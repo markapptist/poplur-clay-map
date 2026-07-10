@@ -1,0 +1,339 @@
+.map {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+}
+
+/* ── Clay material overlays ───────────────────────────── */
+
+/* Bump lighting: turbulence run through diffuse lighting → sculpted clay
+   surface with real-looking dents and thumb marks */
+.clayBump {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.6;
+  mix-blend-mode: soft-light;
+  /* three bump scales rendered at high resolution: deep sculpted blobs,
+     knuckle dents, and fine fingerprint ridges — hand-molded clay */
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='900' height='900'%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.007' numOctaves='6' seed='7' stitchTiles='stitch'/%3E%3CfeDiffuseLighting lighting-color='%23ffffff' surfaceScale='11' diffuseConstant='1.25'%3E%3CfeDistantLight azimuth='235' elevation='50'/%3E%3C/feDiffuseLighting%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='340'%3E%3Cfilter id='c' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.04' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeDiffuseLighting lighting-color='%23ffffff' surfaceScale='4.5' diffuseConstant='1.1'%3E%3CfeDistantLight azimuth='235' elevation='58'/%3E%3C/feDiffuseLighting%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23c)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='d' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.12 0.18' numOctaves='2' seed='23' stitchTiles='stitch'/%3E%3CfeDiffuseLighting lighting-color='%23ffffff' surfaceScale='1.6' diffuseConstant='1.05'%3E%3CfeDistantLight azimuth='235' elevation='62'/%3E%3C/feDiffuseLighting%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23d)'/%3E%3C/svg%3E");
+  background-size: 900px 900px, 340px 340px, 140px 140px;
+}
+
+/* Plastic grain: two scales of turbulence noise — fine plastic texture plus
+   larger thumb-pressed clay dimples — blended over the map */
+.clayGrain {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0.38;
+  mix-blend-mode: overlay;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='700'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E");
+  background-size: 240px 240px, 700px 700px;
+}
+
+/* Glossy sheen: soft diagonal highlight so the clay reads as shiny plastic */
+.claySheen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  mix-blend-mode: soft-light;
+  background:
+    radial-gradient(ellipse 80% 50% at 30% 12%, rgba(255, 255, 255, 0.35), transparent 60%),
+    radial-gradient(ellipse 40% 25% at 68% 55%, rgba(255, 255, 255, 0.14), transparent 70%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.1) 0%, transparent 35%, transparent 70%, rgba(246, 59, 154, 0.16) 100%);
+}
+
+/* Soft vignette so the board falls into darkness at the edges */
+.vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background: radial-gradient(ellipse 90% 75% at 50% 42%,
+    transparent 55%,
+    rgba(5, 4, 7, 0.45) 85%,
+    rgba(5, 4, 7, 0.8) 100%);
+}
+
+/* ── Poplur clay pins (provided asset) ────────────────── */
+
+.pin {
+  width: 44px;
+  cursor: pointer;
+  transition: transform 0.18s ease;
+  filter: drop-shadow(0 10px 10px rgba(0, 0, 0, 0.55));
+}
+
+.pin img,
+.pinSelected img {
+  width: 100%;
+  height: auto;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* NOTE: never animate/transform the marker ROOT — Mapbox positions markers
+   with an inline transform and any CSS transform on the root overrides it,
+   teleporting the pin to the screen corner. Animate the inner img instead. */
+.pin:hover img {
+  transform: scale(1.12) translateY(-3px);
+}
+
+.pin img { transition: transform 0.18s ease; }
+
+.pinSelected {
+  width: 66px;
+  cursor: pointer;
+  filter:
+    drop-shadow(0 0 14px rgba(246, 59, 154, 0.85))
+    drop-shadow(0 12px 14px rgba(0, 0, 0, 0.6));
+}
+
+.pinSelected img {
+  animation: pinBounce 1.6s ease-in-out infinite;
+}
+
+@keyframes pinBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pinSelected img { animation: none; }
+}
+
+/* ── Clay landmarks on the globe (provided assets) ────── */
+
+.landmark {
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+  filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.55));
+}
+
+.landmark img,
+.landmark svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Inner wrapper animates so Mapbox keeps the root transform for positioning */
+.landmarkInner {
+  transform-origin: 50% 100%;
+}
+
+/* Airplanes, satellites and clouds circling the clay globe */
+.flyer {
+  pointer-events: none;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
+}
+
+.flyer svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Harbour boats bob on the clay water */
+.boat {
+  pointer-events: none;
+  filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.5));
+}
+
+.boat svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.boatInner {
+  animation: boatBob 3.4s ease-in-out infinite;
+}
+
+@keyframes boatBob {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-4px) rotate(2.5deg); }
+}
+
+/* Toy cars glued flat to the roads */
+.car {
+  pointer-events: none;
+  width: 15px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+}
+
+.car svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* GLB sprite images inside marker wrappers */
+.landmarkInner img,
+.boatInner img,
+.car img {
+  width: 100%;
+  height: auto;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Clay sun and moon hanging in space beside the globe */
+.sunBody {
+  position: absolute;
+  top: 96px;
+  right: 14px;
+  width: 76px;
+  z-index: 8;
+  pointer-events: none;
+  filter: drop-shadow(0 0 18px rgba(255, 217, 77, 0.7));
+  animation: celestialFloat 6s ease-in-out infinite;
+}
+
+.moonBody {
+  position: absolute;
+  top: 96px;
+  left: 14px;
+  width: 58px;
+  z-index: 8;
+  pointer-events: none;
+  filter: drop-shadow(0 0 14px rgba(232, 228, 240, 0.5));
+  animation: celestialFloat 7s ease-in-out infinite;
+}
+
+.sunBody svg, .moonBody svg { width: 100%; height: auto; display: block; }
+
+@keyframes celestialFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sunBody, .moonBody { animation: none; }
+}
+
+/* Fly-through clouds between globe and street zoom */
+.cloudLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.cloudSprite {
+  position: absolute;
+  filter: blur(1.5px) drop-shadow(0 10px 20px rgba(0, 0, 0, 0.3));
+  will-change: transform, opacity;
+}
+
+.cloudSprite svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boatInner { animation: none; }
+}
+
+/* Children's pop-up-book spring: squash flat, burst upward past full height,
+   jiggle, settle */
+.landmarkPop {
+  animation: landmarkPop 950ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+@keyframes landmarkPop {
+  0%   { transform: scaleY(0.15) scaleX(0.7); }
+  45%  { transform: scaleY(1.32) scaleX(1.06); }
+  65%  { transform: scaleY(0.88) scaleX(1.02); }
+  82%  { transform: scaleY(1.08) scaleX(0.99); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landmarkPop { animation: none; }
+}
+
+/* ── Clay zoom slider ─────────────────────────────────── */
+
+.zoomWrap {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 26;
+  height: 200px;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.zoom {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 200px;
+  height: 34px;
+  transform: rotate(-90deg);
+  background: transparent;
+  cursor: pointer;
+}
+
+.zoom::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #17131a, #241e26);
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(246, 59, 154, 0.28),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.zoom::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  margin-top: -8px;
+  background: radial-gradient(circle at 38% 30%, #FF8AC6, #F63B9A 55%, #b02d73);
+  box-shadow:
+    0 0 12px rgba(246, 59, 154, 0.65),
+    inset 0 2px 3px rgba(255, 255, 255, 0.35),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.35);
+}
+
+.zoom::-moz-range-track {
+  height: 10px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #17131a, #241e26);
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(246, 59, 154, 0.28);
+}
+
+.zoom::-moz-range-thumb {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 30%, #FF8AC6, #F63B9A 55%, #b02d73);
+  box-shadow:
+    0 0 12px rgba(246, 59, 154, 0.65),
+    inset 0 2px 3px rgba(255, 255, 255, 0.35),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.35);
+}

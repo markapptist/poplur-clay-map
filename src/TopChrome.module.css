@@ -1,0 +1,29 @@
+.chrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 52px 16px 10px;
+  pointer-events: none;
+}
+
+.icon {
+  width: 40px;
+  height: auto;
+  filter: drop-shadow(0 4px 10px rgba(246, 59, 154, 0.45));
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.wordmark {
+  width: 132px;
+  height: auto;
+  filter: drop-shadow(0 4px 10px rgba(246, 59, 154, 0.4));
+  user-select: none;
+  -webkit-user-drag: none;
+}
