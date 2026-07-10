@@ -6,8 +6,8 @@ import styles from './TopChrome.module.css'
 export default function TopChrome() {
   return (
     <div className={styles.chrome}>
-      <img className={styles.icon} src="/logo_icon.png" alt="" draggable="false" />
-      <img className={styles.wordmark} src="/logo_text.png" alt="poplur" draggable="false" />
+      <img className={styles.icon} src="logo_icon.png" alt="" draggable="false" />
+      <img className={styles.wordmark} src="logo_text.png" alt="poplur" draggable="false" />
     </div>
   )
 }

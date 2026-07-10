@@ -186,17 +186,17 @@ type GlobeLandmark = { coords: [number, number]; width: number } &
 // reference clay earth — provided Meshy assets plus clay monuments at their
 // real coordinates.
 const GLOBE_LANDMARKS: GlobeLandmark[] = [
-  { kind: 'img', src: '/clay_buildings.png', coords: [-74.006, 40.713], width: 92 },  // New York
-  { kind: 'img', src: '/clay_buildings.png', coords: [139.69, 35.68], width: 74 },    // Tokyo
-  { kind: 'img', src: '/clay_buildings.png', coords: [55.27, 25.20], width: 68 },     // Dubai
-  { kind: 'img', src: '/clay_buildings.png', coords: [151.21, -33.87], width: 62 },   // Sydney
-  { kind: 'img', src: '/clay_buildings.png', coords: [-99.13, 19.43], width: 56 },    // Mexico City
-  { kind: 'img', src: '/clay_buildings.png', coords: [72.88, 19.08], width: 60 },     // Mumbai
-  { kind: 'img', src: '/clay_buildings.png', coords: [3.38, 6.52], width: 52 },       // Lagos
-  { kind: 'img', src: '/clay_buildings.png', coords: [-118.24, 34.05], width: 58 },   // Los Angeles
-  { kind: 'img', src: '/clay_buildings.png', coords: [116.40, 39.90], width: 66 },    // Beijing
-  { kind: 'img', src: '/clay_buildings.png', coords: [37.62, 55.75], width: 60 },     // Moscow
-  { kind: 'img', src: '/clay_buildings.png', coords: [28.05, -26.20], width: 54 },    // Johannesburg
+  { kind: 'img', src: 'clay_buildings.png', coords: [-74.006, 40.713], width: 92 },  // New York
+  { kind: 'img', src: 'clay_buildings.png', coords: [139.69, 35.68], width: 74 },    // Tokyo
+  { kind: 'img', src: 'clay_buildings.png', coords: [55.27, 25.20], width: 68 },     // Dubai
+  { kind: 'img', src: 'clay_buildings.png', coords: [151.21, -33.87], width: 62 },   // Sydney
+  { kind: 'img', src: 'clay_buildings.png', coords: [-99.13, 19.43], width: 56 },    // Mexico City
+  { kind: 'img', src: 'clay_buildings.png', coords: [72.88, 19.08], width: 60 },     // Mumbai
+  { kind: 'img', src: 'clay_buildings.png', coords: [3.38, 6.52], width: 52 },       // Lagos
+  { kind: 'img', src: 'clay_buildings.png', coords: [-118.24, 34.05], width: 58 },   // Los Angeles
+  { kind: 'img', src: 'clay_buildings.png', coords: [116.40, 39.90], width: 66 },    // Beijing
+  { kind: 'img', src: 'clay_buildings.png', coords: [37.62, 55.75], width: 60 },     // Moscow
+  { kind: 'img', src: 'clay_buildings.png', coords: [28.05, -26.20], width: 54 },    // Johannesburg
   { kind: 'svg', svg: SVG_EIFFEL,      coords: [2.2945, 48.8584], width: 44 },        // Eiffel Tower, Paris
   { kind: 'svg', svg: SVG_CN_TOWER,    coords: [-79.3871, 43.6426], width: 30 },      // CN Tower, Toronto
   { kind: 'svg', svg: SVG_BIG_BEN,     coords: [-0.1246, 51.5007], width: 28 },       // Big Ben, London
@@ -595,7 +595,7 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
           if (!popBuffer) {
             if (!popBufferLoading) {
               popBufferLoading = true
-              fetch('/pop.mp3')
+              fetch('pop.mp3')
                 .then(res => res.arrayBuffer())
                 .then(data => audioCtx!.decodeAudioData(data))
                 .then(buffer => { popBuffer = buffer })
@@ -611,6 +611,15 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
           gain.connect(audioCtx.destination)
           src.start()
         } catch { /* audio blocked until user gesture */ }
+        // Tell the native shells (haptics on iOS, etc.)
+        try {
+          const w = window as unknown as {
+            webkit?: { messageHandlers?: { poplur?: { postMessage: (m: unknown) => void } } }
+            PoplurNative?: { onEvent: (json: string) => void }
+          }
+          w.webkit?.messageHandlers?.poplur?.postMessage({ type: 'pop' })
+          w.PoplurNative?.onEvent(JSON.stringify({ type: 'pop' }))
+        } catch { /* no native shell */ }
       }
 
       const poppingIds = new Set<string | number>()
@@ -902,10 +911,10 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
         }).catch(err => console.warn('[modelSprite]', url, err))
       }
 
-      swapSprite(() => treeMarkersRef.current, '/models/palm.glb', { pitch: 8, size: 256 })
-      swapSprite(() => boatMarkersRef.current, '/models/boat.glb', { pitch: 14, yaw: 35, size: 256 })
-      swapSprite(() => carMarkersRef.current, '/models/car.glb', { pitch: 82, size: 256 }, 30)
-      swapSprite(() => flyerMarkersRef.current, '/models/plane.glb', { pitch: 74, size: 256 }, undefined,
+      swapSprite(() => treeMarkersRef.current, 'models/palm.glb', { pitch: 8, size: 256 })
+      swapSprite(() => boatMarkersRef.current, 'models/boat.glb', { pitch: 14, yaw: 35, size: 256 })
+      swapSprite(() => carMarkersRef.current, 'models/car.glb', { pitch: 82, size: 256 }, 30)
+      swapSprite(() => flyerMarkersRef.current, 'models/plane.glb', { pitch: 74, size: 256 }, undefined,
         i => FLYERS[i]?.kind === 'plane')
 
       // Atmosphere: dark space with a faint pink rim, like the toy globe on black
@@ -969,7 +978,7 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       const el = document.createElement('div')
       el.className = isSelected ? styles.pinSelected : styles.pin
       // The provided Poplur clay pin asset (Meshy_AI_Poplur Clay Map Pin)
-      el.innerHTML = `<img src="/clay_pin_small.png" alt="${poi.name}" draggable="false" />`
+      el.innerHTML = `<img src="clay_pin_small.png" alt="${poi.name}" draggable="false" />`
       el.addEventListener('click', () => onSelectPoi(poi.id))
 
       const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })

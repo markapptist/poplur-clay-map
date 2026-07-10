@@ -86,6 +86,27 @@ export default function App() {
     w.__setSky = day => setDayTime(day)
   }, [])
 
+  // Native bridge: the iOS/Android shells drive the map through
+  // window.__poplurNative and receive events via postMessage.
+  useEffect(() => {
+    const w = window as unknown as {
+      __poplurNative?: Record<string, unknown>
+    }
+    w.__poplurNative = {
+      setCenter: (lng: number, lat: number, zoom?: number) =>
+        mapRef.current?.easeTo({ center: [lng, lat], zoom: zoom ?? mapRef.current.getZoom(), duration: 800 }),
+      flyTo: (lng: number, lat: number, zoom: number) => {
+        const map = mapRef.current
+        if (!map) return
+        ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
+        map.flyTo({ center: [lng, lat], zoom, pitch: 64, duration: 4600, curve: 1.7, essential: true })
+      },
+      setSky: (day: boolean) => setDayTime(day),
+      setWeather: (m: WeatherMode | null) => setWeatherOverride(m),
+    }
+    return () => { delete w.__poplurNative }
+  }, [])
+
   const handleSelectPoi = useCallback((id: string) => {
     setSelectedId(id)
     const poi = POIS.find(p => p.id === id)
@@ -144,7 +165,7 @@ export default function App() {
       {/* ── The home cube: the actual provided GLB, swipe to spin ── */}
       <model-viewer
         className={styles.cubeViewer}
-        src="/models/cube.glb"
+        src="cube.glb"
         camera-controls
         disable-zoom
         disable-pan
