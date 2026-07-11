@@ -866,7 +866,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             'icon-rotation-alignment': 'map',
             // Depth-tested against the clay towers: cars on streets behind
             // buildings are hidden instead of painting through them.
-            'symbol-z-elevate': true,
             'icon-pitch-alignment': 'map',
             // Moving markers must skip the collision pass — re-placement each
             // frame reads as flashing.
@@ -889,13 +888,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
         .catch(err => console.warn('[modelSprite]', 'models/car.glb', err))
 
-      // ── Hovering category objects: every venue gets a chunky emoji object
-      //    (🍔 over Burger King, ☕ over cafés…) floating at ROOFTOP height —
-      //    symbol-z-elevate lifts them onto the 3D buildings and depth-tests
-      //    them, and Mapbox's symbol fade pops them in as you pan. Emoji are
-      //    system glyphs (no generated art, no trademark exposure); a clay PNG
-      //    at public/poi/clay_<maki>.png overrides its category when the user
-      //    models one. The POI label underneath still names the venue.
+      // ── Popping category objects: every venue in view gets a chunky, fully
+      //    OPAQUE emoji object (🍔 over Burger King, ☕ over cafés…) that POPS
+      //    over its building the moment it scrolls into view — DOM markers, so
+      //    each one plays its own spring pop-in and floaty hover (the pop theme,
+      //    everywhere). Emoji are system glyphs (no generated art, no trademark
+      //    exposure); the POI label underneath still names the venue.
       if (!REALISTIC_MAP) {
         const POI_EMOJI: Record<string, string> = {
           'fast-food': '🍔',
@@ -912,81 +910,65 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           'ice-cream': '🍦',
         }
 
-        // Emoji drawn big on a canvas with a drop shadow + contact-shadow
-        // ellipse: reads as a toy object hovering, not a flat sticker.
-        const emojiSprite = (emoji: string): ImageData => {
-          const size = 128
-          const canvas = document.createElement('canvas')
-          canvas.width = canvas.height = size
-          const c2d = canvas.getContext('2d')!
-          c2d.beginPath()
-          c2d.ellipse(size / 2, size - 12, 24, 7, 0, 0, Math.PI * 2)
-          c2d.fillStyle = 'rgba(5, 4, 7, 0.25)'
-          c2d.fill()
-          c2d.font = '86px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif'
-          c2d.textAlign = 'center'
-          c2d.textBaseline = 'middle'
-          c2d.shadowColor = 'rgba(5, 4, 7, 0.35)'
-          c2d.shadowBlur = 6
-          c2d.shadowOffsetY = 4
-          c2d.fillText(emoji, size / 2, size / 2 - 10)
-          return c2d.getImageData(0, 0, size, size)
-        }
-
-        const readyCats: string[] = []
-        const refreshPoiLayer = () => {
-          if (!readyCats.length) return
-          if (map.getLayer('clay-poi-icons')) map.removeLayer('clay-poi-icons')
-          map.addLayer({
-            id: 'clay-poi-icons',
-            slot: 'top',
-            type: 'symbol',
-            source: 'clay-streets',
-            'source-layer': 'poi_label',
-            minzoom: 13.2,
-            filter: ['all',
-              ['match', ['get', 'maki'], readyCats, true, false],
-              ['<=', ['get', 'filterrank'], 3],
-            ] as never,
-            layout: {
-              'icon-image': ['concat', 'clay-poi-', ['get', 'maki']] as never,
-              'icon-size': ['interpolate', ['linear'], ['zoom'], 13.2, 0.26, 16.2, 0.52] as never,
-              'icon-anchor': 'bottom',
-              'icon-allow-overlap': false,
-              // Rooftop hover: elevated onto the 3D buildings and properly
-              // occluded by nearer towers.
-              'symbol-z-elevate': true,
-            } as never,
-            paint: {
-              'icon-translate-transition': { duration: 1300, delay: 0 },
-            } as never,
-          })
-        }
-
-        Object.keys(POI_EMOJI).forEach(cat => {
-          const register = (image: ImageData | HTMLImageElement | ImageBitmap) => {
-            if (map.hasImage(`clay-poi-${cat}`)) return
-            map.addImage(`clay-poi-${cat}`, image as never)
-            readyCats.push(cat)
-            refreshPoiLayer()
-          }
-          // The user's hand-modelled clay PNG wins; emoji is the instant default.
-          map.loadImage(`poi/clay_${cat}.png`, (err, img) => {
-            if (!err && img) register(img)
-            else register(emojiSprite(POI_EMOJI[cat]))
-          })
+        // Invisible queryable layer: keeps poi tiles streaming and gives
+        // queryRenderedFeatures a target for "which venues are in view".
+        map.addLayer({
+          id: 'clay-poi-loader',
+          slot: 'top',
+          type: 'circle',
+          source: 'clay-streets',
+          'source-layer': 'poi_label',
+          minzoom: 13.2,
+          filter: ['all',
+            ['match', ['get', 'maki'], Object.keys(POI_EMOJI), true, false],
+            ['<=', ['get', 'filterrank'], 3],
+          ] as never,
+          paint: { 'circle-radius': 1, 'circle-opacity': 0 },
         })
 
-        // Gentle hover bob for the whole flock, tweened by the paint transition.
-        let bobUp = false
-        const bobTimer = window.setInterval(() => {
-          if (!map.getLayer('clay-poi-icons')) return
-          bobUp = !bobUp
-          try {
-            map.setPaintProperty('clay-poi-icons', 'icon-translate', bobUp ? [0, -4] : [0, 1])
-          } catch { /* style mid-update */ }
-        }, 1300)
-        map.once('remove', () => window.clearInterval(bobTimer))
+        const poiMarkers = new Map<string, mapboxgl.Marker>()
+        const syncPoiMarkers = () => {
+          if (!map.getLayer('clay-poi-loader')) return
+          if (map.getZoom() < 13.2) {
+            poiMarkers.forEach(mk => mk.remove())
+            poiMarkers.clear()
+            return
+          }
+          const feats = map.queryRenderedFeatures(undefined as never, { layers: ['clay-poi-loader'] })
+          const seen = new Set<string>()
+          for (const f of feats.slice(0, 48)) {
+            const maki = f.properties?.maki as string | undefined
+            const emoji = maki ? POI_EMOJI[maki] : undefined
+            if (!emoji || f.geometry.type !== 'Point') continue
+            const coords = f.geometry.coordinates as [number, number]
+            const key = `${maki}:${coords[0].toFixed(5)},${coords[1].toFixed(5)}`
+            if (seen.has(key)) continue
+            seen.add(key)
+            if (poiMarkers.has(key)) continue
+            const el = document.createElement('div')
+            el.className = styles.poiEmoji
+            el.textContent = emoji
+            // Stagger the pop-ins so a fresh viewport reads as popcorn, not a wall.
+            el.style.animationDelay = `${Math.random() * 0.35}s, ${0.45 + Math.random() * 0.35}s`
+            const mk = new mapboxgl.Marker({ element: el, anchor: 'bottom', offset: [0, -4] })
+              .setLngLat(coords)
+              .addTo(map)
+            poiMarkers.set(key, mk)
+          }
+          poiMarkers.forEach((mk, key) => {
+            if (!seen.has(key)) {
+              mk.remove()
+              poiMarkers.delete(key)
+            }
+          })
+        }
+        map.on('moveend', syncPoiMarkers)
+        const poiSyncTimer = window.setInterval(syncPoiMarkers, 2000)
+        map.once('remove', () => {
+          window.clearInterval(poiSyncTimer)
+          poiMarkers.forEach(mk => mk.remove())
+        })
+        syncPoiMarkers()
       }
 
       // ── 3D clay buildings ───────────────────────────────────────────────────
@@ -1227,14 +1209,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         popRafs.set(id, requestAnimationFrame(step))
       }
 
-      const BUILDING_POP_VISUAL_COOLDOWN_MS = 900
+      const BUILDING_POP_VISUAL_COOLDOWN_MS = 620
       const BUILDING_POP_SOUND_COOLDOWN_MS = 5500
       let lastBuildingPopAt = 0
       let lastBuildingPopSoundAt = 0
       const triggerPops = () => {
         const now = performance.now()
         if (now - lastBuildingPopAt < BUILDING_POP_VISUAL_COOLDOWN_MS) return
-        if (Math.random() > 0.65) return
+        if (Math.random() > 0.45) return
         if (!map.getLayer('clay-buildings-3d')) return // realistic mode: no clay extrusions
         const feats = map.queryRenderedFeatures(undefined as never, { layers: ['clay-buildings-3d'] })
         if (!feats.length) return
@@ -1393,7 +1375,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         carPaths = paths
         lastCarHarvest = center
       }
+      // 'idle' starves under continuous animations (bobbing emoji, claims,
+      // weather) — harvest whenever the camera settles AND on a steady clock.
       map.on('idle', harvestCarPaths)
+      map.on('moveend', harvestCarPaths)
+      const carHarvestTimer = window.setInterval(harvestCarPaths, 2500)
+      map.once('remove', () => window.clearInterval(carHarvestTimer))
 
       const flyerStart = performance.now()
       const animateFlyers = () => {
