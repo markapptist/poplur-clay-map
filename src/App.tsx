@@ -6,8 +6,13 @@ import TopChrome from './TopChrome'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import type { WeatherMode } from './WeatherFX'
 import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
-import { announceMapTour, startMapRadio, stopMapRadio } from './mapRadio'
+import { announceMapTour, startMapRadio, stopMapRadio, tuneLiveRadio } from './mapRadio'
 import type { RadioStationCue } from './mapRadio'
+import {
+  startRegionAudio, stopRegionAudio, setRegionContext,
+  startPoplurTheme, stopPoplurTheme, setVoiceDucked,
+} from './regionAudio'
+import type { RegionContext } from './regionAudio'
 import { postNativeEvent } from './nativeBridge'
 import styles from './App.module.css'
 
@@ -406,16 +411,73 @@ export default function App() {
   const [streetView, setStreetView] = useState(false)
   const soundPlayingRef = useRef(false)
   const lastTourDestinationRef = useRef<string | null>(null)
+  // Region dialect for the Poplur theme (would come from the located region;
+  // the dev panel lets you audition each).
+  const [region, setRegion] = useState<NonNullable<RegionContext['region']>>('default')
+  const regionRef = useRef(region)
+  regionRef.current = region
+
   const applySoundState = useCallback((on: boolean) => {
     soundPlayingRef.current = on
     setSoundPlaying(on)
-    if (on) startMapRadio()
-    else stopMapRadio()
+    if (on) {
+      startMapRadio()
+      // Always-on regional ambience bed, plus the Poplur theme as the default
+      // when no radio station is found (which, in this prototype, is always).
+      startRegionAudio()
+      startPoplurTheme(regionRef.current)
+    } else {
+      stopMapRadio()
+      stopRegionAudio()
+    }
   }, [])
 
   useEffect(() => {
-    return () => stopMapRadio()
+    return () => { stopMapRadio(); stopRegionAudio() }
   }, [])
+
+  // Re-voice the running theme when the region dialect changes.
+  useEffect(() => {
+    if (soundPlayingRef.current) { stopPoplurTheme(); startPoplurTheme(region) }
+  }, [region])
+
+  // Feed the ambient bed from what's under the camera: water → ocean, parks →
+  // wind + birds, building density → city hum, night → crickets.
+  const dayTimeRef = useRef(dayTime)
+  dayTimeRef.current = dayTime
+  useEffect(() => {
+    if (!soundPlaying) return
+    const sample = () => {
+      const map = mapRef.current
+      if (!map) return
+      const el = map.getContainer()
+      const cx = el.clientWidth / 2, cy = el.clientHeight / 2
+      const box: [[number, number], [number, number]] = [[cx - 45, cy - 45], [cx + 45, cy + 45]]
+      const has = (layers: string[]) => {
+        for (const id of layers) {
+          try { if (map.queryRenderedFeatures(box, { layers: [id] }).length) return 1 } catch { /* absent */ }
+        }
+        return 0
+      }
+      const water = has(['water', 'water-shadow', 'Water'])
+      const park = has(['landcover', 'national-park', 'park', 'landuse', 'Landcover'])
+      // Building extrusions aren't reliably returned by queryRenderedFeatures,
+      // so use a style-agnostic proxy: zoomed-in land that's neither water nor
+      // park is "in the city", ramping with how close the camera is.
+      let cityDensity = 0
+      try { cityDensity = Math.min(1, map.queryRenderedFeatures({ layers: ['clay-buildings-3d'] }).length / 110) } catch { /* extrusions unqueryable */ }
+      if (cityDensity === 0 && !water && !park) {
+        cityDensity = Math.max(0, Math.min(1, (map.getZoom() - 12.5) / 3))
+      }
+      setRegionContext({ water, park, cityDensity, dayTime: dayTimeRef.current, region: regionRef.current })
+    }
+    sample()
+    const iv = window.setInterval(sample, 1500)
+    return () => window.clearInterval(iv)
+  }, [soundPlaying])
+
+  // Duck the whole bed under the AI radio host, mirroring the iOS voice-duck.
+  useEffect(() => { setVoiceDucked(!!tourLine) }, [tourLine])
 
   // Rotating AI text under the title (stable node; fade retriggered manually)
   const tickerRef = useRef<HTMLDivElement>(null)
@@ -543,6 +605,11 @@ export default function App() {
     const line = RECOMMENDATIONS[Math.floor(Math.random() * RECOMMENDATIONS.length)](destination)
     const cityName = cityNameForDestination(destination)
     lastTourDestinationRef.current = destination.id
+    // Tune a REAL local station for this stop (Radio Browser). Fire-and-forget:
+    // the synth bed covers the gap and stays as fallback if nothing streams.
+    void tuneLiveRadio(destination.coords[1], destination.coords[0]).then(stationName => {
+      if (stationName) setTourLine(current => current ? `${current} Now streaming ${stationName}.` : current)
+    })
     setTourLine(`${line}. Tuning ${stationsSummary(stations)}.`)
     postNativeEvent({
       type: 'tourStop',
@@ -696,6 +763,29 @@ export default function App() {
             </button>
           ))}
           <button type="button" onClick={() => setWeatherOverride(null)}>Live</button>
+        </div>
+      )}
+
+      {/* ── Dev-only: Poplur audio — toggle the bed + audition region dialects ── */}
+      {import.meta.env.DEV && (
+        <div className={styles.audioPicker}>
+          <button
+            type="button"
+            className={soundPlaying ? styles.weatherPickerOn : undefined}
+            onClick={() => applySoundState(!soundPlaying)}
+          >
+            {soundPlaying ? '♪ sound on' : '♪ sound off'}
+          </button>
+          {(['default', 'tokyo', 'tropical', 'europe', 'club'] as const).map(r => (
+            <button
+              key={r}
+              type="button"
+              className={region === r ? styles.weatherPickerOn : undefined}
+              onClick={() => setRegion(r)}
+            >
+              {r}
+            </button>
+          ))}
         </div>
       )}
 

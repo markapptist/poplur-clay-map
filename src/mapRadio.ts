@@ -34,6 +34,22 @@ let unlockInstalled = false
 let soundWanted = false
 let targetRadioLevel = RADIO_IDLE_LEVEL
 
+// ── Live radio: REAL music via Radio Browser (radio-browser.info) ──────────
+// Free, keyless, open directory of ~50k real internet stations, geo-searchable
+// — the map tunes an actual local station for wherever the camera lands. The
+// synth bed stays as the instant-on fallback and ducks to a whisper while a
+// live stream is playing.
+let liveAudio: HTMLAudioElement | null = null
+let liveStation: { name: string; url: string } | null = null
+let liveFadeTimer: number | null = null
+let liveTuneGeneration = 0
+
+const RADIO_BROWSER_HOSTS = [
+  'https://de1.api.radio-browser.info',
+  'https://fi1.api.radio-browser.info',
+  'https://nl1.api.radio-browser.info',
+]
+
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null
   const AudioCtor = window.AudioContext ?? (window as WebAudioWindow).webkitAudioContext
@@ -290,6 +306,10 @@ function hashText(value: string): number {
 
 function setRadioLevel(value: number, timeConstant = 0.18) {
   targetRadioLevel = value
+  setLiveRadioLevel(value, timeConstant)
+  // Real music playing → the synthesized bed becomes a faint texture only.
+  const bedValue = liveStation ? value * 0.1 : value
+  value = bedValue
   const ctx = getAudioContext()
   if (!ctx || !radioBed) {
     setFallbackRadioLevel(value, timeConstant)
@@ -374,6 +394,111 @@ function blendAfterHost() {
   }
 }
 
+function liveVolumeForLevel(value: number): number {
+  // Real music is the feature — it rides noticeably louder than the old bed.
+  return Math.max(0, Math.min(0.85, value * 4.4))
+}
+
+function getLiveAudio(): HTMLAudioElement | null {
+  if (typeof window === 'undefined' || typeof window.Audio === 'undefined') return null
+  if (!liveAudio) {
+    liveAudio = new window.Audio()
+    liveAudio.preload = 'none'
+    liveAudio.volume = 0
+    const drop = () => { if (liveStation) dropLiveStation() }
+    liveAudio.addEventListener('error', drop)
+    // 'stalled' fires on transient buffering too — only drop if still stalled
+    liveAudio.addEventListener('stalled', () => {
+      window.setTimeout(() => {
+        if (liveStation && liveAudio && liveAudio.readyState < 3 && !liveAudio.paused) drop()
+      }, 8000)
+    })
+  }
+  return liveAudio
+}
+
+function setLiveRadioLevel(value: number, timeConstant = 0.18) {
+  const audio = liveAudio
+  if (!audio || !liveStation) return
+  const target = liveVolumeForLevel(value)
+  if (liveFadeTimer !== null) window.clearInterval(liveFadeTimer)
+  const start = audio.volume
+  const durationMs = Math.max(80, timeConstant * 1400)
+  const startedAt = performance.now()
+  liveFadeTimer = window.setInterval(() => {
+    const progress = Math.min(1, (performance.now() - startedAt) / durationMs)
+    const eased = 1 - Math.pow(1 - progress, 3)
+    audio.volume = start + (target - start) * eased
+    if (progress >= 1 && liveFadeTimer !== null) {
+      window.clearInterval(liveFadeTimer)
+      liveFadeTimer = null
+    }
+  }, 40)
+}
+
+function dropLiveStation() {
+  liveStation = null
+  if (liveFadeTimer !== null) { window.clearInterval(liveFadeTimer); liveFadeTimer = null }
+  if (liveAudio) { liveAudio.pause(); liveAudio.removeAttribute('src') }
+  // The synth bed swells back so the radio never goes dead.
+  if (soundWanted) setRadioLevel(targetRadioLevel, 0.4)
+}
+
+/** Tune a REAL station near the given coordinates. Resolves to the station's
+ *  name (for the ticker) or null when nothing qualifying streams nearby —
+ *  the synth bed keeps playing in that case. Safe to fire-and-forget. */
+// Dev-only inspection hook: lets verification tooling see the live tuner's
+// state (the audio element is detached, so the DOM can't be probed).
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  ;(window as unknown as { __liveRadio?: () => unknown }).__liveRadio = () => ({
+    station: liveStation,
+    paused: liveAudio?.paused ?? null,
+    readyState: liveAudio?.readyState ?? null,
+    volume: liveAudio?.volume ?? null,
+    time: liveAudio?.currentTime ?? null,
+  })
+}
+
+export async function tuneLiveRadio(lat: number, lng: number): Promise<string | null> {
+  if (typeof window === 'undefined') return null
+  const generation = ++liveTuneGeneration
+  const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
+  for (const host of hosts) {
+    try {
+      const ctl = new AbortController()
+      const timer = window.setTimeout(() => ctl.abort(), 5000)
+      const res = await fetch(
+        `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=90000&hidebroken=true&order=clickcount&reverse=true&limit=16`,
+        { signal: ctl.signal },
+      )
+      window.clearTimeout(timer)
+      if (!res.ok) continue
+      const found = (await res.json()) as Array<{
+        name?: string; url_resolved?: string; codec?: string; bitrate?: number
+      }>
+      if (generation !== liveTuneGeneration) return null // a newer tune superseded us
+      const good = found.filter(st =>
+        typeof st.url_resolved === 'string' &&
+        st.url_resolved.startsWith('https://') && // mixed-content safe in the WebView
+        /mp3|aac/i.test(st.codec ?? '') &&
+        ((st.bitrate ?? 0) === 0 || (st.bitrate ?? 0) >= 96), // quality floor; 0 = unreported
+      )
+      if (!good.length) continue
+      const pick = good[Math.floor(Math.random() * Math.min(5, good.length))]
+      const audio = getLiveAudio()
+      if (!audio) return null
+      liveStation = { name: (pick.name ?? '').trim() || 'local radio', url: pick.url_resolved! }
+      audio.src = pick.url_resolved!
+      if (soundWanted) {
+        void audio.play().catch(() => { /* until the unlock gesture */ })
+        setRadioLevel(targetRadioLevel, 0.5)
+      }
+      return liveStation.name
+    } catch { /* aborted or network error — try the next mirror */ }
+  }
+  return null
+}
+
 export function startMapRadio(): boolean {
   soundWanted = true
   installUnlock()
@@ -381,6 +506,7 @@ export function startMapRadio(): boolean {
   if (!ctx || ctx.state === 'closed') return startFallbackRadio()
   if (!radioBed) radioBed = createRadioBed(ctx)
   stopFallbackRadio()
+  if (liveStation && liveAudio) void liveAudio.play().catch(() => {})
   setRadioLevel(RADIO_IDLE_LEVEL, 0.16)
   void ctx.resume().catch(() => {})
   if (ctx.state === 'suspended' && typeof window !== 'undefined') {
@@ -395,6 +521,8 @@ export function stopMapRadio() {
   soundWanted = false
   targetRadioLevel = RADIO_IDLE_LEVEL
   stopFallbackRadio()
+  if (liveFadeTimer !== null) { window.clearInterval(liveFadeTimer); liveFadeTimer = null }
+  if (liveAudio) liveAudio.pause()
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.cancel()
   }
