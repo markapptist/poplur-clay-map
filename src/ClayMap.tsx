@@ -909,7 +909,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // True to life, Apple-Maps style: every real footprint gets clay massing.
         // Towers use their real heights; houses and low-rise footprints get a
         // small default height so neighborhoods are present instead of empty grass.
-        const clayHeight = ['*', ['coalesce', ['get', 'height'], 9], 1.0] as never
+        // Floor at 6m: houses with tiny or missing mapped heights still stand
+        // up as clay volumes instead of flat slabs.
+        const clayHeight = ['max', ['coalesce', ['get', 'height'], 9], 6] as never
         // Per-building pop scale driven by feature-state (see pop system below)
         const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
         const poppedHeight = ['*', clayHeight, popScale] as never
@@ -923,7 +925,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           type: 'fill-extrusion',
           source: 'clay-streets',
           'source-layer': 'building',
-          minzoom: 13,
+          minzoom: 12.5,
           layout: {
             // Experimental v3 property: rounds every extrusion edge → clay
             'fill-extrusion-edge-radius': 0.9,
