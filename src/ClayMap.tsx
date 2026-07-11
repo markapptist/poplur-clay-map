@@ -128,7 +128,7 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
   ;['building', 'building-outline', 'building-underground'].forEach(id => {
     setLayout(id, 'visibility', 'none')
   })
-  map.getStyle().layers?.forEach(layer => {
+  map.getStyle()?.layers?.forEach(layer => {
     if (/^(road|bridge|tunnel|turning-feature|aeroway)/.test(layer.id)) {
       setLayout(layer.id, 'visibility', 'none')
     }
@@ -591,7 +591,27 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     map.on('zoomend', updateLabelCull)
     map.on('pitchend', updateLabelCull)
 
-    map.on('load', () => {
+    // Boot is belt-and-braces: Mapbox's 'load' event is unreliable here (the
+    // style can report loaded without the event ever firing — seen on both
+    // Standard and classic styles). A short poll boots the clay world the
+    // moment the style is ready if the event never arrives; the guard keeps
+    // double-boot impossible when both paths race.
+    let clayWorldBooted = false
+    const bootClayWorld = () => {
+      if (clayWorldBooted) return
+      // isStyleLoaded() itself is flaky (can stay false forever while the map
+      // renders happily) — the real readiness signal is the style JSON having
+      // been applied, i.e. the base layers existing. addLayer is safe then.
+      const style = map.getStyle()
+      if (!style || !(style.layers || []).length) return
+      clayWorldBooted = true
+      window.clearInterval(bootPoll)
+      buildClayWorld()
+    }
+    const bootPoll = window.setInterval(bootClayWorld, 400)
+    map.on('load', bootClayWorld)
+
+    const buildClayWorld = () => {
       // Clay palette + landmark/tree toggles on the Standard basemap import.
       applyStandardConfig(map, theme)
 
@@ -604,7 +624,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
       }
 
-      const firstLayerId = map.getStyle().layers?.[0]?.id
+      const firstLayerId = map.getStyle()?.layers?.[0]?.id
       if (!map.getLayer('clay-land-background')) {
         map.addLayer({
           id: 'clay-land-background',
@@ -1094,7 +1114,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         if (now - lastBuildingPopAt < BUILDING_POP_VISUAL_COOLDOWN_MS) return
         if (Math.random() > 0.65) return
         if (!map.getLayer('clay-buildings-3d')) return // realistic mode: no clay extrusions
-        const feats = map.queryRenderedFeatures(undefined, { layers: ['clay-buildings-3d'] })
+        const feats = map.queryRenderedFeatures(undefined as never, { layers: ['clay-buildings-3d'] })
         if (!feats.length) return
         for (let attempt = 0; attempt < 8; attempt++) {
           const f = feats[Math.floor(Math.random() * feats.length)]
@@ -1238,7 +1258,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         const center = map.getCenter()
         if (lastCarHarvest && carPaths.length && center.distanceTo(lastCarHarvest) < 900) return
         if (!map.getLayer('clay-real-road-body')) return // realistic mode: no clay roads → no toy cars
-        const feats = map.queryRenderedFeatures(undefined, { layers: ['clay-real-road-body'] })
+        const feats = map.queryRenderedFeatures(undefined as never, { layers: ['clay-real-road-body'] })
         const paths: number[][][] = []
         const push = (cs: number[][]) => { if (cs.length >= 5) paths.push(cs) }
         for (const f of feats) {
@@ -1378,9 +1398,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       } catch { /* fog unsupported */ }
 
       setMapEpoch(epoch => epoch + 1)
-    })
+    }
 
     return () => {
+      window.clearInterval(bootPoll)
       stopOrbit()
       if (flyerRaf) cancelAnimationFrame(flyerRaf)
       popRafs.forEach(raf => cancelAnimationFrame(raf))
