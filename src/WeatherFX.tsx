@@ -1,18 +1,26 @@
-import React, { useMemo } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import styles from './WeatherFX.module.css'
+import { modelSprite } from './modelSprite'
+import { startWeatherAudio, stopWeatherAudio, playThunder } from './weatherAudio'
 
-export type WeatherMode = 'clear' | 'cloudy' | 'rain' | 'storm' | 'snow' | 'fog'
+export type WeatherMode =
+  | 'clear' | 'cloudy' | 'rain' | 'thunder' | 'storm' | 'snow' | 'hail' | 'fog'
 
 export function modeForCode(code: number): WeatherMode {
   if (code <= 1) return 'clear'
   if (code === 45 || code === 48) return 'fog'
   if (code <= 3) return 'cloudy'
+  // 96 / 99 are thunderstorm with hail; 95 is thunder + lightning
+  if (code === 96 || code === 99) return 'hail'
   if (code >= 95) return 'storm'
   if (code >= 71 && code <= 86) return 'snow'
   return 'rain'
 }
 
-const CLOUD = `<svg viewBox="0 0 96 56" xmlns="http://www.w3.org/2000/svg"><ellipse cx="30" cy="38" rx="22" ry="14" fill="#FFF2F8"/><ellipse cx="56" cy="32" rx="26" ry="17" fill="#FFF2F8"/><ellipse cx="74" cy="40" rx="16" ry="11" fill="#f4e4ee"/><ellipse cx="42" cy="24" rx="18" ry="13" fill="#fff"/></svg>`
+/** Modes that carry the drifting clay clouds overhead. */
+const CLOUDY_MODES: WeatherMode[] = ['cloudy', 'thunder', 'storm', 'hail']
+/** Modes that darken the scene like a heavy sky. */
+const DIM_MODES: WeatherMode[] = ['thunder', 'storm', 'hail']
 
 interface Particle { left: number; delay: number; duration: number; scale: number }
 
@@ -31,13 +39,52 @@ function makeParticles(count: number, seed: number): Particle[] {
 export default function WeatherFX({ mode }: { mode: WeatherMode }) {
   const drops = useMemo(() => makeParticles(46, 7), [])
   const flakes = useMemo(() => makeParticles(36, 13), [])
+  const stones = useMemo(() => makeParticles(38, 29), [])
+
+  // The provided clay cloud GLB, rendered once to a transparent sprite.
+  const [cloud, setCloud] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    // Defer the three.js render off the map's critical path: creating a second
+    // WebGL context while Mapbox is still fetching its style can stall it.
+    const id = window.setTimeout(() => {
+      modelSprite('cloud.glb', { yaw: -18, pitch: 10, size: 512 })
+        .then(url => { if (alive) setCloud(url) })
+        .catch(() => { /* sprite unavailable — sky just stays clear */ })
+    }, 3000)
+    return () => { alive = false; window.clearTimeout(id) }
+  }, [])
+
+  // Ambient sound follows the weather layer (rain wash / thunder / hail ticks).
+  useEffect(() => {
+    startWeatherAudio(mode)
+    return stopWeatherAudio
+  }, [mode])
+
+  // Storm lightning is driven from JS (not a CSS loop) so the whole-screen
+  // flash and the thunder rumble fire at the same instant.
+  const [flashTick, setFlashTick] = useState(0)
+  useEffect(() => {
+    if (mode !== 'storm') return
+    let timer: number
+    const strike = () => {
+      setFlashTick(t => t + 1)
+      playThunder(0.55)
+      timer = window.setTimeout(strike, 4500 + Math.random() * 5500)
+    }
+    timer = window.setTimeout(strike, 1800 + Math.random() * 1500)
+    return () => window.clearTimeout(timer)
+  }, [mode])
 
   if (mode === 'clear') return null
 
+  const rains = mode === 'rain' || mode === 'thunder' || mode === 'storm'
+  const dims = DIM_MODES.includes(mode)
+
   return (
     <div className={styles.layer} aria-hidden="true">
-      {(mode === 'rain' || mode === 'storm') && (
-        <div className={mode === 'storm' ? styles.stormDim : undefined}>
+      {rains && (
+        <div className={dims ? styles.stormDim : undefined}>
           {drops.map((d, i) => (
             <span
               key={i}
@@ -53,7 +100,30 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
         </div>
       )}
 
-      {mode === 'storm' && <div className={styles.lightning} />}
+      {mode === 'hail' && (
+        <div className={styles.stormDim}>
+          {stones.map((s, i) => (
+            <span
+              key={i}
+              className={styles.stone}
+              style={{
+                left: `${s.left}%`,
+                animationDelay: `${s.delay * 0.5}s`,
+                animationDuration: `${0.45 + s.duration * 0.35}s`,
+                width: 5 + s.scale * 5,
+                height: 5 + s.scale * 5,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Lightning flash only on the full thunder-and-lightning storm.
+          Remounted per strike (key) so the one-shot flash replays, whole
+          screen, in sync with the thunder fired from the same tick. */}
+      {mode === 'storm' && flashTick > 0 && (
+        <div key={flashTick} className={styles.lightning} />
+      )}
 
       {mode === 'snow' && flakes.map((f, i) => (
         <span
@@ -69,11 +139,11 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
         />
       ))}
 
-      {(mode === 'cloudy' || mode === 'storm') && (
+      {cloud && CLOUDY_MODES.includes(mode) && (
         <>
-          <div className={`${styles.cloud} ${styles.cloudA}`} dangerouslySetInnerHTML={{ __html: CLOUD }} />
-          <div className={`${styles.cloud} ${styles.cloudB}`} dangerouslySetInnerHTML={{ __html: CLOUD }} />
-          <div className={`${styles.cloud} ${styles.cloudC}`} dangerouslySetInnerHTML={{ __html: CLOUD }} />
+          <img className={`${styles.cloud} ${styles.cloudA}`} src={cloud} alt="" />
+          <img className={`${styles.cloud} ${styles.cloudB}`} src={cloud} alt="" />
+          <img className={`${styles.cloud} ${styles.cloudC}`} src={cloud} alt="" />
         </>
       )}
 

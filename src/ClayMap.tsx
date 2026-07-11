@@ -3,9 +3,11 @@ import mapboxgl from 'mapbox-gl'
 import { CLAY_ROUTES, PALETTE } from './data'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
+import { playPop } from './pop'
+import type { WeatherMode } from './WeatherFX'
 import styles from './ClayMap.module.css'
 
-interface Props {
+export interface ClayMapProps {
   token: string
   pois: POI[]
   selectedId: string | null
@@ -13,7 +15,20 @@ interface Props {
   mapRef: React.MutableRefObject<mapboxgl.Map | null>
   theme: MapTheme
   dayTime: boolean
+  weatherMode: WeatherMode
+  /** Candidate real-world targets for the first post-globe lock. */
+  introDestinations?: { coords: [number, number] }[]
+  /** Drops the map to a forward-facing street-level 3D camera. */
+  streetView?: boolean
+  /** Fired once the launch flight from space has landed on the user. */
+  onIntroComplete?: (center: [number, number]) => void
 }
+
+// Realistic mode: photoreal satellite flyover (Apple-Maps-like) — no clay
+// geometry (cream buildings / fat roads / coast grooves), no clay material
+// overlays, and the basemap's own POI + place labels back on. Flip to false
+// to restore the full moulded-clay look.
+export const REALISTIC_MAP = false
 
 // Sky follows the real time of day: clear blue by day, pitch-black space with
 // stars by night (like the lock-screen reference).
@@ -42,32 +57,113 @@ const SVG_MOON = `<svg viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><p
 
 // Re-colours every themable layer in place — called on theme switch without
 // rebuilding the map. Colour slots mirror the app's cube skins.
-function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
-  const set = (layer: string, prop: string, value: unknown) => {
-    try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* layer absent */ }
+function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
+  const cfg = (key: string, value: unknown) => {
+    try { map.setConfigProperty('basemap', key, value as never) } catch { /* property absent */ }
   }
+  const set = (layer: string, prop: string, value: unknown) => {
+    if (!map.getLayer(layer)) return
+    try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* layer varies by style version */ }
+  }
+  const setLayout = (layer: string, prop: string, value: unknown) => {
+    if (!map.getLayer(layer)) return
+    try { map.setLayoutProperty(layer, prop as never, value as never) } catch { /* layer varies by style version */ }
+  }
+  cfg('show3dObjects', true)
+  cfg('show3dLandmarks', true)
+  cfg('show3dTrees', true)
+  // Keep Mapbox's generic building extrusion layer off in realistic mode too:
+  // it turns low-rise houses into flat blocks. We add a scoped solid layer for
+  // taller buildings below, while house roofs keep their satellite detail.
+  cfg('show3dBuildings', false)
+  cfg('lightPreset', 'day')
+
+  if (REALISTIC_MAP) {
+    // Photoreal flyover: let the satellite basemap speak for itself — its own
+    // labels on (like the reference), no clay recolouring.
+    cfg('showPlaceLabels', true)
+    cfg('showPointOfInterestLabels', true)
+    cfg('showRoadLabels', true)
+    cfg('showPedestrianRoads', true)
+    return
+  }
+  cfg('roadsBrightness', 0.2)
+
+  cfg('colorLand', theme.land)
+  cfg('colorGreenspace', theme.park)
+  cfg('colorWater', theme.water)
+  cfg('colorRoads', theme.road)
+  cfg('colorMotorways', theme.road)
+  cfg('colorTrunks', theme.roadRim)
+  cfg('colorPlaceLabels', theme.accentHot)
+  cfg('colorRoadLabels', PALETTE.white)
+  // The clay arteries below are the only roads we want to read; Standard's own
+  // road names and footpaths clutter the moulded look.
+  // Label the clay world: POI/building names on, so the user always knows
+  // which clay building they're looking at (venues, landmarks, businesses).
+  cfg('showPointOfInterestLabels', true)
+  cfg('showRoadLabels', false)
+  cfg('showPedestrianRoads', false)
+
+  // Classic clay renderer: solid molded green/blue base, not satellite photo.
+  // These layer ids are present in dark-v11; Standard ignores the calls above
+  // through its config properties.
+  set('background', 'background-color', PALETTE.bg)
   set('land', 'background-color', theme.land)
   set('water', 'fill-color', theme.water)
   set('waterway', 'line-color', theme.water)
-  ;['landcover', 'landuse', 'national-park', 'park', 'pitch'].forEach(id =>
-    set(id, 'fill-color', theme.park))
+  ;['landcover', 'landuse', 'national-park', 'park', 'pitch'].forEach(id => {
+    set(id, 'fill-color', theme.park)
+    set(id, 'fill-opacity', 1)
+  })
 
-  // Native map labels styled like the old floating cards: accent name text
-  // on a heavy dark halo (the "card" look, drawn by the map itself)
+  // Country borders read like carved seams in the clay globe.
+  ;['admin-0-boundary', 'admin-1-boundary'].forEach(id => {
+    set(id, 'line-color', 'rgba(20, 60, 12, 0.55)')
+    set(id, 'line-width', 1.6)
+  })
+  setLayout('admin-0-boundary-disputed', 'visibility', 'none')
+
+  // Hide the base map's flat roads/buildings; clay geometry replaces them.
+  ;['building', 'building-outline', 'building-underground'].forEach(id => {
+    setLayout(id, 'visibility', 'none')
+  })
+  map.getStyle().layers?.forEach(layer => {
+    if (/^(road|bridge|tunnel|turning-feature|aeroway)/.test(layer.id)) {
+      setLayout(layer.id, 'visibility', 'none')
+    }
+  })
+
   ;['settlement-major-label', 'settlement-minor-label', 'settlement-subdivision-label'].forEach(id => {
     set(id, 'text-color', theme.accentHot)
     set(id, 'text-halo-color', 'rgba(8, 6, 10, 0.95)')
     set(id, 'text-halo-width', 2.2)
   })
   ;['poi-label', 'water-point-label', 'water-line-label', 'natural-point-label',
-    'country-label', 'state-label'].forEach(id => {
-    set(id, 'text-color', '#FFF2F8')
+    'country-label', 'state-label', 'clay-building-name-labels',
+    'clay-venue-labels'].forEach(id => {
+    set(id, 'text-color', PALETTE.white)
     set(id, 'text-halo-color', 'rgba(8, 6, 10, 0.9)')
     set(id, 'text-halo-width', 1.8)
   })
+}
+
+function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
+  const set = (layer: string, prop: string, value: unknown) => {
+    if (!map.getLayer(layer)) return
+    try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* layer absent */ }
+  }
+  applyStandardConfig(map, theme)
+
+  // Realistic mode has none of the clay road/coast/building layers, so skip the
+  // recolour pass entirely.
+  if (REALISTIC_MAP) return
 
   set('clay-coast-shadow', 'line-color', '#04121f')
   set('clay-coast-rim', 'line-color', 'rgba(255, 255, 255, 0.55)')
+  set('clay-land-background', 'background-color', theme.land)
+  set('clay-water-fill', 'fill-color', theme.water)
+  set('clay-grass-fill', 'fill-color', theme.park)
   set('clay-minor-roads', 'line-color', theme.road)
   set('clay-real-road-body', 'line-color', theme.road)
   set('clay-real-road-rim', 'line-color', theme.roadRim)
@@ -101,9 +197,6 @@ const SVG_BURJ = `<svg viewBox="0 0 40 110" xmlns="http://www.w3.org/2000/svg"><
 const SVG_PALM = `<svg viewBox="0 0 64 84" xmlns="http://www.w3.org/2000/svg"><path d="M32 34 C30 50 30 62 28 76 L38 76 C36 62 36 50 34 34 Z" fill="#8a5a2a"/><path d="M32 32 C20 20 10 18 2 24 C12 26 20 30 30 34 Z" fill="#3fae3f"/><path d="M32 32 C44 20 54 18 62 24 C52 26 44 30 34 34 Z" fill="#4fc44f"/><path d="M32 32 C26 18 18 12 8 12 C18 16 24 24 30 33 Z" fill="#4fc44f"/><path d="M32 32 C38 18 46 12 56 12 C46 16 40 24 34 33 Z" fill="#3fae3f"/><path d="M32 32 C30 18 32 10 38 4 C34 12 34 22 34 32 Z" fill="#4fc44f"/><ellipse cx="33" cy="78" rx="12" ry="4" fill="#161116" opacity="0.5"/></svg>`
 const SVG_TREE = `<svg viewBox="0 0 48 64" xmlns="http://www.w3.org/2000/svg"><rect x="21" y="38" width="6" height="18" rx="3" fill="#8a5a2a"/><circle cx="24" cy="24" r="17" fill="#3fae3f"/><circle cx="14" cy="30" r="10" fill="#4fc44f"/><circle cx="34" cy="30" r="10" fill="#4fc44f"/><circle cx="24" cy="16" r="9" fill="#5fd45f"/><ellipse cx="24" cy="58" rx="12" ry="3.5" fill="#161116" opacity="0.45"/></svg>`
 const SVG_BOAT = `<svg viewBox="0 0 72 60" xmlns="http://www.w3.org/2000/svg"><path d="M10 40 L62 40 L54 52 L18 52 Z" fill="#F63B9A" stroke="#c92e7d" stroke-width="2"/><rect x="34" y="8" width="4" height="32" rx="2" fill="#8a5a2a"/><path d="M38 10 C50 16 54 26 52 36 L38 36 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="2"/><path d="M32 14 C24 20 22 28 24 36 L32 36 Z" fill="#FF8AC6"/><circle cx="24" cy="46" r="2.5" fill="#161116"/><circle cx="36" cy="46" r="2.5" fill="#161116"/><circle cx="48" cy="46" r="2.5" fill="#161116"/></svg>`
-const SVG_CLOUD = `<svg viewBox="0 0 96 56" xmlns="http://www.w3.org/2000/svg"><ellipse cx="30" cy="38" rx="22" ry="14" fill="#FFF2F8"/><ellipse cx="56" cy="32" rx="26" ry="17" fill="#FFF2F8"/><ellipse cx="74" cy="40" rx="16" ry="11" fill="#f4e4ee"/><ellipse cx="42" cy="24" rx="18" ry="13" fill="#fff"/></svg>`
-// Top-down clay car for the roads (rotated to its heading, glued to the map)
-const SVG_CAR = (body: string) => `<svg viewBox="0 0 28 52" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="22" height="44" rx="10" fill="${body}" stroke="rgba(0,0,0,0.35)" stroke-width="2"/><rect x="6" y="12" width="16" height="10" rx="4" fill="#161116" opacity="0.85"/><rect x="6" y="32" width="16" height="8" rx="4" fill="#161116" opacity="0.6"/><rect x="1" y="10" width="4" height="9" rx="2" fill="#161116"/><rect x="23" y="10" width="4" height="9" rx="2" fill="#161116"/><rect x="1" y="34" width="4" height="9" rx="2" fill="#161116"/><rect x="23" y="34" width="4" height="9" rx="2" fill="#161116"/></svg>`
 
 // City props: clay trees in the parks, boats in the harbour (Toronto demo)
 const CITY_TREES: { coords: [number, number]; width: number; palm?: boolean }[] = [
@@ -122,15 +215,14 @@ const CITY_BOATS: { coords: [number, number]; width: number; drift: number; phas
   { coords: [-79.3652, 43.6338], width: 36, drift: -0.0013, phase: 2 },  // by the islands
 ]
 
-// Cars loop along the clay tour routes
-const CAR_COLORS = ['#F63B9A', '#FFF2F8', '#161116', '#FF8AC6']
-interface CarRun { route: number; speed: number; offset: number; color: string }
+// Cars loop along harvested real road paths using the provided 3D car model.
+interface CarRun { route: number; speed: number; offset: number }
 const CARS: CarRun[] = [
-  { route: 0, speed: 0.022, offset: 0.0, color: CAR_COLORS[0] },
-  { route: 0, speed: 0.017, offset: 0.5, color: CAR_COLORS[1] },
-  { route: 1, speed: 0.026, offset: 0.2, color: CAR_COLORS[2] },
-  { route: 2, speed: 0.02,  offset: 0.6, color: CAR_COLORS[3] },
-  { route: 3, speed: 0.024, offset: 0.35, color: CAR_COLORS[0] },
+  { route: 0, speed: 0.022, offset: 0.0 },
+  { route: 0, speed: 0.017, offset: 0.5 },
+  { route: 1, speed: 0.026, offset: 0.2 },
+  { route: 2, speed: 0.02, offset: 0.6 },
+  { route: 3, speed: 0.024, offset: 0.35 },
 ]
 
 function pointAlongRoute(coordinates: number[][], t: number): { pos: [number, number]; bearing: number } {
@@ -143,6 +235,23 @@ function pointAlongRoute(coordinates: number[][], t: number): { pos: [number, nu
   const pos: [number, number] = [x1 + (x2 - x1) * f, y1 + (y2 - y1) * f]
   const bearing = (Math.atan2(x2 - x1, y2 - y1) * 180) / Math.PI
   return { pos, bearing }
+}
+
+function circlePolygon(center: mapboxgl.LngLat, radiusMeters: number, steps = 28) {
+  const coordinates: [number, number][] = []
+  const latRadius = radiusMeters / 110_540
+  const lngRadius = radiusMeters / (111_320 * Math.max(0.2, Math.cos(center.lat * Math.PI / 180)))
+  for (let i = 0; i <= steps; i += 1) {
+    const angle = (i / steps) * Math.PI * 2
+    coordinates.push([
+      center.lng + Math.cos(angle) * lngRadius,
+      center.lat + Math.sin(angle) * latRadius,
+    ])
+  }
+  return {
+    type: 'Polygon' as const,
+    coordinates: [coordinates],
+  }
 }
 
 // Clay flyers: airplanes cruise low over the surface, satellites orbit high.
@@ -215,9 +324,30 @@ const GLOBE_LANDMARKS: GlobeLandmark[] = [
 ]
 
 const ZOOM_MIN = 1
-const ZOOM_MAX = 16.5
+// Street-level target for the launch landing and slider top end. Zoom 16.x
+// still reads like a satellite overview; 18.x gets close enough for Mapbox
+// Standard's 3D building massing to be obvious.
+const ZOOM_MAX = 16.2 // capped: street level stops at the toy-diorama height, no deeper
+/** Fallback centre when geolocation is denied or times out: Toronto's Financial District. */
+const HOME_CENTER: [number, number] = [-79.3811, 43.6487]
 
-export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime }: Props) {
+// The clay object riding above the zoom slider: the further out you are, the
+// bigger the thing you're looking at. Globe → cloud → airplane → buildings.
+interface ZoomStage { id: string; below: number; url: string; yaw: number; pitch: number }
+const ZOOM_STAGES: ZoomStage[] = [
+  { id: 'globe',     below: 4.5,      url: 'zoom_globe.glb',     yaw: 20,  pitch: 12 },
+  { id: 'cloud',     below: 8.5,      url: 'cloud.glb',          yaw: -18, pitch: 8 },
+  { id: 'airplane',  below: 12.5,     url: 'zoom_airplane.glb',  yaw: 35,  pitch: 10 },
+  { id: 'buildings', below: Infinity, url: 'zoom_buildings.glb', yaw: 25,  pitch: 14 },
+]
+const stageForZoom = (z: number): ZoomStage =>
+  ZOOM_STAGES.find(s => z < s.below) ?? ZOOM_STAGES[ZOOM_STAGES.length - 1]
+
+export default function ClayMap(props: ClayMapProps) {
+  return <MapboxClayMap {...props} />
+}
+
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete }: ClayMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const landmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -226,10 +356,62 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
   const carMarkersRef = useRef<mapboxgl.Marker[]>([])
   const stopOrbitRef = useRef<() => void>(() => {})
+  const streetViewRef = useRef(streetView)
   // Bumped when a new map instance finishes loading, so the marker effect
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
   const [zoomValue, setZoomValue] = useState(14.8)
+  // The clay cloud GLB, rendered once to a sprite for the zoom-in cloud band.
+  const [cloudSprite, setCloudSprite] = useState<string | null>(null)
+  // Clay object riding above the zoom slider, and its pop on every notch.
+  const [zoomSprites, setZoomSprites] = useState<Record<string, string>>({})
+  const [popTick, setPopTick] = useState(0)
+  const lastNotchRef = useRef<number | null>(null)
+  const zoomStage = stageForZoom(zoomValue)
+
+  useEffect(() => {
+    streetViewRef.current = streetView
+    const mapApi = mapRef.current as unknown as { __setStreetView?: (enabled: boolean) => void } | null
+    mapApi?.__setStreetView?.(streetView)
+  }, [mapRef, streetView])
+
+  // Render the active stage's model once (modelSprite caches by url + view).
+  useEffect(() => {
+    if (zoomSprites[zoomStage.id]) return
+    let alive = true
+    modelSprite(zoomStage.url, { yaw: zoomStage.yaw, pitch: zoomStage.pitch, size: 256 })
+      .then(url => {
+        if (!alive) return
+        setZoomSprites(prev => (prev[zoomStage.id] ? prev : { ...prev, [zoomStage.id]: url }))
+      })
+      .catch(() => { /* stage stays blank rather than breaking the map */ })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomStage.id])
+
+  // Pop (sound + haptic) each time the zoom crosses a whole notch. Skipped while
+  // the camera is flying itself (launch + AI tour), which would machine-gun it.
+  useEffect(() => {
+    const notch = Math.round(zoomValue)
+    if (lastNotchRef.current === null) { lastNotchRef.current = notch; return }
+    if (notch === lastNotchRef.current) return
+    lastNotchRef.current = notch
+    if (mapRef.current?.isEasing()) return
+    playPop()
+    setPopTick(t => t + 1)
+  }, [zoomValue, mapRef])
+
+  useEffect(() => {
+    let alive = true
+    // Deferred so the second WebGL context doesn't compete with the map's own
+    // during its initial style/tile load.
+    const id = window.setTimeout(() => {
+      modelSprite('cloud.glb', { yaw: -18, pitch: 8, size: 512 })
+        .then(url => { if (alive) setCloudSprite(url) })
+        .catch(() => { /* no sprite — the cloud band simply stays empty */ })
+    }, 2500)
+    return () => { alive = false; window.clearTimeout(id) }
+  }, [])
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -244,8 +426,14 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: 'mapbox://styles/mapbox/dark-v11',
-      center: [-79.4005, 43.6505],
+      center: HOME_CENTER,
+      // Constructed at street zoom deliberately: the Standard style never
+      // reports isStyleLoaded() when the map is *created* at globe zoom, so
+      // `load` never fires and no clay layers get added. The load handler jumps
+      // straight out to space, then flies back down — same launch, no stall.
       zoom: 14.8,
+      // Hard ceiling: pinch/scroll can't go deeper than the toy-diorama level.
+      maxZoom: ZOOM_MAX,
       pitch: 62,
       bearing: -18,
       antialias: true,
@@ -318,73 +506,191 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       map.on(ev, e => { if ((e as { originalEvent?: Event }).originalEvent) stopOrbit() }))
     map.getContainer().addEventListener('pointerdown', stopOrbit)
     map.getContainer().addEventListener('wheel', stopOrbit, { passive: true })
+
+    const updateLabelCull = () => {
+      if (!map.isStyleLoaded()) return
+      const zoom = map.getZoom()
+      const pitch = map.getPitch()
+      const center = map.getCenter()
+      const tightStreet = streetViewRef.current || pitch >= 74
+      const buildingRadius = tightStreet ? 260 : zoom >= 17 ? 760 : zoom >= 15.5 ? 1500 : 4200
+      const venueRadius = tightStreet ? 460 : zoom >= 17 ? 1050 : zoom >= 15.5 ? 2100 : 5600
+      const buildingFilter = ['all', ['has', 'name'], ['within', circlePolygon(center, buildingRadius)]] as never
+      const venueFilter = ['all', ['has', 'name'], ['within', circlePolygon(center, venueRadius)]] as never
+      if (map.getLayer('clay-building-name-labels')) {
+        try { map.setFilter('clay-building-name-labels', buildingFilter) } catch { /* expression support varies */ }
+      }
+      if (map.getLayer('clay-venue-labels')) {
+        try { map.setFilter('clay-venue-labels', venueFilter) } catch { /* expression support varies */ }
+      }
+    }
+
+    const setStreetViewMode = (enabled: boolean) => {
+      streetViewRef.current = enabled
+      ;(map as unknown as { __streetView?: boolean }).__streetView = enabled
+      stopOrbit()
+      ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
+      if (enabled) {
+        map.setMinPitch(72)
+        map.setMaxPitch(85)
+        map.easeTo({
+          zoom: Math.max(map.getZoom(), 18.9),
+          pitch: 82,
+          bearing: map.getBearing(),
+          duration: 1200,
+          essential: true,
+        })
+      } else {
+        map.setMinPitch(55)
+        map.setMaxPitch(70)
+        map.easeTo({
+          zoom: Math.min(Math.max(map.getZoom(), 17.4), ZOOM_MAX),
+          pitch: 62,
+          bearing: map.getBearing(),
+          duration: 950,
+          essential: true,
+        })
+      }
+      window.setTimeout(updateLabelCull, 150)
+    }
+    ;(map as unknown as { __setStreetView?: (enabled: boolean) => void }).__setStreetView = setStreetViewMode
+
     map.on('moveend', () => {
       const flagged = map as unknown as { __cinematic?: boolean }
+      updateLabelCull()
+      if ((map as unknown as { __streetView?: boolean }).__streetView) {
+        flagged.__cinematic = false
+        return
+      }
       if (flagged.__cinematic) {
         flagged.__cinematic = false
         startOrbit()
       }
     })
 
+    // ── Camera policy: hybrid-locked at street level ─────────────────────────
+    // Zoomed in, the world is only ever seen at the flyover angle — the pitch
+    // clamps into the hybrid band. Zoomed out (globe/region) the camera frees
+    // up for the space view. Enforced at gesture end so cinematic flights
+    // (which animate pitch themselves) never get snapped mid-flight.
+    const HYBRID_ZOOM = 12.5
+    const enforceHybridPitch = () => {
+      if ((map as unknown as { __cinematic?: boolean }).__cinematic) return
+      if ((map as unknown as { __streetView?: boolean }).__streetView) {
+        if (map.getMinPitch() !== 72) { map.setMinPitch(72); map.setMaxPitch(85) }
+        return
+      }
+      if (map.getZoom() >= HYBRID_ZOOM) {
+        if (map.getMinPitch() !== 55) { map.setMinPitch(55); map.setMaxPitch(70) }
+      } else if (map.getMinPitch() !== 0) {
+        map.setMinPitch(0); map.setMaxPitch(85)
+      }
+    }
+    map.on('zoomend', enforceHybridPitch)
+    map.on('moveend', enforceHybridPitch)
+    map.on('zoomend', updateLabelCull)
+    map.on('pitchend', updateLabelCull)
+
     map.on('load', () => {
-      // ── Clay color overrides on the base style ─────────────────────────────
-      const trySet = (layer: string, prop: string, value: unknown) => {
-        try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* layer varies by style version */ }
+      // Clay palette + landmark/tree toggles on the Standard basemap import.
+      applyStandardConfig(map, theme)
+
+      // Standard has no `composite` source (that's a classic-style source), so
+      // the clay layers below get their own Streets vector source.
+      if (!map.getSource('clay-streets')) {
+        map.addSource('clay-streets', {
+          type: 'vector',
+          url: 'mapbox://mapbox.mapbox-streets-v8',
+        })
       }
 
-      // Ground = vivid molded clay-green board; stays green at globe zoom so
-      // the earth reads as clay continents
-      trySet('background', 'background-color', PALETTE.bg)
-      trySet('land', 'background-color', '#4da42f')
+      const firstLayerId = map.getStyle().layers?.[0]?.id
+      if (!map.getLayer('clay-land-background')) {
+        map.addLayer({
+          id: 'clay-land-background',
+          type: 'background',
+          paint: {
+            'background-color': theme.land,
+            'background-opacity': 1,
+          },
+        }, firstLayerId)
+      }
 
-      // Water → saturated toy blue like the clay globe reference
-      trySet('water', 'fill-color', '#2b82dd')
-      trySet('waterway', 'line-color', '#2b82dd')
+      // ── Launch flight: out to space, then fall onto the user at full zoom ───
+      map.jumpTo({ center: HOME_CENTER, zoom: 0.85, pitch: 0, bearing: 0 })
+      setZoomValue(0.85)
 
-      // Parks and greenery pop brighter against the green base
-      const greenLayers = ['landcover', 'landuse', 'national-park', 'park', 'pitch']
-      greenLayers.forEach(id => {
-        trySet(id, 'fill-color', '#66c342')
-        trySet(id, 'fill-opacity', 1)
+      let introDone = false
+      const landOn = (center: [number, number]) => {
+        ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
+        map.flyTo({
+          center,
+          zoom: ZOOM_MAX,
+          pitch: 62,
+          bearing: -18,
+          duration: 7000,
+          curve: 1.5,
+          essential: true,
+        })
+        map.once('moveend', () => {
+          if (introDone) return
+          introDone = true
+          onIntroComplete?.(center)
+        })
+      }
+      // Hold in space for a beat so the globe reads before the dive. Do not wait
+      // on the geolocation permission prompt; browsers can leave it pending
+      // indefinitely, which strands the launch on the globe instead of diving
+      // into the 3D-building view.
+      let landingCenter: [number, number] = HOME_CENTER
+      const startIntro = () => window.setTimeout(() => landOn(landingCenter), 1400)
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          pos => { landingCenter = [pos.coords.longitude, pos.coords.latitude] },
+          () => { /* fallback already scheduled */ },
+          { timeout: 1200, maximumAge: 300000 },
+        )
+      }
+      startIntro()
+
+      // ── Clay geometry ──────────────────────────────────────────────────────
+      if (!REALISTIC_MAP) {
+      // ── Solid molded earth surface: green clay land, bright grass, blue clay
+      //    water. These sit under the roads/buildings and replace any pale
+      //    base-style leftovers. ──────────────────────────────────────────────
+      map.addLayer({
+        id: 'clay-water-fill',
+        slot: 'bottom',
+        type: 'fill',
+        source: 'clay-streets',
+        'source-layer': 'water',
+        paint: {
+          'fill-color': theme.water,
+          'fill-opacity': 1,
+        },
       })
-
-      // Country borders → carved clay seams
-      const seamLayers = ['admin-0-boundary', 'admin-1-boundary']
-      seamLayers.forEach(id => {
-        trySet(id, 'line-color', 'rgba(20, 60, 12, 0.55)')
-        trySet(id, 'line-width', 1.6)
-      })
-      try { map.setLayoutProperty('admin-0-boundary-disputed', 'visibility', 'none') } catch { /* absent */ }
-
-      // Hide the base style's flat building fills — we extrude our own
-      const flatBuildings = ['building', 'building-outline', 'building-underground']
-      flatBuildings.forEach(id => {
-        try { map.setLayoutProperty(id, 'visibility', 'none') } catch { /* absent in some versions */ }
-      })
-
-      // Keep neighbourhood labels but restyle them clay-white with dark halo
-      const labelLayers = ['settlement-major-label', 'settlement-minor-label',
-        'settlement-subdivision-label', 'poi-label', 'water-point-label',
-        'water-line-label', 'natural-point-label']
-      labelLayers.forEach(id => {
-        trySet(id, 'text-color', PALETTE.white)
-        trySet(id, 'text-halo-color', 'rgba(5,4,7,0.9)')
-        trySet(id, 'text-halo-width', 1.6)
-      })
-      // Hide the base style's entire thin road network (and shields/labels) —
-      // the clay arteries drawn below are the only roads, like the reference.
-      map.getStyle().layers.forEach(layer => {
-        if (/^(road|bridge|tunnel|turning-feature|aeroway)/.test(layer.id)) {
-          try { map.setLayoutProperty(layer.id, 'visibility', 'none') } catch { /* readonly */ }
-        }
+      map.addLayer({
+        id: 'clay-grass-fill',
+        slot: 'bottom',
+        type: 'fill',
+        source: 'clay-streets',
+        'source-layer': 'landuse',
+        filter: ['match', ['get', 'class'],
+          ['park', 'grass', 'wood', 'cemetery', 'golf_course', 'pitch',
+           'hospital', 'school'], true, false] as never,
+        paint: {
+          'fill-color': theme.park,
+          'fill-opacity': 1,
+        },
       })
 
       // ── Coastline groove: dark inset shadow + light rim so the green land
       //    reads as a raised clay slab sitting above the water ────────────────
       map.addLayer({
         id: 'clay-coast-shadow',
+        slot: 'bottom',
         type: 'line',
-        source: 'composite',
+        source: 'clay-streets',
         'source-layer': 'water',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
@@ -396,8 +702,9 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       })
       map.addLayer({
         id: 'clay-coast-rim',
+        slot: 'bottom',
         type: 'line',
-        source: 'composite',
+        source: 'clay-streets',
         'source-layer': 'water',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
@@ -417,8 +724,9 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       // city, so a zoomed-in block is never an empty green void.
       map.addLayer({
         id: 'clay-minor-roads',
+        slot: 'middle',
         type: 'line',
-        source: 'composite',
+        source: 'clay-streets',
         'source-layer': 'road',
         minzoom: 11,
         filter: ['match', ['get', 'class'],
@@ -436,8 +744,9 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       // Soft shadow under roads for the "raised clay" feel
       map.addLayer({
         id: 'clay-real-road-shadow',
+        slot: 'middle',
         type: 'line',
-        source: 'composite',
+        source: 'clay-streets',
         'source-layer': 'road',
         filter: majorFilter,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -453,8 +762,9 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       // Fat charcoal road body
       map.addLayer({
         id: 'clay-real-road-body',
+        slot: 'middle',
         type: 'line',
-        source: 'composite',
+        source: 'clay-streets',
         'source-layer': 'road',
         filter: majorFilter,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -468,8 +778,9 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       // Subtle top highlight rim so the road reads as rounded clay
       map.addLayer({
         id: 'clay-real-road-rim',
+        slot: 'middle',
         type: 'line',
-        source: 'composite',
+        source: 'clay-streets',
         'source-layer': 'road',
         filter: majorFilter,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -484,8 +795,9 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       // Pink stitched centre line — the signature Poplur detail
       map.addLayer({
         id: 'clay-real-road-stitches',
+        slot: 'middle',
         type: 'line',
-        source: 'composite',
+        source: 'clay-streets',
         'source-layer': 'road',
         filter: majorFilter,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -498,56 +810,147 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
         },
       })
 
-      // ── 3D clay buildings ───────────────────────────────────────────────────
-      // True to life, Apple-Maps style: real footprints at real heights in
-      // warm neutral cream — rounded edges + AO keep the clay material.
-      const clayHeight = ['*', ['coalesce', ['get', 'height'], 12], 1.0] as never
-      const buildingFilter = ['==', ['get', 'extrude'], 'true'] as never
-      // Per-building pop scale driven by feature-state (see pop system below)
-      const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
-      const poppedHeight = ['*', clayHeight, popScale] as never
+      } // end !REALISTIC_MAP clay geometry (roads/coast — the childish bits)
 
-      map.addLayer({
-        id: 'clay-buildings-3d',
-        type: 'fill-extrusion',
-        source: 'composite',
-        'source-layer': 'building',
-        minzoom: 13,
-        filter: buildingFilter,
-        layout: {
-          // Experimental v3 property: rounds every extrusion edge → clay
-          'fill-extrusion-edge-radius': 0.9,
-        } as never,
-        paint: {
-          'fill-extrusion-color': ['case',
-            ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb', // subtle variety
-            ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
-            '#dbd3c7', // warm cream clay, Apple-Maps neutral
-          ],
-          'fill-extrusion-height': poppedHeight,
-          'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
-          'fill-extrusion-opacity': 1,
-          'fill-extrusion-vertical-gradient': true,
-          'fill-extrusion-ambient-occlusion-intensity': 0.6,
-          'fill-extrusion-ambient-occlusion-radius': 4,
-        } as never,
-      })
+      if (!map.getSource('poplur-cars')) {
+        map.addSource('poplur-cars', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+        })
+      }
+
+      if (!map.getLayer('poplur-road-cars')) {
+        map.addLayer({
+          id: 'poplur-road-cars',
+          slot: 'middle',
+          type: 'symbol',
+          source: 'poplur-cars',
+          minzoom: 12.5,
+          layout: {
+            'icon-image': 'poplur-car',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 12.5, 0.15, 17, 0.28, 19, 0.42],
+            'icon-rotate': ['get', 'bearing'],
+            'icon-rotation-alignment': 'map',
+            'icon-pitch-alignment': 'map',
+            'icon-allow-overlap': false,
+            'icon-ignore-placement': false,
+          } as never,
+          paint: {
+            'icon-opacity': ['interpolate', ['linear'], ['zoom'], 12.4, 0, 13, 1],
+          } as never,
+        })
+      }
+
+      modelSprite('models/car.glb', { pitch: 82, size: 256 })
+        .then(dataUrl => {
+          if (map.hasImage('poplur-car')) return
+          map.loadImage(dataUrl, (error, image) => {
+            if (error || !image || map.hasImage('poplur-car')) return
+            map.addImage('poplur-car', image)
+          })
+        })
+        .catch(err => console.warn('[modelSprite]', 'models/car.glb', err))
+
+      // ── 3D clay buildings ───────────────────────────────────────────────────
+      // Realistic mode draws neutral solid massing only for taller buildings.
+      // Low-rise houses keep their satellite roof detail instead of being
+      // covered by flat generic extrusion slabs.
+      if (REALISTIC_MAP) {
+        const realisticHeight = ['coalesce', ['get', 'height'], 0] as never
+        const substantialBuildingFilter = ['all',
+          ['==', ['get', 'extrude'], 'true'],
+          ['>=', realisticHeight, 24],
+        ] as never
+        map.addLayer({
+          id: 'realistic-buildings-3d',
+          slot: 'top',
+          type: 'fill-extrusion',
+          source: 'clay-streets',
+          'source-layer': 'building',
+          minzoom: 14.8,
+          filter: substantialBuildingFilter,
+          paint: {
+            'fill-extrusion-color': ['case',
+              ['>=', ['coalesce', ['get', 'height'], 0], 80], '#d9dde3',
+              ['>=', ['coalesce', ['get', 'height'], 0], 35], '#c3cad2',
+              '#b8bec5',
+            ],
+            'fill-extrusion-height': realisticHeight,
+            'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+            'fill-extrusion-opacity': 1,
+            'fill-extrusion-vertical-gradient': true,
+            'fill-extrusion-ambient-occlusion-intensity': 0.55,
+            'fill-extrusion-ambient-occlusion-radius': 4,
+          } as never,
+        })
+      }
+
+      if (!REALISTIC_MAP) {
+        // True to life, Apple-Maps style: every real footprint gets clay massing.
+        // Towers use their real heights; houses and low-rise footprints get a
+        // small default height so neighborhoods are present instead of empty grass.
+        const clayHeight = ['*', ['coalesce', ['get', 'height'], 9], 1.0] as never
+        // Per-building pop scale driven by feature-state (see pop system below)
+        const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
+        const poppedHeight = ['*', clayHeight, popScale] as never
+
+        map.addLayer({
+          id: 'clay-buildings-3d',
+          // 'top' draws the extrusions after the clay roads (so streets sit under
+          // buildings) while still below Standard's landmark meshes, which render
+          // above every slot — at the root slot they'd occlude the Eiffel Tower.
+          slot: 'top',
+          type: 'fill-extrusion',
+          source: 'clay-streets',
+          'source-layer': 'building',
+          minzoom: 13,
+          layout: {
+            // Experimental v3 property: rounds every extrusion edge → clay
+            'fill-extrusion-edge-radius': 0.9,
+          } as never,
+          paint: {
+            // Hand-rolled clay is never one flat colour. Eight-way hash across the
+            // warm-cream family gives the batch variation a real sculpt has, while
+            // staying inside one material.
+            'fill-extrusion-color': ['case',
+              ['==', ['%', ['to-number', ['id']], 8], 0], '#b2916c',
+              ['==', ['%', ['to-number', ['id']], 8], 1], '#cdb28a',
+              ['==', ['%', ['to-number', ['id']], 8], 2], '#c0a37c',
+              ['==', ['%', ['to-number', ['id']], 8], 3], '#d6bd96',
+              ['==', ['%', ['to-number', ['id']], 8], 5], '#a98a66',
+              ['==', ['%', ['to-number', ['id']], 8], 6], '#c7ab82',
+              '#c3a67e', // warm modelling-clay tan
+            ],
+            'fill-extrusion-height': poppedHeight,
+            'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+            // A real clay object is opaque. Depth comes from AO + cast shadows,
+            // never from transparency.
+            'fill-extrusion-opacity': 1,
+            'fill-extrusion-vertical-gradient': true,
+            // Deep contact shadow where wall meets ground — the strongest single
+            // cue that an object is physically sitting on a surface.
+            'fill-extrusion-ambient-occlusion-intensity': REALISTIC_MAP ? 0.95 : 0.6,
+            'fill-extrusion-ambient-occlusion-radius': REALISTIC_MAP ? 7 : 4,
+            'fill-extrusion-ambient-occlusion-wall-radius': REALISTIC_MAP ? 6 : 3,
+            'fill-extrusion-ambient-occlusion-ground-radius': REALISTIC_MAP ? 5 : 3,
+          } as never,
+        })
 
       // Lighter rooftop slabs on the tall towers — the subtle roof shading
       // Apple Maps uses, molded in clay.
       map.addLayer({
         id: 'clay-building-caps',
+        slot: 'top',
         type: 'fill-extrusion',
-        source: 'composite',
+        source: 'clay-streets',
         'source-layer': 'building',
         minzoom: 13,
-        filter: ['all', buildingFilter,
-          ['>=', ['coalesce', ['get', 'height'], 0], 45]] as never,
+        filter: ['>=', ['coalesce', ['get', 'height'], 0], 45] as never,
         layout: {
           'fill-extrusion-edge-radius': 0.95,
         } as never,
         paint: {
-          'fill-extrusion-color': '#efe9df',
+          'fill-extrusion-color': '#d8c19a',
           'fill-extrusion-base': poppedHeight,
           'fill-extrusion-height': ['+', poppedHeight, 4],
           'fill-extrusion-opacity': 1,
@@ -556,9 +959,82 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
         } as never,
       })
 
-      // Soft warm key light + cool ambient with cast shadows → clay-render depth
+      // Building and venue names sit above the molded forms so the clay city
+      // still tells you what you are looking at.
+      map.addLayer({
+        id: 'clay-building-name-labels',
+        slot: 'top',
+        type: 'symbol',
+        source: 'clay-streets',
+        'source-layer': 'building',
+        minzoom: 15.2,
+        filter: ['has', 'name'] as never,
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10, 17, 13],
+          'text-max-width': 8,
+          'text-padding': 12,
+          'text-offset': [0, -0.7],
+          'text-pitch-alignment': 'viewport',
+          'text-rotation-alignment': 'viewport',
+          'text-allow-overlap': false,
+          'text-ignore-placement': false,
+          'text-optional': true,
+          'symbol-z-elevate': true,
+        } as never,
+        paint: {
+          'text-color': PALETTE.white,
+          'text-halo-color': 'rgba(8, 6, 10, 0.92)',
+          'text-halo-width': 1.8,
+          'text-halo-blur': 0.4,
+          'text-opacity': ['interpolate', ['linear'], ['zoom'], 14.8, 0, 15.4, 0.92],
+        },
+      })
+
+      map.addLayer({
+        id: 'clay-venue-labels',
+        slot: 'top',
+        type: 'symbol',
+        source: 'clay-streets',
+        'source-layer': 'poi_label',
+        minzoom: 14.4,
+        filter: ['has', 'name'] as never,
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10, 17, 13],
+          'text-max-width': 9,
+          'text-padding': 14,
+          'text-offset': [0, -0.6],
+          'text-pitch-alignment': 'viewport',
+          'text-rotation-alignment': 'viewport',
+          'text-allow-overlap': false,
+          'text-ignore-placement': false,
+          'text-optional': true,
+          'symbol-z-elevate': true,
+        } as never,
+        paint: {
+          'text-color': PALETTE.white,
+          'text-halo-color': 'rgba(8, 6, 10, 0.92)',
+          'text-halo-width': 1.8,
+          'text-halo-blur': 0.4,
+          'text-opacity': ['interpolate', ['linear'], ['zoom'], 14.2, 0, 14.9, 0.9],
+        },
+      })
+      updateLabelCull()
+      } // end !REALISTIC_MAP fill-extrusion buildings
+
+      // Neutral daylight for the Standard basemap in realistic mode; warmer
+      // sculptural light only belongs to the classic clay renderer.
       try {
-        map.setLights([
+        map.setLights(REALISTIC_MAP ? [
+          { id: 'ambient', type: 'ambient', properties: { color: '#ffffff', intensity: 0.48 } },
+          { id: 'sun', type: 'directional', properties: {
+            color: '#ffffff', intensity: 0.72, direction: [222, 44],
+            'cast-shadows': true, 'shadow-intensity': 0.45,
+          } },
+        ] as never : [
           { id: 'ambient', type: 'ambient', properties: { color: '#d8d2ff', intensity: 0.6 } },
           { id: 'sun', type: 'directional', properties: {
             color: '#fff0dd', intensity: 0.8, direction: [215, 38],
@@ -571,6 +1047,7 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       map.addSource('clay-routes', { type: 'geojson', data: CLAY_ROUTES })
       map.addLayer({
         id: 'clay-trail-stitches',
+        slot: 'middle',
         type: 'line',
         source: 'clay-routes',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -583,50 +1060,13 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       })
 
       // ── "Poplur pop": buildings bulge like the cube and spring back ─────────
-      // The exact pop.mp3 the iOS feed plays, decoded once for overlap-safe
-      // low-latency playback through Web Audio.
-      let audioCtx: AudioContext | null = null
-      let popBuffer: AudioBuffer | null = null
-      let popBufferLoading = false
-      const playPop = () => {
-        try {
-          audioCtx ??= new AudioContext()
-          if (audioCtx.state === 'suspended') void audioCtx.resume()
-          if (!popBuffer) {
-            if (!popBufferLoading) {
-              popBufferLoading = true
-              fetch('pop.mp3')
-                .then(res => res.arrayBuffer())
-                .then(data => audioCtx!.decodeAudioData(data))
-                .then(buffer => { popBuffer = buffer })
-                .catch(() => { popBufferLoading = false })
-            }
-            return
-          }
-          const src = audioCtx.createBufferSource()
-          src.buffer = popBuffer
-          const gain = audioCtx.createGain()
-          gain.gain.value = 0.6
-          src.connect(gain)
-          gain.connect(audioCtx.destination)
-          src.start()
-        } catch { /* audio blocked until user gesture */ }
-        // Tell the native shells (haptics on iOS, etc.)
-        try {
-          const w = window as unknown as {
-            webkit?: { messageHandlers?: { poplur?: { postMessage: (m: unknown) => void } } }
-            PoplurNative?: { onEvent: (json: string) => void }
-          }
-          w.webkit?.messageHandlers?.poplur?.postMessage({ type: 'pop' })
-          w.PoplurNative?.onEvent(JSON.stringify({ type: 'pop' }))
-        } catch { /* no native shell */ }
-      }
+      // Sound + haptic now live in ./pop so the zoom indicator shares them.
 
       const poppingIds = new Set<string | number>()
       const popBuilding = (id: string | number) => {
         if (poppingIds.has(id)) return
         poppingIds.add(id)
-        const target = { source: 'composite', sourceLayer: 'building', id }
+        const target = { source: 'clay-streets', sourceLayer: 'building', id }
         const started = performance.now()
         const duration = 680
         const step = (now: number) => {
@@ -645,19 +1085,26 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
         popRafs.set(id, requestAnimationFrame(step))
       }
 
-      let lastPopAt = 0
+      const BUILDING_POP_VISUAL_COOLDOWN_MS = 900
+      const BUILDING_POP_SOUND_COOLDOWN_MS = 5500
+      let lastBuildingPopAt = 0
+      let lastBuildingPopSoundAt = 0
       const triggerPops = () => {
         const now = performance.now()
-        if (now - lastPopAt < 1600) return // at most one pop every ~1.6s of scrolling
-        if (Math.random() > 0.45) return   // …and even then only sometimes
+        if (now - lastBuildingPopAt < BUILDING_POP_VISUAL_COOLDOWN_MS) return
+        if (Math.random() > 0.65) return
+        if (!map.getLayer('clay-buildings-3d')) return // realistic mode: no clay extrusions
         const feats = map.queryRenderedFeatures(undefined, { layers: ['clay-buildings-3d'] })
         if (!feats.length) return
-        lastPopAt = now
         for (let attempt = 0; attempt < 8; attempt++) {
           const f = feats[Math.floor(Math.random() * feats.length)]
           if (f.id != null && !poppingIds.has(f.id)) {
+            lastBuildingPopAt = now
             popBuilding(f.id)
-            playPop()
+            if (now - lastBuildingPopSoundAt > BUILDING_POP_SOUND_COOLDOWN_MS && Math.random() < 0.35) {
+              lastBuildingPopSoundAt = now
+              playPop()
+            }
             break
           }
         }
@@ -771,31 +1218,26 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
       })
 
       carMarkersRef.current.forEach(mk => mk.remove())
-      carMarkersRef.current = CARS.map(car => {
-        const el = document.createElement('div')
-        el.className = styles.car
-        el.innerHTML = SVG_CAR(car.color)
-        el.style.visibility = 'hidden' // shown once real road paths are harvested
-        // map-aligned so the car lies flat on the road like a toy on the board
-        return new mapboxgl.Marker({
-          element: el,
-          anchor: 'center',
-          rotationAlignment: 'map',
-          pitchAlignment: 'map',
-        })
-          .setLngLat([-79.4005, 43.6505])
-          .addTo(map)
-      })
+      carMarkersRef.current = []
 
       // Cars drive the REAL roads: harvest rendered artery geometry around the
       // camera and assign each car a genuine street polyline. Re-harvested
       // when the camera settles somewhere new.
       let carPaths: number[][][] = []
       let lastCarHarvest: mapboxgl.LngLat | null = null
+      const setCarFeatures = (features: Array<{
+        type: 'Feature'
+        geometry: { type: 'Point'; coordinates: [number, number] }
+        properties: { bearing: number }
+      }>) => {
+        const source = map.getSource('poplur-cars') as mapboxgl.GeoJSONSource | undefined
+        source?.setData({ type: 'FeatureCollection', features } as GeoJSON.FeatureCollection)
+      }
       const harvestCarPaths = () => {
         if (map.getZoom() < 12.5) return
         const center = map.getCenter()
         if (lastCarHarvest && carPaths.length && center.distanceTo(lastCarHarvest) < 900) return
+        if (!map.getLayer('clay-real-road-body')) return // realistic mode: no clay roads → no toy cars
         const feats = map.queryRenderedFeatures(undefined, { layers: ['clay-real-road-body'] })
         const paths: number[][][] = []
         const push = (cs: number[][]) => { if (cs.length >= 5) paths.push(cs) }
@@ -808,7 +1250,6 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
         if (!paths.length) return
         carPaths = paths
         lastCarHarvest = center
-        carMarkersRef.current.forEach(mk => { mk.getElement().style.visibility = '' })
       }
       map.on('idle', harvestCarPaths)
 
@@ -831,14 +1272,20 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
             }
           })
         } else if (zoom >= 12.5) {
-          CARS.forEach((car, i) => {
-            const marker = carMarkersRef.current[i]
-            if (!marker || !carPaths.length) return
+          if (carPaths.length && map.hasImage('poplur-car')) {
+            const features = CARS.map((car, i) => {
             const path = carPaths[(car.route + i * 3) % carPaths.length]
             const { pos, bearing } = pointAlongRoute(path, car.offset + t * car.speed)
-            marker.setLngLat(pos as [number, number])
-            marker.setRotation(bearing)
-          })
+              return {
+                type: 'Feature' as const,
+                geometry: { type: 'Point' as const, coordinates: pos },
+                properties: { bearing },
+              }
+            })
+            setCarFeatures(features)
+          } else {
+            setCarFeatures([])
+          }
           CITY_BOATS.forEach((boat, i) => {
             const marker = boatMarkersRef.current[i]
             if (!marker) return
@@ -847,6 +1294,8 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
               boat.coords[1] + Math.cos(t * 0.22 + boat.phase) * boat.drift * 0.4,
             ])
           })
+        } else {
+          setCarFeatures([])
         }
       }
       flyerRaf = requestAnimationFrame(animateFlyers)
@@ -913,7 +1362,6 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
 
       swapSprite(() => treeMarkersRef.current, 'models/palm.glb', { pitch: 8, size: 256 })
       swapSprite(() => boatMarkersRef.current, 'models/boat.glb', { pitch: 14, yaw: 35, size: 256 })
-      swapSprite(() => carMarkersRef.current, 'models/car.glb', { pitch: 82, size: 256 }, 30)
       swapSprite(() => flyerMarkersRef.current, 'models/plane.glb', { pitch: 74, size: 256 }, undefined,
         i => FLYERS[i]?.kind === 'plane')
 
@@ -1012,11 +1460,14 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
   return (
     <>
       <div ref={containerRef} className={styles.map} />
-      {/* Clay material feel: bump lighting + plastic grain + sheen + vignette */}
-      <div className={styles.clayBump} aria-hidden="true" />
-      <div className={styles.clayGrain} aria-hidden="true" />
-      <div className={styles.claySheen} aria-hidden="true" />
-      <div className={styles.vignette} aria-hidden="true" />
+      {!REALISTIC_MAP && (
+        <>
+          <div className={styles.clayBump} aria-hidden="true" />
+          <div className={styles.clayGrain} aria-hidden="true" />
+          <div className={styles.claySheen} aria-hidden="true" />
+        </>
+      )}
+      <div className={styles.vignette} style={REALISTIC_MAP ? { opacity: 0.4 } : undefined} aria-hidden="true" />
 
       {/* Clay sun by day / clay moon by night, hanging in space beside the globe */}
       {zoomValue < 5.5 && (
@@ -1027,21 +1478,27 @@ export default function ClayMap({ token, pois, selectedId, onSelectPoi, mapRef, 
         />
       )}
 
-      {cloudBand > 0.01 && (
+      {cloudBand > 0.01 && cloudSprite && (
         <div className={styles.cloudLayer} aria-hidden="true">
-          <div className={styles.cloudSprite} style={{ left: '-22%', top: '10%', width: 220, opacity: cloudBand * 0.55, transform: `scale(${cloudScale})` }}
-               dangerouslySetInnerHTML={{ __html: SVG_CLOUD }} />
-          <div className={styles.cloudSprite} style={{ right: '-26%', top: '34%', width: 260, opacity: cloudBand * 0.5, transform: `scale(${cloudScale * 1.15})` }}
-               dangerouslySetInnerHTML={{ __html: SVG_CLOUD }} />
-          <div className={styles.cloudSprite} style={{ left: '-18%', bottom: '14%', width: 240, opacity: cloudBand * 0.45, transform: `scale(${cloudScale * 0.9})` }}
-               dangerouslySetInnerHTML={{ __html: SVG_CLOUD }} />
-          <div className={styles.cloudSprite} style={{ right: '-14%', bottom: '-10%', width: 200, opacity: cloudBand * 0.4, transform: `scale(${cloudScale * 1.05})` }}
-               dangerouslySetInnerHTML={{ __html: SVG_CLOUD }} />
+          <img className={styles.cloudSprite} src={cloudSprite} alt=""
+               style={{ left: '-22%', top: '10%', width: 220, opacity: cloudBand * 0.55, transform: `scale(${cloudScale})` }} />
+          <img className={styles.cloudSprite} src={cloudSprite} alt=""
+               style={{ right: '-26%', top: '34%', width: 260, opacity: cloudBand * 0.5, transform: `scale(${cloudScale * 1.15})` }} />
+          <img className={styles.cloudSprite} src={cloudSprite} alt=""
+               style={{ left: '-18%', bottom: '14%', width: 240, opacity: cloudBand * 0.45, transform: `scale(${cloudScale * 0.9})` }} />
+          <img className={styles.cloudSprite} src={cloudSprite} alt=""
+               style={{ right: '-14%', bottom: '-10%', width: 200, opacity: cloudBand * 0.4, transform: `scale(${cloudScale * 1.05})` }} />
         </div>
       )}
 
-      {/* Clay zoom slider — bottom-right, street level at the top, globe at the bottom */}
-      <div className={styles.zoomWrap}>
+      {/* Clay zoom slider — bottom-right, street level at the top, globe at the
+          bottom. The thumb IS the zoom-level clay object (globe → cloud →
+          airplane → buildings), swapped by zoom band and re-popped per notch. */}
+      <div
+        className={styles.zoomWrap}
+        key={`thumb-${zoomStage.id}-${popTick}`}
+        style={{ '--zoomThumb': zoomSprites[zoomStage.id] ? `url("${zoomSprites[zoomStage.id]}")` : 'none' } as React.CSSProperties}
+      >
         <input
           type="range"
           className={styles.zoom}

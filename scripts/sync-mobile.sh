@@ -6,7 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-IOS_DEST="/Users/matrix/Developer/Poplur2025-iOS/Poplur2025/ClayMapWeb"
+IOS_DEST="/Users/matrix/Developer/Poplur2025-iOS/ClayMapWeb"
 ANDROID_DEST="/Users/matrix/Developer/Poplur2025-Android/app/src/main/assets/claymap"
 
 npm run build

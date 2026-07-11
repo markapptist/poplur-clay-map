@@ -29,20 +29,26 @@
   background: rgba(6, 4, 12, 0.28);
 }
 
+/* Whole-screen strike: a flat blinding wash with a hot core up top. One-shot —
+   WeatherFX remounts this node per strike, in sync with the thunder. */
 .lightning {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse 70% 45% at 60% 8%, rgba(255, 246, 214, 0.95), rgba(246, 59, 154, 0.18) 55%, transparent 75%);
+  background:
+    radial-gradient(ellipse 80% 55% at 55% 10%, rgba(255, 252, 235, 1), transparent 80%),
+    rgba(255, 248, 226, 0.88);
   opacity: 0;
-  animation: flash 6.5s ease-out infinite;
+  animation: flash 0.95s ease-out 1 both;
 }
 
+/* Double-blink like a real strike: hard hit, dip, echo, out. */
 @keyframes flash {
-  0%, 84%, 100% { opacity: 0; }
-  85% { opacity: 1; }
-  87% { opacity: 0.1; }
-  89% { opacity: 0.8; }
-  93% { opacity: 0; }
+  0%   { opacity: 0; }
+  6%   { opacity: 1; }
+  18%  { opacity: 0.12; }
+  30%  { opacity: 0.85; }
+  55%  { opacity: 0.18; }
+  100% { opacity: 0; }
 }
 
 /* ── Snow: soft clay flakes wobbling down ── */
@@ -55,17 +61,39 @@
   animation: flakeFall linear infinite;
 }
 
+/* Every stop carries BOTH axes — dropping translateY on the sway stops made the
+   flakes snap back to the top mid-fall. */
 @keyframes flakeFall {
-  25% { transform: translateX(14px); }
-  50% { transform: translateX(-10px) translateY(50vh); }
-  75% { transform: translateX(12px); }
-  100% { transform: translateY(110vh); }
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(14px, 27vh); }
+  50%  { transform: translate(-10px, 54vh); }
+  75%  { transform: translate(12px, 82vh); }
+  100% { transform: translate(0, 112vh); }
 }
 
-/* ── Cloudy: big soft clouds drifting across the top ── */
+/* ── Hail: hard clay pellets, faster and straighter than snow ── */
+.stone {
+  position: absolute;
+  top: -20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #ffffff, #b8cad6);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  animation: stoneFall linear infinite;
+}
+
+@keyframes stoneFall {
+  0% { transform: translateY(0) translateX(0); }
+  100% { transform: translateY(112vh) translateX(-18px); }
+}
+
+/* ── Cloudy: the provided clay cloud GLB, drifting across the top ── */
+/* .cloud is the element itself (an <img> of the GLB sprite); the size comes
+   from .cloudA/.cloudB/.cloudC, so don't set a width here. */
 .cloud {
   position: absolute;
-  filter: blur(1px) drop-shadow(0 10px 18px rgba(0, 0, 0, 0.25));
+  display: block;
+  height: auto;
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.25));
   opacity: 0.9;
 }
 

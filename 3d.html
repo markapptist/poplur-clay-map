@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Poplur — photoreal 3D comparison</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #050407; }
+      #cesium { position: absolute; inset: 0; }
+
+      .flip {
+        position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+        z-index: 10; padding: 9px 16px; border-radius: 999px;
+        background: rgba(12, 12, 14, 0.88); color: #FF8AC6; text-decoration: none;
+        font: 800 13px/1 -apple-system, system-ui, sans-serif; letter-spacing: 0.5px;
+        box-shadow: 0 0 0 1px rgba(246, 59, 154, 0.35), 0 6px 18px rgba(0, 0, 0, 0.6);
+      }
+      .tag {
+        position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%);
+        z-index: 10; color: rgba(255, 255, 255, 0.85);
+        font: 700 12px/1 -apple-system, system-ui, sans-serif; letter-spacing: 0.4px;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="cesium"></div>
+    <a class="flip" href="/">⇄ FLIP TO CLAY MAP</a>
+    <div class="tag">GOOGLE PHOTOREALISTIC 3D — drag to look around</div>
+    <script type="module" src="/src/proto3d.ts"></script>
+  </body>
+</html>

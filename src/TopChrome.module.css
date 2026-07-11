@@ -1,6 +1,6 @@
 .chrome {
   position: absolute;
-  top: 0;
+  top: var(--header-title-top, 44px);
   left: 0;
   right: 0;
   z-index: 30;
@@ -8,7 +8,8 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 52px 16px 10px;
+  height: var(--header-title-height, 40px);
+  padding: 0 16px;
   pointer-events: none;
 }
 

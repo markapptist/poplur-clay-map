@@ -1,0 +1,618 @@
+.stage {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(246, 59, 154, 0.28), transparent 34%),
+    linear-gradient(180deg, #09070b, #050407 58%, #020203);
+  color: #fff2f8;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+}
+
+.phone {
+  position: relative;
+  width: min(100vw, 430px);
+  height: min(100vh, 932px);
+  overflow: hidden;
+  background: #050407;
+  box-shadow:
+    inset 0 0 80px rgba(0, 0, 0, 0.62),
+    0 0 64px rgba(0, 0, 0, 0.86);
+}
+
+@media (min-height: 933px) {
+  .phone { border-radius: 40px; }
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    radial-gradient(circle at 16% 18%, rgba(255, 138, 198, 0.16), transparent 27%),
+    radial-gradient(circle at 72% 12%, rgba(84, 214, 184, 0.12), transparent 28%),
+    linear-gradient(145deg, #161116, #070609 46%, #0c0a0e);
+  background-size: 28px 28px, 28px 28px, auto, auto, auto;
+}
+
+.viewTabs {
+  position: absolute;
+  top: clamp(94px, 16vh, 154px);
+  left: 14px;
+  right: 14px;
+  z-index: 45;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.viewTab,
+.viewTabActive,
+.stateControls button,
+.modeRail button,
+.filterRail button,
+.profileTabs button {
+  appearance: none;
+  border: 1px solid rgba(246, 59, 154, 0.28);
+  background: rgba(9, 8, 10, 0.72);
+  color: #fff2f8;
+  font: 800 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: 10px;
+  min-height: 34px;
+  padding: 0 8px;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.viewTabActive,
+.controlOn {
+  background: #f63b9a !important;
+  border-color: #ff8ac6 !important;
+  color: #16060f !important;
+  box-shadow: 0 0 18px rgba(246, 59, 154, 0.42);
+}
+
+.viewport {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+}
+
+.homeScreen,
+.feedScreen,
+.cameraScreen,
+.profileScreen {
+  position: absolute;
+  inset: 0;
+  padding: clamp(138px, 22vh, 205px) 16px clamp(96px, 15vh, 122px);
+  overflow: hidden;
+}
+
+.homeHero {
+  position: relative;
+  height: clamp(174px, 34vh, 318px);
+  display: grid;
+  place-items: center;
+}
+
+.homeCube {
+  width: min(58vw, 238px);
+  filter:
+    drop-shadow(0 0 28px rgba(246, 59, 154, 0.46))
+    drop-shadow(0 28px 30px rgba(0, 0, 0, 0.66));
+  animation: cubeFloat 4.5s ease-in-out infinite;
+}
+
+.orbit,
+.orbitOne,
+.orbitTwo {
+  position: absolute;
+  border: 1px solid rgba(255, 138, 198, 0.34);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.orbitOne {
+  width: 280px;
+  height: 110px;
+  transform: rotate(-16deg);
+}
+
+.orbitTwo {
+  width: 210px;
+  height: 250px;
+  transform: rotate(28deg);
+  border-color: rgba(84, 214, 184, 0.26);
+}
+
+@keyframes cubeFloat {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-12px) rotate(2deg); }
+}
+
+.homeDock {
+  display: grid;
+  gap: 8px;
+}
+
+.homeDock button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 58px;
+  padding: 0 15px;
+  border: 1px solid rgba(255, 138, 198, 0.24);
+  border-radius: 12px;
+  background: rgba(12, 12, 14, 0.72);
+  color: #fff2f8;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.homeDock span {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.homeDock strong {
+  font-size: 11px;
+  color: #ff8ac6;
+}
+
+.homeTicker {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #ffd9ec;
+}
+
+.liveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f63b9a;
+  box-shadow: 0 0 12px rgba(246, 59, 154, 0.9);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% { transform: scale(1.35); opacity: 0.64; }
+}
+
+.feedScreen {
+  padding-top: clamp(132px, 21vh, 194px);
+  background: #050407;
+}
+
+.feedStatic {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.58;
+  filter: contrast(1.2) brightness(0.72);
+}
+
+.feedGlass {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(5, 4, 7, 0.34), rgba(5, 4, 7, 0.72)),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 4px);
+  pointer-events: none;
+}
+
+.feedChannel {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.feedChannel span {
+  color: #4dff69;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.feedCardStack {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 10px;
+}
+
+.feedCard,
+.feedCardActive {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 12px;
+  align-items: center;
+  min-height: 92px;
+  padding: 10px;
+  border: 1px solid rgba(255, 138, 198, 0.24);
+  border-radius: 12px;
+  background: rgba(7, 6, 9, 0.78);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.34);
+}
+
+.feedCardActive {
+  border-color: rgba(246, 59, 154, 0.8);
+  box-shadow: 0 0 0 1px rgba(246, 59, 154, 0.28), 0 16px 34px rgba(0, 0, 0, 0.44);
+}
+
+.feedThumb {
+  height: 70px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: radial-gradient(circle at 35% 20%, rgba(255, 242, 248, 0.2), rgba(246, 59, 154, 0.14) 44%, rgba(5, 4, 7, 0.78));
+}
+
+.feedThumb img {
+  max-width: 56px;
+  max-height: 56px;
+}
+
+.feedCard h2,
+.feedCardActive h2 {
+  font-size: 17px;
+  line-height: 1.05;
+  margin: 4px 0;
+}
+
+.feedCard span,
+.feedCardActive span,
+.feedCard p,
+.feedCardActive p {
+  font-size: 11px;
+  color: #ff8ac6;
+  font-weight: 800;
+}
+
+.feedPanel,
+.commentPanel {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 176px;
+  z-index: 4;
+  padding: 14px;
+  border: 1px solid rgba(255, 138, 198, 0.28);
+  border-radius: 12px;
+  background: rgba(5, 4, 7, 0.88);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.54);
+}
+
+.feedPanel h3,
+.commentPanel h3 {
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.feedPanel p,
+.commentPanel p {
+  font-size: 12px;
+  color: #ffd9ec;
+  line-height: 1.35;
+}
+
+.stateControls,
+.modeRail,
+.profileTabs {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: clamp(92px, 13vh, 126px);
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cameraScreen {
+  padding-top: clamp(132px, 21vh, 194px);
+}
+
+.cameraPreview {
+  position: relative;
+  height: clamp(260px, 48vh, 430px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 138, 198, 0.24);
+  border-radius: 18px;
+  background:
+    linear-gradient(140deg, rgba(5, 4, 7, 0.1), rgba(5, 4, 7, 0.8)),
+    radial-gradient(circle at 50% 36%, #34343a, #101014 58%, #050407);
+  box-shadow: inset 0 0 64px rgba(0, 0, 0, 0.48), 0 22px 36px rgba(0, 0, 0, 0.45);
+}
+
+.gridLines {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent 33%, rgba(255, 255, 255, 0.12) 33% 34%, transparent 34% 66%, rgba(255, 255, 255, 0.12) 66% 67%, transparent 67%),
+    linear-gradient(0deg, transparent 33%, rgba(255, 255, 255, 0.12) 33% 34%, transparent 34% 66%, rgba(255, 255, 255, 0.12) 66% 67%, transparent 67%);
+}
+
+.focusBox {
+  position: absolute;
+  top: 152px;
+  left: 50%;
+  width: 118px;
+  height: 118px;
+  transform: translateX(-50%);
+  border: 2px solid rgba(255, 217, 236, 0.8);
+  border-radius: 18px;
+  box-shadow: 0 0 18px rgba(246, 59, 154, 0.3);
+}
+
+.cameraSubject {
+  position: absolute;
+  left: 50%;
+  top: 176px;
+  transform: translateX(-50%);
+}
+
+.cameraSubject img {
+  width: 70px;
+  filter: drop-shadow(0 16px 16px rgba(0, 0, 0, 0.6));
+}
+
+.cameraHud {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.cameraHud span {
+  color: #ff8ac6;
+}
+
+.filterRail {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: clamp(144px, 22vh, 180px);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.captureButton,
+.captureRecording {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(20px, 6vh, 50px);
+  width: clamp(58px, 12vw, 74px);
+  height: clamp(58px, 12vw, 74px);
+  transform: translateX(-50%);
+  border: 4px solid #fff2f8;
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.captureButton span,
+.captureRecording span {
+  width: 72%;
+  height: 72%;
+  border-radius: 50%;
+  background: #fff2f8;
+  transition: border-radius 0.18s, transform 0.18s, background 0.18s;
+}
+
+.captureRecording {
+  border-color: #ff4b4b;
+}
+
+.captureRecording span {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #ff4b4b;
+}
+
+.profileScreen {
+  padding-top: clamp(138px, 22vh, 204px);
+}
+
+.profileHeader {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.avatar {
+  width: clamp(62px, 16vw, 86px);
+  height: clamp(62px, 16vw, 86px);
+  display: grid;
+  place-items: center;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 32% 24%, #fff2f8, transparent 18%),
+    linear-gradient(145deg, #ff8ac6, #f63b9a 48%, #5a1237);
+  color: #16060f;
+  font-size: clamp(30px, 8vw, 42px);
+  font-weight: 950;
+  box-shadow: 0 16px 28px rgba(0, 0, 0, 0.48);
+}
+
+.profileHeader h1 {
+  font-size: clamp(26px, 7vw, 34px);
+  line-height: 1;
+}
+
+.profileHeader p {
+  margin-top: 6px;
+  color: #ff8ac6;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.statRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.statRow div {
+  min-height: clamp(56px, 11vh, 72px);
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 138, 198, 0.24);
+  border-radius: 12px;
+  background: rgba(12, 12, 14, 0.7);
+}
+
+.statRow strong {
+  font-size: 20px;
+}
+
+.statRow span {
+  color: #ff8ac6;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.profileTabs {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  margin-top: 16px;
+}
+
+.profilePanel {
+  margin-top: 12px;
+  min-height: clamp(170px, 32vh, 250px);
+  border: 1px solid rgba(255, 138, 198, 0.24);
+  border-radius: 16px;
+  background: rgba(5, 4, 7, 0.62);
+  overflow: hidden;
+}
+
+.postGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  height: clamp(170px, 32vh, 250px);
+  background: rgba(255, 138, 198, 0.2);
+}
+
+.postGrid span {
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 40% 28%, rgba(255, 242, 248, 0.18), rgba(246, 59, 154, 0.24), rgba(5, 4, 7, 0.92));
+  color: #ff8ac6;
+  font: 900 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.radiusChart {
+  height: clamp(170px, 32vh, 250px);
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  padding: 22px;
+}
+
+.radiusChart span {
+  flex: 1;
+  border-radius: 10px 10px 4px 4px;
+  background: linear-gradient(180deg, #ff8ac6, #f63b9a 54%, #5a1237);
+  box-shadow: 0 0 18px rgba(246, 59, 154, 0.34);
+}
+
+.settingsList {
+  display: grid;
+  gap: 1px;
+  background: rgba(255, 138, 198, 0.15);
+}
+
+.settingsList span {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: rgba(5, 4, 7, 0.84);
+  font-weight: 850;
+}
+
+.settingsList span::after {
+  content: "";
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: #f63b9a;
+  box-shadow: inset 16px 0 0 #fff2f8;
+}
+
+.bottomNav {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: clamp(8px, 2.5vh, 18px);
+  z-index: 44;
+  height: clamp(58px, 10vh, 76px);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255, 138, 198, 0.22);
+  border-radius: clamp(16px, 4vw, 22px);
+  background: rgba(9, 8, 10, 0.72);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.42);
+}
+
+.navItem,
+.navItemActive {
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff2f8;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.navItemActive {
+  background: #f63b9a;
+  color: #16060f;
+}
+
+.navIcon {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .homeCube,
+  .liveDot {
+    animation: none;
+  }
+}
