@@ -579,3 +579,95 @@
 @media (prefers-reduced-motion: reduce) {
   .poiEmoji { animation: none; }
 }
+
+/* ── Tap-to-post composer: clay bubble anchored to the tapped ground ── */
+.composeBubble {
+  position: absolute;
+  z-index: 40;
+  width: 208px;
+  transform: translate(-50%, calc(-100% - 16px));
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(33, 30, 34, 0.96), rgba(13, 12, 16, 0.96));
+  box-shadow:
+    0 0 0 1px rgba(246, 59, 154, 0.4),
+    0 16px 38px rgba(5, 4, 7, 0.62),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #FFF2F8;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  animation: composePop 0.28s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+}
+
+/* Little clay pointer down to the tapped spot */
+.composeBubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 14px;
+  height: 14px;
+  transform: translateX(-50%) rotate(45deg);
+  background: rgba(13, 12, 16, 0.96);
+  box-shadow: 1px 1px 0 rgba(246, 59, 154, 0.4);
+}
+
+@keyframes composePop {
+  0%   { opacity: 0; transform: translate(-50%, calc(-100% - 4px)) scale(0.7); }
+  100% { opacity: 1; transform: translate(-50%, calc(-100% - 16px)) scale(1); }
+}
+
+.composeTitle {
+  font-size: 13px;
+  font-weight: 900;
+  color: #FF8AC6;
+  margin-bottom: 8px;
+}
+
+.composeRadiusRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  font-weight: 700;
+  color: #FFD9EC;
+  margin-bottom: 4px;
+}
+
+.composeRadiusRow strong { font-size: 13px; color: #FFF2F8; }
+
+.composeSlider {
+  width: 100%;
+  accent-color: #F63B9A;
+  margin: 2px 0 10px;
+}
+
+.composeActions {
+  display: flex;
+  gap: 8px;
+}
+
+.composeCancel,
+.composeDrop {
+  flex: 1;
+  height: 32px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: 800 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+
+.composeCancel {
+  color: #FFD9EC;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.composeDrop {
+  color: #2a0716;
+  background: radial-gradient(circle at 40% 28%, #FF8AC6, #F63B9A 60%);
+  box-shadow: 0 0 14px rgba(246, 59, 154, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.composeCancel:active,
+.composeDrop:active { transform: scale(0.94); }

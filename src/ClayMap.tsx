@@ -4,6 +4,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
+import { installClaimsLayer, setClaim } from './mapClaims'
 import type { WeatherMode } from './WeatherFX'
 import styles from './ClayMap.module.css'
 
@@ -381,6 +382,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [popTick, setPopTick] = useState(0)
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
+  // Tap-to-post: where the user tapped empty ground, and the compose radius.
+  const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
+  const [composeRadiusKm, setComposeRadiusKm] = useState(2)
+  const postSeqRef = useRef(0)
 
   useEffect(() => {
     streetViewRef.current = streetView
@@ -1377,6 +1382,24 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       }
       // 'idle' starves under continuous animations (bobbing emoji, claims,
       // weather) — harvest whenever the camera settles AND on a steady clock.
+      // Land-claim territory + tap-to-post: a tap on empty ground opens the
+      // composer; the dropped post claims land (a clay disc sized by its km).
+      installClaimsLayer(map, 'clay-buildings-3d')
+      map.on('click', (e) => {
+        // Any tap on the map opens the composer. POI pins are separate DOM
+        // markers with their own handlers; the invisible emoji-loader circles
+        // must NOT block posting, so they're not consulted here.
+        setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: e.point.x, y: e.point.y })
+      })
+      // Keep the composer bubble pinned to its ground point as the camera moves.
+      map.on('move', () => {
+        setComposeAt(prev => {
+          if (!prev) return prev
+          const p = map.project([prev.lng, prev.lat])
+          return { ...prev, x: p.x, y: p.y }
+        })
+      })
+
       map.on('idle', harvestCarPaths)
       map.on('moveend', harvestCarPaths)
       const carHarvestTimer = window.setInterval(harvestCarPaths, 2500)
@@ -1618,6 +1641,55 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
                style={{ left: '-18%', bottom: '14%', width: 240, opacity: cloudBand * 0.45, transform: `scale(${cloudScale * 0.9})` }} />
           <img className={styles.cloudSprite} src={cloudSprite} alt=""
                style={{ right: '-14%', bottom: '-10%', width: 200, opacity: cloudBand * 0.4, transform: `scale(${cloudScale * 1.05})` }} />
+        </div>
+      )}
+
+      {/* Tap-to-post composer: a clay bubble anchored to the tapped ground.
+          Choose the claim radius, then Drop → the territory disc pops out and
+          grows to that many km. */}
+      {composeAt && (
+        <div
+          className={styles.composeBubble}
+          style={{ left: composeAt.x, top: composeAt.y }}
+        >
+          <div className={styles.composeTitle}>Drop a pop here</div>
+          <label className={styles.composeRadiusRow}>
+            <span>Claim radius</span>
+            <strong>{composeRadiusKm} km</strong>
+          </label>
+          <input
+            type="range"
+            min={0.5}
+            max={25}
+            step={0.5}
+            value={composeRadiusKm}
+            onChange={(e) => setComposeRadiusKm(parseFloat(e.target.value))}
+            className={styles.composeSlider}
+            aria-label="Claim radius"
+          />
+          <div className={styles.composeActions}>
+            <button
+              type="button"
+              className={styles.composeCancel}
+              onClick={() => setComposeAt(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={styles.composeDrop}
+              onClick={() => {
+                const map = mapRef.current
+                if (!map) return
+                const id = `post-${postSeqRef.current++}`
+                setClaim(map, { id, center: [composeAt.lng, composeAt.lat], radiusKm: composeRadiusKm })
+                playPop()
+                setComposeAt(null)
+              }}
+            >
+              Drop pop
+            </button>
+          </div>
         </div>
       )}
 
