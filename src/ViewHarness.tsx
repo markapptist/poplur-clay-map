@@ -27,9 +27,11 @@ const profileStats = [
 
 export function harnessViewFromLocation(): HarnessView | null {
   const params = new URLSearchParams(window.location.search)
+  // Hash first: pill/tab navigation writes the hash, and a stale ?view= from
+  // the initial load must not override it on hashchange.
   const raw =
-    params.get('view') ||
     window.location.hash.replace(/^#\/?/, '') ||
+    params.get('view') ||
     window.location.pathname.split('/').filter(Boolean).pop() ||
     ''
   const normalized = raw.toLowerCase()
