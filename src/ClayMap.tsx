@@ -851,6 +851,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             'icon-size': ['interpolate', ['linear'], ['zoom'], 12.5, 0.15, 17, 0.28, 19, 0.42],
             'icon-rotate': ['get', 'bearing'],
             'icon-rotation-alignment': 'map',
+            // Depth-tested against the clay towers: cars on streets behind
+            // buildings are hidden instead of painting through them.
+            'symbol-z-elevate': true,
             'icon-pitch-alignment': 'map',
             // Moving markers must skip the collision pass — re-placement each
             // frame reads as flashing.
