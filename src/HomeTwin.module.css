@@ -1,0 +1,365 @@
+/* Browser twin of the iOS Home screen chrome.
+   Vertical rhythm reproduces CounterSeparatorMetrics from
+   RadiusNumberDisplayFIXED.swift 1:1 (pt → px):
+   label 16 · gap 4 · numerator 48 · gap 2 · separator 90×2 · gap 2
+   · denominator 34 · footer 18 · padding 20/16. */
+
+.home {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* iOS system palette (dark) + Poplur clay pink */
+.home {
+  --pop-pink: #f63b9a;
+  --pop-pink-soft: #ff8ac6;
+  --ios-green: #30d158;
+  --rank-bronze: #cc8033;
+  --label-h: 16px;
+  --label-gap: 4px;
+  --numerator-h: 48px;
+  --num-sep-gap: 2px;
+  --sep-w: 90px;
+  --sep-h: 2px;
+  --sep-den-gap: 2px;
+  --denominator-h: 34px;
+  --footer-h: 18px;
+  --counter-pad-x: 20px;
+  --counter-pad-y: 16px;
+}
+
+/* ---------- bottom counter row (HomeView: leading/trailing 16, bottom safe+20) ---------- */
+
+.bottomRow {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 54px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.counterLeft,
+.counterRight {
+  display: flex;
+  flex-direction: column;
+  padding: var(--counter-pad-y) var(--counter-pad-x);
+  box-sizing: border-box;
+}
+
+.counterLeft {
+  width: 150px;
+  align-items: flex-start;
+}
+
+.counterRight {
+  width: 150px;
+  align-items: flex-end;
+}
+
+.counterLabel,
+.counterLabelText {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  color: rgba(255, 255, 255, 0.6);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+
+.counterLabel {
+  height: var(--label-h);
+  display: flex;
+  align-items: center;
+}
+
+.radiusLabelRow {
+  height: var(--label-h);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rankIcon {
+  color: var(--rank-bronze);
+  filter: drop-shadow(0 0 4px rgba(204, 128, 51, 0.5));
+}
+
+/* numerator slot: 48px tall, content bottom-aligned, centered in the 90px column */
+.numeratorBox {
+  margin-top: var(--label-gap);
+  width: var(--sep-w);
+  height: var(--numerator-h);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.trendArrow {
+  color: var(--ios-green);
+  filter:
+    drop-shadow(0 2px 6px rgba(48, 209, 88, 0.3))
+    drop-shadow(0 1px 4px rgba(0, 0, 0, 0.5));
+  animation: arrowPulse 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes arrowPulse {
+  from { transform: scale(1); opacity: 1; }
+  to { transform: scale(0.85); opacity: 0.7; }
+}
+
+.separator {
+  margin-top: var(--num-sep-gap);
+  width: var(--sep-w);
+  height: var(--sep-h);
+}
+
+.separatorUp {
+  background: var(--ios-green);
+  box-shadow:
+    0 0 2px rgba(48, 209, 88, 0.5),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.separatorBronze {
+  background: var(--rank-bronze);
+  box-shadow:
+    0 0 2px rgba(204, 128, 51, 0.5),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* denominator slot: 34px tall, content top-aligned */
+.denominatorBox {
+  margin-top: var(--sep-den-gap);
+  width: var(--sep-w);
+  height: var(--denominator-h);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.postCount {
+  font-size: 28px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.counterFooter {
+  height: var(--footer-h);
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  display: flex;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.counterFooterSpacer {
+  height: var(--footer-h);
+}
+
+/* RADIUS numerator: 46pt bold bronze + 16pt heavy unit on a shared baseline,
+   bottom-trailing in the 48px slot (fills the 110px inner width) */
+.radiusNumeratorBox {
+  margin-top: var(--label-gap);
+  width: 110px;
+  height: var(--numerator-h);
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.radiusValue {
+  font-size: 46px;
+  font-weight: 700;
+  color: var(--rank-bronze);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--numerator-h);
+  text-shadow:
+    0 2px 6px rgba(204, 128, 51, 0.3),
+    0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.radiusUnit {
+  font-size: 16px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.radiusDenominatorBox {
+  margin-top: var(--sep-den-gap);
+  width: 110px;
+  height: var(--denominator-h);
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.earthValue {
+  font-size: 28px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.earthUnit {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------- cube (CubeTabView: 200×200, anchored to the bottom edge) ---------- */
+
+.cubeWrap {
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 200px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  z-index: 30;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cubeFloat {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  animation: cubeHover 3.6s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+
+.cubePop {
+  animation:
+    cubeTapPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),
+    cubeHover 3.6s ease-in-out infinite;
+}
+
+.cube {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  width: 152px;
+  height: 152px;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 0 22px rgba(246, 59, 154, 0.28))
+    drop-shadow(0 16px 20px rgba(0, 0, 0, 0.55));
+  user-select: none;
+}
+
+/* runtime-drawn face content, like the iOS cube's icon+label emission layer */
+.cubeFace {
+  position: absolute;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%);
+  width: 108px;
+  height: 108px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--pop-pink);
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.55));
+}
+
+.cubeFace span {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+
+@keyframes cubeHover {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -8px; }
+}
+
+@keyframes cubeTapPop {
+  0% { scale: 1 1; }
+  30% { scale: 0.9 0.78; }
+  60% { scale: 1.06 1.1; }
+  100% { scale: 1 1; }
+}
+
+.groundGlow {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 260px;
+  height: 60px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(246, 59, 154, 0.22), transparent 70%);
+  filter: blur(6px);
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* ---------- tab pills (cube tab labels in the clay pill style) ---------- */
+
+.tabPills {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 224px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  z-index: 25;
+}
+
+.pill,
+.pillActive {
+  appearance: none;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(246, 59, 154, 0.28);
+  background: rgba(9, 8, 10, 0.72);
+  color: #fff2f8;
+  font: 800 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.pillActive {
+  background: var(--pop-pink);
+  border-color: var(--pop-pink-soft);
+  color: #16060f;
+  box-shadow: 0 0 18px rgba(246, 59, 154, 0.42);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cubeFloat,
+  .cubePop,
+  .trendArrow {
+    animation: none;
+  }
+}

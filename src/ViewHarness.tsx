@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import TopChrome from './TopChrome'
+import HomeTwin from './HomeTwin'
 import styles from './ViewHarness.module.css'
 
 export type HarnessView = 'home' | 'feed' | 'camera' | 'profile'
@@ -60,7 +61,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   const screen = useMemo(() => {
     switch (view) {
       case 'home':
-        return <HomeHarness onOpen={setHarnessView} />
+        return <HomeTwin onOpen={setHarnessView} />
       case 'feed':
         return <FeedHarness state={feedState} onStateChange={setFeedState} />
       case 'camera':
@@ -83,24 +84,26 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
         <div className={styles.backdrop} />
         <TopChrome />
 
-        <nav className={styles.viewTabs} aria-label="Live view harness">
-          {VIEW_ORDER.map(item => (
-            <button
-              key={item}
-              type="button"
-              className={item === view ? styles.viewTabActive : styles.viewTab}
-              onClick={() => setHarnessView(item)}
-            >
-              {VIEW_LABELS[item]}
-            </button>
-          ))}
-        </nav>
+        {view !== 'home' && (
+          <nav className={styles.viewTabs} aria-label="Live view harness">
+            {VIEW_ORDER.map(item => (
+              <button
+                key={item}
+                type="button"
+                className={item === view ? styles.viewTabActive : styles.viewTab}
+                onClick={() => setHarnessView(item)}
+              >
+                {VIEW_LABELS[item]}
+              </button>
+            ))}
+          </nav>
+        )}
 
         <main className={styles.viewport} aria-label={`${VIEW_LABELS[view]} test view`}>
           {screen}
         </main>
 
-        <BottomCubeNav active={view} onSelect={setHarnessView} />
+        {view !== 'home' && <BottomCubeNav active={view} onSelect={setHarnessView} />}
 
       </div>
     </div>
@@ -132,38 +135,6 @@ function iconForView(view: HarnessView) {
     case 'camera': return 'CAM'
     case 'profile': return '@'
   }
-}
-
-function HomeHarness({ onOpen }: { onOpen: (view: HarnessView) => void }) {
-  return (
-    <section className={styles.homeScreen}>
-      <div className={styles.homeHero}>
-        <img src="clay_cube.png" alt="" className={styles.homeCube} draggable="false" />
-        <div className={`${styles.orbit} ${styles.orbitOne}`} />
-        <div className={`${styles.orbit} ${styles.orbitTwo}`} />
-      </div>
-
-      <div className={styles.homeDock}>
-        <button type="button" onClick={() => onOpen('feed')}>
-          <span>Feed</span>
-          <strong>Live TV mode</strong>
-        </button>
-        <button type="button" onClick={() => onOpen('camera')}>
-          <span>Camera</span>
-          <strong>Capture flow</strong>
-        </button>
-        <button type="button" onClick={() => onOpen('profile')}>
-          <span>Profile</span>
-          <strong>Cube menu</strong>
-        </button>
-      </div>
-
-      <div className={styles.homeTicker}>
-        <span className={styles.liveDot} />
-        AI found 3 nearby posts with growing radius
-      </div>
-    </section>
-  )
 }
 
 function FeedHarness({
