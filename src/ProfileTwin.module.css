@@ -1,0 +1,217 @@
+/* Web twin of ProfileView.swift — LIGHT ground, glowing 3D head, Media/Messages. */
+
+.profile {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* App profile sits on a warm off-white, not the dark app chrome. */
+  background:
+    radial-gradient(120% 60% at 50% 6%, rgba(246, 59, 154, 0.08), transparent 46%),
+    linear-gradient(180deg, #f7f4ef, #efeae3);
+}
+
+.header {
+  position: absolute;
+  top: 128px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ---- 3D head in the cyan→magenta gradient squircle ---- */
+
+.avatarWrap {
+  position: relative;
+  width: 176px;
+  height: 176px;
+  cursor: pointer;
+}
+
+/* gradient-ring squircle (topLeading cyan → bottomTrailing magenta) + soft glow */
+.avatarFrame {
+  position: absolute;
+  inset: 0;
+  border-radius: 40px;
+  padding: 4px;
+  background: linear-gradient(135deg, #5fe1ea 0%, #a06bd8 48%, #f63b9a 100%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  box-shadow:
+    0 0 26px rgba(246, 59, 154, 0.4),
+    0 0 18px rgba(94, 225, 234, 0.28);
+}
+
+/* head overflows the frame at the bottom (shoulders/collar poke out), like the app */
+.head {
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  width: 168px;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 10px 14px rgba(60, 20, 44, 0.28));
+  user-select: none;
+}
+
+/* speaking equaliser — small cyan bars just under the head */
+.speaking {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 16px;
+  margin-top: 6px;
+}
+
+.speaking span {
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #5fe1ea, #2ec3d4);
+  animation: eq 0.9s ease-in-out infinite;
+}
+
+.speaking span:nth-child(1) { height: 6px; animation-delay: 0s; }
+.speaking span:nth-child(2) { height: 12px; animation-delay: 0.12s; }
+.speaking span:nth-child(3) { height: 16px; animation-delay: 0.24s; }
+.speaking span:nth-child(4) { height: 10px; animation-delay: 0.36s; }
+.speaking span:nth-child(5) { height: 7px; animation-delay: 0.48s; }
+
+@keyframes eq {
+  0%, 100% { transform: scaleY(0.5); }
+  50% { transform: scaleY(1); }
+}
+
+/* USERNAME — heavy rounded, dark-brown gradient (poplurTextShader) */
+.username {
+  margin-top: 2px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  background: linear-gradient(180deg, #3a2410, #120a04);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+/* ---- Media / Messages switcher with cyan underline ---- */
+
+.modeSwitch {
+  display: flex;
+  gap: 28px;
+  margin-top: 12px;
+}
+
+.mode,
+.modeOn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px 0;
+  cursor: pointer;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.mode { color: rgba(20, 10, 4, 0.5); }
+.modeOn { color: #140a04; }
+
+.mode i,
+.modeOn i {
+  width: 48px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.modeOn i { background: linear-gradient(90deg, #5fe1ea, #2ec3d4); }
+
+/* ---- content ---- */
+
+.content {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 470px;
+  bottom: 40px;
+  overflow: hidden;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.tile {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: radial-gradient(circle at 38% 26%, rgba(255, 242, 248, 0.5), rgba(246, 59, 154, 0.32) 46%, rgba(120, 20, 70, 0.9));
+  color: #fff2f8;
+  font: 900 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.5px;
+  box-shadow: 0 6px 16px rgba(246, 59, 154, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msgRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(60, 20, 44, 0.08);
+}
+
+.msgAvatar {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ff8ac6, #f63b9a 52%, #5a1237);
+  color: #fff;
+  font-weight: 900;
+  font-size: 18px;
+}
+
+.msgBody { flex: 1; min-width: 0; }
+
+.msgTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.msgTop strong { font-size: 14px; color: #140a04; }
+.msgTop span { font-size: 12px; color: rgba(20, 10, 4, 0.4); }
+
+.msgBody p {
+  margin-top: 2px;
+  font-size: 13px;
+  color: rgba(20, 10, 4, 0.66);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .speaking span { animation: none; }
+}
