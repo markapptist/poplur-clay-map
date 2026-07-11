@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import styles from './HomeTwin.module.css'
-import { modelSprite } from './modelSprite'
+import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import { playPop } from './pop'
 import type { HarnessView } from './ViewHarness'
 
@@ -8,22 +8,18 @@ import type { HarnessView } from './ViewHarness'
 // HomeView.swift + RecordingCountdownView.swift + RadiusNumberDisplayFIXED.swift.
 // Both bottom counters share the CounterSeparatorMetrics vertical grid so their
 // fraction bars sit level, exactly like the .counterSeparator alignment guide.
+//
+// The cube is live 3D (CubeTab3D): drag to swipe between faces, tap to pop,
+// press-and-hold to open the hold menu twin. Pills track the front face;
+// clicking the already-front face's pill opens that tab's screen twin.
 
-// clay_icon_cube.glb face yaws (camera yaw that faces each tab's cube face),
-// per CubeTabView.swift: +Z front=Profile, +X right=Map, -Z back=Camera, -X left=Feed.
-const CUBE_FACE_YAW: Record<string, number> = {
-  profile: 0,
-  map: 90,
-  post: 180,
-  feed: -90,
+const PILL_VIEW: Record<CubeTab, HarnessView> = {
+  map: 'home',
+  feed: 'feed',
+  post: 'camera',
+  profile: 'profile',
 }
-
-const TAB_PILLS: { label: string; view: HarnessView }[] = [
-  { label: 'map', view: 'home' },
-  { label: 'feed', view: 'feed' },
-  { label: 'post', view: 'camera' },
-  { label: 'profile', view: 'profile' },
-]
+const PILL_ORDER: CubeTab[] = ['map', 'feed', 'post', 'profile']
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
 const POST_COUNT = 128
@@ -31,16 +27,8 @@ const RADIUS_METERS = 41_800
 const EARTH_RADIUS_KM = 6_371
 
 export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => void }) {
-  const [cubeSrc, setCubeSrc] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<CubeTab>('map')
   const [popping, setPopping] = useState(false)
-
-  useEffect(() => {
-    let alive = true
-    modelSprite('clay_icon_cube.glb', { yaw: CUBE_FACE_YAW.map, pitch: 10, size: 512 })
-      .then(src => { if (alive) setCubeSrc(src) })
-      .catch(() => { /* fallback PNG stays */ })
-    return () => { alive = false }
-  }, [])
 
   const popCube = () => {
     playPop()
@@ -52,53 +40,41 @@ export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => vo
       <div className={styles.groundGlow} />
 
       <div className={styles.tabPills}>
-        {TAB_PILLS.map(pill => (
+        {PILL_ORDER.map(tab => (
           <button
-            key={pill.label}
+            key={tab}
             type="button"
-            className={pill.view === 'home' ? styles.pillActive : styles.pill}
+            className={tab === activeTab ? styles.pillActive : styles.pill}
             onClick={() => {
               playPop()
-              if (pill.view !== 'home') onOpen(pill.view)
+              if (tab === activeTab) {
+                if (PILL_VIEW[tab] !== 'home') onOpen(PILL_VIEW[tab])
+              } else {
+                setActiveTab(tab) // CubeTab3D springs to this face
+              }
             }}
           >
-            {pill.label}
+            {tab}
           </button>
         ))}
       </div>
 
-      <button
-        type="button"
-        className={styles.cubeWrap}
-        onClick={popCube}
-        aria-label="Poplur cube"
-      >
+      <div className={styles.cubeWrap}>
         <div
           className={popping ? `${styles.cubePop} ${styles.cubeFloat}` : styles.cubeFloat}
           onAnimationEnd={e => { if (e.animationName.includes('Pop')) setPopping(false) }}
         >
-          <img
-            className={styles.cube}
-            src={cubeSrc ?? 'clay_cube.png'}
-            alt=""
-            draggable="false"
+          <CubeTab3D
+            targetTab={activeTab}
+            onFaceChange={setActiveTab}
+            onTap={popCube}
+            onHold={() => {
+              playPop()
+              onOpen('holdmenu')
+            }}
           />
-          {cubeSrc && (
-            // The iOS app draws each tab's icon + label onto the cube skin at
-            // runtime (CubeTabView faceEmissionMask); mirror that here.
-            <div className={styles.cubeFace}>
-              <svg viewBox="0 0 24 24" width="42" height="42" aria-hidden="true">
-                <path
-                  d="M9 2.6 3.6 4.6a1 1 0 0 0-.6.9v14.6a1 1 0 0 0 1.4.9L9 19.2l6 2.2 5.4-2a1 1 0 0 0 .6-.9V3.9a1 1 0 0 0-1.4-.9L15 4.8zM9.75 4.7l4.5 1.65v12.95l-4.5-1.65z"
-                  fill="currentColor"
-                  fillRule="evenodd"
-                />
-              </svg>
-              <span>Map</span>
-            </div>
-          )}
         </div>
-      </button>
+      </div>
 
       <div className={styles.bottomRow}>
         <TrendingCounter />

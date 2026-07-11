@@ -232,10 +232,6 @@
   transform: translateX(-50%);
   width: 200px;
   height: 200px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
   z-index: 30;
   -webkit-tap-highlight-color: transparent;
 }
@@ -254,44 +250,11 @@
     cubeHover 3.6s ease-in-out infinite;
 }
 
-.cube {
-  position: absolute;
-  left: 50%;
-  bottom: 10px;
-  transform: translateX(-50%);
-  width: 152px;
-  height: 152px;
-  object-fit: contain;
+.cubeFloat canvas {
   filter:
     drop-shadow(0 0 22px rgba(246, 59, 154, 0.28))
     drop-shadow(0 16px 20px rgba(0, 0, 0, 0.55));
   user-select: none;
-}
-
-/* runtime-drawn face content, like the iOS cube's icon+label emission layer */
-.cubeFace {
-  position: absolute;
-  left: 50%;
-  bottom: 30px;
-  transform: translateX(-50%);
-  width: 108px;
-  height: 108px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  color: var(--pop-pink);
-  pointer-events: none;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.55));
-}
-
-.cubeFace span {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
-  font-size: 17px;
-  font-weight: 900;
-  letter-spacing: 0.2px;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
 }
 
 @keyframes cubeHover {

@@ -1,0 +1,156 @@
+/* Web twin of CubeHoldMenuOverlay.swift */
+
+.stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+
+/* Dimmed backdrop (iOS: Color.black.opacity(0.50)) over a deep clay-purple */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 90% at 50% 62%, rgba(42, 0, 51, 0.55), rgba(8, 4, 12, 0.86)),
+    rgba(0, 0, 0, 0.5);
+}
+
+/* The pressed cube glowing under the menu */
+.cubeGhost {
+  position: absolute;
+  left: 50%;
+  bottom: 8%;
+  width: 180px;
+  height: 180px;
+  transform: translateX(-50%);
+  background: radial-gradient(circle at 50% 50%, rgba(246, 59, 154, 0.5), transparent 62%);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+/* The wheel card */
+.card {
+  position: absolute;
+  /* sit left of centre so the SCRUB hint on the right stays clear of tiles */
+  left: 46%;
+  top: 46%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 54px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 22px;
+  background: rgba(20, 8, 24, 0.82);
+  border: 1.5px solid rgba(246, 59, 154, 0.4);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.row {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* Glossy 3D icon tile + label */
+.tile, .tileOn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 62px;
+  padding: 9px 8px;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.04);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.tile:active { transform: scale(0.95); }
+
+.tileOn {
+  background: rgba(246, 59, 154, 0.16);
+  box-shadow: 0 0 0 2px #F63B9A, 0 0 0 5px rgba(246, 59, 154, 0.28), 0 6px 18px rgba(246, 59, 154, 0.35);
+  transform: scale(1.06);
+}
+
+.tileIcon {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.tileLabel {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: rgba(255, 242, 248, 0.9);
+  white-space: nowrap;
+}
+
+.tileOn .tileLabel { color: #FF8AC6; }
+
+/* SCRUB ↕ hint on the right edge */
+.scrub {
+  position: absolute;
+  right: 16px;
+  top: 46%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+  pointer-events: none;
+}
+
+.scrubChev { font-size: 18px; font-weight: 900; line-height: 0.6; }
+
+.scrubText {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+/* Context switcher (dev only — the app derives this from the active tab) */
+.tabs {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: rgba(12, 12, 14, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.tab, .tabOn {
+  appearance: none;
+  border: 1px solid rgba(246, 59, 154, 0.35);
+  background: transparent;
+  color: #FFF2F8;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 11px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.tabOn { background: #F63B9A; border-color: #F63B9A; color: #16060f; }

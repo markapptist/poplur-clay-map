@@ -1,16 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import TopChrome from './TopChrome'
 import HomeTwin from './HomeTwin'
+import HoldMenuTwin from './HoldMenuTwin'
 import styles from './ViewHarness.module.css'
 
-export type HarnessView = 'home' | 'feed' | 'camera' | 'profile'
+export type HarnessView = 'home' | 'feed' | 'camera' | 'profile' | 'holdmenu'
 
+// The four bottom-nav tabs. The hold menu is a cube-long-press OVERLAY, not a
+// tab, so it's routable (?view=holdmenu) but excluded from the nav.
 const VIEW_ORDER: HarnessView[] = ['home', 'feed', 'camera', 'profile']
+const ROUTES: HarnessView[] = [...VIEW_ORDER, 'holdmenu']
 const VIEW_LABELS: Record<HarnessView, string> = {
   home: 'Home',
   feed: 'Feed',
   camera: 'Camera',
   profile: 'Profile',
+  holdmenu: 'Hold Menu',
 }
 
 const feedPosts = [
@@ -35,7 +40,7 @@ export function harnessViewFromLocation(): HarnessView | null {
     window.location.pathname.split('/').filter(Boolean).pop() ||
     ''
   const normalized = raw.toLowerCase()
-  return VIEW_ORDER.includes(normalized as HarnessView) ? normalized as HarnessView : null
+  return ROUTES.includes(normalized as HarnessView) ? normalized as HarnessView : null
 }
 
 export default function ViewHarness({ initialView }: { initialView: HarnessView }) {
@@ -77,6 +82,8 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
         )
       case 'profile':
         return <ProfileHarness panel={profilePanel} onPanelChange={setProfilePanel} />
+      case 'holdmenu':
+        return <HoldMenuTwin />
     }
   }, [cameraMode, feedState, isRecording, profilePanel, view])
 
@@ -86,7 +93,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
         <div className={styles.backdrop} />
         <TopChrome />
 
-        {view !== 'home' && (
+        {view !== 'home' && view !== 'holdmenu' && (
           <nav className={styles.viewTabs} aria-label="Live view harness">
             {VIEW_ORDER.map(item => (
               <button
@@ -105,7 +112,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
           {screen}
         </main>
 
-        {view !== 'home' && <BottomCubeNav active={view} onSelect={setHarnessView} />}
+        {view !== 'home' && view !== 'holdmenu' && <BottomCubeNav active={view} onSelect={setHarnessView} />}
 
       </div>
     </div>
