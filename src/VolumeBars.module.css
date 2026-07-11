@@ -1,10 +1,11 @@
-/* Twin of PoplurVolumeBars — 64×320 frame, 18 bars of 32×8 with 6.4px gaps.
-   Left edge, vertically centered. Faint at rest so it never fights the map;
-   waking (drag/keys) brings it to full like the iOS hardware-press overlay. */
+/* Twin of PoplurVolumeBars — 64×320 frame, 18 bars of 32×8 with 6.4px gaps,
+   left edge. Hidden at rest; shows only while the volume is changing, then
+   fades (1.1s), exactly like the iOS hardware-press overlay. Poplur brand
+   pink instead of meter green, per the web identity. */
 .rail,
 .railAwake {
   position: absolute;
-  left: 10px;
+  left: 12px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 34;
@@ -15,29 +16,68 @@
   align-items: center;
   justify-content: center;
   gap: 6.4px;
-  cursor: grab;
   touch-action: none;
-  opacity: 0.42;
-  transition: opacity 0.18s ease-in;
-  outline: none;
-  /* Clay-pill backing so the green meter reads over white clay buildings */
   border-radius: 16px;
-  background: rgba(12, 12, 14, 0.32);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(12, 12, 14, 0.38);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 0 0 1px rgba(246, 59, 154, 0.22), 0 8px 24px rgba(5, 4, 7, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease-in;
 }
 
 .railAwake {
   opacity: 1;
+  pointer-events: auto;
+  cursor: grab;
   transition: opacity 0.12s ease-out;
 }
 
-.rail:focus-visible,
-.railAwake:focus-visible { opacity: 1; }
-
-.bar {
+.barOn,
+.barOff {
   width: 32px;
   height: 8px;
   border-radius: 2px;
   pointer-events: none;
 }
+
+.barOn {
+  background: #F63B9A;
+  box-shadow: 0 0 6px rgba(246, 59, 154, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.barOff {
+  background: rgba(255, 138, 198, 0.16);
+}
+
+/* Hardware volume-key stand-ins (test buttons): small clay fabs, left edge
+   below the rail's reach. */
+.keys {
+  position: absolute;
+  left: 14px;
+  bottom: 132px;
+  z-index: 34;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.key {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  font: 800 19px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: #FF8AC6;
+  background:
+    radial-gradient(circle at 36% 24%, rgba(255, 138, 198, 0.38), transparent 48%),
+    linear-gradient(180deg, rgba(42, 38, 43, 0.96), rgba(15, 14, 18, 0.94));
+  box-shadow:
+    0 0 0 1px rgba(255, 138, 198, 0.32),
+    0 6px 18px rgba(5, 4, 7, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.key:active { transform: scale(0.92); }
