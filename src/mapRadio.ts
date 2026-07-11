@@ -34,6 +34,26 @@ let unlockInstalled = false
 let soundWanted = false
 let targetRadioLevel = RADIO_IDLE_LEVEL
 
+// ── Master volume: user-controlled, scales every radio path (live stream,
+//    synth bed, wav fallback). Persisted so it survives relaunches. ─────────
+const VOLUME_STORAGE_KEY = 'poplur.volume'
+let masterVolume = (() => {
+  try {
+    const raw = window.localStorage.getItem(VOLUME_STORAGE_KEY)
+    const v = raw === null ? NaN : Number(raw)
+    return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.8
+  } catch { return 0.8 }
+})()
+
+export function getRadioMasterVolume(): number { return masterVolume }
+
+export function setRadioMasterVolume(value: number) {
+  masterVolume = Math.max(0, Math.min(1, value))
+  try { window.localStorage.setItem(VOLUME_STORAGE_KEY, String(masterVolume)) } catch { /* embedded */ }
+  // Re-apply the current level so all active paths pick the new scale up now.
+  setRadioLevel(targetRadioLevel, 0.08)
+}
+
 // ── Live radio: REAL music via Radio Browser (radio-browser.info) ──────────
 // Free, keyless, open directory of ~50k real internet stations, geo-searchable
 // — the map tunes an actual local station for wherever the camera lands. The
@@ -81,7 +101,7 @@ function installUnlock() {
 }
 
 function fallbackVolumeForLevel(value: number): number {
-  return Math.max(0, Math.min(0.68, value * 3.45))
+  return Math.max(0, Math.min(0.68, value * 3.45)) * masterVolume
 }
 
 function getFallbackAudio(): HTMLAudioElement | null {
@@ -317,7 +337,7 @@ function setRadioLevel(value: number, timeConstant = 0.18) {
   }
   void ctx.resume().catch(() => {})
   radioBed.master.gain.cancelScheduledValues(ctx.currentTime)
-  radioBed.master.gain.setTargetAtTime(value, ctx.currentTime, timeConstant)
+  radioBed.master.gain.setTargetAtTime(value * masterVolume, ctx.currentTime, timeConstant)
 }
 
 function tuneRadioBed(stations: ReadonlyArray<RadioStationCue>) {
@@ -396,7 +416,7 @@ function blendAfterHost() {
 
 function liveVolumeForLevel(value: number): number {
   // Real music is the feature — it rides noticeably louder than the old bed.
-  return Math.max(0, Math.min(0.85, value * 4.4))
+  return Math.max(0, Math.min(0.85, value * 4.4)) * masterVolume
 }
 
 function getLiveAudio(): HTMLAudioElement | null {

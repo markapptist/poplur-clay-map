@@ -12,13 +12,24 @@ let rainNodes: { src: AudioBufferSourceNode; gain: GainNode } | null = null
 let hailTimer: number | null = null
 let thunderTimer: number | null = null
 
+let weatherMasterVolume = 1
+
+/** Scales all weather sound (rain wash, thunder, hail) — driven by the same
+ *  universal volume bars as the radio. */
+export function setWeatherMasterVolume(value: number) {
+  weatherMasterVolume = Math.max(0, Math.min(1, value))
+  if (master && ctx) {
+    master.gain.setTargetAtTime(weatherMasterVolume, ctx.currentTime, 0.08)
+  }
+}
+
 function ensureCtx(): AudioContext | null {
   try {
     ctx ??= new AudioContext()
     if (ctx.state === 'suspended') void ctx.resume()
     if (!master) {
       master = ctx.createGain()
-      master.gain.value = 1
+      master.gain.value = weatherMasterVolume
       master.connect(ctx.destination)
     }
     return ctx

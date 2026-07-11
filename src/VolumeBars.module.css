@@ -1,0 +1,43 @@
+/* Twin of PoplurVolumeBars — 64×320 frame, 18 bars of 32×8 with 6.4px gaps.
+   Left edge, vertically centered. Faint at rest so it never fights the map;
+   waking (drag/keys) brings it to full like the iOS hardware-press overlay. */
+.rail,
+.railAwake {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 34;
+  width: 64px;
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6.4px;
+  cursor: grab;
+  touch-action: none;
+  opacity: 0.42;
+  transition: opacity 0.18s ease-in;
+  outline: none;
+  /* Clay-pill backing so the green meter reads over white clay buildings */
+  border-radius: 16px;
+  background: rgba(12, 12, 14, 0.32);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.railAwake {
+  opacity: 1;
+  transition: opacity 0.12s ease-out;
+}
+
+.rail:focus-visible,
+.railAwake:focus-visible { opacity: 1; }
+
+.bar {
+  width: 32px;
+  height: 8px;
+  border-radius: 2px;
+  pointer-events: none;
+}

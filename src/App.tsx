@@ -14,6 +14,7 @@ import {
 } from './regionAudio'
 import type { RegionContext } from './regionAudio'
 import { postNativeEvent } from './nativeBridge'
+import VolumeBars from './VolumeBars'
 import styles from './App.module.css'
 
 
@@ -669,7 +670,12 @@ export default function App() {
   }, [flyToCenter])
 
   if (harnessView) {
-    return <ViewHarness initialView={harnessView} />
+    return (
+      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+        <ViewHarness initialView={harnessView} />
+        <VolumeBars />
+      </div>
+    )
   }
 
   if (!TOKEN) {
@@ -684,6 +690,7 @@ export default function App() {
 
   return (
     <div className={styles.shell}>
+      <VolumeBars />
       {/* ── Full-screen clay map ── */}
       <ClayMap
         token={TOKEN}

@@ -30,6 +30,15 @@ export interface ClayMapProps {
 // to restore the full moulded-clay look.
 export const REALISTIC_MAP = false
 
+// Shader-like label material that stays inside Mapbox's batched SDF glyph
+// renderer. The soft plum edge gives the type molded depth while a restrained
+// emissive response seats it in the lit 3D city without adding a
+// second symbol layer or a continuously animated custom shader.
+const CLAY_LABEL_HALO = 'rgba(42, 10, 31, 0.82)'
+const CLAY_LABEL_HALO_WIDTH = 1.35
+const CLAY_LABEL_HALO_BLUR = 0.6
+const CLAY_LABEL_EMISSIVE = 0.8
+
 // Sky follows the real time of day: clear blue by day, pitch-black space with
 // stars by night (like the lock-screen reference).
 function applySky(map: mapboxgl.Map, day: boolean) {
@@ -136,15 +145,19 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
 
   ;['settlement-major-label', 'settlement-minor-label', 'settlement-subdivision-label'].forEach(id => {
     set(id, 'text-color', theme.accentHot)
-    set(id, 'text-halo-color', 'rgba(8, 6, 10, 0.95)')
-    set(id, 'text-halo-width', 2.2)
+    set(id, 'text-halo-color', CLAY_LABEL_HALO)
+    set(id, 'text-halo-width', 1.7)
+    set(id, 'text-halo-blur', CLAY_LABEL_HALO_BLUR)
+    set(id, 'text-emissive-strength', 0.85)
   })
   ;['poi-label', 'water-point-label', 'water-line-label', 'natural-point-label',
     'country-label', 'state-label', 'clay-building-name-labels',
     'clay-venue-labels'].forEach(id => {
     set(id, 'text-color', PALETTE.white)
-    set(id, 'text-halo-color', 'rgba(8, 6, 10, 0.9)')
-    set(id, 'text-halo-width', 1.8)
+    set(id, 'text-halo-color', CLAY_LABEL_HALO)
+    set(id, 'text-halo-width', CLAY_LABEL_HALO_WIDTH)
+    set(id, 'text-halo-blur', CLAY_LABEL_HALO_BLUR)
+    set(id, 'text-emissive-strength', CLAY_LABEL_EMISSIVE)
   })
 }
 
@@ -876,17 +889,53 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
         .catch(err => console.warn('[modelSprite]', 'models/car.glb', err))
 
-      // ── Clay POI icons: category clay icons above venues (a clay burger for
-      //    fast food, coffee cup for cafés…). Assets are USER-SUPPLIED at
-      //    public/poi/clay_<maki>.png (e.g. clay_fast-food.png) — missing files
-      //    skip silently and the basemap's POI labels keep naming venues either
-      //    way. Deliberately category icons, NOT brand logos: no trademark
-      //    exposure; the label underneath already says "McDonald's".
+      // ── Hovering category objects: every venue gets a chunky emoji object
+      //    (🍔 over Burger King, ☕ over cafés…) floating at ROOFTOP height —
+      //    symbol-z-elevate lifts them onto the 3D buildings and depth-tests
+      //    them, and Mapbox's symbol fade pops them in as you pan. Emoji are
+      //    system glyphs (no generated art, no trademark exposure); a clay PNG
+      //    at public/poi/clay_<maki>.png overrides its category when the user
+      //    models one. The POI label underneath still names the venue.
       if (!REALISTIC_MAP) {
-        const POI_CATEGORIES = ['fast-food', 'cafe', 'restaurant', 'grocery', 'bar', 'fuel', 'bank', 'clothing-store']
-        const loadedPoiCats: string[] = []
+        const POI_EMOJI: Record<string, string> = {
+          'fast-food': '🍔',
+          cafe: '☕',
+          restaurant: '🍕',
+          grocery: '🛒',
+          bar: '🍺',
+          fuel: '⛽',
+          bank: '🏦',
+          'clothing-store': '👕',
+          pharmacy: '💊',
+          cinema: '🎬',
+          lodging: '🛏️',
+          'ice-cream': '🍦',
+        }
+
+        // Emoji drawn big on a canvas with a drop shadow + contact-shadow
+        // ellipse: reads as a toy object hovering, not a flat sticker.
+        const emojiSprite = (emoji: string): ImageData => {
+          const size = 128
+          const canvas = document.createElement('canvas')
+          canvas.width = canvas.height = size
+          const c2d = canvas.getContext('2d')!
+          c2d.beginPath()
+          c2d.ellipse(size / 2, size - 12, 24, 7, 0, 0, Math.PI * 2)
+          c2d.fillStyle = 'rgba(5, 4, 7, 0.25)'
+          c2d.fill()
+          c2d.font = '86px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif'
+          c2d.textAlign = 'center'
+          c2d.textBaseline = 'middle'
+          c2d.shadowColor = 'rgba(5, 4, 7, 0.35)'
+          c2d.shadowBlur = 6
+          c2d.shadowOffsetY = 4
+          c2d.fillText(emoji, size / 2, size / 2 - 10)
+          return c2d.getImageData(0, 0, size, size)
+        }
+
+        const readyCats: string[] = []
         const refreshPoiLayer = () => {
-          if (!loadedPoiCats.length) return
+          if (!readyCats.length) return
           if (map.getLayer('clay-poi-icons')) map.removeLayer('clay-poi-icons')
           map.addLayer({
             id: 'clay-poi-icons',
@@ -894,27 +943,50 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             type: 'symbol',
             source: 'clay-streets',
             'source-layer': 'poi_label',
-            minzoom: 13.5,
+            minzoom: 13.2,
             filter: ['all',
-              ['match', ['get', 'maki'], loadedPoiCats, true, false],
+              ['match', ['get', 'maki'], readyCats, true, false],
               ['<=', ['get', 'filterrank'], 3],
             ] as never,
             layout: {
               'icon-image': ['concat', 'clay-poi-', ['get', 'maki']] as never,
-              'icon-size': ['interpolate', ['linear'], ['zoom'], 13.5, 0.22, 16.2, 0.42] as never,
+              'icon-size': ['interpolate', ['linear'], ['zoom'], 13.2, 0.26, 16.2, 0.52] as never,
               'icon-anchor': 'bottom',
               'icon-allow-overlap': false,
-            },
+              // Rooftop hover: elevated onto the 3D buildings and properly
+              // occluded by nearer towers.
+              'symbol-z-elevate': true,
+            } as never,
+            paint: {
+              'icon-translate-transition': { duration: 1300, delay: 0 },
+            } as never,
           })
         }
-        POI_CATEGORIES.forEach(cat => {
-          map.loadImage(`poi/clay_${cat}.png`, (err, img) => {
-            if (err || !img || map.hasImage(`clay-poi-${cat}`)) return
-            map.addImage(`clay-poi-${cat}`, img)
-            loadedPoiCats.push(cat)
+
+        Object.keys(POI_EMOJI).forEach(cat => {
+          const register = (image: ImageData | HTMLImageElement | ImageBitmap) => {
+            if (map.hasImage(`clay-poi-${cat}`)) return
+            map.addImage(`clay-poi-${cat}`, image as never)
+            readyCats.push(cat)
             refreshPoiLayer()
+          }
+          // The user's hand-modelled clay PNG wins; emoji is the instant default.
+          map.loadImage(`poi/clay_${cat}.png`, (err, img) => {
+            if (!err && img) register(img)
+            else register(emojiSprite(POI_EMOJI[cat]))
           })
         })
+
+        // Gentle hover bob for the whole flock, tweened by the paint transition.
+        let bobUp = false
+        const bobTimer = window.setInterval(() => {
+          if (!map.getLayer('clay-poi-icons')) return
+          bobUp = !bobUp
+          try {
+            map.setPaintProperty('clay-poi-icons', 'icon-translate', bobUp ? [0, -4] : [0, 1])
+          } catch { /* style mid-update */ }
+        }, 1300)
+        map.once('remove', () => window.clearInterval(bobTimer))
       }
 
       // ── 3D clay buildings ───────────────────────────────────────────────────
@@ -1053,9 +1125,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         } as never,
         paint: {
           'text-color': PALETTE.white,
-          'text-halo-color': 'rgba(8, 6, 10, 0.92)',
-          'text-halo-width': 1.8,
-          'text-halo-blur': 0.4,
+          'text-halo-color': CLAY_LABEL_HALO,
+          'text-halo-width': CLAY_LABEL_HALO_WIDTH,
+          'text-halo-blur': CLAY_LABEL_HALO_BLUR,
+          'text-emissive-strength': CLAY_LABEL_EMISSIVE,
           'text-opacity': ['interpolate', ['linear'], ['zoom'], 14.8, 0, 15.4, 0.92],
         },
       })
@@ -1084,9 +1157,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         } as never,
         paint: {
           'text-color': PALETTE.white,
-          'text-halo-color': 'rgba(8, 6, 10, 0.92)',
-          'text-halo-width': 1.8,
-          'text-halo-blur': 0.4,
+          'text-halo-color': CLAY_LABEL_HALO,
+          'text-halo-width': CLAY_LABEL_HALO_WIDTH,
+          'text-halo-blur': CLAY_LABEL_HALO_BLUR,
+          'text-emissive-strength': CLAY_LABEL_EMISSIVE,
           'text-opacity': ['interpolate', ['linear'], ['zoom'], 14.2, 0, 14.9, 0.9],
         },
       })
