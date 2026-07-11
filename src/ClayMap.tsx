@@ -873,6 +873,47 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
         .catch(err => console.warn('[modelSprite]', 'models/car.glb', err))
 
+      // ── Clay POI icons: category clay icons above venues (a clay burger for
+      //    fast food, coffee cup for cafés…). Assets are USER-SUPPLIED at
+      //    public/poi/clay_<maki>.png (e.g. clay_fast-food.png) — missing files
+      //    skip silently and the basemap's POI labels keep naming venues either
+      //    way. Deliberately category icons, NOT brand logos: no trademark
+      //    exposure; the label underneath already says "McDonald's".
+      if (!REALISTIC_MAP) {
+        const POI_CATEGORIES = ['fast-food', 'cafe', 'restaurant', 'grocery', 'bar', 'fuel', 'bank', 'clothing-store']
+        const loadedPoiCats: string[] = []
+        const refreshPoiLayer = () => {
+          if (!loadedPoiCats.length) return
+          if (map.getLayer('clay-poi-icons')) map.removeLayer('clay-poi-icons')
+          map.addLayer({
+            id: 'clay-poi-icons',
+            slot: 'top',
+            type: 'symbol',
+            source: 'clay-streets',
+            'source-layer': 'poi_label',
+            minzoom: 13.5,
+            filter: ['all',
+              ['match', ['get', 'maki'], loadedPoiCats, true, false],
+              ['<=', ['get', 'filterrank'], 3],
+            ] as never,
+            layout: {
+              'icon-image': ['concat', 'clay-poi-', ['get', 'maki']] as never,
+              'icon-size': ['interpolate', ['linear'], ['zoom'], 13.5, 0.22, 16.2, 0.42] as never,
+              'icon-anchor': 'bottom',
+              'icon-allow-overlap': false,
+            },
+          })
+        }
+        POI_CATEGORIES.forEach(cat => {
+          map.loadImage(`poi/clay_${cat}.png`, (err, img) => {
+            if (err || !img || map.hasImage(`clay-poi-${cat}`)) return
+            map.addImage(`clay-poi-${cat}`, img)
+            loadedPoiCats.push(cat)
+            refreshPoiLayer()
+          })
+        })
+      }
+
       // ── 3D clay buildings ───────────────────────────────────────────────────
       // Realistic mode draws neutral solid massing only for taller buildings.
       // Low-rise houses keep their satellite roof detail instead of being
