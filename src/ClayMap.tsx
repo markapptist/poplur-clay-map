@@ -852,8 +852,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             'icon-rotate': ['get', 'bearing'],
             'icon-rotation-alignment': 'map',
             'icon-pitch-alignment': 'map',
-            'icon-allow-overlap': false,
-            'icon-ignore-placement': false,
+            // Moving markers must skip the collision pass — re-placement each
+            // frame reads as flashing.
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
           } as never,
           paint: {
             'icon-opacity': ['interpolate', ['linear'], ['zoom'], 12.4, 0, 13, 1],
@@ -861,7 +863,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
       }
 
-      modelSprite('models/car.glb', { pitch: 82, size: 256 })
+      modelSprite('models/car.glb', { pitch: 68, yaw: 90, size: 256 }) // yaw 90: the GLB's nose points +X, sprite needs it pointing up for bearing rotation
         .then(dataUrl => {
           if (map.hasImage('poplur-car')) return
           map.loadImage(dataUrl, (error, image) => {
