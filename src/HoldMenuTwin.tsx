@@ -1,11 +1,12 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import styles from './HoldMenuTwin.module.css'
+import { playPop } from './pop'
 
-// Web twin of CubeHoldMenuOverlay.swift — the cube's long-press "hold menu".
-// A dimmed backdrop, a rounded card of glossy 3D icon tiles (chunked into rows
-// of ≤4), a SCRUB ↕ hint on the right, and a selection glow. The item set is
-// context-sensitive per tab, exactly like the app (HomeView.swift /
-// MapView.mapCubeMenuItems).
+// Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
+// as the app currently ships it: a curved VERTICAL wheel. The selected item
+// sits at center; neighbours recede up/down along a gentle arc that bows to the
+// right (offset + rotation + scale + fade falloff), scrubbed with wheel-of-
+// fortune momentum. Physics ported 1:1 from CubeMenuWheelController.
 
 type Tab = 'map' | 'feed' | 'camera' | 'profile'
 
@@ -13,6 +14,7 @@ interface Item { icon: string; title: string }
 
 const MENUS: Record<Tab, Item[]> = {
   map: [
+    { icon: 'Directions', title: 'DIRECTIONS' },
     { icon: 'Search', title: 'LOCATE' },
     { icon: 'Create', title: 'POST' },
     { icon: 'Tour', title: 'TOUR' },
@@ -45,49 +47,247 @@ const MENUS: Record<Tab, Item[]> = {
 
 const TAB_LABELS: Record<Tab, string> = { map: 'Map', feed: 'Feed', camera: 'Camera', profile: 'Profile' }
 
-function chunk<T>(arr: T[], n: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
-  return out
-}
+// Placeholder for icons that don't yet have a clay PNG in public/holdmenu/.
+// A navigation arrow in the app's clay pink; drop in the real Directions.png and
+// it takes over automatically (see the <img onError> fallback below).
+const NAV_ICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>" +
+      "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>" +
+      "<stop offset='0' stop-color='#ff8ac6'/><stop offset='1' stop-color='#f63b9a'/></linearGradient></defs>" +
+      "<path d='M50 11 L83 85 L50 66 L17 85 Z' fill='url(#g)' stroke='#16060f' stroke-width='3.5' stroke-linejoin='round'/>" +
+      '</svg>',
+  )
+
+// ── Wheel geometry / physics (CubeMenuWheelOverlay + CubeMenuWheelController) ──
+const SLOT_SPACING = 122
+const ARC_DEPTH = 26
+const POINTS_PER_ITEM = 62
+const FRICTION = 0.955
+const MAX_VELOCITY = 16
+const SNAP_VELOCITY = 0.9
+const CENTER_Y_FRAC = 0.46
+
+const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
 export default function HoldMenuTwin() {
   // Default to the camera context (we arrive here right after the camera tab).
   const [tab, setTab] = useState<Tab>('camera')
   const items = MENUS[tab]
-  // The scrub cursor opens on the second tile (not the rightmost, which would
-  // sit under the SCRUB hint).
-  const [selected, setSelected] = useState(1)
-  const rows = chunk(items, 4)
 
-  const pick = (t: Tab) => { setTab(t); setSelected(1) }
+  const [offset, setOffset] = useState(0)      // continuous wheel position, item units
+  const [selected, setSelected] = useState(0)  // item at center = round(offset)
+
+  // Physics state lives in refs so the rAF loop reads live values.
+  const offsetRef = useRef(0)
+  const velocityRef = useRef(0)
+  const lastScrubRef = useRef(0)
+  const lastNotchRef = useRef(0)
+  const draggingRef = useRef(false)
+  const dragYRef = useRef(0)
+  const snapIndexRef = useRef<number | null>(null) // tap-to-spin target item
+  const countRef = useRef(items.length)
+  countRef.current = items.length
+
+  // Reset the wheel whenever the context (item set) changes.
+  useEffect(() => {
+    offsetRef.current = 0
+    velocityRef.current = 0
+    lastNotchRef.current = 0
+    setOffset(0)
+    setSelected(0)
+  }, [tab])
+
+  const applyOffsetDelta = (delta: number) => {
+    const count = countRef.current
+    if (count === 0) return
+    let o = (offsetRef.current + delta) % count
+    if (o < 0) o += count
+    offsetRef.current = o
+    setOffset(o)
+
+    const notch = ((Math.round(o) % count) + count) % count
+    if (notch !== lastNotchRef.current) {
+      lastNotchRef.current = notch
+      setSelected(notch)
+      playPop()
+    }
+  }
+
+  const scrub = (deltaY: number) => {
+    const count = countRef.current
+    if (count <= 1 || Math.abs(deltaY) < 0.25) return
+    snapIndexRef.current = null // a drag interrupts any tap-to-spin
+    const now = performance.now() / 1000
+    const dt = Math.max(now - lastScrubRef.current, 1 / 120)
+    lastScrubRef.current = now
+
+    const slotDelta = deltaY / POINTS_PER_ITEM
+    const instant = clampMag(slotDelta / dt, MAX_VELOCITY)
+    velocityRef.current = clampMag(velocityRef.current * 0.35 + instant * 0.65, MAX_VELOCITY)
+    applyOffsetDelta(slotDelta)
+  }
+
+  // Momentum loop — wheel-of-fortune inertia + snap-to-nearest. Driven by a
+  // 60 fps setInterval (matching the app's Timer, and unlike requestAnimationFrame
+  // it keeps ticking when the embedding WebView is backgrounded).
+  useEffect(() => {
+    let last = performance.now()
+    const id = window.setInterval(() => {
+      const t = performance.now()
+      const dt = Math.min((t - last) / 1000, 1 / 30)
+      last = t
+      const count = countRef.current
+      if (count <= 1) return
+      if (draggingRef.current) return
+
+      // Tap-to-spin: ease the wheel to the tapped item along the shortest arc.
+      if (snapIndexRef.current !== null) {
+        const o = offsetRef.current
+        let d = (snapIndexRef.current - o) % count
+        if (d > count / 2) d -= count
+        if (d <= -count / 2) d += count
+        if (Math.abs(d) < 0.001) { applyOffsetDelta(d); snapIndexRef.current = null }
+        else applyOffsetDelta(d * 0.22)
+        return
+      }
+
+      const now = t / 1000
+      const idle = now - lastScrubRef.current > 0.032
+      if (!idle) return
+      const v = velocityRef.current
+      if (Math.abs(v) > SNAP_VELOCITY) {
+        applyOffsetDelta(v * dt)
+        velocityRef.current = v * Math.pow(FRICTION, dt * 60)
+      } else {
+        const o = offsetRef.current
+        const target = Math.round(o)
+        if (v !== 0 || o !== target) {
+          velocityRef.current = 0
+          const remaining = target - o
+          applyOffsetDelta(Math.abs(remaining) < 0.001 ? remaining : remaining * 0.22)
+        }
+      }
+    }, 1000 / 60)
+    return () => window.clearInterval(id)
+  }, [])
+
+  // Pointer drag (finger scrub). Dragging up advances toward the next item.
+  // A near-stationary press+release is treated as a tap that spins to the tile
+  // under the finger (native click is unreliable while the pointer is captured).
+  const downPtRef = useRef({ x: 0, y: 0 })
+  const movedRef = useRef(0)
+  const onPointerDown = (e: React.PointerEvent) => {
+    draggingRef.current = true
+    dragYRef.current = e.clientY
+    downPtRef.current = { x: e.clientX, y: e.clientY }
+    movedRef.current = 0
+    lastScrubRef.current = performance.now() / 1000
+    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
+  }
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!draggingRef.current) return
+    const dy = e.clientY - dragYRef.current
+    dragYRef.current = e.clientY
+    movedRef.current += Math.abs(dy)
+    scrub(-dy) // drag up (negative dy) → advance
+  }
+  const onPointerUp = (e: React.PointerEvent) => {
+    draggingRef.current = false
+    if (movedRef.current < 6) {
+      const el = document.elementFromPoint(downPtRef.current.x, downPtRef.current.y)
+      const btn = (el as Element | null)?.closest('[data-index]') as HTMLElement | null
+      if (btn) spinTo(Number(btn.dataset.index))
+    }
+  }
+
+  const onWheel = (e: React.WheelEvent) => { scrub(e.deltaY * 0.6) }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') { spinTo(selected + 1); e.preventDefault() }
+      else if (e.key === 'ArrowUp') { spinTo(selected - 1); e.preventDefault() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  // Spin the wheel to a specific index; the loop eases it there along the
+  // shortest circular path (framerate-independent, lands exactly on the item).
+  const spinTo = (index: number) => {
+    const count = countRef.current
+    velocityRef.current = 0
+    snapIndexRef.current = ((index % count) + count) % count
+  }
+
+  // Continuous signed column of index relative to the live wheel position,
+  // wrapped so the wheel is circular (…-2, -1, 0, +1, +2…).
+  const wrappedColumn = (index: number) => {
+    const n = items.length
+    if (n === 0) return 0
+    let c = (index - offset) % n
+    if (c > n / 2) c -= n
+    if (c <= -n / 2) c += n
+    return c
+  }
 
   return (
     <div className={styles.stage}>
-      {/* Dimmed backdrop with the pressed cube glowing underneath */}
       <div className={styles.backdrop} />
-      <div className={styles.cubeGhost} aria-hidden="true" />
+      <div className={styles.pinkGlow} aria-hidden="true" />
 
-      {/* The wheel card */}
-      <div className={styles.card}>
-        {rows.map((row, ri) => (
-          <div key={ri} className={styles.row}>
-            {row.map((it, ci) => {
-              const idx = ri * 4 + ci
-              const on = idx === selected
-              return (
-                <button
-                  key={it.title}
-                  className={on ? styles.tileOn : styles.tile}
-                  onClick={() => setSelected(idx)}
-                >
-                  <img className={styles.tileIcon} src={`holdmenu/${it.icon}.png`} alt="" draggable={false} />
-                  <span className={styles.tileLabel}>{it.title}</span>
-                </button>
-              )
-            })}
-          </div>
-        ))}
+      <div
+        className={styles.wheel}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onWheel={onWheel}
+      >
+        {items.map((it, index) => {
+          const column = wrappedColumn(index)
+          const distance = Math.abs(column)
+          if (distance > 2.4) return null
+          const on = index === selected
+          const scale = Math.max(0.78, 1 - distance * 0.13)
+          const dx = Math.pow(distance, 1.5) * ARC_DEPTH
+          const dy = column * SLOT_SPACING
+          const alpha = Math.max(0, Math.min(1, 1.4 - distance * 0.42))
+          const size = on ? 104 : 88
+          return (
+            <button
+              key={it.title}
+              data-index={index}
+              className={styles.tile}
+              style={{
+                top: `${CENTER_Y_FRAC * 100}%`,
+                transform:
+                  `translate(-50%, -50%) translate(${dx}px, ${dy}px) ` +
+                  `rotate(${column * 5}deg) scale(${scale})`,
+                opacity: alpha,
+                zIndex: Math.round(30 - distance * 10),
+              }}
+            >
+              <div
+                className={on ? styles.iconBoxOn : styles.iconBox}
+                style={{ width: size, height: size }}
+              >
+                <img
+                  className={styles.icon}
+                  src={`holdmenu/${it.icon}.png`}
+                  alt=""
+                  draggable={false}
+                  onError={e => {
+                    const t = e.currentTarget
+                    if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = NAV_ICON }
+                  }}
+                />
+              </div>
+              <span className={on ? styles.labelOn : styles.label}>{it.title}</span>
+            </button>
+          )
+        })}
       </div>
 
       {/* SCRUB ↕ hint on the right, like the app */}
@@ -97,13 +297,16 @@ export default function HoldMenuTwin() {
         <span className={styles.scrubChev}>⌄</span>
       </div>
 
+      {/* Close button (twin of the neon-pink xmark) */}
+      <div className={styles.closeBtn} aria-hidden="true">✕</div>
+
       {/* Context switcher (dev): the app derives this from the active tab */}
       <div className={styles.tabs}>
         {(Object.keys(MENUS) as Tab[]).map(t => (
           <button
             key={t}
             className={t === tab ? styles.tabOn : styles.tab}
-            onClick={() => pick(t)}
+            onClick={() => setTab(t)}
           >
             {TAB_LABELS[t]}
           </button>
