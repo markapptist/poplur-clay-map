@@ -130,7 +130,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     rim.position.set(3, 1, -3)
     scene.add(rim)
 
-    const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100)
+    // ORTHOGRAPHIC camera: no perspective foreshortening, so every face
+    // projects at exactly the same size no matter how the cube is rotated —
+    // this is what makes the sides read as equal. halfH frames the 2×2×2 cube
+    // so even its 45°-rotated silhouette (half-width √2 ≈ 1.414) never clips.
+    const halfH = 1.46
+    const camera = new THREE.OrthographicCamera(-halfH, halfH, halfH, -halfH, 0.01, 100)
     const group = new THREE.Group()
     scene.add(group)
 
@@ -165,14 +170,19 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const model = gltf.scene
       const box = new THREE.Box3().setFromObject(model)
       const center = box.getCenter(new THREE.Vector3())
+      const dims = box.getSize(new THREE.Vector3())
       model.position.sub(center)
-      const radius = Math.max(0.001, box.getBoundingSphere(new THREE.Sphere()).radius)
+      // The raw GLB is an organically-sculpted cube (~1.82 x 1.90 x 1.70), so its
+      // faces aren't the same size. Non-uniformly scale it to a true 2×2×2 so
+      // every face reads identically.
+      model.scale.set(2 / dims.x, 2 / dims.y, 2 / dims.z)
       group.add(model)
 
-      // icon/label plates hovering just off each side face
-      const edge = (2 * radius) / Math.sqrt(3)
-      const plate = edge * 0.68
-      const offset = edge / 2 + radius * 0.015
+      // Each icon/label plate sits FLUSH on its own face — identical size, all
+      // at the same distance — so faces match and no adjacent icon can peek.
+      const HALF = 1                       // half-extent per axis after equalizing
+      const plate = 2 * 0.6                // icon plate ~60% of the face
+      const offset = HALF + 0.012          // hug the face, don't float
       for (const { tab, az } of FACES) {
         const texture = faceTexture(tab)
         const mesh = new THREE.Mesh(
@@ -184,9 +194,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         group.add(mesh)
       }
 
-      const dist = (radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.08
-      const pitch = (9 * Math.PI) / 180
-      camera.position.set(0, dist * Math.sin(pitch), dist * Math.cos(pitch))
+      // Small downward pitch for a hint of the top face; with ortho the front
+      // face stays a near-perfect square (height 2·cos8° ≈ 1.98) and, crucially,
+      // identical to every other face as the cube turns.
+      const pitch = (8 * Math.PI) / 180
+      camera.position.set(0, 10 * Math.sin(pitch), 10 * Math.cos(pitch))
       camera.lookAt(0, 0, 0)
       needsRender = true
     }).catch(() => { /* cube stays empty; screen still usable */ })
