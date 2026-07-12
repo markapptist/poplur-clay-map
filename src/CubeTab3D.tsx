@@ -112,11 +112,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       model.scale.set(2 / dims.x, 2 / dims.y, 2 / dims.z)
       group.add(model)
 
-      // Small downward pitch for a hint of the top face; with ortho the front
-      // face stays a near-perfect square (height 2·cos8° ≈ 1.98) and, crucially,
-      // identical to every other face as the cube turns.
-      const pitch = (8 * Math.PI) / 180
-      camera.position.set(0, 10 * Math.sin(pitch), 10 * Math.cos(pitch))
+      // Straight-on (no pitch): the top face is never visible, and with the
+      // ortho camera the front face is a perfect square that stays identical as
+      // the cube turns.
+      camera.position.set(0, 0, 10)
       camera.lookAt(0, 0, 0)
       needsRender = true
     }).catch(() => { /* cube stays empty; screen still usable */ })
