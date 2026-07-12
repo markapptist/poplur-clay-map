@@ -3,16 +3,18 @@ import styles from './ProfileTwin.module.css'
 import { playPop } from './pop'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground with
-// the animated 3D Mark head in a cyan→magenta gradient squircle, a notification
-// bell to its left, USERNAME, a cyan speaking equaliser, and the
-// Media / Messages / Saved switcher. Kept per the user: the poplur wordmark and
-// the channel-number tiles, plus pull-to-refresh on the grid.
+// the animated *talking* 3D Mark head in a cyan→magenta gradient squircle, a
+// notification bell and a 3D camera flanking it (both centred on the square),
+// USERNAME, and the Media / Messages / Saved switcher. Kept per the user: the
+// poplur wordmark, the channel-number tiles, and pull-to-refresh on the grid.
 //
-// The head's idle animation mirrors MarkHeadView.swift: a slow vertical bob
-// (±0.007 over 1.6s) and a yaw sway (±0.07 rad over 2.4s each way). The bob is
-// CSS; the sway cross-fades five pre-rendered yaw frames (−12°…+12°).
+// The head is the talking rig: eight viseme frames (rendered from
+// MarkHead_TalkingRig.glb) cycle in a speech rhythm, over a CSS bob + slow yaw
+// sway. Pressing the camera opens a capture flow to shoot a new profile photo.
 
-const HEAD_FRAMES = [0, 1, 2, 3, 4] // mark_head0..4 = yaw −12, −6, 0, +6, +12
+const TALK_FRAMES = [0, 1, 2, 3, 4, 5, 6, 7]
+// A lively, non-sequential mouth pattern; index 5 is the blink/′I′ frame.
+const TALK_PATTERN = [1, 3, 2, 4, 6, 7, 2, 1, 5, 4, 3, 6, 2, 0, 1, 4, 7, 0]
 
 const MEDIA = ['CH 24', 'CH 83', 'CH 12', 'CH 07', 'CH 51', 'CH 09']
 const SAVED = ['CH 31', 'CH 58', 'CH 44', 'CH 66', 'CH 19', 'CH 72']
@@ -27,29 +29,30 @@ type Mode = 'media' | 'messages' | 'saved'
 
 export default function ProfileTwin() {
   const [mode, setMode] = useState<Mode>('media')
+  const [capturing, setCapturing] = useState(false)
+  const [photo, setPhoto] = useState<string | null>(null)
+  const [camError, setCamError] = useState(false)
+  const [flash, setFlash] = useState(false)
+
   const frameRefs = useRef<(HTMLImageElement | null)[]>([])
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
   const spinnerRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
 
-  // Yaw sway: cross-fade the five head frames along a slow sine (4.8s cycle).
+  // Talking mouth: step through the viseme pattern in a speech rhythm.
   useEffect(() => {
-    let raf = 0
-    const start = performance.now()
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick)
-      const t = (now - start) / 1000
-      const f = 2 + 2 * Math.sin((2 * Math.PI * t) / 4.8) // 0..4, centred
-      const i0 = Math.min(3, Math.floor(f))
-      const frac = f - i0
-      frameRefs.current.forEach((img, i) => {
-        if (!img) return
-        img.style.opacity = i === i0 ? String(1 - frac) : i === i0 + 1 ? String(frac) : '0'
-      })
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [])
+    if (photo) return
+    let i = 0
+    const show = (f: number) =>
+      frameRefs.current.forEach((img, idx) => { if (img) img.style.opacity = idx === f ? '1' : '0' })
+    const id = window.setInterval(() => {
+      show(TALK_PATTERN[i % TALK_PATTERN.length])
+      i++
+    }, 110)
+    return () => window.clearInterval(id)
+  }, [photo])
 
   // Pull-to-refresh on the grid, like the app's PoplurRefreshHeader.
   useEffect(() => {
@@ -57,23 +60,13 @@ export default function ProfileTwin() {
     const inner = pullRef.current
     const spinner = spinnerRef.current
     if (!content || !inner || !spinner) return
-
-    let pulling = false
-    let startY = 0
-    let pull = 0
-    let refreshing = false
-
+    let pulling = false, startY = 0, pull = 0, refreshing = false
     const apply = () => {
       inner.style.transform = `translateY(${pull}px)`
       spinner.style.opacity = String(Math.min(1, pull / 48))
       if (!refreshing) spinner.style.transform = `translateX(-50%) rotate(${pull * 6}deg)`
     }
-
-    const onDown = (e: PointerEvent) => {
-      if (refreshing) return
-      pulling = true
-      startY = e.clientY
-    }
+    const onDown = (e: PointerEvent) => { if (!refreshing) { pulling = true; startY = e.clientY } }
     const onMove = (e: PointerEvent) => {
       if (!pulling) return
       const dy = e.clientY - startY
@@ -102,7 +95,6 @@ export default function ProfileTwin() {
         window.setTimeout(() => { inner.style.transition = '' }, 260)
       }
     }
-
     content.addEventListener('pointerdown', onDown)
     content.addEventListener('pointermove', onMove)
     content.addEventListener('pointerup', onUp)
@@ -115,31 +107,87 @@ export default function ProfileTwin() {
     }
   }, [])
 
+  // Camera capture: request the webcam when the sheet opens; tidy up on close.
+  const stopStream = () => {
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+  }
+  useEffect(() => {
+    if (!capturing) { stopStream(); return }
+    let cancelled = false
+    setCamError(false)
+    navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+      .then(stream => {
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          void videoRef.current.play()
+        }
+      })
+      .catch(() => { if (!cancelled) setCamError(true) })
+    return () => { cancelled = true; stopStream() }
+  }, [capturing])
+
+  const shoot = () => {
+    playPop()
+    setFlash(true)
+    window.setTimeout(() => setFlash(false), 380)
+    const video = videoRef.current
+    if (video && streamRef.current && video.videoWidth) {
+      const size = 320
+      const canvas = document.createElement('canvas')
+      canvas.width = size
+      canvas.height = size
+      const g = canvas.getContext('2d')!
+      const s = Math.min(video.videoWidth, video.videoHeight)
+      const sx = (video.videoWidth - s) / 2
+      const sy = (video.videoHeight - s) / 2
+      g.save()
+      g.translate(size, 0) // mirror the selfie
+      g.scale(-1, 1)
+      g.drawImage(video, sx, sy, s, s, 0, 0, size, size)
+      g.restore()
+      setPhoto(canvas.toDataURL('image/png'))
+    }
+    window.setTimeout(() => setCapturing(false), 260)
+  }
+
   const grid = mode === 'saved' ? SAVED : MEDIA
 
   return (
     <section className={styles.profile}>
-      <button type="button" className={styles.bell} onClick={() => playPop()} aria-label="Notifications">
-        🔔
-        <span className={styles.bellDot} />
-      </button>
-
       <div className={styles.header}>
-        <div className={styles.avatarWrap} onClick={() => playPop()}>
+        <div className={styles.avatarWrap}>
+          <button className={styles.bell} onClick={() => playPop()} aria-label="Notifications">
+            🔔<span className={styles.bellDot} />
+          </button>
+
           <div className={styles.avatarFrame} />
-          <div className={styles.headStack}>
-            {HEAD_FRAMES.map(i => (
-              <img
-                key={i}
-                ref={el => { frameRefs.current[i] = el }}
-                className={styles.headFrame}
-                style={{ opacity: i === 2 ? 1 : 0 }}
-                src={`mark_head${i}.png`}
-                alt=""
-                draggable="false"
-              />
-            ))}
-          </div>
+
+          {photo ? (
+            <img className={styles.photo} src={photo} alt="" draggable="false" onClick={() => playPop()} />
+          ) : (
+            <div className={styles.headStack} onClick={() => playPop()}>
+              <div className={styles.headTilt}>
+                {TALK_FRAMES.map(i => (
+                  <img
+                    key={i}
+                    ref={el => { frameRefs.current[i] = el }}
+                    className={styles.headFrame}
+                    style={{ opacity: i === 0 ? 1 : 0 }}
+                    src={`mark_talk${i}.png`}
+                    alt=""
+                    draggable="false"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button className={styles.camBtn} onClick={() => setCapturing(true)} aria-label="Take profile photo">
+            <img src="cam_object.png" alt="" draggable="false" />
+          </button>
         </div>
 
         <div className={styles.speaking} aria-hidden="true">
@@ -196,6 +244,30 @@ export default function ProfileTwin() {
           )}
         </div>
       </div>
+
+      {capturing && (
+        <div className={styles.capture}>
+          <div className={styles.captureHead}>Take profile photo</div>
+          <div className={styles.viewfinder}>
+            {camError ? (
+              <div className={styles.camFallback}>
+                <span>📷</span>
+                <p>Camera unavailable here.<br />This is where you’d frame your shot.</p>
+              </div>
+            ) : (
+              <video ref={videoRef} className={styles.video} playsInline muted />
+            )}
+            <div className={styles.vfRing} />
+          </div>
+          <div className={styles.captureBar}>
+            <button className={styles.cancelBtn} onClick={() => setCapturing(false)}>Cancel</button>
+            <button className={styles.shutter} onClick={shoot} aria-label="Capture"><span /></button>
+            <div className={styles.captureSpacer} />
+          </div>
+        </div>
+      )}
+
+      {flash && <div className={styles.flash} />}
     </section>
   )
 }
