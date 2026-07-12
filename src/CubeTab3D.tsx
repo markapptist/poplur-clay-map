@@ -3,18 +3,17 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 // Live 3D cube tab navigator — the web twin of CubeTabView.swift.
-// Renders clay_icon_cube.glb in its own small canvas with a FIXED camera, so
-// every face reads at exactly the same size as the cube rotates. Tab icons and
-// labels are drawn onto per-face canvas textures at runtime, mirroring how the
-// iOS cube composites SF Symbols onto the skin with UIGraphicsImageRenderer.
+// Renders poplur_cube_v4.glb (a true 2×2×2 box built from the six designed clay
+// face tiles) in its own small canvas with a FIXED orthographic camera, so
+// every face reads at exactly the same size as the cube rotates.
 //
 // Gestures (like the app): horizontal drag rotates with momentum and a spring
 // snap to the nearest face; quick tap fires onTap; press-and-hold fires onHold.
 
 export type CubeTab = 'map' | 'feed' | 'post' | 'profile'
 
-// Face azimuths on clay_icon_cube.glb (verified by render): +Z Profile,
-// +X Map, -Z Post/Camera, -X Feed. Cube rotation.y = -azimuth fronts a face.
+// Baked face → side on poplur_cube_v4.glb: +Z Profile, +X Map, -Z Camera(Post),
+// -X Feed(TV). Cube rotation.y = -azimuth fronts a face.
 const FACES: { tab: CubeTab; az: number }[] = [
   { tab: 'profile', az: 0 },
   { tab: 'map', az: Math.PI / 2 },
@@ -23,69 +22,6 @@ const FACES: { tab: CubeTab; az: number }[] = [
 ]
 
 const HALF_PI = Math.PI / 2
-const POP_PINK = '#f63b9a'
-
-// 24-unit-viewBox glyph paths, drawn SF-Symbol style like the iOS faces.
-const GLYPHS: Record<CubeTab, { label: string; fill: string; stroke?: string }> = {
-  map: {
-    label: 'Map',
-    fill: 'M9 2.6 3.6 4.6 A1 1 0 0 0 3 5.5 V20.1 A1 1 0 0 0 4.4 21 L9 19.2 l6 2.2 5.4 -2 A1 1 0 0 0 21 18.5 V3.9 A1 1 0 0 0 19.6 3 L15 4.8 Z M9.75 4.7 l4.5 1.65 v12.95 l-4.5 -1.65 Z',
-  },
-  feed: {
-    label: 'Feed',
-    fill: 'M4.5 7 h15 A2.5 2.5 0 0 1 22 9.5 v9 A2.5 2.5 0 0 1 19.5 21 h-15 A2.5 2.5 0 0 1 2 18.5 v-9 A2.5 2.5 0 0 1 4.5 7 Z M6 9.4 A1.2 1.2 0 0 0 4.8 10.6 v6.8 A1.2 1.2 0 0 0 6 18.6 h12 A1.2 1.2 0 0 0 19.2 17.4 v-6.8 A1.2 1.2 0 0 0 18 9.4 Z',
-    stroke: 'M8 1.5 L12 6 L16 1.5',
-  },
-  post: {
-    label: 'Post',
-    fill: 'M9.4 4.5 A1.6 1.6 0 0 1 10.8 3.7 h2.4 a1.6 1.6 0 0 1 1.4 .8 L15.7 6.4 H19.5 A2.5 2.5 0 0 1 22 8.9 v9.1 A2.5 2.5 0 0 1 19.5 20.5 h-15 A2.5 2.5 0 0 1 2 18 V8.9 A2.5 2.5 0 0 1 4.5 6.4 h3.8 Z M12 8.8 a4.6 4.6 0 1 0 0 9.2 a4.6 4.6 0 0 0 0 -9.2 Z M12 11 a2.4 2.4 0 1 1 0 4.8 a2.4 2.4 0 0 1 0 -4.8 Z',
-  },
-  profile: {
-    label: 'Profile',
-    fill: 'M12 3.2 a4.3 4.3 0 1 1 0 8.6 a4.3 4.3 0 0 1 0 -8.6 Z M12 13.6 c-4.6 0 -8.2 2.7 -8.2 6.1 V20.9 H20.2 v-1.2 c0 -3.4 -3.6 -6.1 -8.2 -6.1 Z',
-  },
-}
-
-function faceTexture(tab: CubeTab): THREE.CanvasTexture {
-  const size = 256
-  const canvas = document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')!
-  const { label, fill, stroke } = GLYPHS[tab]
-
-  ctx.save()
-  // glyph: centered, ~118px, in Poplur pink with a soft dark drop for depth
-  const glyphSize = 118
-  ctx.translate((size - glyphSize) / 2, 34)
-  ctx.scale(glyphSize / 24, glyphSize / 24)
-  ctx.fillStyle = POP_PINK
-  ctx.strokeStyle = POP_PINK
-  ctx.shadowColor = 'rgba(0,0,0,0.55)'
-  ctx.shadowBlur = 2
-  ctx.shadowOffsetY = 1
-  ctx.fill(new Path2D(fill), 'evenodd')
-  if (stroke) {
-    ctx.lineWidth = 2.6
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.stroke(new Path2D(stroke))
-  }
-  ctx.restore()
-
-  ctx.fillStyle = POP_PINK
-  ctx.font = '900 44px system-ui, -apple-system, "SF Pro Rounded", sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.shadowColor = 'rgba(0,0,0,0.6)'
-  ctx.shadowBlur = 2
-  ctx.shadowOffsetY = 1.5
-  ctx.fillText(label, size / 2, 196)
-
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.anisotropy = 4
-  return texture
-}
 
 export interface CubeTab3DProps {
   /** rotating here springs the cube to this tab's face */
@@ -165,34 +101,16 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
 
     // ---- load model + face plates ----
     const loader = new GLTFLoader()
-    loader.loadAsync('clay_icon_cube.glb').then(gltf => {
+    loader.loadAsync('poplur_cube_v4.glb').then(gltf => {
       if (disposed) return
       const model = gltf.scene
       const box = new THREE.Box3().setFromObject(model)
       const center = box.getCenter(new THREE.Vector3())
       const dims = box.getSize(new THREE.Vector3())
       model.position.sub(center)
-      // The raw GLB is an organically-sculpted cube (~1.82 x 1.90 x 1.70), so its
-      // faces aren't the same size. Non-uniformly scale it to a true 2×2×2 so
-      // every face reads identically.
+      // Normalise to a true 2×2×2 (the GLB is already a box, so this is ~1×).
       model.scale.set(2 / dims.x, 2 / dims.y, 2 / dims.z)
       group.add(model)
-
-      // Each icon/label plate sits FLUSH on its own face — identical size, all
-      // at the same distance — so faces match and no adjacent icon can peek.
-      const HALF = 1                       // half-extent per axis after equalizing
-      const plate = 2 * 0.6                // icon plate ~60% of the face
-      const offset = HALF + 0.012          // hug the face, don't float
-      for (const { tab, az } of FACES) {
-        const texture = faceTexture(tab)
-        const mesh = new THREE.Mesh(
-          new THREE.PlaneGeometry(plate, plate),
-          new THREE.MeshBasicMaterial({ map: texture, transparent: true }),
-        )
-        mesh.position.set(Math.sin(az) * offset, 0, Math.cos(az) * offset)
-        mesh.rotation.y = az
-        group.add(mesh)
-      }
 
       // Small downward pitch for a hint of the top face; with ortho the front
       // face stays a near-perfect square (height 2·cos8° ≈ 1.98) and, crucially,
