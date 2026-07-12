@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES } from './data'
 import ClayMap from './ClayMap'
+import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import type { WeatherMode } from './WeatherFX'
@@ -704,6 +705,16 @@ export default function App() {
         introDestinations={INTRO_LANDMARKS}
         streetView={streetView}
         onIntroComplete={handleIntroComplete}
+      />
+
+      {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
+      <ClayNav
+        mapRef={mapRef}
+        token={TOKEN}
+        theme={theme}
+        streetView={streetView}
+        setStreetView={setStreetView}
+        say={setTourLine}
       />
 
       {/* ── Weather overlay effects (rain / storm / snow / cloudy / fog) ── */}
