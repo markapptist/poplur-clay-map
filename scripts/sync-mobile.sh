@@ -13,9 +13,9 @@ npm run build
 
 sync_to() {
   local dest="$1"
-  rm -rf "$dest"
   mkdir -p "$dest"
-  rsync -a --exclude 'models/' dist/ "$dest/"
+  rsync -a --delete --exclude 'models/' dist/ "$dest/"
+  shasum -a 256 public/logo_icon.png "$dest/logo_icon.png" | awk 'NR == 1 { expected = $1 } NR == 2 && $1 != expected { exit 1 }'
 }
 
 sync_to "$IOS_DEST"

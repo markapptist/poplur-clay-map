@@ -14,6 +14,8 @@
   position: relative;
   width: min(100vw, 430px);
   height: min(100vh, 932px);
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   background: #050407;
   box-shadow:
@@ -23,6 +25,20 @@
 
 @media (min-height: 933px) {
   .phone { border-radius: 40px; }
+}
+
+@media (min-width: 600px), (min-height: 933px) {
+  .stage {
+    place-items: stretch;
+  }
+
+  .phone {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
 }
 
 .backdrop {
@@ -513,4 +529,3 @@
   font-size: 11px;
   letter-spacing: 0;
 }
-
