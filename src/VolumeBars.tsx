@@ -100,12 +100,6 @@ export default function VolumeBars() {
           />
         ))}
       </div>
-
-      {/* Hardware-key stand-ins: step one bar per press. */}
-      <div className={styles.keys}>
-        <button type="button" className={styles.key} aria-label="Volume up" onClick={() => step(1)}>+</button>
-        <button type="button" className={styles.key} aria-label="Volume down" onClick={() => step(-1)}>−</button>
-      </div>
     </>
   )
 }

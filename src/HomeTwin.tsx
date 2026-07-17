@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
+import ClayChannelArrows from './ClayChannelArrows'
 import { playPop } from './pop'
 import type { HarnessView } from './ViewHarness'
 
@@ -28,15 +29,28 @@ const POST_COUNT = 128
 const RADIUS_METERS = 41_800
 const EARTH_RADIUS_KM = 6_371
 
+// Channel numbers for the left-slot channel changer (mirrors the feed twin's).
+const CHANNEL_NUMBERS = [101, 104, 108, 112, 117, 121, 128, 134]
+
 export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => void }) {
   const [activeTab, setActiveTab] = useState<CubeTab>('map')
   const [popping, setPopping] = useState(false)
   // Radius units cycle km ⇄ mi continuously, like the app's radius display.
   const [unitMi, setUnitMi] = useState(false)
+  // Right slot cross-fades TRENDING ⇄ RADIUS, both stacked on the right.
+  const [showTrending, setShowTrending] = useState(true)
+  // Left slot: channel up/down changer.
+  const [chanIndex, setChanIndex] = useState(0)
   useEffect(() => {
-    const iv = window.setInterval(() => setUnitMi(v => !v), 2500)
-    return () => window.clearInterval(iv)
+    const units = window.setInterval(() => setUnitMi(v => !v), 2500)
+    const fade = window.setInterval(() => setShowTrending(v => !v), 3200)
+    return () => { window.clearInterval(units); window.clearInterval(fade) }
   }, [])
+
+  const changeChannel = (dir: 1 | -1) => {
+    playPop()
+    setChanIndex(i => (i + dir + CHANNEL_NUMBERS.length) % CHANNEL_NUMBERS.length)
+  }
 
   const popCube = () => {
     playPop()
@@ -86,19 +100,36 @@ export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => vo
       </div>
 
       <div className={styles.bottomRow}>
-        <TrendingCounter unitMi={unitMi} />
-        <RadiusCounter unitMi={unitMi} />
+        {/* LEFT: clay channel up / down arrows */}
+        <div className={styles.chanSlot}>
+          <ClayChannelArrows
+            number={CHANNEL_NUMBERS[chanIndex]}
+            onUp={() => changeChannel(-1)}
+            onDown={() => changeChannel(1)}
+          />
+        </div>
+
+        {/* RIGHT: TRENDING ⇄ RADIUS crossfade, stacked on the same side */}
+        <div className={styles.crossStack}>
+          <div className={showTrending ? styles.fadeIn : styles.fadeOut}>
+            <TrendingCounter unitMi={unitMi} />
+          </div>
+          <div className={showTrending ? styles.fadeOut : styles.fadeIn}>
+            <RadiusCounter unitMi={unitMi} />
+          </div>
+        </div>
       </div>
     </section>
   )
 }
 
-// LEFT counter — RecordingCountdownView post-count state, trend up.
+// TRENDING counter — RecordingCountdownView post-count state, trend up.
+// Right-aligned now that it shares the right slot with the radius counter.
 function TrendingCounter({ unitMi }: { unitMi: boolean }) {
   const radiusKm = RADIUS_METERS / 1000
   const radius = unitMi ? radiusKm * KM_TO_MI : radiusKm
   return (
-    <div className={styles.counterLeft}>
+    <div className={styles.counterRight}>
       <div className={styles.counterLabel}>TRENDING</div>
       <div className={styles.numeratorBox}>
         <svg
