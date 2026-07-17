@@ -5,6 +5,18 @@ import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim } from './mapClaims'
+import {
+  fetchRoute,
+  installRouteLayers,
+  setRouteData,
+  clearRoute,
+  frameRoute,
+  playNavigation,
+  type Route,
+  type DirProfile,
+  type NavController,
+} from './mapDirections'
+import { setCarProximity, stopCarAudio } from './carAudio'
 import type { WeatherMode } from './WeatherFX'
 import styles from './ClayMap.module.css'
 
@@ -342,6 +354,13 @@ const ZOOM_MIN = 1
 // still reads like a satellite overview; 18.x gets close enough for Mapbox
 // Standard's 3D building massing to be obvious.
 const ZOOM_MAX = 16.2 // capped: street level stops at the toy-diorama height, no deeper
+// Journey mode intentionally drops below the manual diorama ceiling so the
+// clay roads and buildings read from an eye-level chase camera.
+const STREET_VIEW_MAX_ZOOM = 19
+const FOV_MIN = 25
+// Mapbox's camera projection clamps FOV to 60 degrees.
+const FOV_MAX = 60
+const FOV_DEFAULT = 45
 /** Fallback centre when geolocation is denied or times out: Toronto's Financial District. */
 const HOME_CENTER: [number, number] = [-79.3811, 43.6487]
 
@@ -375,6 +394,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
   const [zoomValue, setZoomValue] = useState(14.8)
+  const [fovValue, setFovValue] = useState(FOV_DEFAULT)
   // The clay cloud GLB, rendered once to a sprite for the zoom-in cloud band.
   const [cloudSprite, setCloudSprite] = useState<string | null>(null)
   // Clay object riding above the zoom slider, and its pop on every notch.
@@ -382,10 +402,65 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [popTick, setPopTick] = useState(0)
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
+  const zoomProgress = `${Math.max(0, Math.min(100, ((zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)) * 100))}%`
+  const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
   const postSeqRef = useRef(0)
+
+  // Directions: the active route, the routing profile, whether we're mid
+  // eye-level navigation, the current turn banner, and a routing-in-flight flag.
+  const [route, setRoute] = useState<Route | null>(null)
+  const [dirProfile, setDirProfile] = useState<DirProfile>('driving')
+  const [navigating, setNavigating] = useState(false)
+  const [navBanner, setNavBanner] = useState<string | null>(null)
+  const [routing, setRouting] = useState(false)
+  const navCtlRef = useRef<NavController | null>(null)
+
+  // Fetch a route from the current map centre → the tapped point, draw the clay
+  // ribbon, and frame the whole route (regular directions overview).
+  const requestDirections = React.useCallback(async (dest: [number, number], profile: DirProfile) => {
+    const map = mapRef.current
+    if (!map) return
+    setRouting(true)
+    const origin = map.getCenter()
+    const r = await fetchRoute(profile, [origin.lng, origin.lat], dest, token)
+    setRouting(false)
+    if (!r) { setNavBanner('No route found'); window.setTimeout(() => setNavBanner(null), 2200); return }
+    setRoute(r)
+    setRouteData(map, r.coords)
+    frameRoute(map, r)
+    playPop()
+  }, [mapRef, token])
+
+  const stopNav = React.useCallback(() => {
+    navCtlRef.current?.stop()
+    navCtlRef.current = null
+    setNavigating(false)
+    setNavBanner(null)
+    const map = mapRef.current as unknown as { __cinematic?: boolean } | null
+    if (map) map.__cinematic = false
+  }, [mapRef])
+
+  const clearDirections = React.useCallback(() => {
+    stopNav()
+    const map = mapRef.current
+    if (map) clearRoute(map)
+    setRoute(null)
+  }, [mapRef, stopNav])
+
+  // Enter eye-level navigation: fly the camera down the route at street level.
+  const startEyeLevelNav = React.useCallback(() => {
+    const map = mapRef.current
+    if (!map || !route) return
+    setNavigating(true)
+    playPop()
+    navCtlRef.current = playNavigation(map, route, {
+      onStep: (instruction) => setNavBanner(instruction || 'Continue'),
+      onDone: () => { setNavBanner('You have arrived'); window.setTimeout(stopNav, 2600) },
+    })
+  }, [mapRef, route, stopNav])
 
   useEffect(() => {
     streetViewRef.current = streetView
@@ -460,6 +535,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       projection: 'globe',
     })
     mapRef.current = map
+    // Mapbox 3.7 exposes FOV through the camera transform rather than a
+    // public map.setFov() method.
+    map.transform.fov = FOV_DEFAULT
     if (import.meta.env.DEV) (window as unknown as { __map?: mapboxgl.Map }).__map = map
 
     // ── Zoom slider sync ──────────────────────────────────────────────────────
@@ -511,6 +589,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (orbitRaf) { cancelAnimationFrame(orbitRaf); orbitRaf = 0 }
     }
     stopOrbitRef.current = stopOrbit
+    ;(map as unknown as { __stopOrbit?: () => void }).__stopOrbit = stopOrbit
     const startOrbit = () => {
       stopOrbit()
       const spin = () => {
@@ -549,8 +628,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       stopOrbit()
       ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
       if (enabled) {
-        map.setMinPitch(72)
+        map.setMaxZoom(STREET_VIEW_MAX_ZOOM)
         map.setMaxPitch(85)
+        map.setMinPitch(72)
         map.easeTo({
           zoom: Math.max(map.getZoom(), 18.9),
           pitch: 82,
@@ -561,6 +641,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       } else {
         map.setMinPitch(55)
         map.setMaxPitch(70)
+        map.once('moveend', () => {
+          if (!streetViewRef.current) map.setMaxZoom(ZOOM_MAX)
+        })
         map.easeTo({
           zoom: Math.min(Math.max(map.getZoom(), 17.4), ZOOM_MAX),
           pitch: 62,
@@ -595,7 +678,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const enforceHybridPitch = () => {
       if ((map as unknown as { __cinematic?: boolean }).__cinematic) return
       if ((map as unknown as { __streetView?: boolean }).__streetView) {
-        if (map.getMinPitch() !== 72) { map.setMinPitch(72); map.setMaxPitch(85) }
+        if (map.getMaxZoom() !== STREET_VIEW_MAX_ZOOM) map.setMaxZoom(STREET_VIEW_MAX_ZOOM)
+        if (map.getMinPitch() !== 72) { map.setMaxPitch(85); map.setMinPitch(72) }
         return
       }
       if (map.getZoom() >= HYBRID_ZOOM) {
@@ -869,8 +953,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             'icon-size': ['interpolate', ['linear'], ['zoom'], 12.5, 0.15, 17, 0.28, 19, 0.42],
             'icon-rotate': ['get', 'bearing'],
             'icon-rotation-alignment': 'map',
-            // Depth-tested against the clay towers: cars on streets behind
-            // buildings are hidden instead of painting through them.
+            // REQUIRED in the v3 Standard 3D scene: without z-elevate, ground
+            // symbols are not drawn at all. It also depth-tests the cars against
+            // the clay towers, so cars on streets behind buildings are hidden
+            // instead of painting through them.
+            'symbol-z-elevate': true,
             'icon-pitch-alignment': 'map',
             // Moving markers must skip the collision pass — re-placement each
             // frame reads as flashing.
@@ -1385,6 +1472,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // Land-claim territory + tap-to-post: a tap on empty ground opens the
       // composer; the dropped post claims land (a clay disc sized by its km).
       installClaimsLayer(map, 'clay-buildings-3d')
+      installRouteLayers(map, 'clay-buildings-3d')
       map.on('click', (e) => {
         // Any tap on the map opens the composer. POI pins are separate DOM
         // markers with their own handlers; the invisible emoji-loader circles
@@ -1425,18 +1513,39 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           })
         } else if (zoom >= 12.5) {
           if (carPaths.length && map.hasImage('poplur-car')) {
-            const features = CARS.map((car, i) => {
-            const path = carPaths[(car.route + i * 3) % carPaths.length]
-            const { pos, bearing } = pointAlongRoute(path, car.offset + t * car.speed)
-              return {
-                type: 'Feature' as const,
-                geometry: { type: 'Point' as const, coordinates: pos },
-                properties: { bearing },
+            // Traffic: several cars per harvested road, staggered along it with
+            // per-car speed jitter so they bunch, pass and overlap like real
+            // flow. Fast, and capped so dense downtowns don't overwhelm.
+            const carsPerRoad = 3
+            const container = map.getContainer()
+            const ccx = container.clientWidth / 2
+            const ccy = container.clientHeight / 2
+            let nearest = Infinity
+            const features: Array<{ type: 'Feature'; geometry: { type: 'Point'; coordinates: [number, number] }; properties: { bearing: number } }> = []
+            for (let r = 0; r < carPaths.length && features.length < 42; r++) {
+              const path = carPaths[r]
+              for (let k = 0; k < carsPerRoad; k++) {
+                const seed = r * 7 + k * 13
+                const speed = 0.05 + ((seed % 5) * 0.012)      // fast, varied
+                const dir = (r + k) % 2 === 0 ? 1 : -1          // both ways on the road
+                const phase = (k / carsPerRoad) + (seed % 100) / 400
+                const { pos, bearing } = pointAlongRoute(path, phase + dir * t * speed)
+                features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: pos }, properties: { bearing: bearing + (dir < 0 ? 180 : 0) } })
+                // Track the closest car to the lens centre for the engine sound.
+                const sp = map.project(pos)
+                const d = Math.hypot(sp.x - ccx, sp.y - ccy)
+                if (d < nearest) nearest = d
               }
-            })
+            }
             setCarFeatures(features)
+            // Engines swell only at street level; proximity 1 when a car is ~in
+            // the centre, fading out past ~40% of the screen height away.
+            const reach = container.clientHeight * 0.42
+            const near = Math.max(0, 1 - nearest / reach)
+            setCarProximity(zoom >= 14.5 ? near : 0)
           } else {
             setCarFeatures([])
+            setCarProximity(0)
           }
           CITY_BOATS.forEach((boat, i) => {
             const marker = boatMarkersRef.current[i]
@@ -1448,6 +1557,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           })
         } else {
           setCarFeatures([])
+          setCarProximity(0)
         }
       }
       flyerRaf = requestAnimationFrame(animateFlyers)
@@ -1536,6 +1646,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       window.clearInterval(bootPoll)
       stopOrbit()
       if (flyerRaf) cancelAnimationFrame(flyerRaf)
+      stopCarAudio()
       popRafs.forEach(raf => cancelAnimationFrame(raf))
       popRafs.clear()
       ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, landmarkMarkersRef].forEach(ref => {
@@ -1604,11 +1715,24 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     mapRef.current?.setZoom(v)
   }
 
+  const handleFovInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const next = Math.max(FOV_MIN, Math.min(FOV_MAX, parseFloat(e.target.value)))
+    setFovValue(next)
+    const map = mapRef.current
+    if (!map) return
+    map.transform.fov = next
+    map.triggerRepaint()
+  }
+
   // "Fly through the clouds": while the camera crosses the 4.75–8.25 zoom
   // band, claymation clouds sweep past the edges of the lens. They hug the
   // borders and stay translucent so the map is never fully blanked out.
   const cloudBand = Math.max(0, 1 - Math.abs((zoomValue - 6.5) / 1.75))
   const cloudScale = 0.7 + Math.max(0, zoomValue - 4.75) * 0.4
+  // Automatic depth of field: the closer the camera gets to the city, the
+  // stronger the soft focus becomes outside the center focal band.
+  const depthOfField = Math.max(0, Math.min(1, (zoomValue - 8.5) / (ZOOM_MAX - 8.5)))
+  const depthBlur = `${(1.5 + depthOfField * 5).toFixed(1)}px`
 
   return (
     <>
@@ -1621,6 +1745,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         </>
       )}
       <div className={styles.vignette} style={REALISTIC_MAP ? { opacity: 0.4 } : undefined} aria-hidden="true" />
+      {!REALISTIC_MAP && (
+        <div
+          className={styles.depthOfField}
+          style={{ '--dofBlur': depthBlur, '--dofOpacity': 0.12 + depthOfField * 0.7 } as React.CSSProperties}
+          aria-hidden="true"
+        />
+      )}
 
       {/* Clay sun by day / clay moon by night, hanging in space beside the globe */}
       {zoomValue < 5.5 && (
@@ -1690,7 +1821,69 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
               Drop pop
             </button>
           </div>
+          <button
+            type="button"
+            className={styles.composeDirections}
+            disabled={routing}
+            onClick={() => {
+              const dest: [number, number] = [composeAt.lng, composeAt.lat]
+              setComposeAt(null)
+              void requestDirections(dest, dirProfile)
+            }}
+          >
+            {routing ? 'Routing…' : '➤ Directions here'}
+          </button>
         </div>
+      )}
+
+      {/* Turn banner — shows the current maneuver during eye-level navigation. */}
+      {navBanner && (
+        <div className={styles.navBanner}>{navBanner}</div>
+      )}
+
+      {/* Route summary card: distance + ETA, walk/drive toggle, and the two
+          ways to travel it — eye-level navigation or clearing the route. */}
+      {route && !navigating && (
+        <div className={styles.routeCard}>
+          <div className={styles.routeStats}>
+            <strong>{(route.distanceM / 1000).toFixed(1)} km</strong>
+            <span>·</span>
+            <strong>{Math.max(1, Math.round(route.durationS / 60))} min</strong>
+            <span className={styles.routeProfileName}>{dirProfile}</span>
+          </div>
+          <div className={styles.routeProfiles}>
+            {(['driving', 'walking', 'cycling'] as DirProfile[]).map(p => (
+              <button
+                key={p}
+                type="button"
+                className={p === dirProfile ? styles.routeProfileOn : styles.routeProfile}
+                onClick={() => {
+                  setDirProfile(p)
+                  // Re-route with the new profile, keeping the same destination.
+                  const dest = route.coords[route.coords.length - 1]
+                  void requestDirections(dest, p)
+                }}
+              >
+                {p === 'driving' ? '🚗' : p === 'walking' ? '🚶' : '🚲'}
+              </button>
+            ))}
+          </div>
+          <div className={styles.routeActions}>
+            <button type="button" className={styles.routeClear} onClick={clearDirections}>
+              Clear
+            </button>
+            <button type="button" className={styles.routeStart} onClick={startEyeLevelNav}>
+              ➤ Start eye-level
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* During navigation: a single End button (the banner carries the turns). */}
+      {navigating && (
+        <button type="button" className={styles.navEnd} onClick={stopNav}>
+          End
+        </button>
       )}
 
       {/* Clay zoom slider — bottom-right, street level at the top, globe at the
@@ -1699,7 +1892,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       <div
         className={styles.zoomWrap}
         key={`thumb-${zoomStage.id}-${popTick}`}
-        style={{ '--zoomThumb': zoomSprites[zoomStage.id] ? `url("${zoomSprites[zoomStage.id]}")` : 'none' } as React.CSSProperties}
+        style={{
+          '--zoomThumb': zoomSprites[zoomStage.id] ? `url("${zoomSprites[zoomStage.id]}")` : 'none',
+          '--zoomProgress': zoomProgress,
+        } as React.CSSProperties}
       >
         <input
           type="range"
@@ -1712,6 +1908,27 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           onPointerDown={() => stopOrbitRef.current()}
           aria-label="Zoom"
         />
+      </div>
+
+      {/* Perspective control: widen the lens for a more expansive toy world,
+          or narrow it for a tighter street-level view. */}
+      <div
+        className={styles.fovWrap}
+        style={{ '--fovProgress': fovProgress } as React.CSSProperties}
+      >
+        <span className={styles.fovLabel}>FOV</span>
+        <input
+          type="range"
+          className={styles.fov}
+          min={FOV_MIN}
+          max={FOV_MAX}
+          step={1}
+          value={fovValue}
+          onChange={handleFovInput}
+          aria-label="Field of view"
+          title="Field of view"
+        />
+        <output className={styles.fovValue}>{Math.round(fovValue)}°</output>
       </div>
     </>
   )

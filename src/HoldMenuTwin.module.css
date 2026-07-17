@@ -1,128 +1,175 @@
-/* Web twin of CubeHoldMenuOverlay.swift */
+/* Web twin of CubeMenuWheelOverlay.swift — the curved vertical hold-menu wheel.
+   Palette ported 1:1: neonPink rgb(255,20,140) · cardBg rgb(13,8,20). */
 
 .stage {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  touch-action: none;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  animation: menuIn 0.36s cubic-bezier(0.34, 1.4, 0.64, 1) both;
 }
 
-/* Dimmed backdrop (iOS: Color.black.opacity(0.50)) over a deep clay-purple */
+/* Dark backdrop (iOS: black 0.88) */
 .backdrop {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(120% 90% at 50% 62%, rgba(42, 0, 51, 0.55), rgba(8, 4, 12, 0.86)),
-    rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.88);
 }
 
-/* The pressed cube glowing under the menu */
-.cubeGhost {
+/* Radial pink glow behind the wheel (rgb(140,5,71) 0.55 → clear) */
+.pinkGlow {
   position: absolute;
   left: 50%;
-  bottom: 8%;
-  width: 180px;
-  height: 180px;
-  transform: translateX(-50%);
-  background: radial-gradient(circle at 50% 50%, rgba(246, 59, 154, 0.5), transparent 62%);
-  filter: blur(6px);
+  top: 46%;
+  width: 130%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at center, rgba(140, 5, 71, 0.55), transparent 65%);
   pointer-events: none;
 }
 
-/* The wheel card */
-.card {
+@keyframes menuIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* The scrub surface fills the stage; tiles are absolutely placed within it. */
+.wheel {
   position: absolute;
-  /* sit left of centre so the SCRUB hint on the right stays clear of tiles */
-  left: 46%;
-  top: 46%;
-  transform: translate(-50%, -50%);
-  max-width: calc(100% - 54px);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px;
-  border-radius: 22px;
-  background: rgba(20, 8, 24, 0.82);
-  border: 1.5px solid rgba(246, 59, 154, 0.4);
-  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  inset: 0;
+  cursor: grab;
 }
+.wheel:active { cursor: grabbing; }
 
-.row {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-}
-
-/* Glossy 3D icon tile + label */
-.tile, .tileOn {
+/* A wheel tile: absolutely positioned, transform carries arc offset/rotation/scale.
+   The center X is 50%; the JS transform adds the arc bow to the right. */
+.tile {
+  position: absolute;
+  left: 50%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  min-width: 62px;
-  padding: 9px 8px;
+  gap: 7px;
   border: none;
-  border-radius: 16px;
+  background: none;
+  padding: 0;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.04);
-  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+  will-change: transform, opacity;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.tile:active { transform: scale(0.95); }
-
-.tileOn {
-  background: rgba(246, 59, 154, 0.16);
-  box-shadow: 0 0 0 2px #F63B9A, 0 0 0 5px rgba(246, 59, 154, 0.28), 0 6px 18px rgba(246, 59, 154, 0.35);
-  transform: scale(1.06);
+/* Icon plate — rounded 20, neon-pink stroke, glow shadow. */
+.iconBox, .iconBoxOn {
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-.tileIcon {
-  width: 46px;
-  height: 46px;
+/* The icon PNGs are normalized to uniform black squares with the object centred
+   at ~80% fill, so the frame here is just the neon selection ring hugging the
+   tile — no padding, no second background. */
+.iconBox {
+  border: 1.5px solid rgba(255, 20, 140, 0.35);
+  box-shadow: 0 0 6px rgba(255, 20, 140, 0.18);
+}
+
+.iconBoxOn {
+  border: 2.5px solid #ff148c;
+  box-shadow: 0 0 16px rgba(255, 20, 140, 0.65);
+}
+
+.icon {
+  width: 100%;
+  height: 100%;
   object-fit: contain;
-  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
+  object-position: center;
   user-select: none;
   -webkit-user-drag: none;
 }
 
-.tileLabel {
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.3px;
-  color: rgba(255, 242, 248, 0.9);
+.label, .labelOn {
+  font-weight: 900;
+  letter-spacing: 0.6px;
   white-space: nowrap;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
 }
 
-.tileOn .tileLabel { color: #FF8AC6; }
+.label {
+  font-size: 11px;
+  color: #ffffff;
+}
+
+.labelOn {
+  font-size: 13px;
+  color: #ff148c;
+}
 
 /* SCRUB ↕ hint on the right edge */
 .scrub {
   position: absolute;
-  right: 16px;
+  right: 18px;
   top: 46%;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 12px 8px;
+  gap: 8px;
+  width: 34px;
+  padding: 13px 0;
+  box-sizing: border-box;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(255, 20, 140, 0.12), transparent 28% 72%, rgba(255, 20, 140, 0.12)),
+    rgba(13, 8, 20, 0.9);
+  border: 1.5px solid rgba(255, 20, 140, 0.86);
+  color: #ff8ac6;
+  box-shadow:
+    inset 0 0 12px rgba(255, 20, 140, 0.13),
+    0 0 8px rgba(255, 20, 140, 0.38),
+    0 0 20px rgba(255, 20, 140, 0.18);
   pointer-events: none;
+  z-index: 50;
 }
 
-.scrubChev { font-size: 18px; font-weight: 900; line-height: 0.6; }
+.scrubChev {
+  color: #ff148c;
+  font-size: 17px;
+  font-weight: 950;
+  line-height: 0.55;
+  text-shadow: 0 0 8px rgba(255, 20, 140, 0.9);
+}
 
 .scrubText {
   font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 1px;
+  font-weight: 950;
+  letter-spacing: 1.35px;
   writing-mode: vertical-rl;
   transform: rotate(180deg);
+  text-shadow: 0 0 7px rgba(255, 20, 140, 0.7);
+}
+
+/* Neon-pink close button at ~88% height */
+.closeBtn {
+  position: absolute;
+  left: 50%;
+  top: 88%;
+  transform: translate(-50%, -50%);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #ff148c;
+  font-size: 20px;
+  font-weight: 900;
+  background: rgb(13, 8, 20);
+  border: 2px solid #ff148c;
+  box-shadow: 0 0 14px rgba(255, 20, 140, 0.5);
+  pointer-events: none;
+  z-index: 50;
 }
 
 /* Context switcher (dev only — the app derives this from the active tab) */
@@ -138,13 +185,14 @@
   background: rgba(12, 12, 14, 0.82);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  z-index: 60;
 }
 
 .tab, .tabOn {
   appearance: none;
-  border: 1px solid rgba(246, 59, 154, 0.35);
+  border: 1px solid rgba(255, 20, 140, 0.35);
   background: transparent;
-  color: #FFF2F8;
+  color: #fff2f8;
   font-family: inherit;
   font-size: 11px;
   font-weight: 700;
@@ -153,4 +201,97 @@
   cursor: pointer;
 }
 
-.tabOn { background: #F63B9A; border-color: #F63B9A; color: #16060f; }
+.tabOn { background: #ff148c; border-color: #ff148c; color: #16060f; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stage { animation: none; }
+}
+
+/* Local hold-menu editor. It deliberately sits above the twin so the preview
+   remains visible around the translucent work surface. */
+.editButton, .editButtonOn {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 110;
+  border: 1px solid rgba(255, 20, 140, 0.7);
+  border-radius: 999px;
+  padding: 8px 13px;
+  background: rgba(13, 8, 20, 0.86);
+  color: #ff8ac6;
+  font: 900 11px/1 inherit;
+  letter-spacing: 0.8px;
+  cursor: pointer;
+  box-shadow: 0 0 12px rgba(255, 20, 140, 0.28);
+}
+
+.editButtonOn { background: #ff148c; color: #16060f; }
+
+.editor {
+  position: absolute;
+  inset: 58px 12px 68px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid rgba(255, 20, 140, 0.55);
+  border-radius: 22px;
+  background: rgba(10, 6, 14, 0.94);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.75), 0 0 30px rgba(255, 20, 140, 0.18);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  touch-action: pan-y;
+}
+
+.editorHeader, .editorFooter, .editorRow, .rowActions {
+  display: flex;
+  align-items: center;
+}
+
+.editorHeader { justify-content: space-between; margin-bottom: 12px; }
+.editorHeader h2 { margin: 2px 0 0; color: #fff; font-size: 20px; }
+.editorEyebrow, .savedStatus { color: #ff8ac6; font-size: 9px; font-weight: 900; letter-spacing: 1.2px; }
+.savedStatus { color: rgba(255, 255, 255, 0.5); letter-spacing: 0.3px; }
+
+.editorList { min-height: 0; overflow-y: auto; display: grid; gap: 8px; padding-right: 2px; }
+
+.editorRow {
+  gap: 9px;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.editorRow > img { width: 38px; height: 38px; border-radius: 9px; object-fit: contain; background: #050307; }
+.editorFields { min-width: 0; flex: 1; display: grid; gap: 5px; }
+
+.editorFields input, .editorFields select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 20, 140, 0.28);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  padding: 6px 8px;
+  font: 800 10px/1.1 inherit;
+}
+
+.editorFields select { color: #ffb0d8; font-weight: 700; }
+.rowActions { gap: 4px; }
+.rowActions button, .editorFooter button {
+  border: 1px solid rgba(255, 20, 140, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 20, 140, 0.11);
+  color: #ff8ac6;
+  font: 900 13px/1 inherit;
+  cursor: pointer;
+}
+.rowActions button { width: 27px; height: 27px; padding: 0; }
+.rowActions button:disabled { opacity: 0.25; cursor: default; }
+
+.editorFooter { justify-content: space-between; gap: 8px; padding-top: 12px; }
+.editorFooter button { padding: 8px 11px; font-size: 10px; letter-spacing: 0.4px; }
+.editorFooter .resetButton { color: rgba(255, 255, 255, 0.58); border-color: rgba(255, 255, 255, 0.15); background: transparent; }

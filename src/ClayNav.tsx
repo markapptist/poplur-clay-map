@@ -15,6 +15,10 @@ interface ClayNavProps {
   mapRef: React.MutableRefObject<mapboxgl.Map | null>
   token: string
   theme: MapTheme
+  /** Stable launch/current-location origin; never the roaming tour camera. */
+  routeOrigin: LngLat
+  /** Pauses any autonomous camera motion before routing or driving. */
+  onRouteIntent?: () => void
   streetView: boolean
   setStreetView: (on: boolean) => void
   /** Show a line in the AI ticker (mirrors the Poplur AI voice). */
@@ -25,6 +29,7 @@ type Mode = 'idle' | 'searching' | 'preview' | 'navigating' | 'arrived'
 type LngLat = [number, number]
 interface Step { at: number; text: string; type: string; name: string }
 interface Route { coords: LngLat[]; cum: number[]; distance: number; duration: number; steps: Step[] }
+interface Destination { center: LngLat; name: string }
 
 const SRC = 'clay-nav-route'
 const ANNOUNCE_M = 140   // speak the upcoming turn this far out
@@ -66,12 +71,73 @@ function fmtEta(sec: number): string {
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} min`
 }
 
+async function findDestination(query: string, origin: LngLat, token: string): Promise<Destination | null> {
+  const sessionToken = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  try {
+    const suggestResponse = await fetch(
+      'https://api.mapbox.com/search/searchbox/v1/suggest' +
+      `?q=${encodeURIComponent(query)}&proximity=${origin[0]},${origin[1]}` +
+      `&language=en&limit=8&session_token=${sessionToken}&access_token=${token}`,
+    )
+    const suggestJson = await suggestResponse.json() as {
+      suggestions?: Array<{ mapbox_id?: string; name?: string; full_address?: string }>
+    }
+    if (!suggestResponse.ok) throw new Error('Place search failed')
+    const suggestion = suggestJson.suggestions?.find(item => item.mapbox_id)
+    if (!suggestion?.mapbox_id) return null
+
+    const retrieveResponse = await fetch(
+      `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(suggestion.mapbox_id)}` +
+      `?session_token=${sessionToken}&access_token=${token}`,
+    )
+    const retrieveJson = await retrieveResponse.json() as {
+      features?: Array<{
+        geometry?: { coordinates?: LngLat }
+        properties?: { name?: string; full_address?: string }
+      }>
+    }
+    if (!retrieveResponse.ok) throw new Error('Place details failed')
+    const feature = retrieveJson.features?.[0]
+    const center = feature?.geometry?.coordinates
+    if (!center || !Number.isFinite(center[0]) || !Number.isFinite(center[1])) return null
+    const placeName = feature.properties?.name || suggestion.name || query
+    const address = feature.properties?.full_address || suggestion.full_address
+    return { center, name: address ? `${placeName}, ${address}` : placeName }
+  } catch {
+    // Older native bundles may not have Search Box access, so retain a
+    // geocoding fallback while keeping the proximity hint.
+    const geoResponse = await fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
+      `?proximity=${origin[0]},${origin[1]}&limit=1&access_token=${token}`,
+    )
+    const geo = await geoResponse.json() as {
+      features?: Array<{ center: LngLat; text?: string; place_name?: string }>
+    }
+    if (!geoResponse.ok) throw new Error('Address search is unavailable right now.')
+    const feature = geo.features?.[0]
+    return feature
+      ? { center: feature.center, name: feature.place_name || feature.text || query }
+      : null
+  }
+}
+
+function directionsError(message?: string, code?: string): string {
+  if (/maximum distance|too far/i.test(message ?? '')) {
+    return 'That result is too far away to route. Try adding a city, postal code, or street address.'
+  }
+  if (code === 'NoRoute') return 'No drivable route was found from your location to that address.'
+  return 'Directions are unavailable right now. Please try again.'
+}
+
 const MANEUVER_ICON: Record<string, string> = {
   left: 'M12 20V8m0 0-5 5m5-5 5 5', right: 'M12 20V8m0 0-5 5m5-5 5 5',
   straight: 'M12 20V5m0 0-4 4m4-4 4 4', arrive: 'M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11Z',
 }
 
-export default function ClayNav({ mapRef, token, theme, streetView, setStreetView, say }: ClayNavProps) {
+export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteIntent, streetView, setStreetView, say }: ClayNavProps) {
   const [mode, setMode] = useState<Mode>('idle')
   const [query, setQuery] = useState('')
   const [destName, setDestName] = useState('')
@@ -79,6 +145,7 @@ export default function ClayNav({ mapRef, token, theme, streetView, setStreetVie
   const [banner, setBanner] = useState<{ text: string; dist: number; type: string } | null>(null)
   const [remain, setRemain] = useState<{ dist: number; eta: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isRouting, setIsRouting] = useState(false)
 
   const carRef = useRef<mapboxgl.Marker | null>(null)
   const destMarkRef = useRef<mapboxgl.Marker | null>(null)
@@ -130,26 +197,45 @@ export default function ClayNav({ mapRef, token, theme, streetView, setStreetVie
   // ---- fetch a route to the typed destination ----
   const search = useCallback(async () => {
     const map = mapRef.current
-    if (!map || !query.trim()) return
+    if (!query.trim() || isRouting) return
+    if (!map) {
+      setError('The map is still loading. Try again in a moment.')
+      return
+    }
+    onRouteIntent?.()
     setError(null)
-    setMode('searching')
-    const c = map.getCenter()
-    const origin: LngLat = [c.lng, c.lat]
+    setIsRouting(true)
+    const origin: LngLat = routeOrigin
     try {
-      const geo = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
-        `?proximity=${origin[0]},${origin[1]}&limit=1&access_token=${token}`,
-      ).then(r => r.json())
-      const feat = geo.features?.[0]
-      if (!feat) { setError('No place found. Try another name.'); setMode('idle'); return }
-      const dest: LngLat = feat.center
-      const dir = await fetch(
+      const destination = await findDestination(query.trim(), origin, token)
+      if (!destination) { setError('No place found. Try another name or a full address.'); return }
+      const dest = destination.center
+      const directionsResponse = await fetch(
         `https://api.mapbox.com/directions/v5/mapbox/driving/${origin[0]},${origin[1]};${dest[0]},${dest[1]}` +
         `?geometries=geojson&overview=full&steps=true&access_token=${token}`,
-      ).then(r => r.json())
+      )
+      const dir = await directionsResponse.json() as {
+        code?: string
+        message?: string
+        routes?: Array<{
+          geometry: { coordinates: LngLat[] }
+          distance: number
+          duration: number
+          legs?: Array<{ steps?: Array<{
+            maneuver: { instruction: string; type: string; modifier?: string }
+            name: string
+            distance: number
+          }> }>
+        }>
+      }
+      if (!directionsResponse.ok) throw new Error(directionsError(dir.message, dir.code))
       const leg = dir.routes?.[0]
-      if (!leg) { setError('No route found from here.'); setMode('idle'); return }
+      if (!leg) {
+        setError(directionsError(dir.message, dir.code))
+        return
+      }
       const coords = leg.geometry.coordinates as LngLat[]
+      if (coords.length < 2) { setError('That route did not include a usable path.'); return }
       const cum = [0]
       for (let i = 1; i < coords.length; i++) cum.push(cum[i - 1] + haversine(coords[i - 1], coords[i]))
       // maneuver distance = start of each step; instruction text from the API
@@ -162,7 +248,7 @@ export default function ClayNav({ mapRef, token, theme, streetView, setStreetVie
       })
       const r: Route = { coords, cum, distance: leg.distance, duration: leg.duration, steps }
       setRoute(r)
-      setDestName(feat.text || feat.place_name || query)
+      setDestName(destination.name)
 
       // draw the clay artery + endpoints
       removeRouteLayers()
@@ -189,16 +275,20 @@ export default function ClayNav({ mapRef, token, theme, streetView, setStreetVie
       const b = coords.reduce((acc2, p) => acc2.extend(p), new mapboxgl.LngLatBounds(coords[0], coords[0]))
       map.fitBounds(b, { padding: 90, pitch: 40, duration: 1400 })
       setMode('preview')
-    } catch {
-      setError('Directions unavailable (check the network/token).')
-      setMode('idle')
+    } catch (cause) {
+      setError(cause instanceof Error && cause.message
+        ? cause.message
+        : 'Directions are unavailable right now. Please try again.')
+    } finally {
+      setIsRouting(false)
     }
-  }, [mapRef, query, token, theme, removeRouteLayers])
+  }, [mapRef, query, isRouting, onRouteIntent, routeOrigin, token, theme, removeRouteLayers])
 
   // ---- drive the route ----
   const start = useCallback(() => {
     const map = mapRef.current
     if (!map || !route) return
+    onRouteIntent?.()
     setStreetView(true)                 // clay street-view context (label culling)
     setMode('navigating')
     spokenRef.current.clear()
@@ -252,7 +342,7 @@ export default function ClayNav({ mapRef, token, theme, streetView, setStreetVie
       }
       rafRef.current = requestAnimationFrame(tick)
     })
-  }, [mapRef, route, destName, setStreetView, speak])
+  }, [mapRef, route, destName, onRouteIntent, setStreetView, speak])
 
   const end = useCallback(() => {
     teardown()
@@ -266,23 +356,29 @@ export default function ClayNav({ mapRef, token, theme, streetView, setStreetVie
   return (
     <div className={styles.wrap}>
       {mode === 'idle' && (
-        <button type="button" className={styles.fab} onClick={() => setMode('searching')} aria-label="Directions">
+        <button type="button" className={styles.fab} onClick={() => { onRouteIntent?.(); setError(null); setMode('searching') }} aria-label="Directions">
           <svg viewBox="0 0 24 24" width="22" height="22"><path d="M21.7 11.3 12.7 2.3a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4ZM10 15v-3H8v2H6v-4a1 1 0 0 1 1-1h3V6l4 4Z" fill="currentColor"/></svg>
           <span>Directions</span>
         </button>
       )}
 
       {mode === 'searching' && (
-        <form className={styles.searchCard} onSubmit={e => { e.preventDefault(); void search() }}>
+        <form className={styles.searchCard} aria-busy={isRouting} onSubmit={e => { e.preventDefault(); void search() }}>
           <input
-            autoFocus value={query} onChange={e => setQuery(e.target.value)}
+            autoFocus required value={query} disabled={isRouting}
+            onChange={e => { setQuery(e.target.value); setError(null) }}
+            onKeyDown={e => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              void search()
+            }}
             placeholder="Where to?" className={styles.searchInput}
           />
           <div className={styles.searchRow}>
-            <button type="button" className={styles.ghostBtn} onClick={() => { setMode('idle'); setError(null) }}>Cancel</button>
-            <button type="submit" className={styles.goBtn}>Search</button>
+            <button type="button" className={styles.ghostBtn} disabled={isRouting} onClick={() => { setMode('idle'); setError(null) }}>Cancel</button>
+            <button type="submit" className={styles.goBtn} disabled={isRouting}>{isRouting ? 'Routing…' : 'Search'}</button>
           </div>
-          {error && <div className={styles.err}>{error}</div>}
+          {error && <div className={styles.err} role="alert" aria-live="polite">{error}</div>}
         </form>
       )}
 

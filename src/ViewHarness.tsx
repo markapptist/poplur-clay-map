@@ -47,6 +47,11 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
+  useEffect(() => {
+    document.title = `Poplur — ${VIEW_LABELS[view]}`
+    return () => { document.title = 'Poplur — Post-login' }
+  }, [view])
+
   const setHarnessView = (next: HarnessView) => {
     if (next === view) return
     window.location.hash = next
@@ -71,7 +76,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
       case 'profile':
         return <ProfileTwin />
       case 'holdmenu':
-        return <HoldMenuTwin />
+        return <HoldMenuTwin onOpen={setHarnessView} />
     }
   }, [cameraMode, isRecording, view])
 
@@ -97,7 +102,9 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
         )}
 
         <main className={styles.viewport} aria-label={`${VIEW_LABELS[view]} test view`}>
-          {screen}
+          <div key={view} className={styles.screenSurface}>
+            {screen}
+          </div>
         </main>
 
         {view !== 'home' && view !== 'holdmenu' && <BottomCubeNav active={view} onSelect={setHarnessView} />}
@@ -189,4 +196,3 @@ function CameraHarness({
     </section>
   )
 }
-

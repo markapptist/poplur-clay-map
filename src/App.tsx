@@ -348,6 +348,7 @@ const WEATHER_PREVIEW: { mode: WeatherMode; label: string }[] = [
 
 // Keep every app-driven street flight close enough that 3D buildings are visible.
 const BUILDING_REVEAL_ZOOM = 16.2 // matches ClayMap ZOOM_MAX cap
+const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
 const TOUR_FLIGHT_MS = 6200
 const TOUR_DWELL_MS = 5 * 60 * 1000
 
@@ -411,6 +412,9 @@ export default function App() {
   // Whether the app's music / AI voice is currently audible
   const [soundPlaying, setSoundPlaying] = useState(false)
   const [streetView, setStreetView] = useState(false)
+  // Routing must follow the user/launch location, not the AI tour camera. The
+  // camera may be visiting another continent when an address is entered.
+  const [navigationOrigin, setNavigationOrigin] = useState<[number, number]>(DEFAULT_NAV_ORIGIN)
   const soundPlayingRef = useRef(false)
   const lastTourDestinationRef = useRef<string | null>(null)
   // Region dialect for the Poplur theme (would come from the located region;
@@ -585,6 +589,7 @@ export default function App() {
     navigator.geolocation.getCurrentPosition(
       position => {
         const center: [number, number] = [position.coords.longitude, position.coords.latitude]
+        setNavigationOrigin(center)
         setTourLine('Current location selected - checking nearby 3D buildings.')
         flyToCenter(center, 4600)
       },
@@ -655,6 +660,7 @@ export default function App() {
   }, [clearTourTimers, tourStep])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
+    if (landingCenter) setNavigationOrigin(landingCenter)
     if (tourStartedRef.current) return
     const nearest = landingCenter ? nearestTourDestination(landingCenter) : undefined
     setTourLine(nearest
@@ -662,6 +668,16 @@ export default function App() {
       : 'Poplur AI is finding the next landmark radio stop.')
     startTourLoop(1200, nearest)
   }, [startTourLoop])
+
+  const handleRouteIntent = useCallback(() => {
+    clearTourTimers()
+    const map = mapRef.current
+    if (!map) return
+    const mapApi = map as unknown as { __cinematic?: boolean; __stopOrbit?: () => void }
+    mapApi.__cinematic = false
+    mapApi.__stopOrbit?.()
+    map.stop()
+  }, [clearTourTimers])
 
   const handleSelectPoi = useCallback((id: string) => {
     setSelectedId(id)
@@ -712,6 +728,8 @@ export default function App() {
         mapRef={mapRef}
         token={TOKEN}
         theme={theme}
+        routeOrigin={navigationOrigin}
+        onRouteIntent={handleRouteIntent}
         streetView={streetView}
         setStreetView={setStreetView}
         say={setTourLine}

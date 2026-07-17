@@ -83,6 +83,9 @@
   color: #16060f;
   box-shadow: 0 0 18px rgba(246, 59, 154, 0.42);
 }
+.searchInput:disabled,
+.ghostBtn:disabled,
+.goBtn:disabled { opacity: 0.58; cursor: wait; }
 .err {
   margin-top: 8px;
   font-size: 13px;

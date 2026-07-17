@@ -9,10 +9,12 @@ import { playPop } from './pop'
 // fortune momentum. Physics ported 1:1 from CubeMenuWheelController.
 
 type Tab = 'map' | 'feed' | 'camera' | 'profile'
+type DestinationView = 'home' | 'feed' | 'camera' | 'profile'
 
 interface Item { icon: string; title: string }
+type MenuConfig = Record<Tab, Item[]>
 
-const MENUS: Record<Tab, Item[]> = {
+const DEFAULT_MENUS: MenuConfig = {
   map: [
     { icon: 'Directions', title: 'DIRECTIONS' },
     { icon: 'Search', title: 'LOCATE' },
@@ -46,6 +48,40 @@ const MENUS: Record<Tab, Item[]> = {
 }
 
 const TAB_LABELS: Record<Tab, string> = { map: 'Map', feed: 'Feed', camera: 'Camera', profile: 'Profile' }
+const TAB_DESTINATIONS: Record<Tab, DestinationView> = {
+  map: 'home',
+  feed: 'feed',
+  camera: 'camera',
+  profile: 'profile',
+}
+const TABS = Object.keys(DEFAULT_MENUS) as Tab[]
+const ICONS = [
+  'CameraRoll', 'Chat', 'Create', 'Directions', 'Games', 'Games_Alternate', 'Gifts',
+  'Home', 'Music', 'News', 'Phone', 'Search', 'Settings', 'Stats', 'Store',
+  'TVGuide', 'Tour', 'Wallet', 'YouTube',
+]
+const STORAGE_KEY = 'poplur.hold-menu.v1'
+
+const cloneDefaultMenus = (): MenuConfig =>
+  Object.fromEntries(TABS.map(tab => [tab, DEFAULT_MENUS[tab].map(item => ({ ...item }))])) as MenuConfig
+
+const loadMenus = (): MenuConfig => {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null') as Partial<MenuConfig> | null
+    if (!saved) return cloneDefaultMenus()
+    const menus = cloneDefaultMenus()
+    for (const tab of TABS) {
+      if (Array.isArray(saved[tab])) {
+        menus[tab] = saved[tab]!
+          .filter(item => item && typeof item.icon === 'string' && typeof item.title === 'string')
+          .map(item => ({ icon: item.icon, title: item.title }))
+      }
+    }
+    return menus
+  } catch {
+    return cloneDefaultMenus()
+  }
+}
 
 // Placeholder for icons that don't yet have a clay PNG in public/holdmenu/.
 // A navigation arrow in the app's clay pink; drop in the real Directions.png and
@@ -71,10 +107,12 @@ const CENTER_Y_FRAC = 0.46
 
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
-export default function HoldMenuTwin() {
+export default function HoldMenuTwin({ onOpen }: { onOpen: (view: DestinationView) => void }) {
   // Default to the camera context (we arrive here right after the camera tab).
   const [tab, setTab] = useState<Tab>('camera')
-  const items = MENUS[tab]
+  const [menus, setMenus] = useState<MenuConfig>(loadMenus)
+  const [isEditing, setIsEditing] = useState(false)
+  const items = menus[tab]
 
   const [offset, setOffset] = useState(0)      // continuous wheel position, item units
   const [selected, setSelected] = useState(0)  // item at center = round(offset)
@@ -89,6 +127,42 @@ export default function HoldMenuTwin() {
   const snapIndexRef = useRef<number | null>(null) // tap-to-spin target item
   const countRef = useRef(items.length)
   countRef.current = items.length
+
+  useEffect(() => {
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(menus)) } catch { /* embedded */ }
+  }, [menus])
+
+  const updateItem = (index: number, patch: Partial<Item>) => {
+    setMenus(current => ({
+      ...current,
+      [tab]: current[tab].map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item),
+    }))
+  }
+
+  const moveItem = (index: number, direction: -1 | 1) => {
+    setMenus(current => {
+      const next = [...current[tab]]
+      const target = index + direction
+      if (target < 0 || target >= next.length) return current
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return { ...current, [tab]: next }
+    })
+  }
+
+  const removeItem = (index: number) => {
+    setMenus(current => ({ ...current, [tab]: current[tab].filter((_, itemIndex) => itemIndex !== index) }))
+  }
+
+  const addItem = () => {
+    setMenus(current => ({
+      ...current,
+      [tab]: [...current[tab], { icon: 'Create', title: 'NEW ITEM' }],
+    }))
+  }
+
+  const resetTab = () => {
+    setMenus(current => ({ ...current, [tab]: DEFAULT_MENUS[tab].map(item => ({ ...item })) }))
+  }
 
   // Reset the wheel whenever the context (item set) changes.
   useEffect(() => {
@@ -237,6 +311,15 @@ export default function HoldMenuTwin() {
       <div className={styles.backdrop} />
       <div className={styles.pinkGlow} aria-hidden="true" />
 
+      <button
+        type="button"
+        className={isEditing ? styles.editButtonOn : styles.editButton}
+        onClick={() => setIsEditing(value => !value)}
+        aria-expanded={isEditing}
+      >
+        {isEditing ? 'DONE' : 'EDIT'}
+      </button>
+
       <div
         className={styles.wheel}
         onPointerDown={onPointerDown}
@@ -257,7 +340,7 @@ export default function HoldMenuTwin() {
           const size = on ? 104 : 88
           return (
             <button
-              key={it.title}
+              key={`${it.icon}-${it.title}-${index}`}
               data-index={index}
               className={styles.tile}
               style={{
@@ -300,13 +383,58 @@ export default function HoldMenuTwin() {
       {/* Close button (twin of the neon-pink xmark) */}
       <div className={styles.closeBtn} aria-hidden="true">✕</div>
 
-      {/* Context switcher (dev): the app derives this from the active tab */}
+      {isEditing && (
+        <section className={styles.editor} aria-label={`${TAB_LABELS[tab]} hold menu editor`}>
+          <header className={styles.editorHeader}>
+            <div>
+              <span className={styles.editorEyebrow}>EDITING</span>
+              <h2>{TAB_LABELS[tab]} menu</h2>
+            </div>
+            <span className={styles.savedStatus}>Saved locally</span>
+          </header>
+
+          <div className={styles.editorList}>
+            {items.map((item, index) => (
+              <div className={styles.editorRow} key={`edit-${index}`}>
+                <img src={`holdmenu/${item.icon}.png`} alt="" />
+                <div className={styles.editorFields}>
+                  <input
+                    aria-label={`Item ${index + 1} label`}
+                    value={item.title}
+                    maxLength={24}
+                    onChange={event => updateItem(index, { title: event.target.value.toUpperCase() })}
+                  />
+                  <select
+                    aria-label={`Item ${index + 1} icon`}
+                    value={item.icon}
+                    onChange={event => updateItem(index, { icon: event.target.value })}
+                  >
+                    {ICONS.map(icon => <option key={icon} value={icon}>{icon}</option>)}
+                  </select>
+                </div>
+                <div className={styles.rowActions}>
+                  <button type="button" onClick={() => moveItem(index, -1)} disabled={index === 0} aria-label={`Move item ${index + 1} up`}>↑</button>
+                  <button type="button" onClick={() => moveItem(index, 1)} disabled={index === items.length - 1} aria-label={`Move item ${index + 1} down`}>↓</button>
+                  <button type="button" onClick={() => removeItem(index)} aria-label={`Delete item ${index + 1}`}>−</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <footer className={styles.editorFooter}>
+            <button type="button" onClick={addItem}>+ ADD ITEM</button>
+            <button type="button" className={styles.resetButton} onClick={resetTab}>RESET TAB</button>
+          </footer>
+        </section>
+      )}
+
+      {/* View switcher. In edit mode it changes the menu being configured. */}
       <div className={styles.tabs}>
-        {(Object.keys(MENUS) as Tab[]).map(t => (
+        {TABS.map(t => (
           <button
             key={t}
             className={t === tab ? styles.tabOn : styles.tab}
-            onClick={() => setTab(t)}
+            onClick={() => isEditing ? setTab(t) : onOpen(TAB_DESTINATIONS[t])}
           >
             {TAB_LABELS[t]}
           </button>

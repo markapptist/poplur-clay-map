@@ -52,12 +52,12 @@
 }
 
 .counterLeft {
-  width: 150px;
+  width: 136px;
   align-items: flex-start;
 }
 
 .counterRight {
-  width: 150px;
+  width: 136px;
   align-items: flex-end;
 }
 
@@ -228,10 +228,10 @@
 .cubeWrap {
   position: absolute;
   left: 50%;
-  bottom: -4px;
+  bottom: 18px;
   transform: translateX(-50%);
-  width: 200px;
-  height: 200px;
+  width: 176px;
+  height: 176px;
   z-index: 30;
   -webkit-tap-highlight-color: transparent;
 }
@@ -322,7 +322,21 @@
 @media (prefers-reduced-motion: reduce) {
   .cubeFloat,
   .cubePop,
-  .trendArrow {
+  .trendArrow,
+  .unitFlip {
     animation: none;
   }
+}
+
+/* km ⇄ mi unit flip — the span is re-keyed each toggle so this replays */
+.unitFlip {
+  display: inline-block;
+  transform-origin: center bottom;
+  animation: unitFlip 0.42s ease;
+}
+
+@keyframes unitFlip {
+  0%   { opacity: 0; transform: translateY(-5px) rotateX(85deg); }
+  55%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0) rotateX(0); }
 }

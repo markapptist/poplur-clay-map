@@ -1,8 +1,10 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import { playPop } from './pop'
 import type { HarnessView } from './ViewHarness'
+
+const KM_TO_MI = 0.621371
 
 // Browser twin of the iOS Home screen (map tab state), rebuilt from
 // HomeView.swift + RecordingCountdownView.swift + RadiusNumberDisplayFIXED.swift.
@@ -29,6 +31,12 @@ const EARTH_RADIUS_KM = 6_371
 export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => void }) {
   const [activeTab, setActiveTab] = useState<CubeTab>('map')
   const [popping, setPopping] = useState(false)
+  // Radius units cycle km ⇄ mi continuously, like the app's radius display.
+  const [unitMi, setUnitMi] = useState(false)
+  useEffect(() => {
+    const iv = window.setInterval(() => setUnitMi(v => !v), 2500)
+    return () => window.clearInterval(iv)
+  }, [])
 
   const popCube = () => {
     playPop()
@@ -65,6 +73,7 @@ export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => vo
           onAnimationEnd={e => { if (e.animationName.includes('Pop')) setPopping(false) }}
         >
           <CubeTab3D
+            size={176}
             targetTab={activeTab}
             onFaceChange={setActiveTab}
             onTap={popCube}
@@ -77,15 +86,17 @@ export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => vo
       </div>
 
       <div className={styles.bottomRow}>
-        <TrendingCounter />
-        <RadiusCounter />
+        <TrendingCounter unitMi={unitMi} />
+        <RadiusCounter unitMi={unitMi} />
       </div>
     </section>
   )
 }
 
 // LEFT counter — RecordingCountdownView post-count state, trend up.
-function TrendingCounter() {
+function TrendingCounter({ unitMi }: { unitMi: boolean }) {
+  const radiusKm = RADIUS_METERS / 1000
+  const radius = unitMi ? radiusKm * KM_TO_MI : radiusKm
   return (
     <div className={styles.counterLeft}>
       <div className={styles.counterLabel}>TRENDING</div>
@@ -112,14 +123,17 @@ function TrendingCounter() {
         <span className={styles.postCount}>{POST_COUNT}</span>
       </div>
       <div className={styles.counterFooter}>
-        {POST_COUNT} posts · {(RADIUS_METERS / 1000).toFixed(1)} km
+        {POST_COUNT} posts · {radius.toFixed(1)} <span className={styles.unitFlip}>{unitMi ? 'mi' : 'km'}</span>
       </div>
     </div>
   )
 }
 
 // RIGHT counter — RadiusNumberDisplay. 41.8 km of 6,371 km ⇒ bronze rank.
-function RadiusCounter() {
+function RadiusCounter({ unitMi }: { unitMi: boolean }) {
+  const radius = unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000
+  const earth = unitMi ? Math.round(EARTH_RADIUS_KM * KM_TO_MI) : EARTH_RADIUS_KM
+  const unit = unitMi ? 'mi' : 'km'
   return (
     <div className={styles.counterRight}>
       <div className={styles.radiusLabelRow}>
@@ -129,13 +143,13 @@ function RadiusCounter() {
         </svg>
       </div>
       <div className={styles.radiusNumeratorBox}>
-        <span className={styles.radiusValue}>{(RADIUS_METERS / 1000).toFixed(1)}</span>
-        <span className={styles.radiusUnit}>km</span>
+        <span className={styles.radiusValue}>{radius.toFixed(1)}</span>
+        <span key={`n-${unit}`} className={`${styles.radiusUnit} ${styles.unitFlip}`}>{unit}</span>
       </div>
       <div className={`${styles.separator} ${styles.separatorBronze}`} />
       <div className={styles.radiusDenominatorBox}>
-        <span className={styles.earthValue}>{EARTH_RADIUS_KM.toLocaleString()}</span>
-        <span className={styles.earthUnit}>km</span>
+        <span className={styles.earthValue}>{earth.toLocaleString()}</span>
+        <span key={`d-${unit}`} className={`${styles.earthUnit} ${styles.unitFlip}`}>{unit}</span>
       </div>
       <div className={styles.counterFooterSpacer} />
     </div>

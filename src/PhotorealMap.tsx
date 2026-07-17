@@ -167,6 +167,7 @@ export default function PhotorealMap({
   const [message, setMessage] = useState<string | null>(null)
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
+  const zoomProgress = `${Math.max(0, Math.min(100, ((zoomValue - zoomMin) / (zoomMax - zoomMin || 1)) * 100))}%`
 
   const warnClay = (warning: string) => {
     if (clayWarningsRef.current.has(warning)) return
@@ -577,7 +578,10 @@ export default function PhotorealMap({
 
       <div
         className={styles.zoomWrap}
-        style={{ '--zoomThumb': zoomSprites[zoomStage.id] ? `url("${zoomSprites[zoomStage.id]}")` : 'none' } as React.CSSProperties}
+        style={{
+          '--zoomThumb': zoomSprites[zoomStage.id] ? `url("${zoomSprites[zoomStage.id]}")` : 'none',
+          '--zoomProgress': zoomProgress,
+        } as React.CSSProperties}
         key={`thumb-${zoomStage.id}-${popTick}`}
       >
         <input

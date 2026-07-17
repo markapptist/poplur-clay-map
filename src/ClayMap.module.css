@@ -264,6 +264,47 @@
     rgba(5, 4, 7, 0.8) 100%);
 }
 
+/* Automatic lens depth: the center stays readable while the near and far
+   edges soften as the camera drops into the city. Controls sit above this
+   layer, so only the clay world and its map markers receive the blur. */
+.depthOfField {
+  position: absolute;
+  inset: -10px;
+  z-index: 7;
+  pointer-events: none;
+  opacity: var(--dofOpacity, 0.12);
+  background: radial-gradient(
+    ellipse 62% 48% at 50% 44%,
+    transparent 0 37%,
+    rgba(255, 220, 238, 0.025) 54%,
+    rgba(18, 10, 17, 0.12) 76%,
+    rgba(5, 4, 7, 0.24) 100%
+  );
+  -webkit-backdrop-filter: blur(var(--dofBlur, 1.5px)) saturate(0.92);
+  backdrop-filter: blur(var(--dofBlur, 1.5px)) saturate(0.92);
+  -webkit-mask-image: radial-gradient(
+    ellipse 68% 54% at 50% 44%,
+    transparent 0 36%,
+    rgba(0, 0, 0, 0.08) 51%,
+    rgba(0, 0, 0, 0.72) 76%,
+    #000 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 68% 54% at 50% 44%,
+    transparent 0 36%,
+    rgba(0, 0, 0, 0.08) 51%,
+    rgba(0, 0, 0, 0.72) 76%,
+    #000 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .depthOfField {
+    -webkit-backdrop-filter: blur(1px) saturate(0.96);
+    backdrop-filter: blur(1px) saturate(0.96);
+  }
+}
+
 /* ── Poplur clay pins (provided asset) ────────────────── */
 
 .pin {
@@ -494,11 +535,18 @@
 .zoom::-webkit-slider-runnable-track {
   height: 10px;
   border-radius: 6px;
-  background: linear-gradient(90deg, #17131a, #241e26);
+  background-image:
+    linear-gradient(90deg, transparent 0 var(--zoomProgress, 0%), #17131a var(--zoomProgress, 0%) 100%),
+    repeating-linear-gradient(45deg, #ffe1f1 0 15px, #ff86c4 15px 29px, #f53c99 29px 44px);
+  background-size: 100% 100%, 62px 62px;
+  background-repeat: no-repeat, repeat;
   box-shadow:
+    inset 0 2px 2px rgba(255, 255, 255, 0.55),
+    inset 0 -2px 4px rgba(140, 18, 74, 0.5),
     inset 0 2px 5px rgba(0, 0, 0, 0.85),
     0 0 0 1px rgba(246, 59, 154, 0.28),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+    0 0 16px rgba(244, 59, 153, 0.32);
+  animation: zoomBarber 0.7s linear infinite;
 }
 
 /* The thumb wears the clay zoom-level object itself (globe/cloud/plane/city),
@@ -521,10 +569,18 @@
 .zoom::-moz-range-track {
   height: 10px;
   border-radius: 6px;
-  background: linear-gradient(90deg, #17131a, #241e26);
+  background-image:
+    linear-gradient(90deg, transparent 0 var(--zoomProgress, 0%), #17131a var(--zoomProgress, 0%) 100%),
+    repeating-linear-gradient(45deg, #ffe1f1 0 15px, #ff86c4 15px 29px, #f53c99 29px 44px);
+  background-size: 100% 100%, 62px 62px;
+  background-repeat: no-repeat, repeat;
   box-shadow:
+    inset 0 2px 2px rgba(255, 255, 255, 0.55),
+    inset 0 -2px 4px rgba(140, 18, 74, 0.5),
     inset 0 2px 5px rgba(0, 0, 0, 0.85),
-    0 0 0 1px rgba(246, 59, 154, 0.28);
+    0 0 0 1px rgba(246, 59, 154, 0.28),
+    0 0 16px rgba(244, 59, 153, 0.32);
+  animation: zoomBarber 0.7s linear infinite;
 }
 
 .zoom::-moz-range-thumb {
@@ -547,8 +603,122 @@
   100% { transform: rotate(90deg) scale(1); }
 }
 
+@keyframes zoomBarber {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 0 0, -62px 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .zoom::-webkit-slider-runnable-track,
+  .zoom::-moz-range-track,
   .zoom::-webkit-slider-thumb { animation: none; }
+}
+
+/* ── Clay camera field of view ────────────────────────── */
+
+.fovWrap {
+  position: absolute;
+  right: 58px;
+  top: calc(50% + 122px);
+  z-index: 27;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(42, 38, 43, 0.94), rgba(15, 14, 18, 0.92));
+  box-shadow:
+    0 0 0 1px rgba(255, 138, 198, 0.3),
+    0 8px 20px rgba(5, 4, 7, 0.52),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #fff2f8;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  pointer-events: auto;
+}
+
+.fovLabel {
+  color: #ff8ac6;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+}
+
+.fov {
+  width: 76px;
+  height: 18px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.fov::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    #ff8ac6 0 var(--fovProgress, 44%),
+    rgba(255, 255, 255, 0.18) var(--fovProgress, 44%) 100%
+  );
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.fov::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -5px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 50%;
+  background: #f63b9a;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.5), 0 0 8px rgba(246, 59, 154, 0.5);
+}
+
+.fov::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.fov::-moz-range-progress {
+  height: 5px;
+  border-radius: 999px;
+  background: #ff8ac6;
+}
+
+.fov::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 50%;
+  background: #f63b9a;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.5), 0 0 8px rgba(246, 59, 154, 0.5);
+}
+
+.fov:focus-visible {
+  outline: 2px solid #fff2f8;
+  outline-offset: 3px;
+}
+
+.fovValue {
+  min-width: 27px;
+  color: #fff2f8;
+  font-size: 10px;
+  font-weight: 900;
+  text-align: right;
+}
+
+@media (max-width: 420px) {
+  .fovWrap {
+    right: 54px;
+    transform: scale(0.92);
+    transform-origin: right center;
+  }
 }
 
 /* ── Popping venue emoji: opaque toy objects that spring in over buildings ── */
@@ -671,3 +841,141 @@
 
 .composeCancel:active,
 .composeDrop:active { transform: scale(0.94); }
+
+/* "Directions here" — full-width row under the post actions in the composer. */
+.composeDirections {
+  width: 100%;
+  height: 30px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #FFF2F8;
+  background: rgba(246, 59, 154, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(246, 59, 154, 0.5);
+  font: 800 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+.composeDirections:active { transform: scale(0.96); }
+.composeDirections:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Directions: turn banner, route summary card, end button ─────────────── */
+
+.navBanner {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 46;
+  max-width: 82%;
+  padding: 11px 18px;
+  border-radius: 16px;
+  text-align: center;
+  color: #FFF2F8;
+  background: linear-gradient(180deg, rgba(246, 59, 154, 0.96), rgba(198, 30, 120, 0.96));
+  box-shadow: 0 10px 30px rgba(5, 4, 7, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  font: 800 14px/1.25 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  animation: composePop 0.24s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+}
+
+.routeCard {
+  position: absolute;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 45;
+  width: 280px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(33, 30, 34, 0.96), rgba(13, 12, 16, 0.96));
+  box-shadow:
+    0 0 0 1px rgba(246, 59, 154, 0.4),
+    0 16px 38px rgba(5, 4, 7, 0.62),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #FFF2F8;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  animation: composePop 0.28s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+}
+
+.routeStats {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12px;
+  color: #FFD9EC;
+}
+.routeStats strong { font-size: 17px; color: #FFF2F8; }
+.routeProfileName {
+  margin-left: auto;
+  text-transform: capitalize;
+  font-size: 11px;
+  font-weight: 700;
+  color: #FF8AC6;
+}
+
+.routeProfiles {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0;
+}
+.routeProfile,
+.routeProfileOn {
+  flex: 1;
+  height: 34px;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 16px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.routeProfileOn {
+  background: radial-gradient(circle at 40% 28%, #FF8AC6, #F63B9A 60%);
+  box-shadow: 0 0 12px rgba(246, 59, 154, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+.routeProfile:active,
+.routeProfileOn:active { transform: scale(0.94); }
+
+.routeActions {
+  display: flex;
+  gap: 8px;
+}
+.routeClear,
+.routeStart {
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: 800 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+.routeClear {
+  flex: 0 0 78px;
+  color: #FFD9EC;
+  background: rgba(255, 255, 255, 0.08);
+}
+.routeStart {
+  flex: 1;
+  color: #2a0716;
+  background: radial-gradient(circle at 40% 28%, #FF8AC6, #F63B9A 60%);
+  box-shadow: 0 0 14px rgba(246, 59, 154, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+.routeClear:active,
+.routeStart:active { transform: scale(0.95); }
+
+.navEnd {
+  position: absolute;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 46;
+  height: 44px;
+  padding: 0 34px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #FFF2F8;
+  background: linear-gradient(180deg, rgba(40, 12, 24, 0.96), rgba(20, 6, 12, 0.96));
+  box-shadow: 0 0 0 1px rgba(246, 59, 154, 0.5), 0 12px 30px rgba(5, 4, 7, 0.6);
+  font: 900 14px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+.navEnd:active { transform: translateX(-50%) scale(0.95); }
