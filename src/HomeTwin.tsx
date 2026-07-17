@@ -3,6 +3,7 @@ import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import ClayChannelArrows from './ClayChannelArrows'
 import { playPop } from './pop'
+import { isNativeShell } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
 
 const KM_TO_MI = 0.621371
@@ -61,7 +62,9 @@ export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => vo
     <section className={styles.home}>
       <div className={styles.groundGlow} />
 
-      <div className={styles.tabPills}>
+      {/* Tab pills are a preview-only nav aid — hidden inside the native app,
+          where the cube itself drives tab navigation. */}
+      {!isNativeShell() && <div className={styles.tabPills}>
         {PILL_ORDER.map(tab => (
           <button
             key={tab}
@@ -79,7 +82,7 @@ export default function HomeTwin({ onOpen }: { onOpen: (view: HarnessView) => vo
             {tab}
           </button>
         ))}
-      </div>
+      </div>}
 
       <div className={styles.cubeWrap}>
         <div

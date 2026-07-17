@@ -3,6 +3,18 @@ type NativeWindow = Window & typeof globalThis & {
   PoplurNative?: { onEvent: (json: string) => void }
 }
 
+// True only when the web app is running inside the native iOS/Android shell
+// (a Poplur WebView), false in the plain browser preview. Used to hide
+// preview-only affordances (e.g. the tab pills) when embedded in the app.
+export function isNativeShell(): boolean {
+  try {
+    const w = window as NativeWindow
+    return Boolean(w.webkit?.messageHandlers?.poplur || w.PoplurNative)
+  } catch {
+    return false
+  }
+}
+
 export function postNativeEvent(message: Record<string, unknown>): boolean {
   try {
     const w = window as NativeWindow
