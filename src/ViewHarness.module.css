@@ -266,7 +266,7 @@
 
 .cameraPreview {
   position: relative;
-  height: clamp(260px, 48vh, 430px);
+  height: clamp(210px, 38vh, 320px);
   overflow: hidden;
   border: 1px solid rgba(255, 138, 198, 0.24);
   border-radius: 18px;
@@ -276,9 +276,83 @@
   box-shadow: inset 0 0 64px rgba(0, 0, 0, 0.48), 0 22px 36px rgba(0, 0, 0, 0.45);
 }
 
+/* Live webcam feed fills the preview so the camera reads as a real camera. */
+.cameraFeed {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 0;
+  background: #050407;
+}
+.cameraFeedMirror {
+  transform: scaleX(-1); /* selfie-mirror the front camera */
+}
+
+/* Corner controls — flash (left) + switch camera (right), like prior versions. */
+.camCorner {
+  position: absolute;
+  top: 10px;
+  z-index: 4;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(8, 6, 10, 0.42);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.camCorner:active { transform: scale(0.9); }
+.camCorner svg { width: 21px; height: 21px; }
+.camCornerLeft { left: 10px; }
+.camCornerRight { right: 10px; }
+.camCornerOn {
+  background: rgba(255, 216, 77, 0.28);
+  box-shadow: 0 0 14px rgba(255, 216, 77, 0.55);
+}
+
+/* poplur logo, kept centered at the top of the camera. */
+.camLogo {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  width: clamp(74px, 26vw, 96px);
+  height: auto;
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.55));
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+/* White flash on photo capture when flash is on. */
+.camFlashPulse {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: #fff;
+  pointer-events: none;
+  animation: camFlash 0.28s ease-out;
+}
+@keyframes camFlash {
+  0% { opacity: 0.95; }
+  100% { opacity: 0; }
+}
+
 .gridLines {
   position: absolute;
   inset: 0;
+  z-index: 1;
+  pointer-events: none;
   background:
     linear-gradient(90deg, transparent 33%, rgba(255, 255, 255, 0.12) 33% 34%, transparent 34% 66%, rgba(255, 255, 255, 0.12) 66% 67%, transparent 67%),
     linear-gradient(0deg, transparent 33%, rgba(255, 255, 255, 0.12) 33% 34%, transparent 34% 66%, rgba(255, 255, 255, 0.12) 66% 67%, transparent 67%);
@@ -310,14 +384,16 @@
 
 .cameraHud {
   position: absolute;
-  top: 14px;
+  bottom: 12px;
   left: 14px;
   right: 14px;
+  z-index: 3;
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
   font-weight: 900;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
 }
 
 .cameraHud span {
@@ -328,17 +404,23 @@
   position: absolute;
   left: 16px;
   right: 16px;
-  bottom: clamp(144px, 22vh, 180px);
+  bottom: clamp(236px, 34vh, 264px);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
+}
+
+/* Camera-only: lift the mode rail above the (re-raised) capture button so the
+   filter rail → mode rail → capture → bottom nav stack never collides. */
+.cameraScreen .modeRail {
+  bottom: clamp(180px, 26vh, 210px);
 }
 
 .captureButton,
 .captureRecording {
   position: absolute;
   left: 50%;
-  bottom: clamp(20px, 6vh, 50px);
+  bottom: clamp(102px, 15vh, 122px);
   width: clamp(58px, 12vw, 74px);
   height: clamp(58px, 12vw, 74px);
   transform: translateX(-50%);

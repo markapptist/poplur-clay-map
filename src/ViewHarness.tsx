@@ -1,23 +1,28 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import TopChrome from './TopChrome'
 import HomeTwin from './HomeTwin'
-import HoldMenuTwin from './HoldMenuTwin'
-import FeedTwin from './FeedTwin'
-import ProfileTwin from './ProfileTwin'
+import type { CubeTab } from './CubeTab3D'
 import styles from './ViewHarness.module.css'
 
 export type HarnessView = 'home' | 'feed' | 'camera' | 'profile' | 'holdmenu'
 
-// The four bottom-nav tabs. The hold menu is a cube-long-press OVERLAY, not a
-// tab, so it's routable (?view=holdmenu) but excluded from the nav.
-const VIEW_ORDER: HarnessView[] = ['home', 'feed', 'camera', 'profile']
-const ROUTES: HarnessView[] = [...VIEW_ORDER, 'holdmenu']
+// The four bottom-nav tabs now live INSIDE the home view (its pills switch
+// map/feed/camera/profile inline). The hold menu is a cube-long-press OVERLAY,
+// still routable (?view=holdmenu) but not a tab.
+const ROUTES: HarnessView[] = ['home', 'feed', 'camera', 'profile', 'holdmenu']
 const VIEW_LABELS: Record<HarnessView, string> = {
   home: 'Home',
   feed: 'Feed',
   camera: 'Camera',
   profile: 'Profile',
   holdmenu: 'Hold Menu',
+}
+// Each ?view= simply picks which tab the tabbed home opens on.
+const VIEW_TO_TAB: Record<'home' | 'feed' | 'camera' | 'profile', CubeTab> = {
+  home: 'map',
+  feed: 'feed',
+  camera: 'post',
+  profile: 'profile',
 }
 
 export function harnessViewFromLocation(): HarnessView | null {
@@ -35,8 +40,6 @@ export function harnessViewFromLocation(): HarnessView | null {
 
 export default function ViewHarness({ initialView }: { initialView: HarnessView }) {
   const [view, setView] = useState<HarnessView>(initialView)
-  const [cameraMode, setCameraMode] = useState<'photo' | 'video' | 'live'>('photo')
-  const [isRecording, setIsRecording] = useState(false)
 
   useEffect(() => {
     const onHashChange = () => {
@@ -58,27 +61,22 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     setView(next)
   }
 
-  const screen = useMemo(() => {
-    switch (view) {
-      case 'home':
-        return <HomeTwin onOpen={setHarnessView} />
-      case 'feed':
-        return <FeedTwin />
-      case 'camera':
-        return (
-          <CameraHarness
-            mode={cameraMode}
-            recording={isRecording}
-            onModeChange={setCameraMode}
-            onRecordingChange={setIsRecording}
-          />
-        )
-      case 'profile':
-        return <ProfileTwin />
-      case 'holdmenu':
-        return <HoldMenuTwin onOpen={setHarnessView} />
-    }
-  }, [cameraMode, isRecording, view])
+  // The hold menu is a cube long-press OVERLAY, not a standalone screen — it
+  // floats over the live home view behind a semi-transparent scrim, and closing
+  // it returns you to that home. So ?view=holdmenu keeps the home (map) mounted
+  // underneath rather than swapping it out.
+  const baseView: Exclude<HarnessView, 'holdmenu'> = view === 'holdmenu' ? 'home' : view
+
+  const screen = useMemo(
+    () => (
+      <HomeTwin
+        onOpen={setHarnessView}
+        initialTab={VIEW_TO_TAB[baseView]}
+        initialHoldOpen={view === 'holdmenu'}
+      />
+    ),
+    [baseView, view],
+  )
 
   return (
     <div className={styles.stage}>
@@ -86,113 +84,12 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
         <div className={styles.backdrop} />
         <TopChrome />
 
-        {view !== 'home' && view !== 'holdmenu' && view !== 'feed' && (
-          <nav className={styles.viewTabs} aria-label="Live view harness">
-            {VIEW_ORDER.map(item => (
-              <button
-                key={item}
-                type="button"
-                className={item === view ? styles.viewTabActive : styles.viewTab}
-                onClick={() => setHarnessView(item)}
-              >
-                {VIEW_LABELS[item]}
-              </button>
-            ))}
-          </nav>
-        )}
-
         <main className={styles.viewport} aria-label={`${VIEW_LABELS[view]} test view`}>
-          <div key={view} className={styles.screenSurface}>
+          <div key={baseView} className={styles.screenSurface}>
             {screen}
           </div>
         </main>
-
-        {view !== 'home' && view !== 'holdmenu' && <BottomCubeNav active={view} onSelect={setHarnessView} />}
-
       </div>
     </div>
-  )
-}
-
-function BottomCubeNav({ active, onSelect }: { active: HarnessView; onSelect: (view: HarnessView) => void }) {
-  return (
-    <div className={styles.bottomNav}>
-      {VIEW_ORDER.map(item => (
-        <button
-          key={item}
-          type="button"
-          className={item === active ? styles.navItemActive : styles.navItem}
-          onClick={() => onSelect(item)}
-          aria-label={VIEW_LABELS[item]}
-        >
-          <span className={styles.navIcon}>{iconForView(item)}</span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function iconForView(view: HarnessView) {
-  switch (view) {
-    case 'home': return 'P'
-    case 'feed': return 'TV'
-    case 'camera': return 'CAM'
-    case 'profile': return '@'
-  }
-}
-
-function CameraHarness({
-  mode,
-  recording,
-  onModeChange,
-  onRecordingChange,
-}: {
-  mode: 'photo' | 'video' | 'live'
-  recording: boolean
-  onModeChange: (mode: 'photo' | 'video' | 'live') => void
-  onRecordingChange: (recording: boolean) => void
-}) {
-  return (
-    <section className={styles.cameraScreen}>
-      <div className={styles.cameraPreview}>
-        <div className={styles.gridLines} />
-        <div className={styles.focusBox} />
-        <div className={styles.cameraSubject}>
-          <img src="clay_pin.png" alt="" draggable="false" />
-        </div>
-        <div className={styles.cameraHud}>
-          <span>{mode.toUpperCase()}</span>
-          <strong>{recording ? '00:12' : 'Ready'}</strong>
-        </div>
-      </div>
-
-      <div className={styles.filterRail}>
-        {['original', 'pop tv', 'clay', 'night'].map(filter => (
-          <button key={filter} type="button">{filter}</button>
-        ))}
-      </div>
-
-      <div className={styles.modeRail}>
-        {(['photo', 'video', 'live'] as const).map(item => (
-          <button
-            key={item}
-            type="button"
-            className={mode === item ? styles.controlOn : undefined}
-            onClick={() => onModeChange(item)}
-          >
-            {item}
-          </button>
-        ))}
-      </div>
-
-      <button
-        type="button"
-        className={recording ? styles.captureRecording : styles.captureButton}
-        onClick={() => onRecordingChange(!recording)}
-        aria-label={recording ? 'Stop recording' : 'Capture'}
-      >
-        <span />
-      </button>
-    </section>
   )
 }

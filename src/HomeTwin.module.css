@@ -20,13 +20,61 @@
   --label-gap: 4px;
   --numerator-h: 48px;
   --num-sep-gap: 2px;
-  --sep-w: 90px;
+  --sep-w: clamp(72px, 22vw, 90px);
   --sep-h: 2px;
   --sep-den-gap: 2px;
   --denominator-h: 34px;
   --footer-h: 18px;
-  --counter-pad-x: 20px;
+  --counter-pad-x: clamp(6px, 3vw, 20px);
   --counter-pad-y: 16px;
+}
+
+/* ---------- clay map layer (the approved GCL map, behind the HUD) ---------- */
+
+.mapLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  z-index: 1;
+  /* Clay-tinted (not black) so the boot window reads as the clay world. */
+  background: #2f6b34;
+}
+
+/* Clay skeleton over the map while Mapbox boots + runs its fly-in. */
+.mapSkeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 50% 12%, rgba(120, 214, 160, 0.35), transparent 55%),
+    linear-gradient(160deg, #3a7a41 0%, #2f6b34 46%, #245a2c 100%);
+  transition: opacity 0.55s ease;
+}
+
+/* A soft clay-road sheen sweeping across so it reads as "loading", not frozen. */
+.mapSkeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 138, 198, 0.16) 50%, transparent 62%);
+  background-size: 260% 100%;
+  animation: mapSkeletonSweep 1.5s linear infinite;
+}
+
+@keyframes mapSkeletonSweep {
+  from { background-position: 130% 0; }
+  to { background-position: -130% 0; }
+}
+
+.mapSkeletonHidden {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mapSkeleton::after { animation: none; }
 }
 
 /* ---------- bottom counter row (HomeView: leading/trailing 16, bottom safe+20) ---------- */
@@ -52,12 +100,12 @@
 }
 
 .counterLeft {
-  width: 136px;
+  width: clamp(96px, 30vw, 136px);
   align-items: flex-start;
 }
 
 .counterRight {
-  width: 136px;
+  width: clamp(104px, 32vw, 136px);
   align-items: flex-end;
 }
 
@@ -65,14 +113,14 @@
 .chanSlot {
   display: flex;
   align-items: center;
-  margin-left: 40px;
+  margin-left: clamp(4px, 6vw, 40px);
   pointer-events: auto;
 }
 
 /* ── RIGHT slot: TRENDING ⇄ RADIUS crossfade (both stacked on the right) ── */
 .crossStack {
   position: relative;
-  width: 136px;
+  width: clamp(104px, 32vw, 136px);
   min-height: 132px;
 }
 
@@ -199,7 +247,7 @@
    bottom-trailing in the 48px slot (fills the 110px inner width) */
 .radiusNumeratorBox {
   margin-top: var(--label-gap);
-  width: 110px;
+  width: clamp(92px, 28vw, 110px);
   height: var(--numerator-h);
   display: flex;
   align-items: baseline;
@@ -208,7 +256,7 @@
 }
 
 .radiusValue {
-  font-size: 46px;
+  font-size: clamp(36px, 11.5vw, 46px);
   font-weight: 700;
   color: var(--rank-bronze);
   font-variant-numeric: tabular-nums;
@@ -227,7 +275,7 @@
 
 .radiusDenominatorBox {
   margin-top: var(--sep-den-gap);
-  width: 110px;
+  width: clamp(92px, 28vw, 110px);
   height: var(--denominator-h);
   display: flex;
   align-items: baseline;
@@ -301,7 +349,7 @@
   position: absolute;
   left: 50%;
   bottom: 4px;
-  width: 260px;
+  width: clamp(200px, 62vw, 260px);
   height: 60px;
   transform: translateX(-50%);
   background: radial-gradient(ellipse at center, rgba(246, 59, 154, 0.22), transparent 70%);
@@ -316,7 +364,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 224px;
+  bottom: clamp(208px, 56vw, 236px);
   display: flex;
   justify-content: center;
   gap: 8px;
