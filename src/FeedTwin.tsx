@@ -24,7 +24,7 @@ interface Channel {
   theme: [string, string, string]  // gradient stops
 }
 
-const CHANNELS: Channel[] = [
+export const CHANNELS: Channel[] = [
   { id: 'food', number: 101, name: 'Food', emoji: '🍔', icon: 'poplur_channel_101_food', flag: '🇨🇦', user: '@sauceboss', caption: 'late-night poutine run downtown', lang: 'EN', theme: ['#3a1206', '#c2410c', '#f59e0b'] },
   { id: 'beauty', number: 103, name: 'Beauty', emoji: '💄', icon: 'poplur_channel_103_beauty', flag: '🇺🇸', user: '@glowgetter', caption: 'soft glam in 60 seconds', lang: 'EN', theme: ['#2a0620', '#be185d', '#f472b6'] },
   { id: 'sports', number: 104, name: 'Sports', emoji: '⚽', icon: 'poplur_channel_104_sports', flag: '🇬🇧', user: '@pitchside', caption: 'stoppage-time winner, crowd goes wild', lang: 'EN', theme: ['#052012', '#15803d', '#4ade80'] },
@@ -41,33 +41,30 @@ const CHANNELS: Channel[] = [
   { id: 'comedy', number: 115, name: 'Comedy', emoji: '😂', icon: 'poplur_channel_115_comedy', flag: '🇦🇺', user: '@bitmerchant', caption: 'when the barista spells your name wrong', lang: 'EN', theme: ['#2a2404', '#ca8a04', '#fde047'] },
 ]
 
-const RADIUS_METERS = 41_800
-const EARTH_RADIUS_KM = 6_371
-const KM_TO_MI = 0.621371
-
-export default function FeedTwin() {
-  const [index, setIndex] = useState(0)
+// The feed renders pure channel CONTENT — the channel changer and the
+// RADIUS⇄TRENDING label live in the home HUD (HomeTwin), which controls the
+// channel index from its clay arrows. Standalone (?view=feed) it manages its
+// own index.
+export default function FeedTwin({
+  index: controlledIndex,
+  onIndexChange,
+}: {
+  index?: number
+  onIndexChange?: (index: number) => void
+} = {}) {
+  const [ownIndex, setOwnIndex] = useState(0)
+  const index = controlledIndex ?? ownIndex
   const [displayAsChannel, setDisplayAsChannel] = useState(false)
   const [heart, setHeart] = useState<{ x: number; y: number; id: number } | null>(null)
-  const [showTrending, setShowTrending] = useState(false)  // right stat crossfade
-  const [unitMi, setUnitMi] = useState(false)              // km ↔ mi
-  const [pulse, setPulse] = useState<1 | -1 | null>(null)  // channel-button press glow
   const touchStartY = useRef<number | null>(null)
   const wheelLock = useRef(false)
   const ch = CHANNELS[index]
 
   const change = useCallback((dir: 1 | -1) => {
-    setIndex(i => Math.max(0, Math.min(CHANNELS.length - 1, i + dir)))
-    setPulse(dir)
-    window.setTimeout(() => setPulse(null), 260)
-  }, [])
-
-  // Right stat cross-fades RADIUS ↔ TRENDING; radius unit cycles km ↔ mi.
-  useEffect(() => {
-    const a = window.setInterval(() => setShowTrending(v => !v), 3200)
-    const b = window.setInterval(() => setUnitMi(v => !v), 2500)
-    return () => { window.clearInterval(a); window.clearInterval(b) }
-  }, [])
+    const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
+    if (onIndexChange) onIndexChange(next)
+    else setOwnIndex(next)
+  }, [index, onIndexChange])
 
   // TV ticker: flip username↔CH and coords↔category every ~2.6s.
   useEffect(() => {
@@ -156,39 +153,8 @@ export default function FeedTwin() {
         {ch.lang !== 'EN' && <span className={styles.transBadge}>translated · {ch.lang}</span>}
       </div>
 
-      {/* LEFT: channel up / down buttons (the app's feed channel changer) */}
-      <div className={styles.chanButtons}>
-        <button
-          className={`${styles.chanBtn} ${pulse === -1 ? styles.chanBtnOn : ''}`}
-          onClick={() => change(-1)}
-          aria-label="Previous channel"
-        >▲</button>
-        <span className={styles.chanNum}>{ch.number}</span>
-        <button
-          className={`${styles.chanBtn} ${pulse === 1 ? styles.chanBtnOn : ''}`}
-          onClick={() => change(1)}
-          aria-label="Next channel"
-        >▼</button>
-      </div>
-
-      {/* RIGHT: RADIUS ⇄ TRENDING crossfade, radius unit km ⇄ mi */}
-      <div className={styles.stat}>
-        <div className={showTrending ? styles.statCardOut : styles.statCard}>
-          <span className={styles.statLabel}>RADIUS ◆</span>
-          <span className={styles.statValue}>
-            {unitMi ? (RADIUS_METERS / 1000 * KM_TO_MI).toFixed(1) : (RADIUS_METERS / 1000).toFixed(1)}
-            <span className={styles.statUnit}>{unitMi ? 'mi' : 'km'}</span>
-          </span>
-          <span className={styles.statSub}>
-            of {unitMi ? Math.round(EARTH_RADIUS_KM * KM_TO_MI).toLocaleString() : EARTH_RADIUS_KM.toLocaleString()} {unitMi ? 'mi' : 'km'}
-          </span>
-        </div>
-        <div className={showTrending ? styles.statCard : styles.statCardOut}>
-          <span className={styles.statLabel}>TRENDING ↑</span>
-          <span className={styles.statValue}>128</span>
-          <span className={styles.statSub}>posts nearby</span>
-        </div>
-      </div>
+      {/* Channel changer + RADIUS⇄TRENDING label: OWNED BY THE HOME HUD.
+          The feed itself only swipes/wheels between channels. */}
 
       {/* Channel logo bug (bottom-right watermark) */}
       <img className={styles.logoBug} src="logo_icon.png" alt="" aria-hidden="true" />

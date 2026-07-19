@@ -291,6 +291,20 @@
   transform: scaleX(-1); /* selfie-mirror the front camera */
 }
 
+/* Spoofed viewfinder — a real clay-world scene stands in for the live feed
+   wherever getUserMedia is unavailable (prototype / preview pane), so the
+   camera chrome can be designed against a plausible frame. */
+.cameraSpoof {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 0;
+  background: #050407;
+}
+
 /* Corner controls — flash (left) + switch camera (right), like prior versions. */
 .camCorner {
   position: absolute;

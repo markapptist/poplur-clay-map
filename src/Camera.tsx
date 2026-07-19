@@ -57,11 +57,13 @@ export default function Camera() {
           muted
           playsInline
         />
-        {/* Clay fallback when no camera stream is available */}
+        {/* Real webcam feed when available; otherwise a spoofed viewfinder (the
+            clay world) so the camera stays testable where getUserMedia is
+            blocked — the prototype / preview pane. The chrome is identical
+            either way, keeping this a faithful twin of the app camera for
+            design work. */}
         {!live && (
-          <div className={styles.cameraSubject}>
-            <img src="clay_pin.png" alt="" draggable="false" />
-          </div>
+          <img className={styles.cameraSpoof} src="clay_buildings.png" alt="" draggable="false" />
         )}
         <div className={styles.gridLines} />
         <div className={styles.focusBox} />
@@ -86,7 +88,7 @@ export default function Camera() {
 
         <div className={styles.cameraHud}>
           <span>{mode.toUpperCase()}</span>
-          <strong>{recording ? '00:12' : live ? 'Ready' : 'No camera'}</strong>
+          <strong>{recording ? '00:12' : 'Ready'}</strong>
         </div>
         {pulse && <div className={styles.camFlashPulse} aria-hidden="true" />}
       </div>

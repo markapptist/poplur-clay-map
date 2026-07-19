@@ -77,17 +77,24 @@ export default function ClayChannelArrows({
     })
     geo.center()
 
-    const material = new THREE.MeshStandardMaterial({
-      color: CLAY,
-      roughness: 0.62,
-      metalness: 0.04,
-      emissive: 0x2a0616,
-      emissiveIntensity: 0.35,
-    })
+    // Per-arrow materials so only the PRESSED chevron lights up — the feed's
+    // channel-button flash: it goes bright pink with a glow, then eases back.
+    const makeMaterial = () =>
+      new THREE.MeshStandardMaterial({
+        color: CLAY,
+        roughness: 0.62,
+        metalness: 0.04,
+        emissive: 0x2a0616,
+        emissiveIntensity: 0.35,
+      })
+    const matUp = makeMaterial()
+    const matDown = makeMaterial()
+    const restEmissive = new THREE.Color(0x2a0616)
+    const litEmissive = new THREE.Color(0xff2d96) // feed's press-glow pink
 
-    const up = new THREE.Mesh(geo, material)
+    const up = new THREE.Mesh(geo, matUp)
     up.position.set(0, 1.28, 0)
-    const down = new THREE.Mesh(geo, material)
+    const down = new THREE.Mesh(geo, matDown)
     down.position.set(0, -1.28, 0)
     down.rotation.z = Math.PI // point down
     scene.add(up, down)
@@ -109,14 +116,17 @@ export default function ClayChannelArrows({
       pulse.current.up += (0 - pulse.current.up) * 0.12
       pulse.current.down += (0 - pulse.current.down) * 0.12
 
-      const su = baseScale + pulse.current.up * 0.16
-      const sd = baseScale + pulse.current.down * 0.16
+      // Feed-style light-up: the pressed chevron pops to ~1.12× and flashes
+      // BRIGHT pink (emissive sweeps to the feed's press-glow colour), easing
+      // back to matte clay as the pulse decays.
+      const su = baseScale + pulse.current.up * 0.12
+      const sd = baseScale + pulse.current.down * 0.12
       up.scale.setScalar(su)
       down.scale.setScalar(sd)
-      material.emissiveIntensity = 0.35 // shared; brightened per-frame below
-      // brighten whichever is mid-pulse (max of the two, subtle)
-      const glow = 0.35 + Math.max(pulse.current.up, pulse.current.down) * 0.5
-      material.emissiveIntensity = glow
+      matUp.emissive.copy(restEmissive).lerp(litEmissive, pulse.current.up)
+      matUp.emissiveIntensity = 0.35 + pulse.current.up * 1.6
+      matDown.emissive.copy(restEmissive).lerp(litEmissive, pulse.current.down)
+      matDown.emissiveIntensity = 0.35 + pulse.current.down * 1.6
 
       renderer.render(scene, camera)
       raf = requestAnimationFrame(tick)
@@ -126,7 +136,8 @@ export default function ClayChannelArrows({
     return () => {
       cancelAnimationFrame(raf)
       geo.dispose()
-      material.dispose()
+      matUp.dispose()
+      matDown.dispose()
       renderer.dispose()
     }
   }, [])

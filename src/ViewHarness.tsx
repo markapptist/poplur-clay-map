@@ -18,8 +18,11 @@ const VIEW_LABELS: Record<HarnessView, string> = {
   holdmenu: 'Hold Menu',
 }
 // Each ?view= simply picks which tab the tabbed home opens on.
+// The home view opens on the FEED tab; the map is one tab over (reachable via
+// the cube / the MAP pill). Direct routes (?view=map etc.) still target their
+// own tab.
 const VIEW_TO_TAB: Record<'home' | 'feed' | 'camera' | 'profile', CubeTab> = {
-  home: 'map',
+  home: 'feed',
   feed: 'feed',
   camera: 'post',
   profile: 'profile',

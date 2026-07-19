@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import ClayChannelArrows from './ClayChannelArrows'
-import FeedTwin from './FeedTwin'
+import FeedTwin, { CHANNELS } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera from './Camera'
 import HoldMenuTwin from './HoldMenuTwin'
@@ -35,9 +35,6 @@ const POST_COUNT = 128
 const RADIUS_METERS = 41_800
 const EARTH_RADIUS_KM = 6_371
 
-// Channel numbers for the left-slot channel changer (mirrors the feed twin's).
-const CHANNEL_NUMBERS = [101, 104, 108, 112, 117, 121, 128, 134]
-
 // The map tab embeds the clay map. In the browser prototype that's the separate
 // dev server on :5199; embedded in the native app (custom scheme, e.g.
 // poplur-clay://) there is no localhost, so it loads the SAME bundle's map view
@@ -57,9 +54,9 @@ export default function HomeTwin({ onOpen, initialTab = 'map', initialHoldOpen =
   const [popping, setPopping] = useState(false)
   // Radius units cycle km ⇄ mi continuously, like the app's radius display.
   const [unitMi, setUnitMi] = useState(false)
-  // Right slot cross-fades TRENDING ⇄ RADIUS, both stacked on the right.
+  // Right slot cross-fades RADIUS ⇄ TRENDING (the feed's animated label).
   const [showTrending, setShowTrending] = useState(true)
-  // Left slot: channel up/down changer.
+  // Left slot: channel up/down changer — drives the feed's channel directly.
   const [chanIndex, setChanIndex] = useState(0)
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
@@ -68,12 +65,13 @@ export default function HomeTwin({ onOpen, initialTab = 'map', initialHoldOpen =
   // map tab never flashes a bare black rectangle.
   const [mapReady, setMapReady] = useState(false)
   useEffect(() => { if (activeTab === 'map') setMapReady(false) }, [activeTab])
-  // The tab pills are a PROTOTYPE-only testing aid — the GCL prototype loads the
-  // app with ?tabs=1 to expose them. The real app navigates via the cube, so the
-  // pills never appear outside the prototype.
+  // The tab pills are a testing aid — shown whenever running in a browser so the
+  // map/feed/camera/profile tabs can be switched without the cube. The real app
+  // (native shell) navigates via the cube, so they stay hidden there. Pass
+  // ?tabs=0 to force them off in the browser too.
   const showTestTabs = typeof window !== 'undefined'
     && !isNativeShell()
-    && new URLSearchParams(window.location.search).get('tabs') === '1'
+    && new URLSearchParams(window.location.search).get('tabs') !== '0'
   useEffect(() => {
     const units = window.setInterval(() => setUnitMi(v => !v), 2500)
     const fade = window.setInterval(() => setShowTrending(v => !v), 3200)
@@ -84,7 +82,7 @@ export default function HomeTwin({ onOpen, initialTab = 'map', initialHoldOpen =
 
   const changeChannel = (dir: 1 | -1) => {
     playPop()
-    setChanIndex(i => (i + dir + CHANNEL_NUMBERS.length) % CHANNEL_NUMBERS.length)
+    setChanIndex(i => (i + dir + CHANNELS.length) % CHANNELS.length)
   }
 
   const popCube = () => {
@@ -112,29 +110,38 @@ export default function HomeTwin({ onOpen, initialTab = 'map', initialHoldOpen =
         </>
       )}
 
-      {activeTab === 'feed' && <FeedTwin />}
+      {activeTab === 'feed' && <FeedTwin index={chanIndex} onIndexChange={setChanIndex} />}
       {activeTab === 'post' && <Camera />}
       {activeTab === 'profile' && <ProfileTwin />}
 
       {/* Bottom HUD — channel changer + TRENDING ⇄ RADIUS labels. Persistent
           across every tab, matching the native HomeView chrome. */}
       <div className={styles.bottomRow}>
-        {/* LEFT: clay channel up / down arrows */}
+        {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot}>
           <ClayChannelArrows
-            number={CHANNEL_NUMBERS[chanIndex]}
+            number={CHANNELS[chanIndex].number}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
           />
         </div>
 
-        {/* RIGHT: TRENDING ⇄ RADIUS crossfade, stacked on the same side */}
-        <div className={styles.crossStack}>
-          <div className={showTrending ? styles.fadeIn : styles.fadeOut}>
-            <TrendingCounter unitMi={unitMi} />
+        {/* RIGHT: the feed's animated RADIUS ◆ ⇄ TRENDING ↑ label */}
+        <div className={styles.statStack}>
+          <div className={showTrending ? styles.statCardOut : styles.statCard}>
+            <span className={styles.statLabel}>RADIUS ◆</span>
+            <span className={styles.statValue}>
+              {(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)}
+              <span className={styles.statUnit}>{unitMi ? 'mi' : 'km'}</span>
+            </span>
+            <span className={styles.statSub}>
+              of {(unitMi ? Math.round(EARTH_RADIUS_KM * KM_TO_MI) : EARTH_RADIUS_KM).toLocaleString()} {unitMi ? 'mi' : 'km'}
+            </span>
           </div>
-          <div className={showTrending ? styles.fadeOut : styles.fadeIn}>
-            <RadiusCounter unitMi={unitMi} />
+          <div className={showTrending ? styles.statCard : styles.statCardOut}>
+            <span className={styles.statLabel}>TRENDING ↑</span>
+            <span className={styles.statValue}>{POST_COUNT}</span>
+            <span className={styles.statSub}>posts nearby</span>
           </div>
         </div>
       </div>
@@ -182,66 +189,5 @@ export default function HomeTwin({ onOpen, initialTab = 'map', initialHoldOpen =
   )
 }
 
-// TRENDING counter — RecordingCountdownView post-count state, trend up.
-// Right-aligned now that it shares the right slot with the radius counter.
-function TrendingCounter({ unitMi }: { unitMi: boolean }) {
-  const radiusKm = RADIUS_METERS / 1000
-  const radius = unitMi ? radiusKm * KM_TO_MI : radiusKm
-  return (
-    <div className={styles.counterRight}>
-      <div className={styles.counterLabel}>TRENDING</div>
-      <div className={styles.numeratorBox}>
-        <svg
-          className={styles.trendArrow}
-          viewBox="0 0 24 30"
-          width="26"
-          height="33"
-          aria-hidden="true"
-        >
-          <path
-            d="M12 27V4.5M12 4.5 4.5 12M12 4.5 19.5 12"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </div>
-      <div className={`${styles.separator} ${styles.separatorUp}`} />
-      <div className={styles.denominatorBox}>
-        <span className={styles.postCount}>{POST_COUNT}</span>
-      </div>
-      <div className={styles.counterFooter}>
-        {POST_COUNT} posts · {radius.toFixed(1)} <span className={styles.unitFlip}>{unitMi ? 'mi' : 'km'}</span>
-      </div>
-    </div>
-  )
-}
-
-// RIGHT counter — RadiusNumberDisplay. 41.8 km of 6,371 km ⇒ bronze rank.
-function RadiusCounter({ unitMi }: { unitMi: boolean }) {
-  const radius = unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000
-  const earth = unitMi ? Math.round(EARTH_RADIUS_KM * KM_TO_MI) : EARTH_RADIUS_KM
-  const unit = unitMi ? 'mi' : 'km'
-  return (
-    <div className={styles.counterRight}>
-      <div className={styles.radiusLabelRow}>
-        <span className={styles.counterLabelText}>RADIUS</span>
-        <svg className={styles.rankIcon} viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-          <path d="M12 2l8 3v6c0 5.2-3.4 9.4-8 11-4.6-1.6-8-5.8-8-11V5z" fill="currentColor" />
-        </svg>
-      </div>
-      <div className={styles.radiusNumeratorBox}>
-        <span className={styles.radiusValue}>{radius.toFixed(1)}</span>
-        <span key={`n-${unit}`} className={`${styles.radiusUnit} ${styles.unitFlip}`}>{unit}</span>
-      </div>
-      <div className={`${styles.separator} ${styles.separatorBronze}`} />
-      <div className={styles.radiusDenominatorBox}>
-        <span className={styles.earthValue}>{earth.toLocaleString()}</span>
-        <span key={`d-${unit}`} className={`${styles.earthUnit} ${styles.unitFlip}`}>{unit}</span>
-      </div>
-      <div className={styles.counterFooterSpacer} />
-    </div>
-  )
-}
+// (The old TrendingCounter / RadiusCounter pair was replaced by the feed's
+//  animated RADIUS ◆ ⇄ TRENDING ↑ stat label, rendered inline above.)
