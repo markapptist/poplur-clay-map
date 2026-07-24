@@ -9,10 +9,14 @@
 }
 .wrap > * { pointer-events: auto; }
 
-/* ---- idle: Directions FAB (top-left, under the chrome) ---- */
+/* ---- idle: Directions FAB (top-left, tucked just under the AI ticker so the
+   two never share the same band). Header vars cascade from the app shell. ---- */
 .fab {
   position: absolute;
-  top: 118px;
+  top: calc(
+    var(--header-title-top, 44px) + var(--header-title-height, 40px) +
+    var(--header-row-gap, 16px) + var(--header-ai-height, 44px) + 6px
+  );
   left: 16px;
   display: flex;
   align-items: center;

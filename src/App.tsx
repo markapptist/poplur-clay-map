@@ -83,6 +83,8 @@ function weatherIconForMode(mode: WeatherMode): string {
 // Brand-identity volume mark: clay-pink speaker with sound waves. Shown beside
 // the AI line whenever audio is playing.
 const VOLUME_ICON = `<svg viewBox="0 0 32 32"><path d="M6 12h4l6-5v18l-6-5H6z" fill="#F63B9A" stroke="#c92e7d" stroke-width="1.4" stroke-linejoin="round"/><path d="M21 11.5a7 7 0 0 1 0 9" fill="none" stroke="#FF8AC6" stroke-width="2.6" stroke-linecap="round"/><path d="M25 8.5a11.5 11.5 0 0 1 0 15" fill="none" stroke="#FF4BA1" stroke-width="2.6" stroke-linecap="round"/></svg>`
+// Muted twin of the mark: same clay speaker, waves replaced by a slash.
+const VOLUME_MUTED_ICON = `<svg viewBox="0 0 32 32"><path d="M6 12h4l6-5v18l-6-5H6z" fill="#F63B9A" stroke="#c92e7d" stroke-width="1.4" stroke-linejoin="round"/><path d="M21 11l9 10M30 11l-9 10" fill="none" stroke="#FF8AC6" stroke-width="2.6" stroke-linecap="round"/></svg>`
 const LOCATE_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="9.5" fill="none" stroke="#FF8AC6" stroke-width="2.2"/><circle cx="16" cy="16" r="3.2" fill="#F63B9A"/><path d="M16 3v5M16 24v5M3 16h5M24 16h5" stroke="#FFF2F8" stroke-width="2.2" stroke-linecap="round"/></svg>`
 const STREET_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 25 C10 19 12 13 16 7 C20 13 22 19 26 25" fill="none" stroke="#FFF2F8" stroke-width="2.2" stroke-linecap="round"/><path d="M16 9 L16 13M16 17 L16 21M16 25 L16 27" stroke="#F63B9A" stroke-width="2.3" stroke-linecap="round"/><path d="M8 25H24" stroke="#FF8AC6" stroke-width="2" stroke-linecap="round"/></svg>`
 
@@ -387,6 +389,19 @@ function stationsSummary(stations: RadioStation[]): string {
   return stations.map(station => `${station.name} ${station.frequency}`).join(' / ')
 }
 
+type NativeLocation = { latitude: number; longitude: number }
+
+function nativeLocationFrom(value: unknown): NativeLocation | null {
+  if (!value || typeof value !== 'object') return null
+  const payload = value as { latitude?: unknown; longitude?: unknown; detail?: unknown }
+  if (payload.detail && typeof payload.detail === 'object') return nativeLocationFrom(payload.detail)
+  const latitude = Number(payload.latitude)
+  const longitude = Number(payload.longitude)
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null
+  return { latitude, longitude }
+}
+
 export default function App() {
   const harnessView = harnessViewFromLocation()
   const mapRef = useRef<mapboxgl.Map | null>(null)
@@ -422,6 +437,42 @@ export default function App() {
   const [region, setRegion] = useState<NonNullable<RegionContext['region']>>('default')
   const regionRef = useRef(region)
   regionRef.current = region
+
+  useEffect(() => {
+    if (harnessView) return
+    if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-loading' }, '*')
+    postNativeEvent({ type: 'mapLoading' })
+  }, [harnessView])
+
+  // The native shells ask for location while Feed is visible, then broadcast
+  // the result into this already-mounted map iframe. Keep latitude-first at
+  // the bridge boundary; Mapbox and the routing layer remain [lng, lat].
+  useEffect(() => {
+    if (harnessView) return
+    const w = window as typeof window & {
+      __poplurNative?: Record<string, unknown>
+      __poplurNativeLocation?: NativeLocation
+    }
+    const applyLocation = (value: unknown) => {
+      const location = nativeLocationFrom(value)
+      if (!location) return
+      w.__poplurNativeLocation = location
+      setNavigationOrigin([location.longitude, location.latitude])
+    }
+    const onLocation = (event: Event) => applyLocation((event as CustomEvent).detail)
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'poplur-location') applyLocation(event.data)
+    }
+    window.addEventListener('poplur-location', onLocation)
+    window.addEventListener('poplur-native-location', onLocation)
+    window.addEventListener('message', onMessage)
+    applyLocation(w.__poplurNativeLocation)
+    return () => {
+      window.removeEventListener('poplur-location', onLocation)
+      window.removeEventListener('poplur-native-location', onLocation)
+      window.removeEventListener('message', onMessage)
+    }
+  }, [harnessView])
 
   const applySoundState = useCallback((on: boolean) => {
     soundPlayingRef.current = on
@@ -461,6 +512,7 @@ export default function App() {
       const box: [[number, number], [number, number]] = [[cx - 45, cy - 45], [cx + 45, cy + 45]]
       const has = (layers: string[]) => {
         for (const id of layers) {
+          if (!map.getLayer(id)) continue
           try { if (map.queryRenderedFeatures(box, { layers: [id] }).length) return 1 } catch { /* absent */ }
         }
         return 0
@@ -471,7 +523,7 @@ export default function App() {
       // so use a style-agnostic proxy: zoomed-in land that's neither water nor
       // park is "in the city", ramping with how close the camera is.
       let cityDensity = 0
-      try { cityDensity = Math.min(1, map.queryRenderedFeatures({ layers: ['clay-buildings-3d'] }).length / 110) } catch { /* extrusions unqueryable */ }
+      try { if (map.getLayer('clay-buildings-3d')) cityDensity = Math.min(1, map.queryRenderedFeatures({ layers: ['clay-buildings-3d'] }).length / 110) } catch { /* extrusions unqueryable */ }
       if (cityDensity === 0 && !water && !park) {
         cityDensity = Math.max(0, Math.min(1, (map.getZoom() - 12.5) / 3))
       }
@@ -529,8 +581,17 @@ export default function App() {
   useEffect(() => {
     const w = window as unknown as {
       __poplurNative?: Record<string, unknown>
+      __poplurNativeLocation?: NativeLocation
     }
     w.__poplurNative = {
+      ...w.__poplurNative,
+      setLocation: (latitude: number, longitude: number) => {
+        const location = nativeLocationFrom({ latitude, longitude })
+        if (!location) return
+        w.__poplurNativeLocation = location
+        setNavigationOrigin([location.longitude, location.latitude])
+        window.dispatchEvent(new CustomEvent('poplur-location', { detail: location }))
+      },
       setCenter: (lng: number, lat: number, zoom?: number) =>
         mapRef.current?.easeTo({ center: [lng, lat], zoom: zoom ?? mapRef.current.getZoom(), duration: 800 }),
       flyTo: (lng: number, lat: number, zoom: number) => {
@@ -660,6 +721,8 @@ export default function App() {
   }, [clearTourTimers, tourStep])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
+    if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-ready' }, '*')
+    postNativeEvent({ type: 'mapReady' })
     if (landingCenter) setNavigationOrigin(landingCenter)
     if (tourStartedRef.current) return
     const nearest = landingCenter ? nearestTourDestination(landingCenter) : undefined
@@ -742,10 +805,15 @@ export default function App() {
       <TopChrome />
       <div ref={tickerRef} className={styles.aiTicker}>
         {soundPlaying && (
-          <span
-            className={styles.aiVolume}
-            aria-label="Sound playing"
-            dangerouslySetInnerHTML={{ __html: VOLUME_ICON }}
+          // The mark is the mute control: tapping it silences every map sound
+          // (radio, ambience, theme, pops) through the shared audio gate.
+          <button
+            type="button"
+            className={muted ? styles.aiVolumeMuted : styles.aiVolume}
+            aria-label={muted ? 'Unmute sound' : 'Mute sound'}
+            aria-pressed={muted}
+            onClick={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
+            dangerouslySetInnerHTML={{ __html: muted ? VOLUME_MUTED_ICON : VOLUME_ICON }}
           />
         )}
         <span>{tourLine ?? AI_LINES[aiIndex]}</span>

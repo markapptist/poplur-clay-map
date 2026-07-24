@@ -18,11 +18,27 @@ const embedded = window.parent !== window
 const contexts: AudioContext[] = []
 const mediaEls: HTMLMediaElement[] = []
 
+const MUTE_STORAGE_KEY = 'poplur.muted'
+
 let embedMuted = embedded
 let hidden = document.visibilityState === 'hidden'
+// User mute — the speaker mark beside the AI line toggles this. Persisted so
+// a muted app stays muted across reloads.
+let userMuted = (() => {
+  try { return window.localStorage.getItem(MUTE_STORAGE_KEY) === '1' } catch { return false }
+})()
 const listeners = new Set<(muted: boolean) => void>()
 
-export function isGateMuted(): boolean { return embedMuted || hidden }
+export function isGateMuted(): boolean { return embedMuted || hidden || userMuted }
+
+export function isUserMuted(): boolean { return userMuted }
+
+export function setUserMuted(value: boolean) {
+  if (userMuted === value) return
+  userMuted = value
+  try { window.localStorage.setItem(MUTE_STORAGE_KEY, value ? '1' : '0') } catch { /* embedded */ }
+  apply()
+}
 
 // Subscribe to gate changes (e.g. to forward audibility into a child iframe).
 export function onGateChange(cb: (muted: boolean) => void): () => void {

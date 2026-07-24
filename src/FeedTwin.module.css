@@ -24,6 +24,17 @@
   animation: driftSpin 14s linear infinite;
 }
 
+/* The channel's bundled ad creative — full-bleed under the TV overlays
+   (grain/scanlines/vignette sit on top for the broadcast look). */
+.adVideo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
 .grain,
 .scanlines,
 .vignette {

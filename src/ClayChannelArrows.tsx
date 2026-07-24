@@ -30,12 +30,15 @@ export default function ClayChannelArrows({
   number,
   onUp,
   onDown,
+  size = 176,
 }: {
   number: number
   onUp: () => void
   onDown: () => void
+  size?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const width = Math.round(size / 2)
   // pressed pulse targets per arrow, read by the render loop
   const pulse = useRef({ up: 0, down: 0 })
 
@@ -140,7 +143,7 @@ export default function ClayChannelArrows({
       matDown.dispose()
       renderer.dispose()
     }
-  }, [])
+  }, [size, width])
 
   const press = (dir: 'up' | 'down', handler: () => void) => {
     pulse.current[dir] = 1
@@ -148,12 +151,12 @@ export default function ClayChannelArrows({
   }
 
   return (
-    <div style={{ position: 'relative', width: 88, height: 176, pointerEvents: 'auto' }}>
+    <div style={{ position: 'relative', width, height: size, pointerEvents: 'auto' }}>
       <canvas
         ref={canvasRef}
-        width={88}
-        height={176}
-        style={{ width: 88, height: 176, display: 'block', pointerEvents: 'none' }}
+        width={width}
+        height={size}
+        style={{ width, height: size, display: 'block', pointerEvents: 'none' }}
       />
       {/* green channel number, centred between the chevrons */}
       <span

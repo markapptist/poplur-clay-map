@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
@@ -33,8 +33,55 @@ export interface CubeTab3DProps {
   size?: number
 }
 
+function CubeFallback({ targetTab, onFaceChange, onTap, onHold, size }: CubeTab3DProps & { size: number }) {
+  const gesture = useRef({ x: 0, moved: false, held: false })
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelHold = () => {
+    if (holdTimer.current) clearTimeout(holdTimer.current)
+    holdTimer.current = null
+  }
+  const finish = (clientX: number) => {
+    cancelHold()
+    if (gesture.current.held) return
+    const dx = clientX - gesture.current.x
+    if (gesture.current.moved && Math.abs(dx) > 28) {
+      const current = FACES.findIndex(face => face.tab === targetTab)
+      const next = (current + (dx < 0 ? 1 : -1) + FACES.length) % FACES.length
+      onFaceChange(FACES[next].tab)
+    } else {
+      onTap()
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label="Poplur cube — swipe to change screen, hold for menu"
+      onPointerDown={event => {
+        gesture.current = { x: event.clientX, moved: false, held: false }
+        holdTimer.current = setTimeout(() => {
+          gesture.current.held = true
+          onHold()
+        }, 500)
+      }}
+      onPointerMove={event => {
+        if (Math.abs(event.clientX - gesture.current.x) > 6) {
+          gesture.current.moved = true
+          cancelHold()
+        }
+      }}
+      onPointerUp={event => finish(event.clientX)}
+      onPointerCancel={cancelHold}
+      style={{ position: 'absolute', inset: 0, width: size, height: size, padding: 0, border: 0, background: 'transparent', touchAction: 'none', cursor: 'grab' }}
+    >
+      <img src="clay_cube.png" alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 16px 20px rgba(0,0,0,.55))' }} />
+    </button>
+  )
+}
+
 export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200 }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [glFailed, setGlFailed] = useState(false)
   const targetTabRef = useRef(targetTab)
   const callbacksRef = useRef({ onFaceChange, onTap, onHold })
   callbacksRef.current = { onFaceChange, onTap, onHold }
@@ -52,7 +99,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+    } catch {
+      setGlFailed(true)
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(size, size)
     renderer.setClearColor(0x000000, 0)
@@ -118,7 +171,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       camera.position.set(0, 0, 10)
       camera.lookAt(0, 0, 0)
       needsRender = true
-    }).catch(() => { /* cube stays empty; screen still usable */ })
+    }).catch(() => { setGlFailed(true) })
 
     // ---- gestures ----
     let startX = 0
@@ -186,6 +239,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       needsRender = true
     }
 
+    const onContextLost = (event: Event) => {
+      event.preventDefault()
+      setGlFailed(true)
+    }
+    canvas.addEventListener('webglcontextlost', onContextLost)
     canvas.addEventListener('pointerdown', onPointerDown)
     canvas.addEventListener('pointermove', onPointerMove)
     canvas.addEventListener('pointerup', onPointerUp)
@@ -234,6 +292,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       canvas.removeEventListener('pointermove', onPointerMove)
       canvas.removeEventListener('pointerup', onPointerUp)
       canvas.removeEventListener('pointercancel', onPointerUp)
+      canvas.removeEventListener('webglcontextlost', onContextLost)
       scene.traverse(obj => {
         const mesh = obj as THREE.Mesh
         if (mesh.geometry) mesh.geometry.dispose()
@@ -249,10 +308,15 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   }, [size])
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ width: size, height: size, touchAction: 'none', cursor: 'grab' }}
-      aria-label="Poplur cube — drag to rotate, hold for menu"
-    />
+    <div style={{ position: 'relative', width: size, height: size }}>
+      <canvas
+        ref={canvasRef}
+        style={{ width: size, height: size, touchAction: 'none', cursor: 'grab', visibility: glFailed ? 'hidden' : 'visible' }}
+        aria-label="Poplur cube — drag to rotate, hold for menu"
+      />
+      {glFailed && (
+        <CubeFallback targetTab={targetTab} onFaceChange={onFaceChange} onTap={onTap} onHold={onHold} size={size} />
+      )}
+    </div>
   )
 }

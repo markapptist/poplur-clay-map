@@ -4,14 +4,15 @@ import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import styles from './ViewHarness.module.css'
 
-export type HarnessView = 'home' | 'feed' | 'camera' | 'profile' | 'holdmenu'
+export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'profile' | 'holdmenu'
 
 // The four bottom-nav tabs now live INSIDE the home view (its pills switch
 // map/feed/camera/profile inline). The hold menu is a cube-long-press OVERLAY,
 // still routable (?view=holdmenu) but not a tab.
-const ROUTES: HarnessView[] = ['home', 'feed', 'camera', 'profile', 'holdmenu']
+const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'profile', 'holdmenu']
 const VIEW_LABELS: Record<HarnessView, string> = {
   home: 'Home',
+  map: 'Map',
   feed: 'Feed',
   camera: 'Camera',
   profile: 'Profile',
@@ -21,8 +22,9 @@ const VIEW_LABELS: Record<HarnessView, string> = {
 // The home view opens on the FEED tab; the map is one tab over (reachable via
 // the cube / the MAP pill). Direct routes (?view=map etc.) still target their
 // own tab.
-const VIEW_TO_TAB: Record<'home' | 'feed' | 'camera' | 'profile', CubeTab> = {
+const VIEW_TO_TAB: Record<'home' | 'map' | 'feed' | 'camera' | 'profile', CubeTab> = {
   home: 'feed',
+  map: 'map',
   feed: 'feed',
   camera: 'post',
   profile: 'profile',
@@ -69,11 +71,15 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   // it returns you to that home. So ?view=holdmenu keeps the home (map) mounted
   // underneath rather than swapping it out.
   const baseView: Exclude<HarnessView, 'holdmenu'> = view === 'holdmenu' ? 'home' : view
+  const [inlineTab, setInlineTab] = useState<CubeTab>(VIEW_TO_TAB[baseView])
+
+  useEffect(() => { setInlineTab(VIEW_TO_TAB[baseView]) }, [baseView])
 
   const screen = useMemo(
     () => (
       <HomeTwin
         onOpen={setHarnessView}
+        onTabChange={setInlineTab}
         initialTab={VIEW_TO_TAB[baseView]}
         initialHoldOpen={view === 'holdmenu'}
       />
@@ -85,7 +91,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     <div className={styles.stage}>
       <div className={styles.phone}>
         <div className={styles.backdrop} />
-        <TopChrome />
+        {inlineTab !== 'post' && <TopChrome />}
 
         <main className={styles.viewport} aria-label={`${VIEW_LABELS[view]} test view`}>
           <div key={baseView} className={styles.screenSurface}>
