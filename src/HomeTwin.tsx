@@ -59,6 +59,13 @@ const CLAY_MAP_SRC =
     ? `${window.location.origin}/`
     : 'index.html'
 
+// Android app shell (PoplurNative bridge). Its budget GPUs can't afford Mapbox
+// running behind every tab, so the map iframe mounts on-demand there (see the
+// map layer below). iOS and the browser keep the always-warm map.
+const ANDROID_SHELL =
+  typeof window !== 'undefined' &&
+  Boolean((window as unknown as { PoplurNative?: unknown }).PoplurNative)
+
 export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean }) {
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
@@ -179,14 +186,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
       {/* Keep the map mounted from the first Home frame. Loading can therefore
-          finish the expensive map intro while Feed is already composed. */}
-      <iframe
-        ref={mapFrameRef}
-        className={styles.mapLayer}
-        src={CLAY_MAP_SRC}
-        title="Poplur clay map"
-        allow="autoplay; geolocation"
-      />
+          finish the expensive map intro while Feed is already composed.
+          EXCEPT on the Android shell: its low-end GPUs can't run Mapbox behind
+          the other tabs — the always-mounted map starved the cube/feed and made
+          the home laggy — so there the map mounts only while its tab is front
+          (it re-boots behind its skeleton when you come back). */}
+      {(!ANDROID_SHELL || activeTab === 'map') && (
+        <iframe
+          ref={mapFrameRef}
+          className={styles.mapLayer}
+          src={CLAY_MAP_SRC}
+          title="Poplur clay map"
+          allow="autoplay; geolocation"
+        />
+      )}
 
       <div className={styles.contentLayer}>
         {activeTab === 'feed' && <FeedTwin index={chanIndex} onIndexChange={setChanIndex} />}
