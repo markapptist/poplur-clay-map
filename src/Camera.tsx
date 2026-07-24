@@ -1,5 +1,15 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import styles from './ViewHarness.module.css'
+import { postNativeEvent } from './nativeBridge'
+
+// iOS shell: the REAL native camera (AVCapture + ML detection, the previous
+// versions' pipeline) renders BEHIND this WebView; this pane punches a
+// transparent hole so it shows through, while the approved chrome/icons here
+// stay exactly the same and drive the native camera over the bridge.
+// Android/browser keep the spoofed feed untouched.
+const IOS_SHELL =
+  typeof window !== 'undefined' &&
+  Boolean((window as unknown as { webkit?: { messageHandlers?: { poplur?: unknown } } }).webkit?.messageHandlers?.poplur)
 
 // Corner control glyphs (ported from RecordCameraControlsOverlay.swift:
 // bolt / bolt.slash top-left, flip-camera top-right).
@@ -21,15 +31,26 @@ export default function Camera() {
   const [flash, setFlash] = useState(false)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
 
+  // Punch the transparent hole for the native viewfinder while this pane is
+  // mounted (iOS shell only) — see .camera-live in index.css.
+  useEffect(() => {
+    if (!IOS_SHELL) return
+    document.documentElement.classList.add('camera-live')
+    return () => document.documentElement.classList.remove('camera-live')
+  }, [])
+
   return (
     <section className={styles.cameraFull} aria-label="Camera preview twin">
-      {/* Spoofed live viewfinder — drifts slowly so it reads as a camera */}
-      <img
-        className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
-        src="clay_buildings.png"
-        alt=""
-        draggable={false}
-      />
+      {/* Spoofed live viewfinder (browser/Android); iOS shows the REAL native
+          camera through the transparent hole instead. */}
+      {!IOS_SHELL && (
+        <img
+          className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
+          src="clay_buildings.png"
+          alt=""
+          draggable={false}
+        />
+      )}
       <div className={styles.gridLines} />
       <div className={styles.focusBox} />
 
@@ -40,7 +61,10 @@ export default function Camera() {
       <button
         type="button"
         className={`${styles.camCorner} ${styles.camCornerLeft} ${flash ? styles.camCornerOn : ''}`}
-        onClick={() => setFlash(f => !f)}
+        onClick={() => {
+          setFlash(f => !f)
+          if (IOS_SHELL) postNativeEvent({ type: 'cameraControl', control: 'flash' })
+        }}
         aria-label={flash ? 'Flash on' : 'Flash off'}
         aria-pressed={flash}
         dangerouslySetInnerHTML={{ __html: flash ? FLASH_ON : FLASH_OFF }}
@@ -49,7 +73,10 @@ export default function Camera() {
       <button
         type="button"
         className={`${styles.camCorner} ${styles.camCornerRight}`}
-        onClick={() => setFacing(f => (f === 'user' ? 'environment' : 'user'))}
+        onClick={() => {
+          setFacing(f => (f === 'user' ? 'environment' : 'user'))
+          if (IOS_SHELL) postNativeEvent({ type: 'cameraControl', control: 'flip' })
+        }}
         aria-label="Switch camera"
         dangerouslySetInnerHTML={{ __html: SWITCH }}
       />

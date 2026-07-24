@@ -18,3 +18,31 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* ── camera-live (iOS native shell only) ───────────────────────────────────
+   Set on <html> by Camera.tsx while the camera (post) tab is mounted in the
+   iOS app. The REAL native camera (AVCapture + ML) renders BEHIND the WebView,
+   so every container above the camera pane goes transparent — punching a
+   see-through hole — while the approved chrome/icons keep rendering on top.
+   Browser prototype and Android are unaffected (class never set there). */
+html.camera-live,
+.camera-live body,
+.camera-live #root,
+.camera-live #root section,
+.camera-live #root main,
+.camera-live [class*="stage"],
+.camera-live [class*="phone"],
+.camera-live [class*="viewport"],
+.camera-live [class*="screenSurface"],
+.camera-live [class*="contentLayer"],
+.camera-live [class*="home"],
+.camera-live [class*="cameraFull"] {
+  background: transparent !important;
+  background-image: none !important;
+}
+/* The backdrop layer and the always-mounted map iframe must not paint behind
+   the camera hole. */
+.camera-live [class*="backdrop"],
+.camera-live iframe[title="Poplur clay map"] {
+  visibility: hidden !important;
+}

@@ -8,7 +8,7 @@ import Camera from './Camera'
 import HoldMenuTwin from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import { playPop } from './pop'
-import { isGateMuted, onGateChange } from './audioGate'
+import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
 
@@ -24,6 +24,20 @@ const KM_TO_MI = 0.621371
 // clicking the already-front face's pill opens that tab's screen twin.
 
 const PILL_ORDER: CubeTab[] = ['map', 'feed', 'post', 'profile']
+
+// The approved Loading screen's rotating copy (gcl-prototype loadingPage()),
+// cycled on the same 1.8s beat with the same 200ms cross-fade.
+const LOADING_MESSAGES = [
+  'Warming up the pinetrees',
+  'Rolling out the clay roads',
+  'Dusting off the globe',
+  'Pinning the hotspots',
+  'Measuring your radius',
+  'Sprinkling pink stars',
+  'Waking up the tugboat',
+  'Polishing the big P',
+  'Fluffing the clouds',
+]
 
 // The cube scales with the phone width so it and the two flanking counters
 // always fit — full 176 on a roomy phone, shrinking on tighter ones.
@@ -49,7 +63,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
-  useEffect(() => { onTabChange?.(activeTab) }, [activeTab, onTabChange])
+  useEffect(() => {
+    onTabChange?.(activeTab)
+    // Native shell: tell the app which tab is front so it can mount real
+    // device power behind the web chrome (e.g. the native ML camera on 'post').
+    if (isNativeShell()) postNativeEvent({ type: 'tabChanged', tab: activeTab })
+  }, [activeTab, onTabChange])
   // The cube long-press hold menu floats as a translucent overlay over the
   // current tab, and its items match that tab.
   const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
@@ -66,6 +85,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(false)
+  const [loadingMessage, setLoadingMessage] = useState(0)
+  const [messageShown, setMessageShown] = useState(true)
+  const [loadingMuted, setLoadingMuted] = useState(isUserMuted)
   // The tab pills are a testing aid — shown whenever running in a browser so the
   // map/feed/camera/profile tabs can be switched without the cube. The real app
   // (native shell) navigates via the cube, so they stay hidden there. Pass
@@ -124,6 +146,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return onGateChange(send)
   }, [activeTab, mapReady])
 
+  // Rotate the loading copy only while the overlay is up.
+  const loadingVisible = activeTab === 'map' && (!mapReady || forceMapLoading)
+  useEffect(() => {
+    if (!loadingVisible) return
+    const iv = window.setInterval(() => {
+      setMessageShown(false)
+      window.setTimeout(() => {
+        setLoadingMessage(i => (i + 1) % LOADING_MESSAGES.length)
+        setMessageShown(true)
+      }, 200)
+    }, 1800)
+    return () => window.clearInterval(iv)
+  }, [loadingVisible])
+
   const changeChannel = (dir: 1 | -1) => {
     playPop()
     setChanIndex(i => (i + dir + CHANNELS.length) % CHANNELS.length)
@@ -132,6 +168,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const popCube = () => {
     playPop()
     setPopping(true)
+    // The cube IS the camera shutter on the post tab — fire the real native
+    // capture (previous versions' cube-tap capture) through the bridge.
+    if (activeTab === 'post' && isNativeShell()) postNativeEvent({ type: 'cameraShutter' })
   }
 
   return (
@@ -155,11 +194,34 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         {activeTab === 'profile' && <ProfileTwin />}
       </div>
 
-      {activeTab === 'map' && (!mapReady || forceMapLoading) && (
+      {loadingVisible && (
         <div className={styles.mapLoading} role="status" aria-label="Loading the map">
           <LoadingGlobe />
+          {/* Mute control, matching the approved Loading screen's top-left mark. */}
+          <button
+            type="button"
+            className={styles.mapLoadingMute}
+            aria-label={loadingMuted ? 'Unmute sound' : 'Mute sound'}
+            aria-pressed={loadingMuted}
+            onClick={() => { const next = !loadingMuted; setUserMuted(next); setLoadingMuted(next) }}
+          >
+            <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+              <path d="M6 12h4l6-5v18l-6-5H6z" fill="#fff2f8" stroke="rgba(10,30,110,.55)" strokeWidth="1.3" strokeLinejoin="round" />
+              {!loadingMuted && <g>
+                <path d="M21 11.5a7 7 0 0 1 0 9" fill="none" stroke="#fff2f8" strokeWidth="2.4" strokeLinecap="round" />
+                <path d="M25 8.5a11.5 11.5 0 0 1 0 15" fill="none" stroke="#d6e7ff" strokeWidth="2.4" strokeLinecap="round" />
+              </g>}
+              {loadingMuted && <line x1="20" y1="26" x2="30" y2="6" stroke="#fff2f8" strokeWidth="3" strokeLinecap="round" />}
+            </svg>
+          </button>
           <div className={styles.mapLoadingLoader}>
-            <p className={styles.mapLoadingText}>Dusting off the globe</p>
+            <p
+              className={styles.mapLoadingText}
+              style={{ opacity: messageShown ? 1 : 0 }}
+              aria-live="polite"
+            >
+              {LOADING_MESSAGES[loadingMessage]}
+            </p>
             <div className={styles.mapLoadingTrack} role="progressbar" aria-label="Loading map">
               <span className={styles.mapLoadingFill} />
             </div>
