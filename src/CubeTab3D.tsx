@@ -99,14 +99,17 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const canvas = canvasRef.current
     if (!canvas) return
 
+    // Android shell (budget GPUs): render the cube at a reduced pixel ratio and
+    // skip MSAA — ~60% fewer GL pixels for a visually near-identical cube.
+    const androidShell = Boolean((window as unknown as { PoplurNative?: unknown }).PoplurNative)
     let renderer: THREE.WebGLRenderer
     try {
-      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: !androidShell })
     } catch {
       setGlFailed(true)
       return
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, androidShell ? 1.25 : 2))
     renderer.setSize(size, size)
     renderer.setClearColor(0x000000, 0)
 

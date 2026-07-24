@@ -46,3 +46,21 @@ html.camera-live,
 .camera-live iframe[title="Poplur clay map"] {
   visibility: hidden !important;
 }
+
+/* ── perf-lite, feed layer (native app shell) ──────────────────────────────
+   The feed stacks three full-screen per-frame effects over the playing video:
+   scenePulse (animates `filter` on the video layer — the compositor re-filters
+   every frame), a mix-blend-mode:screen drift layer (offscreen render + blend
+   of the full screen), and a stepped film-grain repaint. A budget GPU
+   (A03s-class) spends the whole frame budget on these. In the app shell the
+   video plays clean; the browser prototype keeps the full treatment. */
+.perf-lite [class*="video"],
+.perf-lite [class*="adVideo"] {
+  animation: none !important;
+  filter: none !important;
+}
+.perf-lite [class*="drift"],
+.perf-lite [class*="grain"],
+.perf-lite [class*="scanlines"] {
+  display: none !important;
+}
