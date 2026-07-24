@@ -43,6 +43,18 @@ export interface ClayMapProps {
 // to restore the full moulded-clay look.
 export const REALISTIC_MAP = false
 
+// ── Global building-footprint fill (Overture Maps) ──────────────────────────
+// The base Mapbox/OSM `building` source is missing footprints in many newer
+// residential areas, so the clay map shows empty grass where houses should be.
+// Overture Maps buildings (Microsoft + Google + OSM ML-detected footprints) fill
+// those gaps EVERYWHERE, streamed live as a hosted global PMTiles by viewport
+// (mapbox-gl reads it with HTTP range requests — no local pipeline). Rendered
+// BELOW the OSM clay massing so real mapped buildings win wherever they exist and
+// Overture only shows through the gaps. Flip false to remove the layer entirely.
+export const OVERTURE_BUILDINGS_FILL = true
+const OVERTURE_BUILDINGS_PMTILES =
+  'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-05-20.0/buildings.pmtiles'
+
 // Shader-like label material that stays inside Mapbox's batched SDF glyph
 // renderer. The soft plum edge gives the type molded depth while a restrained
 // emissive response seats it in the lit 3D city without adding a
@@ -252,12 +264,14 @@ const CARS: CarRun[] = [
 ]
 
 function pointAlongRoute(coordinates: number[][], t: number): { pos: [number, number]; bearing: number } {
-  const segs = coordinates.length - 1
+  const valid = coordinates.filter(point => point.length >= 2 && Number.isFinite(point[0]) && Number.isFinite(point[1]))
+  if (valid.length < 2) return { pos: [0, 0], bearing: 0 }
+  const segs = valid.length - 1
   const scaled = (t % 1) * segs
   const i = Math.min(segs - 1, Math.floor(scaled))
   const f = scaled - i
-  const [x1, y1] = coordinates[i]
-  const [x2, y2] = coordinates[i + 1]
+  const [x1, y1] = valid[i]
+  const [x2, y2] = valid[i + 1]
   const pos: [number, number] = [x1 + (x2 - x1) * f, y1 + (y2 - y1) * f]
   const bearing = (Math.atan2(x2 - x1, y2 - y1) * 180) / Math.PI
   return { pos, bearing }
@@ -390,6 +404,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const carMarkersRef = useRef<mapboxgl.Marker[]>([])
   const stopOrbitRef = useRef<() => void>(() => {})
   const streetViewRef = useRef(streetView)
+  const nativeLocationRef = useRef<[number, number] | null>(null)
   // Bumped when a new map instance finishes loading, so the marker effect
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
@@ -408,6 +423,36 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
   const postSeqRef = useRef(0)
+
+  useEffect(() => {
+    const readLocation = (value: unknown): [number, number] | null => {
+      if (!value || typeof value !== 'object') return null
+      const payload = value as { latitude?: unknown; longitude?: unknown; detail?: unknown }
+      if (payload.detail && typeof payload.detail === 'object') return readLocation(payload.detail)
+      const latitude = Number(payload.latitude)
+      const longitude = Number(payload.longitude)
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
+      if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null
+      return [longitude, latitude]
+    }
+    const apply = (value: unknown) => {
+      const center = readLocation(value)
+      if (center) nativeLocationRef.current = center
+    }
+    const onLocation = (event: Event) => apply((event as CustomEvent).detail)
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'poplur-location') apply(event.data)
+    }
+    window.addEventListener('poplur-location', onLocation)
+    window.addEventListener('poplur-native-location', onLocation)
+    window.addEventListener('message', onMessage)
+    apply((window as typeof window & { __poplurNativeLocation?: unknown }).__poplurNativeLocation)
+    return () => {
+      window.removeEventListener('poplur-location', onLocation)
+      window.removeEventListener('poplur-native-location', onLocation)
+      window.removeEventListener('message', onMessage)
+    }
+  }, [])
 
   // Directions: the active route, the routing profile, whether we're mid
   // eye-level navigation, the current turn banner, and a routing-in-flight flag.
@@ -764,9 +809,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // on the geolocation permission prompt; browsers can leave it pending
       // indefinitely, which strands the launch on the globe instead of diving
       // into the 3D-building view.
-      let landingCenter: [number, number] = HOME_CENTER
-      const startIntro = () => window.setTimeout(() => landOn(landingCenter), 1400)
-      if (navigator.geolocation) {
+      let landingCenter: [number, number] = nativeLocationRef.current ?? HOME_CENTER
+      const startIntro = () => window.setTimeout(() => landOn(nativeLocationRef.current ?? landingCenter), 1400)
+      if (!nativeLocationRef.current && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           pos => { landingCenter = [pos.coords.longitude, pos.coords.latitude] },
           () => { /* fallback already scheduled */ },
@@ -1150,6 +1195,59 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           } as never,
         })
 
+        // Overture Maps buildings fill the gaps the base source leaves empty
+        // (see OVERTURE_BUILDINGS_FILL). Same clay material, streamed live by
+        // viewport from the global PMTiles, drawn BELOW clay-buildings-3d so real
+        // mapped buildings win and Overture only shows where the base has nothing.
+        if (OVERTURE_BUILDINGS_FILL) {
+          if (!map.getSource('overture-buildings')) {
+            // mapbox-gl 3.26 reads PMTiles via its provider plugin: the `pmtiles://`
+            // scheme makes it load mapbox-gl-pmtiles-provider and stream tiles from
+            // the S3-hosted global file by HTTP range request.
+            map.addSource('overture-buildings', { type: 'vector', url: `pmtiles://${OVERTURE_BUILDINGS_PMTILES}` })
+          }
+          // Overture carries real heights; fall back to floors×3.2m, else a 9m
+          // house, floored at 6m so low/missing-height footprints still stand up.
+          const overtureHeight = ['max', ['coalesce',
+            ['to-number', ['get', 'height']],
+            ['*', ['coalesce', ['to-number', ['get', 'num_floors']], 2], 3.2],
+            9], 6] as never
+          map.addLayer({
+            id: 'overture-clay-buildings',
+            slot: 'top',
+            type: 'fill-extrusion',
+            source: 'overture-buildings',
+            'source-layer': 'building',
+            // PERF: this is a SECOND extrusion layer on top of the OSM one, so it
+            // doubles the most expensive map work. Start it closer in (14 instead of
+            // 12.5) — the gap-fill only matters at street level — which cuts the tile
+            // + geometry load a lot on big viewports (iPad) and weaker GPUs (Android).
+            minzoom: 14,
+            layout: {
+              'fill-extrusion-edge-radius': 0.9,
+            } as never,
+            paint: {
+              'fill-extrusion-color': ['case',
+                ['==', ['%', ['to-number', ['id']], 8], 0], '#b2916c',
+                ['==', ['%', ['to-number', ['id']], 8], 1], '#cdb28a',
+                ['==', ['%', ['to-number', ['id']], 8], 2], '#c0a37c',
+                ['==', ['%', ['to-number', ['id']], 8], 3], '#d6bd96',
+                ['==', ['%', ['to-number', ['id']], 8], 5], '#a98a66',
+                ['==', ['%', ['to-number', ['id']], 8], 6], '#c7ab82',
+                '#c3a67e',
+              ] as never,
+              'fill-extrusion-height': overtureHeight,
+              'fill-extrusion-base': ['coalesce', ['to-number', ['get', 'min_height']], 0] as never,
+              'fill-extrusion-opacity': 1,
+              'fill-extrusion-vertical-gradient': true,
+              'fill-extrusion-ambient-occlusion-intensity': REALISTIC_MAP ? 0.95 : 0.6,
+              'fill-extrusion-ambient-occlusion-radius': 4,
+              'fill-extrusion-ambient-occlusion-wall-radius': 3,
+              'fill-extrusion-ambient-occlusion-ground-radius': 3,
+            } as never,
+          }, 'clay-buildings-3d')
+        }
+
       // Lighter rooftop slabs on the tall towers — the subtle roof shading
       // Apple Maps uses, molded in clay.
       map.addLayer({
@@ -1456,7 +1554,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         if (!map.getLayer('clay-real-road-body')) return // realistic mode: no clay roads → no toy cars
         const feats = map.queryRenderedFeatures(undefined as never, { layers: ['clay-real-road-body'] })
         const paths: number[][][] = []
-        const push = (cs: number[][]) => { if (cs.length >= 5) paths.push(cs) }
+        const push = (cs: number[][]) => {
+          const valid = cs.filter(point => point.length >= 2 && Number.isFinite(point[0]) && Number.isFinite(point[1]))
+          if (valid.length >= 5) paths.push(valid)
+        }
         for (const f of feats) {
           const g = f.geometry
           if (g.type === 'LineString') push(g.coordinates as number[][])
@@ -1524,6 +1625,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             const features: Array<{ type: 'Feature'; geometry: { type: 'Point'; coordinates: [number, number] }; properties: { bearing: number } }> = []
             for (let r = 0; r < carPaths.length && features.length < 42; r++) {
               const path = carPaths[r]
+              if (!path || path.length < 2) continue
               for (let k = 0; k < carsPerRoad; k++) {
                 const seed = r * 7 + k * 13
                 const speed = 0.05 + ((seed % 5) * 0.012)      // fast, varied
