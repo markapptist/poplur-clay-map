@@ -385,6 +385,20 @@ const FOV_DEFAULT = 45
 /** Fallback centre when geolocation is denied or times out: Toronto's Financial District. */
 const HOME_CENTER: [number, number] = [-79.3811, 43.6487]
 
+// Map lite tier: 3GB-class devices in the native shell (deviceMemory quantizes
+// the A03s to 2; iOS never reports it). Measured on Mali-G52: the map at full
+// resolution with ambient animation + double extrusions runs single-digit fps.
+// Lite renders at 1x, skips ambient flyers/boats, the Overture fill layer and
+// the AO/edge clay shading. Layout, tiles and interactions are identical.
+const MAP_LITE =
+  typeof window !== 'undefined' &&
+  Boolean(
+    (window as unknown as { webkit?: { messageHandlers?: { poplur?: unknown } }; PoplurNative?: unknown }).PoplurNative ||
+    (window as unknown as { webkit?: { messageHandlers?: { poplur?: unknown } } }).webkit?.messageHandlers?.poplur
+  ) &&
+  typeof (navigator as unknown as { deviceMemory?: number }).deviceMemory === 'number' &&
+  ((navigator as unknown as { deviceMemory?: number }).deviceMemory as number) <= 2
+
 // The clay object riding above the zoom slider: the further out you are, the
 // bigger the thing you're looking at. Globe → cloud → airplane → buildings.
 interface ZoomStage { id: string; below: number; url: string; yaw: number; pitch: number }
@@ -412,6 +426,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const stopOrbitRef = useRef<() => void>(() => {})
   const streetViewRef = useRef(streetView)
   const nativeLocationRef = useRef<[number, number] | null>(null)
+  // True while the map tab is front (the home signals via gcAudio messages);
+  // ambient animation pauses when another tab covers the map.
+  const mapIsFrontRef = useRef(true)
   // Bumped when a new map instance finishes loading, so the marker effect
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
@@ -449,6 +466,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const onLocation = (event: Event) => apply((event as CustomEvent).detail)
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === 'poplur-location') apply(event.data)
+      // The home posts gcAudio on/off as the map tab gains/loses the front —
+      // reuse it as the visibility signal for ambient animation.
+      if (typeof event.data?.gcAudio === 'string') {
+        mapIsFrontRef.current = event.data.gcAudio === 'on'
+      }
     }
     window.addEventListener('poplur-location', onLocation)
     window.addEventListener('poplur-native-location', onLocation)
@@ -567,6 +589,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const popRafs = new Map<string | number, number>()
     // Flyer animation loop handle
     let flyerRaf = 0
+
+    // MAP_LITE: render the map at 1x. Mapbox sizes its canvas from
+    // window.devicePixelRatio at construction/resize — pinning it quarters the
+    // GL pixel count on 2x budget screens. Content and layout are unaffected.
+    if (MAP_LITE) {
+      try {
+        Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
+      } catch { /* non-configurable: keep native ratio */ }
+    }
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
@@ -722,6 +753,42 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         startOrbit()
       }
     })
+
+    // ── Universal marker culling ─────────────────────────────────────────────
+    // Every clay prop/monument/tree/boat/POI is a DOM Marker; Mapbox updates
+    // their transforms and paints them even far outside the viewport. Cull to
+    // the visible screen (with one screen of margin so pans reveal instantly)
+    // on every settle — pure waste removal, no visual change, every device.
+    const CULL_MIN_ZOOM = 11
+    const cullMarkersToViewport = () => {
+      const w = window.innerWidth
+      const h = window.innerHeight
+      const container = map.getContainer()
+      // Only cull at street-level zooms: zoomed out the whole world is the
+      // subject — landmarks must not pop in/out during globe spins, and the
+      // off-screen marker count is low there anyway.
+      if (map.getZoom() < CULL_MIN_ZOOM) {
+        container.querySelectorAll<HTMLElement>('.mapboxgl-marker').forEach(el => {
+          if (el.style.display === 'none') el.style.display = ''
+        })
+        return
+      }
+      // Self-moving markers (flyers/boats) reposition between map events — they
+      // must never be culled or they'd stay hidden while flying into view.
+      const moving = new Set<HTMLElement>()
+      flyerMarkersRef.current.forEach(m => { if (m) moving.add(m.getElement()) })
+      boatMarkersRef.current.forEach(m => { if (m) moving.add(m.getElement()) })
+      container.querySelectorAll<HTMLElement>('.mapboxgl-marker').forEach(el => {
+        if (moving.has(el)) return
+        const r = el.getBoundingClientRect()
+        const off = r.right < -w || r.left > w * 2 || r.bottom < -h || r.top > h * 2
+        const want = off ? 'none' : ''
+        if (el.style.display !== want) el.style.display = want
+      })
+    }
+    map.on('moveend', cullMarkersToViewport)
+    map.on('zoomend', cullMarkersToViewport)
+    map.on('idle', cullMarkersToViewport)
 
     // ── Camera policy: hybrid-locked at street level ─────────────────────────
     // Zoomed in, the world is only ever seen at the flyover angle — the pitch
@@ -1191,7 +1258,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           minzoom: 12.5,
           layout: {
             // Experimental v3 property: rounds every extrusion edge → clay
-            'fill-extrusion-edge-radius': 0.9,
+            'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.9,
           } as never,
           paint: {
             // Hand-rolled clay is never one flat colour. Eight-way hash across the
@@ -1214,7 +1281,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             'fill-extrusion-vertical-gradient': true,
             // Deep contact shadow where wall meets ground — the strongest single
             // cue that an object is physically sitting on a surface.
-            'fill-extrusion-ambient-occlusion-intensity': REALISTIC_MAP ? 0.95 : 0.6,
+            'fill-extrusion-ambient-occlusion-intensity': MAP_LITE ? 0 : (REALISTIC_MAP ? 0.95 : 0.6),
             'fill-extrusion-ambient-occlusion-radius': REALISTIC_MAP ? 7 : 4,
             'fill-extrusion-ambient-occlusion-wall-radius': REALISTIC_MAP ? 6 : 3,
             'fill-extrusion-ambient-occlusion-ground-radius': REALISTIC_MAP ? 5 : 3,
@@ -1225,7 +1292,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // (see OVERTURE_BUILDINGS_FILL). Same clay material, streamed live by
         // viewport from the global PMTiles, drawn BELOW clay-buildings-3d so real
         // mapped buildings win and Overture only shows where the base has nothing.
-        if (OVERTURE_BUILDINGS_FILL) {
+        if (OVERTURE_BUILDINGS_FILL && !MAP_LITE) {
           if (!map.getSource('overture-buildings')) {
             // mapbox-gl 3.26 picks its PMTiles provider plugin by the URL's
             // .pmtiles EXTENSION and hands the url to the plugin verbatim — so
@@ -1252,7 +1319,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             // + geometry load a lot on big viewports (iPad) and weaker GPUs (Android).
             minzoom: 14,
             layout: {
-              'fill-extrusion-edge-radius': 0.9,
+              'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.9,
             } as never,
             paint: {
               'fill-extrusion-color': ['case',
@@ -1268,7 +1335,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
               'fill-extrusion-base': ['coalesce', ['to-number', ['get', 'min_height']], 0] as never,
               'fill-extrusion-opacity': 1,
               'fill-extrusion-vertical-gradient': true,
-              'fill-extrusion-ambient-occlusion-intensity': REALISTIC_MAP ? 0.95 : 0.6,
+              'fill-extrusion-ambient-occlusion-intensity': MAP_LITE ? 0 : (REALISTIC_MAP ? 0.95 : 0.6),
               'fill-extrusion-ambient-occlusion-radius': 4,
               'fill-extrusion-ambient-occlusion-wall-radius': 3,
               'fill-extrusion-ambient-occlusion-ground-radius': 3,
@@ -1287,14 +1354,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         minzoom: 13,
         filter: ['>=', ['coalesce', ['get', 'height'], 0], 45] as never,
         layout: {
-          'fill-extrusion-edge-radius': 0.95,
+          'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.95,
         } as never,
         paint: {
           'fill-extrusion-color': '#d8c19a',
           'fill-extrusion-base': poppedHeight,
           'fill-extrusion-height': ['+', poppedHeight, 4],
           'fill-extrusion-opacity': 1,
-          'fill-extrusion-ambient-occlusion-intensity': 0.3,
+          'fill-extrusion-ambient-occlusion-intensity': MAP_LITE ? 0 : 0.3,
           'fill-extrusion-ambient-occlusion-radius': 2,
         } as never,
       })
@@ -1625,6 +1692,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const flyerStart = performance.now()
       const animateFlyers = () => {
         flyerRaf = requestAnimationFrame(animateFlyers)
+        // Universal: ambient animation only while the map is actually visible.
+        // The home keeps this iframe mounted on every tab (gcAudio 'off' means
+        // another tab is front) — animating an invisible map wastes GPU on
+        // every device class. MAP_LITE devices skip the ambient layer entirely.
+        if (MAP_LITE || document.hidden || !mapIsFrontRef.current) return
         const zoom = map.getZoom()
         const t = (performance.now() - flyerStart) / 1000
         if (zoom < 5.5) {

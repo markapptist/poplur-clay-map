@@ -41,11 +41,18 @@
   background: #1f6bff;
 }
 
-/* Feed / Camera / Profile are explicitly above the always-mounted map. */
+/* Feed / Camera / Profile are explicitly above the always-mounted map.
+   pointer-events: the layer itself must be transparent to touch — on the MAP
+   tab it is empty but still full-screen, and it was swallowing every map
+   gesture (tap/pan/pinch). Children re-enable hit-testing themselves. */
 .contentLayer {
   position: absolute;
   inset: 0;
   z-index: 4;
+  pointer-events: none;
+}
+.contentLayer > * {
+  pointer-events: auto;
 }
 
 /* Approved Loading screen (GCL): the background fades pink → purple → blue
