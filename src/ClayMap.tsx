@@ -5,7 +5,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
-import { installClaimsLayer, setClaim } from './mapClaims'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, onClaimsSettled } from './mapClaims'
 import {
   fetchRoute,
   installRouteLayers,
@@ -210,19 +210,32 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
   set('clay-land-background', 'background-color', theme.land)
   set('clay-water-fill', 'fill-color', theme.water)
   set('clay-grass-fill', 'fill-color', theme.park)
-  set('clay-minor-roads', 'line-color', theme.road)
-  set('clay-real-road-body', 'line-color', theme.road)
-  set('clay-real-road-rim', 'line-color', theme.roadRim)
+  // Claimed territory keeps its takeover colours through every theme/day
+  // re-apply: streets fully inside a claim mold in Poplur plum, and claimed
+  // buildings re-mold pink — the theme only styles the UNCLAIMED branch.
+  const claimedRoad = (normal: string, claimed: string) => {
+    const fc = claimsFeatureCollection()
+    return fc.features.length ? ['case', ['within', fc], claimed, normal] : normal
+  }
+  set('clay-minor-roads', 'line-color', claimedRoad(theme.road, '#9c2a6e'))
+  set('clay-real-road-body', 'line-color', claimedRoad(theme.road, '#8a2260'))
+  set('clay-real-road-rim', 'line-color', claimedRoad(theme.roadRim, '#ff9ccd'))
   set('clay-real-road-stitches', 'line-color', theme.accentHot)
   set('clay-trail-stitches', 'line-color', theme.accent)
   // Buildings stay true-to-life neutral cream in every skin — only the map
-  // surfaces re-colour with the theme.
+  // surfaces re-colour with the theme. Claimed footprints go Poplur pink.
   set('clay-buildings-3d', 'fill-extrusion-color', ['case',
+    ['boolean', ['feature-state', 'claimed'], false], ['case',
+      ['==', ['%', ['to-number', ['id']], 9], 0], '#e8368f',
+      ['==', ['%', ['to-number', ['id']], 9], 4], '#f983c1',
+      '#ee3d98',
+    ],
     ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
     ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
     '#dbd3c7',
   ])
-  set('clay-building-caps', 'fill-extrusion-color', '#efe9df')
+  set('clay-building-caps', 'fill-extrusion-color', ['case',
+    ['boolean', ['feature-state', 'claimed'], false], '#ff9ccd', '#efe9df'])
 }
 
 // Clay-style world monuments drawn as inline SVGs, pink/black like the theme.
@@ -1314,6 +1327,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             // warm-cream family gives the batch variation a real sculpt has, while
             // staying inside one material.
             'fill-extrusion-color': ['case',
+              // Claimed territory: the buildings themselves re-mold in the
+              // Poplur pink family (same 8-way batch variation).
+              ['boolean', ['feature-state', 'claimed'], false], ['case',
+                ['==', ['%', ['to-number', ['id']], 8], 0], '#e8368f',
+                ['==', ['%', ['to-number', ['id']], 8], 1], '#f983c1',
+                ['==', ['%', ['to-number', ['id']], 8], 2], '#ef4fa2',
+                ['==', ['%', ['to-number', ['id']], 8], 3], '#f8a5cf',
+                ['==', ['%', ['to-number', ['id']], 8], 5], '#d92a80',
+                ['==', ['%', ['to-number', ['id']], 8], 6], '#f26bb0',
+                '#ee3d98',
+              ],
               ['==', ['%', ['to-number', ['id']], 8], 0], '#b2916c',
               ['==', ['%', ['to-number', ['id']], 8], 1], '#cdb28a',
               ['==', ['%', ['to-number', ['id']], 8], 2], '#c0a37c',
@@ -1355,7 +1379,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.95,
         } as never,
         paint: {
-          'fill-extrusion-color': '#d8c19a',
+          'fill-extrusion-color': ['case',
+            ['boolean', ['feature-state', 'claimed'], false], '#ff9ccd',
+            '#d8c19a'] as never,
           'fill-extrusion-base': poppedHeight,
           'fill-extrusion-height': ['+', poppedHeight, 4],
           'fill-extrusion-opacity': 1,
@@ -1685,6 +1711,71 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // Land-claim territory + tap-to-post: a tap on empty ground opens the
       // composer; the dropped post claims land (a clay disc sized by its km).
       installClaimsLayer(map)
+
+      // ── Takeover colorization: features INSIDE a claim recolor ──────────────
+      // Streets: `within` paint expressions (line features fully inside a
+      // claim turn Poplur-pink asphalt). Buildings: a feature-state pass marks
+      // footprints whose anchor point falls in a claim circle; the extrusion
+      // palette then re-molds them in the pink family.
+      const claimBuildingSource = import.meta.env.DEV ? 'clay-streets' : 'overture-buildings'
+      const recolorClaimedBuildings = () => {
+        const circles = getClaims()
+        if (!circles.length) return
+        let feats: mapboxgl.GeoJSONFeature[] = []
+        try {
+          feats = map.querySourceFeatures(claimBuildingSource, { sourceLayer: 'building' }) as mapboxgl.GeoJSONFeature[]
+        } catch { return }
+        for (const f of feats) {
+          if (f.id == null) continue
+          const g = f.geometry
+          let pt: [number, number] | null = null
+          if (g.type === 'Polygon') pt = g.coordinates[0][0] as [number, number]
+          else if (g.type === 'MultiPolygon') pt = g.coordinates[0][0][0] as [number, number]
+          if (!pt) continue
+          const anchor = pt
+          const claimed = circles.some(c => {
+            const dLat = (anchor[1] - c.center[1]) * 110.574
+            const dLng = (anchor[0] - c.center[0]) * 111.320 * Math.cos((c.center[1] * Math.PI) / 180)
+            return dLat * dLat + dLng * dLng <= c.radiusKm * c.radiusKm
+          })
+          if (claimed) {
+            try {
+              map.setFeatureState({ source: claimBuildingSource, sourceLayer: 'building', id: f.id }, { claimed: true })
+            } catch { /* map torn down */ }
+          }
+        }
+      }
+      let recolorTimer = 0
+      const scheduleRecolor = () => {
+        if (recolorTimer) return
+        recolorTimer = window.setTimeout(() => { recolorTimer = 0; recolorClaimedBuildings() }, 700)
+      }
+      map.on('moveend', scheduleRecolor)
+      map.on('sourcedata', e => {
+        const ev = e as { sourceId?: string; isSourceLoaded?: boolean }
+        if (ev.sourceId === claimBuildingSource && ev.isSourceLoaded) scheduleRecolor()
+      })
+
+      const applyClaimRoadPaint = () => {
+        const fc = claimsFeatureCollection()
+        if (!fc.features.length) return
+        const w = ['within', fc]
+        try {
+          map.setPaintProperty('clay-real-road-body', 'line-color',
+            ['case', w, '#8a2260', PALETTE.road] as never)
+          map.setPaintProperty('clay-minor-roads', 'line-color',
+            ['case', w, '#9c2a6e', PALETTE.road] as never)
+          map.setPaintProperty('clay-real-road-rim', 'line-color',
+            ['case', w, '#ff9ccd', PALETTE.roadHighlight] as never)
+        } catch { /* layers not ready */ }
+      }
+      onClaimsSettled(() => { applyClaimRoadPaint(); scheduleRecolor() })
+      // Late safety passes: tiles and theme applies can land after the seeds
+      // settle, so re-assert the takeover paint a few times after load.
+      ;[4000, 9000, 16000].forEach(ms => window.setTimeout(() => {
+        applyClaimRoadPaint()
+        scheduleRecolor()
+      }, ms))
 
       // ── Sample pops (testing the takeover look) ─────────────────────────────
       // Each pop claims its radius: the ground inside recolors clay-pink.

@@ -48,11 +48,12 @@ export function installClaimsLayer(map: mapboxgl.Map) {
     type: 'fill',
     source: CLAIMS_SOURCE,
     paint: {
-      // Strong enough that green clay visibly turns claimed-pink ground.
+      // The GROUND recolors — water stays water (this layer slides in under
+      // the clay water fill), streets/buildings colorize per feature.
       'fill-color': '#F0559E',
       'fill-opacity': 0.42,
     },
-  })
+  }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
 
   map.addLayer({
     id: CLAIMS_RIM,
@@ -70,6 +71,23 @@ export function installClaimsLayer(map: mapboxgl.Map) {
 }
 
 const claims = new Map<string, Claim>()
+
+/** Everything currently claimed, for per-feature colorization passes. */
+export function getClaims(): Claim[] { return [...claims.values()] }
+
+/** The claim discs as a plain FeatureCollection — feeds `within` paint
+ *  expressions so streets inside a claim recolor per feature. */
+export function claimsFeatureCollection(): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: [...claims.values()].map(c => circlePolygon(c.center, c.radiusKm)),
+  }
+}
+
+type ClaimsListener = () => void
+let claimsListener: ClaimsListener | null = null
+/** Fires when a claim SETTLES (not per animation frame). */
+export function onClaimsSettled(cb: ClaimsListener) { claimsListener = cb }
 
 function pushClaims(map: mapboxgl.Map) {
   const src = map.getSource(CLAIMS_SOURCE) as mapboxgl.GeoJSONSource | undefined
@@ -90,6 +108,7 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
   if (!animate) {
     claims.set(claim.id, claim)
     pushClaims(map)
+    claimsListener?.()
     return
   }
   const started = performance.now()
@@ -102,7 +121,7 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
     claims.set(claim.id, { ...claim, radiusKm: Math.max(0, r) })
     pushClaims(map)
     if (t < 1) requestAnimationFrame(step)
-    else { claims.set(claim.id, claim); pushClaims(map) }
+    else { claims.set(claim.id, claim); pushClaims(map); claimsListener?.() }
   }
   requestAnimationFrame(step)
 }
