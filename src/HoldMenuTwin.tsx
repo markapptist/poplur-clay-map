@@ -21,6 +21,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   map: [
     { icon: 'Directions', title: 'DIRECTIONS' },
     { icon: 'Search', title: 'LOCATE' },
+    { icon: 'Map', title: 'STREET VIEW' },
     { icon: 'Create', title: 'POST' },
     { icon: 'Tour', title: 'TOUR' },
     { icon: 'Home', title: 'HOME' },
@@ -91,6 +92,23 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
   const snapIndexRef = useRef<number | null>(null) // tap-to-spin target item
   const countRef = useRef(items.length)
   countRef.current = items.length
+
+  // Map-tab entries act on the map itself: post into the always-present map
+  // iframe (the on-map Directions/Locate/Street View buttons moved here).
+  const MAP_ACTIONS: Record<string, string> = {
+    DIRECTIONS: 'directions',
+    LOCATE: 'locate',
+    'STREET VIEW': 'streetview',
+    TOUR: 'tour',
+  }
+  const activateItem = (title: string) => {
+    const action = MAP_ACTIONS[title]
+    if (!action) return
+    playPop()
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Poplur clay map"]')
+    frame?.contentWindow?.postMessage({ type: 'poplur-map-action', action }, '*')
+    onClose()
+  }
 
   const applyOffsetDelta = (delta: number) => {
     const count = countRef.current
@@ -255,6 +273,7 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
             <button
               key={`${it.icon}-${it.title}-${index}`}
               data-index={index}
+              onClick={() => { if (on) activateItem(it.title) }}
               className={styles.tile}
               style={{
                 top: `${CENTER_Y_FRAC * 100}%`,

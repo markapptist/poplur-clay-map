@@ -20,6 +20,8 @@ interface ClayNavProps {
   /** Pauses any autonomous camera motion before routing or driving. */
   onRouteIntent?: () => void
   streetView: boolean
+  /** Increment to open the Directions search (hold-menu entry replaces the FAB). */
+  openSignal?: number
   setStreetView: (on: boolean) => void
   /** Show a line in the AI ticker (mirrors the Poplur AI voice). */
   say: (line: string | null) => void
@@ -137,7 +139,7 @@ const MANEUVER_ICON: Record<string, string> = {
   straight: 'M12 20V5m0 0-4 4m4-4 4 4', arrive: 'M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11Z',
 }
 
-export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteIntent, streetView, setStreetView, say }: ClayNavProps) {
+export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteIntent, streetView, setStreetView, say, openSignal = 0 }: ClayNavProps) {
   const [mode, setMode] = useState<Mode>('idle')
   const [query, setQuery] = useState('')
   const [destName, setDestName] = useState('')
@@ -350,17 +352,20 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
     setMode('idle'); setRoute(null); setBanner(null); setRemain(null); setQuery('')
   }, [teardown, setStreetView])
 
+  // The Directions entry moved into the hold menu: it bumps openSignal, which
+  // opens the search card exactly like the old on-map FAB tap did.
+  useEffect(() => {
+    if (openSignal > 0) { onRouteIntent?.(); setError(null); setMode('searching') }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal])
+
   // ---- UI ----
   const maneuverPath = (t: string) => MANEUVER_ICON[t] || (/(left)/i.test(t) ? MANEUVER_ICON.left : /(right)/i.test(t) ? MANEUVER_ICON.right : MANEUVER_ICON.straight)
 
   return (
     <div className={styles.wrap}>
-      {mode === 'idle' && (
-        <button type="button" className={styles.fab} onClick={() => { onRouteIntent?.(); setError(null); setMode('searching') }} aria-label="Directions">
-          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M21.7 11.3 12.7 2.3a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4ZM10 15v-3H8v2H6v-4a1 1 0 0 1 1-1h3V6l4 4Z" fill="currentColor"/></svg>
-          <span>Directions</span>
-        </button>
-      )}
+      {/* Directions FAB removed — the hold menu's DIRECTIONS entry opens the
+          search via openSignal (declutter the map). */}
 
       {mode === 'searching' && (
         <form className={styles.searchCard} aria-busy={isRouting} onSubmit={e => { e.preventDefault(); void search() }}>

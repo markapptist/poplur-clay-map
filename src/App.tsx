@@ -18,6 +18,7 @@ import { postNativeEvent } from './nativeBridge'
 import { isUserMuted, setUserMuted } from './audioGate'
 import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
+import ClayMuteButton from './ClayMuteButton'
 import styles from './App.module.css'
 
 
@@ -744,6 +745,23 @@ export default function App() {
     startTourLoop(1200, nearest)
   }, [startTourLoop])
 
+  // Hold-menu actions arrive from the home page as messages: the on-map
+  // Directions/Street View/Locate buttons moved there to declutter the map.
+  const [directionsSignal, setDirectionsSignal] = useState(0)
+  useEffect(() => {
+    const onAction = (event: MessageEvent) => {
+      if (event.data?.type !== 'poplur-map-action') return
+      switch (event.data.action) {
+        case 'locate': handleGoToCurrentLocation(); break
+        case 'streetview': handleToggleStreetView(); break
+        case 'directions': setDirectionsSignal(n => n + 1); break
+        case 'tour': startTourLoop(0); break
+      }
+    }
+    window.addEventListener('message', onAction)
+    return () => window.removeEventListener('message', onAction)
+  }, [handleGoToCurrentLocation, handleToggleStreetView, startTourLoop])
+
   const handleRouteIntent = useCallback(() => {
     clearTourTimers()
     const map = mapRef.current
@@ -801,6 +819,7 @@ export default function App() {
 
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
       <ClayNav
+        openSignal={directionsSignal}
         mapRef={mapRef}
         token={TOKEN}
         theme={theme}
@@ -818,15 +837,13 @@ export default function App() {
       <TopChrome />
       <div ref={tickerRef} className={styles.aiTicker}>
         {soundPlaying && (
-          // The mark is the mute control: tapping it silences every map sound
-          // (radio, ambience, theme, pops) through the shared audio gate.
-          <button
-            type="button"
-            className={muted ? styles.aiVolumeMuted : styles.aiVolume}
-            aria-label={muted ? 'Unmute sound' : 'Mute sound'}
-            aria-pressed={muted}
-            onClick={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
-            dangerouslySetInnerHTML={{ __html: muted ? VOLUME_MUTED_ICON : VOLUME_ICON }}
+          // The mute control: silences every map sound (radio, ambience, theme,
+          // pops) through the shared audio gate. Feed-style clay button, sized
+          // to be seen and pressed — replaces the 15px mark users couldn't find.
+          <ClayMuteButton
+            muted={muted}
+            size={44}
+            onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
           />
         )}
         <span>{tourLine ?? AI_LINES[aiIndex]}</span>
@@ -841,22 +858,8 @@ export default function App() {
         </span>
       </div>
 
-      <button
-        type="button"
-        className={styles.locateButton}
-        aria-label="Go to current location"
-        onClick={handleGoToCurrentLocation}
-        dangerouslySetInnerHTML={{ __html: LOCATE_ICON }}
-      />
-
-      <button
-        type="button"
-        className={streetView ? styles.streetViewButtonActive : styles.streetViewButton}
-        aria-label={streetView ? 'Exit Street View' : 'Enter Street View'}
-        aria-pressed={streetView}
-        onClick={handleToggleStreetView}
-        dangerouslySetInnerHTML={{ __html: STREET_ICON }}
-      />
+      {/* Locate + Street View moved into the HOLD MENU (declutter): they now
+          arrive as poplur-map-action messages — see the listener effect. */}
 
       {/* ── Weather badge — left side, opposite the zoom slider ── */}
       {weather && (

@@ -441,7 +441,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [popTick, setPopTick] = useState(0)
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
-  const zoomProgress = `${Math.max(0, Math.min(100, ((zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)) * 100))}%`
+  // Fill percentage aligned to the CENTER of the native thumb: a range thumb
+  // only travels (track − thumb) px, so a raw value-percentage mask leads the
+  // knob by up to half the thumb width — the barber fill visibly ran PAST the
+  // knob. Compensate with the real geometry (track 200px, thumb 46px).
+  const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
+  const zoomProgress = `${((zoomRatio * (200 - 46) + 23) / 200) * 100}%`
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
