@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 import styles from './ViewHarness.module.css'
 
 // Camera Roll — the camera's upper page (channel-up pushes the whole camera
@@ -42,6 +43,24 @@ const ROLL: RollItem[] = [
 ]
 
 export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => void; lite?: boolean } = {}) {
+  // Native shell: the REAL device photo library replaces the mock grid. The
+  // app answers requestCameraRoll with recent photo thumbnails (data URIs) via
+  // window.poplurCameraRoll; a denied OS permission flips back to the camera.
+  const [nativeRoll, setNativeRoll] = useState<RollItem[] | null>(null)
+  useEffect(() => {
+    if (!isNativeShell()) return
+    const w = window as unknown as { poplurCameraRoll?: (payload: unknown) => void }
+    w.poplurCameraRoll = payload => {
+      if (Array.isArray(payload)) {
+        setNativeRoll(payload.filter((it): it is RollItem =>
+          !!it && typeof (it as RollItem).src === 'string'))
+      } else if (payload && typeof payload === 'object' && (payload as { denied?: boolean }).denied) {
+        onDeny?.()
+      }
+    }
+    return () => { delete w.poplurCameraRoll }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // First-open permission alert, in the Poplur clay alert style (twin of the
   // pre-login camera/location permission cards). Only a GRANT persists;
   // denying flips back to the live camera and the alert returns next time.
@@ -55,8 +74,14 @@ export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => vo
   const allow = () => {
     try { window.localStorage.setItem('poplur.rollPermission', 'granted') } catch { /* embedded */ }
     setGranted(true)
+    if (isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
   }
   const deny = () => { onDeny?.() }
+  // Re-request on every open once granted, so the roll stays fresh.
+  useEffect(() => {
+    if (granted && isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [granted])
 
   return (
     <section className={styles.cameraRoll} aria-label="Camera roll">
@@ -67,7 +92,7 @@ export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => vo
       </header>
 
       <div className={styles.rollGrid}>
-        {ROLL.map((item, index) => (
+        {(nativeRoll ?? ROLL).map((item, index) => (
           <figure key={index} className={styles.rollTile}>
             {item.kind === 'photo' ? (
               <img className={styles.rollMedia} src={item.src} alt="" loading="lazy" draggable={false} />
