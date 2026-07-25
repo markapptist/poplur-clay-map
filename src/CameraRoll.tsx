@@ -41,7 +41,7 @@ const ROLL: RollItem[] = [
   { kind: 'photo', src: 'clay_pin.png' },
 ]
 
-export default function CameraRoll({ onDeny }: { onDeny?: () => void } = {}) {
+export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => void; lite?: boolean } = {}) {
   // First-open permission alert, in the Poplur clay alert style (twin of the
   // pre-login camera/location permission cards). Only a GRANT persists;
   // denying flips back to the live camera and the alert returns next time.
@@ -71,6 +71,10 @@ export default function CameraRoll({ onDeny }: { onDeny?: () => void } = {}) {
           <figure key={index} className={styles.rollTile}>
             {item.kind === 'photo' ? (
               <img className={styles.rollMedia} src={item.src} alt="" loading="lazy" draggable={false} />
+            ) : lite ? (
+              // Lite clone (the pager's wrap panel, visible only mid-slide):
+              // no <video> decoders, just the badge on a dark tile.
+              <span className={styles.rollBadge}>▶ {item.length}</span>
             ) : (
               <>
                 {/* #t=0.1 forces the browser to decode and paint a real first
@@ -85,7 +89,7 @@ export default function CameraRoll({ onDeny }: { onDeny?: () => void } = {}) {
 
       <p className={styles.rollHint}>▲ ▼ flips back to the camera</p>
 
-      {!granted && (
+      {!granted && !lite && (
         <div className={styles.rollPermScrim}>
           <div className={styles.rollPermAlert} role="dialog" aria-label="Camera roll permission">
             <div className={styles.rollPermContent}>

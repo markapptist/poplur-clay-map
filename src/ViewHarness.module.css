@@ -310,31 +310,6 @@
   box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.85), inset 0 0 64px rgba(255, 255, 255, 0.5);
 }
 
-/* Camera roll thumb — CameraRollButton: 60×60, radius 12, bottom-right just
-   above the HUD band. */
-.camRoll {
-  position: absolute;
-  right: 16px;
-  bottom: 224px;
-  width: 60px;
-  height: 60px;
-  padding: 0;
-  border-radius: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.85);
-  overflow: hidden;
-  background: #16060f;
-  cursor: pointer;
-  z-index: 3;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
-}
-
-.camRoll img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
 /* Full-screen overrides for the shared viewfinder dressing */
 .cameraFull .gridLines { z-index: 1; }
 .cameraFull .focusBox {
@@ -344,33 +319,14 @@
   z-index: 1;
 }
 
-/* Corner controls — flash (left) + switch camera (right), like prior versions. */
-.camCorner {
+/* Corner controls — bare clay 3D marks (flash left, flip right), no backing. */
+.camCornerSlot {
   position: absolute;
-  top: 10px;
-  z-index: 4;
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
-  color: #fff;
-  background: rgba(8, 6, 10, 0.42);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  top: max(14px, env(safe-area-inset-top));
+  z-index: 8;
 }
-.camCorner:active { transform: scale(0.9); }
-.camCorner svg { width: 21px; height: 21px; }
-.camCornerLeft { left: 10px; }
-.camCornerRight { right: 10px; }
-.camCornerOn {
-  background: rgba(255, 216, 77, 0.28);
-  box-shadow: 0 0 14px rgba(255, 216, 77, 0.55);
-}
+.camSlotLeft { left: max(12px, env(safe-area-inset-left)); }
+.camSlotRight { right: max(12px, env(safe-area-inset-right)); }
 
 /* poplur logo, kept centered at the top of the camera. */
 .camLogo {
@@ -694,20 +650,25 @@
 .camPagerTrack {
   position: absolute;
   inset: 0 0 auto 0;
-  height: 200%;
+  height: 400%;
   transition: transform 0.52s cubic-bezier(0.32, 0.72, 0.24, 1);
   will-change: transform;
 }
+
+/* Wrap-snap: reposition to the centre panels with no visible motion. */
+.camPagerSnap { transition: none; }
 
 .camPagerTrack > * {
   position: absolute !important;
   left: 0;
   right: 0;
-  height: 50%;
+  height: 25%;
 }
 
-.camPagerTrack > *:first-child { top: 0; }
-.camPagerTrack > *:last-child { top: 50%; }
+.camPagerTrack > *:nth-child(1) { top: 0; }
+.camPagerTrack > *:nth-child(2) { top: 25%; }
+.camPagerTrack > *:nth-child(3) { top: 50%; }
+.camPagerTrack > *:nth-child(4) { top: 75%; }
 
 /* ── Camera Roll page: fills the WHOLE screen — the grid runs edge to edge
       and scrolls vertically under a floating header. ── */
@@ -972,25 +933,9 @@
   to { transform: translate(2.4%, -1.6%) scale(-1.06, 1.06); }
 }
 
-.cameraFull .camCorner {
-  top: max(16px, env(safe-area-inset-top));
-  z-index: 8;
-}
-
-.cameraFull .camCornerLeft { left: max(16px, env(safe-area-inset-left)); }
-.cameraFull .camCornerRight { right: max(16px, env(safe-area-inset-right)); }
-
 .cameraFull .camLogo {
   top: max(18px, env(safe-area-inset-top));
   z-index: 8;
-}
-
-.cameraFull .camRoll {
-  right: max(16px, env(safe-area-inset-right));
-  bottom: calc(18px + var(--cube-size) + 16px);
-  z-index: 8;
-  width: 58px;
-  height: 58px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -167,16 +167,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.clearInterval(iv)
   }, [loadingVisible])
 
-  // Camera's vertical pager: 'live' viewfinder or the Camera Roll page above it.
-  const [cameraPage, setCameraPage] = useState<'live' | 'roll'>(initialCameraPage)
-  useEffect(() => { if (activeTab !== 'post') setCameraPage('live') }, [activeTab])
+  // Camera's vertical pager: `step` counts arrow presses (up +1 / down -1);
+  // parity picks the page, so both directions cycle live ⇄ roll.
+  const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
+  useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
-    // On the camera tab the clay arrows page the camera itself: EITHER arrow
-    // cycles between the live viewfinder and the Camera Roll.
+    // On the camera tab the clay arrows page the camera itself: up slides
+    // up, down slides down, both directions wrap live ⇄ roll.
     if (activeTab === 'post') {
-      setCameraPage(p => (p === 'live' ? 'roll' : 'live'))
+      setCameraStep(s => s + (dir === -1 ? 1 : -1))
       return
     }
     if (activeTab === 'map') {
@@ -219,7 +220,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       <div className={styles.contentLayer}>
         {activeTab === 'feed' && <FeedTwin index={chanIndex} onIndexChange={setChanIndex} />}
-        {activeTab === 'post' && <Camera page={cameraPage} onOpenRoll={() => setCameraPage('roll')} onCloseRoll={() => setCameraPage('live')} />}
+        {activeTab === 'post' && <Camera step={cameraStep} onCloseRoll={() => setCameraStep(s => s - 1)} />}
         {activeTab === 'profile' && <ProfileTwin />}
       </div>
 
