@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES } from './data'
-import ClayMap from './ClayMap'
+import ClayMap, { MAP_LITE } from './ClayMap'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import WeatherFX, { modeForCode } from './WeatherFX'
@@ -748,6 +748,7 @@ export default function App() {
   // Hold-menu actions arrive from the home page as messages: the on-map
   // Directions/Street View/Locate buttons moved there to declutter the map.
   const [directionsSignal, setDirectionsSignal] = useState(0)
+  const popCycleRef = useRef(-1)
   useEffect(() => {
     const onAction = (event: MessageEvent) => {
       if (event.data?.type !== 'poplur-map-action') return
@@ -756,11 +757,25 @@ export default function App() {
         case 'streetview': handleToggleStreetView(); break
         case 'directions': setDirectionsSignal(n => n + 1); break
         case 'tour': startTourLoop(0); break
+        case 'cyclePop': {
+          // Channel arrows on the map: fly pop-to-pop with the tour camera
+          // (curved zoom-out-then-in), pausing the ambient tour.
+          clearTourTimers()
+          const dir = event.data.dir === -1 ? -1 : 1
+          const next = ((popCycleRef.current + dir) % POIS.length + POIS.length) % POIS.length
+          popCycleRef.current = next
+          const poi = POIS[next]
+          if (poi) {
+            setTourLine(`Pop ${next + 1} of ${POIS.length}: ${poi.name}`)
+            flyToCenter(poi.coords as [number, number], TOUR_FLIGHT_MS)
+          }
+          break
+        }
       }
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [handleGoToCurrentLocation, handleToggleStreetView, startTourLoop])
+  }, [handleGoToCurrentLocation, handleToggleStreetView, startTourLoop, clearTourTimers, flyToCenter])
 
   const handleRouteIntent = useCallback(() => {
     clearTourTimers()
@@ -831,7 +846,7 @@ export default function App() {
       />
 
       {/* ── Weather overlay effects (rain / storm / snow / cloudy / fog) ── */}
-      <WeatherFX mode={weatherMode} />
+      {!MAP_LITE && <WeatherFX mode={weatherMode} />}
 
       {/* ── Top chrome: provided clay logo + wordmark, with the AI line ── */}
       <TopChrome />

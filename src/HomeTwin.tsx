@@ -179,6 +179,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setCameraPage(p => (p === 'live' ? 'roll' : 'live'))
       return
     }
+    if (activeTab === 'map') {
+      // On the map the arrows cycle the user's pops: the map flies pop-to-pop
+      // with the tour camera instead of changing feed channels.
+      mapFrameRef.current?.contentWindow?.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir }, '*')
+      return
+    }
     setChanIndex(i => (i + dir + CHANNELS.length) % CHANNELS.length)
   }
 

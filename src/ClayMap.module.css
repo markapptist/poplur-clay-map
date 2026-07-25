@@ -267,42 +267,8 @@
 /* Automatic lens depth: the center stays readable while the near and far
    edges soften as the camera drops into the city. Controls sit above this
    layer, so only the clay world and its map markers receive the blur. */
-.depthOfField {
-  position: absolute;
-  inset: -10px;
-  z-index: 7;
-  pointer-events: none;
-  opacity: var(--dofOpacity, 0.12);
-  background: radial-gradient(
-    ellipse 62% 48% at 50% 44%,
-    transparent 0 37%,
-    rgba(255, 220, 238, 0.025) 54%,
-    rgba(18, 10, 17, 0.12) 76%,
-    rgba(5, 4, 7, 0.24) 100%
-  );
-  -webkit-backdrop-filter: blur(var(--dofBlur, 1.5px)) saturate(0.92);
-  backdrop-filter: blur(var(--dofBlur, 1.5px)) saturate(0.92);
-  -webkit-mask-image: radial-gradient(
-    ellipse 68% 54% at 50% 44%,
-    transparent 0 36%,
-    rgba(0, 0, 0, 0.08) 51%,
-    rgba(0, 0, 0, 0.72) 76%,
-    #000 100%
-  );
-  mask-image: radial-gradient(
-    ellipse 68% 54% at 50% 44%,
-    transparent 0 36%,
-    rgba(0, 0, 0, 0.08) 51%,
-    rgba(0, 0, 0, 0.72) 76%,
-    #000 100%
-  );
-}
 
 @media (prefers-reduced-motion: reduce) {
-  .depthOfField {
-    -webkit-backdrop-filter: blur(1px) saturate(0.96);
-    backdrop-filter: blur(1px) saturate(0.96);
-  }
 }
 
 /* ── Poplur clay pins (provided asset) ────────────────── */

@@ -390,7 +390,7 @@ const HOME_CENTER: [number, number] = [-79.3811, 43.6487]
 // resolution with ambient animation + double extrusions runs single-digit fps.
 // Lite renders at 1x, skips ambient flyers/boats, the Overture fill layer and
 // the AO/edge clay shading. Layout, tiles and interactions are identical.
-const MAP_LITE =
+export const MAP_LITE =
   typeof window !== 'undefined' &&
   Boolean(
     (window as unknown as { webkit?: { messageHandlers?: { poplur?: unknown } }; PoplurNative?: unknown }).PoplurNative ||
@@ -475,6 +475,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // reuse it as the visibility signal for ambient animation.
       if (typeof event.data?.gcAudio === 'string') {
         mapIsFrontRef.current = event.data.gcAudio === 'on'
+      }
+      // Hold-menu FOV entry: cycle lens presets with a pop per step.
+      if (event.data?.type === 'poplur-map-action' && event.data.action === 'fov') {
+        setFovValue(prev => {
+          const presets = [45, 60, 75, 30]
+          const next = presets[(presets.findIndex(v => v >= prev - 2 && v <= prev + 2) + 1) % presets.length] ?? 45
+          const m = mapRef.current
+          if (m) { (m as unknown as { transform: { fov: number } }).transform.fov = next; m.triggerRepaint() }
+          playPop()
+          return next
+        })
       }
     }
     window.addEventListener('poplur-location', onLocation)
@@ -606,6 +617,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
+      // Lite: keep the tile cache tiny — a 3GB device swaps otherwise.
+      ...(MAP_LITE ? { maxTileCacheSize: 16 } : {}),
       style: 'mapbox://styles/mapbox/dark-v11',
       center: HOME_CENTER,
       // Constructed at street zoom deliberately: the Standard style never
@@ -786,7 +799,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       container.querySelectorAll<HTMLElement>('.mapboxgl-marker').forEach(el => {
         if (moving.has(el)) return
         const r = el.getBoundingClientRect()
-        const off = r.right < -w || r.left > w * 2 || r.bottom < -h || r.top > h * 2
+        const m = MAP_LITE ? 0.25 : 1
+        const off = r.right < -w * m || r.left > w * (1 + m) || r.bottom < -h * m || r.top > h * (1 + m)
         const want = off ? 'none' : ''
         if (el.style.display !== want) el.style.display = want
       })
@@ -809,7 +823,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         return
       }
       if (map.getZoom() >= HYBRID_ZOOM) {
-        if (map.getMinPitch() !== 55) { map.setMinPitch(55); map.setMaxPitch(70) }
+        const liteMax = MAP_LITE ? 60 : 70
+        if (map.getMinPitch() !== 55) { map.setMinPitch(55); map.setMaxPitch(liteMax) }
       } else if (map.getMinPitch() !== 0) {
         map.setMinPitch(0); map.setMaxPitch(85)
       }
@@ -1198,7 +1213,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           })
         }
         map.on('moveend', syncPoiMarkers)
-        const poiSyncTimer = window.setInterval(syncPoiMarkers, 2000)
+        const poiSyncTimer = window.setInterval(syncPoiMarkers, MAP_LITE ? 5000 : 2000)
         map.once('remove', () => {
           window.clearInterval(poiSyncTimer)
           poiMarkers.forEach(mk => mk.remove())
@@ -1615,6 +1630,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         el.className = styles.landmark
         el.style.width = `${tree.width}px`
         el.innerHTML = `<div class="${styles.landmarkInner}">${tree.palm ? SVG_PALM : SVG_TREE}</div>`
+        // The 3D clay palm replaces the SVG the moment its sprite renders.
+        if (tree.palm) {
+          modelSprite('palm_clay.glb', { yaw: 20, pitch: 8 }).then(uri => {
+            el.innerHTML = `<div class="${styles.landmarkInner}"><img src="${uri}" style="width:100%" alt=""/></div>`
+          }).catch(() => {})
+        }
         return new mapboxgl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat(tree.coords)
           .addTo(map)
@@ -1626,6 +1647,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         el.className = styles.boat
         el.style.width = `${boat.width}px`
         el.innerHTML = `<div class="${styles.boatInner}">${SVG_BOAT}</div>`
+        // The 3D clay boat replaces the SVG the moment its sprite renders.
+        modelSprite('boat_clay.glb', { yaw: 35, pitch: 6 }).then(uri => {
+          el.innerHTML = `<div class="${styles.boatInner}"><img src="${uri}" style="width:100%" alt=""/></div>`
+        }).catch(() => {})
         return new mapboxgl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat(boat.coords)
           .addTo(map)
@@ -1691,8 +1716,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       map.on('idle', harvestCarPaths)
       map.on('moveend', harvestCarPaths)
-      const carHarvestTimer = window.setInterval(harvestCarPaths, 2500)
-      map.once('remove', () => window.clearInterval(carHarvestTimer))
+      // Lite skips the car system: road harvesting queries rendered features on
+      // the main thread and cars add per-frame marker updates.
+      const carHarvestTimer = MAP_LITE ? 0 : window.setInterval(harvestCarPaths, 2500)
+      if (carHarvestTimer) map.once('remove', () => window.clearInterval(carHarvestTimer))
 
       const flyerStart = performance.now()
       const animateFlyers = () => {
@@ -1936,10 +1963,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // borders and stay translucent so the map is never fully blanked out.
   const cloudBand = Math.max(0, 1 - Math.abs((zoomValue - 6.5) / 1.75))
   const cloudScale = 0.7 + Math.max(0, zoomValue - 4.75) * 0.4
-  // Automatic depth of field: the closer the camera gets to the city, the
-  // stronger the soft focus becomes outside the center focal band.
-  const depthOfField = Math.max(0, Math.min(1, (zoomValue - 8.5) / (ZOOM_MAX - 8.5)))
-  const depthBlur = `${(1.5 + depthOfField * 5).toFixed(1)}px`
 
   return (
     <>
@@ -1952,13 +1975,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         </>
       )}
       <div className={styles.vignette} style={REALISTIC_MAP ? { opacity: 0.4 } : undefined} aria-hidden="true" />
-      {!REALISTIC_MAP && (
-        <div
-          className={styles.depthOfField}
-          style={{ '--dofBlur': depthBlur, '--dofOpacity': 0.12 + depthOfField * 0.7 } as React.CSSProperties}
-          aria-hidden="true"
-        />
-      )}
+      {/* Edge-blur "depth of field" removed by request: real DoF means the
+          BACKGROUND behind the focal subject blurs (bokeh), not the screen
+          edges — that effect is on the work order for capable devices. */}
 
       {/* Clay sun by day / clay moon by night, hanging in space beside the globe */}
       {zoomValue < 5.5 && (
@@ -2117,26 +2136,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         />
       </div>
 
-      {/* Perspective control: widen the lens for a more expansive toy world,
-          or narrow it for a tighter street-level view. */}
-      <div
-        className={styles.fovWrap}
-        style={{ '--fovProgress': fovProgress } as React.CSSProperties}
-      >
-        <span className={styles.fovLabel}>FOV</span>
-        <input
-          type="range"
-          className={styles.fov}
-          min={FOV_MIN}
-          max={FOV_MAX}
-          step={1}
-          value={fovValue}
-          onChange={handleFovInput}
-          aria-label="Field of view"
-          title="Field of view"
-        />
-        <output className={styles.fovValue}>{Math.round(fovValue)}°</output>
-      </div>
+      {/* FOV slider moved into the HOLD MENU (declutter): its entry cycles
+          presets via the poplur-map-action 'fov' message. */}
     </>
   )
 }

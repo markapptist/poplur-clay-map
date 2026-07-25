@@ -22,6 +22,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Directions', title: 'DIRECTIONS' },
     { icon: 'Search', title: 'LOCATE' },
     { icon: 'Map', title: 'STREET VIEW' },
+    { icon: 'Settings', title: 'FOV' },
     { icon: 'Create', title: 'POST' },
     { icon: 'Tour', title: 'TOUR' },
     { icon: 'Home', title: 'HOME' },
@@ -100,6 +101,7 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
     LOCATE: 'locate',
     'STREET VIEW': 'streetview',
     TOUR: 'tour',
+    FOV: 'fov',
   }
   const activateItem = (title: string) => {
     const action = MAP_ACTIONS[title]

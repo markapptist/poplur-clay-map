@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 
 // Renders a provided clay GLB once to a transparent PNG data-URL so Mapbox
 // markers can wear the real 3D model (globe projection has no custom-layer
@@ -7,6 +8,11 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 let renderer: THREE.WebGLRenderer | null = null
 const loader = new GLTFLoader()
+// Clay prop GLBs ship Draco-compressed (28-30MB raw → ~530KB); the decoder is
+// bundled at public/draco/ so sprites decode offline in the app shell too.
+const dracoLoader = new DRACOLoader()
+dracoLoader.setDecoderPath('draco/')
+loader.setDRACOLoader(dracoLoader)
 const cache = new Map<string, Promise<string>>()
 
 export interface SpriteView {
