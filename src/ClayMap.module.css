@@ -688,32 +688,11 @@
 }
 
 /* ── Popping venue emoji: opaque toy objects that spring in over buildings ── */
-.poiEmoji {
-  font-size: 30px;
-  line-height: 1;
-  pointer-events: none; /* map clicks (posting) pass straight through */
-  filter:
-    drop-shadow(0 4px 5px rgba(5, 4, 7, 0.42))
-    drop-shadow(0 0 2px rgba(255, 255, 255, 0.25));
-  animation:
-    poiPop 0.5s cubic-bezier(0.2, 1.7, 0.4, 1) both,
-    poiFloat 2.4s 0.5s ease-in-out infinite alternate;
-  transform-origin: 50% 100%;
-}
 
-@keyframes poiPop {
-  0%   { transform: scale(0); }
-  62%  { transform: scale(1.22); }
-  100% { transform: scale(1); }
-}
 
-@keyframes poiFloat {
-  from { translate: 0 0; }
-  to   { translate: 0 -6px; }
-}
+
 
 @media (prefers-reduced-motion: reduce) {
-  .poiEmoji { animation: none; }
 }
 
 /* ── Tap-to-post composer: clay bubble anchored to the tapped ground ── */

@@ -186,18 +186,16 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  height: 20px;
   width: min(60%, 420px);
+  display: grid;
   text-align: center;
 }
 
+/* Overlaid via grid-area (not absolute) so the tallest line sets the height —
+   long titles wrap instead of being cut off. */
 .centerOn,
 .centerOff {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  grid-area: 1 / 1;
   font-size: 15px;
   font-weight: 950;
   color: #fff2f8;

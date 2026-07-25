@@ -47,14 +47,14 @@ export interface ClayMapProps {
 // to restore the full moulded-clay look.
 export const REALISTIC_MAP = false
 
-// ── Global building-footprint fill (Overture Maps) ──────────────────────────
-// The base Mapbox/OSM `building` source is missing footprints in many newer
-// residential areas, so the clay map shows empty grass where houses should be.
-// Overture Maps buildings (Microsoft + Google + OSM ML-detected footprints) fill
-// those gaps EVERYWHERE, streamed live as a hosted global PMTiles by viewport
-// (mapbox-gl reads it with HTTP range requests — no local pipeline). Rendered
-// BELOW the OSM clay massing so real mapped buildings win wherever they exist and
-// Overture only shows through the gaps. Flip false to remove the layer entirely.
+// ── Global building source (Overture Maps) ──────────────────────────────────
+// The clay city's ONE building source: Overture merges OSM footprints with
+// Microsoft/Google ML-detected ones upstream, so it covers newer residential
+// areas the base Mapbox/OSM `building` layer misses — streamed live as a
+// hosted global PMTiles by viewport (HTTP range requests, no local pipeline).
+// It REPLACES the OSM extrusions rather than underlaying them: two coplanar
+// extrusions of the same footprint z-fight and read as flickering,
+// colour-swapping houses.
 export const OVERTURE_BUILDINGS_FILL = true
 // Pin the release explicitly: Overture publishes a new dated build every month
 // and DELETES older ones, so a stale date 404s and the houses silently vanish.
@@ -1138,89 +1138,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
         .catch(err => console.warn('[modelSprite]', 'models/car.glb', err))
 
-      // ── Popping category objects: every venue in view gets a chunky, fully
-      //    OPAQUE emoji object (🍔 over Burger King, ☕ over cafés…) that POPS
-      //    over its building the moment it scrolls into view — DOM markers, so
-      //    each one plays its own spring pop-in and floaty hover (the pop theme,
-      //    everywhere). Emoji are system glyphs (no generated art, no trademark
-      //    exposure); the POI label underneath still names the venue.
-      if (!REALISTIC_MAP) {
-        const POI_EMOJI: Record<string, string> = {
-          'fast-food': '🍔',
-          cafe: '☕',
-          restaurant: '🍕',
-          grocery: '🛒',
-          bar: '🍺',
-          fuel: '⛽',
-          bank: '🏦',
-          'clothing-store': '👕',
-          pharmacy: '💊',
-          cinema: '🎬',
-          lodging: '🛏️',
-          'ice-cream': '🍦',
-        }
-
-        // Invisible queryable layer: keeps poi tiles streaming and gives
-        // queryRenderedFeatures a target for "which venues are in view".
-        map.addLayer({
-          id: 'clay-poi-loader',
-          slot: 'top',
-          type: 'circle',
-          source: 'clay-streets',
-          'source-layer': 'poi_label',
-          minzoom: 13.2,
-          filter: ['all',
-            ['match', ['get', 'maki'], Object.keys(POI_EMOJI), true, false],
-            ['<=', ['get', 'filterrank'], 3],
-          ] as never,
-          paint: { 'circle-radius': 1, 'circle-opacity': 0 },
-        })
-
-        const poiMarkers = new Map<string, mapboxgl.Marker>()
-        const syncPoiMarkers = () => {
-          if (!map.getLayer('clay-poi-loader')) return
-          if (map.getZoom() < 13.2) {
-            poiMarkers.forEach(mk => mk.remove())
-            poiMarkers.clear()
-            return
-          }
-          const feats = map.queryRenderedFeatures(undefined as never, { layers: ['clay-poi-loader'] })
-          const seen = new Set<string>()
-          for (const f of feats.slice(0, 48)) {
-            const maki = f.properties?.maki as string | undefined
-            const emoji = maki ? POI_EMOJI[maki] : undefined
-            if (!emoji || f.geometry.type !== 'Point') continue
-            const coords = f.geometry.coordinates as [number, number]
-            const key = `${maki}:${coords[0].toFixed(5)},${coords[1].toFixed(5)}`
-            if (seen.has(key)) continue
-            seen.add(key)
-            if (poiMarkers.has(key)) continue
-            const el = document.createElement('div')
-            el.className = styles.poiEmoji
-            el.textContent = emoji
-            // Stagger the pop-ins so a fresh viewport reads as popcorn, not a wall.
-            el.style.animationDelay = `${Math.random() * 0.35}s, ${0.45 + Math.random() * 0.35}s`
-            const mk = new mapboxgl.Marker({ element: el, anchor: 'bottom', offset: [0, -4] })
-              .setLngLat(coords)
-              .addTo(map)
-            poiMarkers.set(key, mk)
-          }
-          poiMarkers.forEach((mk, key) => {
-            if (!seen.has(key)) {
-              mk.remove()
-              poiMarkers.delete(key)
-            }
-          })
-        }
-        map.on('moveend', syncPoiMarkers)
-        const poiSyncTimer = window.setInterval(syncPoiMarkers, MAP_LITE ? 5000 : 2000)
-        map.once('remove', () => {
-          window.clearInterval(poiSyncTimer)
-          poiMarkers.forEach(mk => mk.remove())
-        })
-        syncPoiMarkers()
-      }
-
       // ── 3D clay buildings ───────────────────────────────────────────────────
       // Realistic mode draws neutral solid massing only for taller buildings.
       // Low-rise houses keep their satellite roof detail instead of being
@@ -1260,12 +1177,27 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // Towers use their real heights; houses and low-rise footprints get a
         // small default height so neighborhoods are present instead of empty grass.
         // Floor at 6m: houses with tiny or missing mapped heights still stand
-        // up as clay volumes instead of flat slabs.
-        const clayHeight = ['max', ['coalesce', ['get', 'height'], 9], 6] as never
+        // up as clay volumes instead of flat slabs. Overture carries height,
+        // num_floors×3.2m, or nothing, in that order of preference.
+        const clayHeight = ['max',
+          ['case',
+            ['has', 'height'], ['to-number', ['get', 'height']],
+            ['has', 'num_floors'], ['*', ['to-number', ['get', 'num_floors']], 3.2],
+            9],
+          6] as never
         // Per-building pop scale driven by feature-state (see pop system below)
         const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
         const poppedHeight = ['*', clayHeight, popScale] as never
 
+        // ONE building source for the whole clay city: Overture Maps (OSM +
+        // Microsoft/Google ML footprints, merged upstream). Rendering it as
+        // THE layer — instead of an extra gap-fill layer under the OSM one —
+        // matters: two extrusions of the same footprint are coplanar and
+        // z-fight, which reads as houses flickering and swapping colours as
+        // the camera moves.
+        if (!map.getSource('overture-buildings')) {
+          map.addSource('overture-buildings', { type: 'vector', url: OVERTURE_BUILDINGS_PMTILES })
+        }
         map.addLayer({
           id: 'clay-buildings-3d',
           // 'top' draws the extrusions after the clay roads (so streets sit under
@@ -1273,7 +1205,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // above every slot — at the root slot they'd occlude the Eiffel Tower.
           slot: 'top',
           type: 'fill-extrusion',
-          source: 'clay-streets',
+          source: 'overture-buildings',
           'source-layer': 'building',
           minzoom: 12.5,
           layout: {
@@ -1294,7 +1226,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
               '#c3a67e', // warm modelling-clay tan
             ],
             'fill-extrusion-height': poppedHeight,
-            'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+            'fill-extrusion-base': ['to-number', ['coalesce', ['get', 'min_height'], 0]],
             // A real clay object is opaque. Depth comes from AO + cast shadows,
             // never from transparency.
             'fill-extrusion-opacity': 1,
@@ -1308,60 +1240,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           } as never,
         })
 
-        // Overture Maps buildings fill the gaps the base source leaves empty
-        // (see OVERTURE_BUILDINGS_FILL). Same clay material, streamed live by
-        // viewport from the global PMTiles, drawn BELOW clay-buildings-3d so real
-        // mapped buildings win and Overture only shows where the base has nothing.
-        if (OVERTURE_BUILDINGS_FILL && !MAP_LITE) {
-          if (!map.getSource('overture-buildings')) {
-            // mapbox-gl 3.26 picks its PMTiles provider plugin by the URL's
-            // .pmtiles EXTENSION and hands the url to the plugin verbatim — so
-            // it must be the plain https URL. (A pmtiles:// prefix still loads
-            // the plugin, but the prefixed URL then reaches fetch() and every
-            // range request fails.)
-            map.addSource('overture-buildings', { type: 'vector', url: OVERTURE_BUILDINGS_PMTILES })
-          }
-          // Overture carries real heights; fall back to floors×3.2m, else a 9m
-          // house, floored at 6m so low/missing-height footprints still stand up.
-          const overtureHeight = ['max', ['coalesce',
-            ['to-number', ['get', 'height']],
-            ['*', ['coalesce', ['to-number', ['get', 'num_floors']], 2], 3.2],
-            9], 6] as never
-          map.addLayer({
-            id: 'overture-clay-buildings',
-            slot: 'top',
-            type: 'fill-extrusion',
-            source: 'overture-buildings',
-            'source-layer': 'building',
-            // PERF: this is a SECOND extrusion layer on top of the OSM one, so it
-            // doubles the most expensive map work. Start it closer in (14 instead of
-            // 12.5) — the gap-fill only matters at street level — which cuts the tile
-            // + geometry load a lot on big viewports (iPad) and weaker GPUs (Android).
-            minzoom: 14,
-            layout: {
-              'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.9,
-            } as never,
-            paint: {
-              'fill-extrusion-color': ['case',
-                ['==', ['%', ['to-number', ['id']], 8], 0], '#b2916c',
-                ['==', ['%', ['to-number', ['id']], 8], 1], '#cdb28a',
-                ['==', ['%', ['to-number', ['id']], 8], 2], '#c0a37c',
-                ['==', ['%', ['to-number', ['id']], 8], 3], '#d6bd96',
-                ['==', ['%', ['to-number', ['id']], 8], 5], '#a98a66',
-                ['==', ['%', ['to-number', ['id']], 8], 6], '#c7ab82',
-                '#c3a67e',
-              ] as never,
-              'fill-extrusion-height': overtureHeight,
-              'fill-extrusion-base': ['coalesce', ['to-number', ['get', 'min_height']], 0] as never,
-              'fill-extrusion-opacity': 1,
-              'fill-extrusion-vertical-gradient': true,
-              'fill-extrusion-ambient-occlusion-intensity': MAP_LITE ? 0 : (REALISTIC_MAP ? 0.95 : 0.6),
-              'fill-extrusion-ambient-occlusion-radius': 4,
-              'fill-extrusion-ambient-occlusion-wall-radius': 3,
-              'fill-extrusion-ambient-occlusion-ground-radius': 3,
-            } as never,
-          }, 'clay-buildings-3d')
-        }
+        // (The PMTiles provider note: mapbox-gl 3.26 picks the plugin by the
+        // URL's .pmtiles EXTENSION and hands it to the plugin verbatim — a
+        // pmtiles:// prefix would make every range fetch fail.)
 
       // Lighter rooftop slabs on the tall towers — the subtle roof shading
       // Apple Maps uses, molded in clay.
@@ -1369,10 +1250,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         id: 'clay-building-caps',
         slot: 'top',
         type: 'fill-extrusion',
-        source: 'clay-streets',
+        source: 'overture-buildings',
         'source-layer': 'building',
         minzoom: 13,
-        filter: ['>=', ['coalesce', ['get', 'height'], 0], 45] as never,
+        filter: ['>=', ['case', ['has', 'height'], ['to-number', ['get', 'height']], 0], 45] as never,
         layout: {
           'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.95,
         } as never,
@@ -1495,7 +1376,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const popBuilding = (id: string | number) => {
         if (poppingIds.has(id)) return
         poppingIds.add(id)
-        const target = { source: 'clay-streets', sourceLayer: 'building', id }
+        const target = { source: 'overture-buildings', sourceLayer: 'building', id }
         const started = performance.now()
         const duration = 680
         const step = (now: number) => {

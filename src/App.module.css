@@ -234,11 +234,12 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: var(--header-ai-height);
-  overflow: hidden;
+  /* The host line is never cut off: the box grows past its reserved band and
+     the text wraps as far as it needs. */
+  min-height: var(--header-ai-height);
   text-align: center;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.24;
   color: #FFF2F8;
@@ -248,10 +249,7 @@
 }
 
 .aiTicker > span:last-child {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  display: block;
 }
 
 @keyframes tickerIn {
