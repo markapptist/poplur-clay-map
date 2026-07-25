@@ -158,6 +158,9 @@ export default function FeedTwin({
 
   const adSrc = ch.videos?.[(contentIdxRef.current[ch.id] ?? 0) % (ch.videos?.length || 1)]
 
+  // The static layer uses tv_static_clean.mp4 — the logo-free 0-4s window of
+  // tv_static.mp4 (the full clip bursts a Poplur 'P' at ~4.2-8.5s, which would
+  // double up with the channel identity drawn over it).
   // TV static covers the creative until real frames arrive — the web twin of
   // the app's TVStaticLoopingView + PoplurTransitionFlash: static loops under
   // the centred channel logo / CH number / category. One-way latch like iOS:
@@ -260,7 +263,7 @@ export default function FeedTwin({
           over 0.5s (ease-out) exactly like the app, and stays up as the
           "no signal" card on channels with no creative yet. */}
       <div className={adReady && !forceStatic && !forceTransition ? styles.staticLayerHidden : styles.staticLayer} aria-hidden="true">
-        <video ref={staticVideoRef} className={styles.staticVideo} src={forceTransition ? "feed_end_transition.mp4" : "tv_static.mp4"} autoPlay muted loop playsInline />
+        <video ref={staticVideoRef} className={styles.staticVideo} src={forceTransition ? "feed_end_transition.mp4" : "tv_static_clean.mp4"} autoPlay muted loop playsInline />
         <div className={styles.staticIdentity}>
           <img className={styles.staticLogo} src={`channels/${ch.icon}.png`} alt="" draggable={false} />
           <span className={styles.staticCh}>CH {ch.number}</span>
