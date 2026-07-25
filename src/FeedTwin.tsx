@@ -164,6 +164,13 @@ export default function FeedTwin({
   // once frames arrive the static never returns mid-playback; only a content
   // or channel change re-arms it.
   const [adReady, setAdReady] = useState(false)
+  // GCL test hooks: ?static=1 pins the TV-static layer visible; ?transition=1
+  // plays the app's feed_end_transition clip over it (the two pieces the native
+  // feed uses — TVStaticLooping + the end-of-feed transition).
+  const forceStatic = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('static') === '1'
+  const forceTransition = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('transition') === '1'
   useEffect(() => { setAdReady(false) }, [adSrc])
   // The static loop's autoplay can be refused if it mounted while the page
   // was hidden — re-kick it whenever the cover is (about to be) visible.
@@ -252,8 +259,8 @@ export default function FeedTwin({
       {/* Static + channel identity while the video buffers or swaps; fades out
           over 0.5s (ease-out) exactly like the app, and stays up as the
           "no signal" card on channels with no creative yet. */}
-      <div className={adReady ? styles.staticLayerHidden : styles.staticLayer} aria-hidden="true">
-        <video ref={staticVideoRef} className={styles.staticVideo} src="tv_static.mp4" autoPlay muted loop playsInline />
+      <div className={adReady && !forceStatic && !forceTransition ? styles.staticLayerHidden : styles.staticLayer} aria-hidden="true">
+        <video ref={staticVideoRef} className={styles.staticVideo} src={forceTransition ? "feed_end_transition.mp4" : "tv_static.mp4"} autoPlay muted loop playsInline />
         <div className={styles.staticIdentity}>
           <img className={styles.staticLogo} src={`channels/${ch.icon}.png`} alt="" draggable={false} />
           <span className={styles.staticCh}>CH {ch.number}</span>
