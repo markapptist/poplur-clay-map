@@ -33,24 +33,26 @@ function circlePolygon(center: [number, number], radiusKm: number): GeoJSON.Feat
   return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } }
 }
 
-/** Adds the claim source + clay disc/rim layers under the buildings so towers
- *  and pins still sit on top of the territory. Idempotent. */
-export function installClaimsLayer(map: mapboxgl.Map, beforeLayerId?: string) {
+/** Adds the claim source + territory layers. The FILL lives at the top of the
+ *  BOTTOM slot: above the clay land/grass/water, below the roads (middle) and
+ *  buildings (top) — so the ground ITSELF recolors clay-pink inside a pop's
+ *  radius while streets and towers ride on top untinted. That's the takeover
+ *  read: the map changes colour where you own it. Idempotent. */
+export function installClaimsLayer(map: mapboxgl.Map) {
   if (map.getSource(CLAIMS_SOURCE)) return
   map.addSource(CLAIMS_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
 
-  const before = beforeLayerId && map.getLayer(beforeLayerId) ? beforeLayerId : undefined
   map.addLayer({
     id: CLAIMS_FILL,
-    slot: 'middle',
+    slot: 'bottom',
     type: 'fill',
     source: CLAIMS_SOURCE,
     paint: {
-      // Soft clay-pink territory wash — reads as owned ground, not a hole.
-      'fill-color': '#F63B9A',
-      'fill-opacity': 0.16,
+      // Strong enough that green clay visibly turns claimed-pink ground.
+      'fill-color': '#F0559E',
+      'fill-opacity': 0.42,
     },
-  }, before)
+  })
 
   map.addLayer({
     id: CLAIMS_RIM,
@@ -60,11 +62,11 @@ export function installClaimsLayer(map: mapboxgl.Map, beforeLayerId?: string) {
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: {
       'line-color': '#FF8AC6',
-      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 5],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.2, 10, 2.5, 16, 5],
       'line-opacity': 0.92,
       'line-blur': 0.4,
     },
-  }, before)
+  })
 }
 
 const claims = new Map<string, Claim>()

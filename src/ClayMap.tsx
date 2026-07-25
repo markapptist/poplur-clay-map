@@ -1684,7 +1684,27 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // weather) — harvest whenever the camera settles AND on a steady clock.
       // Land-claim territory + tap-to-post: a tap on empty ground opens the
       // composer; the dropped post claims land (a clay disc sized by its km).
-      installClaimsLayer(map, 'clay-buildings-3d')
+      installClaimsLayer(map)
+
+      // ── Sample pops (testing the takeover look) ─────────────────────────────
+      // Each pop claims its radius: the ground inside recolors clay-pink.
+      // Staggered so the territories pop out one after another. Real posts
+      // replace these seeds via the same setClaim call.
+      const SAMPLE_POPS: { id: string; center: [number, number]; radiusKm: number }[] = [
+        { id: 'pop-downtown', center: [-79.3832, 43.6532], radiusKm: 3 },
+        { id: 'pop-midtown', center: [-79.4, 43.706], radiusKm: 6 },
+        { id: 'pop-mississauga', center: [-79.64, 43.59], radiusKm: 5 },
+        { id: 'pop-barrie', center: [-79.69, 44.389], radiusKm: 10 },
+        { id: 'pop-hamilton', center: [-79.87, 43.256], radiusKm: 14 },
+        { id: 'pop-nyc', center: [-74.006, 40.713], radiusKm: 30 },
+        { id: 'pop-london', center: [-0.1246, 51.5007], radiusKm: 26 },
+        { id: 'pop-tokyo', center: [139.69, 35.68], radiusKm: 28 },
+      ]
+      SAMPLE_POPS.forEach((pop, i) => {
+        window.setTimeout(() => {
+          try { setClaim(map, pop) } catch { /* map torn down */ }
+        }, 1200 + i * 420)
+      })
       installRouteLayers(map, 'clay-buildings-3d')
       map.on('click', (e) => {
         // Any tap on the map opens the composer. POI pins are separate DOM
