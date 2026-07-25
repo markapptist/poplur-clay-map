@@ -231,20 +231,26 @@
   z-index: 31;
 }
 
-/* Rotating AI line under the wordmark */
-.aiTicker {
+/* Header stack: AI line + clock in flow, with the SAME gap below the logo,
+   between text and time — equal rhythm whatever the text wraps to. */
+.headerStack {
   position: absolute;
   top: calc(var(--header-title-top) + var(--header-title-height) + var(--header-row-gap));
   left: 24px;
   right: 24px;
   z-index: 30;
+  display: grid;
+  gap: var(--header-row-gap);
+  justify-items: center;
+  pointer-events: none;
+}
+
+/* Rotating AI line under the wordmark */
+.aiTicker {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  /* The host line is never cut off: the box grows past its reserved band and
-     the text wraps as far as it needs. */
-  min-height: var(--header-ai-height);
   text-align: center;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   font-size: 13px;
@@ -339,17 +345,6 @@
 
 /* ── Clock under the AI ticker: time ⇄ date swing ── */
 .clock {
-  position: absolute;
-  top: calc(
-    var(--header-title-top) +
-    var(--header-title-height) +
-    var(--header-row-gap) +
-    var(--header-ai-height) +
-    var(--header-row-gap)
-  );
-  left: 32px;
-  right: 32px;
-  z-index: 30;
   text-align: center;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   font-size: 11px;

@@ -4,7 +4,7 @@ import { POIS, MAP_THEMES } from './data'
 import ClayMap, { MAP_LITE } from './ClayMap'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
-import WeatherFX, { modeForCode } from './WeatherFX'
+import { modeForCode } from './WeatherFX'
 import type { WeatherMode } from './WeatherFX'
 import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 import { announceMapTour, startMapRadio, stopMapRadio, tuneLiveRadio } from './mapRadio'
@@ -845,8 +845,6 @@ export default function App() {
         say={setTourLine}
       />
 
-      {/* ── Weather overlay effects (rain / storm / snow / cloudy / fog) ── */}
-      {!MAP_LITE && <WeatherFX mode={weatherMode} />}
 
       {/* ── Top chrome: provided clay logo + wordmark, with the AI line ── */}
       <TopChrome />
@@ -859,29 +857,23 @@ export default function App() {
           onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
         />
       </div>
-      <div ref={tickerRef} className={styles.aiTicker}>
-        <span>{tourLine ?? AI_LINES[aiIndex]}</span>
-      </div>
-
-      {/* ── Clock: current time ⇄ date, swapping every few seconds ── */}
-      <div className={styles.clock} aria-live="off">
-        <span key={clockShowsDate ? 'date' : 'time'} className={styles.clockSwing}>
-          {clockShowsDate
-            ? clockNow.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
-            : clockNow.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-        </span>
+      {/* AI line + clock share one flow stack under the wordmark, so the
+          logo→text and text→time gaps are IDENTICAL whatever wraps. */}
+      <div className={styles.headerStack}>
+        <div ref={tickerRef} className={styles.aiTicker}>
+          <span>{tourLine ?? AI_LINES[aiIndex]}</span>
+        </div>
+        <div className={styles.clock} aria-live="off">
+          <span key={clockShowsDate ? 'date' : 'time'} className={styles.clockSwing}>
+            {clockShowsDate
+              ? clockNow.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
+              : clockNow.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          </span>
+        </div>
       </div>
 
       {/* Locate + Street View moved into the HOLD MENU (declutter): they now
           arrive as poplur-map-action messages — see the listener effect. */}
-
-      {/* ── Weather badge — left side, opposite the zoom slider ── */}
-      {weather && (
-        <div className={styles.weatherBadge}>
-          <span className={styles.weatherIcon} dangerouslySetInnerHTML={{ __html: weatherIconForMode(weatherMode) }} />
-          <span className={styles.weatherTemp}>{weather.temp}°</span>
-        </div>
-      )}
 
       {/* ── Dev-only: browse every weather mode ── */}
       {import.meta.env.DEV && (
