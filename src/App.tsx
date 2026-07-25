@@ -624,6 +624,9 @@ export default function App() {
       pitch: streetView ? 82 : 64,
       bearing: map.getBearing() + 36,
       duration,
+      // The tour arc rises ALL the way out — the flight peaks at the full
+      // globe before diving into the next stop.
+      minZoom: 0.9,
       curve: 1.7,
       essential: true,
     })

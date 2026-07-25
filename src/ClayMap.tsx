@@ -1591,7 +1591,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       // ── City props: clay trees, harbour boats, cars on the roads ───────────
       treeMarkersRef.current.forEach(mk => mk.remove())
-      treeMarkersRef.current = CITY_TREES.map(tree => {
+      // Trees belong on LAND — any coordinate that lands on the clay water
+      // (bad data, tide of a redrawn shoreline) is skipped outright.
+      const overWater = (coords: [number, number]) => {
+        try {
+          return map.queryRenderedFeatures(map.project(coords as mapboxgl.LngLatLike), {
+            layers: ['clay-water-fill'],
+          }).length > 0
+        } catch { return false }
+      }
+      treeMarkersRef.current = CITY_TREES.filter(tree => !overWater(tree.coords)).map(tree => {
         const el = document.createElement('div')
         el.className = styles.landmark
         el.style.width = `${tree.width}px`
@@ -1750,10 +1759,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           CITY_BOATS.forEach((boat, i) => {
             const marker = boatMarkersRef.current[i]
             if (!marker) return
-            marker.setLngLat([
+            const drifted: [number, number] = [
               boat.coords[0] + Math.sin(t * 0.3 + boat.phase) * boat.drift,
               boat.coords[1] + Math.cos(t * 0.22 + boat.phase) * boat.drift * 0.4,
-            ])
+            ]
+            // Boats stay IN the water: if the drift would beach the boat,
+            // hold it at its anchor instead of letting it climb the shore.
+            let onWater = true
+            try {
+              onWater = map.queryRenderedFeatures(map.project(drifted as mapboxgl.LngLatLike), {
+                layers: ['clay-water-fill'],
+              }).length > 0
+            } catch { /* water layer not ready yet */ }
+            marker.setLngLat(onWater ? drifted : boat.coords)
           })
         } else {
           setCarFeatures([])
