@@ -850,17 +850,16 @@ export default function App() {
 
       {/* ── Top chrome: provided clay logo + wordmark, with the AI line ── */}
       <TopChrome />
+      {/* The clay mute lives UP beside the logo (title row, left) — always
+          present; silences every map sound through the shared audio gate. */}
+      <div className={styles.headerVolume}>
+        <ClayMuteButton
+          muted={muted}
+          size={44}
+          onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
+        />
+      </div>
       <div ref={tickerRef} className={styles.aiTicker}>
-        {soundPlaying && (
-          // The mute control: silences every map sound (radio, ambience, theme,
-          // pops) through the shared audio gate. Feed-style clay button, sized
-          // to be seen and pressed — replaces the 15px mark users couldn't find.
-          <ClayMuteButton
-            muted={muted}
-            size={44}
-            onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
-          />
-        )}
         <span>{tourLine ?? AI_LINES[aiIndex]}</span>
       </div>
 

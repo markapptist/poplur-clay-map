@@ -223,6 +223,14 @@
 
 /* ── HomeView overlays ── */
 
+/* Clay mute mark, up beside the logo on the title row. */
+.headerVolume {
+  position: absolute;
+  top: calc(var(--header-title-top) - 2px);
+  left: 14px;
+  z-index: 31;
+}
+
 /* Rotating AI line under the wordmark */
 .aiTicker {
   position: absolute;
