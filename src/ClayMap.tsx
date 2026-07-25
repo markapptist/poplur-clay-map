@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
+import { isNativeShell } from './nativeBridge'
 import { CLAY_ROUTES, PALETTE } from './data'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
@@ -606,19 +607,25 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // Flyer animation loop handle
     let flyerRaf = 0
 
-    // MAP_LITE: render the map at 1x. Mapbox sizes its canvas from
-    // window.devicePixelRatio at construction/resize — pinning it quarters the
-    // GL pixel count on 2x budget screens. Content and layout are unaffected.
-    if (MAP_LITE) {
+    // Render-resolution culling. Mapbox sizes its canvas from
+    // window.devicePixelRatio at construction/resize:
+    //  - lite (low-mem Android): pin 1x — quarters the GL pixel count.
+    //  - every other NATIVE shell (iPhones report no deviceMemory, so they
+    //    never qualify as lite): cap at 2x — a 3x phone was pushing 2.25×
+    //    the pixels of a 2x screen for no visible gain on a 6" display.
+    const dprCap = MAP_LITE ? 1 : isNativeShell() ? 2 : Infinity
+    if (window.devicePixelRatio > dprCap) {
       try {
-        Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
+        Object.defineProperty(window, 'devicePixelRatio', { value: dprCap, configurable: true })
       } catch { /* non-configurable: keep native ratio */ }
     }
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      // Lite: keep the tile cache tiny — a 3GB device swaps otherwise.
-      ...(MAP_LITE ? { maxTileCacheSize: 16 } : {}),
+      // Tile-cache culling: bound how much off-screen world is retained.
+      // Without a cap mapbox keeps every visited tile — after one long tour
+      // the whole planet sits in memory. Visible tiles are never evicted.
+      maxTileCacheSize: MAP_LITE ? 16 : 48,
       style: 'mapbox://styles/mapbox/dark-v11',
       center: HOME_CENTER,
       // Constructed at street zoom deliberately: the Standard style never
@@ -630,7 +637,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       maxZoom: ZOOM_MAX,
       pitch: 62,
       bearing: -18,
-      antialias: true,
+      // MSAA is a browser-only luxury: on phone GPUs it multiplies the
+      // fill-extrusion cost at zero perceptible gain on small screens.
+      antialias: !isNativeShell(),
       attributionControl: false,
       // Zooming all the way out morphs the clay board into the clay earth
       projection: 'globe',
@@ -1145,7 +1154,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // the band swaps them for the real clay buildings.
       if (!REALISTIC_MAP) {
         const CITY_BAND_MIN = 5.5
-        const CITY_BAND_MAX = 12.5
+        const CITY_BAND_MAX = 14
         let citySpriteUrl: string | null = null
 
         // Invisible queryable layer over settlement label points.
@@ -1156,7 +1165,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           source: 'clay-streets',
           'source-layer': 'place_label',
           minzoom: CITY_BAND_MIN,
-          maxzoom: CITY_BAND_MAX,
+          maxzoom: 14,
           filter: ['match', ['get', 'class'], ['settlement'], true, false] as never,
           paint: { 'circle-radius': 1, 'circle-opacity': 0 },
         })
@@ -1292,7 +1301,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           type: 'fill-extrusion',
           source: buildingSource,
           'source-layer': 'building',
-          minzoom: 12.5,
+          // Geometry culling: no extrusions until the camera is close enough
+          // to be looking at a neighbourhood, not a whole city. The clay
+          // settlement placeholders own everything wider than this.
+          minzoom: 14,
           layout: {
             // Experimental v3 property: rounds every extrusion edge → clay
             'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.9,
@@ -1337,7 +1349,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         type: 'fill-extrusion',
         source: buildingSource,
         'source-layer': 'building',
-        minzoom: 13,
+        minzoom: 14.5,
         filter: ['>=', ['case', ['has', 'height'], ['to-number', ['get', 'height']], 0], 45] as never,
         layout: {
           'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.95,
