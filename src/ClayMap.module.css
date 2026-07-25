@@ -924,3 +924,18 @@
   font: 900 14px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 }
 .navEnd:active { transform: translateX(-50%) scale(0.95); }
+
+/* Clay-buildings placeholder over settlements (mid zooms): pops in like the
+   rest of the clay set, floats gently, never intercepts the map. */
+.citySprite {
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 10px 14px rgba(57, 0, 30, 0.35));
+  transform-origin: 50% 90%;
+  animation: citySpritePop 0.5s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+}
+
+@keyframes citySpritePop {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: scale(1); }
+}

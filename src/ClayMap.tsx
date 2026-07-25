@@ -374,7 +374,7 @@ const ZOOM_MIN = 1
 // Street-level target for the launch landing and slider top end. Zoom 16.x
 // still reads like a satellite overview; 18.x gets close enough for Mapbox
 // Standard's 3D building massing to be obvious.
-const ZOOM_MAX = 16.2 // capped: street level stops at the toy-diorama height, no deeper
+const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doorstep
 // Journey mode intentionally drops below the manual diorama ceiling so the
 // clay roads and buildings read from an eye-level chase camera.
 const STREET_VIEW_MAX_ZOOM = 19
@@ -1138,6 +1138,85 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
         .catch(err => console.warn('[modelSprite]', 'models/car.glb', err))
 
+      // ── Clay building placeholders ──────────────────────────────────────────
+      // Between the globe landmarks (z < 5.5) and the real Overture massing
+      // (z ≥ 12.5), settlements carry the Poplur clay-buildings object so
+      // built-up areas read as towns instead of empty flat land. Zooming past
+      // the band swaps them for the real clay buildings.
+      if (!REALISTIC_MAP) {
+        const CITY_BAND_MIN = 5.5
+        const CITY_BAND_MAX = 12.5
+        let citySpriteUrl: string | null = null
+
+        // Invisible queryable layer over settlement label points.
+        map.addLayer({
+          id: 'clay-city-loader',
+          slot: 'top',
+          type: 'circle',
+          source: 'clay-streets',
+          'source-layer': 'place_label',
+          minzoom: CITY_BAND_MIN,
+          maxzoom: CITY_BAND_MAX,
+          filter: ['match', ['get', 'class'], ['settlement'], true, false] as never,
+          paint: { 'circle-radius': 1, 'circle-opacity': 0 },
+        })
+
+        const cityMarkers = new Map<string, mapboxgl.Marker>()
+        const syncCityMarkers = () => {
+          if (!map.getLayer('clay-city-loader')) return
+          const zoom = map.getZoom()
+          if (!citySpriteUrl || zoom < CITY_BAND_MIN || zoom >= CITY_BAND_MAX) {
+            cityMarkers.forEach(mk => mk.remove())
+            cityMarkers.clear()
+            return
+          }
+          const feats = map.queryRenderedFeatures(undefined as never, { layers: ['clay-city-loader'] })
+          const seen = new Set<string>()
+          for (const f of feats.slice(0, 24)) {
+            if (f.geometry.type !== 'Point') continue
+            const coords = f.geometry.coordinates as [number, number]
+            const key = `${coords[0].toFixed(3)},${coords[1].toFixed(3)}`
+            if (seen.has(key)) continue
+            seen.add(key)
+            if (cityMarkers.has(key)) continue
+            // Bigger towns (lower symbolrank) get a bigger clay cluster.
+            const rank = Number(f.properties?.symbolrank ?? 10)
+            const width = Math.max(34, Math.min(78, 88 - rank * 5))
+            // The marker ROOT must stay untouched (mapbox positions it via an
+            // inline transform, and an animated transform would override it) —
+            // the pop plays on an inner img instead.
+            const el = document.createElement('div')
+            const img = document.createElement('img')
+            img.className = styles.citySprite
+            img.src = citySpriteUrl
+            img.style.width = `${width}px`
+            img.style.animationDelay = `${Math.random() * 0.3}s`
+            img.draggable = false
+            el.appendChild(img)
+            const mk = new mapboxgl.Marker({ element: el, anchor: 'bottom', offset: [0, 6] })
+              .setLngLat(coords)
+              .addTo(map)
+            cityMarkers.set(key, mk)
+          }
+          cityMarkers.forEach((mk, key) => {
+            if (!seen.has(key)) {
+              mk.remove()
+              cityMarkers.delete(key)
+            }
+          })
+        }
+        modelSprite('zoom_buildings.glb', { yaw: 25, pitch: 14, size: 256 })
+          .then(url => { citySpriteUrl = url; syncCityMarkers() })
+          .catch(err => console.warn('[modelSprite]', 'zoom_buildings.glb', err))
+        map.on('moveend', syncCityMarkers)
+        map.on('zoom', syncCityMarkers)
+        const citySyncTimer = window.setInterval(syncCityMarkers, MAP_LITE ? 5000 : 2500)
+        map.once('remove', () => {
+          window.clearInterval(citySyncTimer)
+          cityMarkers.forEach(mk => mk.remove())
+        })
+      }
+
       // ── 3D clay buildings ───────────────────────────────────────────────────
       // Realistic mode draws neutral solid massing only for taller buildings.
       // Low-rise houses keep their satellite roof detail instead of being
@@ -1195,7 +1274,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // matters: two extrusions of the same footprint are coplanar and
         // z-fight, which reads as houses flickering and swapping colours as
         // the camera moves.
-        if (!map.getSource('overture-buildings')) {
+        //
+        // DEV ONLY: Vite's import-analysis rewrites the dynamic import inside
+        // mapbox's tile worker (__vite__injectQuery), which breaks the PMTiles
+        // provider on the dev server — so dev falls back to the composite OSM
+        // buildings. Built bundles (device, GCL, :8099) always use Overture.
+        const buildingSource = import.meta.env.DEV ? 'clay-streets' : 'overture-buildings'
+        if (!import.meta.env.DEV && !map.getSource('overture-buildings')) {
           map.addSource('overture-buildings', { type: 'vector', url: OVERTURE_BUILDINGS_PMTILES })
         }
         map.addLayer({
@@ -1205,7 +1290,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // above every slot — at the root slot they'd occlude the Eiffel Tower.
           slot: 'top',
           type: 'fill-extrusion',
-          source: 'overture-buildings',
+          source: buildingSource,
           'source-layer': 'building',
           minzoom: 12.5,
           layout: {
@@ -1250,7 +1335,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         id: 'clay-building-caps',
         slot: 'top',
         type: 'fill-extrusion',
-        source: 'overture-buildings',
+        source: buildingSource,
         'source-layer': 'building',
         minzoom: 13,
         filter: ['>=', ['case', ['has', 'height'], ['to-number', ['get', 'height']], 0], 45] as never,
@@ -1376,7 +1461,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const popBuilding = (id: string | number) => {
         if (poppingIds.has(id)) return
         poppingIds.add(id)
-        const target = { source: 'overture-buildings', sourceLayer: 'building', id }
+        const target = { source: import.meta.env.DEV ? 'clay-streets' : 'overture-buildings', sourceLayer: 'building', id }
         const started = performance.now()
         const duration = 680
         const step = (now: number) => {
@@ -1796,32 +1881,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   }, [dayTime, mapEpoch])
 
   function addMarkers(map: mapboxgl.Map) {
+    // NO placeholder pins: the sample-venue markers read as random blinking
+    // pins (the horizon cull toggled their display every frame). Real post
+    // pins return here when they carry real content.
+    void map
     markersRef.current.forEach(m => m.remove())
     markersRef.current = []
-
-    pois.forEach(poi => {
-      const isSelected = poi.id === selectedId
-
-      const el = document.createElement('div')
-      el.className = isSelected ? styles.pinSelected : styles.pin
-      // The provided Poplur clay pin asset (Meshy_AI_Poplur Clay Map Pin)
-      el.innerHTML = `<img src="clay_pin_small.png" alt="${poi.name}" draggable="false" />`
-      el.addEventListener('click', () => onSelectPoi(poi.id))
-
-      const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
-        .setLngLat(poi.coords)
-        .addTo(map)
-      markersRef.current.push(marker)
-    })
-
-    // Freshly created pins must respect the current zoom tier immediately,
-    // and pins projected up near the horizon stay hidden (no floating pins).
-    const isGlobe = map.getZoom() < 5.5
-    const horizonCutoff = map.getContainer().clientHeight * 0.22
-    markersRef.current.forEach(mk => {
-      const nearHorizon = map.project(mk.getLngLat()).y < horizonCutoff
-      mk.getElement().style.display = (isGlobe || nearHorizon) ? 'none' : ''
-    })
   }
 
   const handleZoomInput = (e: React.ChangeEvent<HTMLInputElement>) => {
