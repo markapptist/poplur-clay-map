@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import CameraRoll from './CameraRoll'
 import styles from './ViewHarness.module.css'
 import { postNativeEvent } from './nativeBridge'
 
@@ -27,20 +28,28 @@ const SWITCH = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width=
 // prompt, no crash where capture is blocked — e.g. the prototype). A slow
 // drifting clay-world scene stands in for the live feed so the chrome can be
 // designed against a plausible frame; the native app swaps in the real camera.
-export default function Camera() {
+export default function Camera({ page = 'live', onOpenRoll }: { page?: 'live' | 'roll'; onOpenRoll?: () => void }) {
   const [flash, setFlash] = useState(false)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
 
   // Punch the transparent hole for the native viewfinder while this pane is
-  // mounted (iOS shell only) — see .camera-live in index.css.
+  // mounted AND the live page is front (iOS shell only) — the roll page is a
+  // normal opaque screen. See .camera-live in index.css.
   useEffect(() => {
-    if (!IOS_SHELL) return
+    if (!IOS_SHELL || page !== 'live') return
     document.documentElement.classList.add('camera-live')
     return () => document.documentElement.classList.remove('camera-live')
-  }, [])
+  }, [page])
 
   return (
-    <section className={styles.cameraFull} aria-label="Camera preview twin">
+    // Vertical pager: the whole camera pushes up to the Camera Roll page and
+    // slides back down to the live viewfinder (channel arrows drive it).
+    <div className={styles.camPager} aria-label="Camera">
+      <div
+        className={styles.camPagerTrack}
+        style={{ transform: page === 'roll' ? 'translateY(-50%)' : 'translateY(0)' }}
+      >
+        <section className={styles.cameraFull} aria-label="Camera preview twin">
       {/* Spoofed live viewfinder (browser/Android); iOS shows the REAL native
           camera through the transparent hole instead. */}
       {!IOS_SHELL && (
@@ -82,9 +91,13 @@ export default function Camera() {
       />
 
       {/* Camera roll (bottom-right, above the HUD band — CameraRollButton) */}
-      <button type="button" className={styles.camRoll} aria-label="Open camera roll">
+      <button type="button" className={styles.camRoll} aria-label="Open camera roll" onClick={onOpenRoll}>
         <img src="clay_pin_small.png" alt="" draggable={false} />
       </button>
-    </section>
+        </section>
+
+        <CameraRoll />
+      </div>
+    </div>
   )
 }

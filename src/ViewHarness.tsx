@@ -4,17 +4,18 @@ import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import styles from './ViewHarness.module.css'
 
-export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'profile' | 'holdmenu'
+export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu'
 
 // The four bottom-nav tabs now live INSIDE the home view (its pills switch
 // map/feed/camera/profile inline). The hold menu is a cube-long-press OVERLAY,
 // still routable (?view=holdmenu) but not a tab.
-const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'profile', 'holdmenu']
+const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu']
 const VIEW_LABELS: Record<HarnessView, string> = {
   home: 'Home',
   map: 'Map',
   feed: 'Feed',
   camera: 'Camera',
+  cameraroll: 'Camera Roll',
   profile: 'Profile',
   holdmenu: 'Hold Menu',
 }
@@ -22,11 +23,13 @@ const VIEW_LABELS: Record<HarnessView, string> = {
 // The home view opens on the FEED tab; the map is one tab over (reachable via
 // the cube / the MAP pill). Direct routes (?view=map etc.) still target their
 // own tab.
-const VIEW_TO_TAB: Record<'home' | 'map' | 'feed' | 'camera' | 'profile', CubeTab> = {
+const VIEW_TO_TAB: Record<'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile', CubeTab> = {
   home: 'feed',
   map: 'map',
   feed: 'feed',
   camera: 'post',
+  // Camera Roll is the camera's upper page — same tab, pushed up.
+  cameraroll: 'post',
   profile: 'profile',
 }
 
@@ -82,6 +85,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
         onTabChange={setInlineTab}
         initialTab={VIEW_TO_TAB[baseView]}
         initialHoldOpen={view === 'holdmenu'}
+        initialCameraPage={view === 'cameraroll' ? 'roll' : 'live'}
       />
     ),
     [baseView, view],

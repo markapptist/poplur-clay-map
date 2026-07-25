@@ -66,7 +66,7 @@ const ANDROID_SHELL =
   typeof window !== 'undefined' &&
   Boolean((window as unknown as { PoplurNative?: unknown }).PoplurNative)
 
-export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean }) {
+export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'live' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'live' | 'roll' }) {
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
@@ -167,8 +167,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.clearInterval(iv)
   }, [loadingVisible])
 
+  // Camera's vertical pager: 'live' viewfinder or the Camera Roll page above it.
+  const [cameraPage, setCameraPage] = useState<'live' | 'roll'>(initialCameraPage)
+  useEffect(() => { if (activeTab !== 'post') setCameraPage('live') }, [activeTab])
+
   const changeChannel = (dir: 1 | -1) => {
     playPop()
+    // On the camera tab the clay arrows page the camera itself: up pushes the
+    // whole camera up to the Camera Roll; down drops back to the live view.
+    if (activeTab === 'post') {
+      setCameraPage(dir === -1 ? 'roll' : 'live')
+      return
+    }
     setChanIndex(i => (i + dir + CHANNELS.length) % CHANNELS.length)
   }
 
@@ -203,7 +213,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       <div className={styles.contentLayer}>
         {activeTab === 'feed' && <FeedTwin index={chanIndex} onIndexChange={setChanIndex} />}
-        {activeTab === 'post' && <Camera />}
+        {activeTab === 'post' && <Camera page={cameraPage} onOpenRoll={() => setCameraPage('roll')} />}
         {activeTab === 'profile' && <ProfileTwin />}
       </div>
 
