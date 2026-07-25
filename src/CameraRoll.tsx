@@ -27,6 +27,18 @@ const ROLL: RollItem[] = [
   { kind: 'video', src: 'feed/ad-kids.mp4', length: '0:27' },
   { kind: 'photo', src: 'mark_talk2.png' },
   { kind: 'video', src: 'feed/ad-comedy.mp4', length: '0:21' },
+  { kind: 'video', src: 'feed/ad-french.mp4', length: '0:19' },
+  { kind: 'photo', src: 'clay_pin_small.png' },
+  { kind: 'video', src: 'feed/ad-spanish-1.mp4', length: '0:22' },
+  { kind: 'photo', src: 'clay_stars.png' },
+  { kind: 'video', src: 'feed/ad-shopping.mp4', length: '0:14' },
+  { kind: 'photo', src: 'clay_cube.png' },
+  { kind: 'video', src: 'feed/ad-spanish-2.mp4', length: '0:16' },
+  { kind: 'photo', src: 'clay_tv.png' },
+  { kind: 'video', src: 'feed/ad-cartoon.mp4', length: '0:29' },
+  { kind: 'photo', src: 'clay_buildings.png' },
+  { kind: 'video', src: 'feed/ad-spanish-3.mp4', length: '0:25' },
+  { kind: 'photo', src: 'clay_pin.png' },
 ]
 
 export default function CameraRoll() {
@@ -55,7 +67,7 @@ export default function CameraRoll() {
         ))}
       </div>
 
-      <p className={styles.rollHint}>▼ channel down returns to the camera</p>
+      <p className={styles.rollHint}>▲ ▼ flips back to the camera</p>
     </section>
   )
 }

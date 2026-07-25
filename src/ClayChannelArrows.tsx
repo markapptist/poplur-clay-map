@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { playPop } from './pop'
 
 // Clay channel changer for the home view's left slot: two wide, soft-edged
 // chevrons rendered in three.js with a matte clay material and soft lighting —
@@ -146,6 +147,9 @@ export default function ClayChannelArrows({
   }, [size, width])
 
   const press = (dir: 'up' | 'down', handler: () => void) => {
+    // The clay arrows ALWAYS pop on press, whatever the press does
+    // (channel zap, camera-roll flip, future uses).
+    playPop()
     pulse.current[dir] = 1
     handler()
   }

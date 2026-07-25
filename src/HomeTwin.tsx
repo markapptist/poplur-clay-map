@@ -171,12 +171,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [cameraPage, setCameraPage] = useState<'live' | 'roll'>(initialCameraPage)
   useEffect(() => { if (activeTab !== 'post') setCameraPage('live') }, [activeTab])
 
+  // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
-    playPop()
-    // On the camera tab the clay arrows page the camera itself: up pushes the
-    // whole camera up to the Camera Roll; down drops back to the live view.
+    // On the camera tab the clay arrows page the camera itself: EITHER arrow
+    // cycles between the live viewfinder and the Camera Roll.
     if (activeTab === 'post') {
-      setCameraPage(dir === -1 ? 'roll' : 'live')
+      setCameraPage(p => (p === 'live' ? 'roll' : 'live'))
       return
     }
     setChanIndex(i => (i + dir + CHANNELS.length) % CHANNELS.length)
