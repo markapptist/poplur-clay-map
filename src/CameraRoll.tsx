@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import styles from './ViewHarness.module.css'
 
 // Camera Roll — the camera's upper page (channel-up pushes the whole camera
@@ -41,7 +41,23 @@ const ROLL: RollItem[] = [
   { kind: 'photo', src: 'clay_pin.png' },
 ]
 
-export default function CameraRoll() {
+export default function CameraRoll({ onDeny }: { onDeny?: () => void } = {}) {
+  // First-open permission alert, in the Poplur clay alert style (twin of the
+  // pre-login camera/location permission cards). Only a GRANT persists;
+  // denying flips back to the live camera and the alert returns next time.
+  // ?permission=1 forces the alert visible (the GCL board card uses it).
+  const forceAlert = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('permission') === '1'
+  const [granted, setGranted] = useState(() => {
+    if (forceAlert) return false
+    try { return window.localStorage.getItem('poplur.rollPermission') === 'granted' } catch { return false }
+  })
+  const allow = () => {
+    try { window.localStorage.setItem('poplur.rollPermission', 'granted') } catch { /* embedded */ }
+    setGranted(true)
+  }
+  const deny = () => { onDeny?.() }
+
   return (
     <section className={styles.cameraRoll} aria-label="Camera roll">
       <header className={styles.rollHeader}>
@@ -68,6 +84,26 @@ export default function CameraRoll() {
       </div>
 
       <p className={styles.rollHint}>▲ ▼ flips back to the camera</p>
+
+      {!granted && (
+        <div className={styles.rollPermScrim}>
+          <div className={styles.rollPermAlert} role="dialog" aria-label="Camera roll permission">
+            <div className={styles.rollPermContent}>
+              <div className={styles.rollPermIcon} aria-hidden="true" />
+              <h2 className={`${styles.rollPermTitle} ${styles.rollPermShader}`}>Allow &quot;Poplur&quot; to access your camera roll?</h2>
+              <p className={`${styles.rollPermCopy} ${styles.rollPermShaderSoft}`}>Show your captures here so you can post photos and videos from inside your radius.</p>
+            </div>
+            <div className={styles.rollPermActions}>
+              <button className={styles.rollPermAction} type="button" onClick={deny}>
+                <span className={styles.rollPermShaderBtn}>Don&apos;t Allow</span>
+              </button>
+              <button className={styles.rollPermAction} type="button" onClick={allow}>
+                <span className={styles.rollPermShaderBtn}>Allow</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

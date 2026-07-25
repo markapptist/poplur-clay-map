@@ -28,7 +28,7 @@ const SWITCH = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width=
 // prompt, no crash where capture is blocked — e.g. the prototype). A slow
 // drifting clay-world scene stands in for the live feed so the chrome can be
 // designed against a plausible frame; the native app swaps in the real camera.
-export default function Camera({ page = 'live', onOpenRoll }: { page?: 'live' | 'roll'; onOpenRoll?: () => void }) {
+export default function Camera({ page = 'live', onOpenRoll, onCloseRoll }: { page?: 'live' | 'roll'; onOpenRoll?: () => void; onCloseRoll?: () => void }) {
   const [flash, setFlash] = useState(false)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
 
@@ -96,7 +96,7 @@ export default function Camera({ page = 'live', onOpenRoll }: { page?: 'live' | 
       </button>
         </section>
 
-        <CameraRoll />
+        <CameraRoll onDeny={onCloseRoll} />
       </div>
     </div>
   )

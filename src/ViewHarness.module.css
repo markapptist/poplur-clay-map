@@ -719,8 +719,14 @@
     radial-gradient(circle at 50% -8%, rgba(246, 59, 154, 0.16), transparent 40%),
     linear-gradient(170deg, #16101a, #0a070d 52%, #050407);
   color: #fff2f8;
+  /* Full-bleed gallery: no scrollbars, the content is the chrome. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
+.cameraRoll::-webkit-scrollbar { display: none; }
+
+/* Title bar hugs the very top of the screen. */
 .rollHeader {
   position: sticky;
   top: 0;
@@ -728,7 +734,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: clamp(52px, 8vh, 76px) 16px 12px;
+  padding: 14px 16px 12px;
   background: linear-gradient(180deg, rgba(10, 7, 13, 0.94) 58%, rgba(10, 7, 13, 0));
 }
 
@@ -788,6 +794,154 @@
   font: 900 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: #fff2f8;
   letter-spacing: 0.4px;
+}
+
+/* ── Camera-roll permission alert — 1:1 with the Poplur clay alert cards
+      (pre-login camera/location permissions): frosted 194px card, clay icon,
+      shader-swept text, split actions. ── */
+.rollPermScrim {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 7, 13, 0.45);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+
+.rollPermAlert {
+  width: 194px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.44);
+  border-radius: 8px;
+  background: rgba(255, 247, 251, 0.94);
+  box-shadow: 0 18px 42px rgba(57, 0, 30, 0.38), inset 0 1px 0 #fff;
+  color: #23131e;
+  text-align: center;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  animation: rollPermIn 0.5s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+}
+
+.rollPermContent { padding: 20px 17px 16px; }
+
+/* Clay photo-stack icon: pink clay frame, white sun + mountain glyph. */
+.rollPermIcon {
+  position: relative;
+  width: 44px;
+  height: 34px;
+  margin: 0 auto 13px;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #ff62ad, #d90f6d);
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.45), 0 6px 13px rgba(194, 17, 122, 0.26);
+  animation: rollPermFloat 3.4s ease-in-out infinite;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.rollPermIcon::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 7px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(83, 0, 43, 0.15);
+}
+
+.rollPermIcon::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  bottom: 5px;
+  width: 0;
+  height: 0;
+  border-left: 15px solid transparent;
+  border-right: 15px solid transparent;
+  border-bottom: 14px solid #fff;
+  filter: drop-shadow(6px 0 0 rgba(255, 255, 255, 0.55));
+}
+
+.rollPermTitle {
+  margin: 0 0 7px;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.rollPermCopy {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.42;
+  letter-spacing: 0;
+}
+
+.rollPermShader,
+.rollPermShaderSoft,
+.rollPermShaderBtn {
+  color: transparent;
+  background-size: 260% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: rollPermTextShader 4.8s linear infinite;
+}
+
+.rollPermShader {
+  background-image: linear-gradient(105deg, #25131f 0%, #8b214f 22%, #ff6cad 42%, #173f58 62%, #35c8ef 78%, #25131f 100%);
+  text-shadow: 0 0 7px rgba(255, 84, 166, 0.12), 0 0 10px rgba(53, 200, 239, 0.08);
+}
+
+.rollPermShaderSoft {
+  background-image: linear-gradient(105deg, #69515f 0%, #b43b76 28%, #ff7eba 45%, #38758a 68%, #69515f 100%);
+  text-shadow: 0 0 5px rgba(255, 84, 166, 0.1);
+}
+
+.rollPermActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid rgba(95, 54, 77, 0.18);
+}
+
+.rollPermAction {
+  height: 39px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.58);
+  font: 900 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  cursor: pointer;
+}
+
+.rollPermAction + .rollPermAction {
+  border-left: 1px solid rgba(95, 54, 77, 0.18);
+  background: linear-gradient(180deg, #fff, #fff0f7);
+}
+
+.rollPermAction:active { background: #ffe1ef; }
+
+.rollPermShaderBtn {
+  display: inline-block;
+  background-image: linear-gradient(105deg, #7d345b, #e20c75 34%, #ff70b4 50%, #2c90b0 72%, #7d345b);
+  text-shadow: 0 0 5px rgba(239, 27, 126, 0.12);
+}
+
+@keyframes rollPermIn {
+  from { opacity: 0; transform: scale(0.86) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes rollPermFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes rollPermTextShader {
+  to { background-position: -260% 0; }
 }
 
 .rollHint {

@@ -213,7 +213,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       <div className={styles.contentLayer}>
         {activeTab === 'feed' && <FeedTwin index={chanIndex} onIndexChange={setChanIndex} />}
-        {activeTab === 'post' && <Camera page={cameraPage} onOpenRoll={() => setCameraPage('roll')} />}
+        {activeTab === 'post' && <Camera page={cameraPage} onOpenRoll={() => setCameraPage('roll')} onCloseRoll={() => setCameraPage('live')} />}
         {activeTab === 'profile' && <ProfileTwin />}
       </div>
 
