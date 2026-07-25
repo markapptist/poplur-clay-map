@@ -91,7 +91,9 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     <div className={styles.stage}>
       <div className={styles.phone}>
         <div className={styles.backdrop} />
-        {inlineTab !== 'post' && <TopChrome />}
+        {/* The feed owns its top slot (the brand TV-flips with the channel
+            info there), so the harness chrome would double the logo. */}
+        {inlineTab !== 'post' && inlineTab !== 'feed' && <TopChrome />}
 
         <main className={styles.viewport} aria-label={`${VIEW_LABELS[view]} test view`}>
           <div key={baseView} className={styles.screenSurface}>

@@ -15,6 +15,8 @@ import {
 } from './regionAudio'
 import type { RegionContext } from './regionAudio'
 import { postNativeEvent } from './nativeBridge'
+import { isUserMuted, setUserMuted } from './audioGate'
+import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
 import styles from './App.module.css'
 
@@ -426,6 +428,8 @@ export default function App() {
   const [tourLine, setTourLine] = useState<string | null>(null)
   // Whether the app's music / AI voice is currently audible
   const [soundPlaying, setSoundPlaying] = useState(false)
+  // User mute, toggled by the speaker mark beside the AI line.
+  const [muted, setMuted] = useState(isUserMuted)
   const [streetView, setStreetView] = useState(false)
   // Routing must follow the user/launch location, not the AI tour camera. The
   // camera may be visiting another continent when an address is entered.
@@ -720,7 +724,15 @@ export default function App() {
     }
   }, [clearTourTimers, tourStep])
 
+  // The globe has painted: lift the Loading screen so the launch is revealed at
+  // globe zoom (the dive to the user's location then plays in full view).
+  const handleGlobeReady = useCallback(() => {
+    if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-ready' }, '*')
+    postNativeEvent({ type: 'mapReady' })
+  }, [])
+
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
+    // Safety net: if 'idle' never fired at globe zoom, this still reveals.
     if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-ready' }, '*')
     postNativeEvent({ type: 'mapReady' })
     if (landingCenter) setNavigationOrigin(landingCenter)
@@ -784,6 +796,7 @@ export default function App() {
         introDestinations={INTRO_LANDMARKS}
         streetView={streetView}
         onIntroComplete={handleIntroComplete}
+        onGlobeReady={handleGlobeReady}
       />
 
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}

@@ -35,6 +35,10 @@ export interface ClayMapProps {
   streetView?: boolean
   /** Fired once the launch flight from space has landed on the user. */
   onIntroComplete?: (center: [number, number]) => void
+  /** Fired once the globe has actually painted, BEFORE the dive — this is what
+   *  lifts the Loading screen, so the launch is revealed at globe zoom rather
+   *  than after the 7s descent (which hid the globe entirely). */
+  onGlobeReady?: () => void
 }
 
 // Realistic mode: photoreal satellite flyover (Apple-Maps-like) — no clay
@@ -52,8 +56,11 @@ export const REALISTIC_MAP = false
 // BELOW the OSM clay massing so real mapped buildings win wherever they exist and
 // Overture only shows through the gaps. Flip false to remove the layer entirely.
 export const OVERTURE_BUILDINGS_FILL = true
+// Pin the release explicitly: Overture publishes a new dated build every month
+// and DELETES older ones, so a stale date 404s and the houses silently vanish.
+// Re-point this when the tiles stop loading (list: the bucket's tiles/ prefix).
 const OVERTURE_BUILDINGS_PMTILES =
-  'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-05-20.0/buildings.pmtiles'
+  'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-07-22.0/buildings.pmtiles'
 
 // Shader-like label material that stays inside Mapbox's batched SDF glyph
 // renderer. The soft plum edge gives the type molded depth while a restrained
@@ -394,7 +401,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady }: ClayMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const landmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -583,7 +590,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // Mapbox 3.7 exposes FOV through the camera transform rather than a
     // public map.setFov() method.
     map.transform.fov = FOV_DEFAULT
-    if (import.meta.env.DEV) (window as unknown as { __map?: mapboxgl.Map }).__map = map
+    // Debug handle in every build — the shells and remote sessions poke the
+    // camera through it, and it costs nothing.
+    ;(window as unknown as { __map?: mapboxgl.Map }).__map = map
 
     // ── Zoom slider sync ──────────────────────────────────────────────────────
     map.on('zoom', () => setZoomValue(map.getZoom()))
@@ -786,6 +795,23 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // ── Launch flight: out to space, then fall onto the user at full zoom ───
       map.jumpTo({ center: HOME_CENTER, zoom: 0.85, pitch: 0, bearing: 0 })
       setZoomValue(0.85)
+
+      // Reveal HERE — with the globe on screen and drawn. Waiting for the dive
+      // to finish meant the Loading screen covered the entire launch and lifted
+      // on a street-level city, so the globe was never seen.
+      //
+      // 'idle' alone is NOT safe to gate on: the idle-orbit spins the camera
+      // every frame, so a map that has started orbiting never idles (and never
+      // emits moveend either). Race it against a deadline that still lands
+      // inside the pre-dive hold, so the reveal always happens at globe zoom.
+      let revealed = false
+      const revealAtGlobe = () => {
+        if (revealed) return
+        revealed = true
+        onGlobeReady?.()
+      }
+      map.once('idle', revealAtGlobe)
+      window.setTimeout(revealAtGlobe, 1200)
 
       let introDone = false
       const landOn = (center: [number, number]) => {
@@ -1201,10 +1227,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // mapped buildings win and Overture only shows where the base has nothing.
         if (OVERTURE_BUILDINGS_FILL) {
           if (!map.getSource('overture-buildings')) {
-            // mapbox-gl 3.26 reads PMTiles via its provider plugin: the `pmtiles://`
-            // scheme makes it load mapbox-gl-pmtiles-provider and stream tiles from
-            // the S3-hosted global file by HTTP range request.
-            map.addSource('overture-buildings', { type: 'vector', url: `pmtiles://${OVERTURE_BUILDINGS_PMTILES}` })
+            // mapbox-gl 3.26 picks its PMTiles provider plugin by the URL's
+            // .pmtiles EXTENSION and hands the url to the plugin verbatim — so
+            // it must be the plain https URL. (A pmtiles:// prefix still loads
+            // the plugin, but the prefixed URL then reaches fetch() and every
+            // range request fails.)
+            map.addSource('overture-buildings', { type: 'vector', url: OVERTURE_BUILDINGS_PMTILES })
           }
           // Overture carries real heights; fall back to floors×3.2m, else a 9m
           // house, floored at 6m so low/missing-height footprints still stand up.

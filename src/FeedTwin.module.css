@@ -35,6 +35,59 @@
   background: #000;
 }
 
+/* ── TV static buffering cover — twin of the app's TVStaticLoopingView +
+      PoplurTransitionFlash (channel logo, green CH number, category). Sits
+      under the grain/scanline dressing so the static reads as broadcast. ── */
+.staticLayer,
+.staticLayerHidden {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #050407;
+  opacity: 1;
+  transition: opacity 0.5s ease-out;
+  pointer-events: none;
+}
+
+.staticLayerHidden { opacity: 0; }
+
+.staticVideo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.staticIdentity {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.7));
+}
+
+.staticLogo {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+}
+
+.staticCh {
+  font: 900 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #4fff40;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+
+.staticCat {
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: 1.5px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+}
+
 .grain,
 .scanlines,
 .vignette {
@@ -63,29 +116,109 @@
     linear-gradient(180deg, rgba(5, 4, 7, 0.18), rgba(5, 4, 7, 0.72));
 }
 
-.tvInfo {
+/* ── Top bar: fixed clay mute mark + the cross-fade slot. Chromeless — no
+      pill, no banner — the marks sit straight on the video. ── */
+.topBar {
   position: absolute;
   z-index: 4;
-  top: clamp(126px, 17vh, 164px);
+  top: var(--header-title-top, 44px);
   left: 16px;
-  right: 84px;
+  right: 16px;
+  height: 44px;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 9px;
-  min-height: 50px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 14px;
-  background: rgba(5, 4, 7, 0.36);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  gap: 10px;
 }
 
-.flag {
-  font-size: 22px;
-  line-height: 1;
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
+/* The slot cross-fades between its two faces: ease out, swap, ease back in. */
+.flipSlot {
+  height: 100%;
+  min-width: 0;
+  opacity: 1;
+  transition: opacity 0.34s ease;
+}
+
+.flipSlotOut {
+  opacity: 0;
+}
+
+/* Brand face is screen-centred too, so both faces share the cube's axis. */
+.brandRow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brandIcon {
+  width: 40px;
+  height: auto;
+  filter: drop-shadow(0 4px 10px rgba(246, 59, 154, 0.45));
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.brandWordmark {
+  width: 132px;
+  height: auto;
+  filter: drop-shadow(0 4px 10px rgba(246, 59, 154, 0.4));
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.infoRow {
+  height: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The cycling line is centred on the SCREEN (the cube's axis), not on the
+   slot's leftover space — absolute against the topBar, whose symmetric 16px
+   insets make its centre the viewport centre. */
+.centerTicker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: 20px;
+  width: min(60%, 420px);
+  text-align: center;
+}
+
+.centerOn,
+.centerOff {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 950;
+  color: #fff2f8;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
+  transition: opacity 0.34s ease, transform 0.34s ease;
+}
+
+.centerOff {
+  opacity: 0;
+  transform: translateY(9px);
+}
+
+.chTag {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 900;
+  color: #4dff69;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
 }
 
 .chIcon {
@@ -93,80 +226,6 @@
   height: 38px;
   object-fit: contain;
   filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.5));
-}
-
-.ticker {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 900;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
-}
-
-.tickerLine {
-  position: relative;
-  min-height: 16px;
-  overflow: hidden;
-}
-
-.tName,
-.tCh,
-.tCoords,
-.tCat,
-.tOut {
-  position: absolute;
-  inset: 0 auto auto 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: opacity 0.26s ease, transform 0.26s ease;
-}
-
-.tName,
-.tCoords {
-  color: #fff2f8;
-}
-
-.tCh,
-.tCat {
-  color: #4dff69;
-}
-
-.tOut {
-  opacity: 0;
-  transform: translateY(9px);
-}
-
-.caption {
-  position: absolute;
-  z-index: 4;
-  left: 18px;
-  right: 62px;
-  bottom: clamp(86px, 13vh, 124px);
-  display: grid;
-  gap: 8px;
-  align-content: end;
-  text-shadow: 0 3px 10px rgba(0, 0, 0, 0.76);
-}
-
-.captionText {
-  margin: 0;
-  font-size: clamp(22px, 5.5vw, 30px);
-  line-height: 1.04;
-  font-weight: 950;
-}
-
-.transBadge {
-  justify-self: start;
-  padding: 6px 9px;
-  border-radius: 999px;
-  background: rgba(246, 59, 154, 0.9);
-  color: #16060f;
-  font-size: 11px;
-  font-weight: 950;
-  text-transform: uppercase;
 }
 
 .rail {
@@ -213,18 +272,6 @@
   font-weight: 900;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-}
-
-.logoBug {
-  position: absolute;
-  z-index: 4;
-  right: 18px;
-  bottom: clamp(84px, 13vh, 118px);
-  width: 38px;
-  height: 38px;
-  object-fit: contain;
-  opacity: 0.84;
-  filter: drop-shadow(0 7px 10px rgba(0, 0, 0, 0.58));
 }
 
 .heart {

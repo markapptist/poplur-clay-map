@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
+import ClayMuteButton from './ClayMuteButton'
 import styles from './FeedTwin.module.css'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
@@ -22,9 +24,11 @@ interface Channel {
   caption: string
   lang: string            // translation badge target
   theme: [string, string, string]  // gradient stops
-  videos?: string[]       // /feed/*.mp4 — the channel's ad creatives (the
-                          // previous app version's Google Drive / AI Studio
-                          // ads, now bundled locally); rotates on revisit
+  videos?: string[]       // /feed/*.mp4 — the channel's content (the previous
+                          // app version's Drive / AI Studio ads, bundled
+                          // locally), ORDERED largest→smallest by the radius
+                          // intercepting your current location; horizontal
+                          // swipe steps through it
 }
 
 export const CHANNELS: Channel[] = [
@@ -57,11 +61,18 @@ export default function FeedTwin({
 } = {}) {
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
-  const [displayAsChannel, setDisplayAsChannel] = useState(false)
+  // Top slot TV-flip: alternates the poplur brand and the channel info row.
+  const [face, setFace] = useState<'logo' | 'info'>('logo')
+  const [flipOut, setFlipOut] = useState(false)
+  // Centered line cycles: video title → channel username → coordinates.
+  const [centerIdx, setCenterIdx] = useState(0)
+  const [muted, setMuted] = useState(isUserMuted)
   const [heart, setHeart] = useState<{ x: number; y: number; id: number } | null>(null)
-  const touchStartY = useRef<number | null>(null)
+  const touchStart = useRef<{ x: number; y: number } | null>(null)
   const wheelLock = useRef(false)
+  const adVideoRef = useRef<HTMLVideoElement>(null)
   const ch = CHANNELS[index]
+
 
   const change = useCallback((dir: 1 | -1) => {
     const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
@@ -69,21 +80,58 @@ export default function FeedTwin({
     else setOwnIndex(next)
   }, [index, onIndexChange])
 
-  // TV ticker: flip username↔CH and coords↔category every ~2.6s.
+  // Top slot: fade out, swap face (brand ⇄ channel info), fade back in — an
+  // unhurried beat, not a channel zap.
   useEffect(() => {
-    const iv = window.setInterval(() => setDisplayAsChannel(v => !v), 2600)
+    let swap = 0
+    const iv = window.setInterval(() => {
+      setFlipOut(true)
+      swap = window.setTimeout(() => {
+        setFace(f => (f === 'logo' ? 'info' : 'logo'))
+        setFlipOut(false)
+      }, 340)
+    }, 6500)
+    return () => { window.clearInterval(iv); window.clearTimeout(swap) }
+  }, [])
+
+  // Centered info line: title → username → coordinates, slow cross-fade.
+  useEffect(() => {
+    const iv = window.setInterval(() => setCenterIdx(i => (i + 1) % 3), 3400)
     return () => window.clearInterval(iv)
   }, [])
 
-  // Keyboard: up/down changes channel.
+  const toggleMute = () => {
+    const next = !muted
+    setUserMuted(next)
+    setMuted(next)
+  }
+
+  // Within a channel, horizontal navigation steps through its content. The
+  // list is ordered by the content's radius intercepting your current
+  // location, LARGEST first (videos[] ships pre-sorted that way), so entering
+  // a channel always starts on the widest-reaching post and swiping left
+  // narrows in.
+  const contentIdxRef = useRef<Record<string, number>>({})
+  const [, forceContentRender] = useState(0)
+  const changeContent = useCallback((dir: 1 | -1) => {
+    const count = ch.videos?.length ?? 0
+    if (count < 2) return
+    const current = contentIdxRef.current[ch.id] ?? 0
+    contentIdxRef.current[ch.id] = (current + dir + count) % count
+    forceContentRender(n => n + 1)
+  }, [ch.id, ch.videos])
+
+  // Keyboard twin of the gestures: up/down = channel, left/right = content.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'ArrowUp') { e.preventDefault(); change(-1) }
       if (e.key === 'ArrowDown') { e.preventDefault(); change(1) }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); changeContent(-1) }
+      if (e.key === 'ArrowRight') { e.preventDefault(); changeContent(1) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [change])
+  }, [change, changeContent])
 
   const onWheel = (e: React.WheelEvent) => {
     if (wheelLock.current) return
@@ -93,21 +141,64 @@ export default function FeedTwin({
     window.setTimeout(() => { wheelLock.current = false }, 420)
   }
 
-  const onTouchStart = (e: React.TouchEvent) => { touchStartY.current = e.touches[0].clientY }
+  // One touch, two axes: the dominant axis wins. Vertical swipe changes
+  // channel (unchanged); horizontal swipe steps the channel's content
+  // (swipe left → next, i.e. smaller radius; right → back toward the widest).
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
   const onTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartY.current == null) return
-    const dy = e.changedTouches[0].clientY - touchStartY.current
-    if (Math.abs(dy) > 48) change(dy < 0 ? 1 : -1)   // swipe up → next channel
-    touchStartY.current = null
+    if (!touchStart.current) return
+    const dx = e.changedTouches[0].clientX - touchStart.current.x
+    const dy = e.changedTouches[0].clientY - touchStart.current.y
+    if (Math.abs(dy) > 48 && Math.abs(dy) >= Math.abs(dx)) change(dy < 0 ? 1 : -1)
+    else if (Math.abs(dx) > 48) changeContent(dx < 0 ? 1 : -1)
+    touchStart.current = null
   }
 
-  // Ad-creative rotation: channels with several videos (Spanish has 3) show
-  // the next one each time you come back to the channel.
-  const visitsRef = useRef<Record<string, number>>({})
+  const adSrc = ch.videos?.[(contentIdxRef.current[ch.id] ?? 0) % (ch.videos?.length || 1)]
+
+  // TV static covers the creative until real frames arrive — the web twin of
+  // the app's TVStaticLoopingView + PoplurTransitionFlash: static loops under
+  // the centred channel logo / CH number / category. One-way latch like iOS:
+  // once frames arrive the static never returns mid-playback; only a content
+  // or channel change re-arms it.
+  const [adReady, setAdReady] = useState(false)
+  useEffect(() => { setAdReady(false) }, [adSrc])
+  // The static loop's autoplay can be refused if it mounted while the page
+  // was hidden — re-kick it whenever the cover is (about to be) visible.
+  const staticVideoRef = useRef<HTMLVideoElement>(null)
   useEffect(() => {
-    visitsRef.current[ch.id] = (visitsRef.current[ch.id] ?? -1) + 1
-  }, [ch.id])
-  const adSrc = ch.videos?.[(visitsRef.current[ch.id] ?? 0) % (ch.videos?.length || 1)]
+    if (!adReady) void staticVideoRef.current?.play().catch(() => {})
+  }, [adReady, ch.id])
+
+  // Channel audio. The ad creative is the channel's soundtrack, so it plays
+  // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
+  // and the shared gate must still win (user mute, backgrounded app). So the
+  // element autoplays muted, then unmutes on the first gesture and re-applies
+  // whenever the gate changes.
+  useEffect(() => {
+    const apply = () => {
+      const video = adVideoRef.current
+      if (!video) return
+      video.muted = isGateMuted()
+      video.volume = 0.85
+      // A muted element may already be playing; unmuting can still need a nudge.
+      if (!video.muted && video.paused) void video.play().catch(() => {})
+    }
+    apply()
+    const unlock = () => apply()
+    window.addEventListener('pointerdown', unlock, { passive: true })
+    window.addEventListener('touchstart', unlock, { passive: true })
+    window.addEventListener('keydown', unlock)
+    const offGate = onGateChange(apply)
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('touchstart', unlock)
+      window.removeEventListener('keydown', unlock)
+      offGate()
+    }
+  }, [adSrc])
 
   // Double-tap to like (heart pop), like the app.
   const lastTap = useRef(0)
@@ -145,45 +236,66 @@ export default function FeedTwin({
       {adSrc && (
         <video
           key={adSrc}
+          ref={adVideoRef}
           className={styles.adVideo}
           src={adSrc}
           autoPlay
+          // Starts muted because iOS/Safari refuse unmuted autoplay before a
+          // gesture; the effect below unmutes as soon as one arrives.
           muted
           loop
           playsInline
+          onPlaying={() => setAdReady(true)}
         />
       )}
+
+      {/* Static + channel identity while the video buffers or swaps; fades out
+          over 0.5s (ease-out) exactly like the app, and stays up as the
+          "no signal" card on channels with no creative yet. */}
+      <div className={adReady ? styles.staticLayerHidden : styles.staticLayer} aria-hidden="true">
+        <video ref={staticVideoRef} className={styles.staticVideo} src="tv_static.mp4" autoPlay muted loop playsInline />
+        <div className={styles.staticIdentity}>
+          <img className={styles.staticLogo} src={`channels/${ch.icon}.png`} alt="" draggable={false} />
+          <span className={styles.staticCh}>CH {ch.number}</span>
+          <span className={styles.staticCat}>{ch.name.toUpperCase()}</span>
+        </div>
+      </div>
       <div className={styles.grain} aria-hidden="true" />
       <div className={styles.scanlines} aria-hidden="true" />
       <div className={styles.vignette} aria-hidden="true" />
 
-      {/* ── TV overlay (top-left): flag + channel icon + username↔CH / coords↔category ── */}
-      <div className={styles.tvInfo}>
-        <span className={styles.flag}>{ch.flag}</span>
-        <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
-        <div className={styles.ticker}>
-          <div className={styles.tickerLine}>
-            <span className={displayAsChannel ? styles.tOut : styles.tName}>{ch.user}</span>
-            <span className={displayAsChannel ? styles.tCh : styles.tOut}>CH {ch.number}</span>
-          </div>
-          <div className={styles.tickerLine}>
-            <span className={displayAsChannel ? styles.tOut : styles.tCoords}>43.6480, -79.3810</span>
-            <span className={displayAsChannel ? styles.tCat : styles.tOut}>{ch.name.toUpperCase()}</span>
-          </div>
+      {/* ── Top bar ──
+          Far left: the clay 3D mute mark (same extruded-clay recipe as the
+          channel arrows) — always present, never part of the swap. The rest is
+          ONE slot that cross-fades between the poplur brand and the channel
+          info row: [channel logo | title⇄username⇄coords | CH + name]. */}
+      <div className={styles.topBar}>
+        <ClayMuteButton muted={muted} onToggle={toggleMute} size={40} />
+        <div className={flipOut ? `${styles.flipSlot} ${styles.flipSlotOut}` : styles.flipSlot}>
+          {face === 'logo' ? (
+            <div className={styles.brandRow}>
+              <img className={styles.brandIcon} src="logo_icon.png" alt="" draggable={false} />
+              <img className={styles.brandWordmark} src="logo_text.png" alt="poplur" draggable={false} />
+            </div>
+          ) : (
+            <div className={styles.infoRow}>
+              <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
+              <div className={styles.centerTicker}>
+                {[ch.caption, ch.user, '43.6480, -79.3810'].map((line, i) => (
+                  <span key={i} className={i === centerIdx % 3 ? styles.centerOn : styles.centerOff}>{line}</span>
+                ))}
+              </div>
+              <div className={styles.chTag}>
+                <span>CH {ch.number}</span>
+                <span>{ch.name.toUpperCase()}</span>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
-
-      {/* Bottom caption + translation badge (AI captions in the app) */}
-      <div className={styles.caption}>
-        <p className={styles.captionText}>{ch.caption}</p>
-        {ch.lang !== 'EN' && <span className={styles.transBadge}>translated · {ch.lang}</span>}
       </div>
 
       {/* Channel changer + RADIUS⇄TRENDING label: OWNED BY THE HOME HUD.
           The feed itself only swipes/wheels between channels. */}
-
-      {/* Channel logo bug (bottom-right watermark) */}
-      <img className={styles.logoBug} src="logo_icon.png" alt="" aria-hidden="true" />
 
       {heart && <span className={styles.heart} style={{ left: heart.x, top: heart.y }}>♥</span>}
     </div>

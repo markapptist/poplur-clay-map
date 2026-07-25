@@ -519,16 +519,32 @@
 .audioPicker button:hover { background: rgba(246, 59, 154, 0.18); }
 
 /* Brand volume mark beside the AI line — pulses while sound is playing */
-.aiVolume {
+.aiVolume,
+.aiVolumeMuted {
   flex: none;
   width: 15px;
   height: 15px;
   display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
   filter: drop-shadow(0 0 6px rgba(246, 59, 154, 0.55));
   animation: volumePulse 1.5s ease-in-out infinite;
 }
 
-.aiVolume svg { width: 100%; height: 100%; display: block; }
+/* Muted: the mark stops pulsing and dims, so silence reads at a glance. */
+.aiVolumeMuted {
+  animation: none;
+  opacity: 0.62;
+  filter: none;
+}
+
+.aiVolume:active,
+.aiVolumeMuted:active { transform: scale(0.88); }
+
+.aiVolume svg,
+.aiVolumeMuted svg { width: 100%; height: 100%; display: block; }
 
 @keyframes volumePulse {
   0%, 100% { transform: scale(1); opacity: 0.95; }

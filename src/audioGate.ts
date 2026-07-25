@@ -54,6 +54,10 @@ function apply() {
   for (const el of mediaEls) {
     try { el.muted = muted } catch { /* ignore */ }
   }
+  // Silence the AI host mid-sentence when the gate closes.
+  if (muted && typeof window !== 'undefined' && window.speechSynthesis) {
+    try { window.speechSynthesis.cancel() } catch { /* ignore */ }
+  }
   listeners.forEach(cb => cb(muted))
 }
 
@@ -82,6 +86,26 @@ if (NativeCtx) {
   Patched.prototype = NativeCtx.prototype
   ;(window as unknown as { AudioContext: typeof AudioContext }).AudioContext = Patched
   ;(window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext = Patched
+}
+
+// SpeechSynthesis (the AI radio host, the directions voice) bypasses both
+// AudioContext and HTMLAudio, so gate it too: while muted, speak() DROPS the
+// utterance instead of queueing it — firing its error handler async so app
+// flow (radio ducking blends on host end/error) still advances.
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  const synth = window.speechSynthesis
+  const nativeSpeak = synth.speak.bind(synth)
+  synth.speak = (utterance: SpeechSynthesisUtterance) => {
+    if (isGateMuted()) {
+      window.setTimeout(() => {
+        try {
+          utterance.onerror?.call(utterance, new Event('error') as SpeechSynthesisErrorEvent)
+        } catch { /* ignore */ }
+      }, 0)
+      return
+    }
+    nativeSpeak(utterance)
+  }
 }
 
 // HTMLAudio (the radio's live stream + wav fallback) bypasses AudioContext, so
