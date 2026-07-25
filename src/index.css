@@ -64,3 +64,15 @@ html.camera-live,
 .perf-lite [class*="scanlines"] {
   display: none !important;
 }
+
+/* ── tier-low (auto: weak devices, native shell only) ──────────────────────
+   Set by main.tsx when navigator.deviceMemory reports a 3GB-class device
+   (A03s → 2; iOS never reports it, strong Androids report 4+). Measured on a
+   Mali-G52 MP1: full-screen blur + filter chains are the difference between
+   5fps and usable. Layout and icons stay identical — effects flatten. */
+.tier-low *, .tier-low *::before, .tier-low *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  text-shadow: none !important;
+}

@@ -13,6 +13,14 @@ import { isNativeShell } from './nativeBridge'
 // first paint so there is no flash.
 if (isNativeShell()) document.documentElement.classList.add('perf-lite')
 
+// tier-low: 3GB-class devices (navigator.deviceMemory quantizes the A03s to 2;
+// iOS never exposes it, 4GB+ Androids report 4+). Measured on Mali-G52: the
+// full effect stack runs ~5fps — the lite tier flattens effects, keeps layout.
+const deviceMemory = (navigator as unknown as { deviceMemory?: number }).deviceMemory
+if (isNativeShell() && typeof deviceMemory === 'number' && deviceMemory <= 2) {
+  document.documentElement.classList.add('tier-low')
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
