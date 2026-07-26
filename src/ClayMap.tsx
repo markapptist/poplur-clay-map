@@ -443,7 +443,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const nativeLocationRef = useRef<[number, number] | null>(null)
   // True while the map tab is front (the home signals via gcAudio messages);
   // ambient animation pauses when another tab covers the map.
-  const mapIsFrontRef = useRef(true)
+  // The embed's `front=0` says the map booted behind another tab; the home
+  // still posts gcAudio as tabs change, but that arrives too late to decide
+  // whether the intro should be cinematic.
+  const mapIsFrontRef = useRef(
+    typeof window === 'undefined'
+      || new URLSearchParams(window.location.search).get('front') !== '0',
+  )
   // Bumped when a new map instance finishes loading, so the marker effect
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
@@ -728,8 +734,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const startOrbit = () => {
       stopOrbit()
       const spin = () => {
-        map.setBearing(map.getBearing() + 0.03)
         orbitRaf = requestAnimationFrame(spin)
+        // Only actually turn the camera while the map tab is front. The home
+        // keeps this iframe mounted behind Feed / Profile / Camera, and a
+        // display:none iframe is NOT `document.hidden` in Chrome or WKWebView —
+        // so the idle orbit kept calling setBearing every frame and repainted a
+        // full-res Mapbox canvas behind whatever screen was actually in front.
+        // Keep the rAF ticking so the orbit resumes the instant the tab returns.
+        if (!mapIsFrontRef.current) return
+        map.setBearing(map.getBearing() + 0.03)
       }
       orbitRaf = requestAnimationFrame(spin)
     }
@@ -934,6 +947,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       let introDone = false
       const landOn = (center: [number, number]) => {
+        // Behind another tab there is nobody to watch the dive — flying it just
+        // streams tiles and uploads textures for seven seconds while Feed or
+        // Profile is trying to hold 60fps. Land immediately instead; the map is
+        // then already composed when its tab comes front.
+        if (!mapIsFrontRef.current) {
+          map.jumpTo({ center, zoom: INTRO_LANDING_ZOOM, pitch: 52, bearing: -18 })
+          if (!introDone) {
+            introDone = true
+            onIntroComplete?.(center)
+          }
+          return
+        }
         ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
         map.flyTo({
           center,

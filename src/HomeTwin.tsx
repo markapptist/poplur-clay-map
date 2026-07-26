@@ -7,6 +7,7 @@ import ProfileTwin from './ProfileTwin'
 import Camera from './Camera'
 import HoldMenuTwin from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
+import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import { playPop, preloadPop } from './pop'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -50,10 +51,34 @@ function cubeSizeFor(): number {
 const POST_COUNT = 128
 const RADIUS_METERS = 41_800
 const EARTH_RADIUS_KM = 6_371
+// Stable spoofed reach until presence is wired to the live audience service.
+const SPOOFED_ONLINE_AUDIENCE = 1_200_000
 
-// Home and Map use the same bundle. Dropping the query string renders App's map
-// route, avoids a second dev-server dependency, and mirrors the native custom-
-// scheme bundle exactly.
+function shouldUseMiles(): boolean {
+  if (typeof window === 'undefined') return false
+  const params = new URLSearchParams(window.location.search)
+  const forcedUnit = params.get('units')
+  if (forcedUnit === 'mi') return true
+  if (forcedUnit === 'km') return false
+
+  const locale = navigator.languages?.[0] ?? navigator.language
+  try {
+    const region = new Intl.Locale(locale).region
+    return region === 'US' || region === 'LR' || region === 'MM'
+  } catch {
+    return /-(US|LR|MM)$/i.test(locale)
+  }
+}
+
+function compactAudience(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(value % 1_000_000_000 === 0 ? 0 : 1)}B`
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value % 1_000 === 0 ? 0 : 1)}K`
+  return value.toString()
+}
+
+// Home and Map use the same bundle. The dedicated internal map route avoids a
+// second dev server while keeping `/` reserved for the post-login home.
 // `front=0` tells the embedded map it is booting behind another tab, so it
 // skips the 7s cinematic intro (which streams tiles and uploads textures the
 // whole way) and just lands. Without it the map's intro runs behind Feed /
@@ -62,8 +87,8 @@ const CLAY_MAP_SRC = (() => {
   const front = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('view') === 'map' ? '1' : '0'
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?front=${front}`
-    : `index.html?front=${front}`
+    ? `${window.location.origin}/?map=1&front=${front}`
+    : `index.html?map=1&front=${front}`
 })()
 
 // Android app shell (PoplurNative bridge). Its budget GPUs can't afford Mapbox
@@ -115,10 +140,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // current tab, and its items match that tab.
   const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
   const [popping, setPopping] = useState(false)
-  // Radius units cycle km ⇄ mi continuously, like the app's radius display.
-  const [unitMi, setUnitMi] = useState(false)
-  // Right slot cross-fades RADIUS ⇄ TRENDING (the feed's animated label).
-  const [showTrending, setShowTrending] = useState(true)
+  // Start in the measurement system implied by the device locale. Tapping the
+  // Radius card remains a deliberate local override for this session.
+  const [unitMi, setUnitMi] = useState(shouldUseMiles)
+  // Right slot alternates between local radius and the potential audience it
+  // reaches. The spoofed audience stays stable until live presence arrives.
+  const [showOnlineAudience, setShowOnlineAudience] = useState(false)
   // Left slot: channel up/down changer — drives the feed's channel directly.
   const [chanIndex, setChanIndex] = useState(0)
   // Cube size follows the viewport so the bottom cluster never overlaps.
@@ -144,13 +171,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     && typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('map-loading') === '1'
   useEffect(() => {
-    // Radius is the headline metric: no auto unit flip (it used to swap km/mi
-    // every 2.5s, so the number never held still) and no cross-fade — tapping
-    // the value toggles units instead. TRENDING keeps its own small line.
-    const fade = 0
     const onResize = () => setCubeSize(cubeSizeFor())
     window.addEventListener('resize', onResize)
     return () => { window.removeEventListener('resize', onResize) }
+  }, [])
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const interval = window.setInterval(() => setShowOnlineAudience(showingOnline => !showingOnline), 7600)
+    return () => window.clearInterval(interval)
   }, [])
 
   useEffect(() => {
@@ -318,7 +347,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         </div>
       )}
 
-      {/* Bottom HUD — channel changer + RADIUS ⇄ TRENDING label. Persistent
+      {/* Bottom HUD — channel changer + reach metric. Persistent
           across every tab. The row hugs the cube's box (same bottom, same
           height) and lays out as [arrows | cube-width gap | label] on one
           center line: the cube sits exactly centered in the middle column and
@@ -336,26 +365,36 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
         <div className={styles.cubeSpacer} aria-hidden="true" />
 
-        {/* RIGHT: the feed's animated RADIUS ◆ ⇄ TRENDING ↑ label */}
+        {/* RIGHT: local RADIUS ⇄ ONLINE NOW. */}
         <div className={styles.statStack}>
-          {/* RADIUS is permanent — the app's headline number. It no longer shares
-              this slot with TRENDING (which hid it half the time) and no longer
-              auto-flips units. Tap the value to switch km/mi. */}
+          {/* Radius keeps the user’s local-unit toggle; the audience card takes
+              this exact slot on the next beat. */}
           <div
-            className={styles.statCard}
+            className={showOnlineAudience ? styles.statCardOut : styles.statCard}
             onClick={() => { playPop(); setUnitMi(v => !v) }}
             role="button"
             aria-label={`Radius ${(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
           >
             <span className={styles.statLabel}>RADIUS ◆</span>
-            <span className={styles.statValue}>
+            <span className={`${styles.statValue} ${styles.radiusValueShader}`}>
               {(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)}
               <span className={styles.statUnit}>{unitMi ? 'mi' : 'km'}</span>
             </span>
             <span className={styles.statSub}>
-              of {(unitMi ? Math.round(EARTH_RADIUS_KM * KM_TO_MI) : EARTH_RADIUS_KM).toLocaleString()} {unitMi ? 'mi' : 'km'}
+              of <span className={styles.statMax}>{(unitMi ? Math.round(EARTH_RADIUS_KM * KM_TO_MI) : EARTH_RADIUS_KM).toLocaleString()}</span> {unitMi ? 'mi' : 'km'}
             </span>
-            <span className={styles.statTrend}>TRENDING ↑ {POST_COUNT} nearby</span>
+            <span className={styles.statTrend}>{POST_COUNT} nearby</span>
+          </div>
+          <div
+            className={showOnlineAudience ? styles.statCard : styles.statCardOut}
+            aria-label={`${compactAudience(SPOOFED_ONLINE_AUDIENCE)} users online in your reach`}
+          >
+            <span className={styles.statLabel}>ONLINE NOW</span>
+            <span className={`${styles.statValue} ${styles.onlineValueShader}`}>
+              {compactAudience(SPOOFED_ONLINE_AUDIENCE)}
+            </span>
+            <span className={styles.statSub}>users in reach</span>
+            <span className={styles.statTrend}>LIVE PRESENCE</span>
           </div>
         </div>
       </div>
@@ -396,6 +435,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         ))}
       </div>}
 
+      <PoplurVoiceAssistant onTabRequest={tab => setActiveTab(tab)} />
+
       {/* Cube long-press hold menu — translucent overlay whose item set matches
           the tab it was opened from. Closes back to that tab. */}
       {holdOpen && <HoldMenuTwin tab={activeTab} onClose={() => setHoldOpen(false)} />}
@@ -403,5 +444,4 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   )
 }
 
-// (The old TrendingCounter / RadiusCounter pair was replaced by the feed's
-//  animated RADIUS ◆ ⇄ TRENDING ↑ stat label, rendered inline above.)
+// (The old TrendingCounter / RadiusCounter pair is now the inline reach slot.)

@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
+import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { playPop } from './pop'
 import styles from './FeedTwin.module.css'
+import profileStyles from './ProfileTwin.module.css'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -48,6 +52,15 @@ export const CHANNELS: Channel[] = [
   { id: 'comedy', number: 115, name: 'Comedy', emoji: '😂', icon: 'poplur_channel_115_comedy', flag: '🇦🇺', user: '@bitmerchant', caption: 'when the barista spells your name wrong', lang: 'EN', theme: ['#2a2404', '#ca8a04', '#fde047'], videos: ['feed/ad-comedy.mp4'] },
 ]
 
+// Match the Profile post viewer's share destinations and avatars exactly. The
+// Feed button opens that same Poplur-first flow for whichever post is active.
+const SHARE_FRIENDS = [
+  { handle: 'kensington_eats', name: 'Kensington', avatar: 'feed/posters/ad-food.jpg' },
+  { handle: 'harbourfront', name: 'Harbour', avatar: 'feed/posters/ad-comedy.jpg' },
+  { handle: 'queenwest', name: 'Queen W', avatar: 'feed/posters/ad-shopping.jpg' },
+  { handle: 'the_annex', name: 'Annex', avatar: 'mark_talk0.png' },
+]
+
 // The feed renders pure channel CONTENT — the channel changer and the
 // RADIUS⇄TRENDING label live in the home HUD (HomeTwin), which controls the
 // channel index from its clay arrows. Standalone (?view=feed) it manages its
@@ -68,7 +81,9 @@ export default function FeedTwin({
   const [centerIdx, setCenterIdx] = useState(0)
   const [muted, setMuted] = useState(isUserMuted)
   const [heart, setHeart] = useState<{ x: number; y: number; id: number } | null>(null)
-  const touchStart = useRef<{ x: number; y: number } | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [shareNote, setShareNote] = useState<string | null>(null)
+  const gestureStart = useRef<{ pointerId: number; x: number; y: number } | null>(null)
   const wheelLock = useRef(false)
   const adVideoRef = useRef<HTMLVideoElement>(null)
   const ch = CHANNELS[index]
@@ -141,22 +156,49 @@ export default function FeedTwin({
     window.setTimeout(() => { wheelLock.current = false }, 420)
   }
 
-  // One touch, two axes: the dominant axis wins. Vertical swipe changes
-  // channel (unchanged); horizontal swipe steps the channel's content
-  // (swipe left → next, i.e. smaller radius; right → back toward the widest).
-  const onTouchStart = (e: React.TouchEvent) => {
-    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-  }
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStart.current) return
-    const dx = e.changedTouches[0].clientX - touchStart.current.x
-    const dy = e.changedTouches[0].clientY - touchStart.current.y
-    if (Math.abs(dy) > 48 && Math.abs(dy) >= Math.abs(dx)) change(dy < 0 ? 1 : -1)
-    else if (Math.abs(dx) > 48) changeContent(dx < 0 ? 1 : -1)
-    touchStart.current = null
+  const adSrc = ch.videos?.[(contentIdxRef.current[ch.id] ?? 0) % (ch.videos?.length || 1)]
+  const shareLink = `https://poplur.app/p/ch${ch.number}`
+
+  const flashShareNote = (text: string) => {
+    setShareNote(text)
+    window.setTimeout(() => setShareNote(null), 2100)
   }
 
-  const adSrc = ch.videos?.[(contentIdxRef.current[ch.id] ?? 0) % (ch.videos?.length || 1)]
+  const dmShare = (friend: typeof SHARE_FRIENDS[number]) => {
+    playPop()
+    if (isNativeShell()) {
+      postNativeEvent({ type: 'sharePost', to: friend.handle, link: shareLink })
+    }
+    setShareOpen(false)
+    flashShareNote(`Sent to ${friend.name}`)
+  }
+
+  const shareOutside = async () => {
+    playPop()
+    const payload = { title: 'Poplur', text: ch.caption, url: shareLink }
+    setShareOpen(false)
+    try {
+      if (navigator.share) {
+        await navigator.share(payload)
+        return
+      }
+      await navigator.clipboard?.writeText(shareLink)
+      flashShareNote('Link copied')
+    } catch {
+      flashShareNote('Sharing cancelled')
+    }
+  }
+
+  const copyShareLink = async () => {
+    playPop()
+    setShareOpen(false)
+    try {
+      await navigator.clipboard.writeText(shareLink)
+      flashShareNote('Link copied')
+    } catch {
+      flashShareNote('Could not copy the link')
+    }
+  }
 
   // The static layer uses tv_static_clean.mp4 — the logo-free 0-4s window of
   // tv_static.mp4 (the full clip bursts a Poplur 'P' at ~4.2-8.5s, which would
@@ -164,9 +206,10 @@ export default function FeedTwin({
   // TV static covers the creative until real frames arrive — the web twin of
   // the app's TVStaticLoopingView + PoplurTransitionFlash: static loops under
   // the centred channel logo / CH number / category. One-way latch like iOS:
-  // once frames arrive the static never returns mid-playback; only a content
-  // or channel change re-arms it.
-  const [adReady, setAdReady] = useState(false)
+  // once a DECODED frame has painted the static never returns mid-playback;
+  // only a content or channel change re-arms it. `playing` alone is too early
+  // in WebKit: it can fire while the first composited video frame is black.
+  const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   // GCL test hooks: ?static=1 pins the TV-static layer visible; ?transition=1
   // plays the app's feed_end_transition clip over it (the two pieces the native
   // feed uses — TVStaticLooping + the end-of-feed transition).
@@ -174,10 +217,43 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('static') === '1'
   const forceTransition = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('transition') === '1'
-  useEffect(() => { setAdReady(false) }, [adSrc])
+  const adReady = Boolean(adSrc) && readyAdSrc === adSrc
+  const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
+  const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
+  const staticReady = readyStaticKey === staticKey
   // The static loop's autoplay can be refused if it mounted while the page
   // was hidden — re-kick it whenever the cover is (about to be) visible.
   const staticVideoRef = useRef<HTMLVideoElement>(null)
+  const settleAfterFrame = (video: HTMLVideoElement, callback: () => void) => {
+    const frameAware = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (listener: (now: number, metadata: unknown) => void) => number
+    }
+    const settle = () => window.requestAnimationFrame(() => callback())
+    if (frameAware.requestVideoFrameCallback) {
+      frameAware.requestVideoFrameCallback(() => settle())
+    } else {
+      // Browsers without requestVideoFrameCallback still need two paints after
+      // loadeddata before it is safe to lift the cover.
+      window.requestAnimationFrame(() => window.requestAnimationFrame(callback))
+    }
+  }
+
+  const markAdReady = useCallback((source: string) => {
+    const video = adVideoRef.current
+    if (!video || video.getAttribute('src') !== source || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+    settleAfterFrame(video, () => {
+      if (adVideoRef.current === video && video.getAttribute('src') === source) setReadyAdSrc(source)
+    })
+  }, [])
+
+  const markStaticReady = useCallback((key: string) => {
+    const video = staticVideoRef.current
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+    settleAfterFrame(video, () => {
+      if (staticVideoRef.current === video) setReadyStaticKey(key)
+    })
+  }, [])
+
   useEffect(() => {
     if (!adReady) void staticVideoRef.current?.play().catch(() => {})
   }, [adReady, ch.id])
@@ -210,9 +286,58 @@ export default function FeedTwin({
     }
   }, [adSrc])
 
-  // Double-tap to like (heart pop), like the app.
+  // One pointer path for touch, pen, and desktop mouse drag. Capturing the
+  // pointer keeps the swipe alive when it finishes outside the feed. The
+  // dominant axis wins: vertical changes channel; horizontal steps through
+  // the current channel's content.
   const lastTap = useRef(0)
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return
+    const target = e.target
+    if (
+      target instanceof Element
+      && target.closest('button, a, input, textarea, select, [role="button"]')
+    ) return
+
+    gestureStart.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const onPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (gestureStart.current?.pointerId !== e.pointerId) return
+    gestureStart.current = null
+    lastTap.current = 0
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+  }
+
   const onPointerUp = (e: React.PointerEvent) => {
+    const start = gestureStart.current
+    if (!start || start.pointerId !== e.pointerId) return
+    gestureStart.current = null
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+
+    const dx = e.clientX - start.x
+    const dy = e.clientY - start.y
+    if (Math.abs(dy) > 48 && Math.abs(dy) >= Math.abs(dx)) {
+      lastTap.current = 0
+      change(dy < 0 ? 1 : -1)
+      return
+    }
+    if (Math.abs(dx) > 48) {
+      lastTap.current = 0
+      changeContent(dx < 0 ? 1 : -1)
+      return
+    }
+    if (Math.hypot(dx, dy) > 12) {
+      lastTap.current = 0
+      return
+    }
+
+    // Double-tap to like (heart pop), like the app. A drag never counts.
     const now = Date.now()
     if (now - lastTap.current < 300) {
       setHeart({ x: e.clientX, y: e.clientY, id: now })
@@ -227,9 +352,9 @@ export default function FeedTwin({
     <div
       className={styles.feed}
       onWheel={onWheel}
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
+      onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
     >
       {/* Full-bleed "video": animated themed background + film grain + scanlines */}
       <div
@@ -255,7 +380,8 @@ export default function FeedTwin({
           muted
           loop
           playsInline
-          onPlaying={() => setAdReady(true)}
+          onLoadedData={() => markAdReady(adSrc)}
+          onPlaying={() => markAdReady(adSrc)}
         />
       )}
 
@@ -263,7 +389,24 @@ export default function FeedTwin({
           over 0.5s (ease-out) exactly like the app, and stays up as the
           "no signal" card on channels with no creative yet. */}
       <div className={adReady && !forceStatic && !forceTransition ? styles.staticLayerHidden : styles.staticLayer} aria-hidden="true">
-        <video ref={staticVideoRef} className={styles.staticVideo} src={forceTransition ? "feed_end_transition.mp4" : "tv_static_clean.mp4"} autoPlay muted loop playsInline />
+        {/* Once the ad's real frames arrive the static cover fades out — but a
+            fully-transparent <video> keeps its decoder running, a second live
+            decoder behind the ad for no visible gain. Unmount it when the ad is
+            ready (the identity card stays as the "no signal" state for channels
+            with no creative, where adReady never flips). */}
+        {(!adReady || forceStatic || forceTransition) && (
+          <video
+            ref={staticVideoRef}
+            className={staticReady ? `${styles.staticVideo} ${styles.staticVideoReady}` : styles.staticVideo}
+            src={forceTransition ? "feed_end_transition.mp4" : "tv_static_clean.mp4"}
+            autoPlay
+            muted
+            loop
+            playsInline
+            onLoadedData={() => markStaticReady(staticKey)}
+            onPlaying={() => markStaticReady(staticKey)}
+          />
+        )}
         <div className={styles.staticIdentity}>
           <img className={styles.staticLogo} src={`channels/${ch.icon}.png`} alt="" draggable={false} />
           <span className={styles.staticCh}>CH {ch.number}</span>
@@ -292,7 +435,12 @@ export default function FeedTwin({
               <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
               <div className={styles.centerTicker}>
                 {[ch.caption, ch.user, '43.6480, -79.3810'].map((line, i) => (
-                  <span key={i} className={i === centerIdx % 3 ? styles.centerOn : styles.centerOff}>{line}</span>
+                  <span
+                    key={i}
+                    className={`${i === centerIdx % 3 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
+                  >
+                    {line}
+                  </span>
                 ))}
               </div>
               <div className={styles.chTag}>
@@ -302,11 +450,67 @@ export default function FeedTwin({
             </div>
           )}
         </div>
+        <div className={styles.shareSlot}>
+          <ClayCornerButton
+            kind="share"
+            label={`Share CH ${ch.number} post`}
+            size={40}
+            onPress={() => { playPop(); setShareOpen(true) }}
+          />
+        </div>
       </div>
 
       {/* Channel changer + RADIUS⇄TRENDING label: OWNED BY THE HOME HUD.
           The feed itself only swipes/wheels between channels. */}
 
+      {/* Same Poplur-first share alert used by the Profile post viewer. */}
+      {shareOpen && (
+        <div className={profileStyles.shareScrim} onClick={() => setShareOpen(false)}>
+          <div className={profileStyles.shareAlert} onClick={e => e.stopPropagation()}>
+            <div className={profileStyles.shareContent}>
+              <div className={profileStyles.shareIcon} aria-hidden="true" />
+              <h2 className={`${profileStyles.shareTitle} ${profileStyles.shareShader}`}>Send this pop</h2>
+              <p className={`${profileStyles.shareCopy} ${profileStyles.shareShaderSoft}`}>
+                DM a friend inside your radius, or share it anywhere.
+              </p>
+              <div className={profileStyles.shareFriends}>
+                {SHARE_FRIENDS.map(friend => (
+                  <button
+                    key={friend.handle}
+                    className={profileStyles.shareFriend}
+                    onClick={() => dmShare(friend)}
+                    title={`Send to ${friend.handle}`}
+                  >
+                    <img className={profileStyles.shareFriendFace} src={friend.avatar} alt="" draggable="false" />
+                    <span className={profileStyles.shareFriendName}>{friend.name}</span>
+                  </button>
+                ))}
+              </div>
+              <div className={profileStyles.shareActions}>
+                <div className={profileStyles.shareTool}>
+                  <ClayCornerButton kind="link" label="Copy link" size={52} onPress={copyShareLink} />
+                  <span className={profileStyles.shareToolName}>Copy link</span>
+                </div>
+                <div className={profileStyles.shareTool}>
+                  <ClayCornerButton kind="share" label="Share outside Poplur" size={52} onPress={shareOutside} />
+                  <span className={profileStyles.shareToolName}>Share out</span>
+                </div>
+                <div className={profileStyles.shareTool}>
+                  <ClayCornerButton
+                    kind="close"
+                    label="Cancel"
+                    size={52}
+                    onPress={() => { playPop(); setShareOpen(false) }}
+                  />
+                  <span className={profileStyles.shareToolName}>Cancel</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shareNote && <div className={profileStyles.shareNote}>{shareNote}</div>}
       {heart && <span className={styles.heart} style={{ left: heart.x, top: heart.y }}>♥</span>}
     </div>
   )

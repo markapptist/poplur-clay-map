@@ -406,7 +406,11 @@ function nativeLocationFrom(value: unknown): NativeLocation | null {
 }
 
 export default function App() {
-  const harnessView = harnessViewFromLocation()
+  // The public root is the post-login home. The map runs standalone only when
+  // HomeTwin embeds this same bundle with the internal map route below.
+  const params = new URLSearchParams(window.location.search)
+  const isMapEmbed = params.get('map') === '1'
+  const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>('queen')
   // Theme switching lives in the app's Profile → Settings; the prototype

@@ -18,46 +18,44 @@ interface Item {
   screen: string
   format?: 'png' | 'svg'
   preview?: boolean
+  toggle?: 'tour' | 'captions' | 'detection'
+  activeTitle?: string
 }
 
-// Per-tab item sets mirror the approved Rough Copy subscreen groups exactly.
-// Every tile has a real destination, so the hold menu doubles as the launcher
-// for the next round of subscreen testing.
+// Per-tab item sets are the confirmed hold-menu inventory. Every tile keeps a
+// subscreen destination so the prototype remains inspectable from the app.
 const TAB_MENUS: Record<CubeTab, Item[]> = {
   map: [
-    { icon: 'Search', title: 'LOCATE', screen: 'map-locate' },
-    { icon: 'Create', title: 'POST', screen: 'map-post' },
-    { icon: 'Tour', title: 'TOUR', screen: 'map-tour' },
-    { icon: 'Directions', title: 'SEARCH', screen: 'map-search' },
-    { icon: 'Stats', title: 'CLAIMS', screen: 'map-claims' },
-    { icon: 'Chat', title: 'CHAT', screen: 'map-chat' },
+    { icon: 'Search', title: 'SEARCH', screen: 'map-search' },
+    { icon: 'Search', title: 'CURRENT LOCATION', screen: 'map-locate' },
+    { icon: 'Create', title: 'POST MULTIPLE', screen: 'map-post' },
+    { icon: 'Wallet', title: 'PREMIUM MAP', screen: 'map-claims' },
+    { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', toggle: 'tour', screen: 'map-tour' },
+    { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-search' },
   ],
   feed: [
-    { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide' },
-    { icon: 'Chat', title: 'COMMENTS', screen: 'feed-comments' },
-    { icon: 'News', title: 'NEWS', screen: 'feed-news' },
-    { icon: 'Music', title: 'MUSIC', screen: 'feed-music' },
-    { icon: 'Games', title: 'GAMES', screen: 'feed-games' },
     { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg' },
-    { icon: 'CC', title: 'CC', screen: 'feed-cc', format: 'svg' },
+    { icon: 'Chat', title: 'COMMENT', screen: 'feed-comments' },
+    { icon: 'Home', title: 'PROFILE', screen: 'profile-stats' },
+    { icon: 'News', title: 'NEWS', screen: 'feed-news' },
+    { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide' },
+    { icon: 'CC', title: 'CC ON', activeTitle: 'CC OFF', toggle: 'captions', screen: 'feed-cc', format: 'svg' },
   ],
   post: [
-    { icon: 'Create', title: 'CAPTURE', screen: 'camera-capture' },
-    { icon: 'CameraRoll', title: 'CAMERA ROLL', screen: 'camera-roll-window', preview: true },
-    { icon: 'Create', title: 'CREATE', screen: 'camera-create' },
-    { icon: 'TVGuide', title: 'PREVIEW', screen: 'camera-preview' },
+    { icon: 'Create', title: 'PHOTO', screen: 'camera-capture' },
+    { icon: 'TVGuide', title: 'VIDEO', screen: 'camera-capture' },
     { icon: 'YouTube', title: 'LIVE', screen: 'camera-live' },
-    { icon: 'Chat', title: 'CHAT', screen: 'camera-chat' },
-    { icon: 'Store', title: 'STORE', screen: 'camera-store' },
+    { icon: 'Games_Alternate', title: 'AR', screen: 'camera-capture' },
+    { icon: 'Search', title: 'DETECT OFF', activeTitle: 'DETECT ON', toggle: 'detection', screen: 'camera-capture' },
+    { icon: 'Games', title: 'GAMES', screen: 'feed-games' },
   ],
   profile: [
-    { icon: 'Chat', title: 'MESSAGES', screen: 'profile-messages' },
+    { icon: 'Chat', title: 'MAIL', screen: 'profile-messages' },
     { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings' },
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
     { icon: 'Notifications', title: 'NOTIFICATIONS', screen: 'profile-alerts', format: 'svg' },
-    { icon: 'Store', title: 'STORE', screen: 'profile-store' },
     { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
-    { icon: 'Create', title: 'CREATOR', screen: 'profile-creator' },
+    { icon: 'Store', title: 'STORE', screen: 'profile-store' },
   ],
 }
 
@@ -96,12 +94,22 @@ const FRICTION = 0.955
 const MAX_VELOCITY = 16
 const SNAP_VELOCITY = 0.9
 const CENTER_Y_FRAC = 0.46
+type HoldMenuState = { tour: boolean; captions: boolean; detection: boolean }
+let persistedMenuState: HoldMenuState = { tour: false, captions: true, detection: false }
 
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
 export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: () => void }) {
-  // The item set is fixed to the tab the menu was opened from.
-  const items = TAB_MENUS[tab] ?? TAB_MENUS.map
+  // The item set is fixed to the tab the menu was opened from. The three
+  // mutable controls retain their current state while the wheel is open.
+  const [menuState, setMenuState] = useState(persistedMenuState)
+  const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).map(item => {
+    if (!item.toggle || !item.activeTitle) return item
+    return {
+      ...item,
+      title: menuState[item.toggle] ? item.activeTitle : item.title,
+    }
+  })
 
   const [offset, setOffset] = useState(0)      // continuous wheel position, item units
   const [selected, setSelected] = useState(0)  // item at center = round(offset)
@@ -119,6 +127,13 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
   countRef.current = items.length
 
   const activateItem = (item: Item) => {
+    if (item.toggle) {
+      setMenuState(current => {
+        const next = { ...current, [item.toggle!]: !current[item.toggle!] }
+        persistedMenuState = next
+        return next
+      })
+    }
     playPop()
     setActiveScreen(item)
   }
@@ -198,10 +213,11 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
   }, [])
 
   // Pointer drag (finger scrub). Dragging up advances toward the next item.
-  // A near-stationary press+release is treated as a tap: on a tile it spins the
-  // wheel to it; on empty space it dismisses the menu.
+  // A near-stationary press+release opens the tapped tile directly; empty
+  // space dismisses the menu. This keeps subscreens one tap away.
   const downPtRef = useRef({ x: 0, y: 0 })
   const movedRef = useRef(0)
+  const consumedTileTapRef = useRef(false)
   const onPointerDown = (e: React.PointerEvent) => {
     draggingRef.current = true
     dragYRef.current = e.clientY
@@ -222,9 +238,20 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
     if (movedRef.current < 6) {
       const el = document.elementFromPoint(downPtRef.current.x, downPtRef.current.y)
       const btn = (el as Element | null)?.closest('[data-index]') as HTMLElement | null
-      if (btn) spinTo(Number(btn.dataset.index))
+      const index = Number(btn?.dataset.index)
+      if (btn && Number.isInteger(index) && items[index]) {
+        // A pointer release is followed by the button's click event. Mark it
+        // consumed so its keyboard handler does not activate the route twice.
+        consumedTileTapRef.current = true
+        activateItem(items[index])
+      }
       else onClose() // tap on empty space dismisses the overlay
     }
+  }
+
+  const onPointerCancel = () => {
+    draggingRef.current = false
+    movedRef.current = Number.POSITIVE_INFINITY
   }
 
   const onWheel = (e: React.WheelEvent) => { scrub(e.deltaY * 0.6) }
@@ -293,16 +320,12 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
 
   return (
     <div className={styles.stage} role="dialog" aria-label="Cube hold menu">
-      {/* Translucent scrim over the home tab beneath — tap to dismiss. */}
-      <div className={styles.backdrop} />
-      <div className={styles.pinkGlow} aria-hidden="true" />
-
       <div
         className={styles.wheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
         onWheel={onWheel}
       >
         {items.map((it, index) => {
@@ -321,7 +344,13 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
               data-index={index}
               data-screen={it.screen}
               aria-label={`Open ${it.title} subscreen`}
-              onClick={() => { if (on) activateItem(it) }}
+              onClick={() => {
+                if (consumedTileTapRef.current) {
+                  consumedTileTapRef.current = false
+                  return
+                }
+                activateItem(it)
+              }}
               className={styles.tile}
               style={{
                 top: `${CENTER_Y_FRAC * 100}%`,

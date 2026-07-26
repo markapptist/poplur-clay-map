@@ -202,7 +202,7 @@ type TorchVideoTrack = MediaStreamTrack & {
 }
 
 // Canned Poplur AI — stands in for the backend until it exists.
-function aiAnswer(q: string, username: string): string {
+export function aiAnswer(q: string, username: string): string {
   const lower = q.toLowerCase()
   if (/radius|big|far/.test(lower)) return `${username}, your radius is 41.8 km and growing — Barrie is fully claimed.`
   if (/pop|post/.test(lower)) return 'Your last pop claimed 3 km of downtown. Drop one at Union Station — it is live right now.'
@@ -229,6 +229,7 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
   const [torchOn, setTorchOn] = useState(false)
   const [torchAvailable, setTorchAvailable] = useState(false)
   const [showNotifs, setShowNotifs] = useState(false)
+  const [notifsClosing, setNotifsClosing] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
   // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
   // to the OS share sheet / clipboard for outside.
@@ -240,6 +241,20 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
   // Crossfade beat: with a photo set, the head/building fades back in briefly.
   const [showHead, setShowHead] = useState(false)
   const [buildingSprite, setBuildingSprite] = useState<string | null>(null)
+
+  // The persistent Home-level microphone controller sends its visible/spoken
+  // reply back here when Profile is front, so the profile still reflects a
+  // voice request made with the equaliser instead of becoming a separate flow.
+  useEffect(() => {
+    const receiveVoiceReply = (event: Event) => {
+      const reply = (event as CustomEvent<{ reply?: string }>).detail?.reply
+      if (!reply) return
+      setAskOpen(false)
+      setAiReply(reply)
+    }
+    window.addEventListener('poplur-voice-response', receiveVoiceReply)
+    return () => window.removeEventListener('poplur-voice-response', receiveVoiceReply)
+  }, [])
 
   // ── Identity: the REAL username + account type. Native shells answer over
   // the bridge; the browser twin honours ?username= / ?business=1 and
@@ -292,6 +307,35 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
   const videoRef = useRef<HTMLVideoElement>(null)
   const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const notifCloseTimerRef = useRef<number | null>(null)
+
+  const openNotifs = () => {
+    if (notifCloseTimerRef.current != null) {
+      window.clearTimeout(notifCloseTimerRef.current)
+      notifCloseTimerRef.current = null
+    }
+    setNotifsClosing(false)
+    setShowNotifs(true)
+  }
+
+  const closeNotifs = () => {
+    if (!showNotifs || notifsClosing) return
+    setNotifsClosing(true)
+    notifCloseTimerRef.current = window.setTimeout(() => {
+      setShowNotifs(false)
+      setNotifsClosing(false)
+      notifCloseTimerRef.current = null
+    }, 840)
+  }
+
+  const toggleNotifs = () => {
+    if (showNotifs && !notifsClosing) closeNotifs()
+    else openNotifs()
+  }
+
+  useEffect(() => () => {
+    if (notifCloseTimerRef.current != null) window.clearTimeout(notifCloseTimerRef.current)
+  }, [])
 
   // ── Clay channel arrows: browse posts in the viewer, else scroll the grid.
   const viewerIdxRef = useRef(viewerIdx)
@@ -520,8 +564,26 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
         </div>
         <div className={styles.vfRing} />
         <div className={styles.captureBar}>
-          <button className={styles.cancelBtn} onClick={() => setCapturing(false)}>Cancel</button>
-          <button className={styles.shutter} onClick={shoot} aria-label="Capture photo"><span /></button>
+          <div className={styles.captureAction}>
+            <ClayCornerButton
+              kind="close"
+              label="Cancel"
+              onPress={() => { playPop(); setCapturing(false) }}
+              size={76}
+              activateOnClick
+            />
+            <span className={styles.captureActionLabel}>Cancel</span>
+          </div>
+          <div className={`${styles.captureAction} ${styles.captureActionPrimary}`}>
+            <ClayCornerButton
+              kind="capture"
+              label="Capture photo"
+              onPress={shoot}
+              size={108}
+              activateOnClick
+            />
+            <span className={styles.captureActionLabel}>Capture</span>
+          </div>
           <div className={styles.captureSpacer} aria-hidden="true" />
         </div>
       </div>,
@@ -621,9 +683,9 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
         <div className={styles.avatarWrap}>
           <button
             className={styles.bell}
-            onClick={() => { playPop(); setShowNotifs(v => !v) }}
+            onClick={() => { playPop(); toggleNotifs() }}
             aria-label="Notifications"
-            aria-expanded={showNotifs}
+            aria-expanded={showNotifs && !notifsClosing}
           >
             🔔<span className={styles.bellDot} />
           </button>
@@ -657,11 +719,17 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
           )}
         </div>
 
-        {/* Hey Poplur AI — tap the bars, ask, get an answer (shown + spoken). */}
+        {/* Hey Poplur AI — a real microphone trigger; Home keeps listening for
+            the wake phrase and then the spoken command across every tab. */}
         <button
           className={styles.speaking}
           aria-label="Hey Poplur"
-          onClick={() => { playPop(); setAskOpen(v => { if (v) setAiReply(null); return !v }) }}
+          onClick={() => {
+            playPop()
+            setAskOpen(false)
+            setAiReply(null)
+            window.dispatchEvent(new CustomEvent('poplur-voice-request'))
+          }}
         >
           <span /><span /><span /><span /><span />
         </button>
@@ -695,7 +763,9 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
               className={mode === m ? styles.modeOn : styles.mode}
               onClick={() => setMode(m)}
             >
-              {m[0].toUpperCase() + m.slice(1)}
+              <span className={styles.modeLabel}>
+                {m[0].toUpperCase() + m.slice(1)}
+              </span>
               <i />
             </button>
           ))}
@@ -765,24 +835,43 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
       </div>
 
       {/* ── Pink notifications banner — springs down from the top. ── */}
-      {showNotifs && (
-        <div className={styles.notifScrim} onClick={() => setShowNotifs(false)}>
-          <div className={styles.notifBanner} onClick={e => e.stopPropagation()}>
-            <NotificationDotMap />
-            <div className={styles.notifTitle}>Notifications</div>
-            {NOTIFICATIONS.map(n => (
-              <div key={n.text} className={styles.notifRow}>
-                <div className={styles.notifIcon}>
-                  <NotificationIcon kind={n.kind} />
+      {showNotifs && typeof document !== 'undefined' && createPortal(
+        <div
+          className={notifsClosing ? `${styles.notifScrim} ${styles.notifScrimClosing}` : styles.notifScrim}
+          onClick={closeNotifs}
+        >
+          <button
+            type="button"
+            className={styles.notifDismiss}
+            aria-label="Close notifications"
+            onClick={closeNotifs}
+          />
+          <div className={notifsClosing ? `${styles.notifMotionShell} ${styles.notifMotionShellClosing}` : styles.notifMotionShell}>
+            <span className={styles.notifTopCover} aria-hidden="true" />
+            <div
+              className={styles.notifBanner}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Notifications"
+              onClick={e => e.stopPropagation()}
+            >
+              <NotificationDotMap />
+              <div className={styles.notifTitle}>Notifications</div>
+              {NOTIFICATIONS.map(n => (
+                <div key={n.text} className={styles.notifRow}>
+                  <div className={styles.notifIcon}>
+                    <NotificationIcon kind={n.kind} />
+                  </div>
+                  <div className={styles.notifBody}>
+                    <div className={styles.notifTop}><strong>{n.who}</strong><span>{n.when}</span></div>
+                    <p>{n.text}</p>
+                  </div>
                 </div>
-                <div className={styles.notifBody}>
-                  <div className={styles.notifTop}><strong>{n.who}</strong><span>{n.when}</span></div>
-                  <p>{n.text}</p>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}

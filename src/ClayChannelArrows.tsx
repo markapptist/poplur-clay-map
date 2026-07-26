@@ -42,6 +42,8 @@ export default function ClayChannelArrows({
   const width = Math.round(size / 2)
   // pressed pulse targets per arrow, read by the render loop
   const pulse = useRef({ up: 0, down: 0 })
+  // Wakes the render loop when a press pulse needs animating. Set by the effect.
+  const kickRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -104,18 +106,19 @@ export default function ClayChannelArrows({
     scene.add(up, down)
 
     let raf = 0
-    const clock = new THREE.Clock()
     const baseScale = 1
 
-    const tick = () => {
-      const t = clock.getElapsedTime()
-      // base downward tilt reveals the top faces; a steady Y tumble swings the
-      // extruded sides through the light so the depth always reads as 3D.
-      const yaw = Math.sin(t * 1.15) * 0.55
-      const tilt = -0.16 + Math.sin(t * 0.9) * 0.08
-      up.rotation.set(tilt, yaw, 0)
-      down.rotation.set(tilt, yaw, Math.PI)
+    // A fixed 3/4 pose: a downward tilt reveals the top faces and a steady yaw
+    // swings the extruded sides into the light, so the depth reads as 3D
+    // WITHOUT a per-frame tumble. The scene is otherwise static, so it only
+    // draws while a press pulse is decaying (see the loop below) instead of
+    // burning a full three.js render every frame forever.
+    const IDLE_YAW = 0.42
+    const IDLE_TILT = -0.16
+    up.rotation.set(IDLE_TILT, IDLE_YAW, 0)
+    down.rotation.set(IDLE_TILT, IDLE_YAW, Math.PI)
 
+    const draw = () => {
       // ease the pulses back toward rest
       pulse.current.up += (0 - pulse.current.up) * 0.12
       pulse.current.down += (0 - pulse.current.down) * 0.12
@@ -133,9 +136,21 @@ export default function ClayChannelArrows({
       matDown.emissiveIntensity = 0.35 + pulse.current.down * 1.6
 
       renderer.render(scene, camera)
-      raf = requestAnimationFrame(tick)
     }
-    tick()
+
+    // Render-on-demand: run frames only while a pulse is above the rest floor,
+    // then park. `kick` restarts the loop from a press.
+    const loop = () => {
+      draw()
+      if (pulse.current.up > 0.002 || pulse.current.down > 0.002) {
+        raf = requestAnimationFrame(loop)
+      } else {
+        raf = 0
+      }
+    }
+    const kick = () => { if (!raf) raf = requestAnimationFrame(loop) }
+    kickRef.current = kick
+    draw() // one frame at mount so the clay marks are visible at rest
 
     return () => {
       cancelAnimationFrame(raf)
@@ -151,6 +166,7 @@ export default function ClayChannelArrows({
     // (channel zap, camera-roll flip, future uses).
     playPop()
     pulse.current[dir] = 1
+    kickRef.current()
     handler()
   }
 

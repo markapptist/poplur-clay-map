@@ -326,18 +326,22 @@
   50% { transform: scaleY(1); }
 }
 
-/* USERNAME — heavy rounded, dark-brown gradient (poplurTextShader) */
+/* USERNAME — heavy rounded, animated Poplur shader */
 .username {
   margin-top: 2px;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
   font-size: 24px;
   font-weight: 900;
   letter-spacing: 0.5px;
-  background: linear-gradient(180deg, #3a2410, #120a04);
+  color: transparent;
+  background-image: linear-gradient(105deg, #25131f 0%, #8b214f 22%, #ff6cad 42%, #173f58 62%, #35c8ef 78%, #25131f 100%);
+  background-size: 260% 100%;
+  background-position: 0 0;
   -webkit-background-clip: text;
   background-clip: text;
-  color: transparent;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.4)) drop-shadow(0 0 6px rgba(255, 84, 166, 0.12));
+  animation: profileTextShader 4.8s linear infinite;
 }
 
 /* ---- Media / Messages / Saved switcher with cyan underline ---- */
@@ -367,6 +371,27 @@
 .mode { color: rgba(20, 10, 4, 0.5); }
 .modeOn { color: #140a04; }
 
+.modeLabel {
+  display: inline-block;
+  color: transparent;
+  background-image: linear-gradient(105deg, #69515f 0%, #b43b76 28%, #ff7eba 45%, #38758a 68%, #35c8ef 82%, #69515f 100%);
+  background-size: 260% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 4px rgba(255, 84, 166, 0.1));
+  animation: profileTextShader 4.8s linear infinite;
+}
+
+.modeOn .modeLabel {
+  background-image: linear-gradient(105deg, #25131f 0%, #8b214f 22%, #ff6cad 42%, #173f58 62%, #35c8ef 78%, #25131f 100%);
+  filter: drop-shadow(0 0 6px rgba(246, 59, 154, 0.2));
+}
+
+.modeSwitch button:nth-child(2) .modeLabel { animation-delay: -1.6s; }
+.modeSwitch button:nth-child(3) .modeLabel { animation-delay: -3.2s; }
+
 .mode i,
 .modeOn i {
   width: 44px;
@@ -375,6 +400,10 @@
 }
 
 .modeOn i { background: linear-gradient(90deg, #5fe1ea, #2ec3d4); }
+
+@keyframes profileTextShader {
+  to { background-position: -260% 0; }
+}
 
 /* ---- content (grid directly under the tabs) ---- */
 
@@ -564,16 +593,63 @@
 /* ---- notifications banner (pink, springs down from the top) ---- */
 
 .notifScrim {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 44;
+  /* Portalled to the document root so this layer clears the harness chrome,
+     including the separately stacked Poplur wordmark. */
+  z-index: 2147483000;
 }
 
-.notifBanner {
+.notifScrimClosing {
+  pointer-events: none;
+}
+
+.notifDismiss {
+  position: absolute;
+  top: 430px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.notifMotionShell {
   position: absolute;
   top: 0;
   left: 10px;
   right: 10px;
+  z-index: 1;
+  transform-origin: center top;
+  will-change: transform;
+  animation: notifDropBounce 1060ms cubic-bezier(0.2, 0.82, 0.28, 1.08) both;
+}
+
+.notifMotionShellClosing {
+  animation: notifSpringUp 840ms cubic-bezier(0.34, 0.02, 0.42, 1) both;
+}
+
+.notifTopCover {
+  position: absolute;
+  top: -92px;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  height: 96px;
+  pointer-events: none;
+  background:
+    radial-gradient(110% 160% at 50% 6%, rgba(255, 182, 221, 0.5), transparent 66%),
+    linear-gradient(180deg, #ff73bb, #f53798);
+}
+
+.notifBanner {
+  position: relative;
+  z-index: 1;
   padding: 54px 16px 16px;
   border-radius: 0 0 26px 26px;
   overflow: hidden;
@@ -583,11 +659,7 @@
     linear-gradient(180deg, #ff73bb, #f53798 72%, #d91d78);
   box-shadow:
     0 16px 40px rgba(246, 59, 154, 0.45),
-    inset 0 2px 0 rgba(255, 255, 255, 0.32),
     inset 0 -3px 0 rgba(135, 7, 68, 0.2);
-  transform-origin: center top;
-  will-change: transform;
-  animation: notifDropBounce 720ms cubic-bezier(0.22, 0.86, 0.32, 1.18) both;
 }
 
 .notifDotMap {
@@ -608,11 +680,23 @@
 }
 
 @keyframes notifDropBounce {
-  0% { transform: translateY(-118%); }
-  62% { transform: translateY(12px); }
-  78% { transform: translateY(-7px); }
-  90% { transform: translateY(3px); }
+  0% { transform: translateY(-138%) scaleY(0.96); }
+  44% { transform: translateY(60px) scaleY(0.99); }
+  60% { transform: translateY(-30px) scaleY(1.02); }
+  73% { transform: translateY(22px) scaleY(0.99); }
+  85% { transform: translateY(-12px) scaleY(1.01); }
+  94% { transform: translateY(6px) scaleY(0.995); }
   100% { transform: translateY(0); }
+}
+
+@keyframes notifSpringUp {
+  0% { transform: translateY(0) scaleY(1); }
+  18% { transform: translateY(22px) scaleY(0.965); }
+  40% { transform: translateY(-42px) scaleY(1.02); }
+  54% { transform: translateY(-24px) scaleY(0.99); }
+  78% { transform: translateY(-126%) scaleY(1.01); }
+  89% { transform: translateY(-112%) scaleY(0.99); }
+  100% { transform: translateY(-142%) scaleY(1); }
 }
 
 .notifTitle {
@@ -822,8 +906,7 @@
     0 7px 12px rgba(0, 0, 0, 0.72);
 }
 
-.captureTool,
-.cancelBtn {
+.captureTool {
   border: none;
   color: #fff3f9;
   background: linear-gradient(160deg, #ff9fce 0%, #ee4e98 42%, #c11f6e 100%);
@@ -846,8 +929,7 @@
   text-shadow: 0 2px 0 #731342;
 }
 
-.captureTool:active,
-.cancelBtn:active { transform: translateY(2px) scale(0.97); }
+.captureTool:active { transform: translateY(2px) scale(0.97); }
 
 .captureToolOn {
   color: #4c2500;
@@ -905,50 +987,45 @@
   left: 0;
   right: 0;
   bottom: max(28px, env(safe-area-inset-bottom));
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 88px 112px 88px;
+  align-items: end;
   justify-content: center;
-  gap: 26px;
+  gap: clamp(12px, 3.2vw, 24px);
   z-index: 2;
 }
 
-.cancelBtn {
-  width: 78px;
-  height: 40px;
-  border-radius: 15px;
-  font: 900 13px/1 system-ui, -apple-system, sans-serif;
+.captureAction {
+  width: 88px;
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  filter: drop-shadow(0 10px 10px rgba(24, 2, 15, 0.46));
+}
+
+.captureActionPrimary {
+  width: 112px;
+  min-height: 130px;
+}
+
+.captureActionLabel {
+  margin-top: -2px;
+  color: #ffe9f4;
+  font: 900 11px/1 "Arial Rounded MT Bold", ui-rounded, "SF Pro Rounded", "Avenir Next", system-ui, -apple-system, sans-serif;
   letter-spacing: 0.35px;
-  cursor: pointer;
+  text-shadow:
+    0 -1px 0 rgba(255, 255, 255, 0.3),
+    0 2px 0 #8d174f,
+    0 5px 10px rgba(0, 0, 0, 0.72);
+  pointer-events: none;
 }
 
-.captureSpacer { width: 78px; }
-
-.shutter {
-  width: 78px;
-  height: 78px;
-  border-radius: 50%;
-  border: 5px solid #ffeaf5;
-  background: linear-gradient(160deg, #ffc2df, #e14e97 52%, #b42272);
-  box-shadow:
-    inset 0 4px 0 rgba(255, 255, 255, 0.82),
-    inset 0 -7px 9px rgba(92, 8, 48, 0.45),
-    0 11px 24px rgba(0, 0, 0, 0.5),
-    0 0 0 3px rgba(255, 120, 180, 0.22);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
+.captureSpacer {
+  width: 88px;
+  height: 104px;
 }
-
-.shutter span {
-  width: 58px;
-  height: 58px;
-  border-radius: 50%;
-  background: linear-gradient(145deg, #fff9fc, #f4a8cb);
-  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, 0.9), inset -3px -4px 0 rgba(149, 42, 94, 0.25);
-  transition: transform 0.1s ease;
-}
-
-.shutter:active span { transform: scale(0.88); }
 
 .flash {
   position: fixed;

@@ -8,8 +8,7 @@
   touch-action: none;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   animation: menuIn 0.36s cubic-bezier(0.34, 1.4, 0.64, 1) both;
-  /* Sits above the home tab it overlays — map iframe (1), HUD (20), pills (25),
-     cube (30) — so the whole surface dims and the wheel floats on top. */
+  /* Sits above the active tab without dimming or recolouring it. */
   z-index: 200;
 }
 
@@ -67,28 +66,6 @@
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* Semi-transparent scrim — the home tab underneath stays visible through it,
-   so the hold menu reads as an overlay, not a full screen. */
-.backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(6, 3, 10, 0.52);
-  backdrop-filter: blur(3px) saturate(1.05);
-  -webkit-backdrop-filter: blur(3px) saturate(1.05);
-}
-
-/* Radial pink glow behind the wheel (rgb(140,5,71) 0.55 → clear) */
-.pinkGlow {
-  position: absolute;
-  left: 50%;
-  top: 46%;
-  width: 130%;
-  aspect-ratio: 1;
-  transform: translate(-50%, -50%);
-  background: radial-gradient(circle at center, rgba(140, 5, 71, 0.55), transparent 65%);
-  pointer-events: none;
-}
-
 @keyframes menuIn {
   from { opacity: 0; transform: scale(0.85); }
   to   { opacity: 1; transform: scale(1); }
@@ -119,26 +96,30 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Icon plate — rounded 20, neon-pink stroke, glow shadow. */
+/* Icons float directly over the active tab. The layered clay shadow gives them
+   the same legibility as the radius HUD without a menu background. */
 .iconBox, .iconBoxOn {
   display: grid;
   place-items: center;
-  border-radius: 20px;
-  overflow: hidden;
+  border-radius: 22px;
+  overflow: visible;
   box-sizing: border-box;
+  filter:
+    drop-shadow(0 2px 0 rgba(5, 14, 46, 0.96))
+    drop-shadow(0 7px 10px rgba(0, 0, 0, 0.7))
+    drop-shadow(0 0 9px rgba(255, 242, 248, 0.36));
 }
 
-/* The icon PNGs are normalized to uniform black squares with the object centred
-   at ~80% fill, so the frame here is just the neon selection ring hugging the
-   tile — no padding, no second background. */
 .iconBox {
-  border: 1.5px solid rgba(255, 20, 140, 0.35);
-  box-shadow: 0 0 6px rgba(255, 20, 140, 0.18);
+  border: 1.5px solid rgba(255, 255, 255, 0.42);
 }
 
 .iconBoxOn {
-  border: 2.5px solid #ff148c;
-  box-shadow: 0 0 16px rgba(255, 20, 140, 0.65);
+  border: 2.5px solid #fff2f8;
+  filter:
+    drop-shadow(0 2px 0 rgba(91, 10, 48, 0.96))
+    drop-shadow(0 8px 12px rgba(0, 0, 0, 0.78))
+    drop-shadow(0 0 13px rgba(255, 20, 140, 0.92));
 }
 
 .icon {
@@ -154,7 +135,10 @@
   font-weight: 900;
   letter-spacing: 0.6px;
   white-space: nowrap;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  text-shadow:
+    0 2px 0 rgba(5, 14, 46, 0.95),
+    0 4px 8px rgba(0, 0, 0, 0.9),
+    0 0 8px rgba(255, 255, 255, 0.34);
 }
 
 .label {
@@ -164,7 +148,11 @@
 
 .labelOn {
   font-size: 13px;
-  color: #ff148c;
+  color: #fff2f8;
+  text-shadow:
+    0 2px 0 rgba(91, 10, 48, 0.98),
+    0 4px 9px rgba(0, 0, 0, 0.9),
+    0 0 10px rgba(255, 20, 140, 0.9);
 }
 
 /* SCRUB ↕ hint on the right edge */
@@ -180,26 +168,23 @@
   width: 34px;
   padding: 13px 0;
   box-sizing: border-box;
-  border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(255, 20, 140, 0.12), transparent 28% 72%, rgba(255, 20, 140, 0.12)),
-    rgba(13, 8, 20, 0.9);
-  border: 1.5px solid rgba(255, 20, 140, 0.86);
-  color: #ff8ac6;
-  box-shadow:
-    inset 0 0 12px rgba(255, 20, 140, 0.13),
-    0 0 8px rgba(255, 20, 140, 0.38),
-    0 0 20px rgba(255, 20, 140, 0.18);
+  color: #fff2f8;
+  text-shadow:
+    0 2px 0 rgba(5, 14, 46, 0.95),
+    0 4px 8px rgba(0, 0, 0, 0.9),
+    0 0 8px rgba(255, 20, 140, 0.7);
   pointer-events: none;
   z-index: 50;
 }
 
 .scrubChev {
-  color: #ff148c;
+  color: #fff2f8;
   font-size: 17px;
   font-weight: 950;
   line-height: 0.55;
-  text-shadow: 0 0 8px rgba(255, 20, 140, 0.9);
+  text-shadow:
+    0 2px 0 rgba(91, 10, 48, 0.98),
+    0 0 8px rgba(255, 20, 140, 0.9);
 }
 
 .scrubText {
@@ -208,7 +193,9 @@
   letter-spacing: 1.35px;
   writing-mode: vertical-rl;
   transform: rotate(180deg);
-  text-shadow: 0 0 7px rgba(255, 20, 140, 0.7);
+  text-shadow:
+    0 2px 0 rgba(5, 14, 46, 0.95),
+    0 0 7px rgba(255, 20, 140, 0.7);
 }
 
 /* Context switcher (dev only — the app derives this from the active tab) */

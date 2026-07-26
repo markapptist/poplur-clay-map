@@ -45,6 +45,9 @@ export default function ClayMuteButton({
   const mutedRef = useRef(muted)
   mutedRef.current = muted
   const pulse = useRef(0)
+  // Wakes the render loop when a press pulse or a muted-state change needs
+  // drawing. Set by the effect.
+  const kickRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -123,15 +126,15 @@ export default function ClayMuteButton({
     root.add(slash)
 
     let raf = 0
-    const clock = new THREE.Clock()
     const restColor = new THREE.Color(CLAY)
     const dimColor = new THREE.Color(CLAY_MUTED)
 
-    const tick = () => {
-      const t = clock.getElapsedTime()
-      // Same idle tumble as the chevrons, slightly softer for a small mark.
-      root.rotation.set(-0.14 + Math.sin(t * 0.9) * 0.07, Math.sin(t * 1.15) * 0.45, 0)
+    // Fixed 3/4 pose (was a per-frame tumble): the small mark still reads as
+    // extruded clay, but the scene is static, so it draws only while a press
+    // pulse is decaying instead of rendering every frame forever.
+    root.rotation.set(-0.14, 0.36, 0)
 
+    const draw = () => {
       waves.visible = !mutedRef.current
       slash.visible = mutedRef.current
       mat.color.copy(mutedRef.current ? dimColor : restColor)
@@ -142,9 +145,21 @@ export default function ClayMuteButton({
       mat.emissiveIntensity = 0.35 + pulse.current * 1.6
 
       renderer.render(scene, camera)
-      raf = requestAnimationFrame(tick)
     }
-    tick()
+
+    // Render-on-demand: frames run only while a pulse is decaying, then park.
+    // `kick` restarts the loop from a press or a muted-state change.
+    const loop = () => {
+      draw()
+      if (pulse.current > 0.002) {
+        raf = requestAnimationFrame(loop)
+      } else {
+        raf = 0
+      }
+    }
+    const kick = () => { if (!raf) raf = requestAnimationFrame(loop) }
+    kickRef.current = kick
+    draw() // one frame at mount so the mark is visible at rest
 
     return () => {
       cancelAnimationFrame(raf)
@@ -153,6 +168,9 @@ export default function ClayMuteButton({
       renderer.dispose()
     }
   }, [size])
+
+  // Muted toggled: redraw one frame so the waves↔slash swap shows immediately.
+  useEffect(() => { kickRef.current() }, [muted])
 
   return (
     <div style={{ position: 'relative', width: size, height: size, pointerEvents: 'auto' }}>
@@ -166,7 +184,7 @@ export default function ClayMuteButton({
         type="button"
         aria-label={muted ? 'Unmute sound' : 'Mute sound'}
         aria-pressed={muted}
-        onPointerDown={() => { pulse.current = 1; onToggle() }}
+        onPointerDown={() => { pulse.current = 1; kickRef.current(); onToggle() }}
         style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer', padding: 0 }}
       />
     </div>
