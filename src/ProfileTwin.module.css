@@ -431,26 +431,67 @@
 
 .tile:active { transform: scale(0.96); }
 
-.tilePreview,
-.tileStatic {
+/* The poster paints the instant it decodes — its visibility is NOT gated on a
+   React state update. The grid lives behind the always-mounted map iframe,
+   which starves the main thread on open; the old design hid every poster at
+   opacity 0 until `readyTiles` (a setState per tile) flushed, so under that
+   starvation the tiles stayed black for seconds. Now the image is simply on. */
+.tilePreview {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   pointer-events: none;
+  opacity: 1;
 }
 
-.tilePreview {
-  opacity: 0;
-  transition: opacity 220ms ease;
-}
-
+/* kept for API compatibility with the ready-fade; the base is already on */
 .tilePreviewReady { opacity: 1; }
 
+/* TV static that covers the buffer before the poster decodes. A cheap,
+   GPU-composited CSS noise sweep — the old per-tile <video> spun up a decoder
+   per tile (a 4.7MB clip ×15) and froze the screen for ~6s on open. The layer
+   is oversized (inset:-25%) so the transform sweep never bares an edge, and it
+   FADES ITSELF OUT on a CSS timer: the buffer must clear even if the starved
+   main thread never runs the JS that would unmount it. React still unmounts it
+   (via staticGone) when it can, to drop the layer entirely. */
 .tileStatic {
-  opacity: 0.34;
+  position: absolute;
+  inset: -25%;
+  pointer-events: none;
+  opacity: 0.42;
   mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 90px 90px;
+  transition: opacity 500ms ease-out;
+  /* sweep is FINITE (4 iters ≈ 1.8s) so no infinite compositor work lingers,
+     then settle fades it to nothing — self-clearing without React. */
+  animation:
+    tileStaticSweep 0.45s steps(3) 4,
+    tileStaticSettle 0.6s ease-out 1.5s forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes tileStaticSweep {
+  0% { transform: translate3d(0, 0, 0); }
+  33% { transform: translate3d(-6%, 4%, 0); }
+  66% { transform: translate3d(5%, -5%, 0); }
+  100% { transform: translate3d(-4%, 6%, 0); }
+}
+
+@keyframes tileStaticSettle {
+  to { opacity: 0; }
+}
+
+/* React reached the tile before the CSS timer — retire the static promptly. */
+.tileStaticOut {
+  opacity: 0;
+  animation: tileStaticSweep 0.45s steps(3) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tileStatic { animation: tileStaticSettle 0.6s ease-out 0.3s forwards; }
 }
 
 .tileScan {
@@ -691,18 +732,35 @@
   text-shadow: 0 0 8px rgba(57, 255, 106, 0.75), 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
-.viewerClose {
-  width: 40px;
-  height: 40px;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff2f8;
-  font-size: 17px;
-  font-weight: 800;
-  cursor: pointer;
-  backdrop-filter: blur(6px);
+/* Share + close: the same moulded clay pills as the capture tools, so the
+   viewer's chrome reads as the same material as the rest of the app. */
+.viewerTools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
+
+.viewerTool {
+  width: 46px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 233, 245, 0.42);
+  border-radius: 15px;
+  color: #fff1f8;
+  background: linear-gradient(145deg, rgba(255, 154, 206, 0.96), rgba(180, 33, 104, 0.94));
+  box-shadow:
+    inset 1px 2px 0 rgba(255, 255, 255, 0.58),
+    inset -2px -3px 0 rgba(89, 6, 47, 0.45),
+    0 6px 13px rgba(0, 0, 0, 0.38);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease;
+}
+
+.viewerTool svg { filter: drop-shadow(0 2px 0 rgba(115, 19, 66, 0.9)); }
+
+.viewerTool:active { transform: translateY(2px) scale(0.97); }
 
 .viewerTitle {
   position: absolute;
@@ -747,27 +805,34 @@
   display: grid;
   grid-template-columns: 52px 1fr 52px;
   align-items: center;
+  justify-items: center;
   gap: 12px;
 }
 
 .captureHead {
   text-align: center;
-  color: #ffe7f4;
-  font: 900 15px/1 system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.8px;
-  text-shadow: 0 2px 0 #6e164b, 0 5px 13px rgba(0, 0, 0, 0.75);
+  color: #ffe9f4;
+  font: 900 16px/1 "Arial Rounded MT Bold", ui-rounded, "SF Pro Rounded", "Avenir Next", system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.4px;
+  /* clay text — matches the pre-login headings */
+  text-shadow:
+    0 -1.5px 0 rgba(255, 255, 255, 0.32),
+    0 2px 0 #b8547a,
+    0 4px 0 rgba(120, 12, 62, 0.6),
+    0 7px 12px rgba(0, 0, 0, 0.72);
 }
 
 .captureTool,
 .cancelBtn {
-  border: 1px solid rgba(255, 233, 245, 0.42);
-  color: #fff1f8;
-  background:
-    linear-gradient(145deg, rgba(255, 154, 206, 0.96), rgba(180, 33, 104, 0.94));
+  border: none;
+  color: #fff3f9;
+  background: linear-gradient(160deg, #ff9fce 0%, #ee4e98 42%, #c11f6e 100%);
   box-shadow:
-    inset 1px 2px 0 rgba(255, 255, 255, 0.58),
-    inset -2px -3px 0 rgba(89, 6, 47, 0.45),
-    0 6px 13px rgba(0, 0, 0, 0.38);
+    inset 0 3px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -6px 7px rgba(88, 6, 47, 0.5),
+    0 9px 17px rgba(0, 0, 0, 0.45),
+    0 2px 3px rgba(120, 10, 60, 0.55);
+  text-shadow: 0 -1px 0 rgba(255, 255, 255, 0.4), 0 2px 0 #8a1550;
   cursor: pointer;
 }
 
@@ -859,15 +924,16 @@
 .captureSpacer { width: 78px; }
 
 .shutter {
-  width: 74px;
-  height: 74px;
+  width: 78px;
+  height: 78px;
   border-radius: 50%;
-  border: 4px solid #ffeaf5;
-  background: linear-gradient(145deg, #ffb4d8, #b42272);
+  border: 5px solid #ffeaf5;
+  background: linear-gradient(160deg, #ffc2df, #e14e97 52%, #b42272);
   box-shadow:
-    inset 2px 3px 0 rgba(255, 255, 255, 0.75),
-    inset -4px -5px 0 rgba(92, 8, 48, 0.42),
-    0 9px 20px rgba(0, 0, 0, 0.45);
+    inset 0 4px 0 rgba(255, 255, 255, 0.82),
+    inset 0 -7px 9px rgba(92, 8, 48, 0.45),
+    0 11px 24px rgba(0, 0, 0, 0.5),
+    0 0 0 3px rgba(255, 120, 180, 0.22);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -902,4 +968,213 @@
   .speaking span,
   .headStack,
   .headTilt { animation: none; }
+}
+
+/* ── Share alert (Poplur house style: frosted card, clay icon, shader text) ─ */
+
+.shareScrim {
+  position: absolute;
+  inset: 0;
+  z-index: 47;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 2, 8, 0.5);
+}
+
+.shareAlert {
+  width: 236px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.44);
+  border-radius: 9px;
+  background: rgba(255, 247, 251, 0.94);
+  box-shadow: 0 18px 42px rgba(57, 0, 30, 0.38), inset 0 1px 0 #fff;
+  color: #23131e;
+  text-align: center;
+  animation: shareIn 0.5s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+}
+
+.shareContent { padding: 19px 16px 15px; }
+
+/* clay send-arrow badge */
+.shareIcon {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 12px;
+  border-radius: 13px;
+  background: linear-gradient(145deg, #ff62ad, #d90f6d);
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.45), 0 6px 13px rgba(194, 17, 122, 0.26);
+  animation: shareFloat 3.4s ease-in-out infinite;
+}
+
+.shareIcon::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 11px;
+  width: 3px;
+  height: 17px;
+  border-radius: 2px;
+  background: #fff;
+  transform: translateX(-50%);
+}
+
+.shareIcon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 9px;
+  width: 11px;
+  height: 11px;
+  border-top: 3px solid #fff;
+  border-left: 3px solid #fff;
+  border-radius: 2px;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.shareTitle {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.18;
+}
+
+.shareCopy {
+  margin: 0 0 13px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.42;
+}
+
+.shareFriends {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+}
+
+.shareFriend {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.shareFriendFace {
+  width: 40px;
+  height: 40px;
+  display: block;
+  border-radius: 50%;
+  /* the picture itself, ringed in clay */
+  object-fit: cover;
+  background: linear-gradient(145deg, #ff8ac6, #f63b9a 52%, #5a1237);
+  box-shadow:
+    inset 0 3px 0 rgba(255, 255, 255, 0.62),
+    inset 0 -4px 0 rgba(89, 6, 47, 0.4),
+    0 5px 0 #a3175c,
+    0 9px 15px rgba(194, 17, 122, 0.32);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.shareFriend:active .shareFriendFace {
+  transform: translateY(4px);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -2px 0 rgba(89, 6, 47, 0.45),
+    0 1px 0 #a3175c,
+    0 4px 8px rgba(194, 17, 122, 0.3);
+}
+
+.shareFriendName {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 800 9px/1.1 system-ui, -apple-system, sans-serif;
+  color: rgba(35, 19, 30, 0.72);
+}
+
+/* Moulded clay buttons — same material language as the channel arrows: a thick
+   pink body, a light top lip, a dark under-lip, and a real press depth. */
+/* Row of clay objects (the real 3D buttons), each with its label. */
+.shareActions {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(95, 54, 77, 0.18);
+}
+
+.shareTool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.shareToolName {
+  font: 900 9px/1.1 system-ui, -apple-system, sans-serif;
+  color: rgba(35, 19, 30, 0.72);
+  white-space: nowrap;
+}
+
+.shareShader,
+.shareShaderSoft,
+.shareShaderBtn {
+  color: transparent;
+  background-size: 260% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shareTextShader 4.8s linear infinite;
+}
+
+.shareShader {
+  background-image: linear-gradient(105deg, #25131f 0%, #8b214f 22%, #ff6cad 42%, #173f58 62%, #35c8ef 78%, #25131f 100%);
+  text-shadow: 0 0 7px rgba(255, 84, 166, 0.12), 0 0 10px rgba(53, 200, 239, 0.08);
+}
+
+.shareShaderSoft {
+  background-image: linear-gradient(105deg, #69515f 0%, #b43b76 28%, #ff7eba 45%, #38758a 68%, #69515f 100%);
+}
+
+.shareShaderBtn {
+  display: inline-block;
+  background-image: linear-gradient(105deg, #7d345b, #e20c75 34%, #ff70b4 50%, #2c90b0 72%, #7d345b);
+}
+
+/* confirmation toast after a send / copy */
+.shareNote {
+  position: absolute;
+  left: 50%;
+  bottom: 168px;
+  z-index: 47;
+  transform: translateX(-50%);
+  padding: 9px 17px;
+  border-radius: 999px;
+  background: rgba(255, 247, 251, 0.95);
+  color: #23131e;
+  font: 900 12px/1 system-ui, -apple-system, sans-serif;
+  box-shadow: 0 10px 26px rgba(57, 0, 30, 0.4), inset 0 1px 0 #fff;
+  animation: shareIn 0.4s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+}
+
+@keyframes shareIn {
+  from { opacity: 0; transform: scale(0.86) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes shareFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes shareTextShader {
+  to { background-position: -260% 0; }
 }

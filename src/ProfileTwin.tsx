@@ -5,6 +5,7 @@ import { playPop } from './pop'
 import { isGateMuted, onGateChange } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { modelSprite } from './modelSprite'
+import ClayCornerButton from './ClayCornerButton'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -45,6 +46,12 @@ const POSTS: Post[] = [
 ]
 const SAVED: Post[] = [...POSTS].reverse().slice(0, 6)
 
+// Grid tiles show the post's first frame as a still (feed/posters/*.jpg, cut
+// from the clips themselves). A <video> per tile meant a decoder per tile —
+// sixteen of them dragged the screen to single-digit fps. Video is for the
+// fullscreen viewer only.
+const posterFor = (video: string) => video.replace('feed/', 'feed/posters/').replace('.mp4', '.jpg')
+
 type NotificationKind = 'growth' | 'decrease' | 'pop' | 'trend' | 'message'
 
 const NOTIFICATIONS: Array<{ who: string; text: string; when: string; kind: NotificationKind }> = [
@@ -53,6 +60,16 @@ const NOTIFICATIONS: Array<{ who: string; text: string; when: string; kind: Noti
   { who: 'takeover', text: 'Your downtown pop now covers 3.0 km.', when: '9m', kind: 'pop' },
   { who: 'kensington_eats', text: 'that shawarma shot is trending 🔥', when: '18m', kind: 'trend' },
   { who: 'harbourfront', text: 'blue hour meetup this Friday?', when: '1h', kind: 'message' },
+]
+
+// Friends offered first in the share sheet — DM inside Poplur. Their pictures
+// are spoofed from stills we already ship (the ad posters and the Mark head)
+// until real accounts exist; nothing here is invented artwork.
+const FRIENDS = [
+  { handle: 'kensington_eats', name: 'Kensington', avatar: 'feed/posters/ad-food.jpg' },
+  { handle: 'harbourfront', name: 'Harbour', avatar: 'feed/posters/ad-comedy.jpg' },
+  { handle: 'queenwest', name: 'Queen W', avatar: 'feed/posters/ad-shopping.jpg' },
+  { handle: 'the_annex', name: 'Annex', avatar: 'mark_talk0.png' },
 ]
 
 const MESSAGES = [
@@ -196,6 +213,13 @@ function aiAnswer(q: string, username: string): string {
 export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void } = {}) {
   const [mode, setMode] = useState<Mode>('media')
   const [readyTiles, setReadyTiles] = useState<Set<string>>(() => new Set())
+  // Tiles whose static overlay has finished fading — it is then unmounted so the
+  // grid doesn't keep 15 animating layers alive forever (the feed does the same:
+  // static covers the buffer, then it's gone). The static is a cheap CSS noise
+  // sweep, NOT a <video>: a decoder per tile (a 4.7MB clip ×15) froze the main
+  // thread for ~6s on open, which also stalled the poster onLoads so the tiles
+  // stayed black. Grid previews are stills; video belongs to the viewer only.
+  const [staticGone, setStaticGone] = useState<Set<string>>(() => new Set())
   const [capturing, setCapturing] = useState(false)
   const [launchingCamera, setLaunchingCamera] = useState(false)
   const [photo, setPhoto] = useState<string | null>(null)
@@ -206,6 +230,10 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
   const [torchAvailable, setTorchAvailable] = useState(false)
   const [showNotifs, setShowNotifs] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
+  // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
+  // to the OS share sheet / clipboard for outside.
+  const [shareOpen, setShareOpen] = useState(false)
+  const [shareNote, setShareNote] = useState<string | null>(null)
   const [askOpen, setAskOpen] = useState(false)
   const [askText, setAskText] = useState('')
   const [aiReply, setAiReply] = useState<string | null>(null)
@@ -243,6 +271,20 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
       .then(setBuildingSprite)
       .catch(() => {})
   }, [isBusiness, buildingSprite])
+
+  const markTileReady = useCallback((key: string) => {
+    setReadyTiles(current => (current.has(key) ? current : new Set(current).add(key)))
+  }, [])
+
+  // Retire each tile's static shortly after its preview arrives.
+  useEffect(() => {
+    const timers = [...readyTiles]
+      .filter(key => !staticGone.has(key))
+      .map(key => window.setTimeout(() => {
+        setStaticGone(current => new Set(current).add(key))
+      }, 620))
+    return () => timers.forEach(window.clearTimeout)
+  }, [readyTiles, staticGone])
 
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
@@ -459,24 +501,22 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
           <video ref={videoRef} className={facingMode === 'user' ? styles.video : `${styles.video} ${styles.videoBack}`} playsInline muted />
         )}
         <div className={styles.captureTop}>
-          <button
-            className={torchOn ? `${styles.captureTool} ${styles.captureToolOn}` : styles.captureTool}
-            onClick={toggleTorch}
-            aria-label={torchOn ? 'Turn flash off' : 'Turn flash on'}
-            aria-pressed={torchOn}
-            title={torchAvailable ? 'Toggle flash' : 'Flash preview'}
-          >
-            <span aria-hidden="true">&#9889;</span>
-          </button>
+          {/* 3D clay flash / flip — the same extruded-clay marks as the post
+              camera, instead of flat glyph buttons. */}
+          <ClayCornerButton
+            kind="flash"
+            active={torchOn}
+            label={torchOn ? 'Turn flash off' : 'Turn flash on'}
+            onPress={toggleTorch}
+            size={48}
+          />
           <div className={styles.captureHead}>Profile photo</div>
-          <button
-            className={styles.captureTool}
-            onClick={() => { playPop(); setFacingMode(mode => mode === 'user' ? 'environment' : 'user') }}
-            aria-label="Switch camera"
-            title="Switch camera"
-          >
-            <span aria-hidden="true">&#8635;</span>
-          </button>
+          <ClayCornerButton
+            kind="flip"
+            label="Switch camera"
+            onPress={() => { playPop(); setFacingMode(mode => mode === 'user' ? 'environment' : 'user') }}
+            size={48}
+          />
         </div>
         <div className={styles.vfRing} />
         <div className={styles.captureBar}>
@@ -488,6 +528,55 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
       document.body,
     )
     : null
+
+  // ── Sharing the open post ────────────────────────────────────────────────
+  const postLink = (post: Post) => `https://poplur.app/p/${post.ch.replace(/\s+/g, '').toLowerCase()}`
+
+  const flashNote = (text: string) => {
+    setShareNote(text)
+    window.setTimeout(() => setShareNote(null), 2100)
+  }
+
+  const dmFriend = (friend: typeof FRIENDS[number]) => {
+    playPop()
+    if (isNativeShell() && viewerPost) {
+      postNativeEvent({ type: 'sharePost', to: friend.handle, link: postLink(viewerPost) })
+    }
+    setShareOpen(false)
+    flashNote(`Sent to ${friend.name}`)
+  }
+
+  const shareOutside = async () => {
+    playPop()
+    if (!viewerPost) return
+    const link = postLink(viewerPost)
+    const payload = { title: 'Poplur', text: viewerPost.title, url: link }
+    setShareOpen(false)
+    // The OS sheet when the platform has one; otherwise put it on the clipboard
+    // so there is always somewhere for the link to go.
+    try {
+      if (navigator.share) {
+        await navigator.share(payload)
+        return
+      }
+      await navigator.clipboard?.writeText(link)
+      flashNote('Link copied')
+    } catch {
+      flashNote('Sharing cancelled')
+    }
+  }
+
+  const copyLink = async () => {
+    playPop()
+    if (!viewerPost) return
+    setShareOpen(false)
+    try {
+      await navigator.clipboard.writeText(postLink(viewerPost))
+      flashNote('Link copied')
+    } catch {
+      flashNote('Could not copy the link')
+    }
+  }
 
   const ask = () => {
     const q = askText.trim()
@@ -642,22 +731,30 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
               {posts.map((post, i) => (
                 <button key={post.video + i} className={styles.tile} onClick={() => { playPop(); setViewerIdx(i) }}>
                   {/* the post's own first frame… */}
-                  <video
+                  <img
+                    // A cached poster can finish decoding before React attaches
+                    // onLoad, so also check `complete` when the node mounts —
+                    // otherwise the tile sits empty behind its static forever.
+                    ref={el => { if (el?.complete) markTileReady(`${post.video}-${i}`) }}
                     className={readyTiles.has(`${post.video}-${i}`) ? `${styles.tilePreview} ${styles.tilePreviewReady}` : styles.tilePreview}
-                    src={`${post.video}#t=0.1`}
-                    preload="metadata"
-                    autoPlay
-                    muted
-                    loop
-                    playsInline
-                    onPlaying={() => setReadyTiles(current => {
-                      const next = new Set(current)
-                      next.add(`${post.video}-${i}`)
-                      return next
-                    })}
+                    src={posterFor(post.video)}
+                    alt=""
+                    decoding="async"
+                    draggable="false"
+                    onLoad={() => markTileReady(`${post.video}-${i}`)}
+                    // A missing/failed poster must still clear its static, or the
+                    // tile stays a black box forever.
+                    onError={() => markTileReady(`${post.video}-${i}`)}
                   />
-                  {/* …under live TV static, like the feed between signals */}
-                  <video className={styles.tileStatic} src="tv_static_clean.mp4" autoPlay muted loop playsInline />
+                  {/* …under live TV static, like the feed between signals: a cheap
+                      composited CSS noise sweep covers the buffer, fades when the
+                      post arrives, then unmounts (no per-tile video decoder). */}
+                  {!staticGone.has(`${post.video}-${i}`) && (
+                    <span
+                      className={readyTiles.has(`${post.video}-${i}`) ? `${styles.tileStatic} ${styles.tileStaticOut}` : styles.tileStatic}
+                      aria-hidden="true"
+                    />
+                  )}
                   <span className={styles.tileScan} aria-hidden="true" />
                   <span className={styles.tileCh}>{post.ch}</span>
                 </button>
@@ -704,10 +801,75 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
           <span className={styles.tileScan} aria-hidden="true" />
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>
-            <button className={styles.viewerClose} onClick={() => { playPop(); setViewerIdx(null) }} aria-label="Close">✕</button>
+            {/* Real moulded clay, same renderer as the channel arrows — not a
+                CSS impression of it. */}
+            <div className={styles.viewerTools}>
+              <ClayCornerButton
+                kind="share"
+                label="Share this pop"
+                size={46}
+                onPress={() => { playPop(); setShareOpen(true) }}
+              />
+              <ClayCornerButton
+                kind="close"
+                label="Close"
+                size={46}
+                onPress={() => { playPop(); setViewerIdx(null) }}
+              />
+            </div>
           </div>
           <p className={styles.viewerTitle}>{viewerPost.title}</p>
           <p className={styles.viewerHint}>▲ ▼ browse your posts</p>
+
+          {/* ── Poplur share alert: DM inside, or hand it to the OS ── */}
+          {shareOpen && (
+            <div className={styles.shareScrim} onClick={() => setShareOpen(false)}>
+              <div className={styles.shareAlert} onClick={e => e.stopPropagation()}>
+                <div className={styles.shareContent}>
+                  <div className={styles.shareIcon} aria-hidden="true" />
+                  <h2 className={`${styles.shareTitle} ${styles.shareShader}`}>Send this pop</h2>
+                  <p className={`${styles.shareCopy} ${styles.shareShaderSoft}`}>
+                    DM a friend inside your radius, or share it anywhere.
+                  </p>
+                  <div className={styles.shareFriends}>
+                    {FRIENDS.map(friend => (
+                      <button
+                        key={friend.handle}
+                        className={styles.shareFriend}
+                        onClick={() => dmFriend(friend)}
+                        title={`Send to ${friend.handle}`}
+                      >
+                        <img className={styles.shareFriendFace} src={friend.avatar} alt="" draggable="false" />
+                        <span className={styles.shareFriendName}>{friend.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {/* the same clay objects as the viewer's controls, labelled */}
+                  <div className={styles.shareActions}>
+                    <div className={styles.shareTool}>
+                      <ClayCornerButton kind="link" label="Copy link" size={52} onPress={copyLink} />
+                      <span className={styles.shareToolName}>Copy link</span>
+                    </div>
+                    <div className={styles.shareTool}>
+                      <ClayCornerButton kind="share" label="Share outside Poplur" size={52} onPress={shareOutside} />
+                      <span className={styles.shareToolName}>Share out</span>
+                    </div>
+                    <div className={styles.shareTool}>
+                      <ClayCornerButton
+                        kind="close"
+                        label="Cancel"
+                        size={52}
+                        onPress={() => { playPop(); setShareOpen(false) }}
+                      />
+                      <span className={styles.shareToolName}>Cancel</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {shareNote && <div className={styles.shareNote}>{shareNote}</div>}
         </div>
       )}
 

@@ -695,8 +695,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px 12px;
-  background: linear-gradient(180deg, rgba(10, 7, 13, 0.94) 58%, rgba(10, 7, 13, 0));
+  /* Clear the status bar / notch on device (the WebView is full-bleed under it). */
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 12px;
+  background: linear-gradient(180deg, rgba(10, 7, 13, 0.94) 66%, rgba(10, 7, 13, 0));
 }
 
 .rollLogo {

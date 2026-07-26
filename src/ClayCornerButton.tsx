@@ -42,18 +42,61 @@ function arrowShape(size: number): THREE.Shape {
   return s
 }
 
+/** Rounded bar, centred — the building block for the X and the share tray. */
+function barShape(w: number, h: number, r = Math.min(w, h) / 2): THREE.Shape {
+  const s = new THREE.Shape()
+  const x = w / 2, y = h / 2
+  s.moveTo(-x + r, -y)
+  s.lineTo(x - r, -y)
+  s.absarc(x - r, -y + r, r, -Math.PI / 2, 0, false)
+  s.lineTo(x, y - r)
+  s.absarc(x - r, y - r, r, 0, Math.PI / 2, false)
+  s.lineTo(-x + r, y)
+  s.absarc(-x + r, y - r, r, Math.PI / 2, Math.PI, false)
+  s.lineTo(-x, -y + r)
+  s.absarc(-x + r, -y + r, r, Math.PI, Math.PI * 1.5, false)
+  s.closePath()
+  return s
+}
+
+/** Rounded-rect ring (outline only) — one half of the chain link. */
+function ringShape(w: number, h: number, thickness: number, r: number): THREE.Shape {
+  const outer = barShape(w, h, r)
+  outer.holes.push(new THREE.Path(barShape(w - thickness * 2, h - thickness * 2, Math.max(0.04, r - thickness)).getPoints(24)))
+  return outer
+}
+
+/** Circular clay puck and ring used by the profile-photo shutter. */
+function discShape(radius: number): THREE.Shape {
+  const s = new THREE.Shape()
+  s.absarc(0, 0, radius, 0, Math.PI * 2, false)
+  s.closePath()
+  return s
+}
+
+function discRingShape(outerRadius: number, innerRadius: number): THREE.Shape {
+  const outer = discShape(outerRadius)
+  const hole = new THREE.Path()
+  hole.absarc(0, 0, innerRadius, 0, Math.PI * 2, true)
+  outer.holes.push(hole)
+  return outer
+}
+
 export default function ClayCornerButton({
   kind,
   active = false,
   label,
   onPress,
   size = 44,
+  activateOnClick = false,
 }: {
-  kind: 'flash' | 'flip'
+  kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'capture'
   active?: boolean
   label: string
   onPress: () => void
   size?: number
+  /** Use click for controls that unmount their surface, preventing pointer-through. */
+  activateOnClick?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeRef = useRef(active)
@@ -95,6 +138,13 @@ export default function ClayCornerButton({
       emissive: 0x2a0616,
       emissiveIntensity: 0.35,
     })
+    const creamMat = new THREE.MeshStandardMaterial({
+      color: 0xffeaf4,
+      roughness: 0.72,
+      metalness: 0.02,
+      emissive: 0x3a1428,
+      emissiveIntensity: 0.18,
+    })
     const restEmissive = new THREE.Color(0x2a0616)
     const litEmissive = new THREE.Color(0xff2d96)
     const clayColor = new THREE.Color(CLAY)
@@ -104,15 +154,55 @@ export default function ClayCornerButton({
     scene.add(root)
 
     const geos: THREE.BufferGeometry[] = []
-    const mesh = (shape: THREE.Shape) => {
+    const mesh = (shape: THREE.Shape, material: THREE.Material = mat) => {
       const geo = new THREE.ExtrudeGeometry(shape, extrude)
       geo.translate(0, 0, -0.26)
       geos.push(geo)
-      return new THREE.Mesh(geo, mat)
+      return new THREE.Mesh(geo, material)
     }
 
     if (kind === 'flash') {
       root.add(mesh(boltShape()))
+    } else if (kind === 'close') {
+      // Two moulded bars crossed — the X, rolled in clay.
+      const a = mesh(barShape(1.9, 0.36))
+      a.rotation.z = Math.PI / 4
+      const b = mesh(barShape(1.9, 0.36))
+      b.rotation.z = -Math.PI / 4
+      root.add(a, b)
+    } else if (kind === 'share') {
+      // Arrow lifting out of an open tray.
+      const shaft = mesh(barShape(0.34, 1.0))
+      shaft.position.set(0, 0.42, 0)
+      const head = mesh(arrowShape(0.36))
+      head.position.set(0, 1.06, 0)
+      head.rotation.z = Math.PI / 2
+      const left = mesh(barShape(0.3, 0.92))
+      left.position.set(-0.78, -0.42, 0)
+      const right = mesh(barShape(0.3, 0.92))
+      right.position.set(0.78, -0.42, 0)
+      const floor = mesh(barShape(1.86, 0.3))
+      floor.position.set(0, -0.83, 0)
+      root.add(shaft, head, left, right, floor)
+    } else if (kind === 'link') {
+      // Chain link: two rounded rings leaning into each other.
+      const a = mesh(ringShape(1.18, 0.72, 0.2, 0.34))
+      a.position.set(-0.3, 0.16, 0)
+      a.rotation.z = -0.6
+      const b = mesh(ringShape(1.18, 0.72, 0.2, 0.34))
+      b.position.set(0.3, -0.16, 0)
+      b.rotation.z = -0.6
+      root.add(a, b)
+    } else if (kind === 'capture') {
+      // A moulded camera object, not a conventional flat shutter circle.
+      const body = mesh(barShape(2.1, 1.45, 0.34))
+      const finder = mesh(barShape(0.72, 0.34, 0.13))
+      finder.position.set(-0.45, 0.82, -0.02)
+      const lens = mesh(discRingShape(0.52, 0.3), creamMat)
+      lens.position.set(0.25, 0, 0.23)
+      const glass = mesh(discShape(0.22))
+      glass.position.set(0.25, 0, 0.42)
+      root.add(body, finder, lens, glass)
     } else {
       // Flip-camera: two opposing arcs with arrowheads at their leading ends.
       const arcTop = mesh(arcShape(0.6, 0.9, Math.PI * 0.83, Math.PI * 0.17, true))
@@ -133,7 +223,8 @@ export default function ClayCornerButton({
       root.rotation.set(-0.14 + Math.sin(t * 0.9) * 0.07, Math.sin(t * 1.15) * 0.45, 0)
       mat.color.copy(kind === 'flash' && activeRef.current ? goldColor : clayColor)
       pulse.current += (0 - pulse.current) * 0.12
-      root.scale.setScalar(0.9 + pulse.current * 0.1)
+      const restScale = kind === 'capture' ? 1.32 : kind === 'close' ? 1.18 : 0.9
+      root.scale.setScalar(restScale + pulse.current * 0.1)
       mat.emissive.copy(restEmissive).lerp(litEmissive, pulse.current)
       mat.emissiveIntensity = (kind === 'flash' && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
       renderer.render(scene, camera)
@@ -145,6 +236,7 @@ export default function ClayCornerButton({
       cancelAnimationFrame(raf)
       geos.forEach(g => g.dispose())
       mat.dispose()
+      creamMat.dispose()
       renderer.dispose()
     }
   }, [size, kind])
@@ -161,7 +253,11 @@ export default function ClayCornerButton({
         type="button"
         aria-label={label}
         aria-pressed={kind === 'flash' ? active : undefined}
-        onPointerDown={() => { pulse.current = 1; onPress() }}
+        onPointerDown={() => {
+          pulse.current = 1
+          if (!activateOnClick) onPress()
+        }}
+        onClick={() => { if (activateOnClick) onPress() }}
         style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer', padding: 0 }}
       />
     </div>
