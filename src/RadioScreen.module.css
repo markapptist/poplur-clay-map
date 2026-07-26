@@ -654,38 +654,25 @@
 /* the plinth the TV turns on */
 .bootStage {
   position: relative;
-  width: 128px;
-  height: 128px;
+  width: 190px;
+  height: 190px;
   display: grid;
   place-items: center;
   perspective: 460px;
 }
 
-.bootTv {
+.bootModel {
   position: relative;
-  width: 112px;
-  height: 112px;
-  transform-style: preserve-3d;
-  animation: bootSpin 3.6s linear infinite;
+  width: 190px;
+  height: 190px;
+  display: grid;
+  place-items: center;
 }
 
-.bootFace {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  /* the point of the whole thing: the small buffer is scaled up with no
-     interpolation, so the clay TV comes back as square pixels */
-  image-rendering: pixelated;
-  backface-visibility: hidden;
-  filter: drop-shadow(0 0 12px rgba(126, 255, 106, 0.45));
-}
-
-.bootFaceBack { transform: rotateY(180deg); }
-
-@keyframes bootSpin {
-  from { transform: rotateY(0deg); }
-  to { transform: rotateY(360deg); }
+.bootCanvas {
+  width: 190px !important;
+  height: 190px !important;
+  filter: drop-shadow(0 0 14px rgba(126, 255, 106, 0.4));
 }
 
 .bootShadow {
@@ -731,5 +718,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bootTv, .bootShadow, .bootGlass, .lcdWaveOn i { animation: none; }
+  .bootShadow, .bootGlass, .lcdWaveOn i { animation: none; }
 }
