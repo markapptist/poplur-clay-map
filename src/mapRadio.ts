@@ -622,3 +622,81 @@ if (typeof window !== 'undefined') {
   onGateChange(applyGate)
   applyGate()
 }
+
+export interface LocalStation {
+  id: string
+  name: string
+  genre: string
+  bitrate: number
+  url: string
+  /** the station's own logo, where it publishes one */
+  logo: string | null
+  /** real popularity from the directory — stands in for a listener count */
+  listeners: number
+  /** km from you — the station's transmitter, so "intercepting" is literal */
+  distanceKm: number
+}
+
+/** Every station whose signal reaches where you are, nearest first. */
+export async function listLocalStations(lat: number, lng: number, radiusM = 120_000): Promise<LocalStation[]> {
+  if (typeof window === 'undefined') return []
+  const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
+  for (const host of hosts) {
+    try {
+      const ctl = new AbortController()
+      const timer = window.setTimeout(() => ctl.abort(), 6000)
+      const res = await fetch(
+        `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=${radiusM}`
+        + '&hidebroken=true&order=clickcount&reverse=true&limit=60',
+        { signal: ctl.signal },
+      )
+      window.clearTimeout(timer)
+      if (!res.ok) continue
+      const found = (await res.json()) as Array<{
+        stationuuid?: string; name?: string; url_resolved?: string; codec?: string
+        bitrate?: number; tags?: string; geo_lat?: number; geo_long?: number
+        favicon?: string; clickcount?: number; votes?: number
+      }>
+      const km = (a: number, b: number, c: number, d: number) => {
+        const R = 6371, toRad = (v: number) => (v * Math.PI) / 180
+        const dLat = toRad(c - a), dLng = toRad(d - b)
+        const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a)) * Math.cos(toRad(c)) * Math.sin(dLng / 2) ** 2
+        return 2 * R * Math.asin(Math.sqrt(h))
+      }
+      return found
+        .filter(st => typeof st.url_resolved === 'string'
+          && st.url_resolved.startsWith('https://')   // mixed content is blocked in the WebView
+          && /mp3|aac/i.test(st.codec ?? ''))
+        .map(st => ({
+          id: st.stationuuid ?? st.url_resolved!,
+          name: (st.name ?? '').trim() || 'Unnamed station',
+          genre: (st.tags ?? '').split(',')[0]?.trim() || 'Various',
+          bitrate: st.bitrate ?? 0,
+          url: st.url_resolved!,
+          logo: st.favicon && st.favicon.startsWith('https://') ? st.favicon : null,
+          listeners: Math.max(st.clickcount ?? 0, st.votes ?? 0),
+          distanceKm: st.geo_lat != null && st.geo_long != null
+            ? +km(lat, lng, st.geo_lat, st.geo_long).toFixed(1)
+            : 0,
+        }))
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+    } catch { /* mirror down — try the next */ }
+  }
+  return []
+}
+
+/** Tune a specific station picked from the dial. */
+export function playStation(station: { name: string; url: string }): void {
+  const audio = getLiveAudio()
+  if (!audio) return
+  soundWanted = true
+  installUnlock()
+  liveStation = { name: station.name, url: station.url }
+  audio.src = station.url
+  audio.muted = isGateMuted()
+  if (radioBed) radioBed.master.gain.value = 0   // the synth stand-in steps aside
+  void audio.play().catch(() => { /* until the unlock gesture */ })
+  setRadioLevel(RADIO_CRUISE_LEVEL, 0.4)
+}
+
+export function nowPlayingStation(): { name: string; url: string } | null { return liveStation }

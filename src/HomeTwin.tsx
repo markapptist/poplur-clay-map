@@ -209,18 +209,27 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('message', onMapMessage)
   }, [])
 
+  // A hold-menu screen (Radio, News, TV Guide) is covering the app: the feed
+  // behind it must stop playing, its captions must not show through, and the
+  // map iframe must go quiet.
+  const [overlayOpen, setOverlayOpen] = useState(false)
+
   // The map iframe stays mounted on every tab, so its audio (radio, ambience,
   // pops) must be gated here: audible only while the MAP tab is front-most AND
   // this harness itself is audible (not board-muted, not backgrounded). Resent
   // on mapReady because the iframe's listener isn't up for the earliest sends.
+  //
+  // A hold-menu screen also silences it. The Radio deck runs its OWN station
+  // from this document while the map runs one inside the iframe — without this
+  // you hear both at once.
   useEffect(() => {
     const send = () => {
-      const audible = activeTab === 'map' && !isGateMuted()
+      const audible = activeTab === 'map' && !isGateMuted() && !overlayOpen
       mapFrameRef.current?.contentWindow?.postMessage({ gcAudio: audible ? 'on' : 'off' }, '*')
     }
     send()
     return onGateChange(send)
-  }, [activeTab, mapReady])
+  }, [activeTab, mapReady, overlayOpen])
 
   // Rotate the loading copy only while the overlay is up.
   // Map lifetime. Coming back to the map remounts it immediately; leaving it
@@ -270,15 +279,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  const runMenuAction = (action: FeedAction | 'premium') => {
-    if (action === 'premium') {
-      // The premium (photoreal) surface is a paid switch — the map owns the
-      // wallet check and answers with whether it could afford it.
-      mapFrameRef.current?.contentWindow?.postMessage(
-        { type: 'poplur-map-action', action: 'togglePremium' }, '*',
-      )
-      return
-    }
+  const runMenuAction = (action: FeedAction) => {
     feedActionsRef.current?.(action)
   }
 
@@ -287,9 +288,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Where that profile was opened FROM, so closing it returns you there (the
   // feed you were watching) instead of dropping you on your own profile.
   const [profileOrigin, setProfileOrigin] = useState<CubeTab | null>(null)
-  // A hold-menu screen (News, TV Guide) is covering the app: the feed behind it
-  // must stop playing and its captions must not show through.
-  const [overlayOpen, setOverlayOpen] = useState(false)
   // Which of the nearby posts the map arrows are parked on (1-based on screen).
   const [mapPostIdx, setMapPostIdx] = useState(0)
 

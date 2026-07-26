@@ -510,8 +510,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
   const postSeqRef = useRef(0)
-  const prototypeComposer = typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('compose') === '1'
+  // Drop a pop by tapping the map. This used to require ?compose=1 — a
+  // prototype flag from when posting lived only in the camera flow — which is
+  // why tapping the map did nothing. ?compose=0 opts back out.
+  const prototypeComposer = typeof window === 'undefined'
+    || new URLSearchParams(window.location.search).get('compose') !== '0'
   const prototypeClaimSeeds = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('sample-claims') === '1'
 
@@ -1915,8 +1918,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       installRouteLayers(map, 'clay-buildings-3d')
       if (prototypeComposer) {
         map.on('click', (e) => {
-          // Prototype-only: any tap on empty ground opens the composer. Real app
-          // posting lives in the camera/feed flow, so the map stays decluttered.
+          // A tap on open ground starts a pop there: pick a radius, drop it.
+          // Taps that land on a POI/venue marker are handled by those layers.
           setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: e.point.x, y: e.point.y })
         })
       }

@@ -5,6 +5,7 @@ import type { CubeTab } from './CubeTab3D'
 import ClayCornerButton from './ClayCornerButton'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
+import RadioScreen from './RadioScreen'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -26,7 +27,7 @@ interface Item {
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'captions' | 'profile' | 'premium'
+  action?: 'like' | 'comment' | 'captions' | 'profile'
 }
 
 // Per-tab item sets are the confirmed hold-menu inventory. Every tile keeps a
@@ -36,7 +37,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Search', title: 'SEARCH', screen: 'map-search' },
     { icon: 'Search', title: 'CURRENT LOCATION', screen: 'map-locate' },
     { icon: 'Create', title: 'POST MULTIPLE', screen: 'map-post' },
-    { icon: 'Wallet', title: 'PREMIUM MAP', screen: 'map-claims', action: 'premium' },
+    { icon: 'Music', title: 'RADIO', screen: 'map-radio', native: true },
     { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', toggle: 'tour', screen: 'map-tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-search' },
   ],
@@ -369,6 +370,13 @@ export default function HoldMenuTwin({
 
   if (activeScreen) {
     // TV GUIDE is a real screen in the app, not a Rough Copy capture.
+    if (activeScreen.native && activeScreen.screen === 'map-radio') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Radio">
+          <RadioScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
     if (activeScreen.native && activeScreen.screen === 'feed-news') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Times">

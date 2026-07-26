@@ -453,36 +453,6 @@ export default function App() {
   const [clockNow, setClockNow] = useState(() => new Date())
   // Place search (top-right): the clay magnifier opens a field that geocodes
   // through Mapbox and flies the map to whatever you pick.
-  // Poplur credit plumbing stays — it is what any paid feature will use. What
-  // it buys is open again; PREMIUM MAP currently just reports the balance.
-  const [premiumNote, setPremiumNote] = useState<string | null>(null)
-
-  useEffect(() => {
-    const PREMIUM_COST = 25
-    const readCredit = () => {
-      try {
-        const raw = window.localStorage.getItem('poplur.credit')
-        return raw === null ? 100 : Number(raw)
-      } catch { return 100 }
-    }
-    const note = (text: string, ms = 2800) => {
-      setPremiumNote(text)
-      window.setTimeout(() => setPremiumNote(null), ms)
-    }
-    const onMessage = (event: MessageEvent) => {
-      if (event.data?.type !== 'poplur-map-action' || event.data.action !== 'togglePremium') return
-      playPop()
-      const credit = readCredit()
-      // Nothing to buy yet — the photoreal surface is parked. The wallet read
-      // stays wired so the next premium feature has somewhere to land.
-      note(credit < PREMIUM_COST
-        ? `Not enough Poplur credit — ${PREMIUM_COST} needed, you have ${credit}`
-        : `Poplur credit: ${credit}. Premium map is coming back as a venue view.`, 3200)
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
-  }, [])
-
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchClosing, setSearchClosing] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -1017,8 +987,6 @@ export default function App() {
         onIntroComplete={handleIntroComplete}
         onGlobeReady={handleGlobeReady}
       />
-
-      {premiumNote && <div className={styles.premiumNote}>{premiumNote}</div>}
 
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
       <ClayNav
