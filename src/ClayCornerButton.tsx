@@ -93,6 +93,7 @@ export default function ClayCornerButton({
   still = false,
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
+    | 'heart' | 'play'
   active?: boolean
   label: string
   onPress: () => void
@@ -157,6 +158,7 @@ export default function ClayCornerButton({
     const litEmissive = new THREE.Color(0xff2d96)
     const clayColor = new THREE.Color(CLAY)
     const goldColor = new THREE.Color(GOLD)
+    const litHeart = new THREE.Color(0xff2d96)   // favourited: hot pink clay
 
     const bodyMat = tone === 'cream' ? creamMat : mat
 
@@ -210,6 +212,19 @@ export default function ClayCornerButton({
       dart.closePath()
       const tri = mesh(dart)
       tri.rotation.z = -0.42
+      root.add(tri)
+    } else if (kind === 'heart') {
+      // Two lobes over a point, moulded — the like.
+      const heart = new THREE.Shape()
+      heart.moveTo(0, -1.05)
+      heart.bezierCurveTo(-1.5, -0.1, -0.95, 1.15, 0, 0.55)
+      heart.bezierCurveTo(0.95, 1.15, 1.5, -0.1, 0, -1.05)
+      heart.closePath()
+      root.add(mesh(heart))
+    } else if (kind === 'play') {
+      // The play triangle, pointing right.
+      const tri = mesh(arrowShape(1.16))
+      tri.position.set(0.14, 0, 0)
       root.add(tri)
     } else if (kind === 'search') {
       // Magnifier: a moulded ring with a stubby handle off its lower right.
@@ -266,12 +281,16 @@ export default function ClayCornerButton({
     const tick = () => {
       const t = still ? 0.7 : clock.getElapsedTime()
       root.rotation.set(-0.14 + Math.sin(t * 0.9) * 0.07, Math.sin(t * 1.15) * 0.45, 0)
-      if (tone !== 'cream') mat.color.copy(kind === 'flash' && activeRef.current ? goldColor : clayColor)
+      if (tone !== 'cream') {
+        const lit = activeRef.current && (kind === 'flash' || kind === 'heart')
+        mat.color.copy(lit ? (kind === 'heart' ? litHeart : goldColor) : clayColor)
+      }
       pulse.current += (0 - pulse.current) * 0.12
       const restScale = kind === 'capture' ? 1.32 : kind === 'close' ? 1.18 : 0.9
       root.scale.setScalar(restScale + pulse.current * 0.1)
       bodyMat.emissive.copy(restEmissive).lerp(litEmissive, pulse.current)
-      bodyMat.emissiveIntensity = (kind === 'flash' && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
+      bodyMat.emissiveIntensity =
+        ((kind === 'flash' || kind === 'heart') && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
       renderer.render(scene, camera)
       // Still buttons hold their pose: keep drawing only while a press pulse is
       // still decaying, otherwise stop the loop entirely.

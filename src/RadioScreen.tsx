@@ -3,6 +3,7 @@ import styles from './RadioScreen.module.css'
 import { playPop } from './pop'
 import { isUserMuted, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
+import ClayMuteButton from './ClayMuteButton'
 import { listLocalStations, playStation, nowPlayingStation, type LocalStation } from './mapRadio'
 
 // POPLUR RADIO — the station deck.
@@ -124,13 +125,12 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
           <span className={styles.brandName}>poplur radio</span>
         </div>
         <div className={styles.headTools}>
-          <button
-            className={styles.iconBtn}
-            aria-label={muted ? 'Unmute' : 'Mute'}
-            onClick={() => { const next = !muted; setUserMuted(next); setMuted(next); playPop() }}
-          >
-            {muted ? '🔇' : '🔊'}
-          </button>
+          {/* the same clay mute object the feed and TV guide carry */}
+          <ClayMuteButton
+            muted={muted}
+            onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next) }}
+            size={40}
+          />
           <ClayCornerButton kind="close" label="Close the radio" size={44} activateOnClick onPress={onClose} />
         </div>
       </header>
@@ -153,18 +153,22 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
             <div className={styles.heroSub}>
               {tuned ? `${compact(tuned.listeners)} listeners · ${tuned.distanceKm} km away` : ''}
             </div>
+            {/* all three are real clay objects, like the rest of the app */}
             <div className={styles.heroControls}>
-              <button
-                className={tuned && favourites.has(tuned.id) ? `${styles.round} ${styles.roundOn}` : styles.round}
-                aria-label="Favourite"
-                onClick={() => tuned && toggleFav(tuned.id)}
-              >♥</button>
-              <button
-                className={styles.play}
-                aria-label="Play"
-                onClick={() => tuned && tune(tuned)}
-              >▶</button>
-              <button className={styles.round} aria-label="Share" onClick={() => playPop()}>⤴</button>
+              <ClayCornerButton
+                kind="heart"
+                label="Favourite"
+                size={50}
+                active={!!tuned && favourites.has(tuned.id)}
+                onPress={() => tuned && toggleFav(tuned.id)}
+              />
+              <ClayCornerButton
+                kind="play"
+                label="Play"
+                size={72}
+                onPress={() => tuned && tune(tuned)}
+              />
+              <ClayCornerButton kind="share" label="Share" size={50} onPress={() => playPop()} />
             </div>
           </div>
         </section>
