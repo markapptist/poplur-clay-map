@@ -54,10 +54,17 @@ const EARTH_RADIUS_KM = 6_371
 // Home and Map use the same bundle. Dropping the query string renders App's map
 // route, avoids a second dev-server dependency, and mirrors the native custom-
 // scheme bundle exactly.
-const CLAY_MAP_SRC =
-  typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/`
-    : 'index.html'
+// `front=0` tells the embedded map it is booting behind another tab, so it
+// skips the 7s cinematic intro (which streams tiles and uploads textures the
+// whole way) and just lands. Without it the map's intro runs behind Feed /
+// Profile / Camera and drags those screens into single-digit fps.
+const CLAY_MAP_SRC = (() => {
+  const front = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('view') === 'map' ? '1' : '0'
+  return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
+    ? `${window.location.origin}/?front=${front}`
+    : `index.html?front=${front}`
+})()
 
 // Android app shell (PoplurNative bridge). Its budget GPUs can't afford Mapbox
 // running behind every tab, so the map iframe mounts on-demand there (see the
@@ -105,11 +112,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     && typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('map-loading') === '1'
   useEffect(() => {
-    const units = window.setInterval(() => setUnitMi(v => !v), 2500)
-    const fade = window.setInterval(() => setShowTrending(v => !v), 3200)
+    // Radius is the headline metric: no auto unit flip (it used to swap km/mi
+    // every 2.5s, so the number never held still) and no cross-fade — tapping
+    // the value toggles units instead. TRENDING keeps its own small line.
+    const fade = 0
     const onResize = () => setCubeSize(cubeSizeFor())
     window.addEventListener('resize', onResize)
-    return () => { window.clearInterval(units); window.clearInterval(fade); window.removeEventListener('resize', onResize) }
+    return () => { window.removeEventListener('resize', onResize) }
   }, [])
 
   useEffect(() => {
@@ -286,7 +295,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
         {/* RIGHT: the feed's animated RADIUS ◆ ⇄ TRENDING ↑ label */}
         <div className={styles.statStack}>
-          <div className={showTrending ? styles.statCardOut : styles.statCard}>
+          {/* RADIUS is permanent — the app's headline number. It no longer shares
+              this slot with TRENDING (which hid it half the time) and no longer
+              auto-flips units. Tap the value to switch km/mi. */}
+          <div
+            className={styles.statCard}
+            onClick={() => { playPop(); setUnitMi(v => !v) }}
+            role="button"
+            aria-label={`Radius ${(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
+          >
             <span className={styles.statLabel}>RADIUS ◆</span>
             <span className={styles.statValue}>
               {(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)}
@@ -295,11 +312,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             <span className={styles.statSub}>
               of {(unitMi ? Math.round(EARTH_RADIUS_KM * KM_TO_MI) : EARTH_RADIUS_KM).toLocaleString()} {unitMi ? 'mi' : 'km'}
             </span>
-          </div>
-          <div className={showTrending ? styles.statCard : styles.statCardOut}>
-            <span className={styles.statLabel}>TRENDING ↑</span>
-            <span className={styles.statValue}>{POST_COUNT}</span>
-            <span className={styles.statSub}>posts nearby</span>
+            <span className={styles.statTrend}>TRENDING ↑ {POST_COUNT} nearby</span>
           </div>
         </div>
       </div>

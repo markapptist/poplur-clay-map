@@ -662,3 +662,51 @@
   55%  { opacity: 1; }
   100% { opacity: 1; transform: translateY(0) rotateX(0); }
 }
+
+/* TRENDING demoted to a small line under the permanent RADIUS value, so the
+   headline number owns the slot instead of sharing a 3.2s cross-fade. */
+.statTrend {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.62);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+}
+
+/* ── RADIUS legibility (no plate) ───────────────────────────────────────────
+   The headline number sits directly on live video / bright clay map, where
+   plain white disappeared. A dark stroke painted UNDER the fill (paint-order)
+   plus a soft halo keeps it readable on any frame — bright or dark — with no
+   background behind it. */
+.statValue {
+  color: #fff;
+  -webkit-text-stroke: 2.5px rgba(5, 2, 9, 0.92);
+  paint-order: stroke fill;
+  text-shadow:
+    0 2px 5px rgba(0, 0, 0, 0.9),
+    0 0 16px rgba(0, 0, 0, 0.6);
+}
+
+.statUnit {
+  -webkit-text-stroke: 1.6px rgba(5, 2, 9, 0.9);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.85);
+}
+
+/* The label uses background-clip:text, so a stroke can't apply — a layered
+   drop-shadow gives it the same separation from the background. */
+.statLabel {
+  filter:
+    drop-shadow(0 1px 2px rgba(0, 0, 0, 0.95))
+    drop-shadow(0 0 7px rgba(0, 0, 0, 0.65));
+}
+
+.statSub,
+.statTrend {
+  color: rgba(255, 255, 255, 0.92);
+  -webkit-text-stroke: 1.1px rgba(5, 2, 9, 0.85);
+  paint-order: stroke fill;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
