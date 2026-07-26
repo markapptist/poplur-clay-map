@@ -93,7 +93,7 @@ export default function ClayCornerButton({
   still = false,
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
-    | 'heart' | 'play'
+    | 'heart' | 'play' | 'seekBack' | 'seekFwd'
   active?: boolean
   label: string
   onPress: () => void
@@ -226,6 +226,15 @@ export default function ClayCornerButton({
       const tri = mesh(arrowShape(1.16))
       tri.position.set(0.14, 0, 0)
       root.add(tri)
+    } else if (kind === 'seekBack' || kind === 'seekFwd') {
+      // Two stacked triangles — the seek keys, moulded.
+      const dir = kind === 'seekFwd' ? 1 : -1
+      const a = mesh(arrowShape(0.74))
+      a.position.set(-0.42 * dir, 0, 0)
+      const b = mesh(arrowShape(0.74))
+      b.position.set(0.5 * dir, 0, 0)
+      if (dir < 0) { a.rotation.z = Math.PI; b.rotation.z = Math.PI }
+      root.add(a, b)
     } else if (kind === 'search') {
       // Magnifier: a moulded ring with a stubby handle off its lower right.
       const ring = mesh(discRingShape(0.78, 0.5))

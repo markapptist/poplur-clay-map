@@ -155,6 +155,8 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
             </div>
 
             <div className={styles.dashScreen}>
+              <span className={styles.lcdGrid} aria-hidden="true" />
+              <span className={styles.lcdGlass} aria-hidden="true" />
               <div className={styles.dashArt}>
                 {tuned?.logo
                   ? <img src={tuned.logo} alt="" draggable="false" />
@@ -184,7 +186,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
             </div>
 
             <div className={styles.dashControls}>
-              <button className={styles.dashKey} onClick={() => scan(-1)} aria-label="Previous station">◂◂</button>
+              <ClayCornerButton kind="seekBack" label="Previous station" size={46} onPress={() => scan(-1)} />
               <ClayCornerButton
                 kind="heart"
                 label="Favourite"
@@ -194,7 +196,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
               />
               <ClayCornerButton kind="play" label="Play" size={78} onPress={() => tuned && tune(tuned)} />
               <ClayCornerButton kind="share" label="Share" size={52} onPress={() => playPop()} />
-              <button className={styles.dashKey} onClick={() => scan(1)} aria-label="Next station">▸▸</button>
+              <ClayCornerButton kind="seekFwd" label="Next station" size={46} onPress={() => scan(1)} />
             </div>
           </div>
           <div className={styles.dashHint}>scroll for stations ⌄</div>
