@@ -5,7 +5,7 @@ import { isUserMuted, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import RadioBoot from './RadioBootScreen'
-import { listLocalStations, playStation, nowPlayingStation, type LocalStation } from './mapRadio'
+import { listLocalStations, playStation, stopMapRadio, nowPlayingStation, type LocalStation } from './mapRadio'
 
 // POPLUR RADIO — the station deck.
 //
@@ -27,6 +27,22 @@ const BANDS = [
 ] as const
 
 const HOME: [number, number] = [-79.3832, 43.6532]
+
+// A station's logo is whatever the directory has on file: often nothing, and
+// often a URL that no longer resolves. Either way the deck must still show a
+// picture — a blank square reads as a broken screen. The Poplur TV stands in.
+function StationArt({ logo }: { logo?: string | null }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => { setFailed(false) }, [logo])
+  return (
+    <img
+      src={!logo || failed ? 'clay_tv.png' : logo}
+      alt=""
+      draggable="false"
+      onError={() => setFailed(true)}
+    />
+  )
+}
 
 const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
 
@@ -77,6 +93,11 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     const t = window.setInterval(hush, 1500)
     return () => window.clearInterval(t)
   }, [])
+
+  // Closing the deck takes it off the air. The station runs from THIS document,
+  // so without this it kept streaming behind the app — you would leave the
+  // radio, land on the feed, and hear both at once.
+  useEffect(() => stopMapRadio, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
@@ -195,9 +216,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
             {/* the segment: what is on the air */}
             <div className={styles.seg}>
               <div className={styles.segArt}>
-                {tuned?.logo
-                  ? <img src={tuned.logo} alt="" draggable="false" />
-                  : <img src="clay_tv.png" alt="" draggable="false" />}
+                <StationArt logo={tuned?.logo} />
               </div>
               <div className={styles.segInfo}>
                 <div className={styles.segLabel}>NOW PLAYING</div>
@@ -273,9 +292,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
       {/* ── the bar that never leaves ── */}
       <footer className={styles.bar}>
         <div className={styles.barArt}>
-          {tuned?.logo
-            ? <img src={tuned.logo} alt="" draggable="false" />
-            : <img src="clay_tv.png" alt="" draggable="false" />}
+          <StationArt logo={tuned?.logo} />
         </div>
         <div className={styles.barBody}>
           <div className={styles.barName}>{tuned?.name ?? 'Nothing tuned'}</div>
