@@ -499,29 +499,63 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const zoomRailRef = useRef<HTMLInputElement>(null)
   const [zoomRailLen, setZoomRailLen] = useState(380)
   const ZOOM_THUMB = 76
-  // Flip the basemap between the clay style and photoreal satellite.
+  // Premium = HYBRID: real satellite photography laid under the SAME 3D
+  // buildings and clay props, not a different style. Swapping styles wiped
+  // every custom layer (and rebuilding them mid-session was the source of the
+  // void/lag) — adding one raster layer under the stack has none of that:
+  // toggle off simply removes it.
   useEffect(() => {
     const map = mapRef.current
+    if (!map || !map.isStyleLoaded?.()) {
+      // not built yet — the load handler will run before anyone can toggle
+      if (!premiumSurface) return
+    }
     if (!map) return
-    // HYBRID, not flat imagery: standard-satellite carries real photography
-    // AND the 3D building massing, so premium looks like the city rather than
-    // a photograph of it. (satellite-streets-v12 has no buildings at all —
-    // that is why the first cut looked wrong.)
-    const style = premiumSurface
-      ? 'mapbox://styles/mapbox/standard-satellite'
-      : 'mapbox://styles/mapbox/dark-v11'
+    const SRC = 'premium-satellite'
+    const LAYER = 'premium-satellite'
     try {
-      map.setStyle(style)
-      // setStyle drops every custom layer, so the clay world has to be rebuilt
-      // when we come back. Bumping the epoch re-runs the layer effects.
-      map.once('style.load', () => {
-        try {
-          map.setConfigProperty?.('basemap', 'show3dObjects', true)
-          map.setConfigProperty?.('basemap', 'lightPreset', dayTime ? 'day' : 'night')
-        } catch { /* older style spec */ }
-        setMapEpoch(e => e + 1)
-      })
-    } catch { /* style server hiccup */ }
+      if (premiumSurface) {
+        if (!map.getSource(SRC)) {
+          map.addSource(SRC, {
+            type: 'raster',
+            url: 'mapbox://mapbox.satellite',
+            tileSize: 256,
+          })
+        }
+        if (!map.getLayer(LAYER)) {
+          // under everything we draw: first clay layer if present, else on top
+          const layers = map.getStyle()?.layers ?? []
+          const firstOurs = layers.find(l => /^clay-/.test(l.id) || l.type === 'fill-extrusion')?.id
+          // dark-v11 is a CLASSIC style: slots don't reorder, plain array
+          // order is render order. So the photo goes immediately before the
+          // building extrusions — above the base land and the clay ground,
+          // below the buildings, caps, props and labels. ('bottom' put it at
+          // index 0 under the opaque base; no beforeId appended it on top of
+          // everything, which is why premium looked flat.)
+          const anchor = map.getLayer('clay-buildings-3d') ? 'clay-buildings-3d' : firstOurs
+          map.addLayer(
+            { id: LAYER, type: 'raster', source: SRC, slot: 'top', paint: { 'raster-opacity': 1 } } as never,
+            anchor,
+          )
+        }
+        // The clay GROUND is opaque — left visible it sits on top of the
+        // photography and premium "looks flat" (all you see is clay). Hide the
+        // ground skins; keep the 3D buildings and props standing on the photo.
+        for (const l of map.getStyle()?.layers ?? []) {
+          if (/^clay-(water|grass|coast|land)/.test(l.id)) {
+            try { map.setLayoutProperty(l.id, 'visibility', 'none') } catch { /* absent */ }
+          }
+        }
+      } else {
+        if (map.getLayer(LAYER)) map.removeLayer(LAYER)
+        if (map.getSource(SRC)) map.removeSource(SRC)
+        for (const l of map.getStyle()?.layers ?? []) {
+          if (/^clay-(water|grass|coast|land)/.test(l.id)) {
+            try { map.setLayoutProperty(l.id, 'visibility', 'visible') } catch { /* absent */ }
+          }
+        }
+      }
+    } catch { /* style still booting — the next toggle lands */ }
   }, [premiumSurface, mapRef])
 
   useEffect(() => {

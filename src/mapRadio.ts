@@ -607,7 +607,15 @@ if (typeof window !== 'undefined') {
       if (!el) continue
       el.muted = muted
       if (muted) { try { el.pause() } catch { /* not started */ } }
-      else if (soundWanted) { void el.play().catch(() => { /* awaiting a gesture */ }) }
+    }
+    // Resume ONE source, never both: the live station when tuned, the fallback
+    // only while nothing is on air. Resuming both is what made the map sound
+    // like two radios talking over each other after an unmute.
+    if (!muted && soundWanted) {
+      const active = liveStation ? liveAudio : fallbackAudio
+      const idle = liveStation ? fallbackAudio : liveAudio
+      if (idle) { try { idle.pause() } catch { /* not started */ } }
+      if (active) void active.play().catch(() => { /* awaiting a gesture */ })
     }
     if (muted && radioBed) radioBed.master.gain.value = 0
   }
