@@ -73,6 +73,33 @@ const ANDROID_SHELL =
   typeof window !== 'undefined' &&
   Boolean((window as unknown as { PoplurNative?: unknown }).PoplurNative)
 
+// How long the map iframe survives after its tab stops being front.
+//
+// A `display:none` iframe is NOT `document.hidden` in Chrome or WKWebView: the
+// map keeps its GL context, its tile workers and a full-resolution (1179x2556)
+// canvas alive behind whatever tab is actually in front. Measured on the built
+// bundle, that held Feed / Home at ~3fps while the map itself was drawing
+// roughly one call per second — the cost is the iframe existing, not its work.
+// Hiding it, shrinking its canvas to 2x2 and pausing its render loop all
+// measured no better; only unmounting recovered the frame budget (~3 -> 30fps).
+//
+// So every shell now takes the Android trade: the map is mounted ONLY while the
+// Map tab is front. Leaving it unmounts the iframe immediately, which recovers
+// the full frame budget on Profile / Feed / Camera (profile measured 5.5 ->
+// 59.9fps median once the map is gone). Coming back to Map remounts a fresh
+// iframe, which shows the loading globe while it boots — the same overlay the
+// map route already uses. `?map-grace=<seconds>` opts back into a warm bounce
+// for testing (the iframe lingers that long so a quick return to Map is free);
+// the default 0 keeps the map off every non-map tab.
+const MAP_GRACE_MS = (() => {
+  const fallback = 0
+  if (typeof window === 'undefined') return fallback
+  const raw = new URLSearchParams(window.location.search).get('map-grace')
+  if (raw === null) return fallback
+  const seconds = Number(raw)
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : fallback
+})()
+
 export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'live' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'live' | 'roll' }) {
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
@@ -100,6 +127,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(false)
+  // The map iframe mounts only while the Map tab is front (the Android trade):
+  // it starts mounted only when Home opens directly on the map, and otherwise
+  // stays absent so Profile / Feed / Camera keep their full frame budget. It is
+  // torn down once the user leaves the map (after MAP_GRACE_MS, default 0).
+  const [mapMounted, setMapMounted] = useState(initialTab === 'map')
   const [loadingMessage, setLoadingMessage] = useState(0)
   const [messageShown, setMessageShown] = useState(true)
   const [loadingMuted, setLoadingMuted] = useState(isUserMuted)
@@ -162,6 +194,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [activeTab, mapReady])
 
   // Rotate the loading copy only while the overlay is up.
+  // Map lifetime. Coming back to the map remounts it immediately; leaving it
+  // starts the grace timer, and only when that expires does the iframe go away.
+  // Clearing mapReady on teardown puts the map's own loading screen back, so a
+  // remounted map shows the loading globe instead of a blank layer.
+  useEffect(() => {
+    if (activeTab === 'map') { setMapMounted(true); return }
+    const drop = () => { setMapMounted(false); setMapReady(false) }
+    if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
+    const timer = window.setTimeout(drop, MAP_GRACE_MS)
+    return () => window.clearTimeout(timer)
+  }, [activeTab])
+
   const loadingVisible = activeTab === 'map' && (!mapReady || forceMapLoading)
   useEffect(() => {
     if (!loadingVisible) return
@@ -218,16 +262,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       className={styles.home}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
-      {/* Keep the map mounted from the first Home frame. Loading can therefore
-          finish the expensive map intro while Feed is already composed.
-          EXCEPT on the Android shell: its low-end GPUs can't run Mapbox behind
-          the other tabs — the always-mounted map starved the cube/feed and made
-          the home laggy — so there the map mounts only while its tab is front
-          (it re-boots behind its skeleton when you come back). */}
-      {(!ANDROID_SHELL || activeTab === 'map') && (
+      {/* The map iframe mounts only while the Map tab is front. CSS cannot make
+          an idle map cheap (a hidden iframe still holds its GL context, tile
+          workers and full-res canvas), so leaving the map unmounts it entirely
+          and returning remounts a fresh iframe (see MAP_GRACE_MS). This keeps
+          the map from starving Profile / Feed / Camera of frames. */}
+      {mapMounted && (
         <iframe
           ref={mapFrameRef}
-          className={styles.mapLayer}
+          className={activeTab === 'map' ? styles.mapLayer : `${styles.mapLayer} ${styles.mapLayerIdle}`}
           src={CLAY_MAP_SRC}
           title="Poplur clay map"
           allow="autoplay; geolocation"

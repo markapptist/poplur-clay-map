@@ -41,6 +41,13 @@
   background: #1f6bff;
 }
 
+/* Off the map tab the embed stays MOUNTED (so the map keeps its style, tiles
+   and camera and never re-boots) but stops being rendered: an unrendered frame
+   gets no rAF and no compositing, so Mapbox stops uploading tile textures.
+   While it was merely covered, it kept painting and starved whatever screen was
+   actually in front — Feed and Profile were losing most of their frames to it. */
+.mapLayerIdle { display: none; }
+
 /* Feed / Camera / Profile are explicitly above the always-mounted map.
    pointer-events: the layer itself must be transparent to touch — on the MAP
    tab it is empty but still full-screen, and it was swallowing every map
