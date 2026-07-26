@@ -1,3 +1,4 @@
+import { isGateMuted, onGateChange } from './audioGate'
 type RadioSource = AudioScheduledSourceNode & AudioNode
 
 interface RadioBed {
@@ -326,6 +327,9 @@ function hashText(value: string): number {
 
 function setRadioLevel(value: number, timeConstant = 0.18) {
   targetRadioLevel = value
+  // Every fade is clamped to silence while muted, so a level change can never
+  // reopen the sound behind the gate.
+  if (isGateMuted()) value = 0
   setLiveRadioLevel(value, timeConstant)
   // Real music playing → the synthesized bed becomes a faint texture only.
   const bedValue = liveStation ? value * 0.1 : value
@@ -425,6 +429,7 @@ function getLiveAudio(): HTMLAudioElement | null {
     liveAudio = new window.Audio()
     liveAudio.preload = 'none'
     liveAudio.volume = 0
+    liveAudio.muted = isGateMuted()
     const drop = () => { if (liveStation) dropLiveStation() }
     liveAudio.addEventListener('error', drop)
     // 'stalled' fires on transient buffering too — only drop if still stalled
@@ -483,12 +488,17 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
   if (typeof window === 'undefined') return null
   const generation = ++liveTuneGeneration
   const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
+  // Keep widening until something real is on air: your own town first, then the
+  // next city out, then the region. A single fixed radius left listeners in
+  // silence wherever no station happened to sit inside 90 km.
+  const RINGS_M = [30_000, 90_000, 250_000, 600_000, 1_500_000]
+  for (const radius of RINGS_M) {
   for (const host of hosts) {
     try {
       const ctl = new AbortController()
       const timer = window.setTimeout(() => ctl.abort(), 5000)
       const res = await fetch(
-        `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=90000&hidebroken=true&order=clickcount&reverse=true&limit=16`,
+        `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=${radius}&hidebroken=true&order=clickcount&reverse=true&limit=24`,
         { signal: ctl.signal },
       )
       window.clearTimeout(timer)
@@ -513,8 +523,11 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
         void audio.play().catch(() => { /* until the unlock gesture */ })
         setRadioLevel(targetRadioLevel, 0.5)
       }
+      // A real station is on: silence the synthesized stand-in bed entirely.
+      if (radioBed) radioBed.master.gain.value = 0
       return liveStation.name
     } catch { /* aborted or network error — try the next mirror */ }
+  }
   }
   return null
 }
@@ -581,4 +594,23 @@ export function announceMapTour(line: string, stations: ReadonlyArray<RadioStati
   window.speechSynthesis.cancel()
   window.speechSynthesis.speak(utterance)
   return true
+}
+
+// Muted means silent — not "quiet", and not "silent until the next fade or
+// reconnect turns the volume back up". The gate is checked at the source here
+// so no code path (level fades, stream reconnects, autoplay unlocks) can put
+// sound back while the user has it off.
+if (typeof window !== 'undefined') {
+  const applyGate = () => {
+    const muted = isGateMuted()
+    for (const el of [liveAudio, fallbackAudio]) {
+      if (!el) continue
+      el.muted = muted
+      if (muted) { try { el.pause() } catch { /* not started */ } }
+      else if (soundWanted) { void el.play().catch(() => { /* awaiting a gesture */ }) }
+    }
+    if (muted && radioBed) radioBed.master.gain.value = 0
+  }
+  onGateChange(applyGate)
+  applyGate()
 }

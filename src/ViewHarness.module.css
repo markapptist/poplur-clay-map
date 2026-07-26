@@ -85,12 +85,12 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  animation: screenReveal 180ms ease-out both;
+  animation: screenReveal 280ms ease both;
   will-change: opacity;
 }
 
 @keyframes screenReveal {
-  from { opacity: 0.2; }
+  from { opacity: 0; }
   to { opacity: 1; }
 }
 

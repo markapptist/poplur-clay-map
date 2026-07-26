@@ -477,12 +477,15 @@
 
 .zoomWrap {
   position: absolute;
-  right: 8px;
+  touch-action: none;
+  right: 4px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 26;
-  height: 200px;
-  width: 44px;
+  /* Was a 44px column with a 200px rail — too small to hit, let alone drag, on
+     a phone. Now a full-height rail with a 72px-wide touch column. */
+  height: min(56vh, 430px);
+  width: 92px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -491,16 +494,22 @@
 .zoom {
   -webkit-appearance: none;
   appearance: none;
-  width: 200px;
-  height: 34px;
+  /* the map behind was swallowing the drag on touch devices */
+  touch-action: none;
+  /* The rail is a flex item in a 96px column, so flex-shrink was quietly
+     capping it at ~129px no matter what width was asked for — which is why
+     every attempt to lengthen this slider did nothing. */
+  flex: 0 0 auto;
+  width: min(56vh, 430px);
+  height: 76px;
   transform: rotate(-90deg);
   background: transparent;
   cursor: pointer;
 }
 
 .zoom::-webkit-slider-runnable-track {
-  height: 10px;
-  border-radius: 6px;
+  height: 16px;
+  border-radius: 9px;
   background-image:
     linear-gradient(90deg, transparent 0 var(--zoomProgress, 0%), #17131a var(--zoomProgress, 0%) 100%),
     repeating-linear-gradient(45deg, #ffe1f1 0 15px, #ff86c4 15px 29px, #f53c99 29px 44px);
@@ -519,9 +528,9 @@
    painted from --zoomThumb set inline on .zoomWrap. */
 .zoom::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 46px;
-  height: 46px;
-  margin-top: -18px;
+  width: 64px;
+  height: 64px;
+  margin-top: -26px;
   border-radius: 0;
   background: var(--zoomThumb, radial-gradient(circle at 38% 30%, #FF8AC6, #F63B9A 55%, #b02d73)) center / contain no-repeat;
   box-shadow: none;
@@ -533,8 +542,8 @@
 }
 
 .zoom::-moz-range-track {
-  height: 10px;
-  border-radius: 6px;
+  height: 16px;
+  border-radius: 9px;
   background-image:
     linear-gradient(90deg, transparent 0 var(--zoomProgress, 0%), #17131a var(--zoomProgress, 0%) 100%),
     repeating-linear-gradient(45deg, #ffe1f1 0 15px, #ff86c4 15px 29px, #f53c99 29px 44px);
@@ -550,8 +559,8 @@
 }
 
 .zoom::-moz-range-thumb {
-  width: 46px;
-  height: 46px;
+  width: 64px;
+  height: 64px;
   border: none;
   border-radius: 0;
   background: var(--zoomThumb, radial-gradient(circle at 38% 30%, #FF8AC6, #F63B9A 55%, #b02d73)) center / contain no-repeat;
@@ -938,4 +947,57 @@
 @keyframes citySpritePop {
   from { opacity: 0; transform: scale(0.4); }
   to { opacity: 1; transform: scale(1); }
+}
+
+/* Current weather, above the zoom rail — the mark that says what it is doing
+   outside right now (sun, cloud, rain, storm, snow). */
+.zoomWeather {
+  position: absolute;
+  right: 4px;
+  /* just above the rail, and clear of the AI line at the top of the screen */
+  top: calc(50% - min(28vh, 215px) - 96px);
+  z-index: 27;
+  width: 92px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55)) drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
+}
+
+.zoomWeather svg,
+.zoomWeather img { width: 38px; height: 38px; }
+
+/* the reading, under the mark */
+.zoomTemp {
+  margin-top: 1px;
+  font: 900 13px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: #7fe3ff;
+  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.92);
+  paint-order: stroke fill;
+  filter: drop-shadow(0 0 7px rgba(74, 196, 255, 0.45));
+}
+
+/* Sun by day, moon by night — only while the whole earth is in frame. */
+.celestial {
+  position: absolute;
+  z-index: 24;
+  transform: translate(-50%, -50%);
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+  animation: celestialFloat 7.5s ease-in-out infinite;
+  filter:
+    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
+    drop-shadow(0 8px 14px rgba(0, 0, 0, 0.5));
+}
+
+/* the one below the horizon fades out rather than popping away */
+.celestialDim { opacity: 0.14; }
+
+@keyframes celestialFloat {
+  0%, 100% { transform: translate(-50%, -50%); }
+  50% { transform: translate(-50%, calc(-50% - 6px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .celestial { animation: none; }
 }

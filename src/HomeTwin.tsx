@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import ClayChannelArrows from './ClayChannelArrows'
-import FeedTwin, { CHANNELS } from './FeedTwin'
+import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera from './Camera'
-import HoldMenuTwin from './HoldMenuTwin'
+import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import { playPop, preloadPop } from './pop'
@@ -235,7 +235,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.clearTimeout(timer)
   }, [activeTab])
 
-  const loadingVisible = activeTab === 'map' && (!mapReady || forceMapLoading)
+  // No loading screen over the map any more. The map itself opens on the globe
+  // (zoomed all the way out) and eases in once its tiles are actually ready —
+  // the overlay only ever hid a load that the user can now watch happen.
+  // ?map-loading=1 still forces it for GCL captures.
+  const loadingVisible = activeTab === 'map' && forceMapLoading
   useEffect(() => {
     if (!loadingVisible) return
     const iv = window.setInterval(() => {
@@ -252,10 +256,34 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // parity picks the page, so both directions cycle live ⇄ roll.
   const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
+  useEffect(() => {
+    if (activeTab !== 'profile') { setViewingUser(null); setProfileOrigin(null) }
+  }, [activeTab])
 
   // Profile tab: the clay arrows scroll the grid / browse the open post —
   // ProfileTwin registers its handler here.
   const profileArrowsRef = useRef<((dir: 1 | -1) => void) | null>(null)
+  // LIKE / COMMENT / CC are performed by the feed itself.
+  const feedActionsRef = useRef<((action: FeedAction) => void) | null>(null)
+
+  // One route for every hold-menu action, whether it came from the menu or
+  // from a plain cube tap firing this tab's favourite.
+  // PROFILE included: the feed answers with whose post is playing, and that
+  // handle is the profile we open — not your own.
+  const runMenuAction = (action: FeedAction) => {
+    feedActionsRef.current?.(action)
+  }
+
+  // null = your own profile; a handle = that user's profile.
+  const [viewingUser, setViewingUser] = useState<string | null>(null)
+  // Where that profile was opened FROM, so closing it returns you there (the
+  // feed you were watching) instead of dropping you on your own profile.
+  const [profileOrigin, setProfileOrigin] = useState<CubeTab | null>(null)
+  // A hold-menu screen (News, TV Guide) is covering the app: the feed behind it
+  // must stop playing and its captions must not show through.
+  const [overlayOpen, setOverlayOpen] = useState(false)
+  // Which of the nearby posts the map arrows are parked on (1-based on screen).
+  const [mapPostIdx, setMapPostIdx] = useState(0)
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
@@ -270,8 +298,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       return
     }
     if (activeTab === 'map') {
-      // On the map the arrows cycle the user's pops: the map flies pop-to-pop
-      // with the tour camera instead of changing feed channels.
+      // On the map the arrows walk the posts around you: the map flies
+      // pop-to-pop and the number between the arrows is which post you are on.
+      setMapPostIdx(i => ((i + dir) % POST_COUNT + POST_COUNT) % POST_COUNT)
       mapFrameRef.current?.contentWindow?.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir }, '*')
       return
     }
@@ -281,6 +310,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const popCube = () => {
     playPop()
     setPopping(true)
+    // Tapping the cube runs whatever you pinned in this tab's hold menu.
+    const favourite = readFavourite(activeTab)
+    if (favourite) {
+      const map: Record<string, 'like' | 'comment' | 'captions' | 'profile'> = {
+        LIKE: 'like', COMMENT: 'comment', 'CC ON': 'captions', 'CC OFF': 'captions', PROFILE: 'profile',
+      }
+      const action = map[favourite]
+      if (action) runMenuAction(action)
+    }
     // The cube IS the camera shutter on the post tab — fire the real native
     // capture (previous versions' cube-tap capture) through the bridge.
     if (activeTab === 'post' && isNativeShell()) postNativeEvent({ type: 'cameraShutter' })
@@ -307,9 +345,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       )}
 
       <div className={styles.contentLayer}>
-        {activeTab === 'feed' && <FeedTwin index={chanIndex} onIndexChange={setChanIndex} />}
+        {activeTab === 'feed' && (
+          <FeedTwin
+            index={chanIndex}
+            onIndexChange={setChanIndex}
+            bindActions={fn => { feedActionsRef.current = fn }}
+            suppressed={overlayOpen || holdOpen}
+            onOpenProfile={user => {
+              setProfileOrigin(activeTab)
+              setViewingUser(user)
+              setActiveTab('profile')
+            }}
+          />
+        )}
         {activeTab === 'post' && <Camera step={cameraStep} onCloseRoll={() => setCameraStep(s => s - 1)} />}
-        {activeTab === 'profile' && <ProfileTwin bindArrows={fn => { profileArrowsRef.current = fn }} />}
+        {activeTab === 'profile' && (
+          <ProfileTwin
+            bindArrows={fn => { profileArrowsRef.current = fn }}
+            viewUser={viewingUser}
+            onBackToOwn={() => {
+              setActiveTab(profileOrigin ?? 'feed')
+              setViewingUser(null)
+              setProfileOrigin(null)
+            }}
+          />
+        )}
       </div>
 
       {loadingVisible && (
@@ -357,7 +417,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         <div className={styles.chanSlot}>
           <ClayChannelArrows
             size={cubeSize}
-            number={CHANNELS[chanIndex].number}
+            number={activeTab === 'map' ? mapPostIdx + 1 : CHANNELS[chanIndex].number}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
           />
@@ -439,7 +499,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       {/* Cube long-press hold menu — translucent overlay whose item set matches
           the tab it was opened from. Closes back to that tab. */}
-      {holdOpen && <HoldMenuTwin tab={activeTab} onClose={() => setHoldOpen(false)} />}
+      {holdOpen && (
+        <HoldMenuTwin
+          tab={activeTab}
+          onClose={() => setHoldOpen(false)}
+          onAction={runMenuAction}
+          onSubscreenChange={setOverlayOpen}
+        />
+      )}
     </section>
   )
 }

@@ -1,0 +1,281 @@
+/* THE POPLUR TIMES — newsprint surface, timeline behaviour. */
+
+.paper {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  overflow: hidden;
+  color: #16120c;
+  /* newsprint: warm paper with a faint fibre tooth */
+  background:
+    repeating-linear-gradient(0deg, rgba(22, 18, 12, 0.022) 0 1px, transparent 1px 3px),
+    radial-gradient(120% 60% at 50% 0%, #fbf7ec, transparent 60%),
+    #f4efe1;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+}
+
+.closeSlot {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  right: 14px;
+  z-index: 3;
+}
+
+.scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: max(18px, env(safe-area-inset-top)) 18px 40px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scroll::-webkit-scrollbar { display: none; }
+
+/* ---- masthead ---- */
+
+.masthead { padding-top: 6px; }
+
+.mastRule,
+.mastRuleThin {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgba(22, 18, 12, 0.66);
+}
+
+.mastRule {
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(22, 18, 12, 0.5);
+}
+
+.mastRuleThin {
+  margin-top: 7px;
+  padding: 6px 0 9px;
+  border-top: 1px solid rgba(22, 18, 12, 0.5);
+  border-bottom: 3px double rgba(22, 18, 12, 0.66);
+}
+
+.title {
+  margin: 10px 0 2px;
+  text-align: center;
+  font-size: clamp(34px, 11vw, 52px);
+  font-weight: 900;
+  line-height: 0.94;
+  letter-spacing: -0.5px;
+  /* letterpress: ink sitting in the paper */
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8), 0 -1px 0 rgba(22, 18, 12, 0.12);
+}
+
+/* ---- lead story ---- */
+
+.lead { padding: 14px 0 12px; }
+
+.kicker {
+  font: 800 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.8px;
+  color: #a3172c;
+  margin-bottom: 6px;
+}
+
+.leadHead {
+  margin: 0 0 8px;
+  font-size: clamp(21px, 6.4vw, 28px);
+  font-weight: 900;
+  line-height: 1.1;
+  letter-spacing: -0.2px;
+}
+
+.leadBody {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  text-align: justify;
+  hyphens: auto;
+}
+
+.dropCap {
+  float: left;
+  margin: 4px 7px 0 0;
+  font-size: 46px;
+  line-height: 0.78;
+  font-weight: 900;
+}
+
+.byline {
+  clear: both;
+  margin-top: 9px;
+  font: 700 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.4px;
+  color: rgba(22, 18, 12, 0.62);
+}
+
+.columnsRule {
+  height: 0;
+  margin: 6px 0 4px;
+  border-top: 3px double rgba(22, 18, 12, 0.6);
+}
+
+/* ---- timeline (Twitter behaviour, newsprint dress) ---- */
+
+.timeline { padding-top: 4px; }
+
+.entry {
+  display: flex;
+  gap: 11px;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(22, 18, 12, 0.22);
+}
+
+/* AI dispatches are set apart like a standing column */
+.entryAi {
+  padding-left: 10px;
+  border-left: 3px solid #a3172c;
+  background: linear-gradient(90deg, rgba(163, 23, 44, 0.05), transparent 60%);
+}
+
+.avatar {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  /* halftone-ish: newsprint photographs are never crisp colour */
+  filter: contrast(1.08) saturate(0.72);
+  box-shadow: 0 0 0 1px rgba(22, 18, 12, 0.45);
+}
+
+.entryBody { flex: 1; min-width: 0; }
+
+.entryTop {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.who { font-weight: 900; font-size: 14.5px; }
+
+.handle,
+.when,
+.dot {
+  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(22, 18, 12, 0.55);
+}
+
+.aiTag {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid #a3172c;
+  color: #a3172c;
+  font: 800 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1px;
+}
+
+.body {
+  margin: 5px 0 0;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+/* every written post carries a radius, like a video pop */
+.reach {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.4px;
+  color: rgba(22, 18, 12, 0.58);
+}
+
+.reachPip {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f63b9a;
+  box-shadow: 0 0 0 3px rgba(246, 59, 154, 0.22);
+}
+
+.actions {
+  display: flex;
+  gap: 20px;
+  margin-top: 9px;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: rgba(22, 18, 12, 0.6);
+  font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+
+.action span { font-size: 14px; }
+
+.action:active { transform: scale(0.92); }
+
+.actionOn { color: #d1246b; }
+
+/* ---- the presses keep running ---- */
+
+.sentinel {
+  padding: 22px 0 10px;
+  text-align: center;
+}
+
+.setting,
+.endMark {
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.6px;
+  color: rgba(22, 18, 12, 0.5);
+}
+
+.endMark { color: rgba(22, 18, 12, 0.72); }
+
+/* Headlines carry an ink shader — a fixed sheen through the letterforms, the
+   way heavy press ink catches light. No animation. */
+.inkShader {
+  background-image: linear-gradient(168deg,
+    #3d342a 0%, #16120c 34%, #000000 52%, #241d15 74%, #4a4034 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.72));
+}
+
+/* ---- map plates: real snapshots of the map, printed like newspaper art ---- */
+
+.plate {
+  margin: 12px 0 4px;
+}
+
+.plateSmall {
+  margin: 9px 0 2px;
+  max-width: 320px;
+}
+
+.plateImg {
+  display: block;
+  width: 100%;
+  border: 1px solid rgba(22, 18, 12, 0.55);
+  /* printed, not screened: knock the colour back into newsprint */
+  filter: grayscale(0.55) contrast(1.14) sepia(0.16);
+}
+
+.plateCap {
+  margin-top: 4px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid rgba(22, 18, 12, 0.3);
+  font: 700 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.2px;
+  color: rgba(22, 18, 12, 0.6);
+}

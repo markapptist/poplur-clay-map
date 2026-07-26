@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
+import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
@@ -65,12 +67,84 @@ const SHARE_FRIENDS = [
 // RADIUS⇄TRENDING label live in the home HUD (HomeTwin), which controls the
 // channel index from its clay arrows. Standalone (?view=feed) it manages its
 // own index.
+export type FeedAction = 'like' | 'comment' | 'captions' | 'profile'
+
+// A channel is a stack of POSTS by different users. Channels that don't ship
+// their own creative borrow a stock clip, chosen by channel number, so a
+// channel is never empty and the static never sticks with nothing behind it.
+const STOCK_CLIPS = [
+  'feed/ad-food.mp4', 'feed/ad-sports.mp4', 'feed/ad-music.mp4', 'feed/ad-french.mp4',
+  'feed/ad-shopping.mp4', 'feed/ad-cartoon.mp4', 'feed/ad-kids.mp4', 'feed/ad-comedy.mp4',
+  'feed/ad-spanish-1.mp4', 'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4',
+]
+
+const CHANNEL_USERS: Record<string, string[]> = {
+  food: ['@sauceboss', '@nightmarket', '@poutine.patrol'],
+  beauty: ['@glowgetter', '@softglam', '@lash.lab'],
+  sports: ['@pitchside', '@extratime', '@thekop'],
+  modelling: ['@runwayraw', '@backstage', '@lookbook'],
+  fashion: ['@fitcheckdaily', '@thriftking', '@atelier'],
+  music: ['@basement.set', '@warehouse', '@bpm'],
+  tech: ['@shipit', '@desksetup', '@benchmark'],
+  news: ['@localwire', '@harbourfront', '@citydesk'],
+  french: ['@paris.pov', '@terrasse', '@boulangerie'],
+  spanish: ['@vibra.cdmx', '@alpastor', '@mercado'],
+  shopping: ['@hauls', '@samplesale', '@under20'],
+  cartoon: ['@doodlecast', '@clayoc', '@keyframe'],
+  kids: ['@playtime', '@blanketfort', '@snacktime'],
+  comedy: ['@bitmerchant', '@openmic', '@baristabit'],
+}
+
+export interface ChannelPost { user: string; video: string }
+
+// Ordered by the post's radius intercepting your location, widest first.
+function postsFor(channel: Channel): ChannelPost[] {
+  const users = CHANNEL_USERS[channel.id] ?? [channel.user]
+  const own = channel.videos ?? []
+  // Each user posts something different: the channel's own clips first, then
+  // stock ones — repeating a single clip across users made stepping look broken.
+  return users.map((user, i) => ({
+    user,
+    video: own[i] ?? STOCK_CLIPS[(channel.number + i * 5) % STOCK_CLIPS.length],
+  }))
+}
+
+// Captions come from the clip's own audio (transcribed with whisper.cpp), so
+// they are keyed by VIDEO — each user's post has its own track.
+function cuesFor(video: string | undefined, fallback: string) {
+  return (video && CAPTION_CUES[video]) || [{ t: 0, text: fallback }]
+}
+
+// Comments on the playing post. They roll like end credits above the box.
+// Pictures are spoofed from stills we already ship, same as the share sheet.
+const COMMENT_ROLL = [
+  { who: '@nightmarket', body: 'this is exactly my block 😭', pic: 'feed/posters/ad-food.jpg' },
+  { who: '@poutine.patrol', body: 'the gravy shot at 0:12 is criminal', pic: 'feed/posters/ad-comedy.jpg' },
+  { who: '@harbourfront', body: 'ok but where is this', pic: 'feed/posters/ad-french.jpg' },
+  { who: '@queenwest', body: 'went last week, worth the line', pic: 'feed/posters/ad-shopping.jpg' },
+  { who: '@the_annex', body: 'adding to my radius right now', pic: 'mark_talk0.png' },
+  { who: '@sauceboss', body: 'reply: open till 4am all weekend', pic: 'feed/posters/ad-food.jpg' },
+  { who: '@kensington_eats', body: 'the curds squeak, i can hear it', pic: 'feed/posters/ad-kids.jpg' },
+  { who: '@basement.set', body: 'soundtrack goes hard btw', pic: 'feed/posters/ad-music.jpg' },
+  { who: '@localwire', body: 'covering this Friday, see you there', pic: 'feed/posters/ad-sports.jpg' },
+  { who: '@hauls', body: 'my whole feed is this place today', pic: 'feed/posters/ad-cartoon.jpg' },
+]
+
 export default function FeedTwin({
   index: controlledIndex,
   onIndexChange,
+  bindActions,
+  onOpenProfile,
+  suppressed = false,
 }: {
   index?: number
   onIndexChange?: (index: number) => void
+  /** hold-menu hook: LIKE / COMMENT / CC act on the post that is playing */
+  bindActions?: (fn: ((action: FeedAction) => void) | null) => void
+  /** PROFILE opens the poster's profile, not yours */
+  onOpenProfile?: (user: string) => void
+  /** something is covering the feed (hold menu, News, TV Guide): go quiet */
+  suppressed?: boolean
 } = {}) {
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
@@ -81,6 +155,25 @@ export default function FeedTwin({
   const [centerIdx, setCenterIdx] = useState(0)
   const [muted, setMuted] = useState(isUserMuted)
   const [heart, setHeart] = useState<{ x: number; y: number; id: number } | null>(null)
+  const suppressedRef = useRef(suppressed)
+  suppressedRef.current = suppressed
+  const [commentOpen, setCommentOpen] = useState(false)
+  const [commentClosing, setCommentClosing] = useState(false)
+  const [commentText, setCommentText] = useState('')
+  const [commentSent, setCommentSent] = useState<string | null>(null)
+  const [captionsOn, setCaptionsOn] = useState(() => {
+    try { return window.localStorage.getItem('poplur.captions') === '1' } catch { return false }
+  })
+
+  // Persist as an effect, never inside the updater — StrictMode double-invokes
+  // updaters, so the write (and the toggle) used to run twice and cancel out.
+  useEffect(() => {
+    try { window.localStorage.setItem('poplur.captions', captionsOn ? '1' : '0') } catch { /* private mode */ }
+  }, [captionsOn])
+
+  // The caption line follows the video's clock: whichever cue's start time has
+  // passed most recently is the one on screen, and it clears between cues.
+  const [captionLine, setCaptionLine] = useState('')
   const [shareOpen, setShareOpen] = useState(false)
   const [shareNote, setShareNote] = useState<string | null>(null)
   const gestureStart = useRef<{ pointerId: number; x: number; y: number } | null>(null)
@@ -129,12 +222,13 @@ export default function FeedTwin({
   const contentIdxRef = useRef<Record<string, number>>({})
   const [, forceContentRender] = useState(0)
   const changeContent = useCallback((dir: 1 | -1) => {
-    const count = ch.videos?.length ?? 0
+    const count = postsFor(ch).length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
     contentIdxRef.current[ch.id] = (current + dir + count) % count
+    playPop()
     forceContentRender(n => n + 1)
-  }, [ch.id, ch.videos])
+  }, [ch])
 
   // Keyboard twin of the gestures: up/down = channel, left/right = content.
   useEffect(() => {
@@ -156,7 +250,12 @@ export default function FeedTwin({
     window.setTimeout(() => { wheelLock.current = false }, 420)
   }
 
-  const adSrc = ch.videos?.[(contentIdxRef.current[ch.id] ?? 0) % (ch.videos?.length || 1)]
+  const posts = postsFor(ch)
+  const post = posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length]
+  const adSrc = post?.video
+  // read inside the action bridge without re-binding it every post
+  const postRef = useRef(post)
+  postRef.current = post
   const shareLink = `https://poplur.app/p/ch${ch.number}`
 
   const flashShareNote = (text: string) => {
@@ -217,7 +316,14 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('static') === '1'
   const forceTransition = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('transition') === '1'
+  // Static is the channel-change transition. Moving between posts inside a
+  // channel is not a channel change, so it must never raise static.
+  const [staticArmed, setStaticArmed] = useState(true)
+  useEffect(() => { setStaticArmed(true) }, [ch.id])
+
   const adReady = Boolean(adSrc) && readyAdSrc === adSrc
+  useEffect(() => { if (adReady) setStaticArmed(false) }, [adReady])
+  const showStatic = (staticArmed && !adReady) || forceStatic || forceTransition
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
   const staticReady = readyStaticKey === staticKey
@@ -267,6 +373,10 @@ export default function FeedTwin({
     const apply = () => {
       const video = adVideoRef.current
       if (!video) return
+      // Covered by News / TV Guide / the hold menu: stay silent and stopped,
+      // whatever the gate says — this effect used to resume playback the moment
+      // it ran, which is why the feed kept going behind the paper.
+      if (suppressedRef.current) { video.muted = true; video.pause(); return }
       video.muted = isGateMuted()
       video.volume = 0.85
       // A muted element may already be playing; unmuting can still need a nudge.
@@ -339,12 +449,87 @@ export default function FeedTwin({
 
     // Double-tap to like (heart pop), like the app. A drag never counts.
     const now = Date.now()
-    if (now - lastTap.current < 300) {
-      setHeart({ x: e.clientX, y: e.clientY, id: now })
-      window.setTimeout(() => setHeart(h => (h && h.id === now ? null : h)), 900)
-    }
+    if (now - lastTap.current < 300) popHeart(e.clientX, e.clientY)
     lastTap.current = now
   }
+
+  // One like animation, whatever triggered it: double tap on the video, or
+  // LIKE from the hold menu (which has no pointer position, so it pops centre).
+  const popHeart = (x?: number, y?: number) => {
+    const id = Date.now()
+    setHeart({ x: x ?? window.innerWidth / 2, y: y ?? window.innerHeight / 2, id })
+    window.setTimeout(() => setHeart(h => (h && h.id === id ? null : h)), 900)
+  }
+
+  useEffect(() => {
+    if (!bindActions) return
+    bindActions(action => {
+      if (action === 'like') { playPop(); popHeart(); return }
+      if (action === 'comment') { playPop(); setCommentOpen(true); return }
+      if (action === 'captions') {
+        playPop()
+        setCaptionsOn(on => !on)
+        return
+      }
+      if (action === 'profile') {
+        // whoever posted the video you are watching
+        playPop()
+        onOpenProfile?.(postRef.current?.user ?? ch.user)
+      }
+    })
+    return () => bindActions(null)
+  }, [bindActions])
+
+  // Tapping outside sends the window back up the way it came, then unmounts.
+  const closeComments = () => {
+    setCommentClosing(true)
+    window.setTimeout(() => {
+      setCommentOpen(false)
+      setCommentClosing(false)
+    }, 360)
+  }
+
+  const sendComment = () => {
+    const body = commentText.trim()
+    if (!body) return
+    playPop()
+    setCommentText('')
+    closeComments()
+    setCommentSent(body)
+    window.setTimeout(() => setCommentSent(null), 2200)
+  }
+
+  useEffect(() => {
+    if (!captionsOn) { setCaptionLine(''); return }
+    const video = adVideoRef.current
+    const cues = cuesFor(adSrc, ch.caption)
+    if (!video) { setCaptionLine(cues[0]?.text ?? ''); return }
+    // clear the previous post's line the moment the clip changes
+
+    const sync = () => {
+      const at = video.currentTime
+      let current = ''
+      for (const cue of cues) {
+        if (at + 0.01 >= cue.t) current = cue.text
+        else break
+      }
+      setCaptionLine(current)
+    }
+    sync()
+    video.addEventListener('timeupdate', sync)
+    video.addEventListener('seeked', sync)
+    return () => {
+      video.removeEventListener('timeupdate', sync)
+      video.removeEventListener('seeked', sync)
+    }
+  }, [captionsOn, ch, adSrc, index])
+
+  useEffect(() => {
+    const video = adVideoRef.current
+    if (!video) return
+    if (suppressed) { video.muted = true; video.pause() }
+    else { video.muted = isGateMuted(); void video.play().catch(() => {}) }
+  }, [suppressed, adSrc])
 
   const [c0, c1, c2] = ch.theme
 
@@ -356,14 +541,23 @@ export default function FeedTwin({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
-      {/* Full-bleed "video": animated themed background + film grain + scanlines */}
-      <div
-        key={`bg-${ch.id}`}
-        className={styles.video}
-        style={{ background: `radial-gradient(120% 90% at 30% 20%, ${c2}, ${c1} 45%, ${c0} 100%)` }}
-      >
-        <div className={styles.drift} style={{ background: `conic-gradient(from 0deg at 60% 40%, ${c2}00, ${c2}55, ${c2}00)` }} />
-      </div>
+      {/* Tap the left or right edge to step through the other users posting on
+          this channel — the tap twin of the horizontal swipe. The middle is
+          left clear so double-tap-to-like still works. */}
+      <button
+        className={`${styles.userStep} ${styles.userStepLeft}`}
+        onClick={() => changeContent(-1)}
+        aria-label="Previous user on this channel"
+      />
+      <button
+        className={`${styles.userStep} ${styles.userStepRight}`}
+        onClick={() => changeContent(1)}
+        aria-label="Next user on this channel"
+      />
+
+      {/* Behind the creative is black, not a themed wash — a channel change
+          shows STATIC, never a coloured card. */}
+      <div key={`bg-${ch.id}`} className={styles.video} style={{ background: '#05040a' }} />
 
       {/* The channel's real ad creative (bundled from the previous version's
           Drive ads) plays full-bleed over the gradient; the gradient shows
@@ -388,13 +582,13 @@ export default function FeedTwin({
       {/* Static + channel identity while the video buffers or swaps; fades out
           over 0.5s (ease-out) exactly like the app, and stays up as the
           "no signal" card on channels with no creative yet. */}
-      <div className={adReady && !forceStatic && !forceTransition ? styles.staticLayerHidden : styles.staticLayer} aria-hidden="true">
+      <div className={showStatic ? styles.staticLayer : styles.staticLayerHidden} aria-hidden="true">
         {/* Once the ad's real frames arrive the static cover fades out — but a
             fully-transparent <video> keeps its decoder running, a second live
             decoder behind the ad for no visible gain. Unmount it when the ad is
             ready (the identity card stays as the "no signal" state for channels
             with no creative, where adReady never flips). */}
-        {(!adReady || forceStatic || forceTransition) && (
+        {showStatic && (
           <video
             ref={staticVideoRef}
             className={staticReady ? `${styles.staticVideo} ${styles.staticVideoReady}` : styles.staticVideo}
@@ -512,6 +706,58 @@ export default function FeedTwin({
 
       {shareNote && <div className={profileStyles.shareNote}>{shareNote}</div>}
       {heart && <span className={styles.heart} style={{ left: heart.x, top: heart.y }}>♥</span>}
+
+      {/* Closed captions ride above the home chrome (cube, counters), so they
+          are portalled out of the feed's stacking context. Language stays a
+          Settings choice. */}
+      {captionsOn && !suppressed && captionLine && typeof document !== 'undefined' && createPortal(
+        <div className={styles.captions}><span>{captionLine}</span></div>,
+        document.body,
+      )}
+
+      {/* Comment box drops from the top, in the app's clay/glass language. */}
+      {commentOpen && (
+        <div className={styles.commentScrim} onClick={closeComments}>
+          <div
+            className={commentClosing ? `${styles.commentWindow} ${styles.commentWindowOut}` : styles.commentWindow}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* the roll drifts upward like end credits */}
+            <div className={styles.commentRoll}>
+              <div className={styles.commentRollTrack}>
+                {[0, 1].map(copy => (
+                  <div key={copy} aria-hidden={copy === 1}>
+                    {COMMENT_ROLL.map(c => (
+                      <p className={styles.commentLine} key={`${copy}-${c.who}`}>
+                        <img className={styles.commentAvatar} src={c.pic} alt="" draggable="false" />
+                        <span className={styles.commentText}>
+                          <span className={styles.commentWho}>{c.who}</span>
+                          <span className={styles.commentBody}>{c.body}</span>
+                        </span>
+                      </p>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.commentTitle}>Comment on {ch.user}</div>
+            <div className={styles.commentRow}>
+              <input
+                className={styles.commentInput}
+                value={commentText}
+                placeholder="Say something…"
+                onChange={e => setCommentText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') sendComment() }}
+                autoFocus
+              />
+              <ClayCornerButton kind="send" label="Post comment" size={46} onPress={sendComment} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {commentSent && <div className={styles.commentToast}>Comment posted</div>}
     </div>
   )
 }

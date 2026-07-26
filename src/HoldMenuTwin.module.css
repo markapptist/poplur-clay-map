@@ -18,7 +18,9 @@
   z-index: 240;
   overflow: hidden;
   background: #08040a;
-  animation: subscreenIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+  /* a plain fade reads far calmer than the old slide+scale, which made every
+     sub-screen feel like it was being thrown at you */
+  animation: subscreenIn 0.42s ease both;
 }
 
 .subscreenFrame {
@@ -29,41 +31,16 @@
   background: #08040a;
 }
 
-.subscreenBack {
+.subscreenClose {
   position: absolute;
-  left: max(16px, env(safe-area-inset-left));
+  right: max(16px, env(safe-area-inset-right));
   top: max(16px, env(safe-area-inset-top));
-  min-height: 42px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 14px 0 10px;
-  border: 2px solid #ff148c;
-  border-radius: 999px;
-  color: #fff2f8;
-  background: rgba(13, 8, 20, 0.92);
-  box-shadow:
-    inset 0 0 12px rgba(255, 20, 140, 0.18),
-    0 0 18px rgba(255, 20, 140, 0.52);
-  font: 950 11px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  letter-spacing: 0.7px;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.subscreenBack span {
-  color: #ff72b8;
-  font-size: 27px;
-  line-height: 0.7;
-}
-
-.subscreenBack:active {
-  transform: scale(0.94);
+  z-index: 2;
 }
 
 @keyframes subscreenIn {
-  from { opacity: 0; transform: translateY(3%) scale(0.985); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes menuIn {
@@ -153,6 +130,77 @@
     0 2px 0 rgba(91, 10, 48, 0.98),
     0 4px 9px rgba(0, 0, 0, 0.9),
     0 0 10px rgba(255, 20, 140, 0.9);
+}
+
+/* HOLD TO FAVOURITE hint on the left edge — the mirror of SCRUB. */
+.favHint {
+  position: absolute;
+  left: 18px;
+  top: 46%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 34px;
+  padding: 13px 0;
+  box-sizing: border-box;
+  color: #fff2f8;
+  text-shadow:
+    0 2px 0 rgba(5, 14, 46, 0.95),
+    0 4px 8px rgba(0, 0, 0, 0.9),
+    0 0 8px rgba(255, 20, 140, 0.7);
+  pointer-events: none;
+  z-index: 50;
+}
+
+.favHintStar {
+  font-size: 15px;
+  font-weight: 950;
+  line-height: 0.7;
+  text-shadow:
+    0 2px 0 rgba(91, 10, 48, 0.98),
+    0 0 8px rgba(255, 20, 140, 0.9);
+}
+
+.favHintText {
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 1.35px;
+  writing-mode: vertical-rl;
+  text-shadow:
+    0 2px 0 rgba(5, 14, 46, 0.95),
+    0 0 7px rgba(255, 20, 140, 0.7);
+}
+
+/* the pinned item wears a star */
+.tile[data-favourite='true'] .label::after,
+.tile[data-favourite='true'] .labelOn::after {
+  content: ' ★';
+  color: #ffd76a;
+}
+
+.favToast {
+  position: absolute;
+  left: 50%;
+  bottom: 15%;
+  z-index: 60;
+  transform: translateX(-50%);
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(13, 8, 20, 0.94);
+  border: 2px solid #ff148c;
+  color: #fff2f8;
+  font: 950 11px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  box-shadow: 0 0 18px rgba(255, 20, 140, 0.5);
+  animation: favToastIn 0.34s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+}
+
+@keyframes favToastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 /* SCRUB ↕ hint on the right edge */

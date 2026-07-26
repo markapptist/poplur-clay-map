@@ -89,19 +89,27 @@ export default function ClayCornerButton({
   onPress,
   size = 44,
   activateOnClick = false,
+  tone = 'clay',
+  still = false,
 }: {
-  kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'capture'
+  kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
   active?: boolean
   label: string
   onPress: () => void
   size?: number
   /** Use click for controls that unmount their surface, preventing pointer-through. */
   activateOnClick?: boolean
+  /** 'cream' moulds the object in white clay, for light grounds. */
+  tone?: 'clay' | 'cream'
+  /** Render once and stop, waking only for a press. Use on heavy screens (the
+   *  map) where a permanent idle tumble is a renderer running for nothing. */
+  still?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeRef = useRef(active)
   activeRef.current = active
   const pulse = useRef(0)
+  const wakeRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -150,11 +158,13 @@ export default function ClayCornerButton({
     const clayColor = new THREE.Color(CLAY)
     const goldColor = new THREE.Color(GOLD)
 
+    const bodyMat = tone === 'cream' ? creamMat : mat
+
     const root = new THREE.Group()
     scene.add(root)
 
     const geos: THREE.BufferGeometry[] = []
-    const mesh = (shape: THREE.Shape, material: THREE.Material = mat) => {
+    const mesh = (shape: THREE.Shape, material: THREE.Material = bodyMat) => {
       const geo = new THREE.ExtrudeGeometry(shape, extrude)
       geo.translate(0, 0, -0.26)
       geos.push(geo)
@@ -184,6 +194,41 @@ export default function ClayCornerButton({
       const floor = mesh(barShape(1.86, 0.3))
       floor.position.set(0, -0.83, 0)
       root.add(shaft, head, left, right, floor)
+    } else if (kind === 'send') {
+      // One bold triangle, moulded — reads as SEND at a glance, no thin shaft.
+      const head = mesh(arrowShape(1.18))
+      head.position.set(0.12, 0, 0)
+      root.add(head)
+    } else if (kind === 'locate') {
+      // The narrow navigation triangle — a slim dart pointing up-right, the
+      // shape every map uses for "you are here".
+      const dart = new THREE.Shape()
+      dart.moveTo(0, 1.15)
+      dart.lineTo(0.74, -1.05)
+      dart.lineTo(0, -0.44)
+      dart.lineTo(-0.74, -1.05)
+      dart.closePath()
+      const tri = mesh(dart)
+      tri.rotation.z = -0.42
+      root.add(tri)
+    } else if (kind === 'search') {
+      // Magnifier: a moulded ring with a stubby handle off its lower right.
+      const ring = mesh(discRingShape(0.78, 0.5))
+      ring.position.set(-0.12, 0.16, 0)
+      const handle = mesh(barShape(0.72, 0.3))
+      handle.position.set(0.62, -0.5, 0)
+      handle.rotation.z = -Math.PI / 4
+      root.add(ring, handle)
+    } else if (kind === 'mail') {
+      // Envelope: a moulded body with the flap creased across its top half.
+      const body = mesh(barShape(2.0, 1.35, 0.24))
+      const flapL = mesh(barShape(1.16, 0.22))
+      flapL.position.set(-0.5, 0.3, 0.22)
+      flapL.rotation.z = -0.52
+      const flapR = mesh(barShape(1.16, 0.22))
+      flapR.position.set(0.5, 0.3, 0.22)
+      flapR.rotation.z = 0.52
+      root.add(body, flapL, flapR)
     } else if (kind === 'link') {
       // Chain link: two rounded rings leaning into each other.
       const a = mesh(ringShape(1.18, 0.72, 0.2, 0.34))
@@ -219,18 +264,25 @@ export default function ClayCornerButton({
     let raf = 0
     const clock = new THREE.Clock()
     const tick = () => {
-      const t = clock.getElapsedTime()
+      const t = still ? 0.7 : clock.getElapsedTime()
       root.rotation.set(-0.14 + Math.sin(t * 0.9) * 0.07, Math.sin(t * 1.15) * 0.45, 0)
-      mat.color.copy(kind === 'flash' && activeRef.current ? goldColor : clayColor)
+      if (tone !== 'cream') mat.color.copy(kind === 'flash' && activeRef.current ? goldColor : clayColor)
       pulse.current += (0 - pulse.current) * 0.12
       const restScale = kind === 'capture' ? 1.32 : kind === 'close' ? 1.18 : 0.9
       root.scale.setScalar(restScale + pulse.current * 0.1)
-      mat.emissive.copy(restEmissive).lerp(litEmissive, pulse.current)
-      mat.emissiveIntensity = (kind === 'flash' && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
+      bodyMat.emissive.copy(restEmissive).lerp(litEmissive, pulse.current)
+      bodyMat.emissiveIntensity = (kind === 'flash' && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
       renderer.render(scene, camera)
-      raf = requestAnimationFrame(tick)
+      // Still buttons hold their pose: keep drawing only while a press pulse is
+      // still decaying, otherwise stop the loop entirely.
+      if (!still || pulse.current > 0.002) raf = requestAnimationFrame(tick)
+      else raf = 0
     }
     tick()
+    if (still) {
+      const wake = () => { if (!raf) raf = requestAnimationFrame(tick) }
+      wakeRef.current = wake
+    }
 
     return () => {
       cancelAnimationFrame(raf)
@@ -239,7 +291,7 @@ export default function ClayCornerButton({
       creamMat.dispose()
       renderer.dispose()
     }
-  }, [size, kind])
+  }, [size, kind, tone, still])
 
   return (
     <div style={{ position: 'relative', width: size, height: size, pointerEvents: 'auto' }}>
@@ -247,7 +299,15 @@ export default function ClayCornerButton({
         ref={canvasRef}
         width={size}
         height={size}
-        style={{ width: size, height: size, display: 'block', pointerEvents: 'none' }}
+        style={{
+          width: size,
+          height: size,
+          display: 'block',
+          pointerEvents: 'none',
+          filter: tone === 'cream'
+            ? 'drop-shadow(0 3px 0 rgba(150,108,130,.45)) drop-shadow(0 7px 10px rgba(60,20,44,.35))'
+            : undefined,
+        }}
       />
       <button
         type="button"

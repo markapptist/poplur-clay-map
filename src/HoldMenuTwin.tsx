@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import styles from './HoldMenuTwin.module.css'
 import { playPop } from './pop'
 import type { CubeTab } from './CubeTab3D'
+import ClayCornerButton from './ClayCornerButton'
+import TVGuide from './TVGuide'
+import NewsPaper from './NewsPaper'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -20,6 +23,10 @@ interface Item {
   preview?: boolean
   toggle?: 'tour' | 'captions' | 'detection'
   activeTitle?: string
+  /** rendered by the app itself rather than embedded from Rough Copy */
+  native?: boolean
+  /** performed on the live screen — no subscreen opens */
+  action?: 'like' | 'comment' | 'captions' | 'profile'
 }
 
 // Per-tab item sets are the confirmed hold-menu inventory. Every tile keeps a
@@ -34,12 +41,12 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-search' },
   ],
   feed: [
-    { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg' },
-    { icon: 'Chat', title: 'COMMENT', screen: 'feed-comments' },
-    { icon: 'Home', title: 'PROFILE', screen: 'profile-stats' },
-    { icon: 'News', title: 'NEWS', screen: 'feed-news' },
-    { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide' },
-    { icon: 'CC', title: 'CC ON', activeTitle: 'CC OFF', toggle: 'captions', screen: 'feed-cc', format: 'svg' },
+    { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg', action: 'like' },
+    { icon: 'Chat', title: 'COMMENT', screen: 'feed-comments', action: 'comment' },
+    { icon: 'Home', title: 'PROFILE', screen: 'profile-stats', action: 'profile' },
+    { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
+    { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
+    { icon: 'CC', title: 'CC ON', activeTitle: 'CC OFF', toggle: 'captions', screen: 'feed-cc', format: 'svg', action: 'captions' },
   ],
   post: [
     { icon: 'Create', title: 'PHOTO', screen: 'camera-capture' },
@@ -99,7 +106,26 @@ let persistedMenuState: HoldMenuState = { tour: false, captions: true, detection
 
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
-export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: () => void }) {
+// The favourite is what a plain cube TAP fires for this tab — set it by
+// holding an item in the menu.
+export function favouriteKey(tab: CubeTab) { return `poplur.holdFavourite.${tab}` }
+
+export function readFavourite(tab: CubeTab): string | null {
+  try { return window.localStorage.getItem(favouriteKey(tab)) } catch { return null }
+}
+
+export default function HoldMenuTwin({
+  tab,
+  onClose,
+  onAction,
+  onSubscreenChange,
+}: {
+  tab: CubeTab
+  onClose: () => void
+  onAction?: (action: NonNullable<Item['action']>) => void
+  /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the app */
+  onSubscreenChange?: (open: boolean) => void
+}) {
   // The item set is fixed to the tab the menu was opened from. The three
   // mutable controls retain their current state while the wheel is open.
   const [menuState, setMenuState] = useState(persistedMenuState)
@@ -114,6 +140,12 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
   const [offset, setOffset] = useState(0)      // continuous wheel position, item units
   const [selected, setSelected] = useState(0)  // item at center = round(offset)
   const [activeScreen, setActiveScreen] = useState<Item | null>(null)
+  // The feed keeps playing behind these screens otherwise — you would hear it
+  // over the paper. Tell the home so it can silence what it is covering.
+  useEffect(() => {
+    onSubscreenChange?.(Boolean(activeScreen))
+    return () => onSubscreenChange?.(false)
+  }, [activeScreen, onSubscreenChange])
 
   // Physics state lives in refs so the rAF loop reads live values.
   const offsetRef = useRef(0)
@@ -126,7 +158,52 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
   const countRef = useRef(items.length)
   countRef.current = items.length
 
+  // Held tile → this tab's favourite (what a plain cube tap fires).
+  const [favourite, setFavourite] = useState<string | null>(() => readFavourite(tab))
+  const [favToast, setFavToast] = useState<string | null>(null)
+  const holdTimer = useRef<number | null>(null)
+
+  const setAsFavourite = (item: Item) => {
+    try { window.localStorage.setItem(favouriteKey(tab), item.title) } catch { /* private mode */ }
+    setFavourite(item.title)
+    playPop()
+    setFavToast(item.title)
+    window.setTimeout(() => setFavToast(null), 1800)
+  }
+
+  const beginHold = (item: Item) => {
+    if (holdTimer.current) window.clearTimeout(holdTimer.current)
+    holdTimer.current = window.setTimeout(() => {
+      holdTimer.current = null
+      heldRef.current = true
+      setAsFavourite(item)
+    }, 550)
+  }
+
+  const endHold = () => {
+    if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null }
+  }
+
+  const heldRef = useRef(false)
+
   const activateItem = (item: Item) => {
+    // a hold set the favourite; don't also fire the item
+    if (heldRef.current) { heldRef.current = false; return }
+    // LIKE / COMMENT / CC / PROFILE happen on the screen behind the menu —
+    // they were never really sub-screens.
+    if (item.action) {
+      if (item.toggle) {
+        setMenuState(current => {
+          const next = { ...current, [item.toggle!]: !current[item.toggle!] }
+          persistedMenuState = next
+          return next
+        })
+      }
+      playPop()
+      onAction?.(item.action)
+      onClose()
+      return
+    }
     if (item.toggle) {
       setMenuState(current => {
         const next = { ...current, [item.toggle!]: !current[item.toggle!] }
@@ -291,6 +368,21 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
   }
 
   if (activeScreen) {
+    // TV GUIDE is a real screen in the app, not a Rough Copy capture.
+    if (activeScreen.native && activeScreen.screen === 'feed-news') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Times">
+          <NewsPaper onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'feed-tvguide') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="TV Guide">
+          <TVGuide onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
     return (
       <div
         className={styles.subscreenStage}
@@ -305,15 +397,15 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
           src={rclSubscreenUrl(activeScreen)}
           title={`${activeScreen.title} Rough Copy`}
         />
-        <button
-          type="button"
-          className={styles.subscreenBack}
-          onClick={() => { playPop(); setActiveScreen(null) }}
-          aria-label={`Back to ${tab} hold menu`}
-        >
-          <span aria-hidden="true">‹</span>
-          HOLD MENU
-        </button>
+        {/* one way out, and it is the clay object — no second back control */}
+        <div className={styles.subscreenClose}>
+          <ClayCornerButton
+            kind="close"
+            label={`Close ${activeScreen.title}`}
+            size={50}
+            onPress={() => { playPop(); setActiveScreen(null) }}
+          />
+        </div>
       </div>
     )
   }
@@ -351,7 +443,12 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
                 }
                 activateItem(it)
               }}
+              onPointerDown={() => beginHold(it)}
+              onPointerUp={endHold}
+              onPointerLeave={endHold}
+              onPointerCancel={endHold}
               className={styles.tile}
+              data-favourite={favourite === it.title ? 'true' : undefined}
               style={{
                 top: `${CENTER_Y_FRAC * 100}%`,
                 transform:
@@ -381,6 +478,14 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
           )
         })}
       </div>
+
+      {/* Left edge: how to pin a favourite — mirrors SCRUB on the right. */}
+      <div className={styles.favHint} aria-hidden="true">
+        <span className={styles.favHintStar}>★</span>
+        <span className={styles.favHintText}>HOLD TO FAVOURITE</span>
+      </div>
+
+      {favToast && <div className={styles.favToast}>★ {favToast} is now your cube tap</div>}
 
       {/* SCRUB ↕ hint on the right, like the app */}
       <div className={styles.scrub} aria-hidden="true">

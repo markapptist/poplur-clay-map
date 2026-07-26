@@ -1255,3 +1255,35 @@
 @keyframes shareTextShader {
   to { background-position: -260% 0; }
 }
+
+/* Visiting someone else's profile: the way back to your own. */
+.backToOwn {
+  margin-top: 6px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(246, 59, 154, 0.14);
+  color: #7a1748;
+  font: 900 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+}
+
+.backToOwn:active { transform: scale(0.95); }
+
+/* Visiting: the clay close takes the bell's place, mail takes the camera's. */
+.visitClose {
+  position: absolute;
+  top: 50%;
+  left: calc(-58px - var(--control-outset) - var(--flank));
+  z-index: 6;
+  transform: translateY(-50%);
+}
+
+.visitMail {
+  position: absolute;
+  top: 50%;
+  right: calc(-60px - var(--control-outset) - var(--flank));
+  z-index: 6;
+  transform: translateY(-50%);
+}

@@ -29,7 +29,11 @@ export interface ClayMapProps {
   mapRef: React.MutableRefObject<mapboxgl.Map | null>
   theme: MapTheme
   dayTime: boolean
-  weatherMode: WeatherMode
+  weatherMode?: WeatherMode
+  /** inline SVG for the current conditions, shown above the zoom rail */
+  weatherIcon?: string
+  /** already formatted for the locale, e.g. "18°C" or "64°F" */
+  weatherTemp?: string | null
   /** Candidate real-world targets for the first post-globe lock. */
   introDestinations?: { coords: [number, number] }[]
   /** Drops the map to a forward-facing street-level 3D camera. */
@@ -430,7 +434,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherTemp }: ClayMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const landmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -454,6 +458,27 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
   const [zoomValue, setZoomValue] = useState(14.8)
+  // The sky's own clock. Normally the real one; in dev it can be raced so the
+  // sun and moon complete their circuit in a minute instead of a day.
+  const [skyClock, setSkyClock] = useState(() => new Date())
+  useEffect(() => {
+    // OPT-IN, not on by default: this re-renders the map every second, which
+    // is fine for eyeballing the sky and ruinous for frame rate otherwise.
+    const fast = import.meta.env.DEV
+      && new URLSearchParams(window.location.search).get('sky-cycle') === '1'
+    if (!fast) {
+      const id = window.setInterval(() => setSkyClock(new Date()), 60_000)
+      return () => window.clearInterval(id)
+    }
+    // TEST ONLY: a full day every ~48s, so night, day, moonrise and sunrise can
+    // all be checked without waiting for the sky.
+    let simulated = new Date()
+    const id = window.setInterval(() => {
+      simulated = new Date(simulated.getTime() + 30 * 60 * 1000)
+      setSkyClock(new Date(simulated))
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [])
   const [fovValue, setFovValue] = useState(FOV_DEFAULT)
   // The clay cloud GLB, rendered once to a sprite for the zoom-in cloud band.
   const [cloudSprite, setCloudSprite] = useState<string | null>(null)
@@ -465,9 +490,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // Fill percentage aligned to the CENTER of the native thumb: a range thumb
   // only travels (track − thumb) px, so a raw value-percentage mask leads the
   // knob by up to half the thumb width — the barber fill visibly ran PAST the
-  // knob. Compensate with the real geometry (track 200px, thumb 46px).
+  // knob. The rail is now viewport-sized, so measure it rather than assuming.
+  const zoomRailRef = useRef<HTMLInputElement>(null)
+  const [zoomRailLen, setZoomRailLen] = useState(380)
+  const ZOOM_THUMB = 76
+  useEffect(() => {
+    const el = zoomRailRef.current
+    if (!el) return
+    const measure = () => setZoomRailLen(el.getBoundingClientRect().width || 380)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
-  const zoomProgress = `${((zoomRatio * (200 - 46) + 23) / 200) * 100}%`
+  const zoomProgress = `${((zoomRatio * (zoomRailLen - ZOOM_THUMB) + ZOOM_THUMB / 2) / zoomRailLen) * 100}%`
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
@@ -731,20 +768,47 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }
     stopOrbitRef.current = stopOrbit
     ;(map as unknown as { __stopOrbit?: () => void }).__stopOrbit = stopOrbit
+    // A flat constant-rate spin reads as a turntable. Left alone, the camera
+    // should behave like an operator: ease into a move, drift, breathe on the
+    // pitch, ease out, hold, then glide to the next subject. Every value is
+    // driven per frame from smooth curves, so there is never a cut — the
+    // "cuts" between subjects are long eased glides.
     const startOrbit = () => {
       stopOrbit()
-      const spin = () => {
-        orbitRaf = requestAnimationFrame(spin)
+      const begun = performance.now()
+      let last = begun
+      // the shot's own rate, re-rolled each time we settle somewhere new
+      const shot = { rate: 0.022 + Math.random() * 0.016, dir: Math.random() < 0.5 ? -1 : 1 }
+      const basePitch = map.getPitch()
+
+      const frame = (now: number) => {
+        orbitRaf = requestAnimationFrame(frame)
         // Only actually turn the camera while the map tab is front. The home
         // keeps this iframe mounted behind Feed / Profile / Camera, and a
         // display:none iframe is NOT `document.hidden` in Chrome or WKWebView —
         // so the idle orbit kept calling setBearing every frame and repainted a
         // full-res Mapbox canvas behind whatever screen was actually in front.
         // Keep the rAF ticking so the orbit resumes the instant the tab returns.
-        if (!mapIsFrontRef.current) return
-        map.setBearing(map.getBearing() + 0.03)
+        if (!mapIsFrontRef.current) { last = now; return }
+        if ((map as unknown as { __cinematic?: boolean }).__cinematic) { last = now; return }
+
+        const dt = Math.min(64, now - last)
+        last = now
+        const t = (now - begun) / 1000
+
+        // Ease the move IN over the first 2.5s instead of snapping to speed.
+        const spinUp = Math.min(1, t / 2.5)
+        const eased = spinUp * spinUp * (3 - 2 * spinUp)
+        // Two slow sines beat against each other so the drift never repeats
+        // on an obvious loop.
+        const wander = 0.72 + 0.28 * Math.sin(t / 7.3) + 0.12 * Math.sin(t / 3.1)
+        map.setBearing(map.getBearing() + shot.dir * shot.rate * wander * eased * (dt / 16.67))
+
+        // The camera breathes: a couple of degrees of pitch, very slowly.
+        const breathe = basePitch + Math.sin(t / 11.5) * 2.4
+        if (Math.abs(map.getPitch() - breathe) > 0.05) map.setPitch(breathe)
       }
-      orbitRaf = requestAnimationFrame(spin)
+      orbitRaf = requestAnimationFrame(frame)
     }
     const interactionEvents = ['dragstart', 'zoomstart', 'rotatestart', 'pitchstart'] as const
     interactionEvents.forEach(ev =>
@@ -841,14 +905,22 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const moving = new Set<HTMLElement>()
       flyerMarkersRef.current.forEach(m => { if (m) moving.add(m.getElement()) })
       boatMarkersRef.current.forEach(m => { if (m) moving.add(m.getElement()) })
+      // Measure every marker BEFORE touching any of them. Writing style.display
+      // inside the same loop invalidated layout between each read, so every
+      // getBoundingClientRect forced a fresh synchronous layout — with a few
+      // hundred trees/boats/cars/landmarks on screen that put
+      // getBoundingClientRect at the top of the map's CPU profile. Read first,
+      // then apply, and the whole pass costs one layout instead of hundreds.
+      const m = MAP_LITE ? 0.25 : 1
+      const pending: Array<[HTMLElement, string]> = []
       container.querySelectorAll<HTMLElement>('.mapboxgl-marker').forEach(el => {
         if (moving.has(el)) return
         const r = el.getBoundingClientRect()
-        const m = MAP_LITE ? 0.25 : 1
         const off = r.right < -w * m || r.left > w * (1 + m) || r.bottom < -h * m || r.top > h * (1 + m)
         const want = off ? 'none' : ''
-        if (el.style.display !== want) el.style.display = want
+        if (el.style.display !== want) pending.push([el, want])
       })
+      pending.forEach(([el, want]) => { el.style.display = want })
     }
     map.on('moveend', cullMarkersToViewport)
     map.on('zoomend', cullMarkersToViewport)
@@ -960,15 +1032,22 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           return
         }
         ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
-        map.flyTo({
+        // easeTo, not flyTo: flyTo's zoom curve accelerates hard through the
+        // middle, which reads as a lurch while tiles are still arriving. A
+        // smoothstep ease holds one steady rate from globe to street.
+        const start = () => map.easeTo({
           center,
           zoom: INTRO_LANDING_ZOOM,
           pitch: 52,
           bearing: -18,
-          duration: 7000,
-          curve: 1.5,
+          duration: 6200,
+          easing: t => t * t * (3 - 2 * t),
           essential: true,
         })
+        // Wait for the globe to finish loading before moving at all: descending
+        // through a half-loaded style is what made the old intro judder.
+        if (map.areTilesLoaded()) start()
+        else map.once('idle', start)
         map.once('moveend', () => {
           if (introDone) return
           introDone = true
@@ -1942,22 +2021,37 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       flyerRaf = requestAnimationFrame(animateFlyers)
 
       // ── Cinematic landmark tour: long curved flights landmark to landmark ──
+      // The tour is shot, not merely navigated. Every stop is a three-beat
+      // move: a long TRAVEL in, then one of a few camera grammars on arrival —
+      // a DOLLY (push in while the pitch drops), a PAN (a slow lateral arc at a
+      // held height), or a CRANE (rise and tilt back to reveal). Each is eased
+      // with smoothstep so nothing snaps, and the landmark pops on the beat.
+      const smooth = (t: number) => t * t * (3 - 2 * t)
+      const settle = () => new Promise(res => map.once('moveend', res))
+
       const startTour = async (stops = 4) => {
         stopOrbit()
         const order = GLOBE_LANDMARKS.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, stops)
-        for (const i of order) {
+        const grammars = ['dolly', 'pan', 'crane'] as const
+
+        for (const [shotIndex, i] of order.entries()) {
           stopOrbit()
-          map.flyTo({
-            center: GLOBE_LANDMARKS[i].coords,
+          const target = GLOBE_LANDMARKS[i].coords
+          const grammar = grammars[shotIndex % grammars.length]
+
+          // TRAVEL: come in high and wide, always arriving off-axis so the
+          // subject is never dead centre on the approach.
+          map.easeTo({
+            center: target,
             zoom: 3.4,
-            pitch: 0,
-            bearing: map.getBearing() + 30,
+            pitch: 12,
+            bearing: map.getBearing() + 42,
             duration: 4200,
-            curve: 1.5,
+            easing: smooth,
             essential: true,
           })
-          await new Promise(res => map.once('moveend', res))
-          // The landmark greets the camera with a pop
+          await settle()
+
           const inner = landmarkMarkersRef.current[i]?.getElement()
             .querySelector(`.${styles.landmarkInner}`) as HTMLElement | null
           if (inner) {
@@ -1966,7 +2060,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             inner.classList.add(styles.landmarkPop)
             playPop()
           }
-          await new Promise(res => setTimeout(res, 2000))
+
+          if (grammar === 'dolly') {
+            // push in, flattening the tilt as the subject fills the frame
+            map.easeTo({ zoom: 5.6, pitch: 46, duration: 3600, easing: smooth, essential: true })
+          } else if (grammar === 'pan') {
+            // a held height, the camera arcing slowly around the subject
+            map.easeTo({ bearing: map.getBearing() + 55, zoom: 4.3, duration: 4200, easing: smooth, essential: true })
+          } else {
+            // crane up and tilt back — the reveal
+            map.easeTo({ zoom: 4.9, pitch: 58, bearing: map.getBearing() - 28, duration: 4000, easing: smooth, essential: true })
+          }
+          await settle()
+
+          // hold on the subject before the next shot
+          await new Promise(res => setTimeout(res, 1400))
         }
       }
 
@@ -2001,7 +2109,37 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         }).catch(err => console.warn('[modelSprite]', url, err))
       }
 
-      swapSprite(() => treeMarkersRef.current, 'models/palm.glb', { pitch: 8, size: 256 })
+      // ── Trees: flat SVG far out, the real Poplur clay palm once you are in ──
+      // palm_clay.glb is the app's own palm (518K, properly moulded); the old
+      // models/palm.glb was a stand-in. Rendering it as a sprite costs one
+      // render, but it only earns its detail close up — far out it is three
+      // pixels of green — so the swap is gated on zoom and reverts when you
+      // pull back out.
+      const TREE_3D_ZOOM = 14.5
+      let clayPalmSprite: string | null = null
+      let treesAre3D = false
+
+      const paintTrees = (use3D: boolean) => {
+        if (use3D && !clayPalmSprite) return
+        if (use3D === treesAre3D) return
+        treesAre3D = use3D
+        treeMarkersRef.current.forEach((mk, i) => {
+          const inner = mk.getElement().querySelector(`.${styles.landmarkInner}`) as HTMLElement | null
+          if (!inner) return
+          inner.innerHTML = use3D
+            ? `<img src="${clayPalmSprite}" alt="" draggable="false" />`
+            : (CITY_TREES[i]?.palm ? SVG_PALM : SVG_TREE)
+        })
+      }
+
+      modelSprite('palm_clay.glb', { pitch: 8, size: 320 })
+        .then(dataUrl => {
+          clayPalmSprite = dataUrl
+          if (map.getZoom() >= TREE_3D_ZOOM) paintTrees(true)
+        })
+        .catch(err => console.warn('[modelSprite] palm_clay.glb', err))
+
+      map.on('zoomend', () => paintTrees(map.getZoom() >= TREE_3D_ZOOM))
       swapSprite(() => boatMarkersRef.current, 'models/boat.glb', { pitch: 14, yaw: 35, size: 256 })
       swapSprite(() => flyerMarkersRef.current, 'models/plane.glb', { pitch: 74, size: 256 }, undefined,
         i => FLYERS[i]?.kind === 'plane')
@@ -2240,6 +2378,65 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       {/* Clay zoom slider — bottom-right, street level at the top, globe at the
           bottom. The thumb IS the zoom-level clay object (globe → cloud →
           airplane → buildings), swapped by zoom band and re-popped per notch. */}
+      {/* Zoomed all the way out you are looking at the sky, not the weather:
+          the sun and moon ride the same arc the real ones do. Local noon puts
+          the sun at the top, midnight puts the moon there, and they sit
+          opposite each other the whole way round. */}
+      {zoomValue <= 4.4 && (() => {
+        const minutes = skyClock.getHours() * 60 + skyClock.getMinutes()
+        // midnight at the bottom, noon at the top
+        const sunAngle = (minutes / 1440) * 360 - 90
+        const moonAngle = sunAngle + 180
+        const place = (deg: number) => {
+          const rad = (deg * Math.PI) / 180
+          return {
+            left: `calc(50% + ${(Math.cos(rad) * 40).toFixed(2)}vh)`,
+            top: `calc(50% + ${(Math.sin(rad) * 40).toFixed(2)}vh)`,
+          }
+        }
+        return (
+          <>
+            <div
+              className={dayTime ? styles.celestial : `${styles.celestial} ${styles.celestialDim}`}
+              style={place(sunAngle)}
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 64 64" width="58" height="58">
+                <g stroke="#ffd76a" strokeWidth="4" strokeLinecap="round" opacity="0.95">
+                  <path d="M32 4v8M32 52v8M4 32h8M52 32h8M12 12l6 6M46 46l6 6M52 12l-6 6M18 46l-6 6" />
+                </g>
+                <circle cx="32" cy="32" r="15" fill="#ffcf4d" stroke="#e0a51f" strokeWidth="1.4" />
+                <ellipse cx="26" cy="26" rx="5" ry="3.4" fill="rgba(255,255,255,.55)" />
+              </svg>
+            </div>
+            <div
+              className={dayTime ? `${styles.celestial} ${styles.celestialDim}` : styles.celestial}
+              style={place(moonAngle)}
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 64 64" width="52" height="52">
+                <defs>
+                  <mask id="poplurMoonBite">
+                    <rect width="64" height="64" fill="#fff" />
+                    <circle cx="42" cy="26" r="16" fill="#000" />
+                  </mask>
+                </defs>
+                <circle cx="32" cy="32" r="17" fill="#eef3ff" stroke="#b9c6e6" strokeWidth="1.4" mask="url(#poplurMoonBite)" />
+                <circle cx="25" cy="37" r="2.6" fill="rgba(150,168,205,.55)" />
+                <circle cx="30" cy="26" r="1.8" fill="rgba(150,168,205,.45)" />
+              </svg>
+            </div>
+          </>
+        )
+      })()}
+
+      {weatherIcon && zoomValue > 4.4 && (
+        <div className={styles.zoomWeather} aria-label={`Current weather: ${weatherMode}`}>
+          <div dangerouslySetInnerHTML={{ __html: weatherIcon }} />
+          {weatherTemp != null && <div className={styles.zoomTemp}>{weatherTemp}</div>}
+        </div>
+      )}
+
       <div
         className={styles.zoomWrap}
         key={`thumb-${zoomStage.id}-${popTick}`}
@@ -2249,6 +2446,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         } as React.CSSProperties}
       >
         <input
+          ref={zoomRailRef}
           type="range"
           className={styles.zoom}
           min={ZOOM_MIN}

@@ -4,7 +4,9 @@ import { POIS, MAP_THEMES } from './data'
 import ClayMap, { MAP_LITE } from './ClayMap'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
-import { modeForCode } from './WeatherFX'
+import ClayCornerButton from './ClayCornerButton'
+import WeatherFX, { modeForCode } from './WeatherFX'
+import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
 import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 import { announceMapTour, startMapRadio, stopMapRadio, tuneLiveRadio } from './mapRadio'
@@ -70,6 +72,19 @@ const THUNDER_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><g fill="u
 const HAIL_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><g fill="url(#wIce)" stroke="#7E97A8" stroke-width="0.9"><circle cx="13" cy="29" r="3.1"/><circle cx="21" cy="33" r="3.1"/><circle cx="28" cy="28" r="3.1"/></g><ellipse cx="20" cy="14" rx="12" ry="8" fill="url(#wDark)" stroke="#6C616A" stroke-width="0.8"/>${gloss(15, 10.5, 4, 2.4)}</svg>`
 
 /** Icon follows the rendered weather mode, so previewing a mode updates it too. */
+// Fahrenheit is the local habit in the US (plus a handful of territories);
+// everyone else reads Celsius.
+function usesFahrenheit(): boolean {
+  if (typeof window === 'undefined') return false
+  const locale = navigator.languages?.[0] ?? navigator.language ?? 'en-CA'
+  try {
+    const region = new Intl.Locale(locale).region ?? ''
+    return ['US', 'BS', 'BZ', 'KY', 'PW', 'FM', 'MH', 'LR', 'PR', 'GU', 'VI'].includes(region)
+  } catch {
+    return /-US$/i.test(locale)
+  }
+}
+
 function weatherIconForMode(mode: WeatherMode): string {
   switch (mode) {
     case 'clear': return SUN_ICON
@@ -341,15 +356,6 @@ const RECOMMENDATIONS: ((destination: TourDestination) => string)[] = [
 ]
 
 /** All modes, in the order you asked to browse them. */
-const WEATHER_PREVIEW: { mode: WeatherMode; label: string }[] = [
-  { mode: 'clear', label: 'Sunny' },
-  { mode: 'cloudy', label: 'Cloudy' },
-  { mode: 'rain', label: 'Rain' },
-  { mode: 'thunder', label: 'Thunder' },
-  { mode: 'storm', label: 'Thunder + lightning' },
-  { mode: 'snow', label: 'Snow' },
-  { mode: 'hail', label: 'Hail' },
-]
 
 // Keep every app-driven street flight close enough that 3D buildings are visible.
 const BUILDING_REVEAL_ZOOM = 16.2 // matches ClayMap ZOOM_MAX cap
@@ -419,9 +425,39 @@ export default function App() {
   const [aiIndex, setAiIndex] = useState(0)
   const [weather, setWeather] = useState<{ temp: number; code: number } | null>(null)
   const [weatherOverride, setWeatherOverride] = useState<WeatherMode | null>(null)
+  // TEST ONLY: walk day → night → day so both skies can be checked without
+  // waiting twelve hours. ?day-cycle=0 turns it off; dev builds only.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    if (new URLSearchParams(window.location.search).get('day-cycle') !== '1') return
+    const id = window.setInterval(() => setDayTime(d => !d), 24_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  // TEST ONLY: cycle every weather mode so each overlay can be checked without
+  // waiting on the sky. Dev builds by default; ?weather-cycle=0 turns it off,
+  // and it cannot run in production because __DEV__ is compiled out.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    if (new URLSearchParams(window.location.search).get('weather-cycle') !== '1') return
+    const modes: WeatherMode[] = ['clear', 'cloudy', 'rain', 'thunder', 'storm', 'snow', 'hail', 'fog']
+    let at = 0
+    const id = window.setInterval(() => {
+      at = (at + 1) % modes.length
+      setWeatherOverride(modes[at])
+    }, 9000)
+    return () => window.clearInterval(id)
+  }, [])
 
   // Clock under the AI ticker: swings between the time and the date.
   const [clockNow, setClockNow] = useState(() => new Date())
+  // Place search (top-right): the clay magnifier opens a field that geocodes
+  // through Mapbox and flies the map to whatever you pick.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchClosing, setSearchClosing] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [searchHits, setSearchHits] = useState<Array<{ name: string; center: [number, number] }>>([])
+  const [searching, setSearching] = useState(false)
   const [clockShowsDate, setClockShowsDate] = useState(false)
   useEffect(() => {
     const tick = window.setInterval(() => setClockNow(new Date()), 1000)
@@ -444,7 +480,13 @@ export default function App() {
   // unfocused there, so no map audio can win a resume race before Home sends
   // the first foreground message.
   const mapAudioFrontRef = useRef(typeof window === 'undefined' || window.parent === window)
-  const soundRequestedRef = useRef(false)
+  // The map always WANTS sound; whether you hear it is the gate's decision
+  // (your mute, the app being backgrounded, another tab being front). This used
+  // to start false and was only flipped by a dev-only "sound on" button — with
+  // that button gone, unmuting had nothing to switch back on.
+  const soundRequestedRef = useRef(true)
+  // one tune per session unless it comes back empty
+  const liveStationTunedRef = useRef(false)
   const lastTourDestinationRef = useRef<string | null>(null)
   // Region dialect for the Poplur theme (would come from the located region;
   // the dev panel lets you audition each).
@@ -488,20 +530,89 @@ export default function App() {
     }
   }, [harnessView])
 
+  const runPlaceSearch = useCallback(async (query: string) => {
+    const q = query.trim()
+    if (!q) { setSearchHits([]); return }
+    setSearching(true)
+    try {
+      const res = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
+        + `?access_token=${TOKEN}&limit=6&types=place,locality,address,poi`,
+      )
+      if (!res.ok) throw new Error(String(res.status))
+      const data = await res.json() as { features?: Array<{ place_name: string; center: [number, number] }> }
+      setSearchHits((data.features ?? []).map(f => ({ name: f.place_name, center: f.center })))
+    } catch {
+      setSearchHits([])
+    } finally {
+      setSearching(false)
+    }
+  }, [])
+
+  // Tapping away sends the panel back up the way it came, then unmounts it.
+  const closeSearch = useCallback(() => {
+    setSearchClosing(true)
+    window.setTimeout(() => {
+      setSearchOpen(false)
+      setSearchClosing(false)
+      setSearchText('')
+      setSearchHits([])
+    }, 320)
+  }, [])
+
+  const flyToPlace = useCallback((center: [number, number]) => {
+    playPop(0.3)
+    setSearchOpen(false)
+    setSearchClosing(false)
+    setSearchText('')
+    setSearchHits([])
+    const map = mapRef.current as unknown as {
+      stop?: () => void
+      easeTo?: (o: Record<string, unknown>) => void
+      __stopOrbit?: () => void
+    } | null
+    map?.__stopOrbit?.()
+    map?.stop?.()
+    map?.easeTo?.({
+      center,
+      zoom: 15.4,
+      pitch: 52,
+      duration: 3400,
+      easing: (t: number) => t * t * (3 - 2 * t),
+      essential: true,
+    })
+  }, [mapRef])
+
   const applySoundState = useCallback((on: boolean): boolean => {
     soundRequestedRef.current = on
     const audible = on && mapAudioFrontRef.current && !isGateMuted()
     soundPlayingRef.current = audible
     setSoundPlaying(audible)
     if (audible) {
+      // Radio and the Poplur AI host only. The procedural ambience bed (the
+      // hum) and the generative Poplur theme are gone: they ran under
+      // everything, forever, and read as noise rather than atmosphere. Silence
+      // between the host's lines and the station's own gaps is correct.
       startMapRadio()
-      // Always-on regional ambience bed, plus the Poplur theme as the default
-      // when no radio station is found (which, in this prototype, is always).
-      startRegionAudio()
-      startPoplurTheme(regionRef.current)
+      stopRegionAudio()
+      stopPoplurTheme()
+      // Tune a real station for wherever the camera actually is. This used to
+      // happen only when the AI tour visited somewhere, so an ordinary session
+      // never got a station at all — you unmuted and heard nothing.
+      if (!liveStationTunedRef.current) {
+        liveStationTunedRef.current = true
+        const map = mapRef.current as unknown as { getCenter?: () => { lat: number; lng: number } } | null
+        const at = map?.getCenter?.()
+        const lat = at?.lat ?? DEFAULT_NAV_ORIGIN[1]
+        const lng = at?.lng ?? DEFAULT_NAV_ORIGIN[0]
+        void tuneLiveRadio(lat, lng).then(name => {
+          if (!name) liveStationTunedRef.current = false // nothing on air: try again next time
+        })
+      }
     } else {
       stopMapRadio()
       stopRegionAudio()
+      stopPoplurTheme()
     }
     return audible
   }, [])
@@ -531,7 +642,7 @@ export default function App() {
 
   // Re-voice the running theme when the region dialect changes.
   useEffect(() => {
-    if (soundPlayingRef.current) { stopPoplurTheme(); startPoplurTheme(region) }
+    // (the generative theme no longer plays on the map — radio + host only)
   }, [region])
 
   // Feed the ambient bed from what's under the camera: water → ocean, parks →
@@ -588,15 +699,17 @@ export default function App() {
   }, [aiIndex])
 
   // Real weather + day/night for the map area (same open-meteo endpoint the
-  // iOS app uses)
+  // iOS app uses). Fahrenheit only where people actually use it — the US, its
+  // territories, and a short list besides; everywhere else gets Celsius.
   useEffect(() => {
-    fetch('https://api.open-meteo.com/v1/forecast?latitude=43.65&longitude=-79.38&current=temperature_2m,weather_code,is_day&temperature_unit=fahrenheit&timezone=auto')
+    const unit = usesFahrenheit() ? 'fahrenheit' : 'celsius'
+    fetch(`https://api.open-meteo.com/v1/forecast?latitude=43.65&longitude=-79.38&current=temperature_2m,weather_code,is_day&temperature_unit=${unit}&timezone=auto`)
       .then(res => res.json())
       .then(json => {
         setWeather({ temp: Math.round(json.current.temperature_2m), code: json.current.weather_code })
         setDayTime(json.current.is_day === 1)
       })
-      .catch(() => setWeather({ temp: 72, code: 1 }))
+      .catch(() => setWeather({ temp: usesFahrenheit() ? 72 : 22, code: 1 }))
   }, [])
 
   // DEV: cycle weather / sky from the console to demo every overlay
@@ -861,6 +974,8 @@ export default function App() {
         theme={theme}
         dayTime={dayTime}
         weatherMode={weatherMode}
+        weatherIcon={weatherIconForMode(weatherMode)}
+        weatherTemp={weather ? `${weather.temp}°${usesFahrenheit() ? 'F' : 'C'}` : null}
         introDestinations={INTRO_LANDMARKS}
         streetView={streetView}
         onIntroComplete={handleIntroComplete}
@@ -892,6 +1007,72 @@ export default function App() {
           onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
         />
       </div>
+      {/* The weather overlay itself: rain, snow, hail, lightning over the map.
+          It had never been mounted, so every weather change was invisible. */}
+      <WeatherFX mode={weatherMode} />
+
+      {/* Top right, level with the sound mark: search, and jump to where you
+          actually are. */}
+      <div className={styles.mapTools}>
+        <ClayCornerButton
+          kind="search"
+          label={searchOpen ? 'Close search' : 'Search places'}
+          size={56}
+          still
+          activateOnClick
+          onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
+        />
+        <ClayCornerButton
+          kind="locate"
+          label="Go to my location"
+          size={56}
+          still
+          activateOnClick
+          onPress={() => {
+            playPop(0.25)
+            const map = mapRef.current as unknown as { __locateMe?: () => void } | null
+            if (map?.__locateMe) { map.__locateMe(); return }
+            navigator.geolocation?.getCurrentPosition(
+              pos => flyToPlace([pos.coords.longitude, pos.coords.latitude]),
+              () => { /* permission refused — nothing to fly to */ },
+              { enableHighAccuracy: true, timeout: 8000 },
+            )
+          }}
+        />
+      </div>
+
+      {searchOpen && (
+        <div className={styles.searchScrim} onClick={closeSearch}>
+        <div
+          className={searchClosing ? `${styles.searchPanel} ${styles.searchPanelOut}` : styles.searchPanel}
+          onClick={e => e.stopPropagation()}
+        >
+          <input
+            className={styles.searchInput}
+            value={searchText}
+            placeholder="Search places…"
+            autoFocus
+            onChange={e => { setSearchText(e.target.value); void runPlaceSearch(e.target.value) }}
+            onKeyDown={e => { if (e.key === 'Enter') void runPlaceSearch(searchText) }}
+          />
+          {searching && <div className={styles.searchNote}>searching…</div>}
+          {!searching && searchHits.map(hit => (
+            <button
+              key={hit.name}
+              type="button"
+              className={styles.searchHit}
+              onClick={() => flyToPlace(hit.center)}
+            >
+              {hit.name}
+            </button>
+          ))}
+          {!searching && !searchHits.length && searchText.trim() !== '' && (
+            <div className={styles.searchNote}>nothing found</div>
+          )}
+        </div>
+        </div>
+      )}
+
       {/* AI line + clock share one flow stack under the wordmark, so the
           logo→text and text→time gaps are IDENTICAL whatever wraps. */}
       <div className={styles.headerStack}>
@@ -899,56 +1080,16 @@ export default function App() {
           <span>{tourLine ?? AI_LINES[aiIndex]}</span>
         </div>
         <div className={styles.clock} aria-live="off">
-          <span key={clockShowsDate ? 'date' : 'time'} className={styles.clockSwing}>
-            {clockShowsDate
-              ? clockNow.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
-              : clockNow.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          {/* Always the time. It used to alternate with the date, so half the
+              time the clock simply was not there. */}
+          <span className={styles.clockSwing}>
+            {clockNow.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
           </span>
         </div>
       </div>
 
       {/* Locate + Street View moved into the HOLD MENU (declutter): they now
           arrive as poplur-map-action messages — see the listener effect. */}
-
-      {/* ── Dev-only: browse every weather mode ── */}
-      {import.meta.env.DEV && (
-        <div className={styles.weatherPicker}>
-          {WEATHER_PREVIEW.map(w => (
-            <button
-              key={w.mode}
-              type="button"
-              className={weatherMode === w.mode ? styles.weatherPickerOn : undefined}
-              onClick={() => setWeatherOverride(w.mode)}
-            >
-              {w.label}
-            </button>
-          ))}
-          <button type="button" onClick={() => setWeatherOverride(null)}>Live</button>
-        </div>
-      )}
-
-      {/* ── Dev-only: Poplur audio — toggle the bed + audition region dialects ── */}
-      {import.meta.env.DEV && (
-        <div className={styles.audioPicker}>
-          <button
-            type="button"
-            className={soundPlaying ? styles.weatherPickerOn : undefined}
-            onClick={() => applySoundState(!soundPlaying)}
-          >
-            {soundPlaying ? '♪ sound on' : '♪ sound off'}
-          </button>
-          {(['default', 'tokyo', 'tropical', 'europe', 'club'] as const).map(r => (
-            <button
-              key={r}
-              type="button"
-              className={region === r ? styles.weatherPickerOn : undefined}
-              onClick={() => setRegion(r)}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* The home cube lives in the app shell now (it's the post-login cube),
           so the map no longer renders one of its own. */}

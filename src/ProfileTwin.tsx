@@ -210,7 +210,34 @@ export function aiAnswer(q: string, username: string): string {
   return `On it, ${username} — I will keep growing your world and let you know when a venue heats up.`
 }
 
-export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void } = {}) {
+// Handles → the spoof pictures we already ship (same set as the share sheet).
+const AVATAR_BY_HANDLE: Record<string, string> = {
+  '@sauceboss': 'feed/posters/ad-food.jpg',
+  '@nightmarket': 'feed/posters/ad-food.jpg',
+  '@poutine.patrol': 'feed/posters/ad-comedy.jpg',
+  '@glowgetter': 'feed/posters/ad-shopping.jpg',
+  '@pitchside': 'feed/posters/ad-sports.jpg',
+  '@runwayraw': 'feed/posters/ad-french.jpg',
+  '@basement.set': 'feed/posters/ad-music.jpg',
+  '@localwire': 'feed/posters/ad-sports.jpg',
+  '@paris.pov': 'feed/posters/ad-french.jpg',
+  '@vibra.cdmx': 'feed/posters/ad-spanish-1.jpg',
+  '@hauls': 'feed/posters/ad-shopping.jpg',
+  '@doodlecast': 'feed/posters/ad-cartoon.jpg',
+  '@playtime': 'feed/posters/ad-kids.jpg',
+  '@bitmerchant': 'feed/posters/ad-comedy.jpg',
+}
+
+export default function ProfileTwin({
+  bindArrows,
+  viewUser = null,
+  onBackToOwn,
+}: {
+  bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
+  /** a handle when you opened someone else's profile from the feed */
+  viewUser?: string | null
+  onBackToOwn?: () => void
+} = {}) {
   const [mode, setMode] = useState<Mode>('media')
   const [readyTiles, setReadyTiles] = useState<Set<string>>(() => new Set())
   // Tiles whose static overlay has finished fading — it is then unmounted so the
@@ -234,6 +261,8 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
   // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
   // to the OS share sheet / clipboard for outside.
   const [shareOpen, setShareOpen] = useState(false)
+  const [mailingUser, setMailingUser] = useState(false)
+  const [mailText, setMailText] = useState('')
   const [shareNote, setShareNote] = useState<string | null>(null)
   const [askOpen, setAskOpen] = useState(false)
   const [askText, setAskText] = useState('')
@@ -670,6 +699,12 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
 
   const posts = mode === 'saved' ? SAVED : POSTS
   const viewerPost = viewerIdx != null ? posts[viewerIdx % posts.length] : null
+  // Someone else's profile: their handle, their picture, and none of your own
+  // controls (you cannot set another person's photo or read their bell).
+  const visiting = Boolean(viewUser)
+  const shownName = viewUser ? viewUser.replace(/^@/, '') : username
+  const visitingAvatar = viewUser ? (AVATAR_BY_HANDLE[viewUser] ?? 'mark_talk0.png') : null
+
   const identity = isBusiness
     ? (buildingSprite
       ? <img className={styles.headFrame} src={buildingSprite} alt="" draggable="false" />
@@ -681,18 +716,30 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
       <section className={styles.profile}>
       <div className={styles.header}>
         <div className={styles.avatarWrap}>
-          <button
+          {visiting ? (
+            <div className={styles.visitClose}>
+              <ClayCornerButton
+                kind="close"
+                label="Back to your profile"
+                size={46}
+                activateOnClick
+                onPress={() => { playPop(); onBackToOwn?.() }}
+              />
+            </div>
+          ) : <button
             className={styles.bell}
             onClick={() => { playPop(); toggleNotifs() }}
             aria-label="Notifications"
             aria-expanded={showNotifs && !notifsClosing}
           >
             🔔<span className={styles.bellDot} />
-          </button>
+          </button>}
 
           <div className={styles.avatarFrame} />
 
-          {photo ? (
+          {visiting ? (
+            <img className={styles.photo} src={visitingAvatar!} alt="" draggable="false" />
+          ) : photo ? (
             <>
               <img
                 className={showHead ? `${styles.photo} ${styles.fadeOut}` : styles.photo}
@@ -708,10 +755,24 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
             </div>
           )}
 
-          <button className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Take profile photo">
-            <img src="cam_object.png" alt="" draggable="false" />
-          </button>
-          {launchingCamera && (
+          {visiting ? (
+            /* their profile: message them, rather than set their photo */
+            <div className={styles.visitMail}>
+              <ClayCornerButton
+                kind="mail"
+                tone="cream"
+                label={`Message ${shownName}`}
+                size={68}
+                activateOnClick
+                onPress={() => { playPop(); setMailingUser(true) }}
+              />
+            </div>
+          ) : (
+            <button className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Take profile photo">
+              <img src="cam_object.png" alt="" draggable="false" />
+            </button>
+          )}
+          {!visiting && launchingCamera && (
             <div className={styles.camEject} aria-hidden="true">
               <i />
               <img src="cam_object.png" alt="" draggable="false" />
@@ -753,7 +814,7 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
           </div>
         )}
 
-        <h1 className={styles.username}>{username.toUpperCase()}</h1>
+        <h1 className={styles.username}>{shownName.toUpperCase()}</h1>
 
         <div className={styles.modeSwitch}>
           {(['media', 'messages', 'saved'] as Mode[]).map(m => (
@@ -959,6 +1020,50 @@ export default function ProfileTwin({ bindArrows }: { bindArrows?: (fn: ((dir: 1
           )}
 
           {shareNote && <div className={styles.shareNote}>{shareNote}</div>}
+
+      {/* Direct message to the person whose profile you are on. */}
+      {mailingUser && (
+        <div className={styles.shareScrim} onClick={() => setMailingUser(false)}>
+          <div className={styles.shareAlert} onClick={e => e.stopPropagation()}>
+            <div className={styles.shareContent}>
+              <div className={styles.shareIcon} aria-hidden="true" />
+              <h2 className={`${styles.shareTitle} ${styles.shareShader}`}>Message {shownName}</h2>
+              <div className={styles.askRow}>
+                <input
+                  className={styles.askInput}
+                  value={mailText}
+                  placeholder="Say something…"
+                  onChange={e => setMailText(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && mailText.trim()) {
+                      playPop()
+                      if (isNativeShell()) postNativeEvent({ type: 'sendMessage', to: viewUser, body: mailText.trim() })
+                      setMailText('')
+                      setMailingUser(false)
+                      flashNote(`Sent to ${shownName}`)
+                    }
+                  }}
+                  autoFocus
+                />
+                <ClayCornerButton
+                  kind="send"
+                  label="Send message"
+                  size={44}
+                  activateOnClick
+                  onPress={() => {
+                    if (!mailText.trim()) return
+                    playPop()
+                    if (isNativeShell()) postNativeEvent({ type: 'sendMessage', to: viewUser, body: mailText.trim() })
+                    setMailText('')
+                    setMailingUser(false)
+                    flashNote(`Sent to ${shownName}`)
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
         </div>
       )}
 
