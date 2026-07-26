@@ -5,6 +5,7 @@ import ClayMap, { MAP_LITE } from './ClayMap'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import ClayCornerButton from './ClayCornerButton'
+import PhotorealMap from './PhotorealMap'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
@@ -453,6 +454,54 @@ export default function App() {
   const [clockNow, setClockNow] = useState(() => new Date())
   // Place search (top-right): the clay magnifier opens a field that geocodes
   // through Mapbox and flies the map to whatever you pick.
+  // Which world the map shows. Premium is the PHOTOREALISTIC surface (Cesium +
+  // Google 3D tiles — real photogrammetry buildings), not clay on photography.
+  // Persisted so a premium user comes back to what they paid for.
+  const [mapSurface, setMapSurface] = useState<'clay' | 'photoreal'>(() => {
+    try { return window.localStorage.getItem('poplur.mapSurface') === 'photoreal' ? 'photoreal' : 'clay' } catch { return 'clay' }
+  })
+  const [premiumNote, setPremiumNote] = useState<string | null>(null)
+  const mapSurfaceRef = useRef(mapSurface)
+  mapSurfaceRef.current = mapSurface
+
+  useEffect(() => {
+    const PREMIUM_COST = 25
+    const readCredit = () => {
+      try {
+        const raw = window.localStorage.getItem('poplur.credit')
+        return raw === null ? 100 : Number(raw)
+      } catch { return 100 }
+    }
+    const note = (text: string, ms = 2800) => {
+      setPremiumNote(text)
+      window.setTimeout(() => setPremiumNote(null), ms)
+    }
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'poplur-map-action' || event.data.action !== 'togglePremium') return
+      if (mapSurfaceRef.current === 'photoreal') {
+        playPop()
+        setMapSurface('clay')
+        try { window.localStorage.setItem('poplur.mapSurface', 'clay') } catch { /* private mode */ }
+        note('Back to the clay world')
+        return
+      }
+      const credit = readCredit()
+      if (credit < PREMIUM_COST) {
+        note(`Not enough Poplur credit — ${PREMIUM_COST} needed, you have ${credit}`, 3200)
+        return
+      }
+      try {
+        window.localStorage.setItem('poplur.credit', String(credit - PREMIUM_COST))
+        window.localStorage.setItem('poplur.mapSurface', 'photoreal')
+      } catch { /* private mode */ }
+      playPop()
+      setMapSurface('photoreal')
+      note(`Premium world on — ${PREMIUM_COST} credit, ${credit - PREMIUM_COST} left`)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchClosing, setSearchClosing] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -964,23 +1013,45 @@ export default function App() {
   return (
     <div className={styles.shell}>
       <VolumeBars />
-      {/* ── Full-screen clay map ── */}
-      <ClayMap
-        token={TOKEN}
-        pois={POIS}
-        selectedId={selectedId}
-        onSelectPoi={handleSelectPoi}
-        mapRef={mapRef}
-        theme={theme}
-        dayTime={dayTime}
-        weatherMode={weatherMode}
-        weatherIcon={weatherIconForMode(weatherMode)}
-        weatherTemp={weather ? `${weather.temp}°${usesFahrenheit() ? 'F' : 'C'}` : null}
-        introDestinations={INTRO_LANDMARKS}
-        streetView={streetView}
-        onIntroComplete={handleIntroComplete}
-        onGlobeReady={handleGlobeReady}
-      />
+      {/* ── Full-screen map: the clay world, or the photorealistic one on
+          premium (Cesium + Google 3D tiles — real buildings, not clay). ── */}
+      {mapSurface === 'photoreal' ? (
+        <PhotorealMap
+          token={TOKEN}
+          pois={POIS}
+          selectedId={selectedId}
+          onSelectPoi={handleSelectPoi}
+          mapRef={mapRef}
+          theme={theme}
+          dayTime={dayTime}
+          weatherMode={weatherMode}
+          introDestinations={INTRO_LANDMARKS}
+          streetView={streetView}
+          onIntroComplete={handleIntroComplete}
+          zoomMin={1.4}
+          zoomMax={19.5}
+          homeCenter={DEFAULT_NAV_ORIGIN}
+        />
+      ) : (
+        <ClayMap
+          token={TOKEN}
+          pois={POIS}
+          selectedId={selectedId}
+          onSelectPoi={handleSelectPoi}
+          mapRef={mapRef}
+          theme={theme}
+          dayTime={dayTime}
+          weatherMode={weatherMode}
+          weatherIcon={weatherIconForMode(weatherMode)}
+          weatherTemp={weather ? `${weather.temp}°${usesFahrenheit() ? 'F' : 'C'}` : null}
+          introDestinations={INTRO_LANDMARKS}
+          streetView={streetView}
+          onIntroComplete={handleIntroComplete}
+          onGlobeReady={handleGlobeReady}
+        />
+      )}
+
+      {premiumNote && <div className={styles.premiumNote}>{premiumNote}</div>}
 
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
       <ClayNav

@@ -460,11 +460,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [zoomValue, setZoomValue] = useState(14.8)
   // The sky's own clock. Normally the real one; in dev it can be raced so the
   // sun and moon complete their circuit in a minute instead of a day.
-  // Premium (photoreal) surface + the line that reports what the wallet did.
-  const [premiumSurface, setPremiumSurface] = useState(false)
-  const premiumSurfaceRef = useRef(false)
-  const [premiumNote, setPremiumNote] = useState<string | null>(null)
-
   const [skyClock, setSkyClock] = useState(() => new Date())
   useEffect(() => {
     // OPT-IN, not on by default: this re-renders the map every second, which
@@ -499,65 +494,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const zoomRailRef = useRef<HTMLInputElement>(null)
   const [zoomRailLen, setZoomRailLen] = useState(380)
   const ZOOM_THUMB = 76
-  // Premium = HYBRID: real satellite photography laid under the SAME 3D
-  // buildings and clay props, not a different style. Swapping styles wiped
-  // every custom layer (and rebuilding them mid-session was the source of the
-  // void/lag) — adding one raster layer under the stack has none of that:
-  // toggle off simply removes it.
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !map.isStyleLoaded?.()) {
-      // not built yet — the load handler will run before anyone can toggle
-      if (!premiumSurface) return
-    }
-    if (!map) return
-    const SRC = 'premium-satellite'
-    const LAYER = 'premium-satellite'
-    try {
-      if (premiumSurface) {
-        if (!map.getSource(SRC)) {
-          map.addSource(SRC, {
-            type: 'raster',
-            url: 'mapbox://mapbox.satellite',
-            tileSize: 256,
-          })
-        }
-        if (!map.getLayer(LAYER)) {
-          // under everything we draw: first clay layer if present, else on top
-          const layers = map.getStyle()?.layers ?? []
-          const firstOurs = layers.find(l => /^clay-/.test(l.id) || l.type === 'fill-extrusion')?.id
-          // dark-v11 is a CLASSIC style: slots don't reorder, plain array
-          // order is render order. So the photo goes immediately before the
-          // building extrusions — above the base land and the clay ground,
-          // below the buildings, caps, props and labels. ('bottom' put it at
-          // index 0 under the opaque base; no beforeId appended it on top of
-          // everything, which is why premium looked flat.)
-          const anchor = map.getLayer('clay-buildings-3d') ? 'clay-buildings-3d' : firstOurs
-          map.addLayer(
-            { id: LAYER, type: 'raster', source: SRC, slot: 'top', paint: { 'raster-opacity': 1 } } as never,
-            anchor,
-          )
-        }
-        // The clay GROUND is opaque — left visible it sits on top of the
-        // photography and premium "looks flat" (all you see is clay). Hide the
-        // ground skins; keep the 3D buildings and props standing on the photo.
-        for (const l of map.getStyle()?.layers ?? []) {
-          if (/^clay-(water|grass|coast|land)/.test(l.id)) {
-            try { map.setLayoutProperty(l.id, 'visibility', 'none') } catch { /* absent */ }
-          }
-        }
-      } else {
-        if (map.getLayer(LAYER)) map.removeLayer(LAYER)
-        if (map.getSource(SRC)) map.removeSource(SRC)
-        for (const l of map.getStyle()?.layers ?? []) {
-          if (/^clay-(water|grass|coast|land)/.test(l.id)) {
-            try { map.setLayoutProperty(l.id, 'visibility', 'visible') } catch { /* absent */ }
-          }
-        }
-      }
-    } catch { /* style still booting — the next toggle lands */ }
-  }, [premiumSurface, mapRef])
-
   useEffect(() => {
     const el = zoomRailRef.current
     if (!el) return
@@ -607,46 +543,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           stopCarAudio()
         }
       }
-      // Hold-menu PREMIUM MAP: the photoreal surface is a paid feature. The
-      // wallet is checked here, the charge is taken on the way IN, and turning
-      // it back off is free. Balance lives in localStorage for this testing
-      // run; the real one comes from the account service.
-      if (event.data?.type === 'poplur-map-action' && event.data.action === 'togglePremium') {
-        const PREMIUM_COST = 25
-        const readCredit = () => {
-          try {
-            const raw = window.localStorage.getItem('poplur.credit')
-            return raw === null ? 100 : Number(raw)
-          } catch { return 100 }
-        }
-        const writeCredit = (v: number) => {
-          try { window.localStorage.setItem('poplur.credit', String(v)) } catch { /* private mode */ }
-        }
-        // Decide and charge OUTSIDE the state updater: React StrictMode invokes
-        // updaters twice, which billed the wallet twice for one press.
-        const turningOn = !premiumSurfaceRef.current
-        if (!turningOn) {
-          playPop()
-          premiumSurfaceRef.current = false
-          setPremiumSurface(false)
-          setPremiumNote('Back to the clay map')
-          window.setTimeout(() => setPremiumNote(null), 2200)
-        } else {
-          const credit = readCredit()
-          if (credit < PREMIUM_COST) {
-            setPremiumNote(`Not enough Poplur credit — ${PREMIUM_COST} needed, you have ${credit}`)
-            window.setTimeout(() => setPremiumNote(null), 3200)
-          } else {
-            writeCredit(credit - PREMIUM_COST)
-            playPop()
-            premiumSurfaceRef.current = true
-            setPremiumSurface(true)
-            setPremiumNote(`Premium map on — ${PREMIUM_COST} credit, ${credit - PREMIUM_COST} left`)
-            window.setTimeout(() => setPremiumNote(null), 2800)
-          }
-        }
-      }
-
       // Hold-menu FOV entry: cycle lens presets with a pop per step.
       if (event.data?.type === 'poplur-map-action' && event.data.action === 'fov') {
         setFovValue(prev => {
@@ -2533,8 +2429,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           </>
         )
       })()}
-
-      {premiumNote && <div className={styles.premiumNote}>{premiumNote}</div>}
 
       {weatherIcon && zoomValue > 4.4 && (
         <div className={styles.zoomWeather} aria-label={`Current weather: ${weatherMode}`}>
