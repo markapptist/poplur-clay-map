@@ -24,8 +24,6 @@ const KM_TO_MI = 0.621371
 // press-and-hold to open the hold menu twin. Pills track the front face;
 // clicking the already-front face's pill opens that tab's screen twin.
 
-const PILL_ORDER: CubeTab[] = ['map', 'feed', 'post', 'profile']
-
 // The approved Loading screen's rotating copy (gcl-prototype loadingPage()),
 // cycled on the same 1.8s beat with the same 200ms cross-fade.
 const LOADING_MESSAGES = [
@@ -164,9 +162,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [loadingMuted, setLoadingMuted] = useState(isUserMuted)
   // The tab pills are a testing aid. Keep them out of the app/RN surface unless
   // a prototype session explicitly asks for them with ?tabs=1.
-  const showTestTabs = typeof window !== 'undefined'
-    && !isNativeShell()
-    && new URLSearchParams(window.location.search).get('tabs') === '1'
   const forceMapLoading = import.meta.env.DEV
     && typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('map-loading') === '1'
@@ -486,20 +481,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         </div>
       </div>
 
-      {/* Tab pills — a prototype-only testing aid (see showTestTabs). The real
-          app navigates with the cube, so these never render outside the prototype. */}
-      {showTestTabs && <div className={styles.tabPills}>
-        {PILL_ORDER.map(tab => (
-          <button
-            key={tab}
-            type="button"
-            className={tab === activeTab ? styles.pillActive : styles.pill}
-            onClick={() => { playPop(); setActiveTab(tab) }}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>}
+      {/* No tab pills. The cube IS the navigation — a row of buttons beside it
+          was a testing shortcut that kept leaking into views of the app. Turn
+          the cube, or long-press it for the hold menu. */}
 
       <PoplurVoiceAssistant onTabRequest={tab => setActiveTab(tab)} />
 

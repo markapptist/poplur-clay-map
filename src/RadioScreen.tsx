@@ -113,6 +113,13 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     })
   }
 
+  // SCAN: step to the next station in range, like the seek key on a dash.
+  const scan = (dir: 1 | -1) => {
+    if (!inBand.length) return
+    const at = inBand.findIndex(s => s.url === tunedUrl)
+    tune(inBand[((at + dir) % inBand.length + inBand.length) % inBand.length])
+  }
+
   const scrollRail = (dir: 1 | -1) => {
     railRef.current?.scrollBy({ left: dir * 240, behavior: 'smooth' })
   }
@@ -136,41 +143,61 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
       </header>
 
       <div className={styles.scroll}>
-        {/* ── Now Playing ── */}
-        <section className={styles.hero}>
-          <h2 className={styles.sectionTitle}>Now Playing</h2>
-          <div className={styles.heroCard}>
-            <div className={styles.heroArtWrap}>
-              {tuned?.logo
-                ? <img className={styles.heroArt} src={tuned.logo} alt="" draggable="false" />
-                : <img className={styles.heroArtFallback} src="clay_tv.png" alt="" draggable="false" />}
-              <span className={styles.heroGlow} aria-hidden="true" />
+        {/* ── Now Playing: the head unit. Fills the screen like a dash. ── */}
+        <section className={styles.dash}>
+          <div className={styles.dashChassis}>
+            <div className={styles.dashTop}>
+              <span className={styles.dashBadge}>{tuned ? 'LIVE' : 'STANDBY'}</span>
+              <span className={styles.dashCh}>CH {tuned ? String(Math.max(1, inBand.indexOf(tuned) + 1)).padStart(3, '0') : '---'}</span>
+              <span className={styles.dashSignal} aria-hidden="true">
+                <i /><i /><i /><i /><i />
+              </span>
             </div>
-            <div className={styles.heroName}>{tuned?.name ?? 'Nothing tuned'}</div>
-            <div className={styles.heroTag}>
-              {tuned ? tuned.genre.toUpperCase() : 'Pick a station — every one of these reaches you'}
+
+            <div className={styles.dashScreen}>
+              <div className={styles.dashArt}>
+                {tuned?.logo
+                  ? <img src={tuned.logo} alt="" draggable="false" />
+                  : <img src="clay_tv.png" alt="" draggable="false" />}
+              </div>
+              <div className={styles.dashInfo}>
+                <div className={styles.dashLabel}>NOW PLAYING</div>
+                <div className={styles.dashName}>{tuned?.name ?? 'Nothing tuned'}</div>
+                <div className={styles.dashGenre}>{tuned ? tuned.genre.toUpperCase() : 'PICK A STATION'}</div>
+                <div className={styles.dashStats}>
+                  {tuned
+                    ? <>{compact(tuned.listeners)} listeners &nbsp;·&nbsp; {tuned.distanceKm} km away &nbsp;·&nbsp; {tuned.bitrate || '—'} kbps</>
+                    : 'Every station here reaches where you are'}
+                </div>
+              </div>
             </div>
-            <div className={styles.heroSub}>
-              {tuned ? `${compact(tuned.listeners)} listeners · ${tuned.distanceKm} km away` : ''}
+
+            {/* the tuner scale, like the strip under a car dial */}
+            <div className={styles.tuner} aria-hidden="true">
+              {Array.from({ length: 41 }, (_, i) => (
+                <i key={i} className={i % 5 === 0 ? styles.tickMajor : styles.tick} />
+              ))}
+              <span
+                className={styles.needle}
+                style={{ left: `${tuned ? Math.min(96, Math.max(4, (inBand.indexOf(tuned) / Math.max(1, inBand.length - 1)) * 100)) : 50}%` }}
+              />
             </div>
-            {/* all three are real clay objects, like the rest of the app */}
-            <div className={styles.heroControls}>
+
+            <div className={styles.dashControls}>
+              <button className={styles.dashKey} onClick={() => scan(-1)} aria-label="Previous station">◂◂</button>
               <ClayCornerButton
                 kind="heart"
                 label="Favourite"
-                size={50}
+                size={52}
                 active={!!tuned && favourites.has(tuned.id)}
                 onPress={() => tuned && toggleFav(tuned.id)}
               />
-              <ClayCornerButton
-                kind="play"
-                label="Play"
-                size={72}
-                onPress={() => tuned && tune(tuned)}
-              />
-              <ClayCornerButton kind="share" label="Share" size={50} onPress={() => playPop()} />
+              <ClayCornerButton kind="play" label="Play" size={78} onPress={() => tuned && tune(tuned)} />
+              <ClayCornerButton kind="share" label="Share" size={52} onPress={() => playPop()} />
+              <button className={styles.dashKey} onClick={() => scan(1)} aria-label="Next station">▸▸</button>
             </div>
           </div>
+          <div className={styles.dashHint}>scroll for stations ⌄</div>
         </section>
 
         {/* ── Station bands ── */}
