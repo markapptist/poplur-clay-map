@@ -142,39 +142,42 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
         </div>
       </header>
 
-      <div className={styles.scroll}>
-        {/* ── Now Playing: the head unit. Fills the screen like a dash. ── */}
-        <section className={styles.dash}>
-          <div className={styles.dashChassis}>
-            <div className={styles.dashTop}>
-              <span className={styles.dashBadge}>{tuned ? 'LIVE' : 'STANDBY'}</span>
-              <span className={styles.dashCh}>CH {tuned ? String(Math.max(1, inBand.indexOf(tuned) + 1)).padStart(3, '0') : '---'}</span>
-              <span className={styles.dashSignal} aria-hidden="true">
-                <i /><i /><i /><i /><i />
-              </span>
-            </div>
+      {/* Everything lives on one panel: the now-playing segment at the top of
+          the LCD, the channel list scrolling inside the same glass. */}
+      <div className={styles.dash}>
+        <div className={styles.dashChassis}>
+          <div className={styles.dashTop}>
+            <span className={styles.dashBadge}>{tuned ? 'LIVE' : 'STANDBY'}</span>
+            <span className={styles.dashCh}>
+              CH {tuned ? String(Math.max(1, inBand.indexOf(tuned) + 1)).padStart(3, '0') : '---'}
+            </span>
+            <span className={styles.dashSignal} aria-hidden="true"><i /><i /><i /><i /><i /></span>
+          </div>
 
-            <div className={styles.dashScreen}>
-              <span className={styles.lcdGrid} aria-hidden="true" />
-              <span className={styles.lcdGlass} aria-hidden="true" />
-              <div className={styles.dashArt}>
+          <div className={styles.dashScreen}>
+            <span className={styles.lcdGrid} aria-hidden="true" />
+            <span className={styles.lcdGlass} aria-hidden="true" />
+
+            {/* the segment: what is on the air */}
+            <div className={styles.seg}>
+              <div className={styles.segArt}>
                 {tuned?.logo
                   ? <img src={tuned.logo} alt="" draggable="false" />
                   : <img src="clay_tv.png" alt="" draggable="false" />}
               </div>
-              <div className={styles.dashInfo}>
-                <div className={styles.dashLabel}>NOW PLAYING</div>
-                <div className={styles.dashName}>{tuned?.name ?? 'Nothing tuned'}</div>
-                <div className={styles.dashGenre}>{tuned ? tuned.genre.toUpperCase() : 'PICK A STATION'}</div>
-                <div className={styles.dashStats}>
+              <div className={styles.segInfo}>
+                <div className={styles.segLabel}>NOW PLAYING</div>
+                <div className={styles.segName}>{(tuned?.name ?? 'NOTHING TUNED').toUpperCase()}</div>
+                <div className={styles.segGenre}>{tuned ? tuned.genre.toUpperCase() : 'SELECT A CHANNEL'}</div>
+                <div className={styles.segStats}>
                   {tuned
-                    ? <>{compact(tuned.listeners)} listeners &nbsp;·&nbsp; {tuned.distanceKm} km away &nbsp;·&nbsp; {tuned.bitrate || '—'} kbps</>
-                    : 'Every station here reaches where you are'}
+                    ? `${compact(tuned.listeners)} LISTENERS · ${tuned.distanceKm} KM · ${tuned.bitrate || '--'} KBPS`
+                    : 'ALL CHANNELS BELOW REACH YOU'}
                 </div>
               </div>
             </div>
 
-            {/* the tuner scale, like the strip under a car dial */}
+            {/* the tuner scale */}
             <div className={styles.tuner} aria-hidden="true">
               {Array.from({ length: 41 }, (_, i) => (
                 <i key={i} className={i % 5 === 0 ? styles.tickMajor : styles.tick} />
@@ -185,121 +188,44 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
               />
             </div>
 
-            <div className={styles.dashControls}>
-              <ClayCornerButton kind="seekBack" label="Previous station" size={46} onPress={() => scan(-1)} />
-              <ClayCornerButton
-                kind="heart"
-                label="Favourite"
-                size={52}
-                active={!!tuned && favourites.has(tuned.id)}
-                onPress={() => tuned && toggleFav(tuned.id)}
-              />
-              <ClayCornerButton kind="play" label="Play" size={78} onPress={() => tuned && tune(tuned)} />
-              <ClayCornerButton kind="share" label="Share" size={52} onPress={() => playPop()} />
-              <ClayCornerButton kind="seekFwd" label="Next station" size={46} onPress={() => scan(1)} />
-            </div>
-          </div>
-          <div className={styles.dashHint}>scroll for stations ⌄</div>
-        </section>
-
-        {/* ── Station bands ── */}
-        <section>
-          <div className={styles.rowHead}>
-            <h2 className={styles.sectionTitle}>Radio Stations</h2>
-            <button className={styles.chev} aria-label="More stations" onClick={() => scrollRail(1)}>›</button>
-          </div>
-          <div className={styles.rail} ref={railRef}>
-            {BANDS.map(b => {
-              const count = (stations ?? []).filter(s => bandOf(s) === b.key).length
-              const on = band === b.key
-              return (
+            {/* the channel list, on the same glass */}
+            <div className={styles.lcdList}>
+              <div className={styles.lcdListHead}>
+                <span>CH</span><span>CHANNEL</span><span className={styles.lcdReach}>KM</span>
+              </div>
+              {stations === null && <div className={styles.lcdNote}>SCANNING BAND…</div>}
+              {stations !== null && !inBand.length && <div className={styles.lcdNote}>{(error ?? 'NO SIGNAL').toUpperCase()}</div>}
+              {inBand.map((st, i) => (
                 <button
-                  key={b.key}
-                  className={on ? `${styles.tile} ${styles.tileOn}` : styles.tile}
-                  style={{ '--tint': b.tint } as React.CSSProperties}
-                  onClick={() => { playPop(); setBand(on ? null : b.key) }}
-                  disabled={!count}
+                  key={st.id}
+                  className={st.url === tunedUrl ? `${styles.lcdRow} ${styles.lcdRowOn}` : styles.lcdRow}
+                  onClick={() => tune(st)}
                 >
-                  <span className={styles.tileArt} aria-hidden="true" />
-                  <span className={styles.tileLabel}>{b.label}</span>
-                  <span className={styles.tileCount}>{count}</span>
+                  <span className={styles.lcdCh}>{String(i + 1).padStart(3, '0')}</span>
+                  <span className={styles.lcdBody}>
+                    <span className={styles.lcdName}>{st.name.toUpperCase()}</span>
+                    <span className={styles.lcdGenre}>{st.genre.toUpperCase()}</span>
+                  </span>
+                  <span className={styles.lcdReach}>{st.distanceKm}</span>
                 </button>
-              )
-            })}
-          </div>
-        </section>
-
-        {/* ── Trending + genres ── */}
-        <section className={styles.split}>
-          <div className={styles.trending}>
-            <h2 className={styles.sectionTitle}>Trending Now</h2>
-            {stations === null && <div className={styles.note}>scanning the band…</div>}
-            {stations !== null && !trending.length && <div className={styles.note}>{error ?? 'Nothing in range'}</div>}
-            {trending.map(s => (
-              <button key={s.id} className={styles.trendRow} onClick={() => tune(s)}>
-                <span className={styles.trendBars} aria-hidden="true">
-                  <i /><i /><i /><i />
-                </span>
-                <span className={styles.trendBody}>
-                  <span className={styles.trendName}>{s.name}</span>
-                  <span className={styles.trendMeta}>Live · {compact(s.listeners)} Listeners</span>
-                </span>
-                <span className={s.url === tunedUrl ? `${styles.trendPlay} ${styles.trendPlayOn}` : styles.trendPlay}>▶</span>
-              </button>
-            ))}
-          </div>
-
-          <div className={styles.genres}>
-            <h2 className={styles.sectionTitle}>Top Genres</h2>
-            <div className={styles.genreBody}>
-              <div
-                className={styles.donut}
-                style={{
-                  background: `conic-gradient(${genreSplit
-                    .reduce<{ css: string[]; at: number }>((acc, g) => {
-                      const next = acc.at + g.pct
-                      acc.css.push(`${g.tint} ${acc.at}% ${next}%`)
-                      return { css: acc.css, at: next }
-                    }, { css: [], at: 0 })
-                    .css.join(', ') || '#2a2233 0% 100%'})`,
-                }}
-                aria-hidden="true"
-              />
-              <ul className={styles.legend}>
-                {genreSplit.map(g => (
-                  <li key={g.key}>
-                    <span className={styles.dot} style={{ background: g.tint }} />
-                    <span className={styles.legendName}>{g.label}</span>
-                    <span className={styles.legendPct}>{g.pct}%</span>
-                  </li>
-                ))}
-              </ul>
+              ))}
             </div>
           </div>
-        </section>
 
-        {/* ── Everything in range ── */}
-        <section>
-          <h2 className={styles.sectionTitle}>
-            {band ? BANDS.find(b => b.key === band)?.label : 'All stations reaching you'}
-          </h2>
-          <div className={styles.list}>
-            {inBand.map((s, i) => (
-              <button
-                key={s.id}
-                className={s.url === tunedUrl ? `${styles.row} ${styles.rowOn}` : styles.row}
-                onClick={() => tune(s)}
-              >
-                <span className={styles.rowCh}>{String(i + 1).padStart(2, '0')}</span>
-                <span className={styles.rowBody}>
-                  <span className={styles.rowName}>{s.name}</span>
-                  <span className={styles.rowGenre}>{s.genre}</span>
-                </span>
-                <span className={styles.rowReach}>{s.distanceKm} km</span>
-              </button>
-            ))}
+          <div className={styles.dashControls}>
+            <ClayCornerButton kind="seekBack" label="Previous station" size={46} onPress={() => scan(-1)} />
+            <ClayCornerButton
+              kind="heart"
+              label="Favourite"
+              size={52}
+              active={!!tuned && favourites.has(tuned.id)}
+              onPress={() => tuned && toggleFav(tuned.id)}
+            />
+            <ClayCornerButton kind="play" label="Play" size={78} onPress={() => tuned && tune(tuned)} />
+            <ClayCornerButton kind="share" label="Share" size={52} onPress={() => playPop()} />
+            <ClayCornerButton kind="seekFwd" label="Next station" size={46} onPress={() => scan(1)} />
           </div>
-        </section>
+        </div>
       </div>
 
       {/* ── the bar that never leaves ── */}
