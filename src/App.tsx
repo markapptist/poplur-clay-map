@@ -783,6 +783,15 @@ export default function App() {
     tourTimers.current.forEach(t => window.clearTimeout(t))
     tourTimers.current = []
   }, [])
+
+  // Anything that interrupts the tour — a route, walking the pops, stopping it
+  // outright — has to say so, or the menu keeps offering STOP for a tour that
+  // is no longer running.
+  const stopTour = useCallback(() => {
+    clearTourTimers()
+    tourOnRef.current = false
+    setTourOn(false)
+  }, [clearTourTimers])
   useEffect(() => clearTourTimers, [clearTourTimers])
 
   const handleToggleStreetView = useCallback(() => {
@@ -855,9 +864,29 @@ export default function App() {
     activateTourDestination(destination)
   }, [activateTourDestination])
 
+  // Whether the tour is running. The hold menu's tile has to read STOP TOUR
+  // for as long as it is, so the map owns the truth and reports it upward —
+  // the menu can't infer it from a tile it tapped once.
+  // The cloudy badge wears the real clay cloud — the same cloud.glb that drifts
+  // overhead in WeatherFX, rendered once to a sprite. The drawn SVG stands in
+  // only until it resolves, so the badge is never empty.
+  const [cloudBadge, setCloudBadge] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    modelSprite('cloud.glb', { yaw: -18, pitch: 12, size: 256 })
+      .then(url => { if (alive) setCloudBadge(url) })
+      .catch(() => { /* the SVG keeps the badge */ })
+    return () => { alive = false }
+  }, [])
+
+  const [tourOn, setTourOn] = useState(false)
+  const tourOnRef = useRef(false)
+
   const startTourLoop = useCallback((initialDelayMs = 0, firstDestination?: TourDestination) => {
     clearTourTimers()
     tourStartedRef.current = true
+    tourOnRef.current = true
+    setTourOn(true)
     let pendingFirst = firstDestination
     const runStop = () => {
       tourStep(pendingFirst)
@@ -893,6 +922,13 @@ export default function App() {
     startTourLoop(1200, nearest)
   }, [startTourLoop])
 
+  // The home shell mirrors the tour state onto the hold-menu tile.
+  useEffect(() => {
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'poplur-map-tour', on: tourOn }, '*')
+    }
+  }, [tourOn])
+
   // Hold-menu actions arrive from the home page as messages: the on-map
   // Directions/Street View/Locate buttons moved there to declutter the map.
   const [directionsSignal, setDirectionsSignal] = useState(0)
@@ -904,11 +940,21 @@ export default function App() {
         case 'locate': handleGoToCurrentLocation(); break
         case 'streetview': handleToggleStreetView(); break
         case 'directions': setDirectionsSignal(n => n + 1); break
-        case 'tour': startTourLoop(0); break
+        // The search panel drops in from the top, the same one the map's own
+        // search button opens — the menu tile is another way in, not a copy.
+        case 'search': setSearchOpen(true); break
+        // One tile, both directions. The decision is read off the ref rather
+        // than computed inside a state updater: StrictMode double-invokes
+        // those, and this one has to fire timers.
+        case 'tour': {
+          if (tourOnRef.current) stopTour()
+          else startTourLoop(0)
+          break
+        }
         case 'cyclePop': {
           // Channel arrows on the map: fly pop-to-pop with the tour camera
           // (curved zoom-out-then-in), pausing the ambient tour.
-          clearTourTimers()
+          stopTour()
           const dir = event.data.dir === -1 ? -1 : 1
           const next = ((popCycleRef.current + dir) % POIS.length + POIS.length) % POIS.length
           popCycleRef.current = next
@@ -923,17 +969,17 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [handleGoToCurrentLocation, handleToggleStreetView, startTourLoop, clearTourTimers, flyToCenter])
+  }, [handleGoToCurrentLocation, handleToggleStreetView, startTourLoop, stopTour, flyToCenter])
 
   const handleRouteIntent = useCallback(() => {
-    clearTourTimers()
+    stopTour()
     const map = mapRef.current
     if (!map) return
     const mapApi = map as unknown as { __cinematic?: boolean; __stopOrbit?: () => void }
     mapApi.__cinematic = false
     mapApi.__stopOrbit?.()
     map.stop()
-  }, [clearTourTimers])
+  }, [stopTour])
 
   const handleSelectPoi = useCallback((id: string) => {
     setSelectedId(id)
@@ -980,7 +1026,11 @@ export default function App() {
         theme={theme}
         dayTime={dayTime}
         weatherMode={weatherMode}
-        weatherIcon={weatherIconForMode(weatherMode)}
+        weatherIcon={
+          cloudBadge && (weatherMode === 'cloudy' || weatherMode === 'fog')
+            ? `<img src="${cloudBadge}" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain" />`
+            : weatherIconForMode(weatherMode)
+        }
         weatherTemp={weather ? `${weather.temp}°${usesFahrenheit() ? 'F' : 'C'}` : null}
         introDestinations={INTRO_LANDMARKS}
         streetView={streetView}

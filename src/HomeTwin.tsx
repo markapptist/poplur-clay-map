@@ -194,6 +194,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
       if (event.data.type === 'poplur-map-loading') setMapReady(false)
+      // The map tells us whether its tour is running; the hold-menu tile
+      // mirrors it rather than tracking a toggle of its own.
+      if (event.data.type === 'poplur-map-tour') setMapTourOn(Boolean(event.data.on))
       if (event.data.type === 'poplur-map-ready') {
         setMapReady(true)
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
@@ -208,6 +211,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // behind it must stop playing, its captions must not show through, and the
   // map iframe must go quiet.
   const [overlayOpen, setOverlayOpen] = useState(false)
+  const [mapTourOn, setMapTourOn] = useState(false)
 
   // The map iframe stays mounted on every tab, so its audio (radio, ambience,
   // pops) must be gated here: audible only while the MAP tab is front-most AND
@@ -494,6 +498,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           tab={activeTab}
           onClose={() => setHoldOpen(false)}
           onAction={runMenuAction}
+          onMapAction={action => {
+            mapFrameRef.current?.contentWindow?.postMessage(
+              { type: 'poplur-map-action', action }, '*',
+            )
+          }}
+          tourOn={mapTourOn}
           onSubscreenChange={setOverlayOpen}
         />
       )}

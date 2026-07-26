@@ -292,7 +292,10 @@ function pointAlongRoute(coordinates: number[][], t: number): { pos: [number, nu
   const valid = coordinates.filter(point => point.length >= 2 && Number.isFinite(point[0]) && Number.isFinite(point[1]))
   if (valid.length < 2) return { pos: [0, 0], bearing: 0 }
   const segs = valid.length - 1
-  const scaled = (t % 1) * segs
+  // Cars driving the road backwards pass a NEGATIVE t once they have travelled
+  // past their start offset, and `t % 1` keeps that sign — which indexed the
+  // point list at -1 and threw on every frame. Wrap into [0,1) first.
+  const scaled = (((t % 1) + 1) % 1) * segs
   const i = Math.min(segs - 1, Math.floor(scaled))
   const f = scaled - i
   const [x1, y1] = valid[i]
@@ -353,39 +356,34 @@ function flyerPosition(f: Flyer, t: number): [number, number] {
   return [lng, lat]
 }
 
-type GlobeLandmark = { coords: [number, number]; width: number } &
-  ({ kind: 'img'; src: string } | { kind: 'svg'; svg: string })
-
-// Clay props standing on the globe at world zoom, like the toys on the
-// reference clay earth — provided Meshy assets plus clay monuments at their
-// real coordinates.
-const GLOBE_LANDMARKS: GlobeLandmark[] = [
-  { kind: 'img', src: 'clay_buildings.png', coords: [-74.006, 40.713], width: 92 },  // New York
-  { kind: 'img', src: 'clay_buildings.png', coords: [139.69, 35.68], width: 74 },    // Tokyo
-  { kind: 'img', src: 'clay_buildings.png', coords: [55.27, 25.20], width: 68 },     // Dubai
-  { kind: 'img', src: 'clay_buildings.png', coords: [151.21, -33.87], width: 62 },   // Sydney
-  { kind: 'img', src: 'clay_buildings.png', coords: [-99.13, 19.43], width: 56 },    // Mexico City
-  { kind: 'img', src: 'clay_buildings.png', coords: [72.88, 19.08], width: 60 },     // Mumbai
-  { kind: 'img', src: 'clay_buildings.png', coords: [3.38, 6.52], width: 52 },       // Lagos
-  { kind: 'img', src: 'clay_buildings.png', coords: [-118.24, 34.05], width: 58 },   // Los Angeles
-  { kind: 'img', src: 'clay_buildings.png', coords: [116.40, 39.90], width: 66 },    // Beijing
-  { kind: 'img', src: 'clay_buildings.png', coords: [37.62, 55.75], width: 60 },     // Moscow
-  { kind: 'img', src: 'clay_buildings.png', coords: [28.05, -26.20], width: 54 },    // Johannesburg
-  { kind: 'svg', svg: SVG_EIFFEL,      coords: [2.2945, 48.8584], width: 44 },        // Eiffel Tower, Paris
-  { kind: 'svg', svg: SVG_CN_TOWER,    coords: [-79.3871, 43.6426], width: 30 },      // CN Tower, Toronto
-  { kind: 'svg', svg: SVG_BIG_BEN,     coords: [-0.1246, 51.5007], width: 28 },       // Big Ben, London
-  { kind: 'svg', svg: SVG_PYRAMID,     coords: [31.1342, 29.9792], width: 58 },       // Giza Pyramids
-  { kind: 'svg', svg: SVG_CHRIST,      coords: [-43.2105, -22.9519], width: 44 },     // Christ the Redeemer, Rio
-  { kind: 'svg', svg: SVG_LIBERTY,     coords: [-74.0445, 40.6892], width: 34 },      // Statue of Liberty, NYC
-  { kind: 'svg', svg: SVG_TAJ,         coords: [78.0421, 27.1751], width: 56 },       // Taj Mahal, Agra
-  { kind: 'svg', svg: SVG_OPERA,       coords: [151.2153, -33.8568], width: 58 },     // Sydney Opera House
-  { kind: 'svg', svg: SVG_COLOSSEUM,   coords: [12.4922, 41.8902], width: 52 },       // Colosseum, Rome
-  { kind: 'svg', svg: SVG_NEEDLE,      coords: [-122.3493, 47.6205], width: 32 },     // Space Needle, Seattle
-  { kind: 'svg', svg: SVG_TOKYO_TOWER, coords: [139.7454, 35.6586], width: 38 },      // Tokyo Tower
-  { kind: 'svg', svg: SVG_GOLDEN_GATE, coords: [-122.4783, 37.8199], width: 60 },     // Golden Gate, SF
-  { kind: 'svg', svg: SVG_BURJ,        coords: [55.2744, 25.1972], width: 30 },       // Burj Khalifa, Dubai
-  { kind: 'svg', svg: SVG_PALM,        coords: [-61.5, 10.65], width: 40 },           // Caribbean palm
-  { kind: 'svg', svg: SVG_PALM,        coords: [-157.86, 21.31], width: 36 },         // Hawaii palm
+// The globe used to carry flat PNG/SVG monuments — an Eiffel Tower sticker, a
+// clay_buildings.png pasted on eleven cities. They were 2D cutouts standing on
+// a 3D clay world and read as exactly that, so they are gone. The props that
+// remain (trees, boats, cars, flyers) are the ones that belong.
+//
+// Their COORDINATES stay, as the cinematic tour's shot list: the camera still
+// flies the world's landmarks, it just no longer finds a sticker waiting there.
+const TOUR_SUBJECTS: Array<[number, number]> = [
+  [-74.006, 40.713],   // New York
+  [139.69, 35.68],     // Tokyo
+  [55.27, 25.20],      // Dubai
+  [151.21, -33.87],    // Sydney
+  [-99.13, 19.43],     // Mexico City
+  [72.88, 19.08],      // Mumbai
+  [3.38, 6.52],        // Lagos
+  [-118.24, 34.05],    // Los Angeles
+  [116.40, 39.90],     // Beijing
+  [37.62, 55.75],      // Moscow
+  [28.05, -26.20],     // Johannesburg
+  [2.2945, 48.8584],   // Eiffel Tower, Paris
+  [-79.3871, 43.6426], // CN Tower, Toronto
+  [-0.1246, 51.5007],  // Big Ben, London
+  [31.1342, 29.9792],  // Giza
+  [-43.2105, -22.9519],// Christ the Redeemer, Rio
+  [78.0421, 27.1751],  // Taj Mahal, Agra
+  [151.2153, -33.8568],// Sydney Opera House
+  [12.4922, 41.8902],  // Colosseum, Rome
+  [-122.4783, 37.8199],// Golden Gate, SF
 ]
 
 const ZOOM_MIN = 1
@@ -437,7 +435,6 @@ export default function ClayMap(props: ClayMapProps) {
 function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherTemp }: ClayMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
-  const landmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -725,7 +722,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     map.on('zoom', () => setZoomValue(map.getZoom()))
 
     // ── Zoom-dependent marker visibility ─────────────────────────────────────
-    // Globe zoom shows the clay landmarks; street zoom shows the POI pins.
+    // Globe zoom shows the flyers; street zoom shows the POI pins.
     // (Without this, city pins hover in outer space at globe zoom.)
     // display (not opacity) because Mapbox rewrites marker opacity every
     // frame for its own globe horizon fade.
@@ -733,9 +730,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const zoom = map.getZoom()
       const isGlobe = zoom < 5.5
       const isCity = zoom >= 12.5
-      landmarkMarkersRef.current.forEach(mk => {
-        mk.getElement().style.display = isGlobe ? '' : 'none'
-      })
       flyerMarkersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? '' : 'none'
       })
@@ -1661,69 +1655,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       }
 
       // Only user gestures pop (originalEvent present) — programmatic camera
-      // flights like the launch descent stay quiet. At street zoom the
-      // buildings pop; at globe zoom the landmarks you scroll over pop.
+      // flights like the launch descent stay quiet.
       map.on('move', e => {
         if (!(e as { originalEvent?: Event }).originalEvent) return
-        if (map.getZoom() < 5.5) triggerLandmarkPops()
-        else triggerPops()
+        if (map.getZoom() >= 5.5) triggerPops()
       })
-
-      // ── Clay landmarks standing on the globe (provided assets + monuments) ──
-      // Each landmark has an inner wrapper that plays the pop-up-book spring
-      // (the marker root's transform belongs to Mapbox for positioning).
-      landmarkMarkersRef.current.forEach(mk => mk.remove())
-      landmarkMarkersRef.current = GLOBE_LANDMARKS.map(lm => {
-        const el = document.createElement('div')
-        el.className = styles.landmark
-        el.style.width = `${lm.width}px`
-        const content = lm.kind === 'img'
-          ? `<img src="${lm.src}" alt="" draggable="false" />`
-          : lm.svg
-        el.innerHTML = `<div class="${styles.landmarkInner}">${content}</div>`
-        // rotationAlignment 'horizon' tilts the marker with the globe's
-        // curvature so it stands upright ON the planet surface (3D), instead
-        // of floating as a flat screen-space billboard.
-        return new mapboxgl.Marker({ element: el, anchor: 'bottom', rotationAlignment: 'horizon' })
-          .setLngLat(lm.coords)
-          .addTo(map)
-      })
-      updateLandmarks()
-
-      // Pop-up-book on scroll-over: as the user pans the globe, the landmark
-      // crossing the middle of the screen springs out of the earth with the
-      // feed pop sound. One at a time, with per-landmark and global cooldowns.
-      const landmarkLastPop = new Map<number, number>()
-      let lastLandmarkPopAt = 0
-      const triggerLandmarkPops = () => {
-        const now = performance.now()
-        if (now - lastLandmarkPopAt < 700) return
-        const container = map.getContainer()
-        const cx = container.clientWidth / 2
-        const cy = container.clientHeight / 2
-        let best = -1
-        let bestDist = Infinity
-        landmarkMarkersRef.current.forEach((marker, i) => {
-          const el = marker.getElement()
-          if (el.style.display === 'none') return
-          if (parseFloat(getComputedStyle(el).opacity) < 0.2) return // behind the globe
-          const p = map.project(marker.getLngLat())
-          const dist = Math.hypot(p.x - cx, p.y - cy)
-          if (dist > 90) return
-          if ((now - (landmarkLastPop.get(i) ?? 0)) < 4000) return
-          if (dist < bestDist) { bestDist = dist; best = i }
-        })
-        if (best < 0) return
-        lastLandmarkPopAt = now
-        landmarkLastPop.set(best, now)
-        const inner = landmarkMarkersRef.current[best].getElement()
-          .querySelector(`.${styles.landmarkInner}`) as HTMLElement | null
-        if (!inner) return
-        inner.classList.remove(styles.landmarkPop)
-        void inner.offsetWidth // restart the CSS animation
-        inner.classList.add(styles.landmarkPop)
-        playPop()
-      }
 
       // ── Clay flyers: airplanes low over the surface, satellites up high ─────
       // Positions animate along inclined orbits; markers ride the horizon
@@ -2034,12 +1970,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       const startTour = async (stops = 4) => {
         stopOrbit()
-        const order = GLOBE_LANDMARKS.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, stops)
+        const order = TOUR_SUBJECTS.map((_, i) => i).sort(() => Math.random() - 0.5).slice(0, stops)
         const grammars = ['dolly', 'pan', 'crane'] as const
 
         for (const [shotIndex, i] of order.entries()) {
           stopOrbit()
-          const target = GLOBE_LANDMARKS[i].coords
+          const target = TOUR_SUBJECTS[i]
           const grammar = grammars[shotIndex % grammars.length]
 
           // TRAVEL: come in high and wide, always arriving off-axis so the
@@ -2055,14 +1991,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           })
           await settle()
 
-          const inner = landmarkMarkersRef.current[i]?.getElement()
-            .querySelector(`.${styles.landmarkInner}`) as HTMLElement | null
-          if (inner) {
-            inner.classList.remove(styles.landmarkPop)
-            void inner.offsetWidth
-            inner.classList.add(styles.landmarkPop)
-            playPop()
-          }
+          // arrival beat — the shot lands with the feed's pop
+          playPop()
 
           if (grammar === 'dolly') {
             // push in, flattening the tilt as the subject fills the frame
@@ -2084,11 +2014,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (import.meta.env.DEV) {
         const w = window as unknown as {
           __triggerPops?: () => void
-          __triggerLandmarkPops?: () => void
           __startTour?: (stops?: number) => Promise<void>
         }
         w.__triggerPops = triggerPops
-        w.__triggerLandmarkPops = triggerLandmarkPops
         w.__startTour = startTour
       }
 
@@ -2169,7 +2097,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       stopCarAudio()
       popRafs.forEach(raf => cancelAnimationFrame(raf))
       popRafs.clear()
-      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, landmarkMarkersRef].forEach(ref => {
+      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef].forEach(ref => {
         ref.current.forEach(mk => mk.remove())
         ref.current = []
       })

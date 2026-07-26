@@ -28,18 +28,22 @@ interface Item {
   native?: boolean
   /** performed on the live screen — no subscreen opens */
   action?: 'like' | 'comment' | 'captions' | 'profile'
+  /** performed on the live MAP behind the menu — no subscreen opens */
+  mapAction?: 'search' | 'locate' | 'directions' | 'tour'
 }
 
 // Per-tab item sets are the confirmed hold-menu inventory. Every tile keeps a
 // subscreen destination so the prototype remains inspectable from the app.
 const TAB_MENUS: Record<CubeTab, Item[]> = {
+  // Every map tile acts on the map behind the menu. None of them open a
+  // Rough Copy capture any more — a tile that shows you a picture of search
+  // is not search.
   map: [
-    { icon: 'Search', title: 'SEARCH', screen: 'map-search' },
-    { icon: 'Search', title: 'CURRENT LOCATION', screen: 'map-locate' },
-    { icon: 'Create', title: 'POST MULTIPLE', screen: 'map-post' },
+    { icon: 'Search', title: 'SEARCH', screen: 'map-search', mapAction: 'search' },
+    { icon: 'Search', title: 'CURRENT LOCATION', screen: 'map-locate', mapAction: 'locate' },
     { icon: 'Music', title: 'RADIO', screen: 'map-radio', native: true },
-    { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', toggle: 'tour', screen: 'map-tour' },
-    { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-search' },
+    { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
+    { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
   feed: [
     { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg', action: 'like' },
@@ -119,11 +123,16 @@ export default function HoldMenuTwin({
   tab,
   onClose,
   onAction,
+  onMapAction,
+  tourOn,
   onSubscreenChange,
 }: {
   tab: CubeTab
   onClose: () => void
   onAction?: (action: NonNullable<Item['action']>) => void
+  onMapAction?: (action: NonNullable<Item['mapAction']>) => void
+  /** live tour state, reported by the map — the tile must not guess at it */
+  tourOn?: boolean
   /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the app */
   onSubscreenChange?: (open: boolean) => void
 }) {
@@ -131,6 +140,12 @@ export default function HoldMenuTwin({
   // mutable controls retain their current state while the wheel is open.
   const [menuState, setMenuState] = useState(persistedMenuState)
   const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).map(item => {
+    // TOUR reads its label off the map's own state, so it says STOP TOUR for
+    // as long as the tour is actually running — including a tour that started
+    // itself at launch, which a local toggle would have got backwards.
+    if (item.mapAction === 'tour' && item.activeTitle) {
+      return { ...item, title: tourOn ? item.activeTitle : item.title }
+    }
     if (!item.toggle || !item.activeTitle) return item
     return {
       ...item,
@@ -202,6 +217,14 @@ export default function HoldMenuTwin({
       }
       playPop()
       onAction?.(item.action)
+      onClose()
+      return
+    }
+    // SEARCH / CURRENT LOCATION / DIRECTIONS / TOUR happen on the map behind
+    // the menu. Closing is part of the action — you need to see what it did.
+    if (item.mapAction) {
+      playPop()
+      onMapAction?.(item.mapAction)
       onClose()
       return
     }
