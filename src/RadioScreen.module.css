@@ -66,15 +66,20 @@
 /* ── Now Playing: a car head unit, full screen ── */
 
 .dash {
-  /* No min-height here: reserving height on the SECTION left a dead band under
-     the chassis, because the chassis only grew to fit its content. The chassis
-     itself does the filling now. */
-  padding: 0;
+  /* The deck is a flex column (header · dash · bar). This takes the slack and
+     nothing more — a fixed 100dvh height in here overflowed the screen and
+     pushed the channel list past the bottom, which is why rows could not be
+     tapped. min-height:0 lets the LCD scroll inside instead of growing. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding: 0 16px 10px;
 }
 
 .dashChassis {
-  /* the head unit fills the view; its screen takes up the slack */
-  min-height: calc(100dvh - 236px);
+  /* fills whatever the deck gives it, never more */
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border-radius: 26px;
@@ -132,11 +137,12 @@
 .dashScreen {
   position: relative;
   flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 18px;
-  margin-top: 14px;
-  padding: 18px;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 12px;
+  padding: 14px;
   border-radius: 14px;
   overflow: hidden;
   border: 1px solid rgba(0, 0, 0, 0.7);
@@ -434,7 +440,7 @@
 .lcdList {
   flex: 1;
   min-height: 0;
-  margin-top: 12px;
+  margin-top: 10px;
   overflow-y: auto;
   border-top: 1px solid rgba(184, 255, 158, 0.22);
   scrollbar-width: none;
@@ -459,9 +465,11 @@
 .lcdRow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  padding: 7px 2px;
+  /* a dashboard row is a thumb target, not a spreadsheet line */
+  min-height: 52px;
+  padding: 11px 4px;
   border: 0;
   border-bottom: 1px dashed rgba(184, 255, 158, 0.14);
   background: transparent;
@@ -476,14 +484,14 @@
   box-shadow: inset 3px 0 0 #7eff6a;
 }
 
-.lcdCh { flex: none; width: 32px; font-size: 11px; letter-spacing: 1px; color: rgba(184, 255, 158, 0.7); }
+.lcdCh { flex: none; width: 36px; font-size: 12.5px; letter-spacing: 1px; color: rgba(184, 255, 158, 0.7); }
 .lcdRowOn .lcdCh { color: #d6ffc4; text-shadow: 0 0 8px rgba(126, 255, 106, 0.7); }
 
 .lcdBody { flex: 1; min-width: 0; }
 
 .lcdName {
   display: block;
-  font-size: 11.5px;
+  font-size: 13px;
   letter-spacing: 0.8px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -494,8 +502,8 @@
 
 .lcdGenre {
   display: block;
-  margin-top: 2px;
-  font-size: 8.5px;
+  margin-top: 3px;
+  font-size: 9.5px;
   letter-spacing: 1.4px;
   color: rgba(184, 255, 158, 0.45);
 }
@@ -508,4 +516,220 @@
   font-size: 10px;
   letter-spacing: 2px;
   color: rgba(184, 255, 158, 0.5);
+}
+
+/* ── the synth line ─────────────────────────────────────────────────────────
+   The signal itself, drawn on the glass. It moves while a station is on the
+   air and lies flat when nothing is tuned, so the screen always says whether
+   something is actually playing. */
+.lcdWave {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1px;
+  height: 26px;
+  margin-top: 10px;
+  padding: 0 2px;
+}
+
+.lcdWave i {
+  flex: 1 1 auto;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(126, 255, 106, 0.32);
+  box-shadow: 0 0 5px rgba(126, 255, 106, 0.35);
+  transform-origin: center;
+}
+
+.lcdWaveOn i {
+  background: #b8ff9e;
+  box-shadow: 0 0 7px rgba(150, 255, 120, 0.75);
+  animation: lcdWaveStep 0.62s steps(4, end) infinite alternate;
+}
+
+@keyframes lcdWaveStep {
+  from { height: 2px; opacity: 0.55; }
+  to { height: 22px; opacity: 1; }
+}
+
+/* ── power on ───────────────────────────────────────────────────────────────
+   The deck warming up: pixel wordmark, the clay TV redrawn by the panel and
+   turning on its plinth. Same green backlight as the LCD, full bleed. */
+.bootLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border-radius: inherit;
+  overflow: hidden;
+  transform-origin: center;
+}
+
+.boot {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% 30%, rgba(140, 255, 120, 0.2), transparent 68%),
+    linear-gradient(180deg, #1d3a1c 0%, #142b14 54%, #0a1a0c 100%);
+  font-family: ui-monospace, 'DejaVu Sans Mono', 'Courier New', monospace;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  color: #b8ff9e;
+  animation: bootIn 0.34s ease-out both;
+}
+
+/* leaving: the picture collapses the way a set switching off does */
+.bootOut { animation: bootOut 0.42s ease-in forwards; }
+
+@keyframes bootIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes bootOut {
+  0% { opacity: 1; transform: scaleY(1); filter: brightness(1); }
+  55% { opacity: 1; transform: scaleY(0.06); filter: brightness(2.6); }
+  100% { opacity: 0; transform: scaleY(0.004) scaleX(0.4); filter: brightness(3.4); }
+}
+
+.bootGrid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.3) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.36) 0 1px, transparent 1px 3px);
+  mix-blend-mode: multiply;
+}
+
+.bootGlass {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 34%);
+  animation: bootRoll 3.6s linear infinite;
+}
+
+@keyframes bootRoll {
+  from { background-position-y: -140%; }
+  to { background-position-y: 240%; }
+}
+
+.bootInner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.bootWord {
+  font-size: clamp(16px, 5.4vw, 26px);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: #d6ffc4;
+  text-shadow:
+    0 0 2px rgba(182, 255, 158, 0.9),
+    0 0 16px rgba(126, 255, 106, 0.55),
+    2px 2px 0 rgba(0, 0, 0, 0.55);
+  animation: bootFlicker 2.1s steps(1, end) 1;
+}
+
+@keyframes bootFlicker {
+  0%, 6% { opacity: 0; }
+  8% { opacity: 1; }
+  10% { opacity: 0.2; }
+  13% { opacity: 1; }
+  17% { opacity: 0.55; }
+  20%, 100% { opacity: 1; }
+}
+
+/* the plinth the TV turns on */
+.bootStage {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  display: grid;
+  place-items: center;
+  perspective: 460px;
+}
+
+.bootTv {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  transform-style: preserve-3d;
+  animation: bootSpin 3.6s linear infinite;
+}
+
+.bootFace {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* the point of the whole thing: the small buffer is scaled up with no
+     interpolation, so the clay TV comes back as square pixels */
+  image-rendering: pixelated;
+  backface-visibility: hidden;
+  filter: drop-shadow(0 0 12px rgba(126, 255, 106, 0.45));
+}
+
+.bootFaceBack { transform: rotateY(180deg); }
+
+@keyframes bootSpin {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(360deg); }
+}
+
+.bootShadow {
+  position: absolute;
+  bottom: 4px;
+  width: 92px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 50%, rgba(126, 255, 106, 0.4), transparent 72%);
+  animation: bootShadowPulse 3.6s ease-in-out infinite;
+}
+
+@keyframes bootShadowPulse {
+  0%, 100% { transform: scaleX(1); opacity: 0.75; }
+  50% { transform: scaleX(0.62); opacity: 0.45; }
+}
+
+.bootStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.26em;
+  color: rgba(182, 255, 158, 0.72);
+}
+
+.bootDots { display: inline-flex; gap: 4px; }
+
+.bootDots i {
+  width: 4px;
+  height: 4px;
+  background: #b8ff9e;
+  box-shadow: 0 0 6px rgba(126, 255, 106, 0.8);
+  animation: bootDot 1.05s steps(1, end) infinite;
+}
+
+.bootDots i:nth-child(2) { animation-delay: 0.35s; }
+.bootDots i:nth-child(3) { animation-delay: 0.7s; }
+
+@keyframes bootDot {
+  0%, 49% { opacity: 0.18; }
+  50%, 100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bootTv, .bootShadow, .bootGlass, .lcdWaveOn i { animation: none; }
 }

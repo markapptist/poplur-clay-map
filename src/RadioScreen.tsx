@@ -4,6 +4,7 @@ import { playPop } from './pop'
 import { isUserMuted, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
+import RadioBoot from './RadioBootScreen'
 import { listLocalStations, playStation, nowPlayingStation, type LocalStation } from './mapRadio'
 
 // POPLUR RADIO — the station deck.
@@ -35,6 +36,8 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
   const [band, setBand] = useState<string | null>(null)
   const [favourites, setFavourites] = useState<Set<string>>(() => new Set())
   const [muted, setMuted] = useState(isUserMuted)
+  // The set warms up before it plays. 'off' is the collapsing picture.
+  const [boot, setBoot] = useState<'on' | 'off' | 'done'>('on')
   const [error, setError] = useState<string | null>(null)
   const railRef = useRef<HTMLDivElement>(null)
 
@@ -57,6 +60,22 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
       )
     } else load(HOME[1], HOME[0])
     return () => { alive = false }
+  }, [])
+
+  // The deck owns the airwaves. The map runs its own station inside an iframe
+  // behind this screen; the home posts gcAudio as overlays open, but the deck
+  // says it itself — and keeps saying it — so a missed handoff, or the map's
+  // own tour callback resuming mid-song, can never leave two radios playing.
+  // The deck's own station lives in THIS document and is untouched by this.
+  useEffect(() => {
+    const hush = () => {
+      document.querySelectorAll('iframe').forEach(f => {
+        try { (f as HTMLIFrameElement).contentWindow?.postMessage({ gcAudio: 'off' }, '*') } catch { /* cross-origin */ }
+      })
+    }
+    hush()
+    const t = window.setInterval(hush, 1500)
+    return () => window.clearInterval(t)
   }, [])
 
   useEffect(() => {
@@ -99,6 +118,9 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
 
   const tune = (s: LocalStation) => {
     playPop()
+    // Picking a channel IS the intent to listen — tuning while the board is
+    // muted otherwise looks like the button did nothing at all.
+    if (isUserMuted()) { setUserMuted(false); setMuted(false) }
     playStation(s)
     setTunedUrl(s.url)
   }
@@ -158,6 +180,18 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
             <span className={styles.lcdGrid} aria-hidden="true" />
             <span className={styles.lcdGlass} aria-hidden="true" />
 
+            {/* The set warms up on its own glass — the chassis, the controls
+                and the trim stay put around it, the way a dashboard head unit
+                lights up inside its own bezel. */}
+            {boot !== 'done' && (
+              <div
+                className={boot === 'off' ? `${styles.bootLayer} ${styles.bootOut}` : styles.bootLayer}
+                onAnimationEnd={e => { if (boot === 'off' && e.currentTarget === e.target) setBoot('done') }}
+              >
+                <RadioBoot onDone={() => setBoot('off')} />
+              </div>
+            )}
+
             {/* the segment: what is on the air */}
             <div className={styles.seg}>
               <div className={styles.segArt}>
@@ -175,6 +209,14 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
                     : 'ALL CHANNELS BELOW REACH YOU'}
                 </div>
               </div>
+            </div>
+
+            {/* the synth line — the signal itself, moving while a station is
+                on the air, flat when nothing is tuned */}
+            <div className={tuned ? `${styles.lcdWave} ${styles.lcdWaveOn}` : styles.lcdWave} aria-hidden="true">
+              {Array.from({ length: 56 }, (_, i) => (
+                <i key={i} style={{ animationDelay: `${((i * 7) % 23) * 0.055}s` }} />
+              ))}
             </div>
 
             {/* the tuner scale */}
