@@ -460,6 +460,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [zoomValue, setZoomValue] = useState(14.8)
   // The sky's own clock. Normally the real one; in dev it can be raced so the
   // sun and moon complete their circuit in a minute instead of a day.
+  // Premium (photoreal) surface + the line that reports what the wallet did.
+  const [premiumSurface, setPremiumSurface] = useState(false)
+  const premiumSurfaceRef = useRef(false)
+  const [premiumNote, setPremiumNote] = useState<string | null>(null)
+
   const [skyClock, setSkyClock] = useState(() => new Date())
   useEffect(() => {
     // OPT-IN, not on by default: this re-renders the map every second, which
@@ -494,6 +499,31 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const zoomRailRef = useRef<HTMLInputElement>(null)
   const [zoomRailLen, setZoomRailLen] = useState(380)
   const ZOOM_THUMB = 76
+  // Flip the basemap between the clay style and photoreal satellite.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    // HYBRID, not flat imagery: standard-satellite carries real photography
+    // AND the 3D building massing, so premium looks like the city rather than
+    // a photograph of it. (satellite-streets-v12 has no buildings at all —
+    // that is why the first cut looked wrong.)
+    const style = premiumSurface
+      ? 'mapbox://styles/mapbox/standard-satellite'
+      : 'mapbox://styles/mapbox/dark-v11'
+    try {
+      map.setStyle(style)
+      // setStyle drops every custom layer, so the clay world has to be rebuilt
+      // when we come back. Bumping the epoch re-runs the layer effects.
+      map.once('style.load', () => {
+        try {
+          map.setConfigProperty?.('basemap', 'show3dObjects', true)
+          map.setConfigProperty?.('basemap', 'lightPreset', dayTime ? 'day' : 'night')
+        } catch { /* older style spec */ }
+        setMapEpoch(e => e + 1)
+      })
+    } catch { /* style server hiccup */ }
+  }, [premiumSurface, mapRef])
+
   useEffect(() => {
     const el = zoomRailRef.current
     if (!el) return
@@ -543,6 +573,46 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           stopCarAudio()
         }
       }
+      // Hold-menu PREMIUM MAP: the photoreal surface is a paid feature. The
+      // wallet is checked here, the charge is taken on the way IN, and turning
+      // it back off is free. Balance lives in localStorage for this testing
+      // run; the real one comes from the account service.
+      if (event.data?.type === 'poplur-map-action' && event.data.action === 'togglePremium') {
+        const PREMIUM_COST = 25
+        const readCredit = () => {
+          try {
+            const raw = window.localStorage.getItem('poplur.credit')
+            return raw === null ? 100 : Number(raw)
+          } catch { return 100 }
+        }
+        const writeCredit = (v: number) => {
+          try { window.localStorage.setItem('poplur.credit', String(v)) } catch { /* private mode */ }
+        }
+        // Decide and charge OUTSIDE the state updater: React StrictMode invokes
+        // updaters twice, which billed the wallet twice for one press.
+        const turningOn = !premiumSurfaceRef.current
+        if (!turningOn) {
+          playPop()
+          premiumSurfaceRef.current = false
+          setPremiumSurface(false)
+          setPremiumNote('Back to the clay map')
+          window.setTimeout(() => setPremiumNote(null), 2200)
+        } else {
+          const credit = readCredit()
+          if (credit < PREMIUM_COST) {
+            setPremiumNote(`Not enough Poplur credit — ${PREMIUM_COST} needed, you have ${credit}`)
+            window.setTimeout(() => setPremiumNote(null), 3200)
+          } else {
+            writeCredit(credit - PREMIUM_COST)
+            playPop()
+            premiumSurfaceRef.current = true
+            setPremiumSurface(true)
+            setPremiumNote(`Premium map on — ${PREMIUM_COST} credit, ${credit - PREMIUM_COST} left`)
+            window.setTimeout(() => setPremiumNote(null), 2800)
+          }
+        }
+      }
+
       // Hold-menu FOV entry: cycle lens presets with a pop per step.
       if (event.data?.type === 'poplur-map-action' && event.data.action === 'fov') {
         setFovValue(prev => {
@@ -2429,6 +2499,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           </>
         )
       })()}
+
+      {premiumNote && <div className={styles.premiumNote}>{premiumNote}</div>}
 
       {weatherIcon && zoomValue > 4.4 && (
         <div className={styles.zoomWeather} aria-label={`Current weather: ${weatherMode}`}>

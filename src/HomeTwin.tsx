@@ -270,7 +270,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  const runMenuAction = (action: FeedAction) => {
+  const runMenuAction = (action: FeedAction | 'premium') => {
+    if (action === 'premium') {
+      // The premium (photoreal) surface is a paid switch — the map owns the
+      // wallet check and answers with whether it could afford it.
+      mapFrameRef.current?.contentWindow?.postMessage(
+        { type: 'poplur-map-action', action: 'togglePremium' }, '*',
+      )
+      return
+    }
     feedActionsRef.current?.(action)
   }
 

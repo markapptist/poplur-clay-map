@@ -26,7 +26,7 @@ interface Item {
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'captions' | 'profile'
+  action?: 'like' | 'comment' | 'captions' | 'profile' | 'premium'
 }
 
 // Per-tab item sets are the confirmed hold-menu inventory. Every tile keeps a
@@ -36,7 +36,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Search', title: 'SEARCH', screen: 'map-search' },
     { icon: 'Search', title: 'CURRENT LOCATION', screen: 'map-locate' },
     { icon: 'Create', title: 'POST MULTIPLE', screen: 'map-post' },
-    { icon: 'Wallet', title: 'PREMIUM MAP', screen: 'map-claims' },
+    { icon: 'Wallet', title: 'PREMIUM MAP', screen: 'map-claims', action: 'premium' },
     { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', toggle: 'tour', screen: 'map-tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-search' },
   ],
