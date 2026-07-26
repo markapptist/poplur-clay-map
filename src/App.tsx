@@ -15,7 +15,7 @@ import {
 } from './regionAudio'
 import type { RegionContext } from './regionAudio'
 import { postNativeEvent } from './nativeBridge'
-import { isUserMuted, setUserMuted } from './audioGate'
+import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
 import ClayMuteButton from './ClayMuteButton'
@@ -436,6 +436,11 @@ export default function App() {
   // camera may be visiting another continent when an address is entered.
   const [navigationOrigin, setNavigationOrigin] = useState<[number, number]>(DEFAULT_NAV_ORIGIN)
   const soundPlayingRef = useRef(false)
+  // The map lives in an always-mounted iframe behind Feed/Profile. It starts
+  // unfocused there, so no map audio can win a resume race before Home sends
+  // the first foreground message.
+  const mapAudioFrontRef = useRef(typeof window === 'undefined' || window.parent === window)
+  const soundRequestedRef = useRef(false)
   const lastTourDestinationRef = useRef<string | null>(null)
   // Region dialect for the Poplur theme (would come from the located region;
   // the dev panel lets you audition each).
@@ -479,10 +484,12 @@ export default function App() {
     }
   }, [harnessView])
 
-  const applySoundState = useCallback((on: boolean) => {
-    soundPlayingRef.current = on
-    setSoundPlaying(on)
-    if (on) {
+  const applySoundState = useCallback((on: boolean): boolean => {
+    soundRequestedRef.current = on
+    const audible = on && mapAudioFrontRef.current && !isGateMuted()
+    soundPlayingRef.current = audible
+    setSoundPlaying(audible)
+    if (audible) {
       startMapRadio()
       // Always-on regional ambience bed, plus the Poplur theme as the default
       // when no radio station is found (which, in this prototype, is always).
@@ -492,7 +499,27 @@ export default function App() {
       stopMapRadio()
       stopRegionAudio()
     }
+    return audible
   }, [])
+
+  // `gcAudio` is the map's audio-focus contract with the Home shell. The
+  // generic AudioContext gate remains a safety net, but actively stopping the
+  // soundscape here prevents a tour callback from resuming it behind Feed.
+  useEffect(() => {
+    const sync = () => { applySoundState(soundRequestedRef.current) }
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.data?.gcAudio !== 'string') return
+      mapAudioFrontRef.current = event.data.gcAudio === 'on'
+      sync()
+    }
+    window.addEventListener('message', onMessage)
+    const offGate = onGateChange(sync)
+    sync()
+    return () => {
+      window.removeEventListener('message', onMessage)
+      offGate()
+    }
+  }, [applySoundState])
 
   useEffect(() => {
     return () => { stopMapRadio(); stopRegionAudio() }
@@ -681,11 +708,6 @@ export default function App() {
     const line = RECOMMENDATIONS[Math.floor(Math.random() * RECOMMENDATIONS.length)](destination)
     const cityName = cityNameForDestination(destination)
     lastTourDestinationRef.current = destination.id
-    // Tune a REAL local station for this stop (Radio Browser). Fire-and-forget:
-    // the synth bed covers the gap and stays as fallback if nothing streams.
-    void tuneLiveRadio(destination.coords[1], destination.coords[0]).then(stationName => {
-      if (stationName) setTourLine(current => current ? `${current} Now streaming ${stationName}.` : current)
-    })
     setTourLine(`${line}. Tuning ${stationsSummary(stations)}.`)
     postNativeEvent({
       type: 'tourStop',
@@ -698,8 +720,14 @@ export default function App() {
       stations,
       dwellMs: TOUR_DWELL_MS,
     })
-    applySoundState(true)
-    announceMapTour(line, stations)
+    if (applySoundState(true)) {
+      // Tune only once the map owns audio focus. A background map must not
+      // spin up a live stream that can outlast the transition into Feed.
+      void tuneLiveRadio(destination.coords[1], destination.coords[0]).then(stationName => {
+        if (stationName) setTourLine(current => current ? `${current} Now streaming ${stationName}.` : current)
+      })
+      announceMapTour(line, stations)
+    }
     flyToCenter(destination.coords, TOUR_FLIGHT_MS)
   }, [applySoundState, flyToCenter])
 

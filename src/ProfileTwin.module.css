@@ -7,6 +7,10 @@
   background:
     radial-gradient(120% 60% at 50% 6%, rgba(246, 59, 154, 0.08), transparent 46%),
     linear-gradient(180deg, #f7f4ef, #efeae3);
+  /* bell/camera drift outward on wider screens (mirrors the home HUD) */
+  --flank: clamp(0px, calc((100cqw - 440px) / 5), 150px);
+  --control-outset: clamp(0px, calc(20cqw - 64px), 32px);
+  container-type: size;
 }
 
 .header {
@@ -28,13 +32,19 @@
   perspective: 700px;
 }
 
-/* gradient-ring squircle (topLeading cyan → bottomTrailing magenta) + soft glow */
+/* gradient-ring squircle (topLeading cyan → bottomTrailing magenta) with a
+   live shader sweep gliding along the outline + soft glow */
 .avatarFrame {
   position: absolute;
   inset: 0;
   border-radius: 44px;
   padding: 4px;
-  background: linear-gradient(135deg, #5fe1ea 0%, #a06bd8 48%, #f63b9a 100%);
+  background: linear-gradient(120deg,
+    #5fe1ea 0%, #a06bd8 22%, #f63b9a 42%,
+    #ffe9f4 50%,
+    #f63b9a 58%, #a06bd8 78%, #5fe1ea 100%);
+  background-size: 320% 320%;
+  animation: frameSheen 5.5s ease-in-out infinite;
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -43,6 +53,12 @@
   box-shadow:
     0 0 28px rgba(246, 59, 154, 0.42),
     0 0 20px rgba(94, 225, 234, 0.3);
+}
+
+@keyframes frameSheen {
+  0% { background-position: 0% 0%; }
+  50% { background-position: 100% 100%; }
+  100% { background-position: 0% 0%; }
 }
 
 /* the head bobs vertically inside the static frame (MarkHeadView idle float) */
@@ -55,7 +71,11 @@
   transform: translateX(-50%);
   animation: bob 3.2s ease-in-out infinite;
   cursor: pointer;
+  transition: opacity 1.1s ease;
 }
+
+/* photo ⇄ head/building occasional crossfade */
+.fadeOut { opacity: 0; }
 
 /* slow yaw sway (looks left/right) layered on the talking mouth */
 .headTilt {
@@ -85,6 +105,7 @@
   border-radius: 40px;
   cursor: pointer;
   filter: drop-shadow(0 8px 12px rgba(60, 20, 44, 0.22));
+  transition: opacity 1.1s ease;
 }
 
 @keyframes bob {
@@ -97,11 +118,12 @@
   50% { transform: rotateY(9deg); }
 }
 
-/* notification bell — centred on the square's Y, to its left */
+/* notification bell — centred on the square's Y, to its left; drifts further
+   out with screen width so wide screens keep the home-HUD spread */
 .bell {
   position: absolute;
   top: 50%;
-  left: -58px;
+  left: calc(-58px - var(--control-outset) - var(--flank));
   transform: translateY(-50%);
   z-index: 6;
   width: 46px;
@@ -128,7 +150,7 @@
 .camBtn {
   position: absolute;
   top: 50%;
-  right: -60px;
+  right: calc(-60px - var(--control-outset) - var(--flank));
   transform: translateY(-50%);
   z-index: 6;
   width: 58px;
@@ -143,6 +165,10 @@
 
 .camBtn:active { transform: translateY(-50%) scale(0.9); }
 
+.camBtnPop {
+  animation: cameraOriginPop 380ms cubic-bezier(0.2, 1.35, 0.35, 1) both;
+}
+
 .camBtn img {
   width: 100%;
   height: 100%;
@@ -151,13 +177,135 @@
   user-select: none;
 }
 
-/* speaking equaliser — small cyan bars just under the head */
+/* The profile camera is a clay object, not a flat route change: it breaks free
+   from the side control, blooms toward the avatar, then hands off to capture. */
+.camEject {
+  position: absolute;
+  top: 50%;
+  right: calc(-60px - var(--control-outset) - var(--flank));
+  z-index: 8;
+  width: 58px;
+  height: 52px;
+  pointer-events: none;
+  transform: translateY(-50%);
+  animation: cameraEject 380ms cubic-bezier(0.16, 0.92, 0.28, 1) both;
+}
+
+.camEject i {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 248, 252, 0.96), rgba(246, 59, 154, 0.38) 38%, transparent 70%);
+  transform: translate(-50%, -50%) scale(0.3);
+  animation: cameraBurst 380ms ease-out both;
+}
+
+.camEject img {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 12px rgba(60, 20, 44, 0.38));
+}
+
+@keyframes cameraOriginPop {
+  0% { transform: translateY(-50%) scale(1); }
+  45% { transform: translateY(-50%) scale(0.82); }
+  100% { transform: translateY(-50%) scale(1.08); }
+}
+
+@keyframes cameraEject {
+  0% { transform: translateY(-50%) translateX(0) scale(0.82); opacity: 0; }
+  18% { opacity: 1; }
+  62% { transform: translateY(-50%) translateX(-82px) scale(2.1) rotate(-7deg); opacity: 1; }
+  100% { transform: translateY(-50%) translateX(-142px) scale(3.15) rotate(-11deg); opacity: 0; }
+}
+
+@keyframes cameraBurst {
+  0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0; }
+  35% { opacity: 0.95; }
+  100% { transform: translate(-50%, -50%) scale(7); opacity: 0; }
+}
+
+/* Hey Poplur equaliser — small cyan bars just under the head; tapping it
+   opens the ask box */
 .speaking {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 4px 14px 0;
+  cursor: pointer;
   display: flex;
   align-items: flex-end;
   gap: 3px;
-  height: 16px;
+  height: 20px;
+  margin-top: 4px;
+}
+
+/* ask box + spoken reply — floats over the username so nothing reflows */
+.askWrap {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
   margin-top: 6px;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.askRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(320px, 78cqw);
+}
+
+.askInput {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(60, 20, 44, 0.12), inset 0 0 0 1.5px rgba(46, 195, 212, 0.5);
+  font: 600 14px system-ui, -apple-system, sans-serif;
+  color: #140a04;
+  outline: none;
+}
+
+.askInput::placeholder { color: rgba(20, 10, 4, 0.38); }
+
+.askSend {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #5fe1ea, #2ec3d4);
+  color: #06333a;
+  font-size: 18px;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(46, 195, 212, 0.4);
+}
+
+.askSend:active { transform: scale(0.92); }
+
+.aiReply {
+  margin-top: 8px;
+  max-width: min(320px, 80cqw);
+  padding: 9px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 14px rgba(60, 20, 44, 0.1);
+  font: 600 13px/1.45 system-ui, -apple-system, sans-serif;
+  color: rgba(20, 10, 4, 0.82);
+  text-align: center;
 }
 
 .speaking span {
@@ -236,9 +384,14 @@
   right: 16px;
   top: 438px;
   bottom: 34px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   touch-action: pan-y;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+
+.content::-webkit-scrollbar { display: none; }
 
 .refresh {
   position: absolute;
@@ -261,16 +414,61 @@
   gap: 6px;
 }
 
+/* post tile: the post's own first frame under live TV static (feed match) */
 .tile {
+  position: relative;
   aspect-ratio: 1;
-  display: grid;
-  place-items: center;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
   border-radius: 14px;
-  background: radial-gradient(circle at 38% 26%, rgba(255, 242, 248, 0.5), rgba(246, 59, 154, 0.32) 46%, rgba(120, 20, 70, 0.9));
-  color: #fff2f8;
-  font: 900 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.5px;
+  background: #120a12;
+  background: linear-gradient(145deg, #5a1f52 0%, #24143d 52%, #0c4852 100%);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
   box-shadow: 0 6px 16px rgba(246, 59, 154, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.tile:active { transform: scale(0.96); }
+
+.tilePreview,
+.tileStatic {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.tilePreview {
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.tilePreviewReady { opacity: 1; }
+
+.tileStatic {
+  opacity: 0.34;
+  mix-blend-mode: screen;
+}
+
+.tileScan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg,
+    rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px);
+}
+
+.tileCh {
+  position: absolute;
+  left: 7px;
+  bottom: 6px;
+  color: #39ff6a;
+  font: 900 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(57, 255, 106, 0.7), 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
 .messages {
@@ -322,55 +520,309 @@
   text-overflow: ellipsis;
 }
 
-/* ---- camera capture sheet ---- */
+/* ---- notifications banner (pink, springs down from the top) ---- */
 
-.capture {
+.notifScrim {
   position: absolute;
   inset: 0;
-  z-index: 40;
-  background: rgba(8, 4, 12, 0.92);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 22px;
+  z-index: 44;
 }
 
-.captureHead {
-  color: #fff2f8;
-  font-weight: 800;
-  font-size: 17px;
-  letter-spacing: 0.3px;
-}
-
-.viewfinder {
-  position: relative;
-  width: 280px;
-  height: 280px;
-  border-radius: 40px;
+.notifBanner {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  right: 10px;
+  padding: 54px 16px 16px;
+  border-radius: 0 0 26px 26px;
   overflow: hidden;
-  background: #14101a;
-  box-shadow: 0 0 0 4px rgba(246, 59, 154, 0.5), 0 0 34px rgba(246, 59, 154, 0.3);
+  isolation: isolate;
+  background:
+    radial-gradient(110% 76% at 50% 6%, rgba(255, 182, 221, 0.5), transparent 66%),
+    linear-gradient(180deg, #ff73bb, #f53798 72%, #d91d78);
+  box-shadow:
+    0 16px 40px rgba(246, 59, 154, 0.45),
+    inset 0 2px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -3px 0 rgba(135, 7, 68, 0.2);
+  transform-origin: center top;
+  will-change: transform;
+  animation: notifDropBounce 720ms cubic-bezier(0.22, 0.86, 0.32, 1.18) both;
 }
 
-.video {
+.notifDotMap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.88;
+  mix-blend-mode: screen;
+}
+
+.notifTitle,
+.notifRow {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes notifDropBounce {
+  0% { transform: translateY(-118%); }
+  62% { transform: translateY(12px); }
+  78% { transform: translateY(-7px); }
+  90% { transform: translateY(3px); }
+  100% { transform: translateY(0); }
+}
+
+.notifTitle {
+  color: #fff2f8;
+  font: 900 17px system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.4px;
+  margin-bottom: 10px;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(90, 18, 55, 0.45);
+}
+
+.notifRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 233, 246, 0.28);
+  background: rgba(145, 9, 74, 0.27);
+  box-shadow:
+    0 4px 12px rgba(90, 18, 55, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(8px) saturate(1.12);
+  -webkit-backdrop-filter: blur(8px) saturate(1.12);
+}
+
+.notifRow + .notifRow { margin-top: 7px; }
+
+.notifIcon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ffd4e9, #ff7ab9 52%, #a80756);
+  box-shadow:
+    0 3px 7px rgba(85, 7, 48, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.44);
+}
+
+.notifTypeAsset {
+  width: 27px;
+  height: 27px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 1.5px rgba(81, 2, 44, 0.42));
+  user-select: none;
+}
+
+.notifDirection {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  font-size: 25px;
+  font-weight: 1000;
+  line-height: 1;
+  text-shadow: 0 2px 1px rgba(89, 7, 47, 0.4);
+}
+
+.notifGrowth { color: #fff5bd; }
+.notifDecrease { color: #6b103d; }
+
+.notifBody { flex: 1; min-width: 0; }
+
+.notifTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.notifTop strong { font-size: 13px; color: #fff8fc; }
+.notifTop span { font-size: 11px; color: rgba(255, 239, 248, 0.74); }
+
+.notifBody p {
+  margin-top: 1px;
+  font-size: 12px;
+  color: rgba(255, 244, 250, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- fullscreen post viewer (channel arrows browse posts) ---- */
+
+.viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 46;
+  background: #050407;
+  overflow: hidden;
+}
+
+.viewerVideo {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transform: scaleX(-1);
 }
+
+.viewerTop {
+  position: absolute;
+  top: 52px;
+  left: 18px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.viewerCh {
+  color: #39ff6a;
+  font: 900 17px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.6px;
+  text-shadow: 0 0 8px rgba(57, 255, 106, 0.75), 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.viewerClose {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff2f8;
+  font-size: 17px;
+  font-weight: 800;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.viewerTitle {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 118px;
+  color: #fff;
+  font: 800 17px/1.35 system-ui, -apple-system, sans-serif;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+.viewerHint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  text-align: left;
+  padding-left: 18px;
+  color: rgba(255, 255, 255, 0.55);
+  font: 700 11px system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.4px;
+}
+
+/* ---- FULLSCREEN camera capture ---- */
+
+.capture {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 98, 176, 0.28), transparent 34%),
+    #080410;
+  overflow: hidden;
+}
+
+.captureTop {
+  position: absolute;
+  top: max(22px, env(safe-area-inset-top));
+  left: 18px;
+  right: 18px;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 52px 1fr 52px;
+  align-items: center;
+  gap: 12px;
+}
+
+.captureHead {
+  text-align: center;
+  color: #ffe7f4;
+  font: 900 15px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.8px;
+  text-shadow: 0 2px 0 #6e164b, 0 5px 13px rgba(0, 0, 0, 0.75);
+}
+
+.captureTool,
+.cancelBtn {
+  border: 1px solid rgba(255, 233, 245, 0.42);
+  color: #fff1f8;
+  background:
+    linear-gradient(145deg, rgba(255, 154, 206, 0.96), rgba(180, 33, 104, 0.94));
+  box-shadow:
+    inset 1px 2px 0 rgba(255, 255, 255, 0.58),
+    inset -2px -3px 0 rgba(89, 6, 47, 0.45),
+    0 6px 13px rgba(0, 0, 0, 0.38);
+  cursor: pointer;
+}
+
+.captureTool {
+  width: 52px;
+  height: 44px;
+  border-radius: 17px;
+  display: grid;
+  place-items: center;
+  font: 900 24px/1 system-ui, sans-serif;
+  text-shadow: 0 2px 0 #731342;
+}
+
+.captureTool:active,
+.cancelBtn:active { transform: translateY(2px) scale(0.97); }
+
+.captureToolOn {
+  color: #4c2500;
+  background: linear-gradient(145deg, #fff4a7, #e7a637);
+  box-shadow:
+    inset 1px 2px 0 rgba(255, 255, 255, 0.78),
+    inset -2px -3px 0 rgba(116, 67, 0, 0.34),
+    0 0 18px rgba(255, 204, 55, 0.68);
+}
+
+/* the live feed fills the whole screen; slight overscale hides the
+   accelerometer sway's edges */
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1) scale(1.06);
+  will-change: transform;
+}
+
+.videoBack { transform: scale(1.06); }
 
 .vfRing {
   position: absolute;
-  inset: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.55);
-  border-radius: 28px;
+  inset: 108px 26px 148px;
+  border: 3px solid rgba(255, 220, 240, 0.72);
+  border-radius: 31px;
+  box-shadow:
+    inset 0 0 0 2px rgba(93, 5, 48, 0.28),
+    0 0 0 3px rgba(255, 76, 160, 0.16),
+    0 12px 36px rgba(0, 0, 0, 0.3);
   pointer-events: none;
+  z-index: 2;
 }
 
 .camFallback {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -384,29 +836,38 @@
 .camFallback p { font-size: 13px; line-height: 1.4; padding: 0 24px; }
 
 .captureBar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: max(28px, env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 26px;
+  z-index: 2;
 }
 
 .cancelBtn {
-  width: 72px;
-  border: 0;
-  background: transparent;
-  color: rgba(255, 242, 248, 0.85);
-  font-weight: 700;
-  font-size: 15px;
+  width: 78px;
+  height: 40px;
+  border-radius: 15px;
+  font: 900 13px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.35px;
   cursor: pointer;
 }
 
-.captureSpacer { width: 72px; }
+.captureSpacer { width: 78px; }
 
 .shutter {
   width: 74px;
   height: 74px;
   border-radius: 50%;
-  border: 4px solid #fff2f8;
-  background: transparent;
+  border: 4px solid #ffeaf5;
+  background: linear-gradient(145deg, #ffb4d8, #b42272);
+  box-shadow:
+    inset 2px 3px 0 rgba(255, 255, 255, 0.75),
+    inset -4px -5px 0 rgba(92, 8, 48, 0.42),
+    0 9px 20px rgba(0, 0, 0, 0.45);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -416,16 +877,17 @@
   width: 58px;
   height: 58px;
   border-radius: 50%;
-  background: #fff2f8;
+  background: linear-gradient(145deg, #fff9fc, #f4a8cb);
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, 0.9), inset -3px -4px 0 rgba(149, 42, 94, 0.25);
   transition: transform 0.1s ease;
 }
 
 .shutter:active span { transform: scale(0.88); }
 
 .flash {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 1001;
   background: #fff;
   pointer-events: none;
   animation: flashOut 0.38s ease-out forwards;

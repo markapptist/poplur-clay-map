@@ -7,7 +7,7 @@ import ProfileTwin from './ProfileTwin'
 import Camera from './Camera'
 import HoldMenuTwin from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
-import { playPop } from './pop'
+import { playPop, preloadPop } from './pop'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
@@ -70,6 +70,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
+  useEffect(() => { preloadPop() }, [])
   useEffect(() => {
     onTabChange?.(activeTab)
     // Native shell: tell the app which tab is front so it can mount real
@@ -95,13 +96,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [loadingMessage, setLoadingMessage] = useState(0)
   const [messageShown, setMessageShown] = useState(true)
   const [loadingMuted, setLoadingMuted] = useState(isUserMuted)
-  // The tab pills are a testing aid — shown whenever running in a browser so the
-  // map/feed/camera/profile tabs can be switched without the cube. The real app
-  // (native shell) navigates via the cube, so they stay hidden there. Pass
-  // ?tabs=0 to force them off in the browser too.
+  // The tab pills are a testing aid. Keep them out of the app/RN surface unless
+  // a prototype session explicitly asks for them with ?tabs=1.
   const showTestTabs = typeof window !== 'undefined'
     && !isNativeShell()
-    && new URLSearchParams(window.location.search).get('tabs') !== '0'
+    && new URLSearchParams(window.location.search).get('tabs') === '1'
   const forceMapLoading = import.meta.env.DEV
     && typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('map-loading') === '1'
@@ -172,12 +171,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
 
+  // Profile tab: the clay arrows scroll the grid / browse the open post —
+  // ProfileTwin registers its handler here.
+  const profileArrowsRef = useRef<((dir: 1 | -1) => void) | null>(null)
+
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
     // On the camera tab the clay arrows page the camera itself: up slides
     // up, down slides down, both directions wrap live ⇄ roll.
     if (activeTab === 'post') {
       setCameraStep(s => s + (dir === -1 ? 1 : -1))
+      return
+    }
+    if (activeTab === 'profile') {
+      profileArrowsRef.current?.(dir)
       return
     }
     if (activeTab === 'map') {
@@ -221,7 +228,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       <div className={styles.contentLayer}>
         {activeTab === 'feed' && <FeedTwin index={chanIndex} onIndexChange={setChanIndex} />}
         {activeTab === 'post' && <Camera step={cameraStep} onCloseRoll={() => setCameraStep(s => s - 1)} />}
-        {activeTab === 'profile' && <ProfileTwin />}
+        {activeTab === 'profile' && <ProfileTwin bindArrows={fn => { profileArrowsRef.current = fn }} />}
       </div>
 
       {loadingVisible && (

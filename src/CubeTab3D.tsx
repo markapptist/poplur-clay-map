@@ -44,7 +44,7 @@ function CubeFallback({ targetTab, onFaceChange, onTap, onHold, size }: CubeTab3
     cancelHold()
     if (gesture.current.held) return
     const dx = clientX - gesture.current.x
-    if (gesture.current.moved && Math.abs(dx) > 28) {
+    if (gesture.current.moved && Math.abs(dx) > 18) {
       const current = FACES.findIndex(face => face.tab === targetTab)
       const next = (current + (dx < 0 ? 1 : -1) + FACES.length) % FACES.length
       onFaceChange(FACES[next].tab)
@@ -65,7 +65,7 @@ function CubeFallback({ targetTab, onFaceChange, onTap, onHold, size }: CubeTab3
         }, 500)
       }}
       onPointerMove={event => {
-        if (Math.abs(event.clientX - gesture.current.x) > 6) {
+        if (Math.abs(event.clientX - gesture.current.x) > 3) {
           gesture.current.moved = true
           cancelHold()
         }
@@ -211,12 +211,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const onPointerMove = (e: PointerEvent) => {
       if (!dragging) return
       const dx = e.clientX - startX
-      if (Math.abs(dx) > 6 && !moved) { moved = true; cancelHold() }
+      if (Math.abs(dx) > 3 && !moved) { moved = true; cancelHold() }
       if (!moved) return
       const now = performance.now()
       const dt = Math.max(1, now - lastMoveTime) / 1000
-      // 1.35 boost like the app's lower hit area drag
-      const next = startYaw + dx * 0.0105 * 1.35
+      // A short, forgiving drag should traverse a full face on phone screens.
+      const next = startYaw + dx * 0.017
       vel = (next - yaw) / dt
       yaw = next
       lastX = e.clientX

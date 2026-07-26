@@ -13,6 +13,60 @@
   z-index: 200;
 }
 
+.subscreenStage {
+  position: absolute;
+  inset: 0;
+  z-index: 240;
+  overflow: hidden;
+  background: #08040a;
+  animation: subscreenIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.subscreenFrame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #08040a;
+}
+
+.subscreenBack {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  top: max(16px, env(safe-area-inset-top));
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 0 10px;
+  border: 2px solid #ff148c;
+  border-radius: 999px;
+  color: #fff2f8;
+  background: rgba(13, 8, 20, 0.92);
+  box-shadow:
+    inset 0 0 12px rgba(255, 20, 140, 0.18),
+    0 0 18px rgba(255, 20, 140, 0.52);
+  font: 950 11px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.7px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.subscreenBack span {
+  color: #ff72b8;
+  font-size: 27px;
+  line-height: 0.7;
+}
+
+.subscreenBack:active {
+  transform: scale(0.94);
+}
+
+@keyframes subscreenIn {
+  from { opacity: 0; transform: translateY(3%) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 /* Semi-transparent scrim — the home tab underneath stays visible through it,
    so the hold menu reads as an overlay, not a full screen. */
 .backdrop {
@@ -157,38 +211,6 @@
   text-shadow: 0 0 7px rgba(255, 20, 140, 0.7);
 }
 
-/* Neon-pink close button at ~88% height */
-.closeBtn {
-  position: absolute;
-  left: 50%;
-  top: 88%;
-  transform: translate(-50%, -50%);
-  width: 56px;
-  height: 56px;
-  padding: 0;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: #ff148c;
-  font: 900 20px/1 inherit;
-  background: rgb(13, 8, 20);
-  border: 2px solid #ff148c;
-  box-shadow: 0 0 14px rgba(255, 20, 140, 0.5);
-  pointer-events: auto;
-  cursor: pointer;
-  z-index: 50;
-  transition: transform 0.14s ease, box-shadow 0.14s ease;
-}
-
-.closeBtn:hover {
-  transform: translate(-50%, -50%) scale(1.08);
-  box-shadow: 0 0 22px rgba(255, 20, 140, 0.75);
-}
-
-.closeBtn:active {
-  transform: translate(-50%, -50%) scale(0.93);
-}
-
 /* Context switcher (dev only — the app derives this from the active tab) */
 .tabs {
   position: absolute;
@@ -221,7 +243,7 @@
 .tabOn { background: #ff148c; border-color: #ff148c; color: #16060f; }
 
 @media (prefers-reduced-motion: reduce) {
-  .stage { animation: none; }
+  .stage, .subscreenStage { animation: none; }
 }
 
 /* Local hold-menu editor. It deliberately sits above the twin so the preview

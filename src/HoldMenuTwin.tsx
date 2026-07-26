@@ -12,44 +12,67 @@ import type { CubeTab } from './CubeTab3D'
 // It floats as a translucent overlay over the home tab you long-pressed from,
 // so the map/feed/etc. shows through, and its item set matches that tab.
 
-interface Item { icon: string; title: string }
+interface Item {
+  icon: string
+  title: string
+  screen: string
+  format?: 'png' | 'svg'
+  preview?: boolean
+}
 
-// Per-tab item sets, keyed by the home cube tabs (map/feed/post/profile) so the
-// wheel always matches the tab the menu was opened from — the app derives the
-// same context from the active tab.
+// Per-tab item sets mirror the approved Rough Copy subscreen groups exactly.
+// Every tile has a real destination, so the hold menu doubles as the launcher
+// for the next round of subscreen testing.
 const TAB_MENUS: Record<CubeTab, Item[]> = {
   map: [
-    { icon: 'Directions', title: 'DIRECTIONS' },
-    { icon: 'Search', title: 'LOCATE' },
-    { icon: 'Map', title: 'STREET VIEW' },
-    { icon: 'Settings', title: 'FOV' },
-    { icon: 'Create', title: 'POST' },
-    { icon: 'Tour', title: 'TOUR' },
-    { icon: 'Home', title: 'HOME' },
-    { icon: 'Chat', title: 'CHAT' },
+    { icon: 'Search', title: 'LOCATE', screen: 'map-locate' },
+    { icon: 'Create', title: 'POST', screen: 'map-post' },
+    { icon: 'Tour', title: 'TOUR', screen: 'map-tour' },
+    { icon: 'Directions', title: 'SEARCH', screen: 'map-search' },
+    { icon: 'Stats', title: 'CLAIMS', screen: 'map-claims' },
+    { icon: 'Chat', title: 'CHAT', screen: 'map-chat' },
   ],
   feed: [
-    { icon: 'TVGuide', title: 'TV GUIDE' },
-    { icon: 'News', title: 'NEWS' },
-    { icon: 'Music', title: 'MUSIC' },
-    { icon: 'YouTube', title: 'YOUTUBE' },
-    { icon: 'Chat', title: 'CHAT' },
+    { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide' },
+    { icon: 'Chat', title: 'COMMENTS', screen: 'feed-comments' },
+    { icon: 'News', title: 'NEWS', screen: 'feed-news' },
+    { icon: 'Music', title: 'MUSIC', screen: 'feed-music' },
+    { icon: 'Games', title: 'GAMES', screen: 'feed-games' },
+    { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg' },
+    { icon: 'CC', title: 'CC', screen: 'feed-cc', format: 'svg' },
   ],
   post: [
-    { icon: 'CameraRoll', title: 'CAMERA ROLL' },
-    { icon: 'Create', title: 'CREATE' },
-    { icon: 'Home', title: 'HOME' },
-    { icon: 'Chat', title: 'CHAT' },
-    { icon: 'Store', title: 'STORE' },
-    { icon: 'Games', title: 'GAMES' },
+    { icon: 'Create', title: 'CAPTURE', screen: 'camera-capture' },
+    { icon: 'CameraRoll', title: 'CAMERA ROLL', screen: 'camera-roll-window', preview: true },
+    { icon: 'Create', title: 'CREATE', screen: 'camera-create' },
+    { icon: 'TVGuide', title: 'PREVIEW', screen: 'camera-preview' },
+    { icon: 'YouTube', title: 'LIVE', screen: 'camera-live' },
+    { icon: 'Chat', title: 'CHAT', screen: 'camera-chat' },
+    { icon: 'Store', title: 'STORE', screen: 'camera-store' },
   ],
   profile: [
-    { icon: 'Stats', title: 'STATS' },
-    { icon: 'Create', title: 'CREDITS' },
-    { icon: 'Store', title: 'STORE' },
-    { icon: 'Settings', title: 'SETTINGS' },
-    { icon: 'Chat', title: 'CHAT' },
+    { icon: 'Chat', title: 'MESSAGES', screen: 'profile-messages' },
+    { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings' },
+    { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
+    { icon: 'Notifications', title: 'NOTIFICATIONS', screen: 'profile-alerts', format: 'svg' },
+    { icon: 'Store', title: 'STORE', screen: 'profile-store' },
+    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
+    { icon: 'Create', title: 'CREATOR', screen: 'profile-creator' },
   ],
+}
+
+function rclSubscreenUrl(item: Item): string {
+  const route = item.preview
+    ? `.claude/artifacts/rough-copy-preview.html?surface=iphone&screen=${encodeURIComponent(item.screen)}`
+    : `.claude/artifacts/poplur-subscreen-twins.html?embed=${encodeURIComponent(item.screen)}&rcl=1`
+  if (window.location.protocol === 'file:') {
+    return new URL(`../../${route}`, window.location.href).href
+  }
+  const localHost = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+  const origin = localHost
+    ? `${window.location.protocol}//${window.location.hostname}:8945`
+    : window.location.origin
+  return `${origin}/${route}`
 }
 
 // Placeholder for icons that don't yet have a clay PNG in public/holdmenu/.
@@ -82,6 +105,7 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
 
   const [offset, setOffset] = useState(0)      // continuous wheel position, item units
   const [selected, setSelected] = useState(0)  // item at center = round(offset)
+  const [activeScreen, setActiveScreen] = useState<Item | null>(null)
 
   // Physics state lives in refs so the rAF loop reads live values.
   const offsetRef = useRef(0)
@@ -94,22 +118,9 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
   const countRef = useRef(items.length)
   countRef.current = items.length
 
-  // Map-tab entries act on the map itself: post into the always-present map
-  // iframe (the on-map Directions/Locate/Street View buttons moved here).
-  const MAP_ACTIONS: Record<string, string> = {
-    DIRECTIONS: 'directions',
-    LOCATE: 'locate',
-    'STREET VIEW': 'streetview',
-    TOUR: 'tour',
-    FOV: 'fov',
-  }
-  const activateItem = (title: string) => {
-    const action = MAP_ACTIONS[title]
-    if (!action) return
+  const activateItem = (item: Item) => {
     playPop()
-    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Poplur clay map"]')
-    frame?.contentWindow?.postMessage({ type: 'poplur-map-action', action }, '*')
-    onClose()
+    setActiveScreen(item)
   }
 
   const applyOffsetDelta = (delta: number) => {
@@ -220,7 +231,12 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowDown') { spinTo(selected + 1); e.preventDefault() }
+      if (activeScreen && e.key === 'Escape') {
+        setActiveScreen(null)
+        e.preventDefault()
+      }
+      else if (activeScreen) return
+      else if (e.key === 'ArrowDown') { spinTo(selected + 1); e.preventDefault() }
       else if (e.key === 'ArrowUp') { spinTo(selected - 1); e.preventDefault() }
       else if (e.key === 'Escape') { e.preventDefault(); onClose() }
     }
@@ -245,6 +261,34 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
     if (c > n / 2) c -= n
     if (c <= -n / 2) c += n
     return c
+  }
+
+  if (activeScreen) {
+    return (
+      <div
+        className={styles.subscreenStage}
+        role="dialog"
+        aria-label={`${activeScreen.title} Rough Copy subscreen`}
+        data-testid="rcl-subscreen"
+        data-screen={activeScreen.screen}
+        data-rcl-kind={activeScreen.preview ? 'preview' : 'embed'}
+      >
+        <iframe
+          className={styles.subscreenFrame}
+          src={rclSubscreenUrl(activeScreen)}
+          title={`${activeScreen.title} Rough Copy`}
+        />
+        <button
+          type="button"
+          className={styles.subscreenBack}
+          onClick={() => { playPop(); setActiveScreen(null) }}
+          aria-label={`Back to ${tab} hold menu`}
+        >
+          <span aria-hidden="true">‹</span>
+          HOLD MENU
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -275,7 +319,9 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
             <button
               key={`${it.icon}-${it.title}-${index}`}
               data-index={index}
-              onClick={() => { if (on) activateItem(it.title) }}
+              data-screen={it.screen}
+              aria-label={`Open ${it.title} subscreen`}
+              onClick={() => { if (on) activateItem(it) }}
               className={styles.tile}
               style={{
                 top: `${CENTER_Y_FRAC * 100}%`,
@@ -292,7 +338,7 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
               >
                 <img
                   className={styles.icon}
-                  src={`holdmenu/${it.icon}.png`}
+                  src={`holdmenu/${it.icon}.${it.format ?? 'png'}`}
                   alt=""
                   draggable={false}
                   onError={e => {
@@ -314,8 +360,6 @@ export default function HoldMenuTwin({ tab, onClose }: { tab: CubeTab; onClose: 
         <span className={styles.scrubChev}>⌄</span>
       </div>
 
-      {/* Close button (twin of the neon-pink xmark) — dismisses the overlay. */}
-      <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="Close hold menu">✕</button>
     </div>
   )
 }

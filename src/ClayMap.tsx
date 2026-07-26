@@ -385,10 +385,11 @@ const GLOBE_LANDMARKS: GlobeLandmark[] = [
 ]
 
 const ZOOM_MIN = 1
-// Street-level target for the launch landing and slider top end. Zoom 16.x
-// still reads like a satellite overview; 18.x gets close enough for Mapbox
-// Standard's 3D building massing to be obvious.
+// Slider top end. Zoom 16.x still reads like a satellite overview; 18.x gets
+// close enough for Mapbox Standard's 3D building massing to be obvious.
 const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doorstep
+// The intro should land at neighborhood scale, not on the user's doorstep.
+const INTRO_LANDING_ZOOM = 16.2
 // Journey mode intentionally drops below the manual diorama ceiling so the
 // clay roads and buildings read from an eye-level chase camera.
 const STREET_VIEW_MAX_ZOOM = 19
@@ -466,6 +467,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
   const postSeqRef = useRef(0)
+  const prototypeComposer = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('compose') === '1'
+  const prototypeClaimSeeds = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('sample-claims') === '1'
 
   useEffect(() => {
     const readLocation = (value: unknown): [number, number] | null => {
@@ -489,6 +494,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // reuse it as the visibility signal for ambient animation.
       if (typeof event.data?.gcAudio === 'string') {
         mapIsFrontRef.current = event.data.gcAudio === 'on'
+        if (!mapIsFrontRef.current) {
+          // The animated car loop otherwise retains the most recent engine
+          // gain while Feed covers the map.
+          stopCarAudio()
+        }
       }
       // Hold-menu FOV entry: cycle lens presets with a pop per step.
       if (event.data?.type === 'poplur-map-action' && event.data.action === 'fov') {
@@ -927,8 +937,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
         map.flyTo({
           center,
-          zoom: ZOOM_MAX,
-          pitch: 62,
+          zoom: INTRO_LANDING_ZOOM,
+          pitch: 52,
           bearing: -18,
           duration: 7000,
           curve: 1.5,
@@ -1791,18 +1801,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         { id: 'pop-london', center: [-0.1246, 51.5007], radiusKm: 26 },
         { id: 'pop-tokyo', center: [139.69, 35.68], radiusKm: 28 },
       ]
-      SAMPLE_POPS.forEach((pop, i) => {
-        window.setTimeout(() => {
-          try { setClaim(map, pop) } catch { /* map torn down */ }
-        }, 1200 + i * 420)
-      })
+      if (prototypeClaimSeeds) {
+        SAMPLE_POPS.forEach((pop, i) => {
+          window.setTimeout(() => {
+            try { setClaim(map, pop) } catch { /* map torn down */ }
+          }, 1200 + i * 420)
+        })
+      }
       installRouteLayers(map, 'clay-buildings-3d')
-      map.on('click', (e) => {
-        // Any tap on the map opens the composer. POI pins are separate DOM
-        // markers with their own handlers; the invisible emoji-loader circles
-        // must NOT block posting, so they're not consulted here.
-        setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: e.point.x, y: e.point.y })
-      })
+      if (prototypeComposer) {
+        map.on('click', (e) => {
+          // Prototype-only: any tap on empty ground opens the composer. Real app
+          // posting lives in the camera/feed flow, so the map stays decluttered.
+          setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: e.point.x, y: e.point.y })
+        })
+      }
       // Keep the composer bubble pinned to its ground point as the camera moves.
       map.on('move', () => {
         setComposeAt(prev => {
