@@ -154,7 +154,10 @@ export default function PhotorealMap({
   // The signature map: photoreal geography permanently fused with the clay
   // coat. 'photoreal' exists only as the controller's internal failure
   // fallback, never as a user-facing mode.
-  const visualMode: MapVisualMode = loadVisualMode()
+  // Premium bought the photorealistic world — it is never clay-ified here.
+  // (The Clay Realm shader treatment and its TUNE control belonged to an older
+  // experiment; a stale localStorage visual-mode was re-applying it.)
+  const visualMode: MapVisualMode = 'photoreal' as MapVisualMode
   const [claySettings, setClaySettings] = useState<ClayMapSettings>(() => loadClaySettings())
   const visualModeRef = useRef(visualMode)
   const claySettingsRef = useRef(claySettings)
@@ -554,13 +557,7 @@ export default function PhotorealMap({
     <>
       <div ref={containerRef} className={styles.map} />
       {message && <div className={styles.photorealMessage}>{message}</div>}
-      <ClayRealmToggle
-        settings={claySettings}
-        quality={clayQuality}
-        debug={debugState}
-        dev={import.meta.env.DEV}
-        onSettingsChange={setClaySettings}
-      />
+
       <div className={styles.vignette} style={{ opacity: 0.3 }} aria-hidden="true" />
 
       {cloudBand > 0.01 && cloudSprite && (
