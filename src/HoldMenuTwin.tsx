@@ -112,10 +112,18 @@ function rclSubscreenUrl(item: Item): string {
     return new URL(`../../${route}`, window.location.href).href
   }
   const localHost = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
-  const origin = localHost
-    ? `${window.location.protocol}//${window.location.hostname}:8945`
-    : window.location.origin
-  return `${origin}/${route}`
+  if (localHost) return `${window.location.protocol}//${window.location.hostname}:8945/${route}`
+  // Anywhere else — chiefly the app shell, served from poplur-clay://app out
+  // of the bundled dist — there is no artifact server to ask, so use the copy
+  // that ships with the bundle (.codex/sync-subscreen-twins.mjs puts it
+  // there). Dev keeps pointing at :8945 so Rough Copy edits show immediately.
+  if (!item.preview) {
+    return new URL(
+      `subscreens/index.html?embed=${encodeURIComponent(item.screen)}&rcl=1`,
+      window.location.href,
+    ).href
+  }
+  return `${window.location.origin}/${route}`
 }
 
 /** Can we fetch this ourselves? `origin` is the string "null" for both file:
