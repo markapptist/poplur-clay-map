@@ -16,6 +16,9 @@ import type { HarnessView } from './ViewHarness'
 
 const KM_TO_MI = 0.621371
 
+/** Home chrome fades out after this long without a touch (see chromeIdle). */
+const CHROME_IDLE_MS = 10_000
+
 // Browser twin of the iOS Home screen (map tab state), rebuilt from
 // HomeView.swift + RecordingCountdownView.swift + RadiusNumberDisplayFIXED.swift.
 // Both bottom counters share the CounterSeparatorMetrics vertical grid so their
@@ -138,6 +141,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The cube long-press hold menu floats as a translucent overlay over the
   // current tab, and its items match that tab.
   const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
+  // The cube floats over every screen, so on a subscreen it is the one control
+  // that is always there — it goes back a level. Registered by HoldMenuTwin.
+  const goBackRef = useRef<(() => boolean) | null>(null)
+  // Home-view idle rule: the chrome fades almost away after 10s untouched so it
+  // stops obstructing whatever is behind it, and any touch brings it straight
+  // back. Applies on every tab, not just subscreens.
+  const [chromeIdle, setChromeIdle] = useState(false)
   const [popping, setPopping] = useState(false)
   // Start in the measurement system implied by the device locale. Tapping the
   // Radius card remains a deliberate local override for this session.
@@ -206,6 +216,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     window.addEventListener('message', onMapMessage)
     return () => window.removeEventListener('message', onMapMessage)
+  }, [])
+
+  // Dismiss the native/embedding loading screen as soon as the HOME has painted.
+  // This used to ride on the map's `poplur-map-ready`, but the map now mounts
+  // only on the Map tab (perf) — so when Home opens on Feed the map never boots
+  // and that signal never came, trapping the native loader in an endless loop.
+  // The home is ready without the map, so hand off on first paint here; the map
+  // still emits its own ready for its internal loading globe.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
+      if (isNativeShell()) postNativeEvent({ type: 'homeReady' })
+    })
+    return () => cancelAnimationFrame(raf)
   }, [])
 
   // A hold-menu screen (Radio, News, TV Guide) is covering the app: the feed
@@ -327,7 +351,30 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     setChanIndex(i => (i + dir + CHANNELS.length) % CHANNELS.length)
   }
 
+  useEffect(() => {
+    let timer = 0
+    const wake = () => {
+      setChromeIdle(false)
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => setChromeIdle(true), CHROME_IDLE_MS)
+    }
+    wake()
+    // CAPTURE phase, on the document: the cube, the feed and the menu all stop
+    // propagation on their own pointer handlers, so a bubble-phase listener
+    // never saw most taps and the chrome stayed ghosted after you touched it.
+    const opts: AddEventListenerOptions = { passive: true, capture: true }
+    const events = ['pointerdown', 'touchstart', 'wheel', 'keydown'] as const
+    for (const type of events) document.addEventListener(type, wake, opts)
+    return () => {
+      window.clearTimeout(timer)
+      for (const type of events) document.removeEventListener(type, wake, opts)
+    }
+  }, [])
+
   const popCube = () => {
+    // Back before anything else: if a subscreen or the hold menu is open, the
+    // tap is the way out of it, not a favourite-action trigger.
+    if (goBackRef.current?.()) { playPop(); return }
     playPop()
     setPopping(true)
     // Tapping the cube runs whatever you pinned in this tab's hold menu.
@@ -522,9 +569,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       {/* The cube is the persistent navigator — visible on every tab, floating
           over whatever content is active. Its face tracks the current tab. */}
-      <div className={styles.groundGlow} />
+      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}`} />
       <div
-        className={recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap}
+        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
@@ -564,6 +611,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           }}
           tourOn={mapTourOn}
           onSubscreenChange={setOverlayOpen}
+          bindGoBack={fn => { goBackRef.current = fn }}
         />
       )}
     </section>

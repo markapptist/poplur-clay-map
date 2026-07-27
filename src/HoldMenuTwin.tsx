@@ -182,6 +182,7 @@ export default function HoldMenuTwin({
   onMapAction,
   tourOn,
   onSubscreenChange,
+  bindGoBack,
 }: {
   tab: CubeTab
   onClose: () => void
@@ -191,6 +192,9 @@ export default function HoldMenuTwin({
   tourOn?: boolean
   /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the app */
   onSubscreenChange?: (open: boolean) => void
+  /** Registers a "back one level" handler: closes an open subscreen, else the
+      menu itself. The cube calls it so there is always a way out. */
+  bindGoBack?: (fn: (() => boolean) | null) => void
 }) {
   // The item set is fixed to the tab the menu was opened from. The three
   // mutable controls retain their current state while the wheel is open.
@@ -218,6 +222,17 @@ export default function HoldMenuTwin({
     onSubscreenChange?.(Boolean(activeScreen))
     return () => onSubscreenChange?.(false)
   }, [activeScreen, onSubscreenChange])
+
+  // The cube is the app's universal back control (a subscreen that can only be
+  // left by one small clay button at the top-right was too easy to get stuck in).
+  useEffect(() => {
+    bindGoBack?.(() => {
+      if (activeScreen) { setActiveScreen(null); return true }
+      onClose()
+      return true
+    })
+    return () => bindGoBack?.(null)
+  }, [activeScreen, bindGoBack, onClose])
 
   // Whether the embedded Rough Copy capture can actually be fetched. Inside the
   // app shell it usually CANNOT: the web home is served from poplur-clay://app

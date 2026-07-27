@@ -629,6 +629,27 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* The home chrome stays on top of a hold-menu subscreen (z-index 240) instead
+   of being buried by it. The cube is then always reachable, which is what makes
+   it usable as the back control — a subscreen whose only exit was one small
+   clay button at the top-right was far too easy to get stuck in. */
+.overSubscreen {
+  z-index: 260;
+  /* Coming BACK is governed by this rule (the idle class is being removed), so
+     it is quick — waiting on a fade-in after you have already touched the
+     screen feels broken. Going away is governed by .chromeIdle, and is slow. */
+  transition: opacity 0.18s ease;
+}
+
+/* Idle rule: untouched for 10s, the chrome drops to a ghost so the screen
+   behind it is fully readable; any touch brings it straight back. Fading out is
+   slow and calm, coming back is immediate — waiting for a fade-in when you have
+   just touched the screen feels broken. */
+.chromeIdle {
+  opacity: 0.1;
+  transition: opacity 0.9s ease;
+}
+
 .cubeFloat {
   position: relative;
   width: 100%;
