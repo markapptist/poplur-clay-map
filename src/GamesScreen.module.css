@@ -1,0 +1,233 @@
+/* Poplur Games — the picker, and the pet that actually runs. Same clay-dark
+   surface as the other hold-menu screens so it belongs to the app. */
+
+.screen,
+.pet {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(246, 59, 154, 0.12), transparent 62%),
+    linear-gradient(180deg, #150c18 0%, #0c070e 60%, #080509 100%);
+  color: #fff;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  overflow: hidden;
+}
+
+.head,
+.petHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 10px;
+}
+
+.brand { display: flex; align-items: center; gap: 9px; }
+.brandIcon { width: 26px; height: 26px; border-radius: 7px; }
+
+.brandName {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  background: linear-gradient(180deg, #ffffff 0%, #ffd7ee 46%, #f63b9a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 14px 8px;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 138, 198, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.14s ease;
+}
+
+.card:active { transform: scale(0.985); border-color: rgba(246, 59, 154, 0.55); }
+
+.art {
+  flex: 0 0 auto;
+  width: 62px;
+  height: 62px;
+  border-radius: 14px;
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.cardBody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cardTitle { font-size: 16px; font-weight: 800; }
+.cardSub { font-size: 12px; color: rgba(255, 255, 255, 0.62); }
+
+.play,
+.native {
+  flex: 0 0 auto;
+  padding: 6px 11px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.play { background: #f63b9a; color: #fff; }
+.native { background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.7); }
+
+.hint {
+  margin: 0;
+  padding: 0 16px 16px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.note {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(20, 12, 22, 0.95);
+  border: 1px solid rgba(255, 138, 198, 0.3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ── the pet ────────────────────────────────────────────────────────────── */
+
+.back {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.petTitle {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  color: #ffd7ee;
+}
+
+.petAge { font-size: 11px; color: rgba(255, 255, 255, 0.5); }
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+
+.petBody {
+  position: relative;
+  width: 46vw;
+  max-width: 210px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  filter: drop-shadow(0 18px 26px rgba(0, 0, 0, 0.6));
+  animation: petIdle 3.4s ease-in-out infinite;
+}
+
+.petBody img { width: 100%; height: 100%; object-fit: contain; }
+
+/* the mood reads on the whole body, not just the face */
+.petBody[data-mood='meh'] { filter: drop-shadow(0 14px 22px rgba(0, 0, 0, 0.6)) saturate(0.75); }
+.petBody[data-mood='sad'] { filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.6)) saturate(0.4) brightness(0.82); }
+
+.face {
+  position: absolute;
+  top: 44%;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: #2a0616;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+
+@keyframes petIdle {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-8px) scale(1.015); }
+}
+
+.petBounce { animation: petBounce 0.46s ease-out; }
+
+@keyframes petBounce {
+  0% { transform: translateY(0) scale(1); }
+  35% { transform: translateY(-22px) scale(1.06); }
+  70% { transform: translateY(2px) scale(0.97); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+.needs { display: flex; flex-direction: column; gap: 8px; padding: 0 18px 12px; }
+.need { display: flex; align-items: center; gap: 10px; }
+
+.needLabel {
+  width: 46px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.needTrack {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.needFill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease, background 0.4s ease;
+}
+
+.petActions { display: flex; gap: 10px; padding: 0 16px 22px; }
+
+.petBtn {
+  flex: 1;
+  padding: 13px 0;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ff6cba, #d81b7d);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  box-shadow: 0 6px 0 #8f0f4f, 0 10px 18px rgba(0, 0, 0, 0.45);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.petBtn:active {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 #8f0f4f, 0 6px 12px rgba(0, 0, 0, 0.45);
+}

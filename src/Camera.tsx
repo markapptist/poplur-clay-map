@@ -5,6 +5,7 @@ import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { addCapture, isDetectOn, setDetectOn, onCameraStore } from './cameraStore'
+import { startBroadcast, stopBroadcast, isLive, onLiveStore } from './liveStore'
 import DetectionOverlay from './DetectionOverlay'
 import { FrameDetector, type Detection } from './mlDetect'
 import ARFilters, { AR_FILTERS } from './ARFilters'
@@ -27,6 +28,8 @@ export interface CameraActions {
   detect: () => void
   /** open (or close) the AR filter rail */
   ar: () => void
+  /** go live — or come off air */
+  live: () => void
 }
 
 const mmss = (ms: number) => {
@@ -74,6 +77,7 @@ export default function Camera({
 
   // Shared with the hold menu, so the tile and the model can never disagree.
   const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
+  const onAir = useSyncExternalStore(onLiveStore, isLive, isLive)
   const [detections, setDetections] = useState<Detection[]>([])
   const detectorRef = useRef<FrameDetector | null>(null)
 
@@ -107,7 +111,11 @@ export default function Camera({
     void start()
     return () => {
       cancelled = true
-      streamRef.current?.getTracks().forEach(t => t.stop())
+      // A live broadcast OWNS the stream once it starts. Leaving the camera to
+      // go and watch the feed must not kill the camera out from under the
+      // broadcast — you would appear on the LIVE channel as a black rectangle.
+      // Ending the broadcast is what releases it.
+      if (!isLive()) streamRef.current?.getTracks().forEach(t => t.stop())
       streamRef.current = null
       setStreamOn(false)
     }
@@ -228,7 +236,9 @@ export default function Camera({
     return () => window.clearInterval(timer)
   }, [recStart, onRecordingChange, stopVideo])
 
-  // Leaving the camera must not leave a recording running in the background.
+  // A recording must not survive the screen — but a BROADCAST is meant to:
+  // going live and then opening the feed to watch yourself is the point. It
+  // ends when you end it.
   useEffect(() => () => { recorderRef.current?.stop() }, [])
 
   useEffect(() => {
@@ -237,6 +247,13 @@ export default function Camera({
       video: toggleVideo,
       detect: () => setDetectOn(!isDetectOn()),
       ar: () => setArOpen(v => !v),
+      // Going live hands the LIVE channel this camera's own stream — the feed
+      // plays the broadcast itself, not a recording of it.
+      live: () => {
+        playPop()
+        if (isLive()) stopBroadcast()
+        else startBroadcast(streamRef.current ?? undefined)
+      },
     })
   }, [bindActions, capturePhoto, toggleVideo])
 
@@ -309,6 +326,12 @@ export default function Camera({
           draggable={false}
         />
       )}
+      {real && onAir && (
+        <div className={styles.camLiveTag} aria-label="You are live">
+          <span className={styles.camLiveDot} aria-hidden="true" />ON AIR
+        </div>
+      )}
+
       {/* the model's read on the frame */}
       {real && detectOn && detections.length > 0 && (
         <DetectionOverlay detections={detections} mirrored={facing === 'user'} />

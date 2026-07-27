@@ -7,6 +7,7 @@ import { isDetectOn, onCameraStore } from './cameraStore'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
+import GamesScreen from './GamesScreen'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -28,11 +29,15 @@ interface Item {
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video' | 'detect' | 'ar'
+  action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video' | 'detect' | 'ar' | 'live'
   /** drawn as letters instead of an icon file */
   glyph?: string
   /** performed on the live MAP behind the menu — no subscreen opens */
   mapAction?: 'search' | 'locate' | 'directions' | 'tour'
+  /** dispatches an app event and dismisses — no subscreen opens. `voice` wakes
+   *  the Poplur assistant (skipping the wake phrase); `notifications` springs
+   *  down the real notifications dropdown owned by Profile. */
+  event?: 'voice' | 'notifications'
 }
 
 // Per-tab item sets are the confirmed hold-menu inventory. Every tile keeps a
@@ -61,22 +66,28 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // tab's default favourite, so the cube shoots without visiting the menu.
     { icon: 'Create', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
     { icon: 'TVGuide', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
-    { icon: 'YouTube', title: 'LIVE', screen: 'camera-live' },
+    // Going live is an act, not a screen: the broadcast starts on the camera
+    // you are already looking through and lands in the feed's LIVE channel.
+    { icon: 'YouTube', title: 'LIVE', screen: 'camera-live', action: 'live' },
     // AR had a borrowed games icon that said nothing about filters. The letters
     // ARE the icon now — that is what the feature is called on every camera.
     { icon: 'AR', title: 'AR', screen: 'camera-capture', glyph: 'AR', action: 'ar' },
     // The tile names what pressing it DOES, like CC does: with the model
     // running it reads DETECT OFF, and with it stopped, DETECT ON.
     { icon: 'Search', title: 'DETECT ON', activeTitle: 'DETECT OFF', toggle: 'detection', screen: 'camera-capture', action: 'detect' },
-    { icon: 'Games', title: 'GAMES', screen: 'feed-games' },
+    { icon: 'Games', title: 'GAMES', screen: 'games', native: true },
   ],
   profile: [
-    { icon: 'Chat', title: 'MAIL', screen: 'profile-messages' },
-    { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings' },
-    { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
-    { icon: 'Notifications', title: 'NOTIFICATIONS', screen: 'profile-alerts', format: 'svg' },
-    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
+    { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', format: 'svg' },
     { icon: 'Store', title: 'STORE', screen: 'profile-store' },
+    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
+    // NOTIFICATIONS springs down the real dropdown (owned by Profile) rather than
+    // opening a captured screen. `screen` stays for inspection/fallback only.
+    { icon: 'Notifications', title: 'NOTIFICATIONS', screen: 'profile-alerts', format: 'svg', event: 'notifications' },
+    { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
+    { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings' },
+    // HEY POPLUR wakes the assistant directly — no wake phrase needed.
+    { icon: 'Mic', title: 'HEY POPLUR', screen: 'profile-voice', format: 'svg', event: 'voice' },
   ],
 }
 
@@ -236,6 +247,16 @@ export default function HoldMenuTwin({
     if (item.mapAction) {
       playPop()
       onMapAction?.(item.mapAction)
+      onClose()
+      return
+    }
+    // HEY POPLUR / NOTIFICATIONS fire an app event and dismiss — the result (the
+    // voice ring, the notifications dropdown) is owned by another component.
+    if (item.event) {
+      playPop()
+      window.dispatchEvent(new CustomEvent(
+        item.event === 'voice' ? 'poplur-voice-request' : 'poplur-open-notifications',
+      ))
       onClose()
       return
     }
@@ -404,6 +425,13 @@ export default function HoldMenuTwin({
 
   if (activeScreen) {
     // TV GUIDE is a real screen in the app, not a Rough Copy capture.
+    if (activeScreen.native && activeScreen.screen === 'games') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Games">
+          <GamesScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
     if (activeScreen.native && activeScreen.screen === 'map-radio') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Radio">

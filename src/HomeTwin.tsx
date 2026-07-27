@@ -289,7 +289,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
   const runMenuAction = (action: FeedAction | keyof CameraActions) => {
-    if (action === 'photo' || action === 'video' || action === 'detect' || action === 'ar') {
+    if (action === 'photo' || action === 'video' || action === 'detect'
+      || action === 'ar' || action === 'live') {
       cameraActionsRef.current?.[action]()
       return
     }

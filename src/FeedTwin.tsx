@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
@@ -7,6 +7,7 @@ import ClayMuteButton from './ClayMuteButton'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import styles from './FeedTwin.module.css'
+import { interceptingLive, isLive, onLiveStore } from './liveStore'
 import profileStyles from './ProfileTwin.module.css'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
@@ -39,6 +40,9 @@ interface Channel {
 
 export const CHANNELS: Channel[] = [
   { id: 'food', number: 101, name: 'Food', emoji: '🍔', icon: 'poplur_channel_101_food', flag: '🇨🇦', user: '@sauceboss', caption: 'late-night poutine run downtown', lang: 'EN', theme: ['#3a1206', '#c2410c', '#f59e0b'], videos: ['feed/ad-food.mp4'] },
+  // LIVE is not a genre — it is whoever is broadcasting into your radius right
+  // now. Its posts come from liveStore, not from a bundled clip list.
+  { id: 'live', number: 102, name: 'Live', emoji: '🔴', icon: 'poplur_channel_109_news', flag: '🇨🇦', user: '@you', caption: 'live in your radius', lang: 'EN', theme: ['#2a0410', '#b91c3c', '#fb7185'] },
   { id: 'beauty', number: 103, name: 'Beauty', emoji: '💄', icon: 'poplur_channel_103_beauty', flag: '🇺🇸', user: '@glowgetter', caption: 'soft glam in 60 seconds', lang: 'EN', theme: ['#2a0620', '#be185d', '#f472b6'] },
   { id: 'sports', number: 104, name: 'Sports', emoji: '⚽', icon: 'poplur_channel_104_sports', flag: '🇬🇧', user: '@pitchside', caption: 'stoppage-time winner, crowd goes wild', lang: 'EN', theme: ['#052012', '#15803d', '#4ade80'], videos: ['feed/ad-sports.mp4'] },
   { id: 'modelling', number: 105, name: 'Modelling', emoji: '📸', icon: 'poplur_channel_105_modelling', flag: '🇫🇷', user: '@runwayraw', caption: 'backstage before the show', lang: 'FR', theme: ['#170a2e', '#6d28d9', '#a78bfa'] },
@@ -95,10 +99,31 @@ const CHANNEL_USERS: Record<string, string[]> = {
   comedy: ['@bitmerchant', '@openmic', '@baristabit'],
 }
 
-export interface ChannelPost { user: string; video: string }
+export interface ChannelPost {
+  user: string
+  video: string
+  /** a live broadcast: the camera itself, when the broadcast is your own */
+  stream?: MediaStream
+  live?: boolean
+  caption?: string
+  viewers?: number
+}
 
 // Ordered by the post's radius intercepting your location, widest first.
 function postsFor(channel: Channel): ChannelPost[] {
+  // LIVE: whoever is streaming into your radius, your own broadcast first. If
+  // nobody reaches you the channel is genuinely empty — that is the honest
+  // answer, and the static card says so.
+  if (channel.id === 'live') {
+    return interceptingLive().map(b => ({
+      user: b.user,
+      video: b.video ?? '',
+      stream: b.stream,
+      live: true,
+      caption: b.caption,
+      viewers: b.viewers,
+    }))
+  }
   const users = CHANNEL_USERS[channel.id] ?? [channel.user]
   const own = channel.videos ?? []
   // Each user posts something different: the channel's own clips first, then
@@ -250,8 +275,10 @@ export default function FeedTwin({
     window.setTimeout(() => { wheelLock.current = false }, 420)
   }
 
+  // The live channel's posts change as broadcasts start and stop.
+  useSyncExternalStore(onLiveStore, isLive, isLive)
   const posts = postsFor(ch)
-  const post = posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length]
+  const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   const adSrc = post?.video
   // read inside the action bridge without re-binding it every post
   const postRef = useRef(post)
@@ -562,7 +589,20 @@ export default function FeedTwin({
       {/* The channel's real ad creative (bundled from the previous version's
           Drive ads) plays full-bleed over the gradient; the gradient shows
           through while the video buffers or when a channel has no ad yet. */}
-      {adSrc && (
+      {/* Your own live broadcast is the camera itself: no file to load, the
+          MediaStream attaches directly. */}
+      {post?.stream && (
+        <video
+          key="own-live"
+          className={styles.adVideo}
+          ref={el => { if (el && el.srcObject !== post.stream) el.srcObject = post.stream ?? null }}
+          autoPlay
+          muted
+          playsInline
+        />
+      )}
+
+      {adSrc && !post?.stream && (
         <video
           key={adSrc}
           ref={adVideoRef}
@@ -577,6 +617,15 @@ export default function FeedTwin({
           onLoadedData={() => markAdReady(adSrc)}
           onPlaying={() => markAdReady(adSrc)}
         />
+      )}
+
+      {/* A broadcast says so, and says who is watching. */}
+      {post?.live && (
+        <div className={styles.liveTag} aria-label="Live broadcast">
+          <span className={styles.liveDot} aria-hidden="true" />
+          LIVE
+          {post.viewers ? <span className={styles.liveViewers}>{post.viewers.toLocaleString()} watching</span> : null}
+        </div>
       )}
 
       {/* Static + channel identity while the video buffers or swaps; fades out
@@ -628,7 +677,7 @@ export default function FeedTwin({
             <div className={styles.infoRow}>
               <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
               <div className={styles.centerTicker}>
-                {[ch.caption, ch.user, '43.6480, -79.3810'].map((line, i) => (
+                {[post?.caption ?? ch.caption, post?.user ?? ch.user, '43.6480, -79.3810'].map((line, i) => (
                   <span
                     key={i}
                     className={`${i === centerIdx % 3 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
@@ -741,7 +790,7 @@ export default function FeedTwin({
               </div>
             </div>
 
-            <div className={styles.commentTitle}>Comment on {ch.user}</div>
+            <div className={styles.commentTitle}>Comment on {post?.user ?? ch.user}</div>
             <div className={styles.commentRow}>
               <input
                 className={styles.commentInput}
