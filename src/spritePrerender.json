@@ -1,0 +1,16 @@
+{
+  "boat_clay.glb|35|6|320": "sprites/boat_clay_y35_p6_s320.png",
+  "cloud.glb|-18|10|512": "sprites/cloud_y-18_p10_s512.png",
+  "cloud.glb|-18|12|256": "sprites/cloud_y-18_p12_s256.png",
+  "cloud.glb|-18|8|256": "sprites/cloud_y-18_p8_s256.png",
+  "cloud.glb|-18|8|512": "sprites/cloud_y-18_p8_s512.png",
+  "models/boat.glb|35|14|256": "sprites/boat_y35_p14_s256.png",
+  "models/car.glb|90|62|256": "sprites/car_y90_p62_s256.png",
+  "models/car.glb|90|68|256": "sprites/car_y90_p68_s256.png",
+  "models/plane.glb|0|74|256": "sprites/plane_y0_p74_s256.png",
+  "palm_clay.glb|0|8|320": "sprites/palm_clay_y0_p8_s320.png",
+  "palm_clay.glb|20|8|320": "sprites/palm_clay_y20_p8_s320.png",
+  "zoom_airplane.glb|35|10|256": "sprites/zoom_airplane_y35_p10_s256.png",
+  "zoom_buildings.glb|25|14|256": "sprites/zoom_buildings_y25_p14_s256.png",
+  "zoom_globe.glb|20|12|256": "sprites/zoom_globe_y20_p12_s256.png"
+}
