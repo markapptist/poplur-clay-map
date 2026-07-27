@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import ClayChannelArrows from './ClayChannelArrows'
@@ -18,6 +18,9 @@ const KM_TO_MI = 0.621371
 
 /** Home chrome fades out after this long without a touch (see chromeIdle). */
 const CHROME_IDLE_MS = 30_000
+
+/** Length of the cube-into-phone flourish; must match the CSS animation. */
+const CUBE_INTO_PHONE_MS = 1_600
 
 // Browser twin of the iOS Home screen (map tab state), rebuilt from
 // HomeView.swift + RecordingCountdownView.swift + RadiusNumberDisplayFIXED.swift.
@@ -148,6 +151,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stops obstructing whatever is behind it, and any touch brings it straight
   // back. Applies on every tab, not just subscreens.
   const [chromeIdle, setChromeIdle] = useState(false)
+  // The cube pops into the Poplur clay phone when that screen opens. It comes
+  // BACK afterwards on purpose: the cube is the way out of a subscreen, so a
+  // flourish that left it gone would strand you on the phone screen.
+  const [cubeIntoPhone, setCubeIntoPhone] = useState(false)
+  // Cleared on a timer rather than onAnimationEnd: the wrapper also carries the
+  // idle-fade transition and the cube's own hover keyframes bubble through it,
+  // and in practice the flag was surviving the flourish — which meant the class
+  // was still set next time you opened PHONE, so the animation never replayed.
+  useEffect(() => {
+    if (!cubeIntoPhone) return
+    const t = window.setTimeout(() => setCubeIntoPhone(false), CUBE_INTO_PHONE_MS)
+    return () => window.clearTimeout(t)
+  }, [cubeIntoPhone])
+
+  // Stable identity on purpose. HoldMenuTwin re-runs its reporting effect
+  // whenever this prop changes, so an inline arrow re-fired it every render —
+  // which re-set the flourish flag, restarted its timer and left the class on
+  // forever, so the animation never played a second time.
+  const handleSubscreenChange = useCallback((open: boolean, screen?: string) => {
+    setOverlayOpen(open)
+    setCubeIntoPhone(prev => {
+      if (open && screen === 'profile-phone' && !prev) { playPop(); return true }
+      return prev
+    })
+  }, [])
   const [popping, setPopping] = useState(false)
   // Start in the measurement system implied by the device locale. Tapping the
   // Radius card remains a deliberate local override for this session.
@@ -578,7 +606,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           over whatever content is active. Its face tracks the current tab. */}
       <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}`} />
       <div
-        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}`}
+        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
@@ -617,7 +645,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             )
           }}
           tourOn={mapTourOn}
-          onSubscreenChange={setOverlayOpen}
+          onSubscreenChange={handleSubscreenChange}
           bindGoBack={fn => { goBackRef.current = fn }}
         />
       )}

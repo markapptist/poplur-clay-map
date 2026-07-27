@@ -8,6 +8,7 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
+import GamesScreen from './GamesScreen'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -81,7 +82,11 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The tile names what pressing it DOES, like CC does: with the model
     // running it reads DETECT OFF, and with it stopped, DETECT ON.
     { icon: 'Search', title: 'DETECT ON', activeTitle: 'DETECT OFF', toggle: 'detection', screen: 'camera-capture', action: 'detect' },
-    { icon: 'Games', title: 'GAMES', screen: 'feed-games' },
+    // In the app this opens the real native GamePickerView (FPS Shooter +
+    // Poplurgatchi, both natively playable) through the existing HoldMenuNavigate
+    // "games" route. The browser gets the web games library, which plays the real
+    // FPS build and says Poplurgatchi is the native game.
+    { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true, nativeAction: 'games' },
     // CREATE opens the existing Create screen (PoplurAICreateView's twin):
     // generate with Creator Credits, then publish it to a real map location
     // with its own radius. A game made here joins the Games channel.
@@ -191,7 +196,7 @@ export default function HoldMenuTwin({
   /** live tour state, reported by the map — the tile must not guess at it */
   tourOn?: boolean
   /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the app */
-  onSubscreenChange?: (open: boolean) => void
+  onSubscreenChange?: (open: boolean, screen?: string) => void
   /** Registers a "back one level" handler: closes an open subscreen, else the
       menu itself. The cube calls it so there is always a way out. */
   bindGoBack?: (fn: (() => boolean) | null) => void
@@ -219,7 +224,7 @@ export default function HoldMenuTwin({
   // The feed keeps playing behind these screens otherwise — you would hear it
   // over the paper. Tell the home so it can silence what it is covering.
   useEffect(() => {
-    onSubscreenChange?.(Boolean(activeScreen))
+    onSubscreenChange?.(Boolean(activeScreen), activeScreen?.screen)
     return () => onSubscreenChange?.(false)
   }, [activeScreen, onSubscreenChange])
 
@@ -528,6 +533,13 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="TV Guide">
           <TVGuide onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'feed-games') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Games">
+          <GamesScreen onClose={() => { playPop(); onClose() }} />
         </div>
       )
     }
