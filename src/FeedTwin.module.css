@@ -252,11 +252,28 @@
 }
 
 /* "◆ reached you from 12.4 km" — why this post is in front of you at all.
-   Same no-plate legibility treatment as the home radius: stroke under fill so
-   it survives any video frame behind it, without a background. */
-.centerReach {
-  color: #d6f6ff;
+   Pinned just under the top bar and never part of its flip, so it is on screen
+   the whole time the post is. Spans the full width the bar uses, which is why
+   it no longer has to wrap the way it did inside the 166px ticker box. */
+.reachLine {
+  position: absolute;
+  z-index: 4;
+  top: calc(var(--header-title-top, 44px) + 46px);
+  left: 16px;
+  right: 16px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* Same no-plate legibility treatment as the home radius: stroke under fill, so
+   it survives any video frame behind it without a background. */
+.reachText {
+  font-size: 13px;
+  font-weight: 900;
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: #d6f6ff;
   -webkit-text-stroke: 1.6px rgba(5, 2, 9, 0.9);
   paint-order: stroke fill;
   text-shadow: 0 2px 5px rgba(0, 0, 0, 0.9), 0 0 14px rgba(53, 200, 239, 0.42);

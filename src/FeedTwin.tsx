@@ -69,15 +69,12 @@ function usesMiles(): boolean {
   }
 }
 
-/** "◆ reached you from 12.4 km" */
-function reachLabel(key: string): string {
-  const km = reachKmFor(key)
+/** "◆ reached you from 12.4 km" — renders a post's snapshotted reach. */
+function reachLabel(km: number): string {
   const value = usesMiles() ? `${(km * 0.621371).toFixed(1)} mi` : `${km.toFixed(1)} km`
-  // The ticker box is ~166px on a phone, and the full phrase needs ~224px, so
-  // this line wraps. That is fine — the caption above it already makes the row
-  // two lines tall, so the second line is free. What is NOT fine is breaking
-  // between the number and its unit ("13.8" / "mi"). The non-breaking space
-  // keeps the distance whole and forces the break after "from" instead.
+  // Its own full-width line now, so it fits on one line and is set nowrap. The
+  // non-breaking space stays as belt-and-braces: if a longer locale string ever
+  // does wrap, it must not break between the number and its unit.
   return `◆ reached you from ${value.replace(' ', '\u00a0')}`
 }
 
@@ -150,6 +147,17 @@ export interface ChannelPost {
   live?: boolean
   caption?: string
   viewers?: number
+  /**
+   * How far this post travelled to reach you, in km — a SNAPSHOT taken when the
+   * post was published, not a live read of the poster's radius.
+   *
+   * August (real data): populate this from the poster's radius at publish time
+   * and store it on the post. Radius decays when you stop posting, so reading it
+   * live would shrink an old post's travelled distance over time, rewriting what
+   * the poster actually earned. Snapshot on write, never recompute on read.
+   * Until then it is spoofed deterministically, like the other radius numbers.
+   */
+  reachKm?: number
 }
 
 // Ordered by the post's radius intercepting your location, widest first.
@@ -165,16 +173,17 @@ function postsFor(channel: Channel): ChannelPost[] {
       live: true,
       caption: b.caption,
       viewers: b.viewers,
+      reachKm: reachKmFor(`${channel.id}:${b.user}:${b.video ?? ''}`),
     }))
   }
   const users = CHANNEL_USERS[channel.id] ?? [channel.user]
   const own = channel.videos ?? []
   // Each user posts something different: the channel's own clips first, then
   // stock ones — repeating a single clip across users made stepping look broken.
-  return users.map((user, i) => ({
-    user,
-    video: own[i] ?? STOCK_CLIPS[(channel.number + i * 5) % STOCK_CLIPS.length],
-  }))
+  return users.map((user, i) => {
+    const video = own[i] ?? STOCK_CLIPS[(channel.number + i * 5) % STOCK_CLIPS.length]
+    return { user, video, reachKm: reachKmFor(`${channel.id}:${user}:${video}`) }
+  })
 }
 
 // Captions come from the clip's own audio (transcribed with whisper.cpp), so
@@ -720,10 +729,10 @@ export default function FeedTwin({
             <div className={styles.infoRow}>
               <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
               <div className={styles.centerTicker}>
-                {[post?.caption ?? ch.caption, post?.user ?? ch.user, reachLabel(`${ch.id}:${post?.user ?? ch.user}:${post?.video ?? ''}`)].map((line, i) => (
+                {[post?.caption ?? ch.caption, post?.user ?? ch.user].map((line, i) => (
                   <span
                     key={i}
-                    className={`${i === centerIdx % 3 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}${i === 2 ? ` ${styles.centerReach}` : ''}`}
+                    className={`${i === centerIdx % 2 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
                   >
                     {line}
                   </span>
@@ -744,6 +753,16 @@ export default function FeedTwin({
             onPress={() => { playPop(); setShareOpen(true) }}
           />
         </div>
+      </div>
+
+      {/* Why this post is in front of you. Deliberately NOT part of the top
+          bar's logo⇄info flip or the caption⇄handle rotation: in the ticker it
+          was only on screen ~1 slot in 6, which is too rare to teach anyone the
+          mechanic. Radius is the product, so this line is always up. */}
+      <div className={styles.reachLine}>
+        <span className={styles.reachText}>
+          {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
+        </span>
       </div>
 
       {/* Channel changer + RADIUS⇄TRENDING label: OWNED BY THE HOME HUD.
