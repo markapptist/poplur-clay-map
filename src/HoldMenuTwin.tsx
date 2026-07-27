@@ -109,6 +109,9 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   ],
 }
 
+/** How long an embedded capture may take to load before we call it missing. */
+const EMBED_GRACE_MS = 12_000
+
 function rclSubscreenUrl(item: Item): string {
   const route = item.preview
     ? `.claude/artifacts/rough-copy-preview.html?surface=iphone&screen=${encodeURIComponent(item.screen)}`
@@ -129,19 +132,6 @@ function rclSubscreenUrl(item: Item): string {
     ).href
   }
   return `${window.location.origin}/${route}`
-}
-
-/** Can we fetch this ourselves? `origin` is the string "null" for both file:
- *  and custom schemes, so comparing origins would call two unrelated opaque
- *  origins equal — compare the parts that actually identify the server. */
-function isSameOrigin(url: string): boolean {
-  try {
-    const u = new URL(url, window.location.href)
-    if (u.protocol === 'file:') return false
-    return u.protocol === window.location.protocol && u.host === window.location.host
-  } catch {
-    return false
-  }
 }
 
 // Placeholder for icons that don't yet have a clay PNG in public/holdmenu/.
@@ -245,27 +235,31 @@ export default function HoldMenuTwin({
   // iframe resolves to nothing and the screen renders as pure black. The
   // browser 404s visibly; WKWebView's scheme handler answers with nothing at
   // all. Probe first so a screen we can't show says so instead of going dark.
+  // Whether the embedded capture actually rendered.
+  //
+  // This used to PROBE with fetch() on a 2.5s deadline, and that is what made
+  // subscreens unreachable on a physical device: if the timer won the race the
+  // flag latched true and the screen showed "isn't in the app yet" forever —
+  // nothing ever set it back — even though the fetch was about to succeed. On a
+  // busy phone (subscreen opening, iframe loading, feed or map still running)
+  // 2.5s is easy to miss, so which screens broke looked random.
+  //
+  // Now we watch the thing we actually care about instead of a proxy for it:
+  // the iframe loads, and it only counts as missing if it never does. No
+  // duplicate request racing the iframe, no CORS/scheme caveats, and a grace
+  // window long enough for a slow device.
   const [embedMissing, setEmbedMissing] = useState(false)
+  const [embedLoaded, setEmbedLoaded] = useState(false)
   useEffect(() => {
     if (!activeScreen || activeScreen.native) return
     setEmbedMissing(false)
-    const url = rclSubscreenUrl(activeScreen)
-    // Only probe what we are allowed to read. An iframe is not bound by CORS
-    // but fetch is, so probing the dev artifact server (:8945, cross-origin
-    // from :5173, no CORS headers) would call a screen that loads perfectly
-    // missing. file: blocks fetch outright. Both of those cases work as they
-    // are; the one that needs catching is the bundle, which is same-origin.
-    if (!isSameOrigin(url)) return
-    let done = false
-    const miss = () => { if (!done) { done = true; setEmbedMissing(true) } }
-    // A scheme handler that never answers would leave us probing forever.
-    const timer = window.setTimeout(miss, 2500)
-    fetch(url)
-      .then((r) => { if (!done && !r.ok) miss() })
-      .catch(miss)
-      .finally(() => { done = true; window.clearTimeout(timer) })
-    return () => { done = true; window.clearTimeout(timer) }
+    setEmbedLoaded(false)
+    const timer = window.setTimeout(() => setEmbedMissing(true), EMBED_GRACE_MS)
+    return () => window.clearTimeout(timer)
   }, [activeScreen])
+  useEffect(() => {
+    if (embedLoaded) setEmbedMissing(false)
+  }, [embedLoaded])
 
   // Physics state lives in refs so the rAF loop reads live values.
   const offsetRef = useRef(0)
@@ -552,9 +546,20 @@ export default function HoldMenuTwin({
         data-screen={activeScreen.screen}
         data-rcl-kind={activeScreen.preview ? 'preview' : 'embed'}
       >
-        {embedMissing ? (
-          // No capture to show here — say so plainly. A black screen reads as a
-          // crash, and on a phone there is nothing else on it to tap.
+        {/* The iframe is ALWAYS mounted. Swapping it out for the fallback was
+            the bug: unmounting it meant it could never finish loading, so a
+            slow load latched into "isn't in the app yet" permanently. The
+            fallback is an overlay instead, and it disappears the moment the
+            capture arrives — however late that is. */}
+        <iframe
+          className={styles.subscreenFrame}
+          src={rclSubscreenUrl(activeScreen)}
+          title={`${activeScreen.title} Rough Copy`}
+          onLoad={() => setEmbedLoaded(true)}
+        />
+        {!embedLoaded && embedMissing && (
+          // Still nothing after a long wait. Say so plainly rather than leaving
+          // a black screen, which reads as a crash with nothing on it to tap.
           <div className={styles.subscreenMissing} data-testid="rcl-subscreen-missing">
             <p className={styles.subscreenMissingTitle}>{activeScreen.title}</p>
             <p className={styles.subscreenMissingBody}>
@@ -568,12 +573,6 @@ export default function HoldMenuTwin({
               Back
             </button>
           </div>
-        ) : (
-          <iframe
-            className={styles.subscreenFrame}
-            src={rclSubscreenUrl(activeScreen)}
-            title={`${activeScreen.title} Rough Copy`}
-          />
         )}
         {/* The clay ✕ is the intended way out and stays the pretty one. It is
             also a WebGL canvas, and on a phone that can come back blank —
