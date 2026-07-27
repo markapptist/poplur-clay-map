@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useSyncExternalStore } from 'react'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import styles from './ViewHarness.module.css'
+import { playPop } from './pop'
+import { listCaptures, onCameraStore, isSelected, toggleSelected, selectedCount } from './cameraStore'
 
 // Camera Roll — the camera's upper page (channel-up pushes the whole camera
 // up here; channel-down returns to the live viewfinder). A clay-dark grid of
@@ -13,6 +15,8 @@ interface RollItem {
   src: string
   /** mm:ss badge for videos */
   length?: string
+  /** set on this session's own captures, which are selectable */
+  id?: string
 }
 
 const ROLL: RollItem[] = [
@@ -83,17 +87,31 @@ export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => vo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [granted])
 
+  // What the camera shot this session sits at the FRONT of the roll, newest
+  // first — and only those tiles are selectable, because only they belong to
+  // this device's session.
+  const captures = useSyncExternalStore(onCameraStore, listCaptures, listCaptures)
+  const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
+  const shot: RollItem[] = captures.map(c => ({ kind: c.kind, src: c.src, length: c.length, id: c.id }))
+  const items = [...shot, ...(nativeRoll ?? ROLL)]
+
   return (
     <section className={styles.cameraRoll} aria-label="Camera roll">
       <header className={styles.rollHeader}>
         <img className={styles.rollLogo} src="logo_icon.png" alt="" draggable={false} />
         <h1 className={styles.rollTitle}>Camera Roll</h1>
-        <span className={styles.rollCount}>{ROLL.length} captures</span>
+        <span className={styles.rollCount}>
+          {picked ? `${picked} selected` : `${items.length} captures`}
+        </span>
       </header>
 
       <div className={styles.rollGrid}>
-        {(nativeRoll ?? ROLL).map((item, index) => (
-          <figure key={index} className={styles.rollTile}>
+        {items.map((item, index) => (
+          <figure
+            key={item.id ?? index}
+            className={item.id && isSelected(item.id) ? `${styles.rollTile} ${styles.rollTileOn}` : styles.rollTile}
+            onClick={item.id ? () => { playPop(); toggleSelected(item.id!) } : undefined}
+          >
             {item.kind === 'photo' ? (
               <img className={styles.rollMedia} src={item.src} alt="" loading="lazy" draggable={false} />
             ) : lite ? (
@@ -108,6 +126,7 @@ export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => vo
                 <span className={styles.rollBadge}>▶ {item.length}</span>
               </>
             )}
+            {item.id && isSelected(item.id) && <span className={styles.rollTick} aria-hidden="true">✓</span>}
           </figure>
         ))}
       </div>

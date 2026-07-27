@@ -29,11 +29,18 @@ function chevronShape(): THREE.Shape {
 
 export default function ClayChannelArrows({
   number,
+  label,
+  dot = false,
   onUp,
   onDown,
   size = 176,
 }: {
   number: number
+  /** replaces the channel number outright — the camera pages are not channels,
+   *  so they show what is selected there instead of a number that means nothing */
+  label?: string
+  /** the recording tell: a small red dot under the arrows */
+  dot?: boolean
   onUp: () => void
   onDown: () => void
   size?: number
@@ -178,7 +185,7 @@ export default function ClayChannelArrows({
         height={size}
         style={{ width, height: size, display: 'block', pointerEvents: 'none' }}
       />
-      {/* green channel number, centred between the chevrons */}
+      {/* the channel number — or, on the camera, what the roll has selected */}
       <span
         style={{
           position: 'absolute',
@@ -195,8 +202,27 @@ export default function ClayChannelArrows({
           pointerEvents: 'none',
         }}
       >
-        {number}
+        {label ?? number}
       </span>
+      {/* recording tell */}
+      {dot && (
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: 'calc(50% + 16px)',
+            width: 8,
+            height: 8,
+            marginLeft: -4,
+            borderRadius: '50%',
+            background: '#ff2d4b',
+            boxShadow: '0 0 8px rgba(255,45,75,0.9)',
+            animation: 'poplurRecBlink 1s steps(1, end) infinite',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
       {/* transparent hit areas */}
       <button
         type="button"

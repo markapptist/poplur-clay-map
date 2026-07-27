@@ -943,3 +943,43 @@
   .camSpoofFeed,
   .cameraFull .cameraFeedMirror { animation: none; }
 }
+
+/* The instant of capture: the screen blooms white. On the front camera this
+   IS the flash — no phone has a front torch. */
+.camBloom {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0.92;
+  pointer-events: none;
+  z-index: 40;
+  animation: camBloomOut 0.22s ease-out forwards;
+}
+
+@keyframes camBloomOut {
+  from { opacity: 0.92; }
+  to { opacity: 0; }
+}
+
+/* A tile the camera shot this session, picked for posting. */
+.rollTileOn {
+  outline: 3px solid #4dff69;
+  outline-offset: -3px;
+  box-shadow: 0 0 16px rgba(77, 255, 105, 0.45);
+}
+
+.rollTick {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 900;
+  color: #06210c;
+  background: #4dff69;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}

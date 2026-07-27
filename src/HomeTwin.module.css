@@ -828,3 +828,40 @@
   color: #ff453a;
   filter: drop-shadow(0 0 6px rgba(255, 69, 58, 0.55));
 }
+
+/* ── recording ──────────────────────────────────────────────────────────────
+   The radius card becomes the counter while the camera records: same slot,
+   same shape, so nothing moves — the label just changes what it is measuring. */
+.recCard {
+  border-color: rgba(255, 45, 75, 0.5);
+  box-shadow: 0 0 18px rgba(255, 45, 75, 0.28), inset 0 0 0 1px rgba(255, 45, 75, 0.2);
+}
+
+.recCard .statLabel {
+  color: #ff6b81;
+  animation: poplurRecBlink 1s steps(1, end) infinite;
+}
+
+.recValueShader {
+  background: linear-gradient(180deg, #fff 0%, #ffd7dd 42%, #ff2d4b 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 0.6px rgba(120, 0, 16, 0.55);
+  paint-order: stroke fill;
+}
+
+/* the minute, drawn — the bar fills as the ceiling approaches */
+.recBar {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #ff6b81, #ff2d4b);
+  box-shadow: 0 0 8px rgba(255, 45, 75, 0.7);
+  transition: width 0.12s linear;
+}
+
+/* The cube flashes for as long as the recording runs. */
+.cubeRecording {
+  animation: poplurRecCube 1s steps(1, end) infinite;
+}

@@ -1,39 +1,196 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import CameraRoll from './CameraRoll'
 import ClayCornerButton from './ClayCornerButton'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { playPop } from './pop'
+import { addCapture } from './cameraStore'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
 // transparent hole so it shows through, while the approved chrome/icons here
-// drive the native camera over the bridge. The clay-buildings spoof exists
-// ONLY for the plain browser preview and must NEVER appear in the real app —
-// detection goes through the bridge's isNativeShell() (webkit handler OR
-// PoplurNative), not a webkit-only probe that misses shells.
+// drive the native camera over the bridge.
 const NATIVE_SHELL = isNativeShell()
 
+/** A recording can run for a minute. */
+export const MAX_RECORD_MS = 60_000
+
+export interface CameraActions {
+  /** take a picture — the cube's default action on this tab */
+  photo: () => void
+  /** start recording, or stop the recording already running */
+  video: () => void
+}
+
+const mmss = (ms: number) => {
+  const s = Math.floor(ms / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
 // Twin of the app's camera (post) tab — the Snapchat-style full-screen
-// viewfinder from HomeView.swift + RecordCameraControlsOverlay.swift:
-// full-bleed preview, clay flash top-left, clay flip top-right, poplur logo
-// top-center. NO shutter button — the cube IS the camera button, and the home
-// HUD (arrows, label, cube) floats over this view.
+// viewfinder: full-bleed preview, clay flash top-left, clay flip top-right,
+// poplur logo top-center. NO shutter button — the cube IS the camera button.
 //
-// The viewfinder is SPOOFED: it never calls getUserMedia (no permission
-// prompt, no crash where capture is blocked — e.g. the prototype). A slow
-// drifting clay-world scene stands in for the live feed so the chrome can be
-// designed against a plausible frame; the native app swaps in the real camera.
-//
-// Vertical pager: `step` counts arrow presses (up = +1, down = -1). Up always
-// slides UP, down always slides DOWN, and both directions wrap between the
-// live viewfinder and the Camera Roll. Four stacked panels make the wrap
-// seamless: [roll-lite · LIVE · ROLL · live-clone] — the outer two are only
-// visible mid-slide, then the track snaps (no transition) back to the centre
-// panel of the same page.
-export default function Camera({ step = 0, onCloseRoll }: { step?: number; onCloseRoll?: () => void }) {
+// The viewfinder is REAL where the browser allows it (getUserMedia), because
+// the capture, the recording and — next — the AR filters all have to act on an
+// actual frame. Where the camera is refused or absent, the clay-world still
+// stands in so the chrome can still be designed against a plausible frame.
+export default function Camera({
+  step = 0,
+  onCloseRoll,
+  bindActions,
+  onRecordingChange,
+}: {
+  step?: number
+  onCloseRoll?: () => void
+  /** hands the home the actions its cube and hold menu fire */
+  bindActions?: (actions: CameraActions) => void
+  /** elapsed ms while recording, null when stopped — drives the radius counter */
+  onRecordingChange?: (elapsedMs: number | null) => void
+}) {
   const [flash, setFlash] = useState(false)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
   const page: 'live' | 'roll' = ((step % 2) + 2) % 2 === 0 ? 'live' : 'roll'
+
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const [streamOn, setStreamOn] = useState(false)
+  // the white bloom of a shutter — and the front camera's flash, which IS the
+  // screen going bright
+  const [bloom, setBloom] = useState(false)
+
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const [recStart, setRecStart] = useState<number | null>(null)
+
+  // ── the live stream ──────────────────────────────────────────────────────
+  // Native shells show the real camera through a transparent hole, so the web
+  // stream is only for the browser.
+  useEffect(() => {
+    if (NATIVE_SHELL || page !== 'live') return
+    let cancelled = false
+    const start = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 1280 } },
+          audio: true,
+        })
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        streamRef.current = stream
+        setStreamOn(true)
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          void videoRef.current.play().catch(() => {})
+        }
+      } catch {
+        setStreamOn(false)   // refused or unavailable — the clay still stands in
+      }
+    }
+    void start()
+    return () => {
+      cancelled = true
+      streamRef.current?.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+      setStreamOn(false)
+    }
+  }, [facing, page])
+
+  // ── flash ────────────────────────────────────────────────────────────────
+  // Back camera: the real torch, where the device exposes it. Front camera: no
+  // torch exists on any phone, so the flash IS the screen — it blooms white at
+  // the moment of capture. Both are wired; neither is a no-op.
+  const applyTorch = useCallback((on: boolean) => {
+    const track = streamRef.current?.getVideoTracks()[0]
+    if (!track) return
+    const caps = track.getCapabilities?.() as (MediaTrackCapabilities & { torch?: boolean }) | undefined
+    if (!caps?.torch) return
+    void track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (facing === 'environment') applyTorch(flash)
+    return () => applyTorch(false)
+  }, [flash, facing, applyTorch, streamOn])
+
+  // ── take a picture ───────────────────────────────────────────────────────
+  const capturePhoto = useCallback(() => {
+    playPop()
+    if (flash) { setBloom(true); window.setTimeout(() => setBloom(false), 220) }
+    postNativeEvent({ type: 'cameraShutter' })
+    const video = videoRef.current
+    if (!video || !video.videoWidth) return   // native shell / no stream: the shell captures
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    // The front camera is shown mirrored, so the saved frame is mirrored too —
+    // otherwise the photo comes back flipped from what you framed.
+    if (facing === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1) }
+    ctx.drawImage(video, 0, 0)
+    addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
+  }, [facing, flash])
+
+  // ── record ───────────────────────────────────────────────────────────────
+  const stopVideo = useCallback(() => {
+    const rec = recorderRef.current
+    if (!rec || rec.state === 'inactive') return
+    rec.stop()
+  }, [])
+
+  const startVideo = useCallback(() => {
+    const stream = streamRef.current
+    if (!stream) { postNativeEvent({ type: 'cameraControl', control: 'record' }); return }
+    let mime = ''
+    for (const candidate of ['video/mp4', 'video/webm;codecs=vp9', 'video/webm']) {
+      if (MediaRecorder.isTypeSupported?.(candidate)) { mime = candidate; break }
+    }
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+    const chunks: Blob[] = []
+    const started = performance.now()
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+    rec.onstop = () => {
+      const blob = new Blob(chunks, { type: rec.mimeType || 'video/webm' })
+      addCapture({ kind: 'video', src: URL.createObjectURL(blob), length: mmss(performance.now() - started) })
+      recorderRef.current = null
+      setRecStart(null)
+      playPop()
+    }
+    recorderRef.current = rec
+    rec.start(250)
+    setRecStart(started)
+    playPop()
+  }, [])
+
+  const toggleVideo = useCallback(() => {
+    if (recorderRef.current) stopVideo()
+    else startVideo()
+  }, [startVideo, stopVideo])
+
+  // The counter, and the one-minute ceiling. Reported upward every tick so the
+  // radius label can BE the counter while this runs.
+  useEffect(() => {
+    if (recStart == null) { onRecordingChange?.(null); return }
+    // An interval, NOT requestAnimationFrame. rAF stops dead whenever the page
+    // is not compositing — backgrounded, another tab, the app behind a screen —
+    // and the recorder keeps running the whole time. That would freeze the
+    // counter AND let a recording sail past the one-minute ceiling, because
+    // the ceiling is checked in here. An interval still fires when hidden.
+    const tick = () => {
+      const elapsed = performance.now() - recStart
+      if (elapsed >= MAX_RECORD_MS) { onRecordingChange?.(MAX_RECORD_MS); stopVideo(); return }
+      onRecordingChange?.(elapsed)
+    }
+    tick()
+    const timer = window.setInterval(tick, 120)
+    return () => window.clearInterval(timer)
+  }, [recStart, onRecordingChange, stopVideo])
+
+  // Leaving the camera must not leave a recording running in the background.
+  useEffect(() => () => { recorderRef.current?.stop() }, [])
+
+  useEffect(() => {
+    bindActions?.({ photo: capturePhoto, video: toggleVideo })
+  }, [bindActions, capturePhoto, toggleVideo])
 
   const [pos, setPos] = useState(page === 'live' ? 1 : 2)
   const [animated, setAnimated] = useState(true)
@@ -70,19 +227,29 @@ export default function Camera({ step = 0, onCloseRoll }: { step?: number; onClo
   }, [animated])
 
   // Punch the transparent hole for the native viewfinder while the live page
-  // is front (native shells) — the roll is a normal opaque screen. See
-  // .camera-live in index.css.
+  // is front (native shells) — the roll is a normal opaque screen.
   useEffect(() => {
     if (!NATIVE_SHELL || page !== 'live') return
     document.documentElement.classList.add('camera-live')
     return () => document.documentElement.classList.remove('camera-live')
   }, [page])
 
-  const live = (key: string) => (
+  // Only the CENTRE live panel carries the stream — the wrap clone would need
+  // a second camera to show the same picture, and one camera is all there is.
+  const live = (key: string, real: boolean) => (
     <section key={key} className={styles.cameraFull} aria-label="Camera preview twin">
-      {/* Spoofed live viewfinder — browser preview ONLY; every native shell
-          shows the real camera through the transparent hole instead. */}
-      {!NATIVE_SHELL && (
+      {!NATIVE_SHELL && real && (
+        <video
+          ref={videoRef}
+          className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
+          style={{ objectFit: 'cover', display: streamOn ? '' : 'none' }}
+          playsInline
+          muted
+          autoPlay
+        />
+      )}
+      {/* The camera refused, or there is none: the clay world stands in. */}
+      {!NATIVE_SHELL && !(real && streamOn) && (
         <img
           className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
           src="clay_buildings.png"
@@ -90,11 +257,11 @@ export default function Camera({ step = 0, onCloseRoll }: { step?: number; onClo
           draggable={false}
         />
       )}
-      {/* Screen-flash edge glow (FrontCameraFlashEdgeOverlay) when flash is on */}
+      {/* Screen-flash edge glow when the flash is armed */}
       {flash && <div className={styles.camFlashEdge} aria-hidden="true" />}
+      {/* …and the bloom at the instant of capture — the front camera's flash */}
+      {bloom && <div className={styles.camBloom} aria-hidden="true" />}
 
-      {/* Top chrome: clay flash (left) · poplur logo (center) · clay flip
-          (right) — bare clay marks, no backing circles. */}
       <div className={`${styles.camCornerSlot} ${styles.camSlotLeft}`}>
         <ClayCornerButton
           kind="flash"
@@ -127,9 +294,9 @@ export default function Camera({ step = 0, onCloseRoll }: { step?: number; onClo
         style={{ transform: `translateY(${-pos * 25}%)` }}
       >
         <CameraRoll lite />
-        {live('live-a')}
+        {live('live-a', true)}
         <CameraRoll onDeny={onCloseRoll} />
-        {live('live-b')}
+        {live('live-b', false)}
       </div>
     </div>
   )

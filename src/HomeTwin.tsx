@@ -1,14 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
-import Camera from './Camera'
+import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import { playPop, preloadPop } from './pop'
+import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
@@ -263,6 +264,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Camera's vertical pager: `step` counts arrow presses (up +1 / down -1);
   // parity picks the page, so both directions cycle live ⇄ roll.
   const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
+  // The camera's own actions, so the cube and the hold menu can fire them.
+  const cameraActionsRef = useRef<CameraActions | null>(null)
+  // Elapsed ms while recording — the radius label BECOMES this counter.
+  const [recordMs, setRecordMs] = useState<number | null>(null)
+  const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
   useEffect(() => {
     if (activeTab !== 'profile') { setViewingUser(null); setProfileOrigin(null) }
@@ -278,7 +284,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  const runMenuAction = (action: FeedAction) => {
+  const runMenuAction = (action: FeedAction | 'photo' | 'video') => {
+    if (action === 'photo' || action === 'video') { cameraActionsRef.current?.[action](); return }
     feedActionsRef.current?.(action)
   }
 
@@ -317,16 +324,26 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     setPopping(true)
     // Tapping the cube runs whatever you pinned in this tab's hold menu.
     const favourite = readFavourite(activeTab)
+    if (activeTab === 'post') {
+      // The camera's default is PHOTO — a camera whose button does nothing
+      // until you have visited a menu is not a camera.
+      const camera: Record<string, keyof CameraActions> = { PHOTO: 'photo', VIDEO: 'video' }
+      const which = camera[favourite ?? 'PHOTO'] ?? 'photo'
+      cameraActionsRef.current?.[which]()
+      if (isNativeShell() && which === 'photo') postNativeEvent({ type: 'cameraShutter' })
+      return
+    }
     if (favourite) {
       const map: Record<string, 'like' | 'comment' | 'captions' | 'profile'> = {
-        LIKE: 'like', COMMENT: 'comment', 'CC ON': 'captions', 'CC OFF': 'captions', PROFILE: 'profile',
+        LIKE: 'like',
+        COMMENT: 'comment',
+        'CC ON': 'captions',
+        'CC OFF': 'captions',
+        PROFILE: 'profile',
       }
       const action = map[favourite]
       if (action) runMenuAction(action)
     }
-    // The cube IS the camera shutter on the post tab — fire the real native
-    // capture (previous versions' cube-tap capture) through the bridge.
-    if (activeTab === 'post' && isNativeShell()) postNativeEvent({ type: 'cameraShutter' })
   }
 
   return (
@@ -363,7 +380,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
           />
         )}
-        {activeTab === 'post' && <Camera step={cameraStep} onCloseRoll={() => setCameraStep(s => s - 1)} />}
+        {activeTab === 'post' && (
+          <Camera
+            step={cameraStep}
+            onCloseRoll={() => setCameraStep(s => s - 1)}
+            bindActions={actions => { cameraActionsRef.current = actions }}
+            onRecordingChange={setRecordMs}
+          />
+        )}
         {activeTab === 'profile' && (
           <ProfileTwin
             bindArrows={fn => { profileArrowsRef.current = fn }}
@@ -423,6 +447,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           <ClayChannelArrows
             size={cubeSize}
             number={activeTab === 'map' ? mapPostIdx + 1 : CHANNELS[chanIndex].number}
+            // The camera's two pages are not channels. The slot shows what the
+            // roll has selected instead, and carries the recording dot.
+            label={activeTab === 'post' ? (picked ? String(picked) : '') : undefined}
+            dot={activeTab === 'post' && recordMs != null}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
           />
@@ -430,12 +458,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
         <div className={styles.cubeSpacer} aria-hidden="true" />
 
-        {/* RIGHT: local RADIUS ⇄ ONLINE NOW. */}
+        {/* RIGHT: local RADIUS ⇄ ONLINE NOW — or, while the camera records,
+            the counter. The radius label IS the timer; there is no second
+            widget competing for the slot. */}
         <div className={styles.statStack}>
+          {recordMs != null && (
+            <div className={`${styles.statCard} ${styles.recCard}`} aria-label="Recording">
+              <span className={styles.statLabel}>● REC</span>
+              <span className={`${styles.statValue} ${styles.recValueShader}`}>
+                {`${Math.floor(recordMs / 60000)}:${String(Math.floor(recordMs / 1000) % 60).padStart(2, '0')}`}
+              </span>
+              <span className={styles.statSub}>
+                of <span className={styles.statMax}>1:00</span> max
+              </span>
+              <span className={styles.statTrend}>
+                <span className={styles.recBar} style={{ width: `${Math.min(100, (recordMs / MAX_RECORD_MS) * 100)}%` }} />
+              </span>
+            </div>
+          )}
           {/* Radius keeps the user’s local-unit toggle; the audience card takes
               this exact slot on the next beat. */}
           <div
-            className={showOnlineAudience ? styles.statCardOut : styles.statCard}
+            className={recordMs != null || showOnlineAudience ? styles.statCardOut : styles.statCard}
             onClick={() => { playPop(); setUnitMi(v => !v) }}
             role="button"
             aria-label={`Radius ${(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
@@ -451,7 +495,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             <span className={styles.statTrend}>{POST_COUNT} nearby</span>
           </div>
           <div
-            className={showOnlineAudience ? styles.statCard : styles.statCardOut}
+            className={recordMs == null && showOnlineAudience ? styles.statCard : styles.statCardOut}
             aria-label={`${compactAudience(SPOOFED_ONLINE_AUDIENCE)} users online in your reach`}
           >
             <span className={styles.statLabel}>ONLINE NOW</span>
@@ -467,7 +511,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* The cube is the persistent navigator — visible on every tab, floating
           over whatever content is active. Its face tracks the current tab. */}
       <div className={styles.groundGlow} />
-      <div className={styles.cubeWrap} style={{ width: cubeSize, height: cubeSize }}>
+      <div
+        className={recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap}
+        style={{ width: cubeSize, height: cubeSize }}
+      >
         <div
           className={popping ? `${styles.cubePop} ${styles.cubeFloat}` : styles.cubeFloat}
           onAnimationEnd={e => { if (e.animationName.includes('Pop')) setPopping(false) }}

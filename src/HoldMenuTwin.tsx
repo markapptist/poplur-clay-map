@@ -27,7 +27,7 @@ interface Item {
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'captions' | 'profile'
+  action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video'
   /** performed on the live MAP behind the menu — no subscreen opens */
   mapAction?: 'search' | 'locate' | 'directions' | 'tour'
 }
@@ -54,8 +54,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'CC', title: 'CC ON', activeTitle: 'CC OFF', toggle: 'captions', screen: 'feed-cc', format: 'svg', action: 'captions' },
   ],
   post: [
-    { icon: 'Create', title: 'PHOTO', screen: 'camera-capture' },
-    { icon: 'TVGuide', title: 'VIDEO', screen: 'camera-capture' },
+    // PHOTO and VIDEO act on the camera behind the menu. PHOTO is also the
+    // tab's default favourite, so the cube shoots without visiting the menu.
+    { icon: 'Create', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
+    { icon: 'TVGuide', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
     { icon: 'YouTube', title: 'LIVE', screen: 'camera-live' },
     { icon: 'Games_Alternate', title: 'AR', screen: 'camera-capture' },
     { icon: 'Search', title: 'DETECT OFF', activeTitle: 'DETECT ON', toggle: 'detection', screen: 'camera-capture' },
