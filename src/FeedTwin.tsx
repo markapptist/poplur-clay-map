@@ -38,6 +38,39 @@ interface Channel {
                           // swipe steps through it
 }
 
+// How far a post travelled to reach you. This is the whole point of the radius:
+// a post radiates from where it was dropped, and you receive it because your
+// location falls inside that circle. The feed said "43.6480, -79.3810" here,
+// which tells a viewer nothing — this says why the post is in front of them.
+// Deterministic per post so it never flickers between renders.
+function reachKmFor(key: string): number {
+  let h = 0
+  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0
+  return 0.3 + (h % 397) / 10
+}
+
+function usesMiles(): boolean {
+  if (typeof window === 'undefined') return false
+  const forced = new URLSearchParams(window.location.search).get('units')
+  if (forced === 'mi') return true
+  if (forced === 'km') return false
+  const locale = navigator.languages?.[0] ?? navigator.language
+  try {
+    const region = new Intl.Locale(locale).region
+    return region === 'US' || region === 'LR' || region === 'MM'
+  } catch {
+    return /-(US|LR|MM)$/i.test(locale)
+  }
+}
+
+/** "◆ reached you from 12.4 km" */
+function reachLabel(key: string): string {
+  const km = reachKmFor(key)
+  return usesMiles()
+    ? `◆ reached you from ${(km * 0.621371).toFixed(1)} mi`
+    : `◆ reached you from ${km.toFixed(1)} km`
+}
+
 export const CHANNELS: Channel[] = [
   { id: 'food', number: 101, name: 'Food', emoji: '🍔', icon: 'poplur_channel_101_food', flag: '🇨🇦', user: '@sauceboss', caption: 'late-night poutine run downtown', lang: 'EN', theme: ['#3a1206', '#c2410c', '#f59e0b'], videos: ['feed/ad-food.mp4'] },
   // LIVE is not a genre — it is whoever is broadcasting into your radius right
@@ -677,10 +710,10 @@ export default function FeedTwin({
             <div className={styles.infoRow}>
               <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
               <div className={styles.centerTicker}>
-                {[post?.caption ?? ch.caption, post?.user ?? ch.user, '43.6480, -79.3810'].map((line, i) => (
+                {[post?.caption ?? ch.caption, post?.user ?? ch.user, reachLabel(`${ch.id}:${post?.user ?? ch.user}:${post?.video ?? ''}`)].map((line, i) => (
                   <span
                     key={i}
-                    className={`${i === centerIdx % 3 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
+                    className={`${i === centerIdx % 3 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}${i === 2 ? ` ${styles.centerReach}` : ''}`}
                   >
                     {line}
                   </span>

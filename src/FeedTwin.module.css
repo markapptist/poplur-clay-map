@@ -251,6 +251,17 @@
   transform: translateY(9px);
 }
 
+/* "◆ reached you from 12.4 km" — why this post is in front of you at all.
+   Same no-plate legibility treatment as the home radius: stroke under fill so
+   it survives any video frame behind it, without a background. */
+.centerReach {
+  color: #d6f6ff;
+  letter-spacing: 0.02em;
+  -webkit-text-stroke: 1.6px rgba(5, 2, 9, 0.9);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.9), 0 0 14px rgba(53, 200, 239, 0.42);
+}
+
 @keyframes feedCenterTextShader {
   to { background-position: -260% 0; }
 }
