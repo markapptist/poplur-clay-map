@@ -13,6 +13,12 @@ export interface Capture {
   at: number
 }
 
+// ML detection ships ON. It lives HERE rather than inside the viewfinder
+// because the hold-menu tile has to name its state too — with the flag in
+// component state, leaving the camera tab and coming back reset the model
+// while the menu went on claiming the opposite.
+let detectOn = true
+
 const captures: Capture[] = []
 const selected = new Set<string>()
 const listeners = new Set<() => void>()
@@ -22,6 +28,14 @@ const emit = () => listeners.forEach(fn => fn())
 export function onCameraStore(fn: () => void): () => void {
   listeners.add(fn)
   return () => { listeners.delete(fn) }
+}
+
+export function isDetectOn(): boolean { return detectOn }
+
+export function setDetectOn(on: boolean): void {
+  if (detectOn === on) return
+  detectOn = on
+  emit()
 }
 
 export function listCaptures(): readonly Capture[] { return captures }

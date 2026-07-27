@@ -374,3 +374,23 @@
 .editorFooter { justify-content: space-between; gap: 8px; padding-top: 12px; }
 .editorFooter button { padding: 8px 11px; font-size: 10px; letter-spacing: 0.4px; }
 .editorFooter .resetButton { color: rgba(255, 255, 255, 0.58); border-color: rgba(255, 255, 255, 0.15); background: transparent; }
+
+/* A tile whose icon is its own name — AR. Same clay type as the rest of the
+   wheel, sized to fill the box the way an icon would. */
+.glyph {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  background: linear-gradient(180deg, #ffffff 0%, #ffd7ee 44%, #f63b9a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(70, 0, 34, 0.75);
+  paint-order: stroke fill;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+}

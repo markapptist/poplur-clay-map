@@ -1,0 +1,103 @@
+/* The AR strip sits low over the viewfinder, above the home HUD's bottom row
+   but clear of the cube — a filter rail, not a screen. */
+
+.rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 26;
+  padding: 10px 10px 12px;
+  background: linear-gradient(180deg, transparent, rgba(10, 6, 12, 0.72) 38%);
+  animation: arRailIn 0.26s ease-out both;
+}
+
+@keyframes arRailIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 8px;
+}
+
+.title {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  background: linear-gradient(180deg, #ffffff 0%, #ffd7ee 45%, #f63b9a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 0.6px rgba(70, 0, 34, 0.7);
+  paint-order: stroke fill;
+}
+
+.close {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 2px 4px;
+  scrollbar-width: none;
+}
+
+.strip::-webkit-scrollbar { display: none; }
+
+.chip {
+  flex: 0 0 auto;          /* never let the rail squeeze the swatches */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* The swatch is a slice of clay wearing the filter — the preview IS the effect. */
+.swatch {
+  display: block;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background-image: url('/clay_cube.png');
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), inset 0 0 0 2px rgba(255, 255, 255, 0.12);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.chipOn .swatch {
+  transform: translateY(-3px) scale(1.06);
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 2px #f63b9a,
+    0 0 18px rgba(246, 59, 154, 0.55);
+}
+
+.chipLabel {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.chipOn .chipLabel { color: #fff; }

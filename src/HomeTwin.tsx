@@ -268,6 +268,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const cameraActionsRef = useRef<CameraActions | null>(null)
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
+  // Who the camera is currently looking at. While a user is detected the radius
+  // label shows THEIR reach — the number that matters is the one belonging to
+  // the person in frame, not your own.
+  const [seenUser, setSeenUser] = useState<{ handle: string; radiusKm: number } | null>(null)
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
   useEffect(() => {
@@ -284,8 +288,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  const runMenuAction = (action: FeedAction | 'photo' | 'video') => {
-    if (action === 'photo' || action === 'video') { cameraActionsRef.current?.[action](); return }
+  const runMenuAction = (action: FeedAction | keyof CameraActions) => {
+    if (action === 'photo' || action === 'video' || action === 'detect' || action === 'ar') {
+      cameraActionsRef.current?.[action]()
+      return
+    }
     feedActionsRef.current?.(action)
   }
 
@@ -386,6 +393,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onCloseRoll={() => setCameraStep(s => s - 1)}
             bindActions={actions => { cameraActionsRef.current = actions }}
             onRecordingChange={setRecordMs}
+            onDetectUser={setSeenUser}
           />
         )}
         {activeTab === 'profile' && (
@@ -484,9 +492,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             role="button"
             aria-label={`Radius ${(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
           >
-            <span className={styles.statLabel}>RADIUS ◆</span>
+            <span className={styles.statLabel}>{seenUser ? `${seenUser.handle} ◆` : 'RADIUS ◆'}</span>
             <span className={`${styles.statValue} ${styles.radiusValueShader}`}>
-              {(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)}
+              {(() => {
+                const km = seenUser ? seenUser.radiusKm : RADIUS_METERS / 1000
+                return (unitMi ? km * KM_TO_MI : km).toFixed(1)
+              })()}
               <span className={styles.statUnit}>{unitMi ? 'mi' : 'km'}</span>
             </span>
             <span className={styles.statSub}>

@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import styles from './HoldMenuTwin.module.css'
 import { playPop } from './pop'
 import type { CubeTab } from './CubeTab3D'
 import ClayCornerButton from './ClayCornerButton'
+import { isDetectOn, onCameraStore } from './cameraStore'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
@@ -27,7 +28,9 @@ interface Item {
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video'
+  action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video' | 'detect' | 'ar'
+  /** drawn as letters instead of an icon file */
+  glyph?: string
   /** performed on the live MAP behind the menu — no subscreen opens */
   mapAction?: 'search' | 'locate' | 'directions' | 'tour'
 }
@@ -59,8 +62,12 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Create', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
     { icon: 'TVGuide', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
     { icon: 'YouTube', title: 'LIVE', screen: 'camera-live' },
-    { icon: 'Games_Alternate', title: 'AR', screen: 'camera-capture' },
-    { icon: 'Search', title: 'DETECT OFF', activeTitle: 'DETECT ON', toggle: 'detection', screen: 'camera-capture' },
+    // AR had a borrowed games icon that said nothing about filters. The letters
+    // ARE the icon now — that is what the feature is called on every camera.
+    { icon: 'AR', title: 'AR', screen: 'camera-capture', glyph: 'AR', action: 'ar' },
+    // The tile names what pressing it DOES, like CC does: with the model
+    // running it reads DETECT OFF, and with it stopped, DETECT ON.
+    { icon: 'Search', title: 'DETECT ON', activeTitle: 'DETECT OFF', toggle: 'detection', screen: 'camera-capture', action: 'detect' },
     { icon: 'Games', title: 'GAMES', screen: 'feed-games' },
   ],
   profile: [
@@ -109,7 +116,9 @@ const MAX_VELOCITY = 16
 const SNAP_VELOCITY = 0.9
 const CENTER_Y_FRAC = 0.46
 type HoldMenuState = { tour: boolean; captions: boolean; detection: boolean }
-let persistedMenuState: HoldMenuState = { tour: false, captions: true, detection: false }
+// ML detection ships ON: the native viewfinder has it running from the moment
+// it opens, so the tile's job is to turn it OFF.
+let persistedMenuState: HoldMenuState = { tour: false, captions: true, detection: true }
 
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
@@ -141,6 +150,8 @@ export default function HoldMenuTwin({
   // The item set is fixed to the tab the menu was opened from. The three
   // mutable controls retain their current state while the wheel is open.
   const [menuState, setMenuState] = useState(persistedMenuState)
+  // The camera owns whether the model is running; the tile only reports it.
+  const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
   const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).map(item => {
     // TOUR reads its label off the map's own state, so it says STOP TOUR for
     // as long as the tour is actually running — including a tour that started
@@ -149,10 +160,8 @@ export default function HoldMenuTwin({
       return { ...item, title: tourOn ? item.activeTitle : item.title }
     }
     if (!item.toggle || !item.activeTitle) return item
-    return {
-      ...item,
-      title: menuState[item.toggle] ? item.activeTitle : item.title,
-    }
+    const on = item.toggle === 'detection' ? detectOn : menuState[item.toggle]
+    return { ...item, title: on ? item.activeTitle : item.title }
   })
 
   const [offset, setOffset] = useState(0)      // continuous wheel position, item units
@@ -495,6 +504,9 @@ export default function HoldMenuTwin({
                 className={on ? styles.iconBoxOn : styles.iconBox}
                 style={{ width: size, height: size }}
               >
+                {it.glyph ? (
+                  <span className={styles.glyph} aria-hidden="true">{it.glyph}</span>
+                ) : (
                 <img
                   className={styles.icon}
                   src={`holdmenu/${it.icon}.${it.format ?? 'png'}`}
@@ -505,6 +517,7 @@ export default function HoldMenuTwin({
                     if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = NAV_ICON }
                   }}
                 />
+                )}
               </div>
               <span className={on ? styles.labelOn : styles.label}>{it.title}</span>
             </button>

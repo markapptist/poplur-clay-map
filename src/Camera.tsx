@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
 import ClayCornerButton from './ClayCornerButton'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
-import { addCapture } from './cameraStore'
+import { addCapture, isDetectOn, setDetectOn, onCameraStore } from './cameraStore'
+import DetectionOverlay from './DetectionOverlay'
+import { FrameDetector, type Detection } from './mlDetect'
+import ARFilters, { AR_FILTERS } from './ARFilters'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
@@ -20,6 +23,10 @@ export interface CameraActions {
   photo: () => void
   /** start recording, or stop the recording already running */
   video: () => void
+  /** ML detection on ⇄ off */
+  detect: () => void
+  /** open (or close) the AR filter rail */
+  ar: () => void
 }
 
 const mmss = (ms: number) => {
@@ -40,6 +47,7 @@ export default function Camera({
   onCloseRoll,
   bindActions,
   onRecordingChange,
+  onDetectUser,
 }: {
   step?: number
   onCloseRoll?: () => void
@@ -47,6 +55,8 @@ export default function Camera({
   bindActions?: (actions: CameraActions) => void
   /** elapsed ms while recording, null when stopped — drives the radius counter */
   onRecordingChange?: (elapsedMs: number | null) => void
+  /** the detected user, whose OWN reach the radius label adopts */
+  onDetectUser?: (user: { handle: string; radiusKm: number } | null) => void
 }) {
   const [flash, setFlash] = useState(false)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
@@ -61,6 +71,15 @@ export default function Camera({
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const [recStart, setRecStart] = useState<number | null>(null)
+
+  // Shared with the hold menu, so the tile and the model can never disagree.
+  const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
+  const [detections, setDetections] = useState<Detection[]>([])
+  const detectorRef = useRef<FrameDetector | null>(null)
+
+  const [arOpen, setArOpen] = useState(false)
+  const [arFilter, setArFilter] = useState('none')
+  const filterCss = AR_FILTERS.find(f => f.id === arFilter)?.css ?? 'none'
 
   // ── the live stream ──────────────────────────────────────────────────────
   // Native shells show the real camera through a transparent hole, so the web
@@ -94,6 +113,27 @@ export default function Camera({
     }
   }, [facing, page])
 
+  // ── ML detection ─────────────────────────────────────────────────────────
+  // Reads the real frame ~8 times a second. An interval, not rAF, for the same
+  // reason the counter is: it must not silently stop when the page is not
+  // compositing and then look like the model died.
+  useEffect(() => {
+    if (!detectOn || page !== 'live') { setDetections([]); onDetectUser?.(null); return }
+    detectorRef.current ??= new FrameDetector()
+    detectorRef.current.reset()
+    const timer = window.setInterval(() => {
+      const video = videoRef.current
+      if (!video || !video.videoWidth) return
+      const found = detectorRef.current!.detect(video, { facing })
+      setDetections(found)
+      onDetectUser?.(found.find(d => d.user)?.user ?? null)
+    }, 120)
+    return () => {
+      window.clearInterval(timer)
+      onDetectUser?.(null)
+    }
+  }, [detectOn, page, facing, streamOn, onDetectUser])
+
   // ── flash ────────────────────────────────────────────────────────────────
   // Back camera: the real torch, where the device exposes it. Front camera: no
   // torch exists on any phone, so the flash IS the screen — it blooms white at
@@ -123,12 +163,15 @@ export default function Camera({
     canvas.height = video.videoHeight
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    // What you framed is what gets saved: the AR filter is baked into the
+    // capture, not just shown on the preview.
+    if (filterCss !== 'none') ctx.filter = filterCss
     // The front camera is shown mirrored, so the saved frame is mirrored too —
     // otherwise the photo comes back flipped from what you framed.
     if (facing === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1) }
     ctx.drawImage(video, 0, 0)
     addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
-  }, [facing, flash])
+  }, [facing, flash, filterCss])
 
   // ── record ───────────────────────────────────────────────────────────────
   const stopVideo = useCallback(() => {
@@ -189,7 +232,12 @@ export default function Camera({
   useEffect(() => () => { recorderRef.current?.stop() }, [])
 
   useEffect(() => {
-    bindActions?.({ photo: capturePhoto, video: toggleVideo })
+    bindActions?.({
+      photo: capturePhoto,
+      video: toggleVideo,
+      detect: () => setDetectOn(!isDetectOn()),
+      ar: () => setArOpen(v => !v),
+    })
   }, [bindActions, capturePhoto, toggleVideo])
 
   const [pos, setPos] = useState(page === 'live' ? 1 : 2)
@@ -242,7 +290,11 @@ export default function Camera({
         <video
           ref={videoRef}
           className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
-          style={{ objectFit: 'cover', display: streamOn ? '' : 'none' }}
+          style={{
+            objectFit: 'cover',
+            display: streamOn ? '' : 'none',
+            filter: filterCss === 'none' ? undefined : filterCss,
+          }}
           playsInline
           muted
           autoPlay
@@ -257,6 +309,11 @@ export default function Camera({
           draggable={false}
         />
       )}
+      {/* the model's read on the frame */}
+      {real && detectOn && detections.length > 0 && (
+        <DetectionOverlay detections={detections} mirrored={facing === 'user'} />
+      )}
+
       {/* Screen-flash edge glow when the flash is armed */}
       {flash && <div className={styles.camFlashEdge} aria-hidden="true" />}
       {/* …and the bloom at the instant of capture — the front camera's flash */}
@@ -274,6 +331,10 @@ export default function Camera({
         />
       </div>
       <img className={styles.camLogo} src="logo_text.png" alt="poplur" draggable={false} />
+      {real && arOpen && (
+        <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
+      )}
+
       <div className={`${styles.camCornerSlot} ${styles.camSlotRight}`}>
         <ClayCornerButton
           kind="flip"
