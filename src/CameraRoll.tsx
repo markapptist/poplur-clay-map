@@ -3,6 +3,7 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import styles from './ViewHarness.module.css'
 import { playPop } from './pop'
 import { listCaptures, onCameraStore, isSelected, toggleSelected, selectedCount } from './cameraStore'
+import PermissionAlert from './PermissionAlert'
 
 // Camera Roll — the camera's upper page (channel-up pushes the whole camera
 // up here; channel-down returns to the live viewfinder). A clay-dark grid of
@@ -46,7 +47,12 @@ const ROLL: RollItem[] = [
   { kind: 'photo', src: 'clay_pin.png' },
 ]
 
-export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => void; lite?: boolean } = {}) {
+export default function CameraRoll({ onDeny, lite = false, onPick }: {
+  onDeny?: () => void
+  lite?: boolean
+  /** picking a capture sends it into the post composer, like the native roll */
+  onPick?: (media: { kind: 'photo' | 'video'; src: string; length?: string }) => void
+} = {}) {
   // Native shell: the REAL device photo library replaces the mock grid. The
   // app answers requestCameraRoll with recent photo thumbnails (data URIs) via
   // window.poplurCameraRoll; a denied OS permission flips back to the camera.
@@ -110,7 +116,16 @@ export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => vo
           <figure
             key={item.id ?? index}
             className={item.id && isSelected(item.id) ? `${styles.rollTile} ${styles.rollTileOn}` : styles.rollTile}
-            onClick={item.id ? () => { playPop(); toggleSelected(item.id!) } : undefined}
+            // Picking a capture opens the composer (filter → original/AI → post).
+            // Every tile is pickable, not just ones the store gave an id: the
+            // seeded roll has no ids, and a roll where most tiles do nothing when
+            // tapped is the bug, not the design. Selection stays the no-composer
+            // fallback, and it still needs an id.
+            onClick={onPick
+              ? () => { playPop(); onPick({ kind: item.kind, src: item.src, length: item.length }) }
+              : item.id
+                ? () => { playPop(); toggleSelected(item.id!) }
+                : undefined}
           >
             {item.kind === 'photo' ? (
               <img className={styles.rollMedia} src={item.src} alt="" loading="lazy" draggable={false} />
@@ -134,23 +149,16 @@ export default function CameraRoll({ onDeny, lite = false }: { onDeny?: () => vo
       <p className={styles.rollHint}>▲ ▼ flips back to the camera</p>
 
       {!granted && !lite && (
-        <div className={styles.rollPermScrim}>
-          <div className={styles.rollPermAlert} role="dialog" aria-label="Camera roll permission">
-            <div className={styles.rollPermContent}>
-              <div className={styles.rollPermIcon} aria-hidden="true" />
-              <h2 className={`${styles.rollPermTitle} ${styles.rollPermShader}`}>Allow &quot;Poplur&quot; to access your camera roll?</h2>
-              <p className={`${styles.rollPermCopy} ${styles.rollPermShaderSoft}`}>Show your captures here so you can post photos and videos from inside your radius.</p>
-            </div>
-            <div className={styles.rollPermActions}>
-              <button className={styles.rollPermAction} type="button" onClick={deny}>
-                <span className={styles.rollPermShaderBtn}>Don&apos;t Allow</span>
-              </button>
-              <button className={styles.rollPermAction} type="button" onClick={allow}>
-                <span className={styles.rollPermShaderBtn}>Allow</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <PermissionAlert
+          icon="photos"
+          label="Camera roll permission"
+          title={'Allow "Poplur" to access your camera roll?'}
+          copy="Show your captures here so you can post photos and videos from inside your radius."
+          choices={[
+            { label: "Don't Allow", onPick: deny },
+            { label: 'Allow', grants: true, onPick: allow },
+          ]}
+        />
       )}
     </section>
   )

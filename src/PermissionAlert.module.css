@@ -1,0 +1,232 @@
+/* The app's permission alert — the iOS system alert's shape and weight in
+   Poplur's clay, lifted from the pre-login welcome flow so a permission asked
+   after sign-in looks like one asked before it.
+   Extracted from the camera roll's copy, which was the only post-login screen
+   that had one. */
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 7, 13, 0.45);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+
+.alert {
+  width: 194px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.44);
+  border-radius: 8px;
+  background: rgba(255, 247, 251, 0.94);
+  box-shadow: 0 18px 42px rgba(57, 0, 30, 0.38), inset 0 1px 0 #fff;
+  color: #23131e;
+  text-align: center;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  animation: permIn 0.5s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+}
+
+.content { padding: 20px 17px 16px; }
+
+.icon {
+  position: relative;
+  margin: 0 auto 13px;
+  animation: permFloat 3.4s ease-in-out infinite;
+  transform-origin: center;
+  will-change: transform;
+}
+
+/* Photos: clay frame, white sun + mountain. */
+.iconPhotos {
+  width: 44px;
+  height: 34px;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #ff62ad, #d90f6d);
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.45), 0 6px 13px rgba(194, 17, 122, 0.26);
+}
+
+.iconPhotos::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 7px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(83, 0, 43, 0.15);
+}
+
+.iconPhotos::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  bottom: 5px;
+  width: 0;
+  height: 0;
+  border-left: 15px solid transparent;
+  border-right: 15px solid transparent;
+  border-bottom: 14px solid #fff;
+  filter: drop-shadow(6px 0 0 rgba(255, 255, 255, 0.55));
+}
+
+/* Camera: clay body with a viewfinder hump and a white lens ring. */
+.iconCamera {
+  width: 44px;
+  height: 34px;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #ff62ad, #d90f6d);
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.45), 0 6px 13px rgba(194, 17, 122, 0.26);
+}
+
+.iconCamera::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: -5px;
+  width: 17px;
+  height: 8px;
+  border-radius: 4px 4px 0 0;
+  background: #f63b9a;
+}
+
+.iconCamera::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px rgba(83, 0, 43, 0.15);
+}
+
+/* Location: the clay map pin. */
+.iconLocation {
+  width: 46px;
+  height: 46px;
+  filter: drop-shadow(0 5px 7px rgba(148, 10, 84, 0.35));
+}
+
+.iconLocation::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 3px;
+  width: 30px;
+  height: 30px;
+  transform: rotate(45deg);
+  border-radius: 50% 50% 9px 50%;
+  background: linear-gradient(145deg, #ff69b3 0%, #ee2f8b 55%, #c40f66 100%);
+  box-shadow: inset 2px 3px 3px rgba(255, 255, 255, 0.55), inset -2px -3px 4px rgba(120, 4, 55, 0.45);
+}
+
+.iconLocation::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 11px;
+  width: 9px;
+  height: 9px;
+  border: 3.5px solid #f6ecd7;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 1px 2px rgba(83, 0, 43, 0.28);
+}
+
+.title {
+  margin: 0 0 7px;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.copy {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.42;
+  letter-spacing: 0;
+}
+
+.shader,
+.shaderSoft,
+.shaderBtn {
+  color: transparent;
+  background-size: 260% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: permTextShader 4.8s linear infinite;
+}
+
+.shader {
+  background-image: linear-gradient(105deg, #25131f 0%, #8b214f 22%, #ff6cad 42%, #173f58 62%, #35c8ef 78%, #25131f 100%);
+  text-shadow: 0 0 7px rgba(255, 84, 166, 0.12), 0 0 10px rgba(53, 200, 239, 0.08);
+}
+
+.shaderSoft {
+  background-image: linear-gradient(105deg, #69515f 0%, #b43b76 28%, #ff7eba 45%, #38758a 68%, #69515f 100%);
+  text-shadow: 0 0 5px rgba(255, 84, 166, 0.1);
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid rgba(95, 54, 77, 0.18);
+}
+
+/* One choice per row when there are three of them, the way iOS stacks
+   location's Allow Once / While Using / Don't Allow. */
+.actionsStacked { grid-template-columns: 1fr; }
+
+.action {
+  height: 39px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.58);
+  font: 900 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  cursor: pointer;
+}
+
+.action + .action {
+  border-left: 1px solid rgba(95, 54, 77, 0.18);
+  background: linear-gradient(180deg, #fff, #fff0f7);
+}
+
+.actionsStacked .action + .action {
+  border-left: 0;
+  border-top: 1px solid rgba(95, 54, 77, 0.18);
+}
+
+.action:active { background: #ffe1ef; }
+
+.shaderBtn {
+  display: inline-block;
+  background-image: linear-gradient(105deg, #7d345b, #e20c75 34%, #ff70b4 50%, #2c90b0 72%, #7d345b);
+  text-shadow: 0 0 5px rgba(239, 27, 126, 0.12);
+}
+
+@keyframes permIn {
+  from { opacity: 0; transform: scale(0.86) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes permFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes permTextShader {
+  to { background-position: -260% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alert, .icon, .shader, .shaderSoft, .shaderBtn { animation: none; }
+}

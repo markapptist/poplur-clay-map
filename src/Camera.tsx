@@ -9,6 +9,8 @@ import { startBroadcast, stopBroadcast, isLive, onLiveStore } from './liveStore'
 import DetectionOverlay from './DetectionOverlay'
 import { FrameDetector, type Detection } from './mlDetect'
 import ARFilters, { AR_FILTERS } from './ARFilters'
+import PostComposer, { type ComposerMedia, type ComposerTarget } from './PostComposer'
+import PermissionAlert from './PermissionAlert'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
@@ -51,6 +53,8 @@ export default function Camera({
   bindActions,
   onRecordingChange,
   onDetectUser,
+  postTarget,
+  onPostTargetUsed,
 }: {
   step?: number
   onCloseRoll?: () => void
@@ -60,6 +64,10 @@ export default function Camera({
   onRecordingChange?: (elapsedMs: number | null) => void
   /** the detected user, whose OWN reach the radius label adopts */
   onDetectUser?: (user: { handle: string; radiusKm: number } | null) => void
+  /** a map spot picked with "Post here" — the next capture posts to it */
+  postTarget?: ComposerTarget | null
+  /** the pending map spot has been consumed (posted or cancelled) */
+  onPostTargetUsed?: () => void
 }) {
   const [flash, setFlash] = useState(false)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
@@ -84,6 +92,9 @@ export default function Camera({
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
   const filterCss = AR_FILTERS.find(f => f.id === arFilter)?.css ?? 'none'
+  // The capture currently in the post composer (photo taken, video recorded, or
+  // a roll pick). Null when the camera is just a viewfinder.
+  const [composing, setComposing] = useState<ComposerMedia | null>(null)
 
   // ── the live stream ──────────────────────────────────────────────────────
   // Native shells show the real camera through a transparent hole, so the web
@@ -178,7 +189,10 @@ export default function Camera({
     // otherwise the photo comes back flipped from what you framed.
     if (facing === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1) }
     ctx.drawImage(video, 0, 0)
-    addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
+    const shot = addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
+    // A capture that only lands in the roll looks like nothing happened. Open
+    // the composer on it, the way the native flow does.
+    setComposing({ kind: 'photo', src: shot.src })
   }, [facing, flash, filterCss])
 
   // ── record ───────────────────────────────────────────────────────────────
@@ -201,10 +215,12 @@ export default function Camera({
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     rec.onstop = () => {
       const blob = new Blob(chunks, { type: rec.mimeType || 'video/webm' })
-      addCapture({ kind: 'video', src: URL.createObjectURL(blob), length: mmss(performance.now() - started) })
+      const clip = addCapture({ kind: 'video', src: URL.createObjectURL(blob), length: mmss(performance.now() - started) })
       recorderRef.current = null
       setRecStart(null)
       playPop()
+      // Same as a photo: the recording goes straight into the composer.
+      setComposing({ kind: 'video', src: clip.src })
     }
     recorderRef.current = rec
     rec.start(250)
@@ -299,6 +315,29 @@ export default function Camera({
     return () => document.documentElement.classList.remove('camera-live')
   }, [page])
 
+  // Camera permission, asked in Poplur's own alert before the OS one. The
+  // grant is remembered the way the roll remembers its own, so the ask happens
+  // once rather than on every visit to the tab. Browser twins never ask —
+  // there is no native camera behind them to open.
+  const [cameraPermission, setCameraPermission] = useState<'ask' | 'granted' | 'denied'>(() => {
+    if (!NATIVE_SHELL) return 'granted'
+    try {
+      return window.localStorage.getItem('poplur.cameraPermission') === 'granted' ? 'granted' : 'ask'
+    } catch { return 'ask' }
+  })
+  const needsCameraPermission = NATIVE_SHELL && cameraPermission === 'ask' && page === 'live'
+  const allowCamera = () => {
+    playPop()
+    try { window.localStorage.setItem('poplur.cameraPermission', 'granted') } catch { /* embedded */ }
+    setCameraPermission('granted')
+    // Only now does the real prompt fire.
+    postNativeEvent({ type: 'requestCameraPermission' })
+  }
+  const denyCamera = () => {
+    playPop()
+    setCameraPermission('denied')
+  }
+
   // Only the CENTRE live panel carries the stream — the wrap clone would need
   // a second camera to show the same picture, and one camera is all there is.
   const live = (key: string, real: boolean) => (
@@ -379,9 +418,33 @@ export default function Camera({
       >
         <CameraRoll lite />
         {live('live-a', true)}
-        <CameraRoll onDeny={onCloseRoll} />
+        <CameraRoll onDeny={onCloseRoll} onPick={setComposing} />
         {live('live-b', false)}
       </div>
+      {/* Every capture route — shutter, recording, roll pick — ends here. */}
+      {composing && (
+        <PostComposer
+          media={composing}
+          target={postTarget ?? undefined}
+          onClose={() => { setComposing(null); onPostTargetUsed?.() }}
+        />
+      )}
+
+      {/* Asked before the real one. The native layer holds the viewfinder shut
+          until this is answered, so the OS prompt only ever appears to someone
+          who has already said yes here. */}
+      {needsCameraPermission && (
+        <PermissionAlert
+          icon="camera"
+          label="Camera permission"
+          title={'Allow "Poplur" to use your camera?'}
+          copy="Post photos, video and live to the people inside your radius."
+          choices={[
+            { label: "Don't Allow", onPick: denyCamera },
+            { label: 'Allow', grants: true, onPick: allowCamera },
+          ]}
+        />
+      )}
     </div>
   )
 }
