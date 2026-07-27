@@ -4,6 +4,7 @@ import { playPop } from './pop'
 import type { CubeTab } from './CubeTab3D'
 import ClayCornerButton from './ClayCornerButton'
 import { isDetectOn, onCameraStore } from './cameraStore'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
@@ -31,6 +32,12 @@ interface Item {
   action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video' | 'detect' | 'ar' | 'live'
   /** drawn as letters instead of an icon file */
   glyph?: string
+  /**
+   * The action string the NATIVE app already routes through HoldMenuNavigate.
+   * Inside the app shell the tile opens the real native screen; in the browser
+   * it falls back to this screen's Rough Copy twin.
+   */
+  nativeAction?: string
   /** performed on the live MAP behind the menu — no subscreen opens */
   mapAction?: 'search' | 'locate' | 'directions' | 'tour'
   /** dispatches an app event and dismisses — no subscreen opens. `voice` wakes
@@ -78,7 +85,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // CREATE opens the existing Create screen (PoplurAICreateView's twin):
     // generate with Creator Credits, then publish it to a real map location
     // with its own radius. A game made here joins the Games channel.
-    { icon: 'Create', title: 'CREATE', screen: 'camera-create' },
+    // In the app this opens the real Poplur AI chat (PoplurAIChatView, backed
+    // by Google AI Studio through the poplurAiApi function) — the same route
+    // the native cam-create tile takes. The browser gets the Create twin.
+    { icon: 'Create', title: 'CREATE', screen: 'camera-create', nativeAction: 'create' },
   ],
   profile: [
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', format: 'svg' },
@@ -242,6 +252,14 @@ export default function HoldMenuTwin({
       }
       playPop()
       onAction?.(item.action)
+      onClose()
+      return
+    }
+    // Inside the app shell, hand the tile to the native router so the real
+    // screen opens rather than a capture of it.
+    if (item.nativeAction && isNativeShell()) {
+      playPop()
+      postNativeEvent({ type: 'holdMenuNavigate', action: item.nativeAction })
       onClose()
       return
     }
