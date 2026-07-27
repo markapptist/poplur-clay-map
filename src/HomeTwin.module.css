@@ -347,6 +347,10 @@
   min-width: 0;
   height: 96px;
   justify-self: start;
+  /* The row is pointer-events:none so its empty middle never swallows a tap
+     meant for the screen behind it. The arrows opt back in; the radius label
+     never did, which quietly cost it its tap-to-change-units. */
+  pointer-events: auto;
 }
 
 .statCard,

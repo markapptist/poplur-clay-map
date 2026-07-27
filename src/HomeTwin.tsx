@@ -17,7 +17,7 @@ import type { HarnessView } from './ViewHarness'
 const KM_TO_MI = 0.621371
 
 /** Home chrome fades out after this long without a touch (see chromeIdle). */
-const CHROME_IDLE_MS = 10_000
+const CHROME_IDLE_MS = 30_000
 
 // Browser twin of the iOS Home screen (map tab state), rebuilt from
 // HomeView.swift + RecordingCountdownView.swift + RadiusNumberDisplayFIXED.swift.
@@ -496,8 +496,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           across every tab. The row hugs the cube's box (same bottom, same
           height) and lays out as [arrows | cube-width gap | label] on one
           center line: the cube sits exactly centered in the middle column and
-          the arrows/label sit an EQUAL gap from either side of it. */}
-      <div className={styles.bottomRow}>
+          the arrows/label sit an EQUAL gap from either side of it.
+
+          It rides over a subscreen with the cube it is aligned to. The cube
+          was lifted on its own, which split the row it belongs to: the cube
+          floated and the arrows and radius label it sits between vanished
+          underneath. The whole HUD is one piece of home chrome. */}
+      <div
+        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}`}
+      >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot}>
           <ClayChannelArrows

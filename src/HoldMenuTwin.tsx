@@ -563,7 +563,20 @@ export default function HoldMenuTwin({
             title={`${activeScreen.title} Rough Copy`}
           />
         )}
-        {/* one way out, and it is the clay object — no second back control */}
+        {/* The clay ✕ is the intended way out and stays the pretty one. It is
+            also a WebGL canvas, and on a phone that can come back blank —
+            iOS drops contexts under pressure, and a context that is created
+            and then silently draws nothing looks exactly like a working
+            button that isn't there. Being stuck in a full-screen subscreen is
+            worse than a second control, so there is a plain-DOM one that
+            cannot depend on the GPU at all. */}
+        <button
+          type="button"
+          className={styles.subscreenBack}
+          onClick={() => { playPop(); setActiveScreen(null) }}
+        >
+          ‹ Back
+        </button>
         <div className={styles.subscreenClose}>
           <ClayCornerButton
             kind="close"
