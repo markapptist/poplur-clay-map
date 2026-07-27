@@ -43,6 +43,12 @@ interface Channel {
 // location falls inside that circle. The feed said "43.6480, -79.3810" here,
 // which tells a viewer nothing — this says why the post is in front of them.
 // Deterministic per post so it never flickers between renders.
+//
+// August (real data): this must read the poster's radius AT THE MOMENT THEY
+// POSTED, stored on the post — not their radius now. Radius decays when you
+// stop posting, so a live read would retroactively shrink how far an old post
+// "reached", rewriting history and erasing the thing the poster earned. Snapshot
+// on write, never recompute on read.
 function reachKmFor(key: string): number {
   let h = 0
   for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0
