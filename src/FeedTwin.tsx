@@ -42,7 +42,7 @@ export const CHANNELS: Channel[] = [
   { id: 'food', number: 101, name: 'Food', emoji: '🍔', icon: 'poplur_channel_101_food', flag: '🇨🇦', user: '@sauceboss', caption: 'late-night poutine run downtown', lang: 'EN', theme: ['#3a1206', '#c2410c', '#f59e0b'], videos: ['feed/ad-food.mp4'] },
   // LIVE is not a genre — it is whoever is broadcasting into your radius right
   // now. Its posts come from liveStore, not from a bundled clip list.
-  { id: 'live', number: 102, name: 'Live', emoji: '🔴', icon: 'poplur_channel_109_news', flag: '🇨🇦', user: '@you', caption: 'live in your radius', lang: 'EN', theme: ['#2a0410', '#b91c3c', '#fb7185'] },
+  { id: 'live', number: 116, name: 'Live', emoji: '🔴', icon: 'poplur_channel_109_news', flag: '🇨🇦', user: '@you', caption: 'live in your radius', lang: 'EN', theme: ['#2a0410', '#b91c3c', '#fb7185'] },
   { id: 'beauty', number: 103, name: 'Beauty', emoji: '💄', icon: 'poplur_channel_103_beauty', flag: '🇺🇸', user: '@glowgetter', caption: 'soft glam in 60 seconds', lang: 'EN', theme: ['#2a0620', '#be185d', '#f472b6'] },
   { id: 'sports', number: 104, name: 'Sports', emoji: '⚽', icon: 'poplur_channel_104_sports', flag: '🇬🇧', user: '@pitchside', caption: 'stoppage-time winner, crowd goes wild', lang: 'EN', theme: ['#052012', '#15803d', '#4ade80'], videos: ['feed/ad-sports.mp4'] },
   { id: 'modelling', number: 105, name: 'Modelling', emoji: '📸', icon: 'poplur_channel_105_modelling', flag: '🇫🇷', user: '@runwayraw', caption: 'backstage before the show', lang: 'FR', theme: ['#170a2e', '#6d28d9', '#a78bfa'] },

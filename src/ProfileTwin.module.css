@@ -642,24 +642,33 @@
   z-index: 0;
   height: 96px;
   pointer-events: none;
-  background:
-    radial-gradient(110% 160% at 50% 6%, rgba(255, 182, 221, 0.5), transparent 66%),
-    linear-gradient(180deg, #ff73bb, #f53798);
+  background-color: #ff2d96;
+  background-image:
+    radial-gradient(110% 160% at 50% 6%, rgba(255, 182, 221, 0.4), transparent 66%),
+    radial-gradient(rgba(214, 16, 108, 0.40) 1.6px, transparent 2.2px);
+  background-size: auto, 10px 10px;
 }
 
 .notifBanner {
   position: relative;
   z-index: 1;
-  padding: 54px 16px 16px;
+  padding: 54px 16px 18px;
   border-radius: 0 0 26px 26px;
   overflow: hidden;
   isolation: isolate;
-  background:
-    radial-gradient(110% 76% at 50% 6%, rgba(255, 182, 221, 0.5), transparent 66%),
-    linear-gradient(180deg, #ff73bb, #f53798 72%, #d91d78);
+  /* Pre-login clay slab: soft centre light + quilted all-over dot press over the
+     signature pink, with a deep rim vignette and a top clay highlight — the same
+     recipe as the welcome page's .pink background. */
+  background-color: #ff2d96;
+  background-image:
+    radial-gradient(circle at 50% 28%, rgba(255, 150, 205, 0.24), transparent 62%),
+    radial-gradient(rgba(214, 16, 108, 0.40) 1.6px, transparent 2.2px);
+  background-size: auto, 10px 10px;
   box-shadow:
-    0 16px 40px rgba(246, 59, 154, 0.45),
-    inset 0 -3px 0 rgba(135, 7, 68, 0.2);
+    inset 0 0 74px rgba(120, 0, 60, 0.44),
+    inset 0 2px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -3px 0 rgba(135, 7, 68, 0.22),
+    0 18px 44px rgba(160, 8, 82, 0.5);
 }
 
 .notifDotMap {
@@ -669,7 +678,7 @@
   width: 100%;
   height: 100%;
   pointer-events: none;
-  opacity: 0.88;
+  opacity: 0.7;
   mix-blend-mode: screen;
 }
 
@@ -700,66 +709,79 @@
 }
 
 .notifTitle {
-  color: #fff2f8;
-  font: 900 17px system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.4px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   text-align: center;
-  text-shadow: 0 1px 2px rgba(90, 18, 55, 0.45);
+  font: 950 20px "Arial Rounded MT Bold", ui-rounded, "SF Pro Rounded", system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.4px;
+  /* Shader-swept gradient type (pre-login shader recipe), tuned bright so it
+     reads on the pink clay slab: cream → pink → white → cyan sweep, clipped to
+     the letters and drifting, over a dark clay drop-shadow for separation. */
+  color: transparent;
+  background-image: linear-gradient(105deg, #ffd0e8 0%, #ff8ac6 20%, #fff5fb 40%, #7fe3ff 58%, #fff5fb 76%, #ff8ac6 100%);
+  background-size: 260% 100%;
+  background-position: 0 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter:
+    drop-shadow(0 2px 2px rgba(70, 2, 34, 0.7))
+    drop-shadow(0 1px 0 rgba(60, 0, 28, 0.85));
+  animation: notifTitleShader 4.8s linear infinite;
+}
+
+@keyframes notifTitleShader { to { background-position: 260% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .notifTitle { animation: none; background-position: 48% 0; }
 }
 
 .notifRow {
   display: flex;
-  gap: 10px;
+  gap: 11px;
   align-items: center;
-  padding: 9px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 233, 246, 0.28);
-  background: rgba(145, 9, 74, 0.27);
+  padding: 10px 13px;
+  border: 0;
+  border-radius: 16px;
+  /* Clay dough tile with a pink clay rim (pre-login .cap-btn dark recipe): dark
+     matte fill, top sheen, pink rim, dropped shadow and inset relief. */
+  background:
+    radial-gradient(circle at 22% 16%, rgba(255, 255, 255, 0.13), transparent 60%),
+    linear-gradient(180deg, #3a2027 0%, #2a151c 58%, #1a0b11 100%);
   box-shadow:
-    0 4px 12px rgba(90, 18, 55, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(8px) saturate(1.12);
-  -webkit-backdrop-filter: blur(8px) saturate(1.12);
+    0 0 0 2px rgba(244, 69, 156, 0.9),
+    0 0 0 3.4px rgba(120, 4, 55, 0.42),
+    0 6px 0 rgba(80, 2, 36, 0.42),
+    0 12px 20px rgba(40, 0, 20, 0.4),
+    inset 0 2px 3px rgba(255, 255, 255, 0.16),
+    inset 0 -4px 7px rgba(0, 0, 0, 0.48);
 }
 
-.notifRow + .notifRow { margin-top: 7px; }
+.notifRow + .notifRow { margin-top: 12px; }
 
 .notifIcon {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: linear-gradient(145deg, #ffd4e9, #ff7ab9 52%, #a80756);
+  /* Recessed dark-clay well: the pink/gold 3D clay icon (real geometry from
+     ClayNotifIcon) floats in it and reads with depth against the dark dish. */
+  background: radial-gradient(circle at 50% 38%, #2c161d, #180a10 72%);
   box-shadow:
-    0 3px 7px rgba(85, 7, 48, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.44);
+    inset 0 3px 6px rgba(0, 0, 0, 0.55),
+    inset 0 -2px 3px rgba(255, 150, 200, 0.12),
+    0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
-.notifTypeAsset {
-  width: 27px;
-  height: 27px;
-  object-fit: contain;
-  filter: drop-shadow(0 2px 1.5px rgba(81, 2, 44, 0.42));
-  user-select: none;
-}
-
-.notifDirection {
+/* Holds the ClayNotifIcon <canvas>; the shadow grounds the floating clay mesh. */
+.notifIcon3d {
   display: grid;
-  width: 100%;
-  height: 100%;
   place-items: center;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
-  font-size: 25px;
-  font-weight: 1000;
-  line-height: 1;
-  text-shadow: 0 2px 1px rgba(89, 7, 47, 0.4);
+  width: 40px;
+  height: 40px;
+  filter: drop-shadow(0 3px 4px rgba(80, 2, 40, 0.5));
 }
-
-.notifGrowth { color: #fff5bd; }
-.notifDecrease { color: #6b103d; }
 
 .notifBody { flex: 1; min-width: 0; }
 
@@ -769,8 +791,19 @@
   align-items: baseline;
 }
 
-.notifTop strong { font-size: 13px; color: #fff8fc; }
-.notifTop span { font-size: 11px; color: rgba(255, 239, 248, 0.74); }
+.notifTop strong {
+  font-size: 13.5px;
+  font-weight: 900;
+  /* Static shader-gradient sender name — the same pink→cream→cyan sweep, clipped
+     to the text (no animation on the repeated rows, for calm + perf). */
+  color: transparent;
+  background-image: linear-gradient(100deg, #ff8ac6 0%, #f63b9a 28%, #fff2f8 50%, #73d7ff 74%, #ff8ac6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+}
+.notifTop span { font-size: 11px; color: rgba(255, 233, 246, 0.72); }
 
 .notifBody p {
   margin-top: 1px;

@@ -7,7 +7,6 @@ import { isDetectOn, onCameraStore } from './cameraStore'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
-import GamesScreen from './GamesScreen'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -75,7 +74,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The tile names what pressing it DOES, like CC does: with the model
     // running it reads DETECT OFF, and with it stopped, DETECT ON.
     { icon: 'Search', title: 'DETECT ON', activeTitle: 'DETECT OFF', toggle: 'detection', screen: 'camera-capture', action: 'detect' },
-    { icon: 'Games', title: 'GAMES', screen: 'games', native: true },
+    { icon: 'Games', title: 'GAMES', screen: 'feed-games' },
   ],
   profile: [
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', format: 'svg' },
@@ -425,13 +424,6 @@ export default function HoldMenuTwin({
 
   if (activeScreen) {
     // TV GUIDE is a real screen in the app, not a Rough Copy capture.
-    if (activeScreen.native && activeScreen.screen === 'games') {
-      return (
-        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Games">
-          <GamesScreen onClose={() => { playPop(); onClose() }} />
-        </div>
-      )
-    }
     if (activeScreen.native && activeScreen.screen === 'map-radio') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Radio">

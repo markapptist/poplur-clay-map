@@ -6,33 +6,43 @@
   overflow: hidden;
 }
 
-/* The exact cyan -> violet -> pink sweep used by Profile's avatar frame,
-   expanded to the safe edge of the active screen while Poplur is awake. */
+/* Animatable angle for the rotating rainbow ring (Chrome + WKWebView 16.4+). */
+@property --voiceAngle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Full-spectrum RAINBOW wake ring hugging the safe edge of the active screen
+   while Poplur is listening — a conic sweep that rotates around the border (the
+   same mechanic as the iOS AngularGradient wake ring, made full-spectrum). The
+   border-mask keeps it a hollow ring; pulse fades brightness on the listen beat. */
 .edge {
   position: absolute;
   inset: max(5px, env(safe-area-inset-top)) max(5px, env(safe-area-inset-right)) max(5px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left));
   border-radius: clamp(22px, 6vw, 42px);
   padding: 4px;
-  background: linear-gradient(120deg,
-    #5fe1ea 0%, #a06bd8 22%, #f63b9a 42%,
-    #ffe9f4 50%,
-    #f63b9a 58%, #a06bd8 78%, #5fe1ea 100%);
-  background-size: 320% 320%;
-  animation: voiceFrameSheen 2.1s ease-in-out infinite, voiceEdgePulse 1.35s ease-in-out infinite;
+  background: conic-gradient(from var(--voiceAngle),
+    #ff2d95, #ff8a3d, #ffe23d, #6cf05a, #35d9cf,
+    #3d9dff, #8a6bff, #d762ff, #ff4d9e, #ff2d95);
+  animation: voiceRingSpin 4s linear infinite, voiceEdgePulse 1.35s ease-in-out infinite;
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   box-shadow:
-    0 0 28px rgba(246, 59, 154, 0.5),
-    0 0 22px rgba(94, 225, 234, 0.38),
-    inset 0 0 18px rgba(255, 233, 244, 0.3);
+    0 0 30px rgba(246, 59, 154, 0.5),
+    0 0 24px rgba(94, 225, 234, 0.4),
+    0 0 40px rgba(139, 107, 255, 0.32),
+    inset 0 0 18px rgba(255, 240, 250, 0.32);
 }
 
-.thinking .edge { animation-duration: 1.1s, 0.68s; }
-.reply .edge { animation-duration: 3.2s, 2s; }
+.thinking .edge { animation-duration: 1.6s, 0.68s; }
+.reply .edge { animation-duration: 7s, 2s; }
 .unavailable .edge { opacity: 0.62; animation: none; }
+
+@keyframes voiceRingSpin { to { --voiceAngle: 360deg; } }
 
 .status {
   position: absolute;

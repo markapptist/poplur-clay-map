@@ -6,6 +6,7 @@ import { isGateMuted, onGateChange } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { modelSprite } from './modelSprite'
 import ClayCornerButton from './ClayCornerButton'
+import ClayNotifIcon from './ClayNotifIcon'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -176,22 +177,22 @@ function NotificationDotMap() {
   return <canvas ref={canvasRef} className={styles.notifDotMap} aria-hidden="true" />
 }
 
-function NotificationIcon({ kind }: { kind: NotificationKind }) {
-  if (kind === 'growth' || kind === 'decrease') {
-    return (
-      <span className={`${styles.notifDirection} ${kind === 'growth' ? styles.notifGrowth : styles.notifDecrease}`} aria-label={kind === 'growth' ? 'Radius increased' : 'Radius decreased'}>
-        {kind === 'growth' ? '↑' : '↓'}
-      </span>
-    )
-  }
+const NOTIF_ICON_LABEL: Record<NotificationKind, string> = {
+  growth: 'Radius increased',
+  decrease: 'Radius decreased',
+  pop: 'New pop',
+  trend: 'Trending',
+  message: 'Message',
+}
 
-  const asset = kind === 'pop'
-    ? 'Create.png'
-    : kind === 'trend'
-      ? 'Like.svg'
-      : 'Chat.png'
-  const label = kind === 'pop' ? 'New pop' : kind === 'trend' ? 'Trending' : 'Message'
-  return <img className={styles.notifTypeAsset} src={`holdmenu/${asset}`} alt={label} draggable="false" />
+// Real 3D clay icon per notification kind (extruded clay meshes), floating in
+// the row's recessed clay well — no more flat 2D badges.
+function NotificationIcon({ kind }: { kind: NotificationKind }) {
+  return (
+    <span className={styles.notifIcon3d} role="img" aria-label={NOTIF_ICON_LABEL[kind]}>
+      <ClayNotifIcon kind={kind} size={40} />
+    </span>
+  )
 }
 
 type Mode = 'media' | 'messages' | 'saved'
@@ -364,6 +365,16 @@ export default function ProfileTwin({
 
   useEffect(() => () => {
     if (notifCloseTimerRef.current != null) window.clearTimeout(notifCloseTimerRef.current)
+  }, [])
+
+  // The profile hold menu's NOTIFICATIONS tile springs the real dropdown down
+  // from here (via a window event) instead of opening a captured screen.
+  const openNotifsRef = useRef(openNotifs)
+  openNotifsRef.current = openNotifs
+  useEffect(() => {
+    const onOpen = () => openNotifsRef.current()
+    window.addEventListener('poplur-open-notifications', onOpen)
+    return () => window.removeEventListener('poplur-open-notifications', onOpen)
   }, [])
 
   // ── Clay channel arrows: browse posts in the viewer, else scroll the grid.
@@ -780,21 +791,9 @@ export default function ProfileTwin({
           )}
         </div>
 
-        {/* Hey Poplur AI — a real microphone trigger; Home keeps listening for
-            the wake phrase and then the spoken command across every tab. */}
-        <button
-          className={styles.speaking}
-          aria-label="Hey Poplur"
-          onClick={() => {
-            playPop()
-            setAskOpen(false)
-            setAiReply(null)
-            window.dispatchEvent(new CustomEvent('poplur-voice-request'))
-          }}
-        >
-          <span /><span /><span /><span /><span />
-        </button>
-
+        {/* Hey Poplur now lives in the profile hold menu (a mic tile that wakes
+            the assistant) and shows as the rainbow voice ring — the equaliser
+            trigger button that used to sit here has been removed. */}
         {(askOpen || aiReply) && (
           <div className={styles.askWrap}>
             {askOpen && (
