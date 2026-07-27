@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useSyncExternalStore }
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
+import { hasAudioFocus, onAudioFocusChange, registerAudioOwner, requestAudioFocus } from './audioFocus'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -456,10 +457,15 @@ export default function FeedTwin({
       // whatever the gate says — this effect used to resume playback the moment
       // it ran, which is why the feed kept going behind the paper.
       if (suppressedRef.current) { video.muted = true; video.pause(); return }
-      video.muted = isGateMuted()
+      // The radio or the map holding the floor keeps the picture running and
+      // takes the sound: a feed you can see but not hear beats a feed that
+      // stops dead behind another voice.
+      const audible = !isGateMuted() && hasAudioFocus('feed')
+      video.muted = !audible
       video.volume = 0.85
+      if (audible) requestAudioFocus('feed')
       // A muted element may already be playing; unmuting can still need a nudge.
-      if (!video.muted && video.paused) void video.play().catch(() => {})
+      if (video.paused) void video.play().catch(() => {})
     }
     apply()
     const unlock = () => apply()
@@ -467,11 +473,25 @@ export default function FeedTwin({
     window.addEventListener('touchstart', unlock, { passive: true })
     window.addEventListener('keydown', unlock)
     const offGate = onGateChange(apply)
+    const offFocus = onAudioFocusChange(() => {
+      const video = adVideoRef.current
+      if (!video || suppressedRef.current) return
+      // Someone else took the floor — go quiet without stopping the picture.
+      video.muted = isGateMuted() || !hasAudioFocus('feed')
+    })
+    // The feed is a voice like any other: while it is the one sounding, the
+    // radio and the map stop rather than layer over it.
+    const unregister = registerAudioOwner('feed', () => {
+      const video = adVideoRef.current
+      if (video) video.muted = true
+    })
     return () => {
       window.removeEventListener('pointerdown', unlock)
       window.removeEventListener('touchstart', unlock)
       window.removeEventListener('keydown', unlock)
       offGate()
+      offFocus()
+      unregister()
     }
   }, [adSrc])
 

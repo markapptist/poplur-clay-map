@@ -12,6 +12,10 @@
 // Ducking: setVoiceDucked(true) pulls everything down under the radio host TTS,
 // mirroring the iOS rainAmbientAudio.setVoiceDucked pattern.
 
+import { registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
+import { stopWeatherAudio } from './weatherAudio'
+import { stopCarAudio } from './carAudio'
+
 export interface RegionContext {
   water: number       // 0..1 — how much water is under/near the camera
   park: number        // 0..1 — greenery / open land
@@ -175,6 +179,8 @@ let started = false
 export function startRegionAudio() {
   if (started) return
   const c = ensureCtx(); if (!c) return
+  // The map's bed is a voice too — starting it quiets the feed and the radio.
+  requestAudioFocus('map')
   started = true
   layers.ocean = buildOcean(c)
   layers.wind = buildWind(c)
@@ -197,6 +203,7 @@ export function setRegionContext(rc: RegionContext) {
 }
 
 export function stopRegionAudio() {
+  releaseAudioFocus('map')
   Object.values(layers).forEach(l => l.stop())
   for (const k of Object.keys(layers)) delete layers[k]
   if (sparkTimer != null) { window.clearTimeout(sparkTimer); sparkTimer = null }
@@ -295,3 +302,6 @@ if (import.meta.env?.DEV) {
     layers: Object.fromEntries(Object.entries(layers).map(([k, l]) => [k, +l.gain.gain.value.toFixed(3)])),
   })
 }
+
+// The map's ambience yields the floor to the feed or the radio.
+registerAudioOwner('map', () => { stopRegionAudio(); stopWeatherAudio(); stopCarAudio() })

@@ -1,4 +1,8 @@
 import { isGateMuted, onGateChange } from './audioGate'
+import { registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
+
+/** Where we last looked for a station, so a dead stream can be replaced. */
+let lastTuneCoords: { lat: number; lng: number } | null = null
 type RadioSource = AudioScheduledSourceNode & AudioNode
 
 interface RadioBed {
@@ -467,6 +471,27 @@ function dropLiveStation() {
   if (liveAudio) { liveAudio.pause(); liveAudio.removeAttribute('src') }
   // The synth bed swells back so the radio never goes dead.
   if (soundWanted) setRadioLevel(targetRadioLevel, 0.4)
+  scheduleRetune()
+}
+
+// A dropped stream used to be permanent: the bed came back and that was the
+// rest of the session, however long you stayed on the map. Stations die all
+// the time — go find another one, backing off so a region with nothing on air
+// doesn't turn into a request loop.
+let retuneTimer: number | null = null
+let retuneDelayMs = 6000
+function scheduleRetune() {
+  if (typeof window === 'undefined') return
+  if (retuneTimer !== null || !soundWanted || !lastTuneCoords) return
+  retuneTimer = window.setTimeout(() => {
+    retuneTimer = null
+    if (!soundWanted || liveStation || !lastTuneCoords) return
+    void tuneLiveRadio(lastTuneCoords.lat, lastTuneCoords.lng).then(name => {
+      if (name) { retuneDelayMs = 6000; return }
+      retuneDelayMs = Math.min(retuneDelayMs * 2, 5 * 60_000)
+      scheduleRetune()
+    })
+  }, retuneDelayMs)
 }
 
 /** Tune a REAL station near the given coordinates. Resolves to the station's
@@ -486,6 +511,9 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
 
 export async function tuneLiveRadio(lat: number, lng: number): Promise<string | null> {
   if (typeof window === 'undefined') return null
+  // Remembered so a station that dies later can be replaced without waiting
+  // for the map to move.
+  lastTuneCoords = { lat, lng }
   const generation = ++liveTuneGeneration
   const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
   // Keep widening until something real is on air: your own town first, then the
@@ -534,6 +562,9 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
 
 export function startMapRadio(): boolean {
   soundWanted = true
+  // Tuning in is a claim on the app's one voice: the feed goes quiet and the
+  // map's ambience stops rather than playing underneath.
+  requestAudioFocus('radio')
   installUnlock()
   const ctx = getAudioContext()
   if (!ctx || ctx.state === 'closed') return startFallbackRadio()
@@ -552,6 +583,7 @@ export function startMapRadio(): boolean {
 
 export function stopMapRadio() {
   soundWanted = false
+  releaseAudioFocus('radio')
   targetRadioLevel = RADIO_IDLE_LEVEL
   stopFallbackRadio()
   if (liveFadeTimer !== null) { window.clearInterval(liveFadeTimer); liveFadeTimer = null }
@@ -690,6 +722,7 @@ export function playStation(station: { name: string; url: string }): void {
   const audio = getLiveAudio()
   if (!audio) return
   soundWanted = true
+  requestAudioFocus('radio')
   installUnlock()
   liveStation = { name: station.name, url: station.url }
   audio.src = station.url
@@ -700,3 +733,7 @@ export function playStation(station: { name: string; url: string }): void {
 }
 
 export function nowPlayingStation(): { name: string; url: string } | null { return liveStation }
+
+// The radio is one of the app's three voices. When the feed or the map's
+// ambience takes the floor, tune out rather than play underneath.
+registerAudioOwner('radio', () => { stopMapRadio() })

@@ -1,6 +1,13 @@
 /* Phone-shell wrapper — 390px max on desktop, full-screen on mobile */
 .shell {
-  --header-title-top: clamp(34px, 5vh, 44px);
+  /* Everything along the top row hangs off this: the wordmark, and the icons
+     in both corners. It used to be viewport math alone, which on a phone put
+     all three under the Dynamic Island — the "pushed up" header. The safe area
+     is a FLOOR, not an addition, so a browser with no inset looks as it did. */
+  --header-title-top: max(
+    calc(env(safe-area-inset-top, 0px) + 8px),
+    clamp(34px, 5vh, 44px)
+  );
   --header-title-height: 40px;
   --header-row-gap: 16px;
   --header-ai-height: 44px;
