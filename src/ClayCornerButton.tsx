@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 
 // Clay 3D corner controls for the camera (flash + switch-camera): the same
@@ -111,13 +111,28 @@ export default function ClayCornerButton({
   activeRef.current = active
   const pulse = useRef(0)
   const wakeRef = useRef<(() => void) | null>(null)
+  // iOS caps how many live WebGL contexts a WKWebView may hold, and the home
+  // already spends several on the map, the cube and the other clay controls.
+  // When the cap is hit the renderer throws and the canvas stays transparent —
+  // which on a close button means an invisible way out of a full-screen
+  // screen. Fall back to a flat glyph so the control is always SEEN.
+  const [flat, setFlat] = useState(false)
 
   useEffect(() => {
     const canvas = canvasRef.current!
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+    } catch {
+      setFlat(true)
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(size, size, false)
     renderer.setClearColor(0x000000, 0)
+    // The context can also be taken away later, under memory pressure.
+    const onContextLost = () => setFlat(true)
+    canvas.addEventListener('webglcontextlost', onContextLost)
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100)
@@ -314,6 +329,7 @@ export default function ClayCornerButton({
 
     return () => {
       cancelAnimationFrame(raf)
+      canvas.removeEventListener('webglcontextlost', onContextLost)
       geos.forEach(g => g.dispose())
       mat.dispose()
       creamMat.dispose()
@@ -321,8 +337,34 @@ export default function ClayCornerButton({
     }
   }, [size, kind, tone, still])
 
+  // Flat stand-ins for when the GPU can't give us a context. Not as pretty as
+  // the clay, but visible, which is the whole job of a control.
+  const FLAT_GLYPH: Partial<Record<typeof kind, string>> = {
+    close: '✕', flash: '⚡', flip: '⟳', share: '↑', link: '🔗',
+    send: '➤', capture: '◉', mail: '✉', search: '⌕', locate: '◎',
+  }
+
   return (
     <div style={{ position: 'relative', width: size, height: size, pointerEvents: 'auto' }}>
+      {flat && (
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: size * 0.52,
+            lineHeight: 1,
+            color: tone === 'cream' ? '#fff2e4' : '#ff8ac6',
+            textShadow: '0 2px 6px rgba(0,0,0,.55)',
+            pointerEvents: 'none',
+          }}
+        >
+          {FLAT_GLYPH[kind] ?? '●'}
+        </span>
+      )}
       <canvas
         ref={canvasRef}
         width={size}

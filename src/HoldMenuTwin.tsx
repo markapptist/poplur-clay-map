@@ -118,6 +118,19 @@ function rclSubscreenUrl(item: Item): string {
   return `${origin}/${route}`
 }
 
+/** Can we fetch this ourselves? `origin` is the string "null" for both file:
+ *  and custom schemes, so comparing origins would call two unrelated opaque
+ *  origins equal — compare the parts that actually identify the server. */
+function isSameOrigin(url: string): boolean {
+  try {
+    const u = new URL(url, window.location.href)
+    if (u.protocol === 'file:') return false
+    return u.protocol === window.location.protocol && u.host === window.location.host
+  } catch {
+    return false
+  }
+}
+
 // Placeholder for icons that don't yet have a clay PNG in public/holdmenu/.
 // A navigation arrow in the app's clay pink; drop in the real PNG and it takes
 // over automatically (see the <img onError> fallback below).
@@ -197,6 +210,34 @@ export default function HoldMenuTwin({
     onSubscreenChange?.(Boolean(activeScreen))
     return () => onSubscreenChange?.(false)
   }, [activeScreen, onSubscreenChange])
+
+  // Whether the embedded Rough Copy capture can actually be fetched. Inside the
+  // app shell it usually CANNOT: the web home is served from poplur-clay://app
+  // out of the bundled dist, which has no `.claude/artifacts/` in it, so the
+  // iframe resolves to nothing and the screen renders as pure black. The
+  // browser 404s visibly; WKWebView's scheme handler answers with nothing at
+  // all. Probe first so a screen we can't show says so instead of going dark.
+  const [embedMissing, setEmbedMissing] = useState(false)
+  useEffect(() => {
+    if (!activeScreen || activeScreen.native) return
+    setEmbedMissing(false)
+    const url = rclSubscreenUrl(activeScreen)
+    // Only probe what we are allowed to read. An iframe is not bound by CORS
+    // but fetch is, so probing the dev artifact server (:8945, cross-origin
+    // from :5173, no CORS headers) would call a screen that loads perfectly
+    // missing. file: blocks fetch outright. Both of those cases work as they
+    // are; the one that needs catching is the bundle, which is same-origin.
+    if (!isSameOrigin(url)) return
+    let done = false
+    const miss = () => { if (!done) { done = true; setEmbedMissing(true) } }
+    // A scheme handler that never answers would leave us probing forever.
+    const timer = window.setTimeout(miss, 2500)
+    fetch(url)
+      .then((r) => { if (!done && !r.ok) miss() })
+      .catch(miss)
+      .finally(() => { done = true; window.clearTimeout(timer) })
+    return () => { done = true; window.clearTimeout(timer) }
+  }, [activeScreen])
 
   // Physics state lives in refs so the rAF loop reads live values.
   const offsetRef = useRef(0)
@@ -476,11 +517,29 @@ export default function HoldMenuTwin({
         data-screen={activeScreen.screen}
         data-rcl-kind={activeScreen.preview ? 'preview' : 'embed'}
       >
-        <iframe
-          className={styles.subscreenFrame}
-          src={rclSubscreenUrl(activeScreen)}
-          title={`${activeScreen.title} Rough Copy`}
-        />
+        {embedMissing ? (
+          // No capture to show here — say so plainly. A black screen reads as a
+          // crash, and on a phone there is nothing else on it to tap.
+          <div className={styles.subscreenMissing} data-testid="rcl-subscreen-missing">
+            <p className={styles.subscreenMissingTitle}>{activeScreen.title}</p>
+            <p className={styles.subscreenMissingBody}>
+              This screen isn’t in the app yet.
+            </p>
+            <button
+              type="button"
+              className={styles.subscreenMissingBack}
+              onClick={() => { playPop(); setActiveScreen(null) }}
+            >
+              Back
+            </button>
+          </div>
+        ) : (
+          <iframe
+            className={styles.subscreenFrame}
+            src={rclSubscreenUrl(activeScreen)}
+            title={`${activeScreen.title} Rough Copy`}
+          />
+        )}
         {/* one way out, and it is the clay object — no second back control */}
         <div className={styles.subscreenClose}>
           <ClayCornerButton

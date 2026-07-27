@@ -31,6 +31,49 @@
   background: #08040a;
 }
 
+/* Shown instead of the frame when the capture can't be fetched (in the app
+   shell the artifact server simply isn't there). Plain DOM on purpose: this is
+   the state where nothing else is working, so it must not need WebGL. */
+.subscreenMissing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: #08040a;
+}
+
+.subscreenMissingTitle {
+  margin: 0;
+  font: 700 15px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  color: #ff8ac6;
+}
+
+.subscreenMissingBody {
+  margin: 0;
+  max-width: 22ch;
+  font: 500 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: rgba(255, 226, 242, 0.72);
+}
+
+.subscreenMissingBack {
+  margin-top: 4px;
+  border: 1px solid rgba(255, 138, 198, 0.55);
+  border-radius: 999px;
+  padding: 11px 26px;
+  min-height: 44px;
+  background: rgba(255, 138, 198, 0.12);
+  color: #ff8ac6;
+  font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
 .subscreenClose {
   position: absolute;
   right: max(16px, env(safe-area-inset-right));
