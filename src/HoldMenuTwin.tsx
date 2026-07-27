@@ -75,6 +75,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // running it reads DETECT OFF, and with it stopped, DETECT ON.
     { icon: 'Search', title: 'DETECT ON', activeTitle: 'DETECT OFF', toggle: 'detection', screen: 'camera-capture', action: 'detect' },
     { icon: 'Games', title: 'GAMES', screen: 'feed-games' },
+    // CREATE opens the existing Create screen (PoplurAICreateView's twin):
+    // generate with Creator Credits, then publish it to a real map location
+    // with its own radius. A game made here joins the Games channel.
+    { icon: 'Create', title: 'CREATE', screen: 'camera-create' },
   ],
   profile: [
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', format: 'svg' },
