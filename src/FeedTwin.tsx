@@ -72,9 +72,13 @@ function usesMiles(): boolean {
 /** "◆ reached you from 12.4 km" */
 function reachLabel(key: string): string {
   const km = reachKmFor(key)
-  return usesMiles()
-    ? `◆ reached you from ${(km * 0.621371).toFixed(1)} mi`
-    : `◆ reached you from ${km.toFixed(1)} km`
+  const value = usesMiles() ? `${(km * 0.621371).toFixed(1)} mi` : `${km.toFixed(1)} km`
+  // The ticker box is ~166px on a phone, and the full phrase needs ~224px, so
+  // this line wraps. That is fine — the caption above it already makes the row
+  // two lines tall, so the second line is free. What is NOT fine is breaking
+  // between the number and its unit ("13.8" / "mi"). The non-breaking space
+  // keeps the distance whole and forces the break after "from" instead.
+  return `◆ reached you from ${value.replace(' ', '\u00a0')}`
 }
 
 export const CHANNELS: Channel[] = [
