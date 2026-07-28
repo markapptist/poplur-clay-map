@@ -478,7 +478,8 @@ export default function PhotorealMap({
         syncZoom()
 
         let landingCenter: [number, number] = homeCenter
-        if (navigator.geolocation) {
+        const deferInitialGeolocation = new URLSearchParams(window.location.search).get('deferLocation') === '1'
+        if (!deferInitialGeolocation && navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
             pos => { landingCenter = [pos.coords.longitude, pos.coords.latitude] },
             () => {},

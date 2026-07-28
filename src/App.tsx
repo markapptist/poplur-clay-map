@@ -1,7 +1,8 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES } from './data'
-import ClayMap, { MAP_LITE } from './ClayMap'
+import ClayMap, { MAP_2D, MAP_LITE } from './ClayMap'
+import { mark2DNoticeSeen, setMapMode, shouldShow2DNotice } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import ClayCornerButton from './ClayCornerButton'
@@ -12,10 +13,9 @@ import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 import { announceMapTour, startMapRadio, stopMapRadio, tuneLiveRadio } from './mapRadio'
 import type { RadioStationCue } from './mapRadio'
 import {
-  startRegionAudio, stopRegionAudio, setRegionContext,
+  stopRegionAudio,
   startPoplurTheme, stopPoplurTheme, setVoiceDucked,
 } from './regionAudio'
-import type { RegionContext } from './regionAudio'
 import { postNativeEvent } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { playPop } from './pop'
@@ -360,7 +360,22 @@ const RECOMMENDATIONS: ((destination: TourDestination) => string)[] = [
 // Keep every app-driven street flight close enough that 3D buildings are visible.
 const BUILDING_REVEAL_ZOOM = 16.2 // matches ClayMap ZOOM_MAX cap
 const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
-const TOUR_FLIGHT_MS = 6200
+// Tour pacing. The tour flight is not a short hop: it rises all the way out to
+// the globe and dives back into the next city (minZoom 0.9, curve 1.7 in
+// flyToCenter), so it needs real time to read as a camera move rather than a
+// snap. Even 15s rushed the globe reveal and destination approach, so the
+// default now gives the complete move a cinematic 30s.
+//
+// The June iOS tour (MapView.swift) shipped a `tourSpeedMultiplier`, 0.1x–5.0x
+// with a slider, precisely because this wants dialing in — so the multiplier
+// comes back here as `?tour-speed=N` (higher = faster, 1 = the tuned default),
+// and its 30s stop dwell is the reference for how long a stop should hold.
+const TOUR_SPEED = (() => {
+  if (typeof window === 'undefined') return 1
+  const raw = Number(new URLSearchParams(window.location.search).get('tour-speed'))
+  return Number.isFinite(raw) && raw >= 0.1 && raw <= 5 ? raw : 1
+})()
+const TOUR_FLIGHT_MS = Math.round(30_000 / TOUR_SPEED)
 const TOUR_DWELL_MS = 5 * 60 * 1000
 
 function radioMarketForDestination(destination: TourDestination): string {
@@ -418,6 +433,7 @@ export default function App() {
   const isMapEmbed = params.get('map') === '1'
   const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
   const mapRef = useRef<mapboxgl.Map | null>(null)
+  const [show2DNotice, setShow2DNotice] = useState(() => shouldShow2DNotice())
   const [selectedId, setSelectedId] = useState<string | null>('queen')
   // Theme switching lives in the app's Profile → Settings; the prototype
   // ships the default clay skin with the infrastructure in place.
@@ -467,15 +483,12 @@ export default function App() {
   const [dayTime, setDayTime] = useState(true)
   // The AI's live recommendation while it tours places (overrides the ticker)
   const [tourLine, setTourLine] = useState<string | null>(null)
-  // Whether the app's music / AI voice is currently audible
-  const [soundPlaying, setSoundPlaying] = useState(false)
   // User mute, toggled by the speaker mark beside the AI line.
   const [muted, setMuted] = useState(isUserMuted)
   const [streetView, setStreetView] = useState(false)
   // Routing must follow the user/launch location, not the AI tour camera. The
   // camera may be visiting another continent when an address is entered.
   const [navigationOrigin, setNavigationOrigin] = useState<[number, number]>(DEFAULT_NAV_ORIGIN)
-  const soundPlayingRef = useRef(false)
   // The map lives in an always-mounted iframe behind Feed/Profile. It starts
   // unfocused there, so no map audio can win a resume race before Home sends
   // the first foreground message.
@@ -488,12 +501,6 @@ export default function App() {
   // one tune per session unless it comes back empty
   const liveStationTunedRef = useRef(false)
   const lastTourDestinationRef = useRef<string | null>(null)
-  // Region dialect for the Poplur theme (would come from the located region;
-  // the dev panel lets you audition each).
-  const [region, setRegion] = useState<NonNullable<RegionContext['region']>>('default')
-  const regionRef = useRef(region)
-  regionRef.current = region
-
   useEffect(() => {
     if (harnessView) return
     if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-loading' }, '*')
@@ -586,8 +593,6 @@ export default function App() {
   const applySoundState = useCallback((on: boolean): boolean => {
     soundRequestedRef.current = on
     const audible = on && mapAudioFrontRef.current && !isGateMuted()
-    soundPlayingRef.current = audible
-    setSoundPlaying(audible)
     if (audible) {
       // Radio and the Poplur AI host only. The procedural ambience bed (the
       // hum) and the generative Poplur theme are gone: they ran under
@@ -639,47 +644,6 @@ export default function App() {
   useEffect(() => {
     return () => { stopMapRadio(); stopRegionAudio() }
   }, [])
-
-  // Re-voice the running theme when the region dialect changes.
-  useEffect(() => {
-    // (the generative theme no longer plays on the map — radio + host only)
-  }, [region])
-
-  // Feed the ambient bed from what's under the camera: water → ocean, parks →
-  // wind + birds, building density → city hum, night → crickets.
-  const dayTimeRef = useRef(dayTime)
-  dayTimeRef.current = dayTime
-  useEffect(() => {
-    if (!soundPlaying) return
-    const sample = () => {
-      const map = mapRef.current
-      if (!map) return
-      const el = map.getContainer()
-      const cx = el.clientWidth / 2, cy = el.clientHeight / 2
-      const box: [[number, number], [number, number]] = [[cx - 45, cy - 45], [cx + 45, cy + 45]]
-      const has = (layers: string[]) => {
-        for (const id of layers) {
-          if (!map.getLayer(id)) continue
-          try { if (map.queryRenderedFeatures(box, { layers: [id] }).length) return 1 } catch { /* absent */ }
-        }
-        return 0
-      }
-      const water = has(['water', 'water-shadow', 'Water'])
-      const park = has(['landcover', 'national-park', 'park', 'landuse', 'Landcover'])
-      // Building extrusions aren't reliably returned by queryRenderedFeatures,
-      // so use a style-agnostic proxy: zoomed-in land that's neither water nor
-      // park is "in the city", ramping with how close the camera is.
-      let cityDensity = 0
-      try { if (map.getLayer('clay-buildings-3d')) cityDensity = Math.min(1, map.queryRenderedFeatures({ layers: ['clay-buildings-3d'] }).length / 110) } catch { /* extrusions unqueryable */ }
-      if (cityDensity === 0 && !water && !park) {
-        cityDensity = Math.max(0, Math.min(1, (map.getZoom() - 12.5) / 3))
-      }
-      setRegionContext({ water, park, cityDensity, dayTime: dayTimeRef.current, region: regionRef.current })
-    }
-    sample()
-    const iv = window.setInterval(sample, 1500)
-    return () => window.clearInterval(iv)
-  }, [soundPlaying])
 
   // Duck the whole bed under the AI radio host, mirroring the iOS voice-duck.
   useEffect(() => { setVoiceDucked(!!tourLine) }, [tourLine])
@@ -1037,6 +1001,41 @@ export default function App() {
         onIntroComplete={handleIntroComplete}
         onGlobeReady={handleGlobeReady}
       />
+
+      {show2DNotice && (
+        <div role="dialog" aria-modal="true" aria-labelledby="map-mode-title" style={{
+          position: 'absolute', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center',
+          padding: 24, background: 'rgba(24, 8, 19, .58)', backdropFilter: 'blur(8px)',
+        }}>
+          <div style={{
+            width: 'min(420px, 100%)', padding: 24, borderRadius: 28,
+            background: '#f7d7e8', color: '#351329', border: '3px solid rgba(255,255,255,.75)',
+            boxShadow: '0 18px 50px rgba(58, 8, 40, .34)',
+          }}>
+            <h2 id="map-mode-title" style={{ margin: 0, fontSize: 25 }}>Poplur Map is using 2D</h2>
+            <p style={{ fontWeight: 650, lineHeight: 1.45 }}>
+              This phone may not run the 3D Poplur Map smoothly, so we opened the faster clay 2D map.
+              Posts, search, directions, weather and map tools still work the same.
+            </p>
+            <p style={{ fontSize: 14, opacity: .76 }}>You can try 3D anytime in Settings.</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => {
+                setMapMode('3d')
+                mark2DNoticeSeen()
+                window.location.reload()
+              }} style={{ padding: '11px 15px', borderRadius: 999, border: 0, background: '#fff', fontWeight: 800 }}>
+                Try 3D
+              </button>
+              <button type="button" onClick={() => {
+                mark2DNoticeSeen()
+                setShow2DNotice(false)
+              }} style={{ padding: '11px 15px', borderRadius: 999, border: 0, background: '#ff2d96', color: '#fff', fontWeight: 850 }}>
+                Keep 2D
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
       <ClayNav

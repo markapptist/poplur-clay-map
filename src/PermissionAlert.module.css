@@ -7,7 +7,9 @@
 .scrim {
   position: absolute;
   inset: 0;
-  z-index: 5;
+  /* Home's persistent cube/HUD reach z-index 260. Permission consent must be
+     the front-most interaction, not a card hidden underneath navigation. */
+  z-index: 1000;
   display: grid;
   place-items: center;
   background: rgba(10, 7, 13, 0.45);

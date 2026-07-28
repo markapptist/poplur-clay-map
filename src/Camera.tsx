@@ -96,6 +96,20 @@ export default function Camera({
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
 
+  // Native shells capture through the device camera and hand the finished
+  // media back to this exact composer. Keeping the editor in the web layer
+  // gives RN and iOS the same filters/channel flow as browser capture.
+  useEffect(() => {
+    const onNativeCapture = (event: Event) => {
+      const media = (event as CustomEvent<ComposerMedia>).detail
+      if (!media || (media.kind !== 'photo' && media.kind !== 'video') || !media.src) return
+      const capture = addCapture(media)
+      setComposing({ kind: capture.kind, src: capture.src, length: capture.length })
+    }
+    window.addEventListener('poplur-native-capture', onNativeCapture)
+    return () => window.removeEventListener('poplur-native-capture', onNativeCapture)
+  }, [])
+
   // ── the live stream ──────────────────────────────────────────────────────
   // Native shells show the real camera through a transparent hole, so the web
   // stream is only for the browser.

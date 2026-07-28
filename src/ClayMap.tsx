@@ -20,6 +20,7 @@ import {
 import { setCarProximity, stopCarAudio } from './carAudio'
 import type { WeatherMode } from './WeatherFX'
 import styles from './ClayMap.module.css'
+import { initialMapMode } from './mapMode'
 
 export interface ClayMapProps {
   token: string
@@ -45,6 +46,11 @@ export interface ClayMapProps {
    *  than after the 7s descent (which hid the globe entirely). */
   onGlobeReady?: () => void
 }
+
+export const MAP_2D = initialMapMode() === '2d'
+const MAP_LITE_REQUESTED =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('mapLite') === '1'
 
 // Realistic mode: photoreal satellite flyover (Apple-Maps-like) — no clay
 // geometry (cream buildings / fat roads / coast grooves), no clay material
@@ -115,9 +121,9 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
     if (!map.getLayer(layer)) return
     try { map.setLayoutProperty(layer, prop as never, value as never) } catch { /* layer varies by style version */ }
   }
-  cfg('show3dObjects', true)
-  cfg('show3dLandmarks', true)
-  cfg('show3dTrees', true)
+  cfg('show3dObjects', !MAP_2D)
+  cfg('show3dLandmarks', !MAP_2D)
+  cfg('show3dTrees', !MAP_2D)
   // Keep Mapbox's generic building extrusion layer off in realistic mode too:
   // it turns low-rise houses into flat blocks. We add a scoped solid layer for
   // taller buildings below, while house roofs keep their satellite detail.
@@ -198,6 +204,28 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
   })
 }
 
+function flatBuildingColor() {
+  return ['case',
+    ['==', ['%', ['to-number', ['id']], 6], 0], '#b2916c',
+    ['==', ['%', ['to-number', ['id']], 6], 1], '#d6bd96',
+    ['==', ['%', ['to-number', ['id']], 6], 2], '#c0a37c',
+    ['==', ['%', ['to-number', ['id']], 6], 3], '#f0c2d8',
+    ['==', ['%', ['to-number', ['id']], 6], 4], '#c7ab82',
+    '#c3a67e',
+  ]
+}
+
+function claimedFlatBuildingColor() {
+  return ['case',
+    ['==', ['%', ['to-number', ['id']], 6], 0], '#d82f87',
+    ['==', ['%', ['to-number', ['id']], 6], 1], '#ff8ac6',
+    ['==', ['%', ['to-number', ['id']], 6], 2], '#e84699',
+    ['==', ['%', ['to-number', ['id']], 6], 3], '#ffc0df',
+    ['==', ['%', ['to-number', ['id']], 6], 4], '#ed61aa',
+    '#f0559e',
+  ]
+}
+
 function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
   const set = (layer: string, prop: string, value: unknown) => {
     if (!map.getLayer(layer)) return
@@ -213,19 +241,22 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
   set('clay-coast-rim', 'line-color', 'rgba(255, 255, 255, 0.55)')
   set('clay-land-background', 'background-color', theme.land)
   set('clay-water-fill', 'fill-color', theme.water)
-  set('clay-grass-fill', 'fill-color', theme.park)
+  const claimFeatures = claimsFeatureCollection()
+  const claimedPaint = (normal: unknown, claimed: unknown) =>
+    claimFeatures.features.length
+      ? ['case', ['within', claimFeatures], claimed, normal]
+      : normal
+  set('clay-grass-fill', 'fill-color', claimedPaint(theme.park, '#D85D96'))
   // Claimed territory keeps its takeover colours through every theme/day
   // re-apply: streets fully inside a claim mold in Poplur plum, and claimed
   // buildings re-mold pink — the theme only styles the UNCLAIMED branch.
-  const claimedRoad = (normal: string, claimed: string) => {
-    const fc = claimsFeatureCollection()
-    return fc.features.length ? ['case', ['within', fc], claimed, normal] : normal
-  }
-  set('clay-minor-roads', 'line-color', claimedRoad(theme.road, '#9c2a6e'))
-  set('clay-real-road-body', 'line-color', claimedRoad(theme.road, '#8a2260'))
-  set('clay-real-road-rim', 'line-color', claimedRoad(theme.roadRim, '#ff9ccd'))
+  set('clay-minor-roads', 'line-color', claimedPaint(theme.road, '#9c2a6e'))
+  set('clay-real-road-body', 'line-color', claimedPaint(theme.road, '#8a2260'))
+  set('clay-real-road-rim', 'line-color', claimedPaint(theme.roadRim, '#ff9ccd'))
   set('clay-real-road-stitches', 'line-color', theme.accentHot)
   set('clay-trail-stitches', 'line-color', theme.accent)
+  set('clay-buildings-2d', 'fill-color',
+    claimedPaint(flatBuildingColor(), claimedFlatBuildingColor()))
   // Buildings stay true-to-life neutral cream in every skin — only the map
   // surfaces re-colour with the theme. Claimed footprints go Poplur pink.
   set('clay-buildings-3d', 'fill-extrusion-color', ['case',
@@ -240,6 +271,57 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
   ])
   set('clay-building-caps', 'fill-extrusion-color', ['case',
     ['boolean', ['feature-state', 'claimed'], false], '#ff9ccd', '#efe9df'])
+}
+
+function applyComposeSurfacePreview(
+  map: mapboxgl.Map,
+  preview: GeoJSON.FeatureCollection | null,
+  theme: MapTheme,
+) {
+  if (!preview?.features.length) {
+    applyTheme(map, theme)
+    return
+  }
+  const withinPreview = ['within', preview]
+  const committed = claimsFeatureCollection()
+  const takeover = (
+    normal: unknown,
+    committedColor: unknown,
+    previewColor: unknown,
+  ) => ['case',
+    withinPreview, previewColor,
+    ...(committed.features.length
+      ? [['within', committed], committedColor]
+      : []),
+    normal,
+  ]
+  const set = (id: string, property: string, value: unknown) => {
+    if (!map.getLayer(id)) return
+    try { map.setPaintProperty(id, property as never, value as never) } catch { /* layer absent */ }
+  }
+
+  set('clay-grass-fill', 'fill-color',
+    takeover(theme.park, '#D85D96', '#ED78AF'))
+  set('clay-minor-roads', 'line-color',
+    takeover(theme.road, '#9c2a6e', '#B52572'))
+  set('clay-real-road-body', 'line-color',
+    takeover(theme.road, '#8a2260', '#A91D67'))
+  set('clay-real-road-rim', 'line-color',
+    takeover(theme.roadRim, '#ff9ccd', '#FFD2E8'))
+  set('clay-buildings-2d', 'fill-color',
+    takeover(flatBuildingColor(), claimedFlatBuildingColor(), claimedFlatBuildingColor()))
+
+  const regularBuilding = ['case',
+    ['boolean', ['feature-state', 'claimed'], false], claimedFlatBuildingColor(),
+    ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
+    ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
+    '#dbd3c7',
+  ]
+  set('clay-buildings-3d', 'fill-extrusion-color',
+    ['case', withinPreview, claimedFlatBuildingColor(), regularBuilding])
+  set('clay-building-caps', 'fill-extrusion-color',
+    ['case', withinPreview, '#FFD0E6',
+      ['boolean', ['feature-state', 'claimed'], false], '#ff9ccd', '#efe9df'])
 }
 
 // Clay-style world monuments drawn as inline SVGs, pink/black like the theme.
@@ -320,6 +402,158 @@ function circlePolygon(center: mapboxgl.LngLat, radiusMeters: number, steps = 28
     type: 'Polygon' as const,
     coordinates: [coordinates],
   }
+}
+
+const COMPOSE_RADIUS_SOURCE = 'poplur-compose-radius'
+const COMPOSE_RADIUS_FILL = 'poplur-compose-radius-fill'
+const COMPOSE_RADIUS_TEXTURE = 'poplur-compose-radius-texture'
+const COMPOSE_RADIUS_TEXTURE_IMAGE = 'poplur-compose-radius-hatch'
+const COMPOSE_RADIUS_EDGE = 'poplur-compose-radius-edge'
+const COMPOSE_RADIUS_LABEL = 'poplur-compose-radius-label'
+
+function installComposeRadiusPreview(map: mapboxgl.Map) {
+  if (!map.getSource(COMPOSE_RADIUS_SOURCE)) {
+    map.addSource(COMPOSE_RADIUS_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+  }
+  if (!map.hasImage(COMPOSE_RADIUS_TEXTURE_IMAGE)) {
+    const size = 16
+    const data = new Uint8Array(size * size * 4)
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        if ((x + y) % 8 > 1) continue
+        const offset = (y * size + x) * 4
+        data[offset] = 255
+        data[offset + 1] = 214
+        data[offset + 2] = 235
+        data[offset + 3] = 88
+      }
+    }
+    map.addImage(COMPOSE_RADIUS_TEXTURE_IMAGE, { width: size, height: size, data }, { pixelRatio: 2 })
+  }
+  if (!map.getLayer(COMPOSE_RADIUS_FILL)) {
+    map.addLayer({
+      id: COMPOSE_RADIUS_FILL,
+      slot: 'bottom',
+      type: 'fill',
+      source: COMPOSE_RADIUS_SOURCE,
+      paint: {
+        'fill-color': '#E04791',
+        'fill-opacity': 0.76,
+      },
+    }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+  }
+  if (!map.getLayer(COMPOSE_RADIUS_TEXTURE)) {
+    map.addLayer({
+      id: COMPOSE_RADIUS_TEXTURE,
+      slot: 'bottom',
+      type: 'fill',
+      source: COMPOSE_RADIUS_SOURCE,
+      paint: {
+        'fill-pattern': COMPOSE_RADIUS_TEXTURE_IMAGE,
+        'fill-opacity': 0.72,
+      },
+    }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+  }
+  if (!map.getLayer(COMPOSE_RADIUS_EDGE)) {
+    map.addLayer({
+      id: COMPOSE_RADIUS_EDGE,
+      slot: 'top',
+      type: 'line',
+      source: COMPOSE_RADIUS_SOURCE,
+      paint: {
+        'line-color': '#FFF2F8',
+        'line-width': 3,
+        'line-opacity': 0.96,
+        'line-dasharray': [1.5, 1.25],
+      },
+    })
+  }
+  if (!map.getLayer(COMPOSE_RADIUS_LABEL)) {
+    map.addLayer({
+      id: COMPOSE_RADIUS_LABEL,
+      slot: 'top',
+      type: 'symbol',
+      source: COMPOSE_RADIUS_SOURCE,
+      filter: ['==', ['geometry-type'], 'Point'] as never,
+      layout: {
+        'text-field': ['get', 'label'],
+        'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+        'text-size': 13,
+        'text-anchor': 'center',
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+      },
+      paint: {
+        'text-color': '#FFF2F8',
+        'text-halo-color': '#8F1556',
+        'text-halo-width': 2.5,
+      },
+    })
+  }
+}
+
+function updateComposeRadiusPreview(
+  map: mapboxgl.Map,
+  center: mapboxgl.LngLat | null,
+  radiusKm: number,
+  theme: MapTheme,
+) {
+  const source = map.getSource(COMPOSE_RADIUS_SOURCE) as mapboxgl.GeoJSONSource | undefined
+  if (!source) return
+  if (!center) {
+    source.setData({ type: 'FeatureCollection', features: [] })
+    applyComposeSurfacePreview(map, null, theme)
+    return
+  }
+
+  const radiusMeters = radiusKm * 1000
+  const polygon = circlePolygon(center, radiusMeters, 72)
+  const latRadius = radiusMeters / 110_540
+  const lngRadius = radiusMeters / (111_320 * Math.max(0.2, Math.cos(center.lat * Math.PI / 180)))
+  const diameterKm = radiusKm * 2
+  const preview: GeoJSON.FeatureCollection = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { kind: 'coverage' },
+        geometry: polygon,
+      },
+      {
+        type: 'Feature',
+        properties: {
+          kind: 'label',
+          label: `${radiusKm} km radius · ${diameterKm} km across`,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [center.lng + lngRadius * 0.64, center.lat],
+        },
+      },
+    ],
+  }
+  source.setData(preview)
+  applyComposeSurfacePreview(map, preview, theme)
+
+  // Keep the entire selected distance visible as the slider moves. Asymmetric
+  // phone padding leaves room above the anchor for the composer bubble.
+  const compact = map.getContainer().clientWidth <= 480
+  map.fitBounds(
+    [
+      [center.lng - lngRadius, center.lat - latRadius],
+      [center.lng + lngRadius, center.lat + latRadius],
+    ],
+    {
+      padding: compact
+        ? { top: 176, right: 30, bottom: 96, left: 30 }
+        : { top: 138, right: 72, bottom: 88, left: 72 },
+      duration: 0,
+      maxZoom: 15.5,
+    },
+  )
 }
 
 // Clay flyers: airplanes cruise low over the surface, satellites orbit high.
@@ -408,6 +642,8 @@ const HOME_CENTER: [number, number] = [-79.3811, 43.6487]
 // Lite renders at 1x, skips ambient flyers/boats, the Overture fill layer and
 // the AO/edge clay shading. Layout, tiles and interactions are identical.
 export const MAP_LITE =
+  MAP_2D ||
+  MAP_LITE_REQUESTED ||
   typeof window !== 'undefined' &&
   Boolean(
     (window as unknown as { webkit?: { messageHandlers?: { poplur?: unknown } }; PoplurNative?: unknown }).PoplurNative ||
@@ -454,6 +690,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // Bumped when a new map instance finishes loading, so the marker effect
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
+  const [mapFailure, setMapFailure] = useState<string | null>(null)
   const [zoomValue, setZoomValue] = useState(14.8)
   // The sky's own clock. Normally the real one; in dev it can be raced so the
   // sun and moon complete their circuit in a minute instead of a day.
@@ -489,19 +726,23 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // knob by up to half the thumb width — the barber fill visibly ran PAST the
   // knob. The rail is now viewport-sized, so measure it rather than assuming.
   const zoomRailRef = useRef<HTMLInputElement>(null)
-  const [zoomRailLen, setZoomRailLen] = useState(380)
-  const ZOOM_THUMB = 76
+  const [zoomRailMetrics, setZoomRailMetrics] = useState({ length: 380, thumb: 64 })
   useEffect(() => {
     const el = zoomRailRef.current
     if (!el) return
-    const measure = () => setZoomRailLen(el.getBoundingClientRect().width || 380)
+    const measure = () => {
+      const styles = window.getComputedStyle(el)
+      const length = el.getBoundingClientRect().height || 380
+      const thumb = Number.parseFloat(styles.getPropertyValue('--zoom-thumb-size')) || 64
+      setZoomRailMetrics({ length, thumb })
+    }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [zoomStage.id, popTick])
   const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
-  const zoomProgress = `${((zoomRatio * (zoomRailLen - ZOOM_THUMB) + ZOOM_THUMB / 2) / zoomRailLen) * 100}%`
+  const zoomProgress = `${((zoomRatio * (zoomRailMetrics.length - zoomRailMetrics.thumb) + zoomRailMetrics.thumb / 2) / zoomRailMetrics.length) * 100}%`
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
@@ -667,11 +908,28 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     if (!containerRef.current || mapRef.current) return
 
     mapboxgl.accessToken = token
+    setMapFailure(null)
 
     // Live pop animations (building id → rAF handle) so unmount can cancel them
     const popRafs = new Map<string | number, number>()
     // Flyer animation loop handle
     let flyerRaf = 0
+    let disposed = false
+
+    const fallBackAfterWebGLFailure = (error: unknown) => {
+      console.warn('[ClayMap] WebGL renderer unavailable', error)
+      if (!MAP_2D) {
+        const fallbackUrl = new URL(window.location.href)
+        fallbackUrl.searchParams.set('mapMode', '2d')
+        fallbackUrl.searchParams.set('fallback2d', '1')
+        window.location.replace(fallbackUrl.toString())
+        return
+      }
+      setMapFailure('The map renderer is unavailable on this browser.')
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'poplur-map-failed' }, '*')
+      }
+    }
 
     // Render-resolution culling. Mapbox sizes its canvas from
     // window.devicePixelRatio at construction/resize:
@@ -679,37 +937,55 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     //  - every other NATIVE shell (iPhones report no deviceMemory, so they
     //    never qualify as lite): cap at 2x — a 3x phone was pushing 2.25×
     //    the pixels of a 2x screen for no visible gain on a 6" display.
-    const dprCap = MAP_LITE ? 1 : isNativeShell() ? 2 : Infinity
+    const dprCap = MAP_2D || MAP_LITE ? 1 : isNativeShell() ? 2 : Infinity
     if (window.devicePixelRatio > dprCap) {
       try {
         Object.defineProperty(window, 'devicePixelRatio', { value: dprCap, configurable: true })
       } catch { /* non-configurable: keep native ratio */ }
     }
 
-    const map = new mapboxgl.Map({
-      container: containerRef.current,
-      // Tile-cache culling: bound how much off-screen world is retained.
-      // Without a cap mapbox keeps every visited tile — after one long tour
-      // the whole planet sits in memory. Visible tiles are never evicted.
-      maxTileCacheSize: MAP_LITE ? 16 : 48,
-      style: 'mapbox://styles/mapbox/dark-v11',
-      center: HOME_CENTER,
-      // Constructed at street zoom deliberately: the Standard style never
-      // reports isStyleLoaded() when the map is *created* at globe zoom, so
-      // `load` never fires and no clay layers get added. The load handler jumps
-      // straight out to space, then flies back down — same launch, no stall.
-      zoom: 14.8,
-      // Hard ceiling: pinch/scroll can't go deeper than the toy-diorama level.
-      maxZoom: ZOOM_MAX,
-      pitch: 62,
-      bearing: -18,
-      // MSAA is a browser-only luxury: on phone GPUs it multiplies the
-      // fill-extrusion cost at zero perceptible gain on small screens.
-      antialias: !isNativeShell(),
-      attributionControl: false,
-      // Zooming all the way out morphs the clay board into the clay earth
-      projection: 'globe',
-    })
+    let map: mapboxgl.Map
+    try {
+      map = new mapboxgl.Map({
+        container: containerRef.current,
+        // Tile-cache culling: bound how much off-screen world is retained.
+        // Without a cap mapbox keeps every visited tile — after one long tour
+        // the whole planet sits in memory. Visible tiles are never evicted.
+        maxTileCacheSize: MAP_2D ? 12 : MAP_LITE ? 16 : 48,
+        style: 'mapbox://styles/mapbox/dark-v11',
+        center: HOME_CENTER,
+        // Constructed at street zoom deliberately: the Standard style never
+        // reports isStyleLoaded() when the map is *created* at globe zoom, so
+        // `load` never fires and no clay layers get added. The load handler jumps
+        // straight out to space, then flies back down — same launch, no stall.
+        zoom: 14.8,
+        // Hard ceiling: pinch/scroll can't go deeper than the toy-diorama level.
+        maxZoom: ZOOM_MAX,
+        pitch: MAP_2D ? 0 : 62,
+        bearing: MAP_2D ? 0 : -18,
+        // MSAA is a browser-only luxury: on phone GPUs it multiplies the
+        // fill-extrusion cost at zero perceptible gain on small screens.
+        antialias: !MAP_2D && !MAP_LITE && !isNativeShell(),
+        attributionControl: false,
+        // Zooming all the way out morphs the clay board into the clay earth
+        projection: MAP_2D ? 'mercator' : 'globe',
+      })
+    } catch (error) {
+      fallBackAfterWebGLFailure(error)
+      return
+    }
+    const mapCanvas = map.getCanvas()
+    const handleContextLost = (event: Event) => {
+      if (disposed) return
+      event.preventDefault()
+      fallBackAfterWebGLFailure(new Error('WebGL context lost'))
+    }
+    mapCanvas.addEventListener('webglcontextlost', handleContextLost)
+    if (MAP_2D) {
+      map.dragRotate.disable()
+      map.touchZoomRotate.disableRotation()
+      map.setMaxPitch(0)
+    }
     mapRef.current = map
     // Mapbox 3.7 exposes FOV through the camera transform rather than a
     // public map.setFov() method.
@@ -772,6 +1048,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // "cuts" between subjects are long eased glides.
     const startOrbit = () => {
       stopOrbit()
+      if (MAP_2D) return
       const begun = performance.now()
       let last = begun
       // the shot's own rate, re-rolled each time we settle somewhere new
@@ -832,6 +1109,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }
 
     const setStreetViewMode = (enabled: boolean) => {
+      if (MAP_2D) {
+        streetViewRef.current = false
+        ;(map as unknown as { __streetView?: boolean }).__streetView = false
+        map.jumpTo({ pitch: 0, bearing: 0 })
+        return
+      }
       streetViewRef.current = enabled
       ;(map as unknown as { __streetView?: boolean }).__streetView = enabled
       stopOrbit()
@@ -930,6 +1213,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // (which animate pitch themselves) never get snapped mid-flight.
     const HYBRID_ZOOM = 12.5
     const enforceHybridPitch = () => {
+      if (MAP_2D) {
+        if (map.getMinPitch() !== 0) map.setMinPitch(0)
+        if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
+        return
+      }
       if ((map as unknown as { __cinematic?: boolean }).__cinematic) return
       if ((map as unknown as { __streetView?: boolean }).__streetView) {
         if (map.getMaxZoom() !== STREET_VIEW_MAX_ZOOM) map.setMaxZoom(STREET_VIEW_MAX_ZOOM)
@@ -1021,7 +1309,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // Profile is trying to hold 60fps. Land immediately instead; the map is
         // then already composed when its tab comes front.
         if (!mapIsFrontRef.current) {
-          map.jumpTo({ center, zoom: INTRO_LANDING_ZOOM, pitch: 52, bearing: -18 })
+          map.jumpTo({
+            center,
+            zoom: INTRO_LANDING_ZOOM,
+            pitch: MAP_2D ? 0 : 52,
+            bearing: MAP_2D ? 0 : -18,
+          })
           if (!introDone) {
             introDone = true
             onIntroComplete?.(center)
@@ -1035,8 +1328,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         const start = () => map.easeTo({
           center,
           zoom: INTRO_LANDING_ZOOM,
-          pitch: 52,
-          bearing: -18,
+          pitch: MAP_2D ? 0 : 52,
+          bearing: MAP_2D ? 0 : -18,
           duration: 6200,
           easing: t => t * t * (3 - 2 * t),
           essential: true,
@@ -1057,7 +1350,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // into the 3D-building view.
       let landingCenter: [number, number] = nativeLocationRef.current ?? HOME_CENTER
       const startIntro = () => window.setTimeout(() => landOn(nativeLocationRef.current ?? landingCenter), 1400)
-      if (!nativeLocationRef.current && navigator.geolocation) {
+      const deferInitialGeolocation = new URLSearchParams(window.location.search).get('deferLocation') === '1'
+      if (!deferInitialGeolocation && !nativeLocationRef.current && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           pos => { landingCenter = [pos.coords.longitude, pos.coords.latitude] },
           () => { /* fallback already scheduled */ },
@@ -1384,7 +1678,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
       }
 
-      if (!REALISTIC_MAP) {
+      if (!REALISTIC_MAP && !MAP_2D) {
         // True to life, Apple-Maps style: every real footprint gets clay massing.
         // Towers use their real heights; houses and low-rise footprints get a
         // small default height so neighborhoods are present instead of empty grass.
@@ -1568,6 +1862,65 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       })
       updateLabelCull()
       } // end !REALISTIC_MAP fill-extrusion buildings
+
+      if (!REALISTIC_MAP && MAP_2D) {
+        // Flat clay building footprints for the low-cost renderer. These use
+        // Mapbox Streets already resident in the style instead of the much
+        // larger Overture extrusion source, so neighborhoods remain legible
+        // without loading or tessellating any 3D geometry.
+        map.addLayer({
+          id: 'clay-buildings-2d-shadow',
+          slot: 'top',
+          type: 'fill',
+          source: 'clay-streets',
+          'source-layer': 'building',
+          minzoom: 13.2,
+          paint: {
+            'fill-color': '#604836',
+            'fill-opacity': 0.42,
+            'fill-translate': [0, 2],
+            'fill-translate-anchor': 'viewport',
+          },
+        })
+        map.addLayer({
+          id: 'clay-buildings-2d',
+          slot: 'top',
+          type: 'fill',
+          source: 'clay-streets',
+          'source-layer': 'building',
+          minzoom: 13.2,
+          paint: {
+            'fill-color': flatBuildingColor() as never,
+            'fill-opacity': 0.96,
+            'fill-outline-color': '#7b5a43',
+          },
+        })
+        map.addLayer({
+          id: 'clay-building-name-labels-2d',
+          slot: 'top',
+          type: 'symbol',
+          source: 'clay-streets',
+          'source-layer': 'building',
+          minzoom: 15.2,
+          filter: ['has', 'name'] as never,
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 15, 9, 18, 12],
+            'text-max-width': 8,
+            'text-padding': 10,
+            'text-allow-overlap': false,
+            'text-ignore-placement': false,
+            'text-optional': true,
+          } as never,
+          paint: {
+            'text-color': '#fff5e8',
+            'text-halo-color': '#4d3428',
+            'text-halo-width': 1.2,
+            'text-halo-blur': 0.4,
+          },
+        })
+      }
 
       // Neutral daylight for the Standard basemap in realistic mode; warmer
       // sculptural light only belongs to the classic clay renderer.
@@ -1820,6 +2173,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             ['case', w, '#9c2a6e', PALETTE.road] as never)
           map.setPaintProperty('clay-real-road-rim', 'line-color',
             ['case', w, '#ff9ccd', PALETTE.roadHighlight] as never)
+          map.setPaintProperty('clay-grass-fill', 'fill-color',
+            ['case', w, '#D85D96', theme.park] as never)
+          map.setPaintProperty('clay-buildings-2d', 'fill-color',
+            ['case', w, claimedFlatBuildingColor(), flatBuildingColor()] as never)
         } catch { /* layers not ready */ }
       }
       onClaimsSettled(() => { applyClaimRoadPaint(); scheduleRecolor() })
@@ -1852,6 +2209,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
       }
       installRouteLayers(map, 'clay-buildings-3d')
+      installComposeRadiusPreview(map)
       if (prototypeComposer) {
         map.on('click', (e) => {
           // A tap on open ground starts a pop there: pick a radius, drop it.
@@ -2090,7 +2448,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       setMapEpoch(epoch => epoch + 1)
     }
 
-    return () => {
+    const disposeMap = () => {
+      if (disposed) return
+      disposed = true
+      mapCanvas.removeEventListener('webglcontextlost', handleContextLost)
       window.clearInterval(bootPoll)
       stopOrbit()
       if (flyerRaf) cancelAnimationFrame(flyerRaf)
@@ -2103,9 +2464,47 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       })
       markersRef.current.forEach(m => m.remove())
       map.remove()
-      mapRef.current = null
+      if (mapRef.current === map) mapRef.current = null
+    }
+    const mapWindow = window as typeof window & { __poplurDisposeMap?: () => void }
+    const handleDisposeMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'poplur-map-dispose') return
+      disposeMap()
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'poplur-map-disposed' }, '*')
+      }
+    }
+    const handlePageHide = () => disposeMap()
+    mapWindow.__poplurDisposeMap = disposeMap
+    window.addEventListener('message', handleDisposeMessage)
+    window.addEventListener('pagehide', handlePageHide)
+
+    return () => {
+      window.removeEventListener('message', handleDisposeMessage)
+      window.removeEventListener('pagehide', handlePageHide)
+      if (mapWindow.__poplurDisposeMap === disposeMap) {
+        delete mapWindow.__poplurDisposeMap
+      }
+      disposeMap()
     }
   }, [token])
+
+  // The temporary radius is map geometry, not a posted claim. Updating the
+  // GeoJSON source makes every slider tick visible immediately in both 2D and
+  // 3D, while clearing composeAt removes it on cancel/post/directions.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapEpoch === 0) return
+    const center = composeAt
+      ? new mapboxgl.LngLat(composeAt.lng, composeAt.lat)
+      : null
+    // Range inputs can emit faster than the display refresh rate. One map
+    // update per animation frame stays fluid on budget Android hardware.
+    const raf = window.requestAnimationFrame(() => {
+      updateComposeRadiusPreview(map, center, composeRadiusKm, theme)
+    })
+    return () => window.cancelAnimationFrame(raf)
+  }, [composeAt?.lng, composeAt?.lat, composeRadiusKm, mapEpoch, mapRef, theme])
 
   // Add / update POI markers whenever pois, selection, or the map instance changes
   useEffect(() => {
@@ -2161,6 +2560,25 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   return (
     <>
       <div ref={containerRef} className={styles.map} />
+      {mapFailure && (
+        <div
+          role="alert"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 10000,
+            display: 'grid',
+            placeItems: 'center',
+            padding: 28,
+            background: '#081544',
+            color: '#fff4fb',
+            textAlign: 'center',
+            fontWeight: 800,
+          }}
+        >
+          {mapFailure}
+        </div>
+      )}
       {!REALISTIC_MAP && (
         <>
           <div className={styles.clayBump} aria-hidden="true" />
@@ -2208,13 +2626,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             <span>Claim radius</span>
             <strong>{composeRadiusKm} km</strong>
           </label>
+          <div className={styles.composeCoverage}>
+            Live coverage · {composeRadiusKm * 2} km across
+          </div>
           <input
             type="range"
             min={0.5}
             max={25}
             step={0.5}
             value={composeRadiusKm}
-            onChange={(e) => setComposeRadiusKm(parseFloat(e.target.value))}
+            onInput={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
+            onChange={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
             className={styles.composeSlider}
             aria-label="Claim radius"
           />
@@ -2241,6 +2663,24 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
               Drop pop
             </button>
           </div>
+          {/* Post real media to this spot — the map→camera half of the native
+              CaptureFlow. The home switches to the camera and carries this
+              coordinate + radius through to the post composer. */}
+          <button
+            type="button"
+            className={styles.composeDirections}
+            onClick={() => {
+              const { lat, lng } = composeAt
+              playPop()
+              setComposeAt(null)
+              window.parent?.postMessage(
+                { type: 'poplur-post-here', lat, lng, radiusKm: composeRadiusKm },
+                '*',
+              )
+            }}
+          >
+            ✚ Post here
+          </button>
           <button
             type="button"
             className={styles.composeDirections}

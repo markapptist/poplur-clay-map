@@ -39,6 +39,12 @@ let unlockInstalled = false
 let soundWanted = false
 let targetRadioLevel = RADIO_IDLE_LEVEL
 
+function publishRadioState(state: 'off' | 'muted' | 'fallback' | 'live') {
+  if (typeof document === 'undefined') return
+  document.documentElement.dataset.poplurRadio = state
+  document.documentElement.dataset.poplurRadioContext = audioContext?.state ?? 'none'
+}
+
 // ── Master volume: user-controlled, scales every radio path (live stream,
 //    synth bed, wav fallback). Persisted so it survives relaunches. ─────────
 const VOLUME_STORAGE_KEY = 'poplur.volume'
@@ -87,6 +93,10 @@ function installUnlock() {
   if (unlockInstalled || typeof window === 'undefined') return
   const resume = () => {
     if (!soundWanted) return
+    // HTMLAudio needs its own play() call inside the user gesture. Resuming
+    // WebAudio alone does not unlock a live station that was selected while
+    // autoplay was blocked.
+    tryPlayLiveRadio()
     const ctx = getAudioContext()
     if (!ctx) {
       startFallbackRadio()
@@ -333,10 +343,17 @@ function setRadioLevel(value: number, timeConstant = 0.18) {
   targetRadioLevel = value
   // Every fade is clamped to silence while muted, so a level change can never
   // reopen the sound behind the gate.
-  if (isGateMuted()) value = 0
+  if (isGateMuted()) {
+    value = 0
+    publishRadioState('muted')
+  } else {
+    publishRadioState(isLiveRadioPlaying() ? 'live' : soundWanted ? 'fallback' : 'off')
+  }
   setLiveRadioLevel(value, timeConstant)
-  // Real music playing → the synthesized bed becomes a faint texture only.
-  const bedValue = liveStation ? value * 0.1 : value
+  // A selected station is not necessarily an audible station: mobile browsers
+  // can reject its first autoplay attempt. Keep the bed fully audible until
+  // the media element has genuinely started, then yield cleanly to the stream.
+  const bedValue = isLiveRadioPlaying() ? 0 : value
   value = bedValue
   const ctx = getAudioContext()
   if (!ctx || !radioBed) {
@@ -436,6 +453,17 @@ function getLiveAudio(): HTMLAudioElement | null {
     liveAudio.muted = isGateMuted()
     const drop = () => { if (liveStation) dropLiveStation() }
     liveAudio.addEventListener('error', drop)
+    liveAudio.addEventListener('playing', () => {
+      if (!soundWanted || !liveStation) return
+      stopFallbackRadio()
+      setRadioLevel(targetRadioLevel, 0.28)
+    })
+    liveAudio.addEventListener('pause', () => {
+      if (!soundWanted || isGateMuted() || !liveStation) return
+      // A stream can pause before the delayed stalled/error signal arrives.
+      // Bring the bed back immediately so the map never becomes dead air.
+      setRadioLevel(targetRadioLevel, 0.16)
+    })
     // 'stalled' fires on transient buffering too — only drop if still stalled
     liveAudio.addEventListener('stalled', () => {
       window.setTimeout(() => {
@@ -444,6 +472,38 @@ function getLiveAudio(): HTMLAudioElement | null {
     })
   }
   return liveAudio
+}
+
+function isLiveRadioPlaying(): boolean {
+  return Boolean(
+    liveStation
+    && liveAudio
+    && !liveAudio.paused
+    && liveAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
+  )
+}
+
+function tryPlayLiveRadio(): void {
+  if (!soundWanted || isGateMuted() || !liveStation || !liveAudio) return
+  liveAudio.muted = false
+  void liveAudio.play()
+    .then(() => {
+      stopFallbackRadio()
+      setRadioLevel(targetRadioLevel, 0.28)
+    })
+    .catch((error: unknown) => {
+      // Autoplay can still be denied in an embedded WebView. Keep WebAudio
+      // (or its HTML fallback) audible and retry on the next user gesture.
+      if (!soundWanted || isGateMuted()) return
+      setRadioLevel(targetRadioLevel, 0.12)
+      const ctx = getAudioContext()
+      if (!ctx || ctx.state === 'suspended') startFallbackRadio()
+      // A genuine stream/codec failure should move to another station. Keep a
+      // NotAllowedError selected because the next user gesture can unlock it.
+      if ((error as { name?: string } | null)?.name !== 'NotAllowedError' && liveStation) {
+        dropLiveStation()
+      }
+    })
 }
 
 function setLiveRadioLevel(value: number, timeConstant = 0.18) {
@@ -506,6 +566,12 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
     readyState: liveAudio?.readyState ?? null,
     volume: liveAudio?.volume ?? null,
     time: liveAudio?.currentTime ?? null,
+    contextState: audioContext?.state ?? null,
+    bedGain: radioBed?.master.gain.value ?? null,
+    fallbackPaused: fallbackAudio?.paused ?? null,
+    fallbackVolume: fallbackAudio?.volume ?? null,
+    soundWanted,
+    gateMuted: isGateMuted(),
   })
 }
 
@@ -548,11 +614,9 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
       liveStation = { name: (pick.name ?? '').trim() || 'local radio', url: pick.url_resolved! }
       audio.src = pick.url_resolved!
       if (soundWanted) {
-        void audio.play().catch(() => { /* until the unlock gesture */ })
         setRadioLevel(targetRadioLevel, 0.5)
+        tryPlayLiveRadio()
       }
-      // A real station is on: silence the synthesized stand-in bed entirely.
-      if (radioBed) radioBed.master.gain.value = 0
       return liveStation.name
     } catch { /* aborted or network error — try the next mirror */ }
   }
@@ -570,7 +634,7 @@ export function startMapRadio(): boolean {
   if (!ctx || ctx.state === 'closed') return startFallbackRadio()
   if (!radioBed) radioBed = createRadioBed(ctx)
   stopFallbackRadio()
-  if (liveStation && liveAudio) void liveAudio.play().catch(() => {})
+  tryPlayLiveRadio()
   setRadioLevel(RADIO_IDLE_LEVEL, 0.16)
   void ctx.resume().catch(() => {})
   if (ctx.state === 'suspended' && typeof window !== 'undefined') {
@@ -583,6 +647,7 @@ export function startMapRadio(): boolean {
 
 export function stopMapRadio() {
   soundWanted = false
+  publishRadioState('off')
   releaseAudioFocus('radio')
   targetRadioLevel = RADIO_IDLE_LEVEL
   stopFallbackRadio()
@@ -644,10 +709,11 @@ if (typeof window !== 'undefined') {
     // only while nothing is on air. Resuming both is what made the map sound
     // like two radios talking over each other after an unmute.
     if (!muted && soundWanted) {
-      const active = liveStation ? liveAudio : fallbackAudio
-      const idle = liveStation ? fallbackAudio : liveAudio
-      if (idle) { try { idle.pause() } catch { /* not started */ } }
-      if (active) void active.play().catch(() => { /* awaiting a gesture */ })
+      if (liveStation && liveAudio) tryPlayLiveRadio()
+      if (!isLiveRadioPlaying() && fallbackAudio) {
+        void fallbackAudio.play().catch(() => { /* awaiting a gesture */ })
+      }
+      setRadioLevel(targetRadioLevel, 0.12)
     }
     if (muted && radioBed) radioBed.master.gain.value = 0
   }

@@ -146,20 +146,17 @@ export default function ClayNotifIcon({ kind, size = 40 }: { kind: NotifKind; si
     const restScale = kind === 'message' ? 0.94 : kind === 'trend' ? 1.02 : kind === 'pop' ? 1.06 : 1.0
     const decreaseFlip = kind === 'decrease' ? Math.PI : 0
 
-    let raf = 0
-    const clock = new THREE.Clock()
-    const tick = () => {
-      const t = clock.getElapsedTime()
-      root.rotation.set(
-        -0.12 + Math.sin(t * 0.85) * 0.06,
-        Math.sin(t * 1.1) * 0.4,
-        decreaseFlip,
-      )
-      root.scale.setScalar(restScale)
-      renderer.render(scene, camera)
-      raf = requestAnimationFrame(tick)
-    }
-    tick()
+    // Draw ONCE, not every frame. These are static clay icons — a fixed 3/4
+    // clay pose reads as clay without a render loop, so a dropdown of them costs
+    // a handful of one-time draws instead of 5 continuous WebGL contexts (the
+    // perf-profiler's render-on-demand pattern for the other clay widgets).
+    root.rotation.set(-0.12, -0.34, decreaseFlip)
+    root.scale.setScalar(restScale)
+    const draw = () => renderer.render(scene, camera)
+    draw()
+    // One more after layout settles, so an early first paint can't ship a blank
+    // canvas (e.g. before the row has its final size).
+    const raf = requestAnimationFrame(draw)
 
     return () => {
       cancelAnimationFrame(raf)

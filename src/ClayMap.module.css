@@ -476,6 +476,8 @@
 /* ── Clay zoom slider ─────────────────────────────────── */
 
 .zoomWrap {
+  --zoom-track-size: 16px;
+  --zoom-thumb-size: 64px;
   position: absolute;
   touch-action: none;
   right: 4px;
@@ -508,7 +510,7 @@
 }
 
 .zoom::-webkit-slider-runnable-track {
-  height: 16px;
+  height: var(--zoom-track-size);
   border-radius: 9px;
   background-image:
     linear-gradient(90deg, transparent 0 var(--zoomProgress, 0%), #17131a var(--zoomProgress, 0%) 100%),
@@ -528,9 +530,9 @@
    painted from --zoomThumb set inline on .zoomWrap. */
 .zoom::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 64px;
-  height: 64px;
-  margin-top: -26px;
+  width: var(--zoom-thumb-size);
+  height: var(--zoom-thumb-size);
+  margin-top: calc((var(--zoom-track-size) - var(--zoom-thumb-size)) / 2);
   border-radius: 0;
   background: var(--zoomThumb, radial-gradient(circle at 38% 30%, #FF8AC6, #F63B9A 55%, #b02d73)) center / contain no-repeat;
   box-shadow: none;
@@ -542,7 +544,7 @@
 }
 
 .zoom::-moz-range-track {
-  height: 16px;
+  height: var(--zoom-track-size);
   border-radius: 9px;
   background-image:
     linear-gradient(90deg, transparent 0 var(--zoomProgress, 0%), #17131a var(--zoomProgress, 0%) 100%),
@@ -559,8 +561,8 @@
 }
 
 .zoom::-moz-range-thumb {
-  width: 64px;
-  height: 64px;
+  width: var(--zoom-thumb-size);
+  height: var(--zoom-thumb-size);
   border: none;
   border-radius: 0;
   background: var(--zoomThumb, radial-gradient(circle at 38% 30%, #FF8AC6, #F63B9A 55%, #b02d73)) center / contain no-repeat;
@@ -761,6 +763,14 @@
 
 .composeRadiusRow strong { font-size: 13px; color: #FFF2F8; }
 
+.composeCoverage {
+  margin: 0 0 5px;
+  color: #FF9CCE;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
 .composeSlider {
   width: 100%;
   accent-color: #F63B9A;
@@ -954,14 +964,25 @@
 .zoomWeather {
   position: absolute;
   right: 4px;
-  /* just above the rail, and clear of the AI line at the top of the screen */
-  top: calc(50% - min(28vh, 215px) - 96px);
+  /* Anchor by the block's BOTTOM, not an assumed icon height. The cloud
+     sprite uses percentage sizing, so top-based placement let its grid row
+     grow downward into the zoom rail on responsive screens. */
+  top: auto;
+  bottom: calc(50% + min(28vh, 215px) + 18px);
   z-index: 27;
   width: 92px;
   display: grid;
   place-items: center;
   pointer-events: none;
   filter: drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55)) drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
+}
+
+.zoomWeather > div:first-child {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  line-height: 0;
 }
 
 .zoomWeather svg,
@@ -1020,4 +1041,42 @@
   -webkit-text-stroke: 1.4px rgba(5, 2, 9, 0.9);
   paint-order: stroke fill;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+@media (max-width: 430px) and (max-height: 850px) {
+  .zoomWrap {
+    --zoom-track-size: 12px;
+    --zoom-thumb-size: 48px;
+    right: 0;
+    width: 68px;
+    height: min(38vh, 300px);
+  }
+
+  .zoom {
+    width: min(38vh, 300px);
+    height: 56px;
+  }
+
+  .zoomWeather {
+    right: 0;
+    top: auto;
+    bottom: calc(50% + min(19vh, 150px) + 14px);
+    width: 68px;
+  }
+
+  .zoomWeather > div:first-child {
+    width: 30px;
+    height: 30px;
+  }
+
+  .zoomWeather svg,
+  .zoomWeather img {
+    width: 30px;
+    height: 30px;
+  }
+
+  .zoomTemp {
+    font-size: 11px;
+    -webkit-text-stroke-width: 1.3px;
+  }
 }

@@ -14,6 +14,8 @@ export interface Claim {
 
 const CLAIMS_SOURCE = 'poplur-claims'
 const CLAIMS_FILL = 'poplur-claims-fill'
+const CLAIMS_TEXTURE = 'poplur-claims-texture'
+const CLAIMS_TEXTURE_IMAGE = 'poplur-claims-hatch'
 const CLAIMS_RIM = 'poplur-claims-rim'
 
 /** 72-point circle polygon around a center, `radiusKm` on the ground. */
@@ -41,6 +43,21 @@ function circlePolygon(center: [number, number], radiusKm: number): GeoJSON.Feat
 export function installClaimsLayer(map: mapboxgl.Map) {
   if (map.getSource(CLAIMS_SOURCE)) return
   map.addSource(CLAIMS_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+  if (!map.hasImage(CLAIMS_TEXTURE_IMAGE)) {
+    const size = 16
+    const data = new Uint8Array(size * size * 4)
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        if ((x + y) % 8 > 1) continue
+        const offset = (y * size + x) * 4
+        data[offset] = 255
+        data[offset + 1] = 218
+        data[offset + 2] = 237
+        data[offset + 3] = 76
+      }
+    }
+    map.addImage(CLAIMS_TEXTURE_IMAGE, { width: size, height: size, data }, { pixelRatio: 2 })
+  }
 
   map.addLayer({
     id: CLAIMS_FILL,
@@ -50,8 +67,19 @@ export function installClaimsLayer(map: mapboxgl.Map) {
     paint: {
       // The GROUND recolors — water stays water (this layer slides in under
       // the clay water fill), streets/buildings colorize per feature.
-      'fill-color': '#F0559E',
-      'fill-opacity': 0.42,
+      'fill-color': '#D93D89',
+      'fill-opacity': 0.78,
+    },
+  }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+
+  map.addLayer({
+    id: CLAIMS_TEXTURE,
+    slot: 'bottom',
+    type: 'fill',
+    source: CLAIMS_SOURCE,
+    paint: {
+      'fill-pattern': CLAIMS_TEXTURE_IMAGE,
+      'fill-opacity': 0.66,
     },
   }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
 

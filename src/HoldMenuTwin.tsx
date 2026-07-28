@@ -82,18 +82,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The tile names what pressing it DOES, like CC does: with the model
     // running it reads DETECT OFF, and with it stopped, DETECT ON.
     { icon: 'Search', title: 'DETECT ON', activeTitle: 'DETECT OFF', toggle: 'detection', screen: 'camera-capture', action: 'detect' },
-    // In the app this opens the real native GamePickerView (FPS Shooter +
-    // Poplurgatchi, both natively playable) through the existing HoldMenuNavigate
-    // "games" route. The browser gets the web games library, which plays the real
-    // FPS build and says Poplurgatchi is the native game.
-    { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true, nativeAction: 'games' },
-    // CREATE opens the existing Create screen (PoplurAICreateView's twin):
-    // generate with Creator Credits, then publish it to a real map location
-    // with its own radius. A game made here joins the Games channel.
-    // In the app this opens the real Poplur AI chat (PoplurAIChatView, backed
-    // by Google AI Studio through the poplurAiApi function) — the same route
-    // the native cam-create tile takes. The browser gets the Create twin.
-    { icon: 'Create', title: 'CREATE', screen: 'camera-create', nativeAction: 'create' },
+    // Games is a working in-home screen on every target (including RN and
+    // Android). Sending it to the old native-only route left it as a no-op on
+    // those hosts, so it stays in the shared surface like News and TV Guide.
+    { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true },
   ],
   profile: [
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', format: 'svg' },

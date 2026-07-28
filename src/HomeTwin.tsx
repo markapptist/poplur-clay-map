@@ -7,6 +7,7 @@ import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
+import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import { playPop, preloadPop } from './pop'
 import { onCameraStore, selectedCount } from './cameraStore'
@@ -82,6 +83,23 @@ function compactAudience(value: number): string {
   return value.toString()
 }
 
+type PostLoginPermission = 'location' | 'photos'
+
+/**
+ * Native hosts resolve authentication and real OS authorization before loading
+ * Home, then opt the authenticated surface into only the missing custom asks.
+ * `permissions=1` is the browser/RCL verification switch.
+ */
+function initialPostLoginPermissions(): PostLoginPermission[] {
+  if (typeof window === 'undefined') return []
+  const params = new URLSearchParams(window.location.search)
+  const force = params.get('permissions') === '1'
+  const queue: PostLoginPermission[] = []
+  if (force || params.get('askLocation') === '1') queue.push('location')
+  if (force || params.get('askPhotos') === '1') queue.push('photos')
+  return queue
+}
+
 // Home and Map use the same bundle. The dedicated internal map route avoids a
 // second dev server while keeping `/` reserved for the post-login home.
 // `front=0` tells the embedded map it is booting behind another tab, so it
@@ -89,11 +107,25 @@ function compactAudience(value: number): string {
 // whole way) and just lands. Without it the map's intro runs behind Feed /
 // Profile / Camera and drags those screens into single-digit fps.
 const CLAY_MAP_SRC = (() => {
-  const front = typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('view') === 'map' ? '1' : '0'
+  const parentParams = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams()
+  const front = parentParams.get('view') === 'map' ? '1' : '0'
+  const mode = parentParams.get('mapMode')
+  const fallback = parentParams.get('fallback2d')
+  const lite = parentParams.get('mapLite')
+  // The hidden map mounts while Home's custom location primer is visible.
+  // Carry that gate into the iframe so its own startup geolocation cannot race
+  // ahead and surface a raw browser/OS prompt behind the Poplur consent card.
+  const deferLocation = parentParams.get('askLocation') === '1'
+    || parentParams.get('permissions') === '1'
+  const modeQuery = mode === '2d' || mode === '3d' ? `&mapMode=${mode}` : ''
+  const fallbackQuery = fallback === '1' ? '&fallback2d=1' : ''
+  const liteQuery = lite === '1' ? '&mapLite=1' : ''
+  const locationQuery = deferLocation ? '&deferLocation=1' : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}`
-    : `index.html?map=1&front=${front}`
+    ? `${window.location.origin}/?map=1&front=${front}${modeQuery}${fallbackQuery}${liteQuery}${locationQuery}`
+    : `index.html?map=1&front=${front}${modeQuery}${fallbackQuery}${liteQuery}${locationQuery}`
 })()
 
 // Android app shell (PoplurNative bridge). Its budget GPUs can't afford Mapbox
@@ -134,6 +166,40 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
+  const [permissionQueue, setPermissionQueue] = useState<PostLoginPermission[]>(initialPostLoginPermissions)
+  const activePermission = permissionQueue[0] ?? null
+  const finishPermission = useCallback(() => {
+    setPermissionQueue(queue => queue.slice(1))
+  }, [])
+  const allowLocation = useCallback((scope: 'once' | 'whileUsing') => {
+    playPop()
+    if (isNativeShell()) {
+      postNativeEvent({ type: 'requestLocation', scope })
+    } else if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        () => {},
+        () => {},
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 300000 },
+      )
+    }
+    finishPermission()
+  }, [finishPermission])
+  const allowPhotos = useCallback(() => {
+    playPop()
+    if (isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
+    finishPermission()
+  }, [finishPermission])
+  const denyPermission = useCallback(() => {
+    playPop()
+    if (activePermission && isNativeShell()) {
+      postNativeEvent({
+        type: 'permissionHandled',
+        permission: activePermission,
+        granted: false,
+      })
+    }
+    finishPermission()
+  }, [activePermission, finishPermission])
   useEffect(() => { preloadPop() }, [])
   useEffect(() => {
     onTabChange?.(activeTab)
@@ -144,6 +210,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The cube long-press hold menu floats as a translucent overlay over the
   // current tab, and its items match that tab.
   const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
+  // The hold menu belongs to the tab it was opened from ("its item set matches
+  // that tab"), so a tab change has to dismiss it. It also owns the screens that
+  // play their own audio from THIS document — the Radio deck above all — and
+  // those only stop when they unmount. Leaving it mounted across a tab change is
+  // why the radio kept playing over the feed.
+  const tabForHoldRef = useRef(activeTab)
+  useEffect(() => {
+    if (tabForHoldRef.current === activeTab) return
+    tabForHoldRef.current = activeTab
+    setHoldOpen(false)
+  }, [activeTab])
   // The cube floats over every screen, so on a subscreen it is the one control
   // that is always there — it goes back a level. Registered by HoldMenuTwin.
   const goBackRef = useRef<(() => boolean) | null>(null)
@@ -217,18 +294,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
 
   useEffect(() => {
-    // Ask while Home opens on Feed so the already-mounted map can finish its
-    // location-aware intro behind the screen rather than prompting on Map.
-    if (isNativeShell()) {
-      postNativeEvent({ type: 'requestLocation' })
-    } else if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        () => {},
-        () => {},
-        { enableHighAccuracy: true, timeout: 12000, maximumAge: 300000 },
-      )
-    }
-
     const onMapMessage = (event: MessageEvent) => {
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
@@ -240,6 +305,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapReady(true)
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
         postNativeEvent({ type: 'homeReady' })
+      }
+      // Map → camera: the user picked a spot to post to. Switch to the camera
+      // and carry the coordinate + claim radius through to the composer.
+      if (event.data.type === 'poplur-post-here') {
+        setPostTarget({
+          lat: Number(event.data.lat),
+          lng: Number(event.data.lng),
+          radiusKm: Number(event.data.radiusKm) || undefined,
+        })
+        setActiveTab('post')
       }
     }
     window.addEventListener('message', onMapMessage)
@@ -264,7 +339,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // behind it must stop playing, its captions must not show through, and the
   // map iframe must go quiet.
   const [overlayOpen, setOverlayOpen] = useState(false)
+  // The idle fade exists so the chrome stops obstructing a SUBSCREEN you are
+  // reading (News, TV Guide, Radio, an RCL capture). On the home view itself the
+  // chrome IS the screen — fading it there just makes the app look like it
+  // vanished — so the fade only applies while a subscreen is covering the app.
+  const chromeFaded = chromeIdle && overlayOpen
   const [mapTourOn, setMapTourOn] = useState(false)
+  // A spot picked on the map to post to ("Post here"), pending until the next
+  // capture goes through the composer.
+  const [postTarget, setPostTarget] = useState<{ lat: number; lng: number; radiusKm?: number } | null>(null)
 
   // The map iframe stays mounted on every tab, so its audio (radio, ambience,
   // pops) must be gated here: audible only while the MAP tab is front-most AND
@@ -290,7 +373,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // remounted map shows the loading globe instead of a blank layer.
   useEffect(() => {
     if (activeTab === 'map') { setMapMounted(true); return }
-    const drop = () => { setMapMounted(false); setMapReady(false) }
+    const drop = () => {
+      const mapWindow = mapFrameRef.current?.contentWindow as (Window & {
+        __poplurDisposeMap?: () => void
+      }) | null | undefined
+      // Same-origin browser/RN previews can release Mapbox synchronously before
+      // React removes the iframe. Native/file origins may not expose the
+      // function, so retain a postMessage fallback for those shells.
+      try { mapWindow?.__poplurDisposeMap?.() } catch { /* cross-origin frame */ }
+      mapWindow?.postMessage({ type: 'poplur-map-dispose' }, '*')
+      setMapMounted(false)
+      setMapReady(false)
+    }
     if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
     const timer = window.setTimeout(drop, MAP_GRACE_MS)
     return () => window.clearTimeout(timer)
@@ -413,7 +507,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       const camera: Record<string, keyof CameraActions> = { PHOTO: 'photo', VIDEO: 'video' }
       const which = camera[favourite ?? 'PHOTO'] ?? 'photo'
       cameraActionsRef.current?.[which]()
-      if (isNativeShell() && which === 'photo') postNativeEvent({ type: 'cameraShutter' })
       return
     }
     if (favourite) {
@@ -470,6 +563,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             bindActions={actions => { cameraActionsRef.current = actions }}
             onRecordingChange={setRecordMs}
             onDetectUser={setSeenUser}
+            postTarget={postTarget}
+            onPostTargetUsed={() => setPostTarget(null)}
           />
         )}
         {activeTab === 'profile' && (
@@ -531,7 +626,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           floated and the arrows and radius label it sits between vanished
           underneath. The whole HUD is one piece of home chrome. */}
       <div
-        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}`}
+        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot}>
@@ -604,9 +699,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       {/* The cube is the persistent navigator — visible on every tab, floating
           over whatever content is active. Its face tracks the current tab. */}
-      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}`} />
+      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`} />
       <div
-        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeIdle ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
+        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
@@ -631,6 +726,36 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           the cube, or long-press it for the hold menu. */}
 
       <PoplurVoiceAssistant onTabRequest={tab => setActiveTab(tab)} />
+
+      {/* Auth routing owns WHERE the primer appears. Signed-out users receive
+          the matching sequence on Welcome; returning authenticated users are
+          loaded with askLocation/askPhotos flags and receive it here. The real
+          OS request is never fired until one of these custom Allow actions. */}
+      {activePermission === 'location' && (
+        <PermissionAlert
+          icon="location"
+          label="Location permission"
+          title={'Allow "Poplur" to use your location?'}
+          copy="Your location powers nearby posts, map positioning, and the radius around you."
+          choices={[
+            { label: 'Allow Once', grants: true, onPick: () => allowLocation('once') },
+            { label: 'Allow While Using App', grants: true, onPick: () => allowLocation('whileUsing') },
+            { label: "Don't Allow", onPick: denyPermission },
+          ]}
+        />
+      )}
+      {activePermission === 'photos' && (
+        <PermissionAlert
+          icon="photos"
+          label="Camera roll permission"
+          title={'Allow "Poplur" to access your camera roll?'}
+          copy="Share your favourite moments with people inside your radius."
+          choices={[
+            { label: "Don't Allow", onPick: denyPermission },
+            { label: 'Allow', grants: true, onPick: allowPhotos },
+          ]}
+        />
+      )}
 
       {/* Cube long-press hold menu — translucent overlay whose item set matches
           the tab it was opened from. Closes back to that tab. */}

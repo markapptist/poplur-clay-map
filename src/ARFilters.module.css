@@ -1,14 +1,17 @@
-/* The AR strip sits low over the viewfinder, above the home HUD's bottom row
-   but clear of the cube — a filter rail, not a screen. */
+/* The AR rail is the hold menu laid flat: a STRAIGHT HORIZONTAL line of clay
+   swatches that scrubs with momentum and snaps to centre. It floats ABOVE the
+   camera's bottom controls (clear of the cube and the home HUD), so the live
+   viewfinder — and your face in it — stays visible while you scrub. */
 
 .rail {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* above the cube / bottom HUD rather than sitting on it */
+  bottom: clamp(196px, 27vh, 250px);
   z-index: 26;
-  padding: 10px 10px 12px;
-  background: linear-gradient(180deg, transparent, rgba(10, 6, 12, 0.72) 38%);
+  padding: 6px 0 4px;
+  pointer-events: auto;
   animation: arRailIn 0.26s ease-out both;
 }
 
@@ -21,7 +24,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px 8px;
+  padding: 0 14px 6px;
 }
 
 .title {
@@ -49,26 +52,51 @@
   cursor: pointer;
 }
 
-.strip {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding: 2px 2px 4px;
-  scrollbar-width: none;
+/* ── the straight line the chips ride ─────────────────────────────────────── */
+.line {
+  position: relative;
+  height: 86px;
+  overflow: hidden;
+  touch-action: none;            /* the drag is ours, not the page's */
+  cursor: grab;
+}
+.line:active { cursor: grabbing; }
+
+/* the rule the swatches sit on — this is the "straight horizontal line" */
+.rule {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22) 18%, rgba(255, 255, 255, 0.22) 82%, transparent);
+  pointer-events: none;
 }
 
-.strip::-webkit-scrollbar { display: none; }
+/* centre marker — the slot whose filter is live (the hold menu's centre) */
+.centreMark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 62px;
+  height: 62px;
+  transform: translate(-50%, -50%);
+  border-radius: 18px;
+  box-shadow: 0 0 0 2px rgba(246, 59, 154, 0.9), 0 0 18px rgba(246, 59, 154, 0.45);
+  pointer-events: none;
+}
 
 .chip {
-  flex: 0 0 auto;          /* never let the rail squeeze the swatches */
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   border: 0;
   background: transparent;
   cursor: pointer;
   padding: 0;
+  line-height: 0;
+  transition: opacity 0.12s linear;
 }
 
 /* The swatch is a slice of clay wearing the filter — the preview IS the effect. */
@@ -81,23 +109,24 @@
   background-size: cover;
   background-position: center;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), inset 0 0 0 2px rgba(255, 255, 255, 0.12);
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
+  transition: box-shadow 0.16s ease;
 }
 
 .chipOn .swatch {
-  transform: translateY(-3px) scale(1.06);
   box-shadow:
     0 6px 16px rgba(0, 0, 0, 0.55),
     inset 0 0 0 2px #f63b9a,
     0 0 18px rgba(246, 59, 154, 0.55);
 }
 
-.chipLabel {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.72);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+/* the centred filter is named once, under the line */
+.activeLabel {
+  display: block;
+  text-align: center;
+  padding-top: 2px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: #fff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
 }
-
-.chipOn .chipLabel { color: #fff; }

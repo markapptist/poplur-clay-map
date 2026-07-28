@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.."
 
 IOS_DEST="/Users/matrix/Developer/Poplur2025-iOS/ClayMapWeb"
 ANDROID_DEST="/Users/matrix/Developer/Poplur2025-Android/app/src/main/assets/claymap"
+RN_DEST="/Users/matrix/Developer/Poplur2025-ReactNative/src/assets/claymap/claymap.zip"
 
 npm run build
 
@@ -23,5 +24,15 @@ sync_to() {
 sync_to "$IOS_DEST"
 sync_to "$ANDROID_DEST"
 
+# React Native serves the same Vite bundle from a loopback static server. Keep
+# its archive in this release path too; omitting it was why the RN device could
+# keep opening an older home/subscreen build after iOS and Android had moved on.
+rm -f "$RN_DEST"
+(
+  cd dist
+  zip -qr "$RN_DEST" . -x 'models/*'
+)
+unzip -tq "$RN_DEST" >/dev/null
+
 echo "Synced clay map bundle:"
-du -sh "$IOS_DEST" "$ANDROID_DEST"
+du -sh "$IOS_DEST" "$ANDROID_DEST" "$RN_DEST"

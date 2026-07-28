@@ -1,0 +1,215 @@
+/* The one post composer every capture route ends in — full-screen over the
+   camera / roll / map, dark so the media reads, with a step panel at the base. */
+
+.stage {
+  position: absolute;
+  inset: 0;
+  z-index: 48;
+  display: flex;
+  flex-direction: column;
+  background: #07040c;
+  color: #fff;
+  font-family: system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+}
+
+.bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: max(12px, env(safe-area-inset-top)) 12px 8px;
+}
+.barTitle { font-size: 15px; font-weight: 900; letter-spacing: 0.3px; }
+.barBtn {
+  width: 34px; height: 34px;
+  border: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff; font-size: 17px; line-height: 1; cursor: pointer;
+  display: grid; place-items: center;
+}
+.barBtn:active { transform: scale(0.92); }
+
+/* ── media preview ────────────────────────────────────────────────────────── */
+.preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 12px;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+}
+.media { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* ── step panel ───────────────────────────────────────────────────────────── */
+.panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+}
+.panelLabel {
+  font-size: 10.5px; font-weight: 900; letter-spacing: 1.5px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.primary {
+  padding: 15px 18px;
+  border: 0; border-radius: 16px;
+  background: linear-gradient(180deg, #ff62ad, #d90f6d);
+  color: #fff;
+  font: 950 16px/1 system-ui, sans-serif;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(194, 17, 122, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.primary:active { transform: scale(0.97); }
+
+.secondary {
+  padding: 14px 18px;
+  border: 0; border-radius: 16px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: 900 15px/1 system-ui, sans-serif;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+.secondary:active { transform: scale(0.97); }
+
+.choiceHead {
+  margin: 2px 0 4px;
+  font-size: 19px; font-weight: 950; text-align: center;
+}
+
+/* ── filter rail ──────────────────────────────────────────────────────────── */
+.filterRail {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.filterRail::-webkit-scrollbar { display: none; }
+
+.swatchBtn {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  border: 0; background: transparent; padding: 0; cursor: pointer;
+}
+.swatch {
+  display: block;
+  width: 56px; height: 56px;
+  border-radius: 14px;
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), inset 0 0 0 2px rgba(255, 255, 255, 0.12);
+}
+.swatchOn .swatch {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.55), inset 0 0 0 2px #f63b9a, 0 0 16px rgba(246, 59, 154, 0.5);
+}
+.swatchLabel { font-size: 10px; font-weight: 800; color: rgba(255, 255, 255, 0.72); }
+.swatchOn .swatchLabel { color: #fff; }
+
+/* ── ai step ──────────────────────────────────────────────────────────────── */
+.prompt {
+  width: 100%;
+  min-height: 84px;
+  resize: none;
+  padding: 12px 14px;
+  border: 0; border-radius: 14px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font: 600 14px/1.45 system-ui, sans-serif;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+.prompt::placeholder { color: rgba(255, 255, 255, 0.45); }
+.aiNote {
+  margin: 0;
+  font-size: 12.5px; line-height: 1.5; font-weight: 600;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+/* ── channel step ─────────────────────────────────────────────────────────── */
+.caption {
+  width: 100%;
+  padding: 13px 14px;
+  border: 0; border-radius: 14px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font: 600 14px/1 system-ui, sans-serif;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+.caption::placeholder { color: rgba(255, 255, 255, 0.45); }
+
+.radiusRow {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 12.5px; font-weight: 700; color: rgba(255, 255, 255, 0.8);
+}
+.radiusRow b { color: #7bffa0; }
+.radiusRow input { accent-color: #f63b9a; }
+
+.channels {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.channels::-webkit-scrollbar { display: none; }
+
+.chan {
+  flex: 0 0 auto;
+  width: 76px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 9px 6px;
+  border: 0; border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff; cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.chanOn {
+  background: linear-gradient(180deg, rgba(255, 98, 173, 0.35), rgba(217, 15, 109, 0.35));
+  box-shadow: inset 0 0 0 2px #f63b9a, 0 0 16px rgba(246, 59, 154, 0.35);
+}
+.chanEmoji { font-size: 20px; }
+.chanNum { font-size: 9.5px; font-weight: 900; color: #30d158; letter-spacing: 0.5px; }
+.chanName { font-size: 10.5px; font-weight: 800; }
+
+/* ── posted ───────────────────────────────────────────────────────────────── */
+.doneWrap {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px;
+}
+.doneTick {
+  width: 78px; height: 78px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 38px; font-weight: 900;
+  background: linear-gradient(145deg, #ff62ad, #d90f6d);
+  box-shadow: 0 12px 28px rgba(194, 17, 122, 0.5);
+  animation: pop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.5) both;
+}
+.doneTitle { margin: 0; font-size: 26px; font-weight: 950; }
+.doneMeta { margin: 0; font-size: 13px; font-weight: 700; color: rgba(255, 255, 255, 0.7); }
+
+@keyframes pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .doneTick { animation: none; }
+}
+
+/* Shown when the post could NOT be uploaded (browser preview has no account),
+   so the confirmation never implies an upload that did not happen. */
+.doneNote {
+  margin: 6px 0 0;
+  max-width: 30ch;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.66);
+}
