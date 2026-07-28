@@ -33,52 +33,6 @@ export interface CubeTab3DProps {
   size?: number
 }
 
-function CubeFallback({ targetTab, onFaceChange, onTap, onHold, size }: CubeTab3DProps & { size: number }) {
-  const gesture = useRef({ x: 0, moved: false, held: false })
-  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const cancelHold = () => {
-    if (holdTimer.current) clearTimeout(holdTimer.current)
-    holdTimer.current = null
-  }
-  const finish = (clientX: number) => {
-    cancelHold()
-    if (gesture.current.held) return
-    const dx = clientX - gesture.current.x
-    if (gesture.current.moved && Math.abs(dx) > 18) {
-      const current = FACES.findIndex(face => face.tab === targetTab)
-      const next = (current + (dx < 0 ? 1 : -1) + FACES.length) % FACES.length
-      onFaceChange(FACES[next].tab)
-    } else {
-      onTap()
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      aria-label="Poplur cube — swipe to change screen, hold for menu"
-      onPointerDown={event => {
-        gesture.current = { x: event.clientX, moved: false, held: false }
-        holdTimer.current = setTimeout(() => {
-          gesture.current.held = true
-          onHold()
-        }, 500)
-      }}
-      onPointerMove={event => {
-        if (Math.abs(event.clientX - gesture.current.x) > 3) {
-          gesture.current.moved = true
-          cancelHold()
-        }
-      }}
-      onPointerUp={event => finish(event.clientX)}
-      onPointerCancel={cancelHold}
-      style={{ position: 'absolute', inset: 0, width: size, height: size, padding: 0, border: 0, background: 'transparent', touchAction: 'none', cursor: 'grab' }}
-    >
-      <img src="clay_cube.png" alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 16px 20px rgba(0,0,0,.55))' }} />
-    </button>
-  )
-}
-
 export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200 }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
@@ -317,9 +271,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         style={{ width: size, height: size, touchAction: 'none', cursor: 'grab', visibility: glFailed ? 'hidden' : 'visible' }}
         aria-label="Poplur cube — drag to rotate, hold for menu"
       />
-      {glFailed && (
-        <CubeFallback targetTab={targetTab} onFaceChange={onFaceChange} onTap={onTap} onHold={onHold} size={size} />
-      )}
+      {/* A failed WebGL context is intentionally left empty. Showing a static
+          cube here makes a low-tier device look like it loaded a different
+          build, and it can swallow the persistent channel HUD. The surrounding
+          navigator keeps its fixed footprint so the approved channel controls
+          remain in place while the device reports the rendering failure. */}
     </div>
   )
 }

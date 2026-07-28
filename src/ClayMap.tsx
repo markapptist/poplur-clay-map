@@ -967,8 +967,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // fill-extrusion cost at zero perceptible gain on small screens.
         antialias: !MAP_2D && !MAP_LITE && !isNativeShell(),
         attributionControl: false,
-        // Zooming all the way out morphs the clay board into the clay earth
-        projection: MAP_2D ? 'mercator' : 'globe',
+        // Keep the same globe projection for both render tiers. The 2D tier is
+        // top-down (pitch/bearing are locked below) and removes the expensive
+        // 3D layers, while using the globe projection avoids the blank canvas
+        // that Android/WebView can produce when switching this classic style
+        // to mercator at runtime.
+        projection: 'globe',
       })
     } catch (error) {
       fallBackAfterWebGLFailure(error)
@@ -1244,14 +1248,22 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     let clayWorldBooted = false
     const bootClayWorld = () => {
       if (clayWorldBooted) return
-      // isStyleLoaded() itself is flaky (can stay false forever while the map
-      // renders happily) — the real readiness signal is the style JSON having
-      // been applied, i.e. the base layers existing. addLayer is safe then.
       const style = map.getStyle()
       if (!style || !(style.layers || []).length) return
-      clayWorldBooted = true
-      window.clearInterval(bootPoll)
-      buildClayWorld()
+      // A WebView can expose the style JSON (and its layer list) for one or
+      // two frames before Mapbox has finished installing it. Calling
+      // addSource/addLayer in that window throws "Style is not done loading"
+      // and leaves the 2D canvas permanently black. Keep polling until the
+      // SDK's actual readiness flag is true, then only mark the world booted
+      // after the layer build completes successfully.
+      if (!map.isStyleLoaded()) return
+      try {
+        buildClayWorld()
+        clayWorldBooted = true
+        window.clearInterval(bootPoll)
+      } catch (error) {
+        console.warn('[ClayMap] style became unavailable during boot; retrying', error)
+      }
     }
     const bootPoll = window.setInterval(bootClayWorld, 400)
     map.on('load', bootClayWorld)
@@ -1336,8 +1348,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         })
         // Wait for the globe to finish loading before moving at all: descending
         // through a half-loaded style is what made the old intro judder.
-        if (map.areTilesLoaded()) start()
-        else map.once('idle', start)
+        let started = false
+        const startOnce = () => {
+          if (started) return
+          started = true
+          start()
+        }
+        if (map.areTilesLoaded()) startOnce()
+        else {
+          map.once('idle', startOnce)
+          // A tile request can remain pending indefinitely on a constrained
+          // WebView. Do not leave the 2D camera at the black space zoom while
+          // waiting for an idle event; the map will fill its tiles as they land.
+          window.setTimeout(startOnce, MAP_2D ? 1800 : 5000)
+        }
         map.once('moveend', () => {
           if (introDone) return
           introDone = true

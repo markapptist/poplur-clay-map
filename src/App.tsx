@@ -21,6 +21,7 @@ import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGat
 import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
 import ClayMuteButton from './ClayMuteButton'
+import PermissionAlert from './PermissionAlert'
 import styles from './App.module.css'
 
 
@@ -1003,38 +1004,30 @@ export default function App() {
       />
 
       {show2DNotice && (
-        <div role="dialog" aria-modal="true" aria-labelledby="map-mode-title" style={{
-          position: 'absolute', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center',
-          padding: 24, background: 'rgba(24, 8, 19, .58)', backdropFilter: 'blur(8px)',
-        }}>
-          <div style={{
-            width: 'min(420px, 100%)', padding: 24, borderRadius: 28,
-            background: '#f7d7e8', color: '#351329', border: '3px solid rgba(255,255,255,.75)',
-            boxShadow: '0 18px 50px rgba(58, 8, 40, .34)',
-          }}>
-            <h2 id="map-mode-title" style={{ margin: 0, fontSize: 25 }}>Poplur Map is using 2D</h2>
-            <p style={{ fontWeight: 650, lineHeight: 1.45 }}>
-              This phone may not run the 3D Poplur Map smoothly, so we opened the faster clay 2D map.
-              Posts, search, directions, weather and map tools still work the same.
-            </p>
-            <p style={{ fontSize: 14, opacity: .76 }}>You can try 3D anytime in Settings.</p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => {
+        <PermissionAlert
+          icon="location"
+          label="2D map notice"
+          title="Poplur Map is using 2D"
+          copy="This phone may not run the 3D Poplur Map smoothly, so we opened the faster clay 2D map. Posts, search, directions, weather and map tools still work the same. You can try 3D anytime in Settings."
+          choices={[
+            {
+              label: 'Try 3D',
+              onPick: () => {
                 setMapMode('3d')
                 mark2DNoticeSeen()
                 window.location.reload()
-              }} style={{ padding: '11px 15px', borderRadius: 999, border: 0, background: '#fff', fontWeight: 800 }}>
-                Try 3D
-              </button>
-              <button type="button" onClick={() => {
+              },
+            },
+            {
+              label: 'Keep 2D',
+              onPick: () => {
+                setMapMode('2d')
                 mark2DNoticeSeen()
                 setShow2DNotice(false)
-              }} style={{ padding: '11px 15px', borderRadius: 999, border: 0, background: '#ff2d96', color: '#fff', fontWeight: 850 }}>
-                Keep 2D
-              </button>
-            </div>
-          </div>
-        </div>
+              },
+            },
+          ]}
+        />
       )}
 
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
@@ -1066,17 +1059,9 @@ export default function App() {
           It had never been mounted, so every weather change was invisible. */}
       <WeatherFX mode={weatherMode} />
 
-      {/* Top right, level with the sound mark: search, and jump to where you
-          actually are. */}
+      {/* Top right, level with the sound mark: location stays nearest the
+          centered title while Search sits on the protected outer edge. */}
       <div className={styles.mapTools}>
-        <ClayCornerButton
-          kind="search"
-          label={searchOpen ? 'Close search' : 'Search places'}
-          size={56}
-          still
-          activateOnClick
-          onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
-        />
         <ClayCornerButton
           kind="locate"
           label="Go to my location"
@@ -1093,6 +1078,14 @@ export default function App() {
               { enableHighAccuracy: true, timeout: 8000 },
             )
           }}
+        />
+        <ClayCornerButton
+          kind="search"
+          label={searchOpen ? 'Close search' : 'Search places'}
+          size={56}
+          still
+          activateOnClick
+          onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
         />
       </div>
 

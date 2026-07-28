@@ -17,6 +17,15 @@ import PermissionAlert from './PermissionAlert'
 // transparent hole so it shows through, while the approved chrome/icons here
 // drive the native camera over the bridge.
 const NATIVE_SHELL = isNativeShell()
+// Only the iOS host currently mounts a camera surface behind the web view.
+// Android's post-login host is a WebView plus the capture intents; there is no
+// behind-WebView preview to reveal. Treating it as an iOS hole makes A03 show a
+// black/transparent camera page, so Android keeps the supplied clay viewfinder
+// visible while its native shutter/record actions remain bridged.
+const ANDROID_SHELL = typeof window !== 'undefined' && Boolean(
+  (window as unknown as { PoplurNative?: unknown }).PoplurNative,
+)
+const NATIVE_CAMERA_PREVIEW = NATIVE_SHELL && !ANDROID_SHELL
 
 /** A recording can run for a minute. */
 export const MAX_RECORD_MS = 60_000
@@ -324,7 +333,7 @@ export default function Camera({
   // Punch the transparent hole for the native viewfinder while the live page
   // is front (native shells) — the roll is a normal opaque screen.
   useEffect(() => {
-    if (!NATIVE_SHELL || page !== 'live') return
+    if (!NATIVE_CAMERA_PREVIEW || page !== 'live') return
     document.documentElement.classList.add('camera-live')
     return () => document.documentElement.classList.remove('camera-live')
   }, [page])
@@ -356,7 +365,7 @@ export default function Camera({
   // a second camera to show the same picture, and one camera is all there is.
   const live = (key: string, real: boolean) => (
     <section key={key} className={styles.cameraFull} aria-label="Camera preview twin">
-      {!NATIVE_SHELL && real && (
+      {!NATIVE_CAMERA_PREVIEW && real && (
         <video
           ref={videoRef}
           className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
@@ -371,7 +380,7 @@ export default function Camera({
         />
       )}
       {/* The camera refused, or there is none: the clay world stands in. */}
-      {!NATIVE_SHELL && !(real && streamOn) && (
+      {!NATIVE_CAMERA_PREVIEW && !(real && streamOn) && (
         <img
           className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
           src="clay_buildings.png"
