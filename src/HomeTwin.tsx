@@ -9,6 +9,7 @@ import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
+import ClayPhonePop from './ClayPhonePop'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, preloadPop } from './pop'
 import { onCameraStore, selectedCount } from './cameraStore'
@@ -706,6 +707,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* The cube is the persistent navigator — visible on every tab, floating
           over whatever content is active. Its face tracks the current tab. */}
       <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`} />
+      <ClayPhonePop visible={cubeIntoPhone} />
       <div
         data-poplur-cube
         className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
