@@ -9,6 +9,7 @@ import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
+import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, preloadPop } from './pop'
 import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
@@ -168,27 +169,27 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
   const [permissionQueue, setPermissionQueue] = useState<PostLoginPermission[]>(initialPostLoginPermissions)
   const activePermission = permissionQueue[0] ?? null
+  const uiRecoveryKey = useUIRecoveryWatchdog()
   const finishPermission = useCallback(() => {
     setPermissionQueue(queue => queue.slice(1))
   }, [])
   const allowLocation = useCallback((scope: 'once' | 'whileUsing') => {
     playPop()
-    if (isNativeShell()) {
-      postNativeEvent({ type: 'requestLocation', scope })
-    } else if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        () => {},
-        () => {},
-        { enableHighAccuracy: true, timeout: 12000, maximumAge: 300000 },
-      )
+    // The clay card is the only startup permission UI. The native shell may
+    // still request a real permission later, when a feature actually needs it,
+    // but an Allow here must never stack a system dialog on top of this card.
+    if (activePermission && isNativeShell()) {
+      postNativeEvent({ type: 'permissionHandled', permission: activePermission, granted: true, scope })
     }
     finishPermission()
-  }, [finishPermission])
+  }, [activePermission, finishPermission])
   const allowPhotos = useCallback(() => {
     playPop()
-    if (isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
+    if (activePermission && isNativeShell()) {
+      postNativeEvent({ type: 'permissionHandled', permission: activePermission, granted: true })
+    }
     finishPermission()
-  }, [finishPermission])
+  }, [activePermission, finishPermission])
   const denyPermission = useCallback(() => {
     playPop()
     if (activePermission && isNativeShell()) {
@@ -360,7 +361,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     const send = () => {
       const audible = activeTab === 'map' && !isGateMuted() && !overlayOpen
-      mapFrameRef.current?.contentWindow?.postMessage({ gcAudio: audible ? 'on' : 'off' }, '*')
+      mapFrameRef.current?.contentWindow?.postMessage(
+        audible ? { gcAudio: 'on' } : { gcAudio: 'off', type: 'poplur-audio-stop' },
+        '*',
+      )
     }
     send()
     return onGateChange(send)
@@ -525,6 +529,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   return (
     <section
       className={styles.home}
+      data-poplur-watchdog={chromeFaded ? 'off' : 'on'}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
       {/* The map iframe mounts only while the Map tab is front. CSS cannot make
@@ -629,8 +634,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
-        <div className={styles.chanSlot}>
+        <div className={styles.chanSlot} data-poplur-channel-arrows>
           <ClayChannelArrows
+            key={`channel-arrows-${uiRecoveryKey}`}
             size={cubeSize}
             number={activeTab === 'map' ? mapPostIdx + 1 : CHANNELS[chanIndex].number}
             // The camera's two pages are not channels. The slot shows what the
@@ -701,6 +707,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           over whatever content is active. Its face tracks the current tab. */}
       <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`} />
       <div
+        data-poplur-cube
         className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
@@ -709,6 +716,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           onAnimationEnd={e => { if (e.animationName.includes('Pop')) setPopping(false) }}
         >
           <CubeTab3D
+            key={`cube-${uiRecoveryKey}`}
             size={cubeSize}
             targetTab={activeTab}
             onFaceChange={tab => { playPop(); setActiveTab(tab) }}

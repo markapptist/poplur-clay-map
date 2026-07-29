@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useSyncExternalStore }
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
-import { hasAudioFocus, onAudioFocusChange, registerAudioOwner, requestAudioFocus } from './audioFocus'
+import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -460,7 +460,11 @@ export default function FeedTwin({
       // The radio or the map holding the floor keeps the picture running and
       // takes the sound: a feed you can see but not hear beats a feed that
       // stops dead behind another voice.
-      const audible = !isGateMuted() && hasAudioFocus('feed')
+      // Feed is front-most whenever this component is mounted. Claim the
+      // shared floor before unmuting so a map/radio source cannot leak into the
+      // first frame while its own stop callback is still running.
+      requestAudioFocus('feed')
+      const audible = !isGateMuted() && currentAudioOwner() === 'feed'
       video.muted = !audible
       video.volume = 0.85
       if (audible) requestAudioFocus('feed')
@@ -477,7 +481,9 @@ export default function FeedTwin({
       const video = adVideoRef.current
       if (!video || suppressedRef.current) return
       // Someone else took the floor — go quiet without stopping the picture.
-      video.muted = isGateMuted() || !hasAudioFocus('feed')
+      video.muted = !mediaUnlockedRef.current
+        || isGateMuted()
+        || currentAudioOwner() !== 'feed'
     })
     // The feed is a voice like any other: while it is the one sounding, the
     // radio and the map stop rather than layer over it.
@@ -492,6 +498,7 @@ export default function FeedTwin({
       offGate()
       offFocus()
       unregister()
+      releaseAudioFocus('feed')
     }
   }, [adSrc])
 
@@ -626,8 +633,17 @@ export default function FeedTwin({
   useEffect(() => {
     const video = adVideoRef.current
     if (!video) return
-    if (suppressed) { video.muted = true; video.pause() }
-    else { video.muted = isGateMuted(); void video.play().catch(() => {}) }
+    if (suppressed) {
+      video.muted = true
+      video.pause()
+      releaseAudioFocus('feed')
+    } else {
+      if (mediaUnlockedRef.current) requestAudioFocus('feed')
+      video.muted = !mediaUnlockedRef.current
+        || isGateMuted()
+        || currentAudioOwner() !== 'feed'
+      void video.play().catch(() => {})
+    }
   }, [suppressed, adSrc])
 
   const [c0, c1, c2] = ch.theme

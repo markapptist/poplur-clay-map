@@ -625,10 +625,12 @@ export default function HoldMenuTwin({
                 }
                 activateItem(it)
               }}
-              onPointerDown={() => beginHold(it)}
+              onPointerDown={e => { e.preventDefault(); beginHold(it) }}
               onPointerUp={endHold}
               onPointerLeave={endHold}
               onPointerCancel={endHold}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation() }}
+              onDragStart={e => e.preventDefault()}
               className={styles.tile}
               data-favourite={favourite === it.title ? 'true' : undefined}
               style={{

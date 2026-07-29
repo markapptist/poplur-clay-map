@@ -629,6 +629,11 @@ export default function App() {
   useEffect(() => {
     const sync = () => { applySoundState(soundRequestedRef.current) }
     const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'poplur-audio-stop') {
+        mapAudioFrontRef.current = false
+        applySoundState(false)
+        return
+      }
       if (typeof event.data?.gcAudio !== 'string') return
       mapAudioFrontRef.current = event.data.gcAudio === 'on'
       sync()

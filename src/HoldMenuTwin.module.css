@@ -10,6 +10,9 @@
   animation: menuIn 0.36s cubic-bezier(0.34, 1.4, 0.64, 1) both;
   /* Sits above the active tab without dimming or recolouring it. */
   z-index: 200;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .subscreenStage {
@@ -135,6 +138,10 @@
   cursor: pointer;
   will-change: transform, opacity;
   -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 /* Icons float directly over the active tab. The layered clay shadow gives them
@@ -170,6 +177,8 @@
   object-position: center;
   user-select: none;
   -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  pointer-events: none;
 }
 
 .label, .labelOn {

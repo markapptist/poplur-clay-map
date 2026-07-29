@@ -265,7 +265,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   }, [size])
 
   return (
-    <div style={{ position: 'relative', width: size, height: size }}>
+    <div
+      data-cube-renderer={glFailed ? 'failed' : 'ready'}
+      style={{ position: 'relative', width: size, height: size }}
+    >
       <canvas
         ref={canvasRef}
         style={{ width: size, height: size, touchAction: 'none', cursor: 'grab', visibility: glFailed ? 'hidden' : 'visible' }}
