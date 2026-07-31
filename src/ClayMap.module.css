@@ -398,40 +398,6 @@
   -webkit-user-drag: none;
 }
 
-/* Clay sun and moon hanging in space beside the globe */
-.sunBody {
-  position: absolute;
-  top: 96px;
-  right: 14px;
-  width: 76px;
-  z-index: 8;
-  pointer-events: none;
-  filter: drop-shadow(0 0 18px rgba(255, 217, 77, 0.7));
-  animation: celestialFloat 6s ease-in-out infinite;
-}
-
-.moonBody {
-  position: absolute;
-  top: 96px;
-  left: 14px;
-  width: 58px;
-  z-index: 8;
-  pointer-events: none;
-  filter: drop-shadow(0 0 14px rgba(232, 228, 240, 0.5));
-  animation: celestialFloat 7s ease-in-out infinite;
-}
-
-.sunBody svg, .moonBody svg { width: 100%; height: auto; display: block; }
-
-@keyframes celestialFloat {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sunBody, .moonBody { animation: none; }
-}
-
 /* Fly-through clouds between globe and street zoom */
 .cloudLayer {
   position: absolute;
@@ -480,14 +446,18 @@
   --zoom-thumb-size: 64px;
   position: absolute;
   touch-action: none;
-  right: 4px;
+  /* Off the bezel. At 4px the thumb sat in the strip iOS reserves for its own
+     edge gestures (back-swipe, Control Center), so half the grabs went to the
+     OS instead of the slider — and the rest were made with the side of a
+     thumb that was already off the screen. */
+  right: 12px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 26;
   /* Was a 44px column with a 200px rail — too small to hit, let alone drag, on
-     a phone. Now a full-height rail with a 72px-wide touch column. */
+     a phone. Now a full-height rail with a wide touch column. */
   height: min(56vh, 430px);
-  width: 92px;
+  width: 132px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -503,7 +473,11 @@
      every attempt to lengthen this slider did nothing. */
   flex: 0 0 auto;
   width: min(56vh, 430px);
-  height: 76px;
+  /* The input is rotated upright, so its HEIGHT is how wide the touchable band
+     is — the one number that decides whether a thumb lands on this thing. The
+     rail and the knob are drawn inside it and are unchanged; this only grows
+     the invisible catchment around them. */
+  height: 116px;
   transform: rotate(-90deg);
   background: transparent;
   cursor: pointer;
