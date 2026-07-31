@@ -349,7 +349,14 @@ export default function Camera({
     bindActions?.({
       photo: capturePhoto,
       video: toggleVideo,
-      detect: () => setDetectOn(!isDetectOn()),
+      detect: () => {
+        const next = !isDetectOn()
+        setDetectOn(next)
+        // The native shells own the real detector; the web store only drives
+        // the browser overlay. Without this the DETECT toggle looked like it
+        // worked and changed nothing on a device.
+        if (isNativeShell()) postNativeEvent({ type: 'cameraControl', control: 'detect', on: next })
+      },
       ar: () => setArOpen(v => !v),
       // Going live hands the LIVE channel this camera's own stream — the feed
       // plays the broadcast itself, not a recording of it.
