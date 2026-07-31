@@ -225,13 +225,20 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
           yaw = springTarget
           vel = 0
           springTarget = null
-          const tab = frontTab(yaw)
-          if (tab !== lastTab) {
-            lastTab = tab
-            targetTabRef.current = tab
-            callbacksRef.current.onFaceChange(tab)
-          }
         }
+      }
+
+      // Commit the moment the new face WINS the front, not when the cube has
+      // finished settling on it. frontTab() rounds, so it flips at the halfway
+      // point of the quarter turn — past 45° that face is the one you are
+      // looking at, and waiting for the spring (overshoot included) to come to
+      // rest made the cube feel like it was asking permission. The screen is
+      // already changing under a cube that is still turning.
+      const front = frontTab(yaw)
+      if (front !== lastTab) {
+        lastTab = front
+        targetTabRef.current = front
+        callbacksRef.current.onFaceChange(front)
       }
 
       if (needsRender) {

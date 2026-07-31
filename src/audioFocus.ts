@@ -27,14 +27,70 @@ export function registerAudioOwner(owner: AudioOwner, stop: Stop): () => void {
   }
 }
 
-/** Take the floor: every other registered surface is stopped. */
+// ── Across documents ──────────────────────────────────────────────────────
+// The map — and therefore the radio, the region bed and the weather — runs in
+// an IFRAME. Module state does not cross a document boundary, so the feed
+// asking for focus in the parent silenced the parent's owners and left the
+// radio playing happily in the child. That is the radio you can still hear
+// when the feed launches: not a missing rule, a rule enforced in one room.
+//
+// So the claim is broadcast. Every frame silences its own owners when someone
+// elsewhere takes the floor. Messages are shape-checked rather than
+// origin-checked because these frames legitimately differ in origin (http in
+// dev, poplur-clay:// in the app shell, blob/file in others).
+
+const CHANNEL = 'poplur.audioFocus'
+
+interface FocusMessage { [CHANNEL]: AudioOwner | null }
+
+function isFocusMessage(data: unknown): data is FocusMessage {
+  return !!data && typeof data === 'object' && CHANNEL in (data as Record<string, unknown>)
+}
+
+/** Every frame we can reach: our parent chain and any nested iframes. */
+function peers(): Window[] {
+  const out: Window[] = []
+  try { if (window.parent && window.parent !== window) out.push(window.parent) } catch { /* cross-origin */ }
+  try { if (window.top && window.top !== window && window.top !== window.parent) out.push(window.top) } catch { /* ignore */ }
+  for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+    const w = (frame as HTMLIFrameElement).contentWindow
+    if (w) out.push(w)
+  }
+  return out
+}
+
+function broadcast(owner: AudioOwner | null) {
+  for (const peer of peers()) {
+    try { peer.postMessage({ [CHANNEL]: owner }, '*') } catch { /* frame went away */ }
+  }
+}
+
+/** Silence everything this document owns, without echoing the claim back. */
+function silenceLocal(except?: AudioOwner) {
+  for (const [other, stop] of owners) {
+    if (other === except) continue
+    try { stop() } catch { /* a surface that can't stop must not block the one starting */ }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (!isFocusMessage(e.data)) return
+    const owner = e.data[CHANNEL]
+    // Somebody in another frame is sounding. Nothing here may be, and this
+    // document holds no claim it could later think it still has.
+    current = null
+    silenceLocal(owner ?? undefined)
+    listeners.forEach(cb => cb(null))
+  })
+}
+
+/** Take the floor: every other registered surface is stopped, in every frame. */
 export function requestAudioFocus(owner: AudioOwner): void {
   if (current === owner) return
   current = owner
-  for (const [other, stop] of owners) {
-    if (other === owner) continue
-    try { stop() } catch { /* a surface that can't stop must not block the one starting */ }
-  }
+  silenceLocal(owner)
+  broadcast(owner)
   listeners.forEach(cb => cb(current))
 }
 
