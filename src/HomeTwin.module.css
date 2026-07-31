@@ -649,6 +649,15 @@
    behind it is fully readable; any touch brings it straight back. Fading out is
    slow and calm, coming back is immediate — waiting for a fade-in when you have
    just touched the screen feels broken. */
+/* Fully out of the way for a modal (the post composer), not just faded: the
+   cube was overlapping its Continue button and the radius readout was printing
+   through its filter row. */
+.chromeHidden {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
 .chromeIdle {
   opacity: 0.1;
   transition: opacity 0.9s ease;

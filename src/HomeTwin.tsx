@@ -16,6 +16,12 @@ import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
+import { initialMapMode, type PoplurMapMode } from './mapMode'
+import {
+  readMapTourTopics,
+  writeMapTourTopics,
+  type MapTourTopic,
+} from './mapTourPreferences'
 
 const KM_TO_MI = 0.621371
 
@@ -234,6 +240,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // BACK afterwards on purpose: the cube is the way out of a subscreen, so a
   // flourish that left it gone would strand you on the phone screen.
   const [cubeIntoPhone, setCubeIntoPhone] = useState(false)
+  // The post composer is a full-screen modal, but it lives inside .contentLayer
+  // (z-index 4) so it can never stack above the home chrome at 260 — the radius
+  // readout, channel arrows and cube drew straight over it, with the cube
+  // sitting on top of the Continue button. Raising the composer cannot work
+  // from inside a clamped stacking context, so the chrome stands down instead.
+  const [composerOpen, setComposerOpen] = useState(false)
+  const handleComposingChange = useCallback((open: boolean) => setComposerOpen(open), [])
   // Cleared on a timer rather than onAnimationEnd: the wrapper also carries the
   // idle-fade transition and the cube's own hover keyframes bubble through it,
   // and in practice the flag was surviving the flourish — which meant the class
@@ -303,6 +316,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
       if (event.data.type === 'poplur-map-tour') setMapTourOn(Boolean(event.data.on))
+      if (
+        event.data.type === 'poplur-map-mode'
+        && (event.data.mode === '2d' || event.data.mode === '3d')
+      ) {
+        setLiveMapMode(event.data.mode)
+      }
       if (event.data.type === 'poplur-map-ready') {
         setMapReady(true)
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
@@ -347,6 +366,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // vanished — so the fade only applies while a subscreen is covering the app.
   const chromeFaded = chromeIdle && overlayOpen
   const [mapTourOn, setMapTourOn] = useState(false)
+  const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>(() => initialMapMode())
+  const [mapTourTopics, setMapTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
+  const handleMapTourTopicsChange = useCallback((topics: MapTourTopic[]) => {
+    const next = writeMapTourTopics(topics)
+    setMapTourTopics(next)
+    mapFrameRef.current?.contentWindow?.postMessage({
+      type: 'poplur-map-action',
+      action: 'setTourTopics',
+      topics: next,
+    }, '*')
+  }, [])
+
+  // The map is an iframe and can remount on low-memory hosts. Re-send the
+  // checklist whenever it becomes ready so it never falls back to all places.
+  useEffect(() => {
+    if (!mapReady) return
+    mapFrameRef.current?.contentWindow?.postMessage({
+      type: 'poplur-map-action',
+      action: 'setTourTopics',
+      topics: mapTourTopics,
+    }, '*')
+  }, [mapReady, mapTourTopics])
   // A spot picked on the map to post to ("Post here"), pending until the next
   // capture goes through the composer.
   const [postTarget, setPostTarget] = useState<{ lat: number; lng: number; radiusKm?: number } | null>(null)
@@ -564,6 +605,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )}
         {activeTab === 'post' && (
           <Camera
+            onComposingChange={handleComposingChange}
             step={cameraStep}
             onCloseRoll={() => setCameraStep(s => s - 1)}
             bindActions={actions => { cameraActionsRef.current = actions }}
@@ -632,7 +674,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           floated and the arrows and radius label it sits between vanished
           underneath. The whole HUD is one piece of home chrome. */}
       <div
-        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
+        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${composerOpen ? ` ${styles.chromeHidden}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
@@ -656,9 +698,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             widget competing for the slot. */}
         <div className={styles.statStack}>
           {recordMs != null && (
-            <div className={`${styles.statCard} ${styles.recCard}`} aria-label="Recording">
-              <span className={styles.statLabel}>● REC</span>
-              <span className={`${styles.statValue} ${styles.recValueShader}`}>
+            <div className={styles.statCard} aria-label="Recording">
+              <span className={styles.statLabel}>RECORDING ◆</span>
+              <span className={`${styles.statValue} ${styles.radiusValueShader}`}>
                 {`${Math.floor(recordMs / 60000)}:${String(Math.floor(recordMs / 1000) % 60).padStart(2, '0')}`}
               </span>
               <span className={styles.statSub}>
@@ -706,11 +748,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       {/* The cube is the persistent navigator — visible on every tab, floating
           over whatever content is active. Its face tracks the current tab. */}
-      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`} />
+      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${composerOpen ? ` ${styles.chromeHidden}` : ''}`} />
       <ClayPhonePop visible={cubeIntoPhone} />
       <div
         data-poplur-cube
-        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
+        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${composerOpen ? ` ${styles.chromeHidden}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
@@ -780,6 +822,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             )
           }}
           tourOn={mapTourOn}
+          mapMode={liveMapMode}
+          mapTourTopics={mapTourTopics}
+          onMapTourTopicsChange={handleMapTourTopicsChange}
           onSubscreenChange={handleSubscreenChange}
           bindGoBack={fn => { goBackRef.current = fn }}
         />

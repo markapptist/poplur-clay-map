@@ -54,8 +54,8 @@ const mmss = (ms: number) => {
 //
 // The viewfinder is REAL where the browser allows it (getUserMedia), because
 // the capture, the recording and — next — the AR filters all have to act on an
-// actual frame. Where the camera is refused or absent, the clay-world still
-// stands in so the chrome can still be designed against a plausible frame.
+// actual frame. Where the camera is refused or absent, the viewfinder stays
+// plainly unavailable and offers a retry instead of pretending a still is live.
 export default function Camera({
   step = 0,
   onCloseRoll,
@@ -64,6 +64,7 @@ export default function Camera({
   onDetectUser,
   postTarget,
   onPostTargetUsed,
+  onComposingChange,
 }: {
   step?: number
   onCloseRoll?: () => void
@@ -77,19 +78,30 @@ export default function Camera({
   postTarget?: ComposerTarget | null
   /** the pending map spot has been consumed (posted or cancelled) */
   onPostTargetUsed?: () => void
+  /** The composer is a modal — the home HUD must step aside while it is up. */
+  onComposingChange?: (open: boolean) => void
 }) {
   const [flash, setFlash] = useState(false)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
   const page: 'live' | 'roll' = ((step % 2) + 2) % 2 === 0 ? 'live' : 'roll'
+  const [cameraPermission, setCameraPermission] = useState<'ask' | 'granted' | 'denied'>(() => {
+    if (!NATIVE_SHELL) return 'granted'
+    try {
+      return window.localStorage.getItem('poplur.cameraPermission') === 'granted' ? 'granted' : 'ask'
+    } catch { return 'ask' }
+  })
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [streamOn, setStreamOn] = useState(false)
+  const [cameraFailed, setCameraFailed] = useState(false)
+  const [streamRequest, setStreamRequest] = useState(0)
   // the white bloom of a shutter — and the front camera's flash, which IS the
   // screen going bright
   const [bloom, setBloom] = useState(false)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
+  const nativeRecordingRef = useRef(false)
   const [recStart, setRecStart] = useState<number | null>(null)
 
   // Shared with the hold menu, so the tile and the model can never disagree.
@@ -104,6 +116,9 @@ export default function Camera({
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
+  useEffect(() => {
+    onComposingChange?.(Boolean(composing))
+  }, [composing, onComposingChange])
 
   // Native shells capture through the device camera and hand the finished
   // media back to this exact composer. Keeping the editor in the web layer
@@ -112,6 +127,8 @@ export default function Camera({
     const onNativeCapture = (event: Event) => {
       const media = (event as CustomEvent<ComposerMedia>).detail
       if (!media || (media.kind !== 'photo' && media.kind !== 'video') || !media.src) return
+      nativeRecordingRef.current = false
+      setRecStart(null)
       const capture = addCapture(media)
       setComposing({ kind: capture.kind, src: capture.src, length: capture.length })
     }
@@ -120,26 +137,39 @@ export default function Camera({
   }, [])
 
   // ── the live stream ──────────────────────────────────────────────────────
-  // Native shells show the real camera through a transparent hole, so the web
-  // stream is only for the browser.
+  // iOS shows its native camera through a transparent hole. Browser and
+  // Android use getUserMedia so the camera tab is a real live viewfinder,
+  // rather than the old clay-world placeholder.
   useEffect(() => {
-    if (NATIVE_SHELL || page !== 'live') return
+    if (NATIVE_CAMERA_PREVIEW || page !== 'live') return
+    if (ANDROID_SHELL && cameraPermission !== 'granted') return
     let cancelled = false
     const start = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 1280 } },
-          audio: true,
+          // Requesting microphone access here made a denied microphone hide an
+          // otherwise-authorized camera. Video recording can still proceed
+          // with the real camera track when audio is unavailable.
+          audio: false,
         })
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
         streamRef.current = stream
+        setCameraFailed(false)
         setStreamOn(true)
+        stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+          if (!cancelled) {
+            setStreamOn(false)
+            setCameraFailed(true)
+          }
+        }, { once: true })
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           void videoRef.current.play().catch(() => {})
         }
       } catch {
-        setStreamOn(false)   // refused or unavailable — the clay still stands in
+        setStreamOn(false)
+        setCameraFailed(true)
       }
     }
     void start()
@@ -153,7 +183,13 @@ export default function Camera({
       streamRef.current = null
       setStreamOn(false)
     }
-  }, [facing, page])
+  }, [facing, page, cameraPermission, streamRequest])
+
+  useEffect(() => {
+    const retry = () => setStreamRequest(value => value + 1)
+    window.addEventListener('poplur-camera-permission-granted', retry)
+    return () => window.removeEventListener('poplur-camera-permission-granted', retry)
+  }, [])
 
   // ── ML detection ─────────────────────────────────────────────────────────
   // Reads the real frame ~8 times a second. An interval, not rAF, for the same
@@ -177,9 +213,9 @@ export default function Camera({
   }, [detectOn, page, facing, streamOn, onDetectUser])
 
   // ── flash ────────────────────────────────────────────────────────────────
-  // Back camera: the real torch, where the device exposes it. Front camera: no
-  // torch exists on any phone, so the flash IS the screen — it blooms white at
-  // the moment of capture. Both are wired; neither is a no-op.
+  // Back camera: the real torch, where the device exposes it. Front camera:
+  // screen flash is armed separately after switching cameras; a back-camera
+  // flash choice must never carry across and light the front screen.
   const applyTorch = useCallback((on: boolean) => {
     const track = streamRef.current?.getVideoTracks()[0]
     if (!track) return
@@ -196,10 +232,15 @@ export default function Camera({
   // ── take a picture ───────────────────────────────────────────────────────
   const capturePhoto = useCallback(() => {
     playPop()
-    if (flash) { setBloom(true); window.setTimeout(() => setBloom(false), 220) }
-    postNativeEvent({ type: 'cameraShutter' })
+    if (flash && facing === 'user') {
+      setBloom(true)
+      window.setTimeout(() => setBloom(false), 220)
+    }
     const video = videoRef.current
-    if (!video || !video.videoWidth) return   // native shell / no stream: the shell captures
+    if (!video || !video.videoWidth) {
+      postNativeEvent({ type: 'cameraShutter' })
+      return
+    }
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
@@ -227,7 +268,7 @@ export default function Camera({
 
   const startVideo = useCallback(() => {
     const stream = streamRef.current
-    if (!stream) { postNativeEvent({ type: 'cameraControl', control: 'record' }); return }
+    if (!stream) return
     let mime = ''
     for (const candidate of ['video/mp4', 'video/webm;codecs=vp9', 'video/webm']) {
       if (MediaRecorder.isTypeSupported?.(candidate)) { mime = candidate; break }
@@ -252,6 +293,14 @@ export default function Camera({
   }, [])
 
   const toggleVideo = useCallback(() => {
+    if (NATIVE_SHELL && !streamRef.current) {
+      const nextRecording = !nativeRecordingRef.current
+      nativeRecordingRef.current = nextRecording
+      postNativeEvent({ type: 'cameraControl', control: 'record' })
+      setRecStart(nextRecording ? performance.now() : null)
+      playPop()
+      return
+    }
     if (recorderRef.current) stopVideo()
     else startVideo()
   }, [startVideo, stopVideo])
@@ -267,7 +316,17 @@ export default function Camera({
     // the ceiling is checked in here. An interval still fires when hidden.
     const tick = () => {
       const elapsed = performance.now() - recStart
-      if (elapsed >= MAX_RECORD_MS) { onRecordingChange?.(MAX_RECORD_MS); stopVideo(); return }
+      if (elapsed >= MAX_RECORD_MS) {
+        onRecordingChange?.(MAX_RECORD_MS)
+        if (nativeRecordingRef.current) {
+          nativeRecordingRef.current = false
+          postNativeEvent({ type: 'cameraControl', control: 'record' })
+          setRecStart(null)
+        } else {
+          stopVideo()
+        }
+        return
+      }
       onRecordingChange?.(elapsed)
     }
     tick()
@@ -278,7 +337,13 @@ export default function Camera({
   // A recording must not survive the screen — but a BROADCAST is meant to:
   // going live and then opening the feed to watch yourself is the point. It
   // ends when you end it.
-  useEffect(() => () => { recorderRef.current?.stop() }, [])
+  useEffect(() => () => {
+    recorderRef.current?.stop()
+    if (nativeRecordingRef.current) {
+      nativeRecordingRef.current = false
+      postNativeEvent({ type: 'cameraControl', control: 'record' })
+    }
+  }, [])
 
   useEffect(() => {
     bindActions?.({
@@ -342,12 +407,6 @@ export default function Camera({
   // grant is remembered the way the roll remembers its own, so the ask happens
   // once rather than on every visit to the tab. Browser twins never ask —
   // there is no native camera behind them to open.
-  const [cameraPermission, setCameraPermission] = useState<'ask' | 'granted' | 'denied'>(() => {
-    if (!NATIVE_SHELL) return 'granted'
-    try {
-      return window.localStorage.getItem('poplur.cameraPermission') === 'granted' ? 'granted' : 'ask'
-    } catch { return 'ask' }
-  })
   const needsCameraPermission = NATIVE_SHELL && cameraPermission === 'ask' && page === 'live'
   const allowCamera = () => {
     playPop()
@@ -379,14 +438,24 @@ export default function Camera({
           autoPlay
         />
       )}
-      {/* The camera refused, or there is none: the clay world stands in. */}
+      {/* Keep failures honest and recoverable: never substitute a clay still
+          for the live camera. */}
       {!NATIVE_CAMERA_PREVIEW && !(real && streamOn) && (
-        <img
-          className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
-          src="clay_buildings.png"
-          alt=""
-          draggable={false}
-        />
+        <div className={styles.camCameraUnavailable}>
+          {real && cameraFailed && (
+            <button
+              type="button"
+              className={styles.camRetry}
+              onClick={() => {
+                playPop()
+                setCameraFailed(false)
+                setStreamRequest(value => value + 1)
+              }}
+            >
+              OPEN CAMERA
+            </button>
+          )}
+        </div>
       )}
       {real && onAir && (
         <div className={styles.camLiveTag} aria-label="You are live">
@@ -399,8 +468,8 @@ export default function Camera({
         <DetectionOverlay detections={detections} mirrored={facing === 'user'} />
       )}
 
-      {/* Screen-flash edge glow when the flash is armed */}
-      {flash && <div className={styles.camFlashEdge} aria-hidden="true" />}
+      {/* Screen flash exists only on the front camera. The back uses its torch. */}
+      {flash && facing === 'user' && <div className={styles.camFlashEdge} aria-hidden="true" />}
       {/* …and the bloom at the instant of capture — the front camera's flash */}
       {bloom && <div className={styles.camBloom} aria-hidden="true" />}
 
@@ -416,6 +485,15 @@ export default function Camera({
         />
       </div>
       <img className={styles.camLogo} src="logo_text.png" alt="poplur" draggable={false} />
+      {real && detectOn && detections.length > 0 && (() => {
+        const detected = detections.find(item => item.user) ?? detections[0]
+        return (
+          <div className={styles.camDetectionTitle} role="status">
+            <span>{detected.user?.handle ?? detected.label.toUpperCase()}</span>
+            <small>{Math.round(detected.confidence * 100)}%</small>
+          </div>
+        )
+      })()}
       {real && arOpen && (
         <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
       )}
@@ -425,6 +503,8 @@ export default function Camera({
           kind="flip"
           label="Switch camera"
           onPress={() => {
+            setFlash(false)
+            applyTorch(false)
             setFacing(f => (f === 'user' ? 'environment' : 'user'))
             postNativeEvent({ type: 'cameraControl', control: 'flip' })
           }}
