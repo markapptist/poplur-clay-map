@@ -142,10 +142,84 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     setPlaying(p => !p)
   }
 
+  // ── the take: a real recording, not a drawn one ────────────────────────
+  // getUserMedia feeds both a MediaRecorder (what you keep) and an analyser
+  // (what you see). The waveform is sampled from the actual signal, so it goes
+  // flat when you stop talking — a drawn one keeps dancing into silence and
+  // tells you the mic is working when it isn't.
+  const streamRef = useRef<MediaStream | null>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<BlobPart[]>([])
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const levelTimer = useRef(0)
+  const [levels, setLevels] = useState<number[]>([])
+  const [takeUrl, setTakeUrl] = useState<string | null>(null)
+  const [micDenied, setMicDenied] = useState(false)
+  const takeAudio = useRef<HTMLAudioElement | null>(null)
+
+  const stopCapture = () => {
+    window.clearInterval(levelTimer.current)
+    recorderRef.current?.state === 'recording' && recorderRef.current.stop()
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+    analyserRef.current = null
+  }
+
+  useEffect(() => () => { stopCapture(); if (takeUrl) URL.revokeObjectURL(takeUrl) }, [takeUrl])
+
+  const startCapture = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      setMicDenied(false)
+
+      const ctx = new AudioContext()
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 256
+      ctx.createMediaStreamSource(stream).connect(analyser)
+      analyserRef.current = analyser
+      const buf = new Uint8Array(analyser.frequencyBinCount)
+      setLevels([])
+      levelTimer.current = window.setInterval(() => {
+        const a = analyserRef.current
+        if (!a) return
+        a.getByteTimeDomainData(buf)
+        let peak = 0
+        for (let i = 0; i < buf.length; i += 1) peak = Math.max(peak, Math.abs(buf[i] - 128) / 128)
+        setLevels(prev => [...prev.slice(-63), Math.max(4, peak * 140)])
+      }, 55)
+
+      chunksRef.current = []
+      const rec = new MediaRecorder(stream)
+      rec.ondataavailable = e => { if (e.data.size) chunksRef.current.push(e.data) }
+      rec.onstop = () => {
+        if (!chunksRef.current.length) return
+        const url = URL.createObjectURL(new Blob(chunksRef.current, { type: rec.mimeType }))
+        setTakeUrl(old => { if (old) URL.revokeObjectURL(old); return url })
+      }
+      rec.start()
+      recorderRef.current = rec
+      return true
+    } catch {
+      setMicDenied(true)      // refused or no mic — say so rather than pretend
+      return false
+    }
+  }
+
   const record = () => {
     playPop()
-    if (!recording) { requestAudioFocus('studio'); setRecMs(0) }
-    setRecording(r => !r)
+    if (recording) { stopCapture(); setRecording(false); return }
+    requestAudioFocus('studio')
+    setRecMs(0)
+    setRecording(true)
+    void startCapture().then(ok => { if (!ok) setRecording(false) })
+  }
+
+  const playTake = () => {
+    if (!takeUrl) return
+    playPop()
+    requestAudioFocus('studio')
+    takeAudio.current?.play().catch(() => {})
   }
 
   const beat = useMemo(() => {
@@ -300,12 +374,21 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             <span className={styles.cardTitle}>VOCAL RECORDER</span>
           </div>
 
-          <p className={styles.takeName}>Lead Vocal — Rap Take 1</p>
+          <p className={styles.takeName}>
+            Lead Vocal — Rap Take 1
+            {takeUrl && (
+              <button className={styles.playTake} type="button" onClick={playTake}>▶ PLAY</button>
+            )}
+            {micDenied && <span className={styles.micDenied}> · no microphone</span>}
+          </p>
           <div className={styles.takeWave} aria-hidden="true">
-            {Array.from({ length: 64 }, (_, i) => (
-              <i key={i} style={{ height: `${recording ? bar(recMs / 90, i) : bar(3, i) * 0.62}%` }} />
+            {/* The real signal while recording; the captured take's shape after.
+                Before either, a flat line — there is nothing to draw yet. */}
+            {(levels.length ? levels : Array.from({ length: 64 }, () => 4)).map((h, i) => (
+              <i key={i} style={{ height: `${Math.min(100, h)}%` }} />
             ))}
           </div>
+          {takeUrl && <audio ref={takeAudio} src={takeUrl} preload="auto" />}
 
           <div className={styles.recGrid}>
             <div className={styles.micWrap}>
