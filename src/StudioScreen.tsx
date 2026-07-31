@@ -57,6 +57,9 @@ const KEYS = [
   { name: 'F1', black: false }, { name: 'C1', black: false },
 ]
 const STEPS = 16
+// The take is a clip, not a session: 30 seconds, hard stop. Short enough to be
+// fearless, long enough for a hook — and exactly what the AI builder consumes.
+const MAX_TAKE_MS = 30_000
 
 const mmssms = (ms: number) => {
   const m = Math.floor(ms / 60000)
@@ -88,6 +91,17 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   const [cells, setCells] = useState<Set<string>>(
     () => new Set(['1:2', '1:6', '3:0', '3:8', '5:4', '5:12', '7:10']),
   )
+  // The studio is a pipeline, not a dashboard: the mic comes FIRST (record up
+  // to 30s), then the style question, then the AI builds the track, and only
+  // then does the editor open — with the song and your take already on the
+  // transport. Landing cold on a DAW full of empty lanes was the old, terrible
+  // version of this screen.
+  const [stage, setStage] = useState<'mic' | 'style' | 'studio'>('mic')
+  const [songUrl, setSongUrl] = useState<string | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [styleText, setStyleText] = useState('')
+  const [micArtOk, setMicArtOk] = useState(true)
+  const songAudio = useRef<HTMLAudioElement | null>(null)
 
   // The transport is a voice: starting playback takes the floor from the feed
   // and the radio, the same as any other sound in the app.
@@ -99,24 +113,171 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     return () => { unregister(); releaseAudioFocus('studio') }
   }, [])
 
-  // Playhead. An interval rather than rAF so it keeps time when the screen is
-  // not compositing — a transport that silently stops looks like a crash.
+  // ── the engine: the grid MAKES SOUND ─────────────────────────────────────
+  // Everything below used to be a picture of a DAW — a playhead interval over
+  // silence. It is now a WebAudio step sequencer, synthesized in code exactly
+  // the way mapRadio builds its rhythm bed (no samples, nothing fetched). A
+  // 25ms lookahead scheduler books notes ~120ms ahead on the audio clock, which
+  // is how GarageBand-style apps stay in time while React re-renders at its own
+  // pace. State the scheduler needs mid-bar (bpm, cells, mutes) is mirrored
+  // into refs so a slider move lands on the very next step, not the next bar.
+  const engineRef = useRef<{ ctx: AudioContext; master: GainNode } | null>(null)
+  const bpmRef = useRef(bpm)
+  const cellsRef = useRef(cells)
+  const audibleRef = useRef<(name: string) => boolean>(() => true)
+  useEffect(() => { bpmRef.current = bpm }, [bpm])
+  useEffect(() => { cellsRef.current = cells }, [cells])
+
+  const engine = () => {
+    if (!engineRef.current) {
+      const ctx = new AudioContext()
+      const master = ctx.createGain()
+      master.gain.value = 0.9
+      master.connect(ctx.destination)
+      engineRef.current = { ctx, master }
+    }
+    return engineRef.current
+  }
+  useEffect(() => () => { engineRef.current?.ctx.close().catch(() => {}) }, [])
+
+  // One synthesized voice per trigger. Short, percussive, clay-adjacent: the
+  // same building blocks as the radio bed so the app keeps one sonic family.
+  const voice = (name: string, at: number, freq = 220) => {
+    const { ctx, master } = engine()
+    const out = ctx.createGain()
+    out.connect(master)
+    const env = (peak: number, decay: number) => {
+      out.gain.setValueAtTime(0.0001, at)
+      out.gain.exponentialRampToValueAtTime(peak, at + 0.006)
+      out.gain.exponentialRampToValueAtTime(0.0001, at + decay)
+    }
+    const noise = (decay: number, filterHz: number, kind: BiquadFilterType) => {
+      const len = Math.ceil(ctx.sampleRate * decay)
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+      const data = buf.getChannelData(0)
+      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len)
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      const f = ctx.createBiquadFilter()
+      f.type = kind
+      f.frequency.value = filterHz
+      src.connect(f); f.connect(out)
+      src.start(at); src.stop(at + decay)
+    }
+    const tone = (type: OscillatorType, from: number, to: number, decay: number) => {
+      const o = ctx.createOscillator()
+      o.type = type
+      o.frequency.setValueAtTime(from, at)
+      if (to !== from) o.frequency.exponentialRampToValueAtTime(Math.max(1, to), at + decay * 0.8)
+      o.connect(out)
+      o.start(at); o.stop(at + decay)
+    }
+    switch (name) {
+      case 'Drum Loop': env(0.85, 0.16); tone('sine', 150, 44, 0.16); break            // kick
+      case 'Snare':     env(0.5, 0.14);  noise(0.14, 1800, 'bandpass'); break
+      case 'Hat':       env(0.32, 0.04); noise(0.04, 6500, 'highpass'); break
+      case '808':       env(0.7, 0.4);   tone('sine', freq / 2, freq / 2.1, 0.4); break
+      case 'Bass':      env(0.55, 0.22); tone('sawtooth', freq / 2, freq / 2, 0.22); break
+      case 'Melody':    env(0.4, 0.18);  tone('triangle', freq, freq, 0.18); break
+      case 'Chords':    env(0.22, 0.5);  tone('triangle', freq, freq, 0.5)
+                        ;                tone('triangle', freq * 1.5, freq * 1.5, 0.5)
+                        ;                tone('triangle', freq * 2, freq * 2, 0.5); break
+      default:          env(0.3, 0.12);  tone('square', freq, freq, 0.12)
+    }
+  }
+
+  // Row → pitch for the roll. KEYS lists C2 down to C1; A1 = 55Hz anchors it.
+  const rowHz = (row: number) => {
+    const SEMIS = [24, 23, 22, 21, 20, 19, 17, 12] // C2,B1,A#1,A1,G#1,G1,F1,C1 above C0=16.35
+    return 16.35 * Math.pow(2, SEMIS[row] / 12)
+  }
+
+  // The drum pattern is the genre's, not the roll's: the roll is melody/bass,
+  // the way FL splits the step sequencer from the piano roll.
+  const drumsAt = (step: number, g: string) => {
+    const kicks: Record<string, number[]> = {
+      Rap: [0, 7, 10], Trap: [0, 6, 10, 13], Drill: [0, 6, 11], House: [0, 4, 8, 12],
+      'R&B': [0, 10], Pop: [0, 8], Afrobeat: [0, 5, 8, 13],
+    }
+    const hits: string[] = []
+    if ((kicks[g] ?? kicks.Rap).includes(step)) hits.push('Drum Loop')
+    if (step === 4 || step === 12) hits.push('Snare')
+    if (g === 'Trap' || g === 'Drill' ? step % 1 === 0 && step % 4 !== 2 : step % 2 === 0) hits.push('Hat')
+    return hits
+  }
+
+  // Playhead + scheduler share one clock: the AudioContext's. The interval only
+  // paints; the audio itself is booked ahead on ctx.currentTime, so UI jank
+  // cannot make the beat stumble.
   const startedAt = useRef(0)
+  const nextStepRef = useRef({ step: 0, when: 0 })
   useEffect(() => {
     if (!playing) return
-    startedAt.current = performance.now() - pos * 32000
-    const id = window.setInterval(() => {
-      const elapsed = performance.now() - startedAt.current
-      setPos((elapsed % 32000) / 32000)
-    }, 60)
-    return () => window.clearInterval(id)
+    const { ctx } = engine()
+    void ctx.resume()
+    // The take rides the transport, GarageBand-style: press play and your
+    // recording comes in over the beat from the top, gated by the Lead Vocal
+    // lane's mute. playTake stays for auditioning the raw take alone.
+    const take = takeAudio.current
+    if (take && takeUrl && audibleRef.current('Lead Vocal')) {
+      take.currentTime = 0
+      void take.play().catch(() => {})
+    }
+    const song = songAudio.current
+    if (song && songUrl) {
+      song.currentTime = 0
+      void song.play().catch(() => {})
+    }
+    const stepDur = () => 60 / bpmRef.current / 4
+    const BARS = 8 // the arrangement strip spans 8 bars of the loop
+    startedAt.current = ctx.currentTime - pos * (16 * BARS) * stepDur()
+    nextStepRef.current = { step: Math.floor(((ctx.currentTime - startedAt.current) / stepDur())) % 16, when: ctx.currentTime + 0.06 }
+
+    const tick = window.setInterval(() => {
+      const horizon = ctx.currentTime + 0.12
+      while (nextStepRef.current.when < horizon) {
+        const { step, when } = nextStepRef.current
+        const ok = audibleRef.current
+        // With an AI track on the transport the synth bed stands down — the
+        // song IS the band. The roll stays live so edits still sound.
+        const bed = !songUrl
+        for (const d of bed ? drumsAt(step, genre) : []) {
+          // Snare and Hat live on the Drum Loop lane's mute; 808 has its own.
+          const lane = d === 'Snare' || d === 'Hat' ? 'Drum Loop' : d
+          if (ok(lane)) voice(d, when)
+        }
+        if (bed && step % 8 === 0 && ok('808')) voice('808', when, 55)
+        for (const id of cellsRef.current) {
+          const [row, cellStep] = id.split(':').map(Number)
+          if (cellStep !== step) continue
+          if (ok('Melody')) voice('Melody', when, rowHz(row))
+          if (ok('Bass') && row >= 5) voice('Bass', when, rowHz(row))
+        }
+        if (bed && step === 0 && ok('Chords')) voice('Chords', when, rowHz(0))
+        nextStepRef.current = { step: (step + 1) % 16, when: when + stepDur() }
+      }
+      const total = 16 * BARS * stepDur()
+      setPos(((ctx.currentTime - startedAt.current) % total) / total)
+    }, 25)
+    return () => { window.clearInterval(tick); take?.pause(); songAudio.current?.pause() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing])
+  }, [playing, genre])
 
   useEffect(() => {
     if (!recording) return
     const from = performance.now() - recMs
-    const id = window.setInterval(() => setRecMs(performance.now() - from), 50)
+    const id = window.setInterval(() => {
+      const ms = performance.now() - from
+      if (ms >= MAX_TAKE_MS) {
+        // Hard stop at 30s — the counter freezing at 0:30.00 IS the affordance.
+        setRecMs(MAX_TAKE_MS)
+        stopCapture()
+        setRecording(false)
+        setStage(prev => (prev === 'mic' ? 'style' : prev))
+        return
+      }
+      setRecMs(ms)
+    }, 50)
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recording])
@@ -130,6 +291,9 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
 
   const anySolo = Object.values(soloed).some(Boolean)
   const isAudible = (name: string) => (anySolo ? !!soloed[name] : !muted[name])
+  // The scheduler reads mutes mid-bar through this ref, so hitting M or S lands
+  // on the next step rather than waiting for the effect to re-run.
+  useEffect(() => { audibleRef.current = isAudible })
 
   const toggle = (map: Record<string, boolean>, set: (m: Record<string, boolean>) => void, key: string) => {
     playPop()
@@ -222,11 +386,147 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     takeAudio.current?.play().catch(() => {})
   }
 
+  // Mic-stage record control: one button, record → finish → next stage.
+  const micTap = () => {
+    playPop()
+    if (recording) {
+      stopCapture()
+      setRecording(false)
+      setStage('style')
+      return
+    }
+    requestAudioFocus('studio')
+    setRecMs(0)
+    setRecording(true)
+    void startCapture().then(ok => { if (!ok) setRecording(false) })
+  }
+
+  // The AI music stack. ElevenLabs Music — the same provider whose key slot the
+  // native app already carries for voices — builds a 30s instrumental from the
+  // style ask. No key or a failed call degrades HONESTLY: the editor still
+  // opens and says the clay band is backing you, instead of a spinner that lies.
+  const generateSong = async (style: string) => {
+    playPop()
+    setAiError(null)
+    setBuilding(0.04)
+    const key = import.meta.env.VITE_ELEVENLABS_KEY as string | undefined
+    if (!key) {
+      setAiError('No AI music key configured (VITE_ELEVENLABS_KEY) — the clay band will back you instead.')
+      setBuilding(0)
+      setStage('studio')
+      return
+    }
+    try {
+      const res = await fetch('https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128', {
+        method: 'POST',
+        headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: `${style || genre} instrumental, ${bpm} BPM, 30 seconds, radio-ready, space left for a lead vocal.`,
+          music_length_ms: MAX_TAKE_MS,
+        }),
+      })
+      if (!res.ok) throw new Error(`music API ${res.status}`)
+      const url = URL.createObjectURL(await res.blob())
+      setSongUrl(old => { if (old) URL.revokeObjectURL(old); return url })
+    } catch (e) {
+      setAiError(`The AI track failed (${e instanceof Error ? e.message : 'network'}) — the clay band will back you instead.`)
+    }
+    setBuilding(0)
+    setStage('studio')
+  }
+
   const beat = useMemo(() => {
     const totalBeats = 32000 / (60000 / bpm)
     const b = pos * totalBeats
     return { bar: Math.floor(b / 4) + 1, beat: Math.floor(b % 4) + 1 }
   }, [pos, bpm])
+
+  // ── stage 1: the mic. The session starts by SINGING, not by staring at
+  // lanes. One button, thirty seconds, then the style question. ─────────────
+  if (stage === 'mic') {
+    return (
+      <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
+        <div className={styles.micStage}>
+          {micArtOk ? (
+            /* studio_mic.png is the bedazzled Poplur microphone the user
+               supplied. Until the file lands in public/, fall back to the
+               supplied wheel icon rather than inventing art. */
+            <img
+              className={styles.micArt}
+              src="studio_mic.png"
+              alt="Poplur studio microphone"
+              draggable={false}
+              onError={() => setMicArtOk(false)}
+            />
+          ) : (
+            <img className={styles.micArtFallback} src="holdmenu/Mic.svg" alt="Microphone" draggable={false} />
+          )}
+          <div className={styles.micWave} aria-hidden="true">
+            {levels.slice(-40).map((h, i) => (
+              <span key={i} style={{ height: `${Math.min(100, h)}%` }} />
+            ))}
+          </div>
+          <div className={styles.micTime}>
+            {mmssms(recMs)} <span>/ 00:30:00</span>
+          </div>
+          <button className={recording ? `${styles.micBtn} ${styles.micBtnLive}` : styles.micBtn} type="button" onClick={micTap}>
+            {recording ? '■ FINISH' : '● RECORD'}
+          </button>
+          <span className={styles.micHint}>
+            {micDenied
+              ? 'Microphone refused — allow access, or skip and let the AI carry it.'
+              : recording ? 'Thirty seconds max. Make it count.' : 'Tap record and give it a hook.'}
+          </span>
+          <button className={styles.micSkip} type="button" onClick={() => { playPop(); setStage('style') }}>
+            SKIP — NO VOCAL
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── stage 2: the style ask. What are we making? Then the AI builds it and
+  // the editor opens with the track already on the transport. ───────────────
+  if (stage === 'style') {
+    return (
+      <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
+        <div className={styles.styleStage}>
+          <span className={styles.styleKicker}>POPLUR AI</span>
+          <h1 className={styles.styleTitle}>What are we making?</h1>
+          <div className={styles.chips}>
+            {GENRES.map(g => (
+              <button
+                key={g}
+                className={`${styles.chip}${genre === g ? ` ${styles.chipOn}` : ''}`}
+                type="button"
+                aria-pressed={genre === g}
+                onClick={() => { playPop(); setGenre(g) }}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+          <input
+            className={styles.styleInput}
+            value={styleText}
+            onChange={e => setStyleText(e.target.value)}
+            placeholder={`Describe it — moody ${genre.toLowerCase()} with heavy 808s…`}
+            aria-label="Describe the song you want"
+          />
+          {building > 0 ? (
+            <div className={styles.styleBuilding}>
+              <div className={styles.styleTrack}><div className={styles.styleFill} style={{ width: `${building * 100}%` }} /></div>
+              <span>Building your track…</span>
+            </div>
+          ) : (
+            <button className={styles.styleGo} type="button" onClick={() => void generateSong(styleText)}>
+              ✦ MAKE MY TRACK
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
@@ -302,6 +602,29 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </header>
+
+      {songUrl && <audio ref={songAudio} src={songUrl} preload="auto" />}
+      {aiError && <div className={styles.aiNotice} role="status">{aiError}</div>}
+      {nav === 'EXPORT' && (
+        <section className={styles.card} aria-label="Export">
+          <div className={styles.cardHead}>
+            <span className={styles.cardTitle}>SAVE</span>
+          </div>
+          <div className={styles.exportRow}>
+            {songUrl && (
+              <a className={styles.exportBtn} href={songUrl} download="poplur-track.mp3" onClick={() => playPop()}>
+                ⇩ Save track to phone
+              </a>
+            )}
+            {takeUrl && (
+              <a className={styles.exportBtn} href={takeUrl} download="poplur-take.webm" onClick={() => playPop()}>
+                ⇩ Save your take
+              </a>
+            )}
+            {!songUrl && !takeUrl && <span className={styles.exportEmpty}>Nothing to save yet — record a take or make a track.</span>}
+          </div>
+        </section>
+      )}
 
       <div className={styles.body}>
         {/* ── 2. playlist / arrangement ───────────────────────────────── */}

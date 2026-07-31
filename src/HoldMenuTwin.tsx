@@ -614,22 +614,13 @@ export default function HoldMenuTwin({
                 way out of a subscreen, including this placeholder. */}
           </div>
         )}
-        {/* The clay ✕ is the ONE way out of a subscreen. There used to be a
-            plain-DOM "‹ Back" chip beside it as a GPU-independent fallback,
-            because the ✕ is a WebGL canvas and iOS can drop a context under
-            pressure and leave it drawing nothing. Two controls for one job read
-            as clutter, and the fallback was not earning its place: on device it
-            did not respond at all, so it was providing the appearance of a
-            safety net rather than the thing itself. If the ✕ ever does come
-            back blank, fix it there rather than reinstating a second button. */}
-        <div className={styles.subscreenClose}>
-          <ClayCornerButton
-            kind="close"
-            label={`Close ${activeScreen.title}`}
-            size={50}
-            onPress={() => { playPop(); setActiveScreen(null) }}
-          />
-        </div>
+        {/* No close control here. The cube IS the back button for every
+            subscreen — it is bound as the universal back above (bindGoBack),
+            it is always on screen, and it is the one control the app teaches.
+            A per-screen ✕ was a second thing to learn and a second thing to
+            keep working; this had already lost its "‹ Back" companion for the
+            same reason. Anything that adds its own close button is fighting
+            this, not helping it. */}
       </div>
     )
   }

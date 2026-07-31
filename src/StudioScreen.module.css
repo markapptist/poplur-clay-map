@@ -812,3 +812,120 @@
 }
 
 .micDenied { color: #ff6b6b; font-weight: 800; }
+
+/* ── the staged flow: mic → style → editor ─────────────────────────────────
+   The session starts at the microphone, not at the lanes. Both stages sit on
+   the same near-black stage as the games boot so the pipeline feels like one
+   room with the lights coming up. */
+
+.micStage, .styleStage {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  text-align: center;
+  background:
+    radial-gradient(72% 54% at 50% 40%, rgba(246, 59, 154, 0.16), transparent 70%),
+    #07040c;
+}
+
+/* The bedazzled Poplur microphone (public/studio_mic.png, user-supplied). The
+   fallback is the wheel's own Mic icon — never invented art. */
+.micArt {
+  width: min(58vw, 250px);
+  height: auto;
+  filter: drop-shadow(0 22px 40px rgba(0, 0, 0, 0.65)) drop-shadow(0 0 34px rgba(246, 59, 154, 0.35));
+}
+.micArtFallback {
+  width: 110px; height: 110px;
+  opacity: 0.9;
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.6));
+}
+
+/* Live level bars under the mic — sampled from the real signal, same data as
+   the editor's waveform, so silence goes visibly flat. */
+.micWave {
+  display: flex; align-items: flex-end; gap: 3px;
+  width: min(70vw, 280px); height: 44px;
+}
+.micWave span {
+  flex: 1 1 0;
+  min-height: 4%;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #ff8ac6, #f63b9a);
+  box-shadow: 0 0 6px rgba(246, 59, 154, 0.5);
+}
+
+.micTime {
+  font: 900 24px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fff;
+  letter-spacing: 1px;
+}
+.micTime span { color: rgba(255, 255, 255, 0.4); font-size: 15px; }
+
+.micBtn {
+  padding: 16px 34px;
+  border: 0; border-radius: 999px;
+  font: 900 16px/1 system-ui, sans-serif; letter-spacing: 2px;
+  color: #fff; cursor: pointer;
+  background: linear-gradient(135deg, #ff5fa8, #f63b9a 55%, #c40f66);
+  box-shadow: 0 10px 24px rgba(246, 59, 154, 0.4), inset 0 2px 2px rgba(255, 255, 255, 0.45);
+}
+.micBtn:active { transform: scale(0.95); }
+.micBtnLive { animation: micPulse 1.1s ease-in-out infinite; }
+@keyframes micPulse {
+  0%, 100% { box-shadow: 0 10px 24px rgba(246, 59, 154, 0.4), 0 0 0 0 rgba(246, 59, 154, 0.5); }
+  50%      { box-shadow: 0 10px 24px rgba(246, 59, 154, 0.4), 0 0 0 14px rgba(246, 59, 154, 0); }
+}
+
+.micHint { font: 700 13px/1.4 system-ui, sans-serif; color: rgba(255, 255, 255, 0.6); max-width: 260px; }
+.micSkip {
+  margin-top: 4px; padding: 8px 14px;
+  border: 0; background: none; cursor: pointer;
+  font: 800 11px/1 system-ui, sans-serif; letter-spacing: 1.6px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.styleKicker { font: 900 11px/1 system-ui, sans-serif; letter-spacing: 3px; color: #ff8ac6; }
+.styleTitle { margin: 0; font: 900 28px/1.15 system-ui, "SF Pro Rounded", sans-serif; color: #fff; }
+.styleInput {
+  width: min(78vw, 320px);
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 14px;
+  background: rgba(255, 255, 255, 0.07); color: #fff;
+  font: 600 14px/1.2 system-ui, sans-serif;
+}
+.styleInput::placeholder { color: rgba(255, 255, 255, 0.35); }
+.styleGo {
+  padding: 15px 30px;
+  border: 0; border-radius: 999px; cursor: pointer;
+  font: 900 15px/1 system-ui, sans-serif; letter-spacing: 1.6px; color: #fff;
+  background: linear-gradient(135deg, #a44bff, #f63b9a);
+  box-shadow: 0 10px 24px rgba(164, 75, 255, 0.35), inset 0 2px 2px rgba(255, 255, 255, 0.4);
+}
+.styleGo:active { transform: scale(0.95); }
+.styleBuilding { display: grid; gap: 10px; justify-items: center; color: rgba(255, 255, 255, 0.7); font: 700 13px/1 system-ui, sans-serif; }
+.styleTrack { width: min(60vw, 240px); height: 6px; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, 0.14); }
+.styleFill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #fff, #f63b9a); transition: width 0.1s linear; }
+
+/* Honest state, not a toast: if the AI track failed the editor says so, in
+   place, until the next attempt. */
+.aiNotice {
+  margin: 10px 14px 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(246, 59, 154, 0.14);
+  border: 1px solid rgba(246, 59, 154, 0.4);
+  color: #ffd7ea;
+  font: 700 12px/1.4 system-ui, sans-serif;
+}
+
+.exportRow { display: grid; gap: 10px; }
+.exportBtn {
+  display: block; text-align: center; text-decoration: none;
+  padding: 14px 18px; border-radius: 14px;
+  font: 900 14px/1 system-ui, sans-serif; letter-spacing: 1px; color: #fff;
+  background: linear-gradient(135deg, #ff5fa8, #c40f66);
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.4);
+}
+.exportEmpty { font: 700 12px/1.4 system-ui, sans-serif; color: rgba(255, 255, 255, 0.5); }
