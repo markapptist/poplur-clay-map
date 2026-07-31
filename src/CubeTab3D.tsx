@@ -33,6 +33,50 @@ export interface CubeTab3DProps {
   size?: number
 }
 
+// ---- the cube has mass ----------------------------------------------------
+// It used to track your finger exactly and snap home with two hand-picked
+// spring constants, so it turned like a picture of a cube rather than a solid
+// object. This gives it real rotational dynamics about its vertical axis.
+//
+// The torques below are ABSOLUTE, deliberately not scaled by inertia. Deriving
+// every coefficient from I (k = Iw², c = 2zIw) is tempting and completely
+// wrong: torque/I then cancels I out and the mass does nothing at all. Tuned at
+// REFERENCE_MASS_KG — change CUBE_MASS_KG and it genuinely behaves differently,
+// because I moves while these do not.
+const CUBE_MASS_KG = 0.42
+const REFERENCE_MASS_KG = 0.42
+const CUBE_EDGE_M = 0.09
+/** Solid cube about a centre axis: I = m·a²/6. */
+const cubeInertia = (kg: number) => (kg * CUBE_EDGE_M * CUBE_EDGE_M) / 6
+const CUBE_INERTIA = cubeInertia(CUBE_MASS_KG)
+const I_REF = cubeInertia(REFERENCE_MASS_KG)
+
+/** The detent that pulls a face square-on once it has caught. */
+const DETENT_K = I_REF * 15 * 15
+const DETENT_C = 2 * 0.85 * I_REF * 15
+/** Bearing drag while spinning free. What bleeds a flick off. */
+const SPIN_DRAG = 2.5 * I_REF
+/** Below this the nearest face grabs. A spring-loaded detent only catches when
+ *  the dial is turning slowly enough; at speed the ball rides over the notches.
+ *  That is what lets a flick carry past faces AND still settle crisply — one
+ *  viscous coefficient cannot do both, it either kills the spin instantly or
+ *  rings in the well for seconds. Measured both before landing here. */
+const CATCH_SPEED = 4.5
+/** How much notch you still feel at speed, so a fast turn stays mechanical. */
+const RIDE_OVER = 0.12
+/** Your finger, coupled through a torsional spring so the cube trails it. */
+const GRIP_K = I_REF * 26 * 26
+const GRIP_C = 2 * 0.9 * I_REF * 26
+/** A face change asked for in code (tab switch): firmer, still overshoots. */
+const TURN_K = I_REF * 14 * 14
+const TURN_C = 2 * 0.62 * I_REF * 14
+
+/** Fixed sub-step so a long frame on a slow phone cannot blow the integrator
+ *  up — a 50ms frame against a stiff spring goes unstable in a single shot with
+ *  plain Euler, and the A03 produces plenty of those. Verified stable down to
+ *  5fps. */
+const PHYSICS_STEP = 1 / 240
+
 export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200 }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
@@ -88,6 +132,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     // ---- rotation state ----
     let yaw = -FACES.find(f => f.tab === targetTabRef.current)!.az
     let vel = 0
+    let gripYaw = 0
     let springTarget: number | null = null
     let dragging = false
     let disposed = false
@@ -150,7 +195,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       moved = false
       holdFired = false
       startX = lastX = e.clientX
-      startYaw = yaw
+      startYaw = gripYaw = yaw
       downTime = lastMoveTime = performance.now()
       vel = 0
       springTarget = null
@@ -168,11 +213,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       if (Math.abs(dx) > 3 && !moved) { moved = true; cancelHold() }
       if (!moved) return
       const now = performance.now()
-      const dt = Math.max(1, now - lastMoveTime) / 1000
-      // A short, forgiving drag should traverse a full face on phone screens.
-      const next = startYaw + dx * 0.017
-      vel = (next - yaw) / dt
-      yaw = next
+      // Your finger sets where the cube is being PULLED to, not where it is.
+      // The cube is dragged there by a torsional spring, so it trails the
+      // finger by an amount its inertia decides and keeps going when you let
+      // go — the whole point of giving it mass.
+      gripYaw = startYaw + dx * 0.017
       lastX = e.clientX
       lastMoveTime = now
       needsRender = true
@@ -188,11 +233,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         springTarget = Math.round(yaw / HALF_PI) * HALF_PI
         return
       }
-      // momentum decides which face we settle on (max one face past release)
-      const projected = yaw + vel * 0.14
-      const current = Math.round(yaw / HALF_PI)
-      const quarter = Math.max(current - 1, Math.min(current + 1, Math.round(projected / HALF_PI)))
-      springTarget = quarter * HALF_PI
+      // Nothing to compute. The cube is already spinning with whatever angular
+      // momentum the drag gave it; the detent and bearing friction decide where
+      // it comes to rest. A hard flick can now carry it past several faces,
+      // which the old "at most one face past release" clamp made impossible.
+      springTarget = null
       needsRender = true
     }
 
@@ -208,6 +253,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
 
     // ---- spring + render loop ----
     let last = performance.now()
+    let physicsAcc = 0
     let raf = 0
     const loop = (now: number) => {
       if (disposed) return
@@ -215,16 +261,42 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
 
-      if (!dragging && springTarget !== null) {
-        // underdamped spring: slight overshoot + settle, like the app
-        const accel = -90 * (yaw - springTarget) - 12 * vel
-        vel += accel * dt
-        yaw += vel * dt
-        needsRender = true
-        if (Math.abs(yaw - springTarget) < 0.002 && Math.abs(vel) < 0.02) {
-          yaw = springTarget
+      // ---- rotational dynamics -------------------------------------------
+      // Torque about the vertical axis, integrated on a fixed sub-step. Two
+      // regimes, because that is how a spring-loaded detent actually works:
+      // spinning fast it rides over the notches on bearing drag alone, and
+      // below CATCH_SPEED the nearest face grabs it and pulls it square.
+      physicsAcc += dt
+      let steps = 0
+      while (physicsAcc >= PHYSICS_STEP && steps < 40) {
+        physicsAcc -= PHYSICS_STEP
+        steps += 1
+        let torque: number
+        if (Math.abs(vel) < CATCH_SPEED) {
+          const nearest = Math.round(yaw / HALF_PI) * HALF_PI
+          torque = -DETENT_K * (yaw - nearest) - DETENT_C * vel
+        } else {
+          torque = -SPIN_DRAG * vel - DETENT_K * RIDE_OVER * Math.sin(4 * yaw) / 4
+        }
+        if (dragging && moved) {
+          // Your finger sets where the cube is PULLED to, not where it is. The
+          // lag while you drag, and the coast after you let go, are the weight.
+          torque += GRIP_K * (gripYaw - yaw) - GRIP_C * vel
+        } else if (springTarget !== null) {
+          torque += TURN_K * (springTarget - yaw) - TURN_C * vel
+        }
+        vel += (torque / CUBE_INERTIA) * PHYSICS_STEP
+        yaw += vel * PHYSICS_STEP
+      }
+      if (steps > 0) {
+        const restingHere = springTarget ?? Math.round(yaw / HALF_PI) * HALF_PI
+        if (!dragging && Math.abs(vel) < 0.02 && Math.abs(yaw - restingHere) < 0.01) {
+          // Park it exactly square so the render loop can go quiet.
+          yaw = restingHere
           vel = 0
           springTarget = null
+        } else {
+          needsRender = true
         }
       }
 
