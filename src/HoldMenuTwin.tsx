@@ -4,11 +4,15 @@ import { playPop } from './pop'
 import type { CubeTab } from './CubeTab3D'
 import ClayCornerButton from './ClayCornerButton'
 import { isDetectOn, onCameraStore } from './cameraStore'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { isIOSNativeShell, postNativeEvent } from './nativeBridge'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
 import GamesScreen from './GamesScreen'
+import MapShowMe from './MapShowMe'
+import AIChatScreen from './AIChatScreen'
+import StudioScreen from './StudioScreen'
+import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -40,7 +44,7 @@ interface Item {
    */
   nativeAction?: string
   /** performed on the live MAP behind the menu — no subscreen opens */
-  mapAction?: 'search' | 'locate' | 'directions' | 'tour'
+  mapAction?: 'search' | 'locate' | 'directions' | 'tour' | 'mapMode'
   /** dispatches an app event and dismisses — no subscreen opens. `voice` wakes
    *  the Poplur assistant (skipping the wake phrase); `notifications` springs
    *  down the real notifications dropdown owned by Profile. */
@@ -57,6 +61,8 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Search', title: 'SEARCH', screen: 'map-search', mapAction: 'search' },
     { icon: 'Search', title: 'CURRENT LOCATION', screen: 'map-locate', mapAction: 'locate' },
     { icon: 'Music', title: 'RADIO', screen: 'map-radio', native: true },
+    { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true, glyph: '✓' },
+    { icon: 'MapMode', title: '2D MAP', activeTitle: '3D MAP', screen: 'map-mode', mapAction: 'mapMode', glyph: '2D' },
     { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
@@ -82,10 +88,16 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The tile names what pressing it DOES, like CC does: with the model
     // running it reads DETECT OFF, and with it stopped, DETECT ON.
     { icon: 'Search', title: 'DETECT ON', activeTitle: 'DETECT OFF', toggle: 'detection', screen: 'camera-capture', action: 'detect' },
+    // CREATE opens the existing Poplur AI chat. iOS presents the native
+    // PoplurAIChatView; browser and Android use its interactive shared twin.
+    { icon: 'Create', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
     // Games is a working in-home screen on every target (including RN and
     // Android). Sending it to the old native-only route left it as a no-op on
     // those hosts, so it stays in the shared surface like News and TV Guide.
     { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true },
+    // STUDIO is the camera for sound: record a take, let the AI build it into
+    // a song, post it to your radius like any other capture.
+    { icon: 'Music', title: 'STUDIO', screen: 'camera-studio', native: true },
   ],
   profile: [
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', format: 'svg' },
@@ -168,6 +180,9 @@ export default function HoldMenuTwin({
   onAction,
   onMapAction,
   tourOn,
+  mapMode,
+  mapTourTopics,
+  onMapTourTopicsChange,
   onSubscreenChange,
   bindGoBack,
 }: {
@@ -177,6 +192,11 @@ export default function HoldMenuTwin({
   onMapAction?: (action: NonNullable<Item['mapAction']>) => void
   /** live tour state, reported by the map — the tile must not guess at it */
   tourOn?: boolean
+  /** live rendering mode, reported by the map after each mode change */
+  mapMode?: '2d' | '3d'
+  /** June-style checklist controlling which kinds of places the tour visits. */
+  mapTourTopics?: MapTourTopic[]
+  onMapTourTopicsChange?: (topics: MapTourTopic[]) => void
   /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the app */
   onSubscreenChange?: (open: boolean, screen?: string) => void
   /** Registers a "back one level" handler: closes an open subscreen, else the
@@ -189,6 +209,14 @@ export default function HoldMenuTwin({
   // The camera owns whether the model is running; the tile only reports it.
   const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
   const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).map(item => {
+    if (item.mapAction === 'mapMode') {
+      const is3D = mapMode === '3d'
+      return {
+        ...item,
+        title: is3D ? (item.activeTitle ?? item.title) : item.title,
+        glyph: is3D ? '3D' : '2D',
+      }
+    }
     // TOUR reads its label off the map's own state, so it says STOP TOUR for
     // as long as the tour is actually running — including a tour that started
     // itself at launch, which a local toggle would have got backwards.
@@ -310,9 +338,9 @@ export default function HoldMenuTwin({
       onClose()
       return
     }
-    // Inside the app shell, hand the tile to the native router so the real
-    // screen opens rather than a capture of it.
-    if (item.nativeAction && isNativeShell()) {
+    // iOS owns the real AI chat. Other hosts use the bundled interactive twin;
+    // Android does not have a matching native destination yet.
+    if (item.nativeAction && isIOSNativeShell()) {
       playPop()
       postNativeEvent({ type: 'holdMenuNavigate', action: item.nativeAction })
       onClose()
@@ -500,6 +528,17 @@ export default function HoldMenuTwin({
   }
 
   if (activeScreen) {
+    if (activeScreen.native && activeScreen.screen === 'map-show-me') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Choose map tour places">
+          <MapShowMe
+            selected={mapTourTopics ?? defaultMapTourTopics()}
+            onChange={topics => onMapTourTopicsChange?.(topics)}
+            onClose={() => { playPop(); onClose() }}
+          />
+        </div>
+      )
+    }
     // TV GUIDE is a real screen in the app, not a Rough Copy capture.
     if (activeScreen.native && activeScreen.screen === 'map-radio') {
       return (
@@ -524,8 +563,22 @@ export default function HoldMenuTwin({
     }
     if (activeScreen.native && activeScreen.screen === 'feed-games') {
       return (
-        <div className={styles.subscreenStage} role="dialog" aria-label="Games">
+        <div className={`${styles.subscreenStage} ${styles.gameStage}`} role="dialog" aria-label="Games">
           <GamesScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'camera-studio') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Studio">
+          <StudioScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'camera-ai-chat') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur AI chat">
+          <AIChatScreen onClose={() => { playPop(); onClose() }} />
         </div>
       )
     }
@@ -617,7 +670,7 @@ export default function HoldMenuTwin({
               key={`${it.icon}-${it.title}-${index}`}
               data-index={index}
               data-screen={it.screen}
-              aria-label={`Open ${it.title} subscreen`}
+              aria-label={it.mapAction ? it.title : `Open ${it.title} subscreen`}
               onClick={() => {
                 if (consumedTileTapRef.current) {
                   consumedTileTapRef.current = false
@@ -647,7 +700,16 @@ export default function HoldMenuTwin({
                 style={{ width: size, height: size }}
               >
                 {it.glyph ? (
-                  <span className={styles.glyph} aria-hidden="true">{it.glyph}</span>
+                  <span
+                    className={
+                      it.mapAction === 'mapMode' || it.screen === 'map-show-me'
+                        ? `${styles.glyph} ${styles.mapModeGlyph}`
+                        : styles.glyph
+                    }
+                    aria-hidden="true"
+                  >
+                    {it.glyph}
+                  </span>
                 ) : (
                 <img
                   className={styles.icon}

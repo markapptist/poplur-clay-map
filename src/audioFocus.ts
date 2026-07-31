@@ -10,7 +10,7 @@
 // several sounds (the map's region bed, weather and car passes) counts as one
 // voice and can keep its own internal mix.
 
-export type AudioOwner = 'feed' | 'radio' | 'map'
+export type AudioOwner = 'feed' | 'radio' | 'map' | 'studio'
 
 type Stop = () => void
 
