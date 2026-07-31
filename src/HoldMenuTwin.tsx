@@ -610,29 +610,18 @@ export default function HoldMenuTwin({
             <p className={styles.subscreenMissingBody}>
               This screen isn’t in the app yet.
             </p>
-            <button
-              type="button"
-              className={styles.subscreenMissingBack}
-              onClick={() => { playPop(); setActiveScreen(null) }}
-            >
-              Back
-            </button>
+            {/* No Back button here either — the clay ✕ in the corner is the one
+                way out of a subscreen, including this placeholder. */}
           </div>
         )}
-        {/* The clay ✕ is the intended way out and stays the pretty one. It is
-            also a WebGL canvas, and on a phone that can come back blank —
-            iOS drops contexts under pressure, and a context that is created
-            and then silently draws nothing looks exactly like a working
-            button that isn't there. Being stuck in a full-screen subscreen is
-            worse than a second control, so there is a plain-DOM one that
-            cannot depend on the GPU at all. */}
-        <button
-          type="button"
-          className={styles.subscreenBack}
-          onClick={() => { playPop(); setActiveScreen(null) }}
-        >
-          ‹ Back
-        </button>
+        {/* The clay ✕ is the ONE way out of a subscreen. There used to be a
+            plain-DOM "‹ Back" chip beside it as a GPU-independent fallback,
+            because the ✕ is a WebGL canvas and iOS can drop a context under
+            pressure and leave it drawing nothing. Two controls for one job read
+            as clutter, and the fallback was not earning its place: on device it
+            did not respond at all, so it was providing the appearance of a
+            safety net rather than the thing itself. If the ✕ ever does come
+            back blank, fix it there rather than reinstating a second button. */}
         <div className={styles.subscreenClose}>
           <ClayCornerButton
             kind="close"

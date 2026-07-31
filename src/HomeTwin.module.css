@@ -353,6 +353,16 @@
   pointer-events: auto;
 }
 
+/* ...but opting back in made this 112x96 box eat every tap in the bottom-right
+   corner of whatever is underneath. On a subscreen that corner is where the
+   real controls live — the Radio mini-player, the clay phone's ✱/0/# row, the
+   navigation End button — so tapping them silently toggled km/mi instead of
+   doing what the user asked. The unit toggle is a convenience; it must never
+   outrank the screen in front of it. */
+.statStackInert {
+  pointer-events: none;
+}
+
 .statCard,
 .statCardOut {
   position: absolute;

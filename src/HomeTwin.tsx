@@ -696,7 +696,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         {/* RIGHT: local RADIUS ⇄ ONLINE NOW — or, while the camera records,
             the counter. The radius label IS the timer; there is no second
             widget competing for the slot. */}
-        <div className={styles.statStack}>
+        {/* The map tab is included deliberately: the map's own controls (zoom,
+            and the navigation End button) sit in this same bottom-right corner
+            INSIDE the iframe, i.e. underneath this HUD. Tapping End there hit
+            the radius card and toggled km/mi instead of ending navigation, so
+            there was no way to stop turn-by-turn at all. The unit toggle still
+            works on feed, profile and camera; drop 'map' from this test to put
+            it back on the map too. */}
+        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}`}>
           {recordMs != null && (
             <div className={styles.statCard} aria-label="Recording">
               <span className={styles.statLabel}>RECORDING ◆</span>
