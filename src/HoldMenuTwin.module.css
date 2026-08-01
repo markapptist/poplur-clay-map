@@ -474,3 +474,21 @@
   paint-order: stroke fill;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
 }
+
+.mapModeGlyph {
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 32% 22%, rgba(255,255,255,0.92) 0 5%, rgba(255,255,255,0.3) 6% 20%, transparent 34%),
+    linear-gradient(145deg, #ffb7da 0%, #f63b9a 50%, #8d123f 100%);
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  color: #fff2f8;
+  -webkit-text-fill-color: #fff2f8;
+  -webkit-text-stroke: 1.4px rgba(71,0,33,0.78);
+  box-shadow:
+    inset 3px 4px 7px rgba(255,255,255,0.35),
+    inset -4px -5px 8px rgba(71,0,30,0.5);
+  text-shadow:
+    0 2px 0 rgba(85,0,40,0.65),
+    0 4px 8px rgba(0,0,0,0.45);
+}

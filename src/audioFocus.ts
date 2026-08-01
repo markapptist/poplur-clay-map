@@ -87,7 +87,12 @@ if (typeof window !== 'undefined') {
 
 /** Take the floor: every other registered surface is stopped, in every frame. */
 export function requestAudioFocus(owner: AudioOwner): void {
-  if (current === owner) return
+  // Reassert even when this document already believes it owns the floor. A
+  // child frame can be recreated after the original claim (the Map WebView is
+  // deliberately torn down off-screen), so an early return here leaves that
+  // fresh frame unaware that Feed is front-most. The repeat broadcast is the
+  // focus heartbeat: it is cheap, idempotent, and makes late/remounted peers
+  // silence themselves immediately.
   current = owner
   silenceLocal(owner)
   broadcast(owner)

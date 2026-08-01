@@ -15,6 +15,15 @@ export function isNativeShell(): boolean {
   }
 }
 
+export function isIOSNativeShell(): boolean {
+  try {
+    const w = window as NativeWindow
+    return Boolean(w.webkit?.messageHandlers?.poplur)
+  } catch {
+    return false
+  }
+}
+
 export function postNativeEvent(message: Record<string, unknown>): boolean {
   try {
     const w = window as NativeWindow
