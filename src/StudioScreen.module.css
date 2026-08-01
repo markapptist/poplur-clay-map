@@ -832,8 +832,14 @@
 /* The bedazzled Poplur microphone (public/studio_mic.png, user-supplied). The
    fallback is the wheel's own Mic icon — never invented art. */
 .micArt {
-  width: min(58vw, 250px);
-  height: auto;
+  /* The mic IS the screen — full-bleed like Snapchat's camera, not a card
+     floating in the middle. Cover crops the art's edges so no photo border
+     shows on any aspect ratio. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   /* The supplied mic PNG carries its own near-black bokeh background. Screen
      blending drops black to invisible against our dark stage and keeps every
      sparkle and neon rim — a clean "background removal" with no cutout haloes,
