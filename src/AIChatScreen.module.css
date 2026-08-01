@@ -1,0 +1,440 @@
+.screen {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: #24141d;
+  background: #f8edf3;
+  isolation: isolate;
+}
+
+.screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  border: 2px solid transparent;
+  border-image: conic-gradient(
+    from 0deg,
+    #ff2d96,
+    rgba(255, 45, 150, .1),
+    #ff8ac4,
+    rgba(255, 45, 150, .08),
+    #ff2d96
+  ) 1;
+  animation: shaderBorder 6s linear infinite;
+}
+
+.confetti {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: .45;
+  background:
+    radial-gradient(circle, #ff2d96 0 2px, transparent 2.5px) 18px 24px / 92px 86px,
+    radial-gradient(circle, #8f76ff 0 1.5px, transparent 2px) 54px 12px / 126px 118px,
+    radial-gradient(circle, #ff9dca 0 1px, transparent 1.5px) 8px 70px / 104px 96px;
+  animation: confettiDrift 14s linear infinite;
+}
+
+.header {
+  position: relative;
+  z-index: 4;
+  min-height: calc(76px + env(safe-area-inset-top));
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px 0;
+  border: 1px solid rgba(255, 255, 255, .8);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 26% 10%, rgba(255, 255, 255, .88), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, .96), rgba(255, 239, 247, .94));
+  box-shadow:
+    inset 0 -8px 14px rgba(150, 84, 113, .08),
+    0 8px 18px rgba(77, 34, 53, .12);
+}
+
+.back,
+.settings,
+.attach,
+.send,
+.attachment button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: #fff;
+  background:
+    radial-gradient(circle at 30% 22%, rgba(255, 255, 255, .5), transparent 30%),
+    linear-gradient(145deg, #ff79b9, #f12487 68%, #a81154);
+  box-shadow:
+    inset 0 4px 7px rgba(255, 255, 255, .32),
+    inset 0 -5px 7px rgba(106, 7, 50, .22),
+    0 5px 9px rgba(114, 23, 62, .2);
+}
+
+.back,
+.settings {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font: 900 24px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.settings {
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+.identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.identity > span:last-child {
+  min-width: 0;
+  display: grid;
+}
+
+.identity strong {
+  color: #28141e;
+  font: 950 21px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+.identity strong b {
+  color: #ff2d96;
+  text-shadow: 0 1px 0 #fff, 0 3px 6px rgba(199, 19, 101, .28);
+}
+
+.identity small {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #c42b76;
+  font: 800 10px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mark {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  font: 950 23px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  background:
+    radial-gradient(circle at 30% 24%, #ff9ccc, #ff2d96 58%, #b20e59);
+  box-shadow:
+    inset 0 6px 8px rgba(255, 255, 255, .3),
+    inset 0 -5px 8px rgba(112, 4, 51, .28),
+    0 0 15px rgba(255, 45, 150, .4);
+}
+
+.settingsPanel {
+  position: absolute;
+  top: calc(76px + env(safe-area-inset-top));
+  right: 12px;
+  z-index: 8;
+  width: 188px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, .84);
+  border-radius: 14px;
+  background: rgba(255, 248, 252, .98);
+  box-shadow: 0 14px 28px rgba(64, 21, 42, .24);
+}
+
+.settingsPanel label {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #3b2430;
+  font: 850 13px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.settingsPanel input {
+  accent-color: #ff2d96;
+}
+
+.conversation {
+  min-height: 0;
+  margin: 8px;
+  padding: 18px 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .82);
+  box-shadow:
+    inset 0 0 24px rgba(255, 143, 197, .07),
+    0 8px 18px rgba(76, 28, 50, .08);
+  scrollbar-width: none;
+}
+
+.conversation::-webkit-scrollbar {
+  display: none;
+}
+
+.welcome {
+  min-height: 100%;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.sparkle {
+  color: #ff2d96;
+  font-size: 28px;
+  text-shadow: 0 0 12px rgba(255, 45, 150, .42);
+}
+
+.welcome h1 {
+  margin: 6px 0 0;
+  color: #2f1723;
+  font: 950 clamp(25px, 8vw, 34px)/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+.welcome p {
+  margin: 8px 0 18px;
+  color: #8a6476;
+  font: 750 13px/1.25 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.suggestions {
+  width: min(100%, 340px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px;
+}
+
+.suggestions button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 45, 150, .24);
+  border-radius: 17px;
+  color: #5e3448;
+  background: #fff0f7;
+  font: 800 11px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  box-shadow: inset 0 3px 5px rgba(255, 255, 255, .7);
+}
+
+.userMessage,
+.assistantMessage {
+  width: fit-content;
+  max-width: 82%;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  font: 750 13px/1.36 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.userMessage {
+  margin-left: auto;
+  color: #fff;
+  border-bottom-right-radius: 5px;
+  background: linear-gradient(145deg, #ff67ad, #f12686);
+  box-shadow: 0 5px 11px rgba(208, 26, 108, .2);
+}
+
+.assistantMessage {
+  color: #402531;
+  border: 1px solid rgba(255, 45, 150, .12);
+  border-bottom-left-radius: 5px;
+  background: #fff0f7;
+}
+
+.userMessage p,
+.assistantMessage p {
+  margin: 0;
+}
+
+.userMessage img,
+.assistantMessage img {
+  width: min(190px, 100%);
+  max-height: 190px;
+  display: block;
+  margin: 0 0 8px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.typing {
+  width: 54px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 17px 17px 17px 5px;
+  background: #fff0f7;
+}
+
+.typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff2d96;
+  animation: typing .9s ease-in-out infinite;
+}
+
+.typing i:nth-child(2) { animation-delay: .12s; }
+.typing i:nth-child(3) { animation-delay: .24s; }
+
+.inputBar {
+  position: relative;
+  z-index: 4;
+  margin: 0 8px max(8px, env(safe-area-inset-bottom));
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, .86);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 -7px 20px rgba(75, 28, 49, .11);
+}
+
+.controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 8px;
+}
+
+.attach,
+.send {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font: 950 22px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.prompt {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 45, 150, .14);
+  border-radius: 16px;
+  outline: none;
+  color: #341e29;
+  background: #f8f1f5;
+  font: 750 13px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.prompt:focus {
+  border-color: rgba(255, 45, 150, .48);
+  box-shadow: 0 0 0 3px rgba(255, 45, 150, .08);
+}
+
+.file {
+  display: none;
+}
+
+.attachment {
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  background: #fff0f7;
+  color: #6d3d54;
+  font: 800 11px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.attachment img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 7px;
+}
+
+.attachment span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment button {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 17px;
+}
+
+.modes {
+  height: 18px;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 14px;
+  color: #b899a8;
+  font: 900 8px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.modeOn {
+  color: #f12786;
+  text-shadow: 0 1px 4px rgba(255, 45, 150, .2);
+}
+
+@keyframes typing {
+  0%, 100% { transform: translateY(1px); opacity: .45; }
+  50% { transform: translateY(-2px); opacity: 1; }
+}
+
+@keyframes confettiDrift {
+  to { background-position: 110px 120px, -86px 136px, 128px -82px; }
+}
+
+@keyframes shaderBorder {
+  to { filter: hue-rotate(18deg); }
+}
+
+@media (max-height: 690px) {
+  .header {
+    min-height: calc(66px + env(safe-area-inset-top));
+  }
+
+  .conversation {
+    margin-block: 5px;
+    padding-block: 10px;
+  }
+
+  .welcome p {
+    margin-bottom: 10px;
+  }
+
+  .suggestions button {
+    min-height: 30px;
+  }
+}
+
+@media (max-width: 600px) {
+  .inputBar {
+    margin-bottom: max(112px, calc(env(safe-area-inset-bottom) + 102px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen::after,
+  .confetti,
+  .typing i {
+    animation: none;
+  }
+}
