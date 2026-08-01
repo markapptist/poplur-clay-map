@@ -562,6 +562,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Profile tab: the clay arrows scroll the grid / browse the open post —
   // ProfileTwin registers its handler here.
   const profileArrowsRef = useRef<((dir: 1 | -1) => void) | null>(null)
+  // ProfileTwin's "close the top open layer", for the cube.
+  const profileBackRef = useRef<(() => boolean) | null>(null)
   // LIKE / COMMENT / CC are performed by the feed itself.
   const feedActionsRef = useRef<((action: FeedAction) => void) | null>(null)
 
@@ -719,6 +721,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         {activeTab === 'profile' && (
           <ProfileTwin
             bindArrows={fn => { profileArrowsRef.current = fn }}
+            bindGoBack={fn => { profileBackRef.current = fn }}
             viewUser={viewingUser}
             onBackToOwn={() => {
               setActiveTab(profileOrigin ?? 'feed')
