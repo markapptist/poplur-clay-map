@@ -70,18 +70,6 @@ const EARTH_RADIUS_KM = 6_371
 // Stable spoofed reach until presence is wired to the live audience service.
 const SPOOFED_ONLINE_AUDIENCE = 1_200_000
 
-const FEED_SMOKE_PARTICLES = [
-  { left: 12, size: 54, drift: -18, delay: -0.64, duration: 1.15 },
-  { left: 21, size: 72, drift: 22, delay: -0.28, duration: 1.42 },
-  { left: 31, size: 48, drift: -8, delay: -0.92, duration: 1.08 },
-  { left: 41, size: 88, drift: 26, delay: -0.48, duration: 1.55 },
-  { left: 50, size: 62, drift: -20, delay: -0.12, duration: 1.24 },
-  { left: 59, size: 84, drift: 18, delay: -0.78, duration: 1.48 },
-  { left: 69, size: 50, drift: -24, delay: -0.38, duration: 1.12 },
-  { left: 79, size: 76, drift: 12, delay: -1.02, duration: 1.52 },
-  { left: 89, size: 58, drift: -16, delay: -0.54, duration: 1.2 },
-]
-
 function AnimatedRadiusMetrics({
   radius,
   ceiling,
@@ -349,7 +337,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     })
   }, [])
   const [popping, setPopping] = useState(false)
-  const [cubeSpinning, setCubeSpinning] = useState(false)
   // Start in the measurement system implied by the device locale. Tapping the
   // Radius card remains a deliberate local override for this session.
   const [unitMi, setUnitMi] = useState(shouldUseMiles)
@@ -735,25 +722,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )}
       </div>
 
-      {/* Feed gets the cube's exhaust as a transient physical cue. It is
-          mounted only while Feed is front AND the cube is turning, so smoke
-          cannot linger over Camera/Profile/Map or after the detent settles. */}
-      {activeTab === 'feed' && cubeSpinning && (
-        <div className={motionStyles.feedSpinSmoke} aria-hidden="true">
-          {FEED_SMOKE_PARTICLES.map((particle, index) => (
-            <span
-              key={index}
-              style={{
-                '--smoke-left': `${particle.left}%`,
-                '--smoke-size': `${particle.size}px`,
-                '--smoke-drift': `${particle.drift}px`,
-                '--smoke-delay': `${particle.delay}s`,
-                '--smoke-duration': `${particle.duration}s`,
-              } as React.CSSProperties}
-            />
-          ))}
-        </div>
-      )}
+      {/* The cube's exhaust smoke is gone. It read as haze rather than
+          motion, and every particle was another compositor layer animating
+          for the whole spin — cost paid continuously on a phone that was
+          already running hot. The cube's own physics carries the motion. */}
 
       {loadingVisible && (
         <div className={styles.mapLoading} role="status" aria-label="Loading the map">
@@ -894,7 +866,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             size={cubeSize}
             targetTab={activeTab}
             onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}
-            onSpinChange={setCubeSpinning}
             onTap={popCube}
             onHold={() => {
               playPop()
