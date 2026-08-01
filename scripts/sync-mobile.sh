@@ -58,11 +58,21 @@ acquire_publish_lock() {
 # directory and keep that exact snapshot for every downstream target.
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/vite build --outDir "$BUILD_DIR"
-if ! rg -l --glob '*.js' --fixed-strings "$VITE_MAPBOX_TOKEN" "$BUILD_DIR" >/dev/null; then
+# ripgrep is not installed on every machine that runs this script; fall back
+# to plain grep for the same fixed-string check rather than failing the
+# release with a misleading "token was not embedded" error.
+js_contains() {
+  if command -v rg >/dev/null 2>&1; then
+    rg -l --glob '*.js' --fixed-strings -- "$1" "$2" >/dev/null
+  else
+    grep -rlF --include='*.js' -- "$1" "$2" >/dev/null
+  fi
+}
+if ! js_contains "$VITE_MAPBOX_TOKEN" "$BUILD_DIR"; then
   echo "Mobile release verification failed: Mapbox token was not embedded." >&2
   exit 1
 fi
-if rg -l --glob '*.js' --fixed-strings 'Add VITE_MAPBOX_TOKEN' "$BUILD_DIR" >/dev/null; then
+if js_contains 'Add VITE_MAPBOX_TOKEN' "$BUILD_DIR"; then
   echo "Mobile release verification failed: missing-token UI survived production build." >&2
   exit 1
 fi

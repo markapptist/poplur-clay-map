@@ -268,8 +268,9 @@ export default function ProfileTwin({
   const [askOpen, setAskOpen] = useState(false)
   const [askText, setAskText] = useState('')
   const [aiReply, setAiReply] = useState<string | null>(null)
-  // Crossfade beat: with a photo set, the head/building fades back in briefly.
-  const [showHead, setShowHead] = useState(false)
+  // Which avatar face is up: true = the 3D head/building, false = the photo
+  // side (the captured photo, or the "no profile image set" card without one).
+  const [showHead, setShowHead] = useState(true)
   const [buildingSprite, setBuildingSprite] = useState<string | null>(null)
 
   // The persistent Home-level microphone controller sends its visible/spoken
@@ -396,16 +397,10 @@ export default function ProfileTwin({
     return () => bindArrows(null)
   }, [bindArrows])
 
-  // Photo ⇄ head/building crossfade: every so often the 3D identity floats
-  // back through the photo, then fades away again.
-  useEffect(() => {
-    if (!photo) { setShowHead(false); return }
-    const iv = window.setInterval(() => {
-      setShowHead(true)
-      window.setTimeout(() => setShowHead(false), 2600)
-    }, 7000)
-    return () => window.clearInterval(iv)
-  }, [photo])
+  // Photo ⇄ head/building: a TAP flips between the two faces (the old timed
+  // auto-crossfade kept overriding whichever side the user had just chosen).
+  // A newly captured photo fronts itself, exactly as before.
+  useEffect(() => { setShowHead(!photo) }, [photo])
 
   // Pull-to-refresh on the grid, like the app's PoplurRefreshHeader.
   useEffect(() => {
@@ -750,20 +745,31 @@ export default function ProfileTwin({
 
           {visiting ? (
             <img className={styles.photo} src={visitingAvatar!} alt="" draggable="false" />
-          ) : photo ? (
+          ) : (
+            /* Tap flips head/building ⇄ photo. With no photo set, the flip
+               side is the "no profile image set" card instead. */
             <>
-              <img
-                className={showHead ? `${styles.photo} ${styles.fadeOut}` : styles.photo}
-                src={photo} alt="" draggable="false" onClick={() => playPop()}
-              />
-              <div className={showHead ? styles.headStack : `${styles.headStack} ${styles.fadeOut}`} onClick={() => playPop()}>
+              {photo ? (
+                <img
+                  className={showHead ? `${styles.photo} ${styles.fadeOut}` : styles.photo}
+                  src={photo} alt="" draggable="false"
+                  onClick={() => { playPop(); setShowHead(true) }}
+                />
+              ) : (
+                <div
+                  className={showHead ? `${styles.noPhoto} ${styles.fadeOut}` : styles.noPhoto}
+                  onClick={() => { playPop(); setShowHead(true) }}
+                >
+                  <span className={`${styles.noPhotoText} ${styles.shareShader}`}>no profile image set</span>
+                </div>
+              )}
+              <div
+                className={showHead ? styles.headStack : `${styles.headStack} ${styles.fadeOut}`}
+                onClick={() => { playPop(); setShowHead(false) }}
+              >
                 <div className={styles.headTilt}>{identity}</div>
               </div>
             </>
-          ) : (
-            <div className={styles.headStack} onClick={() => playPop()}>
-              <div className={styles.headTilt}>{identity}</div>
-            </div>
           )}
 
           {visiting ? (
