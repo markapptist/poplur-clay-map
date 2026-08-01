@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { isNativeShell } from './nativeBridge'
+import { onFrame, ambientAllowed, boostFrames } from './frameGovernor'
 import { CLAY_ROUTES, PALETTE } from './data'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
@@ -918,8 +919,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
     // Live pop animations (building id → rAF handle) so unmount can cancel them
     const popRafs = new Map<string | number, number>()
-    // Flyer animation loop handle
-    let flyerRaf = 0
+    // Flyer animation unsubscribe (shared frameGovernor clock)
+    let stopFlyerFrames: (() => void) | null = null
     let disposed = false
 
     const fallBackAfterWebGLFailure = (error: unknown) => {
@@ -1052,9 +1053,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
     // ── Idle orbit: after an app-driven cinematic flight, slowly pan around
     //    the destination until the user touches the map ────────────────────────
-    let orbitRaf = 0
+    let stopOrbitFrames: (() => void) | null = null
     const stopOrbit = () => {
-      if (orbitRaf) { cancelAnimationFrame(orbitRaf); orbitRaf = 0 }
+      if (stopOrbitFrames) { stopOrbitFrames(); stopOrbitFrames = null }
     }
     stopOrbitRef.current = stopOrbit
     ;(map as unknown as { __stopOrbit?: () => void }).__stopOrbit = stopOrbit
@@ -1072,8 +1073,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const shot = { rate: 0.022 + Math.random() * 0.016, dir: Math.random() < 0.5 ? -1 : 1 }
       const basePitch = map.getPitch()
 
-      const frame = (now: number) => {
-        orbitRaf = requestAnimationFrame(frame)
+      const frame = (_dtMs: number, now: number) => {
         // Only actually turn the camera while the map tab is front. The home
         // keeps this iframe mounted behind Feed / Profile / Camera, and a
         // display:none iframe is NOT `document.hidden` in Chrome or WKWebView —
@@ -1099,11 +1099,22 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         const breathe = basePitch + Math.sin(t / 11.5) * 2.4
         if (Math.abs(map.getPitch() - breathe) > 0.05) map.setPitch(breathe)
       }
-      orbitRaf = requestAnimationFrame(frame)
+      // Idle orbit is ambient decoration: 30Hz on the shared clock, dropped
+      // with the rest of the ambient layer when the thermal ladder steps down.
+      stopOrbitFrames = onFrame(frame, 'ambient')
     }
     const interactionEvents = ['dragstart', 'zoomstart', 'rotatestart', 'pitchstart'] as const
     interactionEvents.forEach(ev =>
       map.on(ev, e => { if ((e as { originalEvent?: Event }).originalEvent) stopOrbit() }))
+    // A finger on the map promotes ambient work (cars, boats) to interactive
+    // rate for the duration of the gesture, so the world tracks the drag.
+    const boostOnTouch = () => boostFrames(600)
+    map.getContainer().addEventListener('pointerdown', boostOnTouch, { passive: true })
+    map.getContainer().addEventListener('pointermove', boostOnTouch, { passive: true })
+    map.once('remove', () => {
+      map.getContainer().removeEventListener('pointerdown', boostOnTouch)
+      map.getContainer().removeEventListener('pointermove', boostOnTouch)
+    })
     map.getContainer().addEventListener('pointerdown', stopOrbit)
     map.getContainer().addEventListener('wheel', stopOrbit, { passive: true })
 
@@ -2278,15 +2289,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (carHarvestTimer) map.once('remove', () => window.clearInterval(carHarvestTimer))
 
       const flyerStart = performance.now()
+      // Ambient decoration on the shared 30Hz clock (frameGovernor), not a
+      // self-armed rAF: planes, boats and cars are pure decoration, and at a
+      // display's native 120Hz they did 4x the work of anything a viewer can
+      // perceive. The governor also stops ticking entirely while hidden, where
+      // the old loop woke every frame just to hit its own guard, and drops the
+      // whole layer when the thermal ladder steps below full quality.
       const animateFlyers = () => {
-        flyerRaf = requestAnimationFrame(animateFlyers)
         // Universal: ambient animation only while the map is actually visible.
         // The home keeps this iframe mounted on every tab (gcAudio 'off' means
         // another tab is front) — animating an invisible map wastes GPU on
         // every device class. MAP_LITE devices skip the ambient layer entirely.
         // A low-memory 3D device still skips the ambient loop entirely. The
         // default 2D map is also "lite", but keeps only budget-capped cars.
-        if ((MAP_LITE && !MAP_2D) || document.hidden || !mapIsFrontRef.current) return
+        if ((MAP_LITE && !MAP_2D) || !mapIsFrontRef.current || !ambientAllowed()) return
         const frameNow = performance.now()
         const zoom = map.getZoom()
         const t = (frameNow - flyerStart) / 1000
@@ -2371,7 +2387,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           setCarProximity(0)
         }
       }
-      flyerRaf = requestAnimationFrame(animateFlyers)
+      stopFlyerFrames = onFrame(animateFlyers, 'ambient')
 
       // ── Cinematic landmark tour: long curved flights landmark to landmark ──
       // The tour is shot, not merely navigated. Every stop is a three-beat
@@ -2510,7 +2526,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       mapCanvas.removeEventListener('webglcontextlost', handleContextLost)
       window.clearInterval(bootPoll)
       stopOrbit()
-      if (flyerRaf) cancelAnimationFrame(flyerRaf)
+      stopFlyerFrames?.()
       stopCarAudio()
       popRafs.forEach(raf => cancelAnimationFrame(raf))
       popRafs.clear()

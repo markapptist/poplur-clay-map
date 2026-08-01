@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { qualityPixelRatio } from './frameGovernor'
 
 // Clay 3D corner controls for the camera (flash + switch-camera): the same
 // extruded-clay recipe as ClayChannelArrows / ClayMuteButton — matte pink
@@ -122,12 +123,17 @@ export default function ClayCornerButton({
     const canvas = canvasRef.current!
     let renderer: THREE.WebGLRenderer
     try {
-      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+      // This component is instantiated ~26 times across the app, and every
+      // instance is its own GL context. MSAA and the high-performance GPU path
+      // on a button this small are pure heat.
+      renderer = new THREE.WebGLRenderer({
+        canvas, alpha: true, antialias: false, powerPreference: 'low-power',
+      })
     } catch {
       setFlat(true)
       return
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setPixelRatio(qualityPixelRatio(1.5))
     renderer.setSize(size, size, false)
     renderer.setClearColor(0x000000, 0)
     // The context can also be taken away later, under memory pressure.

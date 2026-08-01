@@ -641,6 +641,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // The capture preview is the same deal: with the composer up, the cube is
     // its back button (step back, then close) — never the shutter.
     if (composerOpen && cameraActionsRef.current?.composerBack()) { playPop(); return }
+    // …and the profile's own layers (viewer, share sheet, photo capture, a
+    // visited profile) answer the cube rather than carrying their own ✕.
+    if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
     playPop()
     setPopping(true)
     // Tapping the cube runs whatever you pinned in this tab's hold menu.

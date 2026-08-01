@@ -146,8 +146,6 @@ export default function CameraRoll({ onDeny, lite = false, onPick }: {
         ))}
       </div>
 
-      <p className={styles.rollHint}>▲ ▼ flips back to the camera</p>
-
       {!granted && !lite && (
         <PermissionAlert
           icon="photos"

@@ -1,3 +1,4 @@
+import { onFrame } from './frameGovernor'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type mapboxgl from 'mapbox-gl'
 import { modelSprite } from './modelSprite'
@@ -151,7 +152,8 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
 
   const carRef = useRef<mapboxgl.Marker | null>(null)
   const destMarkRef = useRef<mapboxgl.Marker | null>(null)
-  const rafRef = useRef<number>(0)
+  // Unsubscribe from the shared frame clock (frameGovernor) while driving.
+  const stopTickRef = useRef<(() => void) | null>(null)
   const carSpriteRef = useRef<string | null>(null)
   const spokenRef = useRef<Set<number>>(new Set())
 
@@ -185,7 +187,7 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
   }, [mapRef])
 
   const teardown = useCallback(() => {
-    cancelAnimationFrame(rafRef.current)
+    stopTickRef.current?.()
     window.speechSynthesis?.cancel()
     carRef.current?.remove(); carRef.current = null
     destMarkRef.current?.remove(); destMarkRef.current = null
@@ -305,9 +307,12 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
 
       let progress = 0
       let smBrg = alongRoute(route, 0).brg
-      let last = performance.now()
-      const tick = (now: number) => {
-        const dt = Math.min(0.05, (now - last) / 1000); last = now
+      // Interactive rate on the shared clock: driving is an attended task, but
+      // jumpTo repaints the whole map every call — 120Hz on ProMotion was double
+      // the repaints of anything the eye needs, during the exact activity
+      // (screen on, GPS on) where the phone already runs hottest.
+      const tick = (dtMs: number) => {
+        const dt = Math.min(0.05, dtMs / 1000)
         progress = Math.min(route.distance, progress + DRIVE_MPS * dt)
 
         const me = alongRoute(route, progress)
@@ -337,12 +342,12 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
         if (progress >= route.distance - 1) {
           setMode('arrived'); setBanner(null)
           speak(`You have arrived at ${destName}.`)
-          cancelAnimationFrame(rafRef.current)
-          return
+          stopTickRef.current?.()
+          stopTickRef.current = null
         }
-        rafRef.current = requestAnimationFrame(tick)
       }
-      rafRef.current = requestAnimationFrame(tick)
+      stopTickRef.current?.()
+      stopTickRef.current = onFrame(tick, 'interactive')
     })
   }, [mapRef, route, destName, onRouteIntent, setStreetView, speak])
 

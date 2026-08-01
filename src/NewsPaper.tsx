@@ -200,10 +200,7 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
 
   return (
     <div className={styles.paper} role="dialog" aria-label="Poplur Times">
-      <div className={styles.closeSlot}>
-        <ClayCornerButton kind="close" label="Close the paper" size={46} activateOnClick onPress={onClose} />
-      </div>
-
+      {/* No ✕ — the cube is the back control for every subscreen. */}
       <div className={styles.scroll}>
         <header className={styles.masthead}>
           <div className={styles.mastRule}>

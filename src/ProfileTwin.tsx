@@ -233,11 +233,17 @@ export default function ProfileTwin({
   bindArrows,
   viewUser = null,
   onBackToOwn,
+  bindGoBack,
 }: {
   bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
   /** a handle when you opened someone else's profile from the feed */
   viewUser?: string | null
   onBackToOwn?: () => void
+  /** Registers "close the top open layer" for the cube — the profile's own
+   *  overlays answer the universal back control instead of carrying their
+   *  own ✕. Returns false when nothing is open, so the cube falls through
+   *  to this tab's favourite action. */
+  bindGoBack?: (fn: (() => boolean) | null) => void
 } = {}) {
   const [mode, setMode] = useState<Mode>('media')
   const [readyTiles, setReadyTiles] = useState<Set<string>>(() => new Set())
@@ -396,6 +402,34 @@ export default function ProfileTwin({
     })
     return () => bindArrows(null)
   }, [bindArrows])
+
+  // The cube is the back control for the profile's layers too, topmost first.
+  // Kept in a ref-read closure so the handler registers once and still sees
+  // current state.
+  const backStateRef = useRef({
+    shareOpen, askOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+  })
+  backStateRef.current = {
+    shareOpen, askOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+  }
+  const onBackToOwnRef = useRef(onBackToOwn)
+  onBackToOwnRef.current = onBackToOwn
+  const closeNotifsRef = useRef(closeNotifs)
+  closeNotifsRef.current = closeNotifs
+  useEffect(() => {
+    if (!bindGoBack) return
+    bindGoBack(() => {
+      const s = backStateRef.current
+      if (s.shareOpen) { setShareOpen(false); return true }
+      if (s.askOpen) { setAskOpen(false); return true }
+      if (s.viewerIdx != null) { setViewerIdx(null); return true }
+      if (s.capturing) { setCapturing(false); return true }
+      if (s.showNotifs) { closeNotifsRef.current(); return true }
+      if (s.visiting) { onBackToOwnRef.current?.(); return true }
+      return false
+    })
+    return () => bindGoBack(null)
+  }, [bindGoBack])
 
   // Photo ⇄ head/building: a TAP flips between the two faces (the old timed
   // auto-crossfade kept overriding whichever side the user had just chosen).
@@ -723,15 +757,8 @@ export default function ProfileTwin({
       <div className={styles.header}>
         <div className={styles.avatarWrap}>
           {visiting ? (
-            <div className={styles.visitClose}>
-              <ClayCornerButton
-                kind="close"
-                label="Back to your profile"
-                size={46}
-                activateOnClick
-                onPress={() => { playPop(); onBackToOwn?.() }}
-              />
-            </div>
+            /* No ✕ — the cube takes you back to your own profile. */
+            null
           ) : <button
             className={styles.bell}
             onClick={() => { playPop(); toggleNotifs() }}
@@ -965,12 +992,7 @@ export default function ProfileTwin({
                 size={46}
                 onPress={() => { playPop(); setShareOpen(true) }}
               />
-              <ClayCornerButton
-                kind="close"
-                label="Close"
-                size={46}
-                onPress={() => { playPop(); setViewerIdx(null) }}
-              />
+              {/* No ✕ — the cube closes the viewer. */}
             </div>
           </div>
           <p className={styles.viewerTitle}>{viewerPost.title}</p>

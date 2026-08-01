@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { qualityPixelRatio } from './frameGovernor'
 
 // Clay mute mark for the feed's top bar: the speaker built from the SAME
 // extruded-clay recipe as ClayChannelArrows (material, lighting, idle tumble,
@@ -51,8 +52,13 @@ export default function ClayMuteButton({
 
   useEffect(() => {
     const canvas = canvasRef.current!
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    // A ~40px clay icon is its own GL context and its own framebuffer. MSAA on
+    // something this small buys nothing the pixel ratio is not already giving
+    // us, and low-power keeps it off the high-performance GPU path.
+    const renderer = new THREE.WebGLRenderer({
+      canvas, alpha: true, antialias: false, powerPreference: 'low-power',
+    })
+    renderer.setPixelRatio(qualityPixelRatio(1.5))
     renderer.setSize(size, size, false)
     renderer.setClearColor(0x000000, 0)
 

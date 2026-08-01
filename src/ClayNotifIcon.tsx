@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { qualityPixelRatio } from './frameGovernor'
 
 // Real 3D clay notification icons — the same extruded-clay recipe as
 // ClayCornerButton (matte pink clay, soft key + rim lights, gentle idle tumble),
@@ -72,8 +73,10 @@ export default function ClayNotifIcon({ kind, size = 40 }: { kind: NotifKind; si
 
   useEffect(() => {
     const canvas = canvasRef.current!
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    const renderer = new THREE.WebGLRenderer({
+      canvas, alpha: true, antialias: false, powerPreference: 'low-power',
+    })
+    renderer.setPixelRatio(qualityPixelRatio(1.5))
     renderer.setSize(size, size, false)
     renderer.setClearColor(0x000000, 0)
 

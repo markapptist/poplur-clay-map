@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { qualityPixelRatio } from './frameGovernor'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { playCubeTurnDetent, setCubeTurnSound } from './motionEffectsAudio'
 
@@ -40,6 +41,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   const targetTabRef = useRef(targetTab)
+  // Restarts the parked render loop; set by the effect below.
+  const wakeLoopRef = useRef<() => void>(() => {})
   const callbacksRef = useRef({ onFaceChange, onSpinChange, onTap, onHold })
   callbacksRef.current = { onFaceChange, onSpinChange, onTap, onHold }
 
@@ -66,7 +69,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       setGlFailed(true)
       return
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, androidShell ? 1.25 : 2))
+    renderer.setPixelRatio(qualityPixelRatio(androidShell ? 1.25 : 2))
     renderer.setSize(size, size)
     renderer.setClearColor(0x000000, 0)
 
@@ -116,6 +119,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       const turns = Math.round((yaw - base) / (2 * Math.PI))
       springTarget = base + turns * 2 * Math.PI
       needsRender = true
+      wakeLoopRef.current()
     }
     springToRef.current = springTo
 
@@ -138,6 +142,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       camera.position.set(0, 0, 10)
       camera.lookAt(0, 0, 0)
       needsRender = true
+      wakeLoopRef.current()
     }).catch(() => { setGlFailed(true) })
 
     // ---- gestures ----
@@ -156,6 +161,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
 
     const onPointerDown = (e: PointerEvent) => {
       try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
+      wakeLoopRef.current()
       dragging = true
       moved = false
       holdFired = false
@@ -228,7 +234,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     let raf = 0
     const loop = (now: number) => {
       if (disposed) return
-      raf = requestAnimationFrame(loop)
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
 
@@ -273,7 +278,28 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
         renderer.render(scene, camera)
         needsRender = false
       }
+
+      // Park when settled. This cube is the tab bar — it is mounted on every
+      // screen for the whole session, and re-arming unconditionally meant a
+      // display-rate loop (120Hz on ProMotion) turning a cube that was not
+      // moving, plus an audio call per frame, forever. Idle now costs nothing;
+      // wake() restarts the loop from a gesture or a tab change.
+      const active = dragging || springTarget !== null || Math.abs(vel) > 0.02 || needsRender
+      if (active) {
+        raf = requestAnimationFrame(loop)
+      } else {
+        raf = 0
+        reportSpin(false)
+        setCubeTurnSound(0, false)
+      }
     }
+    const wake = () => {
+      if (!raf && !disposed) {
+        last = performance.now()
+        raf = requestAnimationFrame(loop)
+      }
+    }
+    wakeLoopRef.current = wake
     raf = requestAnimationFrame(loop)
 
     return () => {
