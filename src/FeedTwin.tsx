@@ -257,6 +257,7 @@ export default function FeedTwin({
   const gestureStart = useRef<{ pointerId: number; x: number; y: number } | null>(null)
   const wheelLock = useRef(false)
   const adVideoRef = useRef<HTMLVideoElement>(null)
+  const mediaUnlockedRef = useRef(false)
   const ch = CHANNELS[index]
 
 
