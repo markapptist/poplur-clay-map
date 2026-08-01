@@ -30,6 +30,10 @@ const NATIVE_CAMERA_PREVIEW = NATIVE_SHELL && !ANDROID_SHELL
 /** A recording can run for a minute. */
 export const MAX_RECORD_MS = 60_000
 
+/** The lens preset row above the cube. 0.5× only means glass on iOS (the
+ *  dual-wide device); elsewhere it clamps to the range floor. */
+const ZOOM_PRESETS = [0.5, 1, 2] as const
+
 export interface CameraActions {
   /** take a picture — the cube's default action on this tab */
   photo: () => void
@@ -41,11 +45,39 @@ export interface CameraActions {
   ar: () => void
   /** go live — or come off air */
   live: () => void
+  /** open the Camera Roll from its hold-menu tile */
+  roll: () => void
+  /** The clay channel arrows, offered to the post composer first; otherwise
+   *  they zoom the live camera (up = in, down = out). */
+  arrow: (dir: 1 | -1) => boolean
+  /** The cube while the composer is up: step the composer back one screen
+   *  (closing it from the first). False when no composer is open. */
+  composerBack: () => boolean
 }
+
+/** The actions the cube and hold menu can fire by name. `arrow` and
+ *  `composerBack` are excluded on purpose: they are driven by the clay arrows
+ *  and the cube respectively, not a tile. */
+export type CameraMenuAction = Exclude<keyof CameraActions, 'arrow' | 'composerBack'>
 
 const mmss = (ms: number) => {
   const s = Math.floor(ms / 1000)
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+type CameraZoomRange = { min: number; max: number; step?: number }
+type ZoomTrackCapabilities = MediaTrackCapabilities & { zoom?: CameraZoomRange }
+type ZoomTrackConstraintSet = MediaTrackConstraintSet & { zoom?: number }
+
+// Native iOS runs the real glass behind the hole, and its dual-wide virtual
+// device can genuinely reach 0.5× — the web must not clamp that away before
+// the bridge sees it. Browser getUserMedia still floors at 1×.
+const FALLBACK_ZOOM_RANGE: CameraZoomRange = NATIVE_CAMERA_PREVIEW
+  ? { min: 0.5, max: 4, step: 0.5 }
+  : { min: 1, max: 4, step: 0.5 }
+
+function clampZoom(value: number, range: CameraZoomRange): number {
+  return Math.min(range.max, Math.max(range.min, value))
 }
 
 // Twin of the app's camera (post) tab — the Snapchat-style full-screen
@@ -59,8 +91,10 @@ const mmss = (ms: number) => {
 export default function Camera({
   step = 0,
   onCloseRoll,
+  onOpenRoll,
   bindActions,
   onRecordingChange,
+  onZoomChange,
   onDetectUser,
   postTarget,
   onPostTargetUsed,
@@ -68,10 +102,14 @@ export default function Camera({
 }: {
   step?: number
   onCloseRoll?: () => void
+  /** Camera Roll is entered only from the camera hold menu. */
+  onOpenRoll?: () => void
   /** hands the home the actions its cube and hold menu fire */
   bindActions?: (actions: CameraActions) => void
   /** elapsed ms while recording, null when stopped — drives the radius counter */
   onRecordingChange?: (elapsedMs: number | null) => void
+  /** Current camera zoom, displayed between the clay channel buttons. */
+  onZoomChange?: (zoom: number) => void
   /** the detected user, whose OWN reach the radius label adopts */
   onDetectUser?: (user: { handle: string; radiusKm: number } | null) => void
   /** a map spot picked with "Post here" — the next capture posts to it */
@@ -96,9 +134,16 @@ export default function Camera({
   const [streamOn, setStreamOn] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
   const [streamRequest, setStreamRequest] = useState(0)
+  const [zoom, setZoom] = useState(1)
+  const zoomRef = useRef(1)
+  const zoomRangeRef = useRef<CameraZoomRange>(FALLBACK_ZOOM_RANGE)
+  const hardwareZoomRef = useRef(false)
+  const [hardwareZoom, setHardwareZoom] = useState(false)
   // the white bloom of a shutter — and the front camera's flash, which IS the
   // screen going bright
   const [bloom, setBloom] = useState(false)
+
+  useEffect(() => { onZoomChange?.(zoom) }, [onZoomChange, zoom])
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const nativeRecordingRef = useRef(false)
@@ -127,6 +172,12 @@ export default function Camera({
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
+  // Set while the composer is open so the clay arrows can drive its filters.
+  const composerArrowsRef = useRef<((dir: 1 | -1) => void) | null>(null)
+  // The composer's own back-one-screen, driven by the cube while it is open.
+  const composerBackRef = useRef<(() => void) | null>(null)
+  const composingRef = useRef(false)
+  composingRef.current = Boolean(composing)
   useEffect(() => {
     onComposingChange?.(Boolean(composing))
   }, [composing, onComposingChange])
@@ -166,9 +217,39 @@ export default function Camera({
         })
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
         streamRef.current = stream
+        const videoTrack = stream.getVideoTracks()[0]
+        const zoomRange = videoTrack?.getCapabilities?.() as ZoomTrackCapabilities | undefined
+        const deviceZoom = zoomRange?.zoom
+        const supportsHardwareZoom = Boolean(
+          deviceZoom
+          && Number.isFinite(deviceZoom.min)
+          && Number.isFinite(deviceZoom.max)
+          && deviceZoom.max > deviceZoom.min,
+        )
+        hardwareZoomRef.current = supportsHardwareZoom
+        setHardwareZoom(supportsHardwareZoom)
+        zoomRangeRef.current = supportsHardwareZoom && deviceZoom
+          ? {
+              min: Math.max(1, deviceZoom.min),
+              max: Math.min(4, deviceZoom.max),
+              step: Math.max(0.1, deviceZoom.step ?? 0.5),
+            }
+          : FALLBACK_ZOOM_RANGE
+        const restoredZoom = clampZoom(zoomRef.current, zoomRangeRef.current)
+        zoomRef.current = restoredZoom
+        setZoom(restoredZoom)
+        if (supportsHardwareZoom && videoTrack) {
+          void videoTrack.applyConstraints({
+            advanced: [{ zoom: restoredZoom } as ZoomTrackConstraintSet],
+          }).catch(() => {
+            hardwareZoomRef.current = false
+            setHardwareZoom(false)
+            zoomRangeRef.current = FALLBACK_ZOOM_RANGE
+          })
+        }
         setCameraFailed(false)
         setStreamOn(true)
-        stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        videoTrack?.addEventListener('ended', () => {
           if (!cancelled) {
             setStreamOn(false)
             setCameraFailed(true)
@@ -192,6 +273,8 @@ export default function Camera({
       // Ending the broadcast is what releases it.
       if (!isLive()) streamRef.current?.getTracks().forEach(t => t.stop())
       streamRef.current = null
+      hardwareZoomRef.current = false
+      setHardwareZoom(false)
       setStreamOn(false)
     }
   }, [facing, page, cameraPermission, streamRequest])
@@ -240,6 +323,154 @@ export default function Camera({
     return () => applyTorch(false)
   }, [flash, facing, applyTorch, streamOn])
 
+  const flashRef = useRef(flash)
+  useEffect(() => { flashRef.current = flash }, [flash])
+
+  /** Explicit on/off matters for gestures: repeated swipe-up must leave flash
+   *  on rather than toggling it back off. Native bridges receive the intended
+   *  state as well as the legacy control name. */
+  const setFlashEnabled = useCallback((on: boolean) => {
+    if (flashRef.current !== on) {
+      flashRef.current = on
+      setFlash(on)
+    }
+    if (!on) applyTorch(false)
+    postNativeEvent({ type: 'cameraControl', control: 'flash', on })
+  }, [applyTorch])
+
+  const applyZoomValue = useCallback((value: number, direction?: 1 | -1) => {
+    const range = zoomRangeRef.current
+    const next = Math.round(clampZoom(value, range) * 20) / 20
+    if (Math.abs(next - zoomRef.current) < 0.001) return
+    zoomRef.current = next
+    setZoom(next)
+
+    const track = streamRef.current?.getVideoTracks()[0]
+    if (track && hardwareZoomRef.current) {
+      void track.applyConstraints({
+        advanced: [{ zoom: next } as ZoomTrackConstraintSet],
+      }).catch(() => {
+        // Cameras sometimes advertise zoom but reject the constraint. Keep the
+        // controls working by switching straight to the crop fallback.
+        hardwareZoomRef.current = false
+        setHardwareZoom(false)
+        zoomRangeRef.current = FALLBACK_ZOOM_RANGE
+      })
+    }
+    postNativeEvent({
+      type: 'cameraControl',
+      control: 'zoom',
+      value: next,
+      direction: direction == null ? undefined : direction > 0 ? 'in' : 'out',
+    })
+  }, [])
+
+  const applyZoomStep = useCallback((direction: 1 | -1) => {
+    const range = zoomRangeRef.current
+    const step = Math.max(0.1, range.step ?? 0.5)
+    applyZoomValue(zoomRef.current + direction * step, direction)
+  }, [applyZoomValue])
+
+  const flipCamera = useCallback(() => {
+    setFlashEnabled(false)
+    applyTorch(false)
+    zoomRef.current = 1
+    zoomRangeRef.current = FALLBACK_ZOOM_RANGE
+    setZoom(1)
+    setFacing(current => (current === 'user' ? 'environment' : 'user'))
+    postNativeEvent({ type: 'cameraControl', control: 'flip' })
+    postNativeEvent({ type: 'cameraControl', control: 'zoom', value: 1 })
+  }, [applyTorch, setFlashEnabled])
+
+  // Full-viewfinder gestures, matching the device camera:
+  //   double tap -> flip camera
+  //   swipe up   -> flash on
+  //   swipe down -> flash off
+  // Clay controls are excluded so tapping one never also counts as a camera
+  // gesture. Pointer capture keeps fast swipes intact off the initial target.
+  const gestureRef = useRef({
+    startX: 0,
+    startY: 0,
+    lastTapAt: 0,
+    lastTapX: 0,
+    lastTapY: 0,
+    consumed: false,
+  })
+  const gesturePointsRef = useRef(new Map<number, { x: number; y: number }>())
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const pointerDistance = () => {
+    const points = [...gesturePointsRef.current.values()]
+    return points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
+  }
+  const onCameraPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const target = event.target as Element
+    if (target.closest('button, [role="button"], input, textarea, select, a')) return
+    event.preventDefault()
+    gesturePointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (gesturePointsRef.current.size === 1) {
+      gestureRef.current.startX = event.clientX
+      gestureRef.current.startY = event.clientY
+      gestureRef.current.consumed = false
+    } else if (gesturePointsRef.current.size === 2) {
+      pinchRef.current = { distance: Math.max(1, pointerDistance()), zoom: zoomRef.current }
+      gestureRef.current.consumed = true
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }, [])
+  const onCameraPointerMove = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (!gesturePointsRef.current.has(event.pointerId)) return
+    event.preventDefault()
+    gesturePointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (gesturePointsRef.current.size === 2 && pinchRef.current) {
+      applyZoomValue(pinchRef.current.zoom * (pointerDistance() / pinchRef.current.distance))
+      gestureRef.current.consumed = true
+    }
+  }, [applyZoomValue])
+  const onCameraPointerUp = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const gesture = gestureRef.current
+    if (!gesturePointsRef.current.has(event.pointerId)) return
+    event.preventDefault()
+    const wasSinglePointer = gesturePointsRef.current.size === 1
+    gesturePointsRef.current.delete(event.pointerId)
+    if (gesturePointsRef.current.size < 2) pinchRef.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+
+    if (!wasSinglePointer || gesture.consumed) return
+
+    const dx = event.clientX - gesture.startX
+    const dy = event.clientY - gesture.startY
+    const distance = Math.hypot(dx, dy)
+    if (Math.abs(dy) >= 46 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+      setFlashEnabled(dy < 0)
+      playPop()
+      gesture.lastTapAt = 0
+      return
+    }
+    if (distance > 16) {
+      gesture.lastTapAt = 0
+      return
+    }
+
+    const now = performance.now()
+    const nearLastTap = Math.hypot(
+      event.clientX - gesture.lastTapX,
+      event.clientY - gesture.lastTapY,
+    ) < 44
+    if (now - gesture.lastTapAt <= 330 && nearLastTap) {
+      gesture.lastTapAt = 0
+      flipCamera()
+      playPop()
+      return
+    }
+    gesture.lastTapAt = now
+    gesture.lastTapX = event.clientX
+    gesture.lastTapY = event.clientY
+  }, [flipCamera, setFlashEnabled])
+  const onCameraPointerCancel = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    gesturePointsRef.current.delete(event.pointerId)
+    if (gesturePointsRef.current.size < 2) pinchRef.current = null
+  }, [])
+
   // ── take a picture ───────────────────────────────────────────────────────
   const capturePhoto = useCallback(() => {
     playPop()
@@ -263,7 +494,22 @@ export default function Camera({
     // The front camera is shown mirrored, so the saved frame is mirrored too —
     // otherwise the photo comes back flipped from what you framed.
     if (facing === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1) }
-    ctx.drawImage(video, 0, 0)
+    // When the camera cannot perform device zoom, the preview uses a centred
+    // crop. Apply the same crop to the saved frame so capture matches framing.
+    const captureZoom = hardwareZoomRef.current ? 1 : zoomRef.current
+    const sourceWidth = video.videoWidth / captureZoom
+    const sourceHeight = video.videoHeight / captureZoom
+    ctx.drawImage(
+      video,
+      (video.videoWidth - sourceWidth) / 2,
+      (video.videoHeight - sourceHeight) / 2,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    )
     const shot = addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
     // A capture that only lands in the roll looks like nothing happened. Open
     // the composer on it, the way the native flow does.
@@ -376,8 +622,25 @@ export default function Camera({
         if (isLive()) stopBroadcast()
         else startBroadcast(streamRef.current ?? undefined)
       },
+      roll: () => onOpenRoll?.(),
+      // Offer the arrows to the composer first. On the live camera the upper
+      // channel button zooms in and the lower one zooms out; Camera Roll is now
+      // entered only through its hold-menu tile.
+      arrow: dir => {
+        const handler = composerArrowsRef.current
+        if (handler) handler(dir)
+        else applyZoomStep(dir === -1 ? 1 : -1)
+        return true
+      },
+      composerBack: () => {
+        if (!composingRef.current) return false
+        // The composer registered its own step-back; without one, close.
+        if (composerBackRef.current) composerBackRef.current()
+        else setComposing(null)
+        return true
+      },
     })
-  }, [bindActions, capturePhoto, toggleVideo])
+  }, [applyZoomStep, bindActions, capturePhoto, onOpenRoll, toggleVideo])
 
   const [pos, setPos] = useState(page === 'live' ? 1 : 2)
   const [animated, setAnimated] = useState(true)
@@ -441,7 +704,16 @@ export default function Camera({
   // Only the CENTRE live panel carries the stream — the wrap clone would need
   // a second camera to show the same picture, and one camera is all there is.
   const live = (key: string, real: boolean) => (
-    <section key={key} className={styles.cameraFull} aria-label="Camera preview twin">
+    <section
+      key={key}
+      className={styles.cameraFull}
+      aria-label="Camera preview twin"
+      onPointerDown={real ? onCameraPointerDown : undefined}
+      onPointerMove={real ? onCameraPointerMove : undefined}
+      onPointerUp={real ? onCameraPointerUp : undefined}
+      onPointerCancel={real ? onCameraPointerCancel : undefined}
+      style={{ touchAction: real ? 'none' : undefined }}
+    >
       {!NATIVE_CAMERA_PREVIEW && real && (
         <video
           ref={videoRef}
@@ -450,6 +722,15 @@ export default function Camera({
             objectFit: 'cover',
             display: streamOn ? '' : 'none',
             filter: filterCss === 'none' ? undefined : filterCss,
+            // Device zoom changes the track itself. Unsupported browsers use
+            // this crop fallback; disabling the old drift keeps the requested
+            // zoom stable beneath the HUD.
+            animation: 'none',
+            transform: hardwareZoom
+              ? (facing === 'user' ? 'scaleX(-1)' : undefined)
+              : (facing === 'user' ? `scale(${-zoom}, ${zoom})` : `scale(${zoom})`),
+            transformOrigin: 'center',
+            transition: 'transform 180ms cubic-bezier(.2,.8,.2,1)',
           }}
           playsInline
           muted
@@ -496,10 +777,7 @@ export default function Camera({
           kind="flash"
           active={flash}
           label={flash ? 'Flash on' : 'Flash off'}
-          onPress={() => {
-            setFlash(f => !f)
-            postNativeEvent({ type: 'cameraControl', control: 'flash' })
-          }}
+          onPress={() => setFlashEnabled(!flashRef.current)}
         />
       </div>
       <img className={styles.camLogo} src="logo_text.png" alt="poplur" draggable={false} />
@@ -520,14 +798,32 @@ export default function Camera({
         <ClayCornerButton
           kind="flip"
           label="Switch camera"
-          onPress={() => {
-            setFlash(false)
-            applyTorch(false)
-            setFacing(f => (f === 'user' ? 'environment' : 'user'))
-            postNativeEvent({ type: 'cameraControl', control: 'flip' })
-          }}
+          onPress={flipCamera}
         />
       </div>
+
+      {/* Lens presets, riding just above the cube: 0.5× (iOS ultra-wide),
+          1× and 2×. The lit one is whichever preset the current zoom is
+          nearest, so pinching keeps the row honest. */}
+      {real && (
+        <div className={styles.camZoomPresets} role="group" aria-label="Zoom presets">
+          {ZOOM_PRESETS.map(preset => {
+            const nearest = ZOOM_PRESETS.reduce((best, v) =>
+              Math.abs(v - zoom) < Math.abs(best - zoom) ? v : best, ZOOM_PRESETS[0])
+            return (
+              <button
+                key={preset}
+                type="button"
+                className={preset === nearest ? `${styles.camZoomPreset} ${styles.camZoomPresetOn}` : styles.camZoomPreset}
+                aria-pressed={preset === nearest}
+                onClick={() => { playPop(); applyZoomValue(preset) }}
+              >
+                {preset === 0.5 ? '.5' : `${preset}`}<small>×</small>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 
@@ -548,6 +844,8 @@ export default function Camera({
           media={composing}
           target={postTarget ?? undefined}
           onClose={() => { setComposing(null); onPostTargetUsed?.() }}
+          bindArrows={fn => { composerArrowsRef.current = fn }}
+          bindBack={fn => { composerBackRef.current = fn }}
         />
       )}
 

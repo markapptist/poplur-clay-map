@@ -4,7 +4,6 @@ import { playPop } from './pop'
 import type { CubeTab } from './CubeTab3D'
 import ClayCornerButton from './ClayCornerButton'
 import { isDetectOn, onCameraStore } from './cameraStore'
-import { isIOSNativeShell, postNativeEvent } from './nativeBridge'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
@@ -346,14 +345,11 @@ export default function HoldMenuTwin({
       onClose()
       return
     }
-    // iOS owns the real AI chat. Other hosts use the bundled interactive twin;
-    // Android does not have a matching native destination yet.
-    if (item.nativeAction && isIOSNativeShell()) {
-      playPop()
-      postNativeEvent({ type: 'holdMenuNavigate', action: item.nativeAction })
-      onClose()
-      return
-    }
+    // CREATE opens the bundled AI chat subscreen on every host, iOS included.
+    // The native PoplurAIChatView cover was a screen with no home view on it —
+    // it hid the cube, so the one universal back control was gone. The web
+    // chat lives in the subscreen stage like everything else; the composer's
+    // "Generate in Poplur AI" step still reaches the native generator.
     // SEARCH / CURRENT LOCATION / DIRECTIONS / TOUR happen on the map behind
     // the menu. Closing is part of the action — you need to see what it did.
     if (item.mapAction) {

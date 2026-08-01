@@ -569,7 +569,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  type HomeCameraAction = Exclude<keyof CameraActions, 'arrow'> | 'roll'
+  type HomeCameraAction = Exclude<keyof CameraActions, 'arrow' | 'composerBack'> | 'roll'
   const runMenuAction = (action: FeedAction | HomeCameraAction) => {
     if (action === 'roll') {
       setCameraStep(current => current + 1)
@@ -593,10 +593,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
-    // On the camera tab the clay arrows page the camera itself: up slides
-    // up, down slides down, both directions wrap live ⇄ roll.
+    // On the camera tab the clay arrows belong to the camera: zoom on the
+    // live viewfinder, and filter-flipping once a capture preview is up.
+    // (Live ⇄ roll paging moved to the hold menu's CAMERA ROLL tile.)
     if (activeTab === 'post') {
-      setCameraStep(s => s + (dir === -1 ? 1 : -1))
+      cameraActionsRef.current?.arrow(dir)
       return
     }
     if (activeTab === 'profile') {
@@ -637,6 +638,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // Back before anything else: if a subscreen or the hold menu is open, the
     // tap is the way out of it, not a favourite-action trigger.
     if (goBackRef.current?.()) { playPop(); return }
+    // The capture preview is the same deal: with the composer up, the cube is
+    // its back button (step back, then close) — never the shutter.
+    if (composerOpen && cameraActionsRef.current?.composerBack()) { playPop(); return }
     playPop()
     setPopping(true)
     // Tapping the cube runs whatever you pinned in this tab's hold menu.
@@ -773,7 +777,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           floated and the arrows and radius label it sits between vanished
           underneath. The whole HUD is one piece of home chrome. */}
       <div
-        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${composerOpen ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
@@ -850,11 +854,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       {/* The cube is the persistent navigator — visible on every tab, floating
           over whatever content is active. Its face tracks the current tab. */}
-      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${composerOpen ? ` ${styles.chromeHidden}` : ''}`} />
+      {/* The HUD used to duck out while the composer was up. It stays now: the
+          capture preview is a home surface — cube back, arrows flip filters. */}
+      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`} />
       <ClayPhonePop visible={cubeIntoPhone} />
       <div
         data-poplur-cube
-        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${composerOpen ? ` ${styles.chromeHidden}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
+        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div

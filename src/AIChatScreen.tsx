@@ -31,7 +31,9 @@ function assistantReply(prompt: string): string {
   return 'Got it. Add any media you want me to work with, or tell me one more detail about the result.'
 }
 
-export default function AIChatScreen({ onClose }: { onClose: () => void }) {
+// onClose stays in the contract for hosts that need it; the cube (HoldMenu's
+// universal back) is what actually dismisses this subscreen.
+export default function AIChatScreen({ onClose: _onClose }: { onClose: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [attachment, setAttachment] = useState<{ name: string; url?: string } | null>(null)
@@ -88,14 +90,7 @@ export default function AIChatScreen({ onClose }: { onClose: () => void }) {
     <section className={styles.screen} aria-label="Poplur AI chat">
       <div className={styles.confetti} aria-hidden="true" />
       <header className={styles.header}>
-        <button
-          type="button"
-          className={styles.back}
-          aria-label="Back to Camera"
-          onClick={() => { playPop(); onClose() }}
-        >
-          ‹
-        </button>
+        {/* No ‹ back — the cube closes this subscreen like every other. */}
         <div className={styles.identity}>
           <span className={styles.mark} aria-hidden="true">P</span>
           <span>

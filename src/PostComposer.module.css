@@ -31,22 +31,36 @@
 .barBtn:active { transform: scale(0.92); }
 
 /* ── media preview ────────────────────────────────────────────────────────── */
+/* Full-bleed, like Snapchat: the capture fills the screen and the chrome floats
+   on top of it. It used to be an inset rounded card with object-fit:contain, so
+   a portrait capture sat in a letterbox with black above and below and a margin
+   down each side — the media was the smallest thing on a screen that exists to
+   show it. */
 .preview {
-  flex: 1 1 auto;
-  min-height: 0;
-  margin: 0 12px;
-  border-radius: 20px;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   overflow: hidden;
   background: #000;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   display: grid;
   place-items: center;
 }
-.media { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* cover, not contain: fill the frame and crop the overflow rather than shrink
+   the capture to fit inside it. */
+.media { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* The bar and the step panel sit above the full-bleed media, with a scrim so
+   their text stays legible over a bright capture. */
+.bar, .panel { position: relative; z-index: 1; }
+.bar { background: linear-gradient(180deg, rgba(7, 4, 12, 0.72), transparent); }
+.panel { background: linear-gradient(0deg, rgba(7, 4, 12, 0.82) 62%, transparent); }
 
 /* ── step panel ───────────────────────────────────────────────────────────── */
 .panel {
   flex: 0 0 auto;
+  /* The preview is out of flow now (absolute, full-bleed), so without this the
+     panel would sit directly under the bar at the top of the screen. */
+  margin-top: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -83,6 +97,73 @@
 .choiceHead {
   margin: 2px 0 4px;
   font-size: 19px; font-weight: 950; text-align: center;
+}
+
+/* ── edit step: fullscreen capture chrome ─────────────────────────────────── */
+/* Forward is the only button on the capture preview — back is the cube. */
+.nextFab {
+  position: absolute;
+  z-index: 2;
+  top: max(14px, env(safe-area-inset-top));
+  right: 14px;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff62ad, #d90f6d);
+  color: #fff;
+  font: 950 14px/1 system-ui, sans-serif;
+  letter-spacing: 1px;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(194, 17, 122, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.nextFab:active { transform: scale(0.94); }
+
+/* The current filter's name, floating above the home HUD. Keyed on the filter
+   id so each flick replays the entrance. */
+.filterName {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: calc(178px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  font: 950 21px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: filterNameIn 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+/* The house shader-text recipe (ProfileTwin's share sheet): a slow gradient
+   sweep clipped through the letterforms. */
+.filterNameShader {
+  color: transparent;
+  background-image: linear-gradient(105deg, #25131f 0%, #8b214f 22%, #ff6cad 42%, #173f58 62%, #35c8ef 78%, #25131f 100%);
+  background-size: 260% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation:
+    filterNameIn 0.34s cubic-bezier(0.2, 1.4, 0.4, 1) both,
+    filterNameShader 4.8s linear infinite;
+  filter:
+    drop-shadow(0 2px 0 rgba(5, 2, 9, 0.65))
+    drop-shadow(0 5px 9px rgba(0, 0, 0, 0.55));
+}
+
+@keyframes filterNameIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.9); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+@keyframes filterNameShader {
+  from { background-position: 0 0; }
+  to   { background-position: -260% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .filterName, .filterNameShader { animation: none; }
 }
 
 /* ── filter rail ──────────────────────────────────────────────────────────── */

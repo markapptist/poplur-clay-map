@@ -88,12 +88,20 @@ export default function PostComposer({
   target,
   onClose,
   onPosted,
+  bindArrows,
+  bindBack,
 }: {
   media: ComposerMedia
   /** set when the post is bound to a map coordinate */
   target?: ComposerTarget
   onClose: () => void
   onPosted?: (post: PublishedPost) => void
+  /** Hands the clay channel arrows a job while the composer is open: stepping
+   *  the filter over the capture (and the channel on the channel step). */
+  bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
+  /** Registers "back one screen" for the cube — the composer's only back
+   *  control now that the header's ‹ and ✕ are gone. */
+  bindBack?: (fn: (() => void) | null) => void
 }) {
   const [step, setStep] = useState<Step>('edit')
   const [filterId, setFilterId] = useState('none')
@@ -108,7 +116,6 @@ export default function PostComposer({
   // account) — the confirmation must never imply an upload that did not happen.
   const [uploadNote, setUploadNote] = useState<string | null>(null)
   const filterCss = AR_FILTERS.find(f => f.id === filterId)?.css ?? 'none'
-  const railRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -120,6 +127,20 @@ export default function PostComposer({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   })
+
+  // The cube's back: one screen at a time, closing from the first. Matches
+  // the Escape key exactly.
+  const backRef = useRef({ step, onClose })
+  backRef.current = { step, onClose }
+  useEffect(() => {
+    if (!bindBack) return
+    bindBack(() => {
+      const { step: current, onClose: close } = backRef.current
+      if (current === 'edit') close()
+      else setStep(current === 'channel' ? 'choice' : 'edit')
+    })
+    return () => bindBack(null)
+  }, [bindBack])
 
   /** Bake the chosen filter into the pixels so the post carries what you saw.
    *  Photos are re-drawn through the CSS filter here; video keeps its filter id
@@ -152,6 +173,31 @@ export default function PostComposer({
       reader.readAsDataURL(blob)
     })
   }
+
+  // The clay channel arrows drive the composer while it is open: on the edit
+  // step they walk the filters over your capture (so you can flick through
+  // looks without reaching for the rail), and on the channel step they walk the
+  // channels — in both cases the arrows do the thing the screen is about.
+  const stepRef = useRef(step)
+  stepRef.current = step
+  useEffect(() => {
+    if (!bindArrows) return
+    bindArrows((dir: 1 | -1) => {
+      playPop()
+      if (stepRef.current === 'channel') {
+        setChannelId(current => {
+          const i = CHANNELS.findIndex(c => c.id === current)
+          return CHANNELS[((i + dir) % CHANNELS.length + CHANNELS.length) % CHANNELS.length].id
+        })
+        return
+      }
+      setFilterId(current => {
+        const i = AR_FILTERS.findIndex(f => f.id === current)
+        return AR_FILTERS[((i + dir) % AR_FILTERS.length + AR_FILTERS.length) % AR_FILTERS.length].id
+      })
+    })
+    return () => bindArrows(null)
+  }, [bindArrows])
 
   const publish = async () => {
     playPop()
@@ -233,45 +279,28 @@ export default function PostComposer({
 
   return (
     <div className={styles.stage} role="dialog" aria-label="Post composer">
-      <header className={styles.bar}>
-        <button
-          className={styles.barBtn}
-          onClick={() => { playPop(); step === 'edit' ? onClose() : setStep(step === 'channel' ? 'choice' : 'edit') }}
-          aria-label="Back"
-        >‹</button>
-        <span className={styles.barTitle}>
-          {step === 'edit' ? 'Edit capture' : step === 'choice' ? 'Finish post' : step === 'ai' ? 'Poplur AI' : 'Choose channel'}
-        </span>
-        <button className={styles.barBtn} onClick={() => { playPop(); onClose() }} aria-label="Close composer">✕</button>
-      </header>
-
+      {/* No header, no ‹, no ✕ — the cube is the back button here, like every
+          subscreen. The capture IS the screen. */}
       {preview}
 
-      {/* ── 1. edit: the filter rail, the same AR set the camera uses ──────── */}
+      {/* ── 1. edit: full-bleed capture, Snapchat-style. The clay channel
+             arrows flip through the filters; the name of the current one
+             floats at the base in shader text. ─────────────────────────── */}
       {step === 'edit' && (
-        <div className={styles.panel}>
-          <span className={styles.panelLabel}>FILTER</span>
-          <div className={styles.filterRail} ref={railRef}>
-            {AR_FILTERS.map(f => (
-              <button
-                key={f.id}
-                className={f.id === filterId ? `${styles.swatchBtn} ${styles.swatchOn}` : styles.swatchBtn}
-                onClick={() => { playPop(); setFilterId(f.id) }}
-                aria-pressed={f.id === filterId}
-              >
-                <span
-                  className={styles.swatch}
-                  style={{
-                    backgroundImage: `url(${media.kind === 'photo' ? media.src : 'clay_cube.png'})`,
-                    filter: f.css === 'none' ? undefined : f.css,
-                  }}
-                />
-                <span className={styles.swatchLabel}>{f.label}</span>
-              </button>
-            ))}
-          </div>
-          <button className={styles.primary} onClick={() => { playPop(); setStep('choice') }}>Continue</button>
-        </div>
+        <>
+          <button
+            className={styles.nextFab}
+            onClick={() => { playPop(); setStep('choice') }}
+            aria-label="Continue to post"
+          >NEXT ›</button>
+          <span
+            key={filterId}
+            className={`${styles.filterName} ${styles.filterNameShader}`}
+            aria-live="polite"
+          >
+            {AR_FILTERS.find(f => f.id === filterId)?.label ?? 'ORIGINAL'}
+          </span>
+        </>
       )}
 
       {/* ── 2. choice: post original, or hand it to Poplur AI ──────────────── */}
