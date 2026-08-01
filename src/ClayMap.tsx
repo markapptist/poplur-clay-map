@@ -690,6 +690,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [mapEpoch, setMapEpoch] = useState(0)
   const [mapFailure, setMapFailure] = useState<string | null>(null)
   const [zoomValue, setZoomValue] = useState(14.8)
+  const zoomValueRef = useRef(14.8)
+  const zoomTargetRef = useRef(14.8)
+  const zoomVelocityRef = useRef(0)
+  const zoomAnimationRef = useRef(0)
+  const zoomLastFrameRef = useRef(0)
   // The sky's own clock. Normally the real one; in dev it can be raced so the
   // sun and moon complete their circuit in a minute instead of a day.
   const [skyClock, setSkyClock] = useState(() => new Date())
@@ -725,6 +730,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // knob. The rail is now viewport-sized, so measure it rather than assuming.
   const zoomRailRef = useRef<HTMLDivElement>(null)
   const [zoomRailMetrics, setZoomRailMetrics] = useState({ length: 380, thumb: 64 })
+  useEffect(() => () => {
+    if (zoomAnimationRef.current) cancelAnimationFrame(zoomAnimationRef.current)
+  }, [])
   useEffect(() => {
     const el = zoomRailRef.current
     if (!el) return
@@ -997,7 +1005,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     ;(window as unknown as { __map?: mapboxgl.Map }).__map = map
 
     // ── Zoom slider sync ──────────────────────────────────────────────────────
-    map.on('zoom', () => setZoomValue(map.getZoom()))
+    map.on('zoom', () => {
+      const next = map.getZoom()
+      zoomValueRef.current = next
+      setZoomValue(next)
+      // Pinch/wheel/cinematic zooms become the new resting point. While our
+      // slider spring owns the camera, keep its destination intact instead.
+      if (!zoomAnimationRef.current) zoomTargetRef.current = next
+    })
 
     // ── Zoom-dependent marker visibility ─────────────────────────────────────
     // Globe zoom shows the flyers; street zoom shows the POI pins.
@@ -2577,10 +2592,55 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     markersRef.current = []
   }
 
-  const applyZoom = (v: number) => {
-    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v))
+  const commitZoom = (value: number) => {
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value))
+    zoomValueRef.current = next
     setZoomValue(next)
     mapRef.current?.setZoom(next)
+  }
+
+  const runZoomSpring = () => {
+    if (zoomAnimationRef.current) return
+    zoomLastFrameRef.current = performance.now()
+    const frame = (now: number) => {
+      let remaining = Math.min(0.1, Math.max(1 / 240, (now - zoomLastFrameRef.current) / 1000))
+      zoomLastFrameRef.current = now
+      let current = zoomValueRef.current
+      const target = zoomTargetRef.current
+      let velocity = zoomVelocityRef.current
+
+      // A lightly under-damped, short-travel spring: it takes the hard digital
+      // edge off setZoom without leaving the clay object lagging behind a thumb.
+      const omega = 22
+      const damping = 0.82
+      // Fixed small substeps keep the same physical duration at 120/60/30/12fps
+      // and prevent a long A03 frame from exploding the spring.
+      while (remaining > 0) {
+        const dt = Math.min(1 / 120, remaining)
+        const acceleration = omega * omega * (target - current)
+          - 2 * damping * omega * velocity
+        velocity += acceleration * dt
+        current += velocity * dt
+        remaining -= dt
+      }
+      const next = current
+      zoomVelocityRef.current = velocity
+      commitZoom(next)
+
+      if (Math.abs(target - next) < 0.0025 && Math.abs(velocity) < 0.012) {
+        zoomVelocityRef.current = 0
+        commitZoom(target)
+        zoomAnimationRef.current = 0
+        return
+      }
+      zoomAnimationRef.current = requestAnimationFrame(frame)
+    }
+    zoomAnimationRef.current = requestAnimationFrame(frame)
+  }
+
+  const applyZoom = (v: number) => {
+    zoomTargetRef.current = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v))
+    runZoomSpring()
   }
 
   // Screen Y → zoom. The rail runs globe (bottom) to street (top), so the
@@ -2596,49 +2656,54 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     return ZOOM_MIN + ratio * (ZOOM_MAX - ZOOM_MIN)
   }
 
-  // Press ON the knob picks it up where you touched it; press anywhere else in
-  // the column jumps there first, then drags. Without the grab offset, taking
-  // hold of the knob teleported the map by however far your thumb was off its
-  // centre — the single thing that made this slider feel unusable.
-  const zoomGrabRef = useRef(0)
+  // A relative push/pull once the thumb is grabbed. A 1.24× gain means a short
+  // phone swipe can traverse the full world-to-street range without the user's
+  // finger having to start exactly at an end-stop.
+  const zoomDragRef = useRef<{ startY: number; startZoom: number } | null>(null)
 
   const handleZoomDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const rail = zoomRailRef.current
     if (!rail) return
     e.preventDefault()
     stopOrbitRef.current()
+    mapRef.current?.stop()
     e.currentTarget.setPointerCapture(e.pointerId)
     const box = rail.getBoundingClientRect()
     const thumb = zoomRailMetrics.thumb
     const travel = Math.max(1, box.height - thumb)
     const knobCentreY = box.bottom - thumb / 2 - zoomRatio * travel
     if (Math.abs(e.clientY - knobCentreY) <= thumb / 2) {
-      zoomGrabRef.current = e.clientY - knobCentreY
+      zoomDragRef.current = { startY: e.clientY, startZoom: zoomValueRef.current }
     } else {
-      zoomGrabRef.current = 0
       const v = zoomForClientY(e.clientY)
-      if (v != null) applyZoom(v)
+      if (v != null) {
+        applyZoom(v)
+        zoomDragRef.current = { startY: e.clientY, startZoom: v }
+      }
     }
   }
 
   const handleZoomMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
     e.preventDefault()
-    const v = zoomForClientY(e.clientY - zoomGrabRef.current)
-    if (v != null) applyZoom(v)
+    const drag = zoomDragRef.current
+    if (!drag) return
+    const travel = Math.max(1, zoomRailMetrics.length - zoomRailMetrics.thumb)
+    const delta = ((drag.startY - e.clientY) / travel) * (ZOOM_MAX - ZOOM_MIN) * 1.24
+    applyZoom(drag.startZoom + delta)
   }
 
   const handleZoomUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
-    zoomGrabRef.current = 0
+    zoomDragRef.current = null
   }
 
   const handleZoomKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const step = e.shiftKey ? 1 : 0.25
-    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { e.preventDefault(); applyZoom(zoomValue + step) }
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { e.preventDefault(); applyZoom(zoomValue - step) }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { e.preventDefault(); applyZoom(zoomTargetRef.current + step) }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { e.preventDefault(); applyZoom(zoomTargetRef.current - step) }
     else if (e.key === 'Home') { e.preventDefault(); applyZoom(ZOOM_MAX) }
     else if (e.key === 'End') { e.preventDefault(); applyZoom(ZOOM_MIN) }
   }

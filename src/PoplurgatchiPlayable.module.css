@@ -27,12 +27,12 @@
 
 .device {
   position: relative;
-  /* The image is 3:4. Limit its width by BOTH axes: 82% of the actual stage
-     width and 69% of its height (which produces a device no taller than 92%
-     of the stage). This keeps the full shell visible on narrow phones,
-     landscape devices, split-screen tablets, and native WebViews. */
-  width: min(82%, 69vh);
-  width: min(82cqw, 69cqh);
+  /* The image is 3:4. Use the largest 3:4 rectangle that fits the exact game
+     stage: full container width on a portrait phone, or full container height
+     in landscape. The stage owns the safe-area padding, so the shell and its
+     three percentage-positioned controls remain inside the usable viewport. */
+  width: min(100%, 75vh);
+  width: min(100cqw, 75cqh);
   min-width: 0;
   min-height: 0;
   max-width: 100%;

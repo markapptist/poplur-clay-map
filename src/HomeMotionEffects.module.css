@@ -1,0 +1,99 @@
+/* Transient motion effects for Home. Kept separate from HomeTwin.module.css so
+   release work never has to stage the user's unrelated in-progress Home CSS. */
+
+/* Exhaust belongs to Feed, not the whole app. Home mounts this layer only while
+   the cube is turning with Feed front-most; particles begin at the device's
+   bottom edge and expire before reaching the middle of the screen. */
+.feedSpinSmoke {
+  position: absolute;
+  z-index: 12;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: min(40vh, 390px);
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+  -webkit-mask-image: linear-gradient(to top, #000 0 54%, transparent 100%);
+  mask-image: linear-gradient(to top, #000 0 54%, transparent 100%);
+}
+
+.feedSpinSmoke span {
+  position: absolute;
+  left: var(--smoke-left);
+  bottom: -34px;
+  width: var(--smoke-size);
+  height: var(--smoke-size);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 42% 42%, rgba(255, 231, 244, 0.44) 0 17%, rgba(122, 112, 126, 0.34) 46%, transparent 72%);
+  filter: blur(5px);
+  opacity: 0;
+  transform: translate3d(-50%, 0, 0) scale(0.58);
+  animation: feedSmokeRise var(--smoke-duration) cubic-bezier(0.16, 0.72, 0.3, 1) var(--smoke-delay) infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes feedSmokeRise {
+  0% {
+    opacity: 0;
+    transform: translate3d(-50%, 20px, 0) scale(0.5);
+  }
+  18% { opacity: 0.46; }
+  72% { opacity: 0.2; }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(-50% + var(--smoke-drift)), -210px, 0) scale(1.45);
+  }
+}
+
+/* Rapid 0→value count with two soft copies travelling upward behind it. The
+   readable number never blurs; only the motion trail does, so the effect remains
+   legible over live video while still reading as fast mechanical movement. */
+.radiusCounter,
+.radiusMaxCounter {
+  position: relative;
+  isolation: isolate;
+}
+
+.radiusCounter { display: inline-flex; align-items: baseline; }
+.radiusMaxCounter { display: inline-block; }
+
+.radiusCounter::before,
+.radiusCounter::after,
+.radiusMaxCounter::before,
+.radiusMaxCounter::after {
+  content: attr(data-counter-value);
+  position: absolute;
+  z-index: -1;
+  inset: 0 auto auto 0;
+  color: #8be8ff;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  filter: blur(5px);
+}
+
+.radiusCounterRunning::before,
+.radiusCounterRunning::after {
+  animation: radiusBlurRise 120ms steps(3, end) infinite;
+}
+
+.radiusCounterRunning::after {
+  animation-delay: -60ms;
+  color: #ff8ac6;
+}
+
+@keyframes radiusBlurRise {
+  0% { opacity: 0.32; transform: translateY(8px) scaleY(1.08); }
+  100% { opacity: 0; transform: translateY(-14px) scaleY(0.88); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feedSpinSmoke { display: none; }
+
+  .radiusCounterRunning::before,
+  .radiusCounterRunning::after {
+    animation: none;
+  }
+}

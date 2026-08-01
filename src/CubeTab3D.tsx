@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { playCubeTurnDetent, setCubeTurnSound } from './motionEffectsAudio'
 
 // Live 3D cube tab navigator — the web twin of CubeTabView.swift.
 // Renders poplur_cube_v4.glb (a true 2×2×2 box built from the six designed clay
@@ -28,17 +29,19 @@ export interface CubeTab3DProps {
   targetTab: CubeTab
   /** fired when a rotation settles on a new front face */
   onFaceChange: (tab: CubeTab) => void
+  /** true only while the cube is actually turning (drag or spring settle) */
+  onSpinChange?: (spinning: boolean) => void
   onTap: () => void
   onHold: () => void
   size?: number
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200 }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap, onHold, size = 200 }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   const targetTabRef = useRef(targetTab)
-  const callbacksRef = useRef({ onFaceChange, onTap, onHold })
-  callbacksRef.current = { onFaceChange, onTap, onHold }
+  const callbacksRef = useRef({ onFaceChange, onSpinChange, onTap, onHold })
+  callbacksRef.current = { onFaceChange, onSpinChange, onTap, onHold }
 
   // imperative bridge: prop change → spring to that face
   const springToRef = useRef<(tab: CubeTab) => void>(() => {})
@@ -93,6 +96,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let disposed = false
     let needsRender = true
     let lastTab = targetTabRef.current
+    let spinReported = false
+
+    const reportSpin = (spinning: boolean) => {
+      if (spinReported === spinning) return
+      spinReported = spinning
+      callbacksRef.current.onSpinChange?.(spinning)
+    }
 
     const frontTab = (angle: number): CubeTab => {
       const quarter = ((Math.round(-angle / HALF_PI) % 4) + 4) % 4
@@ -165,7 +175,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const onPointerMove = (e: PointerEvent) => {
       if (!dragging) return
       const dx = e.clientX - startX
-      if (Math.abs(dx) > 3 && !moved) { moved = true; cancelHold() }
+      if (Math.abs(dx) > 3 && !moved) {
+        moved = true
+        cancelHold()
+        // Do this inside the pointer gesture (not one rAF later) so iOS grants
+        // WebAudio activation to the procedural hydraulic turn effect.
+        reportSpin(true)
+        setCubeTurnSound(0.08, true)
+      }
       if (!moved) return
       const now = performance.now()
       const dt = Math.max(1, now - lastMoveTime) / 1000
@@ -238,8 +255,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       if (front !== lastTab) {
         lastTab = front
         targetTabRef.current = front
+        playCubeTurnDetent(Math.min(1, Math.abs(vel) / 12))
         callbacksRef.current.onFaceChange(front)
       }
+
+      // The restored drag/spring constants preserve the previous responsive
+      // feel. Angular speed only drives the physical cues layered on top: the
+      // hydraulic/exhaust bed and Feed's bottom smoke while the cube turns.
+      const spinning = (dragging && moved)
+        || springTarget !== null
+        || (!dragging && Math.abs(vel) > 0.035)
+      reportSpin(spinning)
+      setCubeTurnSound(Math.min(1, Math.abs(vel) / 12), spinning)
 
       if (needsRender) {
         group.rotation.y = yaw
@@ -251,6 +278,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
 
     return () => {
       disposed = true
+      reportSpin(false)
+      setCubeTurnSound(0, false)
       cancelAnimationFrame(raf)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)

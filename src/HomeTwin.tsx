@@ -1,5 +1,6 @@
 import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import styles from './HomeTwin.module.css'
+import motionStyles from './HomeMotionEffects.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
@@ -11,12 +12,13 @@ import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import ClayPhonePop from './ClayPhonePop'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
-import { playPop, preloadPop } from './pop'
+import { playPop, popHaptic, preloadPop } from './pop'
 import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
 import { initialMapMode, type PoplurMapMode } from './mapMode'
+import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
 import {
   readMapTourTopics,
   writeMapTourTopics,
@@ -67,6 +69,88 @@ const RADIUS_METERS = 41_800
 const EARTH_RADIUS_KM = 6_371
 // Stable spoofed reach until presence is wired to the live audience service.
 const SPOOFED_ONLINE_AUDIENCE = 1_200_000
+
+const FEED_SMOKE_PARTICLES = [
+  { left: 12, size: 54, drift: -18, delay: -0.64, duration: 1.15 },
+  { left: 21, size: 72, drift: 22, delay: -0.28, duration: 1.42 },
+  { left: 31, size: 48, drift: -8, delay: -0.92, duration: 1.08 },
+  { left: 41, size: 88, drift: 26, delay: -0.48, duration: 1.55 },
+  { left: 50, size: 62, drift: -20, delay: -0.12, duration: 1.24 },
+  { left: 59, size: 84, drift: 18, delay: -0.78, duration: 1.48 },
+  { left: 69, size: 50, drift: -24, delay: -0.38, duration: 1.12 },
+  { left: 79, size: 76, drift: 12, delay: -1.02, duration: 1.52 },
+  { left: 89, size: 58, drift: -16, delay: -0.54, duration: 1.2 },
+]
+
+function AnimatedRadiusMetrics({
+  radius,
+  ceiling,
+  unit,
+  active,
+}: {
+  radius: number
+  ceiling: number
+  unit: 'mi' | 'km'
+  active: boolean
+}) {
+  const [progress, setProgress] = useState(active ? 0 : 1)
+  const [counting, setCounting] = useState(active)
+
+  useEffect(() => {
+    let raf = 0
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!active || reduced) {
+      setProgress(1)
+      setCounting(false)
+      return
+    }
+
+    setProgress(0)
+    setCounting(true)
+    const started = performance.now()
+    const frame = (now: number) => {
+      const raw = Math.max(0, Math.min(1, (now - started) / 880))
+      // Money counters run hard at the start, then click precisely onto the
+      // final amount rather than coasting past it.
+      const eased = 1 - Math.pow(1 - raw, 2.35)
+      setProgress(eased)
+      playRadiusCounterTick(eased)
+      if (raw < 1) {
+        raf = requestAnimationFrame(frame)
+      } else {
+        setProgress(1)
+        setCounting(false)
+        playRadiusCounterDone()
+      }
+    }
+    raf = requestAnimationFrame(frame)
+    return () => cancelAnimationFrame(raf)
+  }, [active, ceiling, radius, unit])
+
+  const currentText = (radius * progress).toFixed(1)
+  const ceilingText = Math.round(ceiling * progress).toLocaleString()
+  return (
+    <>
+      <span
+        className={`${styles.statValue} ${styles.radiusValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
+        data-counter-value={`${currentText}${unit}`}
+      >
+        {currentText}
+        <span className={styles.statUnit}>{unit}</span>
+      </span>
+      <span className={styles.statSub}>
+        of{' '}
+        <span
+          className={`${styles.statMax} ${motionStyles.radiusMaxCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
+          data-counter-value={ceilingText}
+        >
+          {ceilingText}
+        </span>{' '}
+        {unit}
+      </span>
+    </>
+  )
+}
 
 function shouldUseMiles(): boolean {
   if (typeof window === 'undefined') return false
@@ -265,6 +349,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     })
   }, [])
   const [popping, setPopping] = useState(false)
+  const [cubeSpinning, setCubeSpinning] = useState(false)
   // Start in the measurement system implied by the device locale. Tapping the
   // Radius card remains a deliberate local override for this session.
   const [unitMi, setUnitMi] = useState(shouldUseMiles)
@@ -650,6 +735,26 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )}
       </div>
 
+      {/* Feed gets the cube's exhaust as a transient physical cue. It is
+          mounted only while Feed is front AND the cube is turning, so smoke
+          cannot linger over Camera/Profile/Map or after the detent settles. */}
+      {activeTab === 'feed' && cubeSpinning && (
+        <div className={motionStyles.feedSpinSmoke} aria-hidden="true">
+          {FEED_SMOKE_PARTICLES.map((particle, index) => (
+            <span
+              key={index}
+              style={{
+                '--smoke-left': `${particle.left}%`,
+                '--smoke-size': `${particle.size}px`,
+                '--smoke-drift': `${particle.drift}px`,
+                '--smoke-delay': `${particle.delay}s`,
+                '--smoke-duration': `${particle.duration}s`,
+              } as React.CSSProperties}
+            />
+          ))}
+        </div>
+      )}
+
       {loadingVisible && (
         <div className={styles.mapLoading} role="status" aria-label="Loading the map">
           <LoadingGlobe />
@@ -749,16 +854,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             aria-label={`Radius ${(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
           >
             <span className={styles.statLabel}>{seenUser ? `${seenUser.handle} ◆` : 'RADIUS ◆'}</span>
-            <span className={`${styles.statValue} ${styles.radiusValueShader}`}>
-              {(() => {
-                const km = seenUser ? seenUser.radiusKm : RADIUS_METERS / 1000
-                return (unitMi ? km * KM_TO_MI : km).toFixed(1)
-              })()}
-              <span className={styles.statUnit}>{unitMi ? 'mi' : 'km'}</span>
-            </span>
-            <span className={styles.statSub}>
-              of <span className={styles.statMax}>{(unitMi ? Math.round(EARTH_RADIUS_KM * KM_TO_MI) : EARTH_RADIUS_KM).toLocaleString()}</span> {unitMi ? 'mi' : 'km'}
-            </span>
+            <AnimatedRadiusMetrics
+              radius={(seenUser ? seenUser.radiusKm : RADIUS_METERS / 1000) * (unitMi ? KM_TO_MI : 1)}
+              ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
+              unit={unitMi ? 'mi' : 'km'}
+              active={recordMs == null && !showOnlineAudience}
+            />
             <span className={styles.statTrend}>{POST_COUNT} nearby</span>
           </div>
           <div
@@ -792,7 +893,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             key={`cube-${uiRecoveryKey}`}
             size={cubeSize}
             targetTab={activeTab}
-            onFaceChange={tab => { playPop(); setActiveTab(tab) }}
+            onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}
+            onSpinChange={setCubeSpinning}
             onTap={popCube}
             onHold={() => {
               playPop()
