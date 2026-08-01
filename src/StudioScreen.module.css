@@ -834,7 +834,14 @@
 .micArt {
   width: min(58vw, 250px);
   height: auto;
-  filter: drop-shadow(0 22px 40px rgba(0, 0, 0, 0.65)) drop-shadow(0 0 34px rgba(246, 59, 154, 0.35));
+  /* The supplied mic PNG carries its own near-black bokeh background. Screen
+     blending drops black to invisible against our dark stage and keeps every
+     sparkle and neon rim — a clean "background removal" with no cutout haloes,
+     which an alpha-matte of glitter edges would absolutely have. Requires the
+     stage behind it to stay dark; on a light stage the trick inverts into a
+     washed-out ghost. */
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 34px rgba(246, 59, 154, 0.35));
 }
 .micArtFallback {
   width: 110px; height: 110px;
