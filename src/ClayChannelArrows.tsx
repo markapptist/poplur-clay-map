@@ -51,7 +51,7 @@ export default function ClayChannelArrows({
   size?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [rendererState, setRendererState] = useState<'mounting' | 'ready' | 'recovered'>('mounting')
+  const [rendererState, setRendererState] = useState<'mounting' | 'ready' | 'recovered' | 'failed'>('mounting')
   const recoveryGradientId = useId().replace(/:/g, '')
   const width = Math.round(size / 2)
   // pressed pulse targets per arrow, read by the render loop
@@ -64,7 +64,7 @@ export default function ClayChannelArrows({
     const w = canvas.clientWidth
     const h = canvas.clientHeight
 
-    const markRenderer = (state: 'mounting' | 'ready' | 'recovered') => {
+    const markRenderer = (state: 'mounting' | 'ready' | 'recovered' | 'failed') => {
       canvas.dataset.poplurChannelRenderer = state
       setRendererState(state)
     }
@@ -72,7 +72,12 @@ export default function ClayChannelArrows({
       // Let the browser restore the context, but ask the home watchdog to
       // remount the approved controls so all of their GPU resources are rebuilt.
       event.preventDefault()
-      markRenderer('recovered')
+      // 'failed', not 'recovered'. The home watchdog counts 'recovered' as
+      // HEALTHY, so marking it here told the watchdog everything was fine and
+      // no remount ever ran: the clay arrows fell back to the flat SVG and
+      // stayed there for the rest of the session. 'failed' asks for the
+      // remount that rebuilds the GPU resources and brings the clay back.
+      markRenderer('failed')
     }
     // A restored context asks the home watchdog for one clean remount so the
     // approved WebGL drawing gets a fresh resource set.
@@ -87,7 +92,7 @@ export default function ClayChannelArrows({
     try {
       renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
     } catch {
-      markRenderer('recovered')
+      markRenderer('failed')
       return () => {
         canvas.removeEventListener('webglcontextlost', onContextLost)
         canvas.removeEventListener('webglcontextrestored', onContextRestored)
@@ -228,7 +233,7 @@ export default function ClayChannelArrows({
         height={size}
         style={{ width, height: size, display: 'block', pointerEvents: 'none' }}
       />
-      {rendererState === 'recovered' && (
+      {(rendererState === 'recovered' || rendererState === 'failed') && (
         <svg
           aria-hidden="true"
           viewBox="0 0 88 176"
