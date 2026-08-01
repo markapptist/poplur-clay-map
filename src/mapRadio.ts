@@ -74,6 +74,25 @@ let liveAudio: HTMLAudioElement | null = null
 let liveStation: { name: string; url: string } | null = null
 let liveFadeTimer: number | null = null
 let liveTuneGeneration = 0
+const RADIO_STATION_EVENT = 'poplur-radio-station'
+
+function publishLiveStation() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(RADIO_STATION_EVENT, {
+    detail: { name: liveStation?.name ?? null },
+  }))
+}
+
+export function onLiveStationChange(listener: (name: string | null) => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const handler = (event: Event) => {
+    const detail = (event as CustomEvent<{ name?: string | null }>).detail
+    listener(detail?.name ?? null)
+  }
+  window.addEventListener(RADIO_STATION_EVENT, handler)
+  listener(liveStation?.name ?? null)
+  return () => window.removeEventListener(RADIO_STATION_EVENT, handler)
+}
 
 const RADIO_BROWSER_HOSTS = [
   'https://de1.api.radio-browser.info',
@@ -422,11 +441,10 @@ function preferredVoice(): SpeechSynthesisVoice | null {
 
 function hostLine(line: string, stations: ReadonlyArray<RadioStationCue>): string {
   const stationLine = stations
-    .slice(0, 3)
+    .slice(0, 1)
     .map(station => `${station.name}${station.frequency ? ` ${station.frequency}` : ''}`)
     .join(', ')
-  if (!stationLine) return `Poplur Radio checking in. ${line}.`
-  return `Poplur Radio checking in. ${line}. I am blending us into nearby radio now: ${stationLine}.`
+  return stationLine ? `${line}. ${stationLine}.` : `${line}.`
 }
 
 function blendAfterHost() {
@@ -527,6 +545,7 @@ function setLiveRadioLevel(value: number, timeConstant = 0.18) {
 
 function dropLiveStation() {
   liveStation = null
+  publishLiveStation()
   if (liveFadeTimer !== null) { window.clearInterval(liveFadeTimer); liveFadeTimer = null }
   if (liveAudio) { liveAudio.pause(); liveAudio.removeAttribute('src') }
   // The synth bed swells back so the radio never goes dead.
@@ -612,6 +631,7 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
       const audio = getLiveAudio()
       if (!audio) return null
       liveStation = { name: (pick.name ?? '').trim() || 'local radio', url: pick.url_resolved! }
+      publishLiveStation()
       audio.src = pick.url_resolved!
       if (soundWanted) {
         setRadioLevel(targetRadioLevel, 0.5)
@@ -791,6 +811,7 @@ export function playStation(station: { name: string; url: string }): void {
   requestAudioFocus('radio')
   installUnlock()
   liveStation = { name: station.name, url: station.url }
+  publishLiveStation()
   audio.src = station.url
   audio.muted = isGateMuted()
   if (radioBed) radioBed.master.gain.value = 0   // the synth stand-in steps aside
