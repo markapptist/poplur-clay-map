@@ -100,7 +100,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Music', title: 'STUDIO', screen: 'camera-studio', native: true },
   ],
   profile: [
-    { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', format: 'svg' },
+    { icon: 'Mail', title: 'MAIL', screen: 'profile-messages' },
     { icon: 'Store', title: 'STORE', screen: 'profile-store' },
     { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
     // NOTIFICATIONS springs down the real dropdown (owned by Profile) rather than
@@ -109,7 +109,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
     { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings' },
     // HEY POPLUR wakes the assistant directly — no wake phrase needed.
-    { icon: 'Mic', title: 'HEY POPLUR', screen: 'profile-voice', format: 'svg', event: 'voice' },
+    { icon: 'HeyPoplur', title: 'HEY POPLUR', screen: 'profile-voice', event: 'voice' },
   ],
 }
 
