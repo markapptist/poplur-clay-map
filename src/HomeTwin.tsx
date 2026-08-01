@@ -1,10 +1,10 @@
-import React, { useCallback, useState, useEffect, useRef } from 'react'
+import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
-import Camera, { MAX_RECORD_MS, type CameraActions, type CameraMenuAction } from './Camera'
+import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import PermissionAlert from './PermissionAlert'
@@ -12,6 +12,7 @@ import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import ClayPhonePop from './ClayPhonePop'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, preloadPop } from './pop'
+import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
@@ -469,25 +470,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.clearInterval(iv)
   }, [loadingVisible])
 
-  // Camera Roll remains the camera's second page, but it is entered only from
-  // the camera hold menu. Channel buttons now belong to zoom.
+  // Camera's vertical pager: `step` counts arrow presses (up +1 / down -1);
+  // parity picks the page, so both directions cycle live ⇄ roll.
   const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
-  const cameraRollOpen = ((cameraStep % 2) + 2) % 2 === 1
-  const openCameraRoll = useCallback(() => {
-    setCameraStep(current => (((current % 2) + 2) % 2 === 0 ? current + 1 : current))
-  }, [])
-  const closeCameraRoll = useCallback(() => {
-    setCameraStep(current => (((current % 2) + 2) % 2 === 1 ? current - 1 : current))
-  }, [])
   // The camera's own actions, so the cube and the hold menu can fire them.
   const cameraActionsRef = useRef<CameraActions | null>(null)
-  const [cameraZoom, setCameraZoom] = useState(1)
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
   // Who the camera is currently looking at. While a user is detected the radius
   // label shows THEIR reach — the number that matters is the one belonging to
   // the person in frame, not your own.
   const [seenUser, setSeenUser] = useState<{ handle: string; radiusKm: number } | null>(null)
+  const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
   useEffect(() => {
     if (activeTab !== 'profile') { setViewingUser(null); setProfileOrigin(null) }
@@ -503,9 +497,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  const runMenuAction = (action: FeedAction | CameraMenuAction) => {
+  type HomeCameraAction = Exclude<keyof CameraActions, 'arrow'> | 'roll'
+  const runMenuAction = (action: FeedAction | HomeCameraAction) => {
+    if (action === 'roll') {
+      setCameraStep(current => current + 1)
+      return
+    }
     if (action === 'photo' || action === 'video' || action === 'detect'
-      || action === 'ar' || action === 'live' || action === 'roll') {
+      || action === 'ar' || action === 'live') {
       cameraActionsRef.current?.[action]()
       return
     }
@@ -522,11 +521,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
-    // On the camera tab the arrows zoom the viewfinder (up in, down out). The
-    // post composer gets first refusal so its filter/channel steps still work.
-    // Camera Roll is deliberately absent here; its hold-menu tile owns it.
+    // On the camera tab the clay arrows page the camera itself: up slides
+    // up, down slides down, both directions wrap live ⇄ roll.
     if (activeTab === 'post') {
-      cameraActionsRef.current?.arrow(dir)
+      setCameraStep(s => s + (dir === -1 ? 1 : -1))
       return
     }
     if (activeTab === 'profile') {
@@ -572,19 +570,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // Tapping the cube runs whatever you pinned in this tab's hold menu.
     const favourite = readFavourite(activeTab)
     if (activeTab === 'post') {
-      // The cube is the universal back control. A Camera Roll opened from the
-      // hold menu closes before the cube resumes its capture/favourite action.
-      if (cameraRollOpen) {
-        closeCameraRoll()
-        return
-      }
       // The camera's default is PHOTO — a camera whose button does nothing
       // until you have visited a menu is not a camera.
-      const camera: Record<string, CameraMenuAction> = {
-        PHOTO: 'photo',
-        VIDEO: 'video',
-        'CAMERA ROLL': 'roll',
-      }
+      const camera: Record<string, Exclude<HomeCameraAction, 'roll'>> = { PHOTO: 'photo', VIDEO: 'video' }
       const which = camera[favourite ?? 'PHOTO'] ?? 'photo'
       cameraActionsRef.current?.[which]()
       return
@@ -605,7 +593,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   return (
     <section
       className={styles.home}
-      data-poplur-watchdog={chromeFaded || cameraRollOpen ? 'off' : 'on'}
+      data-poplur-watchdog={chromeFaded ? 'off' : 'on'}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
       {/* The map iframe mounts only while the Map tab is front. CSS cannot make
@@ -641,11 +629,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           <Camera
             onComposingChange={handleComposingChange}
             step={cameraStep}
-            onOpenRoll={openCameraRoll}
-            onCloseRoll={closeCameraRoll}
+            onCloseRoll={() => setCameraStep(s => s - 1)}
             bindActions={actions => { cameraActionsRef.current = actions }}
             onRecordingChange={setRecordMs}
-            onZoomChange={setCameraZoom}
             onDetectUser={setSeenUser}
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}
@@ -713,20 +699,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${composerOpen ? ` ${styles.chromeHidden}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
-        <div
-          className={`${styles.chanSlot}${activeTab === 'post' && cameraRollOpen ? ` ${styles.chanSlotHidden}` : ''}`}
-          data-poplur-channel-arrows
-        >
+        <div className={styles.chanSlot} data-poplur-channel-arrows>
           <ClayChannelArrows
             key={`channel-arrows-${uiRecoveryKey}`}
             size={cubeSize}
             number={activeTab === 'map' ? mapPostIdx + 1 : CHANNELS[chanIndex].number}
-            // Camera buttons are zoom controls now; show their current factor
-            // instead of a channel number or Camera Roll selection count.
-            label={activeTab === 'post' ? `${cameraZoom.toFixed(cameraZoom % 1 ? 1 : 0)}×` : undefined}
+            // The camera's two pages are not channels. The slot shows what the
+            // roll has selected instead, and carries the recording dot.
+            label={activeTab === 'post' ? (picked ? String(picked) : '') : undefined}
             dot={activeTab === 'post' && recordMs != null}
-            upLabel={activeTab === 'post' ? 'Zoom in' : undefined}
-            downLabel={activeTab === 'post' ? 'Zoom out' : undefined}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
           />
