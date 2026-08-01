@@ -2,7 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES } from './data'
 import ClayMap, { MAP_2D, MAP_LITE } from './ClayMap'
-import { mark2DNoticeSeen, setMapMode, shouldShow2DNotice } from './mapMode'
+import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import ClayCornerButton from './ClayCornerButton'
@@ -10,8 +10,20 @@ import WeatherFX, { modeForCode } from './WeatherFX'
 import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
 import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
-import { announceMapTour, startMapRadio, stopMapRadio, tuneLiveRadio } from './mapRadio'
+import {
+  announceMapTour,
+  onLiveStationChange,
+  startMapRadio,
+  stopMapRadio,
+  tuneLiveRadio,
+} from './mapRadio'
 import type { RadioStationCue } from './mapRadio'
+import {
+  normalizeMapTourTopics,
+  readMapTourTopics,
+  writeMapTourTopics,
+  type MapTourTopic,
+} from './mapTourPreferences'
 import {
   stopRegionAudio,
   startPoplurTheme, stopPoplurTheme, setVoiceDucked,
@@ -21,21 +33,10 @@ import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGat
 import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
 import ClayMuteButton from './ClayMuteButton'
-import PermissionAlert from './PermissionAlert'
 import styles from './App.module.css'
 
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
-
-// AI radio-host lines that rotate beneath the wordmark
-const AI_LINES = [
-  'People nearby are posting street food finds — share your take!',
-  'Trending: skyline shots by the harbourfront',
-  '3 new pops in Kensington Market right now',
-  'Poplur Radio: lo-fi beats live from Queen West',
-  'Fit checks are taking over Trinity Bellwoods today',
-  'Night market energy building in Chinatown',
-]
 
 // Clay weather icons keyed by open-meteo weather codes
 // Clay-shaded weather icons: each body is filled with a soft radial "shader"
@@ -107,7 +108,21 @@ const VOLUME_MUTED_ICON = `<svg viewBox="0 0 32 32"><path d="M6 12h4l6-5v18l-6-5
 const LOCATE_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="9.5" fill="none" stroke="#FF8AC6" stroke-width="2.2"/><circle cx="16" cy="16" r="3.2" fill="#F63B9A"/><path d="M16 3v5M16 24v5M3 16h5M24 16h5" stroke="#FFF2F8" stroke-width="2.2" stroke-linecap="round"/></svg>`
 const STREET_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 25 C10 19 12 13 16 7 C20 13 22 19 26 25" fill="none" stroke="#FFF2F8" stroke-width="2.2" stroke-linecap="round"/><path d="M16 9 L16 13M16 17 L16 21M16 25 L16 27" stroke="#F63B9A" stroke-width="2.3" stroke-linecap="round"/><path d="M8 25H24" stroke="#FF8AC6" stroke-width="2" stroke-linecap="round"/></svg>`
 
-type TourKind = 'landmark' | 'mall' | 'arena' | 'school' | 'museum' | 'park' | 'district' | 'venue'
+type TourKind =
+  | 'landmark'
+  | 'mall'
+  | 'arena'
+  | 'school'
+  | 'museum'
+  | 'park'
+  | 'district'
+  | 'venue'
+  | 'food'
+  | 'event'
+  | 'airport'
+  | 'themepark'
+  | 'casino'
+  | 'hotel'
 
 interface TourDestination {
   id: string
@@ -130,6 +145,29 @@ const TOUR_KIND_LABEL: Record<TourKind, string> = {
   park: 'park',
   district: 'district',
   venue: 'venue',
+  food: 'food spot',
+  event: 'local event',
+  airport: 'airport',
+  themepark: 'theme park',
+  casino: 'casino',
+  hotel: 'hotel',
+}
+
+const TOUR_TOPIC_FOR_KIND: Record<TourKind, MapTourTopic> = {
+  landmark: 'landmarks',
+  museum: 'landmarks',
+  park: 'landmarks',
+  mall: 'malls',
+  arena: 'sports',
+  school: 'universities',
+  district: 'downtown',
+  venue: 'events',
+  food: 'food',
+  event: 'events',
+  airport: 'airports',
+  themepark: 'themeParks',
+  casino: 'casinos',
+  hotel: 'hotels',
 }
 
 const RADIO_MARKETS: Record<string, RadioStation[]> = {
@@ -249,13 +287,22 @@ const DESTINATION_RADIO_MARKET: Record<string, string> = {
   'yonge-dundas': 'toronto',
   'kensington-market': 'toronto',
   'union-station-toronto': 'toronto',
+  'st-lawrence-market': 'toronto',
+  'exhibition-place': 'toronto',
+  'nathan-phillips': 'toronto',
+  'pearson-airport': 'toronto',
+  'fairmont-royal-york': 'toronto',
   'big-ben': 'london',
   wembley: 'london',
+  'borough-market': 'london',
+  heathrow: 'london',
   'statue-liberty': 'newyork',
   met: 'newyork',
   'times-square': 'newyork',
   'madison-square-garden': 'newyork',
   'grand-central': 'newyork',
+  'chelsea-market': 'newyork',
+  'jfk-airport': 'newyork',
   giza: 'cairo',
   'christ-redeemer': 'rio',
   'taj-mahal': 'agra',
@@ -264,6 +311,7 @@ const DESTINATION_RADIO_MARKET: Record<string, string> = {
   'burj-khalifa': 'dubai',
   'dubai-mall': 'dubai',
   'space-needle': 'seattle',
+  'pike-place': 'seattle',
   'golden-gate': 'bayarea',
   'mall-america': 'minneapolis',
   'west-edmonton-mall': 'edmonton',
@@ -272,6 +320,9 @@ const DESTINATION_RADIO_MARKET: Record<string, string> = {
   'crypto-arena': 'losangeles',
   ucla: 'losangeles',
   'hollywood-bowl': 'losangeles',
+  'la-live': 'losangeles',
+  'lax-airport': 'losangeles',
+  disneyland: 'losangeles',
   'harvard-yard': 'boston',
   'mit-dome': 'boston',
   'stanford-oval': 'paloalto',
@@ -345,15 +396,42 @@ const TOUR_DESTINATIONS: TourDestination[] = [
   { id: 'union-station-toronto', name: 'Toronto Union Station', kind: 'venue', coords: [-79.3806, 43.6453] },
   { id: 'grand-central', name: 'Grand Central Terminal', kind: 'venue', coords: [-73.9772, 40.7527] },
   { id: 'hollywood-bowl', name: 'the Hollywood Bowl', kind: 'venue', coords: [-118.3391, 34.1122] },
+  { id: 'st-lawrence-market', name: 'St. Lawrence Market', kind: 'food', coords: [-79.3716, 43.6487] },
+  { id: 'borough-market', name: 'Borough Market', kind: 'food', coords: [-0.0911, 51.5055] },
+  { id: 'chelsea-market', name: 'Chelsea Market', kind: 'food', coords: [-74.0055, 40.7424] },
+  { id: 'pike-place', name: 'Pike Place Market', kind: 'food', coords: [-122.3422, 47.6095] },
+  { id: 'exhibition-place', name: 'Exhibition Place', kind: 'event', coords: [-79.4167, 43.6333] },
+  { id: 'nathan-phillips', name: 'Nathan Phillips Square', kind: 'event', coords: [-79.3841, 43.6525] },
+  { id: 'la-live', name: 'L.A. Live', kind: 'event', coords: [-118.2667, 34.0443] },
+  { id: 'pearson-airport', name: 'Toronto Pearson Airport', kind: 'airport', coords: [-79.6248, 43.6777] },
+  { id: 'heathrow', name: 'Heathrow Airport', kind: 'airport', coords: [-0.4543, 51.47] },
+  { id: 'jfk-airport', name: 'JFK Airport', kind: 'airport', coords: [-73.7781, 40.6413] },
+  { id: 'lax-airport', name: 'LAX', kind: 'airport', coords: [-118.4085, 33.9416] },
+  { id: 'disneyland', name: 'Disneyland', kind: 'themepark', coords: [-117.9189, 33.8121] },
+  { id: 'bellagio', name: 'Bellagio', kind: 'casino', coords: [-115.1761, 36.1126] },
+  { id: 'fairmont-royal-york', name: 'Fairmont Royal York', kind: 'hotel', coords: [-79.3811, 43.6459] },
+  { id: 'marina-bay-sands', name: 'Marina Bay Sands', kind: 'hotel', coords: [103.8607, 1.2834] },
 ]
 
 const INTRO_LANDMARKS = TOUR_DESTINATIONS.filter(destination => destination.kind === 'landmark')
 
+const SEARCH_SHORTCUT_IDS = [
+  'cn-tower',
+  'eaton-centre',
+  'st-lawrence-market',
+  'scotiabank-arena',
+  'rogers-centre',
+  'rom',
+  'kensington-market',
+  'union-station-toronto',
+] as const
+const SEARCH_SHORTCUTS = SEARCH_SHORTCUT_IDS
+  .map(id => TOUR_DESTINATIONS.find(destination => destination.id === id))
+  .filter((destination): destination is TourDestination => Boolean(destination))
+
 const RECOMMENDATIONS: ((destination: TourDestination) => string)[] = [
-  destination => `Poplur Radio found ${destination.name}: nobody has posted from this ${TOUR_KIND_LABEL[destination.kind]} today`,
-  destination => `AI host says ${destination.name} is live right now. Drop a pop there?`,
-  destination => `Scanning ${destination.name}: big radius waiting at this ${TOUR_KIND_LABEL[destination.kind]}`,
-  destination => `Your followers have not seen ${destination.name} today - go claim it`,
+  destination => `Now at ${destination.name}`,
+  destination => `Touring ${destination.name}`,
 ]
 
 /** All modes, in the order you asked to browse them. */
@@ -402,16 +480,25 @@ function distanceMeters(a: [number, number], b: [number, number]): number {
   return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
-function nearestTourDestination(center: [number, number]): TourDestination {
-  return TOUR_DESTINATIONS.reduce((nearest, destination) =>
+function destinationsForTopics(topics: readonly MapTourTopic[]): TourDestination[] {
+  const selected = new Set(topics)
+  return TOUR_DESTINATIONS.filter(destination => selected.has(TOUR_TOPIC_FOR_KIND[destination.kind]))
+}
+
+function nearestTourDestination(
+  center: [number, number],
+  topics: readonly MapTourTopic[],
+): TourDestination {
+  const destinations = destinationsForTopics(topics)
+  return destinations.reduce((nearest, destination) =>
     distanceMeters(center, destination.coords) < distanceMeters(center, nearest.coords)
       ? destination
       : nearest,
-  TOUR_DESTINATIONS[0])
+  destinations[0] ?? TOUR_DESTINATIONS[0])
 }
 
-function stationsSummary(stations: RadioStation[]): string {
-  return stations.map(station => `${station.name} ${station.frequency}`).join(' / ')
+function displayPlaceName(name: string): string {
+  return name.replace(/^the\s+/i, '')
 }
 
 type NativeLocation = { latitude: number; longitude: number }
@@ -434,12 +521,19 @@ export default function App() {
   const isMapEmbed = params.get('map') === '1'
   const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
   const mapRef = useRef<mapboxgl.Map | null>(null)
-  const [show2DNotice, setShow2DNotice] = useState(() => shouldShow2DNotice())
+  const currentMapMode = MAP_2D ? '2d' : '3d'
+  const handleToggleMapMode = useCallback(() => {
+    const nextMode = MAP_2D ? '3d' : '2d'
+    setMapMode(nextMode)
+    const nextUrl = new URL(window.location.href)
+    nextUrl.searchParams.set('mapMode', nextMode)
+    nextUrl.searchParams.delete('fallback2d')
+    window.location.replace(nextUrl.toString())
+  }, [])
   const [selectedId, setSelectedId] = useState<string | null>('queen')
   // Theme switching lives in the app's Profile → Settings; the prototype
   // ships the default clay skin with the infrastructure in place.
   const [theme] = useState(MAP_THEMES[0])
-  const [aiIndex, setAiIndex] = useState(0)
   const [weather, setWeather] = useState<{ temp: number; code: number } | null>(null)
   const [weatherOverride, setWeatherOverride] = useState<WeatherMode | null>(null)
   // TEST ONLY: walk day → night → day so both skies can be checked without
@@ -466,8 +560,6 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [])
 
-  // Clock under the AI ticker: swings between the time and the date.
-  const [clockNow, setClockNow] = useState(() => new Date())
   // Place search (top-right): the clay magnifier opens a field that geocodes
   // through Mapbox and flies the map to whatever you pick.
   const [searchOpen, setSearchOpen] = useState(false)
@@ -475,15 +567,32 @@ export default function App() {
   const [searchText, setSearchText] = useState('')
   const [searchHits, setSearchHits] = useState<Array<{ name: string; center: [number, number] }>>([])
   const [searching, setSearching] = useState(false)
-  const [clockShowsDate, setClockShowsDate] = useState(false)
-  useEffect(() => {
-    const tick = window.setInterval(() => setClockNow(new Date()), 1000)
-    const swing = window.setInterval(() => setClockShowsDate(v => !v), 4000)
-    return () => { window.clearInterval(tick); window.clearInterval(swing) }
-  }, [])
   const [dayTime, setDayTime] = useState(true)
-  // The AI's live recommendation while it tours places (overrides the ticker)
+  // Tour narration stays separate from the visible status. The map header only
+  // says where the camera is and which real station is tuned.
   const [tourLine, setTourLine] = useState<string | null>(null)
+  const [currentPlace, setCurrentPlace] = useState('Toronto')
+  const [currentStation, setCurrentStation] = useState('Finding local radio…')
+  // How many px the status line overruns its ticker — 0 means it fits. Drives
+  // the back-and-forth glide; measured on every text change and resize.
+  const tickerRef = useRef<HTMLDivElement>(null)
+  const [tickerOverflow, setTickerOverflow] = useState(0)
+  useEffect(() => {
+    const el = tickerRef.current
+    if (!el) return
+    const measure = () => {
+      const span = el.firstElementChild as HTMLElement | null
+      setTickerOverflow(span ? Math.max(0, span.scrollWidth - el.clientWidth) : 0)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [currentPlace, currentStation])
+  const [tourTopics, setTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
+  const tourTopicsRef = useRef(tourTopics)
+  tourTopicsRef.current = tourTopics
+  const searchInterruptRef = useRef<() => void>(() => {})
   // User mute, toggled by the speaker mark beside the AI line.
   const [muted, setMuted] = useState(isUserMuted)
   const [streetView, setStreetView] = useState(false)
@@ -507,6 +616,12 @@ export default function App() {
     if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-loading' }, '*')
     postNativeEvent({ type: 'mapLoading' })
   }, [harnessView])
+
+  useEffect(() => {
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'poplur-map-mode', mode: currentMapMode }, '*')
+    }
+  }, [currentMapMode])
 
   // The native shells ask for location while Feed is visible, then broadcast
   // the result into this already-mounted map iframe. Keep latitude-first at
@@ -568,8 +683,10 @@ export default function App() {
     }, 320)
   }, [])
 
-  const flyToPlace = useCallback((center: [number, number]) => {
+  const flyToPlace = useCallback((center: [number, number], name: string) => {
     playPop(0.3)
+    searchInterruptRef.current()
+    setCurrentPlace(displayPlaceName(name))
     setSearchOpen(false)
     setSearchClosing(false)
     setSearchText('')
@@ -590,6 +707,53 @@ export default function App() {
       essential: true,
     })
   }, [mapRef])
+
+  // Keep the place half of the status truthful after a manual pan as well as
+  // after a tour/search action. Curated destinations win near their own
+  // coordinates; elsewhere a lightweight reverse lookup supplies the locality.
+  useEffect(() => {
+    let attachedMap: mapboxgl.Map | null = null
+    let lookupGeneration = 0
+    const updatePlace = () => {
+      const map = attachedMap
+      if (!map) return
+      const at = map.getCenter()
+      const center: [number, number] = [at.lng, at.lat]
+      const nearest = TOUR_DESTINATIONS.reduce((best, destination) =>
+        distanceMeters(center, destination.coords) < distanceMeters(center, best.coords)
+          ? destination
+          : best,
+      TOUR_DESTINATIONS[0])
+      if (distanceMeters(center, nearest.coords) < 180) {
+        setCurrentPlace(displayPlaceName(nearest.name))
+        return
+      }
+      const generation = ++lookupGeneration
+      void fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${center[0]},${center[1]}.json`
+        + `?access_token=${TOKEN}&limit=1&types=poi,neighborhood,locality,place`,
+      )
+        .then(response => response.ok ? response.json() : Promise.reject())
+        .then((data: { features?: Array<{ text?: string }> }) => {
+          if (generation !== lookupGeneration) return
+          const label = data.features?.[0]?.text?.trim()
+          if (label) setCurrentPlace(label)
+        })
+        .catch(() => { /* keep the last known place */ })
+    }
+    const attach = () => {
+      if (attachedMap || !mapRef.current) return
+      attachedMap = mapRef.current
+      attachedMap.on('moveend', updatePlace)
+      updatePlace()
+    }
+    attach()
+    const timer = window.setInterval(attach, 250)
+    return () => {
+      window.clearInterval(timer)
+      attachedMap?.off('moveend', updatePlace)
+    }
+  }, [])
 
   const applySoundState = useCallback((on: boolean): boolean => {
     soundRequestedRef.current = on
@@ -613,6 +777,7 @@ export default function App() {
         const lng = at?.lng ?? DEFAULT_NAV_ORIGIN[0]
         void tuneLiveRadio(lat, lng).then(name => {
           if (!name) liveStationTunedRef.current = false // nothing on air: try again next time
+          else setCurrentStation(name)
         })
       }
     } else {
@@ -651,22 +816,12 @@ export default function App() {
     return () => { stopMapRadio(); stopRegionAudio() }
   }, [])
 
+  useEffect(() => onLiveStationChange(name => {
+    if (name) setCurrentStation(name)
+  }), [])
+
   // Duck the whole bed under the AI radio host, mirroring the iOS voice-duck.
   useEffect(() => { setVoiceDucked(!!tourLine) }, [tourLine])
-
-  // Rotating AI text under the title (stable node; fade retriggered manually)
-  const tickerRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const iv = window.setInterval(() => setAiIndex(i => (i + 1) % AI_LINES.length), 4200)
-    return () => window.clearInterval(iv)
-  }, [])
-  useEffect(() => {
-    const el = tickerRef.current
-    if (!el) return
-    el.style.animation = 'none'
-    void el.offsetWidth
-    el.style.animation = ''
-  }, [aiIndex])
 
   // Real weather + day/night for the map area (same open-meteo endpoint the
   // iOS app uses). Fahrenheit only where people actually use it — the US, its
@@ -762,6 +917,7 @@ export default function App() {
     tourOnRef.current = false
     setTourOn(false)
   }, [clearTourTimers])
+  searchInterruptRef.current = stopTour
   useEffect(() => clearTourTimers, [clearTourTimers])
 
   const handleToggleStreetView = useCallback(() => {
@@ -782,6 +938,7 @@ export default function App() {
       position => {
         const center: [number, number] = [position.coords.longitude, position.coords.latitude]
         setNavigationOrigin(center)
+        setCurrentPlace('Current location')
         setTourLine('Current location selected - checking nearby 3D buildings.')
         flyToCenter(center, 4600)
       },
@@ -804,7 +961,9 @@ export default function App() {
     const line = RECOMMENDATIONS[Math.floor(Math.random() * RECOMMENDATIONS.length)](destination)
     const cityName = cityNameForDestination(destination)
     lastTourDestinationRef.current = destination.id
-    setTourLine(`${line}. Tuning ${stationsSummary(stations)}.`)
+    setCurrentPlace(displayPlaceName(destination.name))
+    if (stations[0]) setCurrentStation(stations[0].name)
+    setTourLine(line)
     postNativeEvent({
       type: 'tourStop',
       id: destination.id,
@@ -820,17 +979,18 @@ export default function App() {
       // Tune only once the map owns audio focus. A background map must not
       // spin up a live stream that can outlast the transition into Feed.
       void tuneLiveRadio(destination.coords[1], destination.coords[0]).then(stationName => {
-        if (stationName) setTourLine(current => current ? `${current} Now streaming ${stationName}.` : current)
+        if (stationName) setCurrentStation(stationName)
       })
-      announceMapTour(line, stations)
+      announceMapTour(line, stations.slice(0, 1))
     }
     flyToCenter(destination.coords, TOUR_FLIGHT_MS)
   }, [applySoundState, flyToCenter])
 
   // ── AI place tour: each stop holds for five minutes after arrival ─────────
   const tourStep = useCallback((preferredDestination?: TourDestination) => {
-    const options = TOUR_DESTINATIONS.filter(destination => destination.id !== lastTourDestinationRef.current)
-    const destination = preferredDestination ?? options[Math.floor(Math.random() * options.length)] ?? TOUR_DESTINATIONS[0]
+    const selected = destinationsForTopics(tourTopicsRef.current)
+    const options = selected.filter(destination => destination.id !== lastTourDestinationRef.current)
+    const destination = preferredDestination ?? options[Math.floor(Math.random() * options.length)] ?? selected[0] ?? TOUR_DESTINATIONS[0]
     activateTourDestination(destination)
   }, [activateTourDestination])
 
@@ -885,7 +1045,7 @@ export default function App() {
     postNativeEvent({ type: 'mapReady' })
     if (landingCenter) setNavigationOrigin(landingCenter)
     if (tourStartedRef.current) return
-    const nearest = landingCenter ? nearestTourDestination(landingCenter) : undefined
+    const nearest = landingCenter ? nearestTourDestination(landingCenter, tourTopicsRef.current) : undefined
     setTourLine(nearest
       ? `Poplur AI is finding the nearest ${TOUR_KIND_LABEL[nearest.kind]} radio stop.`
       : 'Poplur AI is finding the next landmark radio stop.')
@@ -913,6 +1073,13 @@ export default function App() {
         // The search panel drops in from the top, the same one the map's own
         // search button opens — the menu tile is another way in, not a copy.
         case 'search': setSearchOpen(true); break
+        case 'mapMode': handleToggleMapMode(); break
+        case 'setTourTopics': {
+          const next = writeMapTourTopics(normalizeMapTourTopics(event.data.topics))
+          tourTopicsRef.current = next
+          setTourTopics(next)
+          break
+        }
         // One tile, both directions. The decision is read off the ref rather
         // than computed inside a state updater: StrictMode double-invokes
         // those, and this one has to fire timers.
@@ -939,7 +1106,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [handleGoToCurrentLocation, handleToggleStreetView, startTourLoop, stopTour, flyToCenter])
+  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startTourLoop, stopTour, flyToCenter])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -955,6 +1122,7 @@ export default function App() {
     setSelectedId(id)
     const poi = POIS.find(p => p.id === id)
     if (!poi) return
+    setCurrentPlace(displayPlaceName(poi.name))
     flyToCenter(poi.coords, 4600)
   }, [flyToCenter])
 
@@ -1008,33 +1176,6 @@ export default function App() {
         onGlobeReady={handleGlobeReady}
       />
 
-      {show2DNotice && (
-        <PermissionAlert
-          icon="location"
-          label="2D map notice"
-          title="Poplur Map is using 2D"
-          copy="This phone may not run the 3D Poplur Map smoothly, so we opened the faster clay 2D map. Posts, search, directions, weather and map tools still work the same. You can try 3D anytime in Settings."
-          choices={[
-            {
-              label: 'Try 3D',
-              onPick: () => {
-                setMapMode('3d')
-                mark2DNoticeSeen()
-                window.location.reload()
-              },
-            },
-            {
-              label: 'Keep 2D',
-              onPick: () => {
-                setMapMode('2d')
-                mark2DNoticeSeen()
-                setShow2DNotice(false)
-              },
-            },
-          ]}
-        />
-      )}
-
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
       <ClayNav
         openSignal={directionsSignal}
@@ -1059,6 +1200,19 @@ export default function App() {
           size={44}
           onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
         />
+        <button
+          type="button"
+          className={styles.mapModeToggle}
+          data-mode={currentMapMode}
+          aria-label={`Switch to ${currentMapMode === '2d' ? '3D' : '2D'} map`}
+          aria-pressed={currentMapMode === '3d'}
+          onClick={() => { playPop(0.25); handleToggleMapMode() }}
+        >
+          <span className={styles.mapModeClay} aria-hidden="true">
+            <span className={styles.mapModeClayDepth}>{currentMapMode.toUpperCase()}</span>
+            <span className={styles.mapModeClayFace}>{currentMapMode.toUpperCase()}</span>
+          </span>
+        </button>
       </div>
       {/* The weather overlay itself: rain, snow, hail, lightning over the map.
           It had never been mounted, so every weather change was invisible. */}
@@ -1078,7 +1232,7 @@ export default function App() {
             const map = mapRef.current as unknown as { __locateMe?: () => void } | null
             if (map?.__locateMe) { map.__locateMe(); return }
             navigator.geolocation?.getCurrentPosition(
-              pos => flyToPlace([pos.coords.longitude, pos.coords.latitude]),
+              pos => flyToPlace([pos.coords.longitude, pos.coords.latitude], 'Current location'),
               () => { /* permission refused — nothing to fly to */ },
               { enableHighAccuracy: true, timeout: 8000 },
             )
@@ -1108,13 +1262,31 @@ export default function App() {
             onChange={e => { setSearchText(e.target.value); void runPlaceSearch(e.target.value) }}
             onKeyDown={e => { if (e.key === 'Enter') void runPlaceSearch(searchText) }}
           />
+          {!searching && searchText.trim() === '' && (
+            <div className={styles.searchShortcuts}>
+              <div className={styles.searchShortcutTitle}>GO NOW</div>
+              <div className={styles.searchShortcutGrid}>
+                {SEARCH_SHORTCUTS.map(destination => (
+                  <button
+                    key={destination.id}
+                    type="button"
+                    className={styles.searchShortcut}
+                    onClick={() => flyToPlace(destination.coords, destination.name)}
+                  >
+                    <span>{displayPlaceName(destination.name)}</span>
+                    <small>{TOUR_KIND_LABEL[destination.kind]}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {searching && <div className={styles.searchNote}>searching…</div>}
           {!searching && searchHits.map(hit => (
             <button
               key={hit.name}
               type="button"
               className={styles.searchHit}
-              onClick={() => flyToPlace(hit.center)}
+              onClick={() => flyToPlace(hit.center, hit.name)}
             >
               {hit.name}
             </button>
@@ -1126,17 +1298,17 @@ export default function App() {
         </div>
       )}
 
-      {/* AI line + clock share one flow stack under the wordmark, so the
-          logo→text and text→time gaps are IDENTICAL whatever wraps. */}
+      {/* The map status stays deliberately terse: place, then tuned station.
+          When the line still overruns the ticker, it glides back and forth so
+          the tail is read rather than amputated by an ellipsis. */}
       <div className={styles.headerStack}>
-        <div ref={tickerRef} className={styles.aiTicker}>
-          <span>{tourLine ?? AI_LINES[aiIndex]}</span>
-        </div>
-        <div className={styles.clock} aria-live="off">
-          {/* Always the time. It used to alternate with the date, so half the
-              time the clock simply was not there. */}
-          <span className={styles.clockSwing}>
-            {clockNow.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
+        <div className={styles.aiTicker} aria-live="polite" ref={tickerRef}>
+          <span
+            key={`${currentPlace}•${currentStation}`}
+            className={tickerOverflow > 0 ? styles.tickerScroll : undefined}
+            style={{ '--tickerShift': `-${tickerOverflow}px` } as React.CSSProperties}
+          >
+            {currentPlace} • {currentStation}
           </span>
         </div>
       </div>

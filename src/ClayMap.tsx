@@ -104,8 +104,6 @@ function applySky(map: mapboxgl.Map, day: boolean) {
   } catch { /* fog unsupported */ }
 }
 
-const SVG_SUN = `<svg viewBox="0 0 90 90" xmlns="http://www.w3.org/2000/svg"><circle cx="45" cy="45" r="22" fill="#ffd94d"/><circle cx="38" cy="38" r="8" fill="#ffe98a" opacity="0.8"/><g stroke="#ffd94d" stroke-width="7" stroke-linecap="round"><path d="M45 6v10M45 74v10M6 45h10M74 45h10M17 17l7 7M66 66l7 7M73 17l-7 7M24 66l-7 7"/></g></svg>`
-const SVG_MOON = `<svg viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><path d="M52 6 C30 10 16 28 20 50 C23 66 36 76 52 74 C36 68 28 54 30 38 C32 24 40 12 52 6 Z" fill="#e8e4f0"/><circle cx="36" cy="30" r="4" fill="#cfc9de"/><circle cx="30" cy="48" r="5" fill="#cfc9de"/><circle cx="40" cy="60" r="3" fill="#cfc9de"/></svg>`
 
 // Re-colours every themable layer in place — called on theme switch without
 // rebuilding the map. Colour slots mirror the app's cube skins.
@@ -725,7 +723,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // only travels (track − thumb) px, so a raw value-percentage mask leads the
   // knob by up to half the thumb width — the barber fill visibly ran PAST the
   // knob. The rail is now viewport-sized, so measure it rather than assuming.
-  const zoomRailRef = useRef<HTMLInputElement>(null)
+  const zoomRailRef = useRef<HTMLDivElement>(null)
   const [zoomRailMetrics, setZoomRailMetrics] = useState({ length: 380, thumb: 64 })
   useEffect(() => {
     const el = zoomRailRef.current
@@ -1248,16 +1246,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     let clayWorldBooted = false
     const bootClayWorld = () => {
       if (clayWorldBooted) return
-      const style = map.getStyle()
-      if (!style || !(style.layers || []).length) return
       // A WebView can expose the style JSON (and its layer list) for one or
       // two frames before Mapbox has finished installing it. Calling
       // addSource/addLayer in that window throws "Style is not done loading"
       // and leaves the 2D canvas permanently black. Keep polling until the
       // SDK's actual readiness flag is true, then only mark the world booted
       // after the layer build completes successfully.
-      if (!map.isStyleLoaded()) return
       try {
+        if (!map.isStyleLoaded()) return
+        const style = map.getStyle()
+        if (!style || !(style.layers || []).length) return
         buildClayWorld()
         clayWorldBooted = true
         window.clearInterval(bootPoll)
@@ -2107,6 +2105,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // when the camera settles somewhere new.
       let carPaths: number[][][] = []
       let lastCarHarvest: mapboxgl.LngLat | null = null
+      let lastCarUpdateAt = 0
       const setCarFeatures = (features: Array<{
         type: 'Feature'
         geometry: { type: 'Point'; coordinates: [number, number] }
@@ -2114,6 +2113,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       }>) => {
         const source = map.getSource('poplur-cars') as mapboxgl.GeoJSONSource | undefined
         source?.setData({ type: 'FeatureCollection', features } as GeoJSON.FeatureCollection)
+        if (import.meta.env.DEV) document.documentElement.dataset.poplurCars = String(features.length)
       }
       const harvestCarPaths = () => {
         if (map.getZoom() < 12.5) return
@@ -2124,13 +2124,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         const paths: number[][][] = []
         const push = (cs: number[][]) => {
           const valid = cs.filter(point => point.length >= 2 && Number.isFinite(point[0]) && Number.isFinite(point[1]))
-          if (valid.length >= 5) paths.push(valid)
+          // Rendered road tiles are commonly clipped into two-to-four point
+          // segments. Requiring five points silently removed nearly every road.
+          if (valid.length >= 2) paths.push(valid)
         }
         for (const f of feats) {
           const g = f.geometry
           if (g.type === 'LineString') push(g.coordinates as number[][])
           else if (g.type === 'MultiLineString') (g.coordinates as number[][][]).forEach(push)
-          if (paths.length >= 16) break
+          if (paths.length >= (MAP_2D ? 10 : 16)) break
+        }
+        if (import.meta.env.DEV) {
+          document.documentElement.dataset.poplurCarRoads = `${feats.length}/${paths.length}`
         }
         if (!paths.length) return
         carPaths = paths
@@ -2254,7 +2259,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       map.on('moveend', harvestCarPaths)
       // Lite skips the car system: road harvesting queries rendered features on
       // the main thread and cars add per-frame marker updates.
-      const carHarvestTimer = MAP_LITE ? 0 : window.setInterval(harvestCarPaths, 2500)
+      const carHarvestTimer = MAP_LITE && !MAP_2D ? 0 : window.setInterval(harvestCarPaths, 2500)
       if (carHarvestTimer) map.once('remove', () => window.clearInterval(carHarvestTimer))
 
       const flyerStart = performance.now()
@@ -2264,10 +2269,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // The home keeps this iframe mounted on every tab (gcAudio 'off' means
         // another tab is front) — animating an invisible map wastes GPU on
         // every device class. MAP_LITE devices skip the ambient layer entirely.
-        if (MAP_LITE || document.hidden || !mapIsFrontRef.current) return
+        // A low-memory 3D device still skips the ambient loop entirely. The
+        // default 2D map is also "lite", but keeps only budget-capped cars.
+        if ((MAP_LITE && !MAP_2D) || document.hidden || !mapIsFrontRef.current) return
+        const frameNow = performance.now()
         const zoom = map.getZoom()
-        const t = (performance.now() - flyerStart) / 1000
-        if (zoom < 5.5) {
+        const t = (frameNow - flyerStart) / 1000
+        if (zoom < 5.5 && !MAP_LITE) {
           FLYERS.forEach((f, i) => {
             const marker = flyerMarkersRef.current[i]
             if (!marker) return
@@ -2281,17 +2289,25 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             }
           })
         } else if (zoom >= 12.5) {
+          if (import.meta.env.DEV) {
+            document.documentElement.dataset.poplurCarImage = String(map.hasImage('poplur-car'))
+          }
+          // The 2D fallback still has moving traffic, just at a budget-phone
+          // cadence and cap instead of rebuilding GeoJSON at display refresh.
           if (carPaths.length && map.hasImage('poplur-car')) {
+            if (frameNow - lastCarUpdateAt >= (MAP_2D ? 100 : 50)) {
+            lastCarUpdateAt = frameNow
             // Traffic: several cars per harvested road, staggered along it with
             // per-car speed jitter so they bunch, pass and overlap like real
             // flow. Fast, and capped so dense downtowns don't overwhelm.
-            const carsPerRoad = 3
+            const carsPerRoad = MAP_2D ? 2 : 3
+            const maxCars = MAP_2D ? 18 : 36
             const container = map.getContainer()
             const ccx = container.clientWidth / 2
             const ccy = container.clientHeight / 2
             let nearest = Infinity
             const features: Array<{ type: 'Feature'; geometry: { type: 'Point'; coordinates: [number, number] }; properties: { bearing: number } }> = []
-            for (let r = 0; r < carPaths.length && features.length < 42; r++) {
+            for (let r = 0; r < carPaths.length && features.length < maxCars; r++) {
               const path = carPaths[r]
               if (!path || path.length < 2) continue
               for (let k = 0; k < carsPerRoad; k++) {
@@ -2313,11 +2329,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             const reach = container.clientHeight * 0.42
             const near = Math.max(0, 1 - nearest / reach)
             setCarProximity(zoom >= 14.5 ? near : 0)
+            }
           } else {
             setCarFeatures([])
             setCarProximity(0)
           }
-          CITY_BOATS.forEach((boat, i) => {
+          if (!MAP_LITE) CITY_BOATS.forEach((boat, i) => {
             const marker = boatMarkersRef.current[i]
             if (!marker) return
             const drifted: [number, number] = [
@@ -2560,10 +2577,70 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     markersRef.current = []
   }
 
-  const handleZoomInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = parseFloat(e.target.value)
-    setZoomValue(v)
-    mapRef.current?.setZoom(v)
+  const applyZoom = (v: number) => {
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v))
+    setZoomValue(next)
+    mapRef.current?.setZoom(next)
+  }
+
+  // Screen Y → zoom. The rail runs globe (bottom) to street (top), so the
+  // ratio is inverted against the usual top-down reading.
+  const zoomForClientY = (clientY: number) => {
+    const rail = zoomRailRef.current
+    if (!rail) return null
+    const box = rail.getBoundingClientRect()
+    const thumb = zoomRailMetrics.thumb
+    const travel = Math.max(1, box.height - thumb)
+    const offset = clientY - (box.top + thumb / 2)
+    const ratio = 1 - Math.max(0, Math.min(1, offset / travel))
+    return ZOOM_MIN + ratio * (ZOOM_MAX - ZOOM_MIN)
+  }
+
+  // Press ON the knob picks it up where you touched it; press anywhere else in
+  // the column jumps there first, then drags. Without the grab offset, taking
+  // hold of the knob teleported the map by however far your thumb was off its
+  // centre — the single thing that made this slider feel unusable.
+  const zoomGrabRef = useRef(0)
+
+  const handleZoomDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rail = zoomRailRef.current
+    if (!rail) return
+    e.preventDefault()
+    stopOrbitRef.current()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const box = rail.getBoundingClientRect()
+    const thumb = zoomRailMetrics.thumb
+    const travel = Math.max(1, box.height - thumb)
+    const knobCentreY = box.bottom - thumb / 2 - zoomRatio * travel
+    if (Math.abs(e.clientY - knobCentreY) <= thumb / 2) {
+      zoomGrabRef.current = e.clientY - knobCentreY
+    } else {
+      zoomGrabRef.current = 0
+      const v = zoomForClientY(e.clientY)
+      if (v != null) applyZoom(v)
+    }
+  }
+
+  const handleZoomMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    e.preventDefault()
+    const v = zoomForClientY(e.clientY - zoomGrabRef.current)
+    if (v != null) applyZoom(v)
+  }
+
+  const handleZoomUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    zoomGrabRef.current = 0
+  }
+
+  const handleZoomKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 1 : 0.25
+    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { e.preventDefault(); applyZoom(zoomValue + step) }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { e.preventDefault(); applyZoom(zoomValue - step) }
+    else if (e.key === 'Home') { e.preventDefault(); applyZoom(ZOOM_MAX) }
+    else if (e.key === 'End') { e.preventDefault(); applyZoom(ZOOM_MIN) }
   }
 
   const handleFovInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2614,15 +2691,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       {/* Edge-blur "depth of field" removed by request: real DoF means the
           BACKGROUND behind the focal subject blurs (bokeh), not the screen
           edges — that effect is on the work order for capable devices. */}
-
-      {/* Clay sun by day / clay moon by night, hanging in space beside the globe */}
-      {zoomValue < 5.5 && (
-        <div
-          className={dayTime ? styles.sunBody : styles.moonBody}
-          aria-hidden="true"
-          dangerouslySetInnerHTML={{ __html: dayTime ? SVG_SUN : SVG_MOON }}
-        />
-      )}
 
       {cloudBand > 0.01 && cloudSprite && (
         <div className={styles.cloudLayer} aria-hidden="true">
@@ -2834,24 +2902,29 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       <div
         className={styles.zoomWrap}
-        key={`thumb-${zoomStage.id}-${popTick}`}
         style={{
           '--zoomThumb': zoomSprites[zoomStage.id] ? `url("${zoomSprites[zoomStage.id]}")` : 'none',
           '--zoomProgress': zoomProgress,
         } as React.CSSProperties}
+        role="slider"
+        aria-label="Zoom"
+        aria-valuemin={ZOOM_MIN}
+        aria-valuemax={ZOOM_MAX}
+        aria-valuenow={Number(zoomValue.toFixed(2))}
+        tabIndex={0}
+        onPointerDown={handleZoomDown}
+        onPointerMove={handleZoomMove}
+        onPointerUp={handleZoomUp}
+        onPointerCancel={handleZoomUp}
+        onKeyDown={handleZoomKey}
       >
-        <input
-          ref={zoomRailRef}
-          type="range"
-          className={styles.zoom}
-          min={ZOOM_MIN}
-          max={ZOOM_MAX}
-          step={0.05}
-          value={Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomValue))}
-          onChange={handleZoomInput}
-          onPointerDown={() => stopOrbitRef.current()}
-          aria-label="Zoom"
-        />
+        <div className={styles.zoomRail} ref={zoomRailRef}>
+          <div
+            key={`thumb-${zoomStage.id}-${popTick}`}
+            className={styles.zoomThumb}
+            style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
+          />
+        </div>
       </div>
 
       {/* FOV slider moved into the HOLD MENU (declutter): its entry cycles

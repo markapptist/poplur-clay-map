@@ -236,10 +236,85 @@
   top: calc(var(--header-title-top) - 2px);
   left: 14px;
   z-index: 31;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-/* Header stack: AI line + clock in flow, with the SAME gap below the logo,
-   between text and time — equal rhythm whatever the text wraps to. */
+.mapModeToggle {
+  appearance: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: #fff;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mapModeClay {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  transform: rotate(-2deg) scale(1);
+  transition: transform 140ms cubic-bezier(0.2, 1.25, 0.4, 1);
+  filter:
+    drop-shadow(0 5px 5px rgba(42, 6, 22, 0.48))
+    drop-shadow(0 0 5px rgba(239, 98, 166, 0.24));
+}
+
+.mapModeClayFace,
+.mapModeClayDepth {
+  grid-area: 1 / 1;
+  position: absolute;
+  display: block;
+  font: 950 17px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: -0.07em;
+  white-space: nowrap;
+}
+
+.mapModeClayDepth {
+  color: #9f285f;
+  transform: translate(3px, 3px);
+  text-shadow:
+    1px 0 #bd3d77,
+    0 1px #8d1f54,
+    1px 1px #8d1f54,
+    2px 2px #731743;
+}
+
+.mapModeClayFace {
+  z-index: 1;
+  color: #ef62a6;
+  -webkit-text-stroke: 0.45px rgba(255, 211, 234, 0.72);
+  text-shadow:
+    -1px -1px 0 rgba(255, 222, 239, 0.62),
+    1px 1px 0 rgba(133, 26, 77, 0.34);
+  background: linear-gradient(145deg, #ffbddc 0%, #ef62a6 42%, #c83a7d 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.mapModeToggle:active {
+  transform: none;
+}
+
+.mapModeToggle:active .mapModeClay {
+  transform: rotate(-1deg) translateY(2px) scale(0.9);
+}
+
+.mapModeToggle:focus-visible {
+  outline: 3px solid #7fe3ff;
+  outline-offset: 3px;
+}
+
+/* One concise line under the wordmark: current place • tuned station. */
 .headerStack {
   position: absolute;
   top: calc(var(--header-title-top) + var(--header-title-height) + var(--header-row-gap));
@@ -247,16 +322,15 @@
   right: 24px;
   z-index: 30;
   display: grid;
-  gap: var(--header-row-gap);
   justify-items: center;
   pointer-events: none;
 }
 
-/* Rotating AI line under the wordmark */
+/* Live place + station line under the wordmark */
 .aiTicker {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
   text-align: center;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
@@ -277,10 +351,37 @@
     drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
   pointer-events: none;
   animation: tickerIn 0.6s ease-out both;
+  max-width: min(84vw, 560px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .aiTicker > span:last-child {
   display: block;
+  flex: 0 0 auto;
+  min-width: max-content;
+  margin-inline: auto;
+  overflow: visible;
+}
+
+/* Overrunning status line: glide to the clipped tail, hold, glide back. The
+   span is keyed on its text so the run restarts from the head each change. */
+.tickerScroll {
+  margin-inline: 0 !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  animation: tickerGlide 10s ease-in-out 1.2s infinite;
+}
+
+@keyframes tickerGlide {
+  0%, 12%   { transform: translateX(0); }
+  46%, 62%  { transform: translateX(var(--tickerShift, 0px)); }
+  92%, 100% { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tickerScroll { animation: none; }
 }
 
 @keyframes tickerIn {
@@ -358,41 +459,6 @@
     0 -1px 0 rgba(0, 0, 0, 0.6),
     0 2px 5px rgba(0, 0, 0, 0.6),
     0 0 14px rgba(0, 0, 0, 0.35);
-}
-
-/* ── Clock under the AI ticker: time ⇄ date swing ── */
-.clock {
-  text-align: center;
-  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  font-size: 15px;
-  font-weight: 900;
-  letter-spacing: 0.6px;
-  /* Same treatment as the radius numbers: solid, dark-rimmed, glowing. An
-     11px gradient-clipped fill was invisible against clay roofs. */
-  color: #7fe3ff;
-  -webkit-text-fill-color: #7fe3ff;
-  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.92);
-  paint-order: stroke fill;
-  filter:
-    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
-    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
-  pointer-events: none;
-}
-
-/* Remounted on each swap (keyed) so the swing replays both directions */
-.clockSwing {
-  display: inline-block;
-  animation: clockSwing 0.5s cubic-bezier(0.2, 1.1, 0.4, 1) both;
-}
-
-@keyframes clockSwing {
-  from { opacity: 0; transform: translateY(7px) scale(0.94); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .clockSwing { animation: none; }
 }
 
 .radioChip { top: 140px; left: 14px; }
@@ -580,17 +646,27 @@
 
 /* ── Place search: clay magnifier, top right, with its results panel ── */
 
-/* level with the sound mark on the left */
+/* Level with the sound mark on the left. */
 .mapTools {
   position: absolute;
-  /* the sound mark's exact top, lifted by half the size difference (44 → 56)
-     so all three sit on one centre line */
+  /* The sound mark's exact top, lifted by half the size difference (44 → 56)
+     so all three sit on one centre line. */
   top: calc(var(--header-title-top) - 2px - 6px);
   right: clamp(10px, 2.6vw, 18px);
   z-index: 46;
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Search moves to the outer edge in the markup. On phones, the group scales
+   just enough to clear the centered title while preserving a 44.8px target. */
+@media (max-width: 430px) {
+  .mapTools {
+    top: calc(var(--header-title-top) - 2px);
+    transform: scale(0.8);
+    transform-origin: top right;
+  }
 }
 
 .searchScrim {
@@ -608,7 +684,7 @@
   transform: translate(-50%, -50%);
   z-index: 48;
   width: min(86vw, 360px);
-  max-height: 52vh;
+  max-height: 64vh;
   overflow-y: auto;
   padding: 10px;
   border-radius: 18px;
@@ -658,6 +734,57 @@
 }
 
 .searchHit:active { background: rgba(246, 59, 154, 0.28); }
+
+.searchShortcuts {
+  padding: 12px 2px 2px;
+}
+
+.searchShortcutTitle {
+  padding: 0 6px 8px;
+  color: #7fe3ff;
+  font: 950 10px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.16em;
+}
+
+.searchShortcutGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.searchShortcut {
+  display: grid;
+  align-content: center;
+  min-height: 58px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 223, 239, 0.2);
+  border-radius: 16px;
+  color: #fff4fa;
+  background:
+    radial-gradient(circle at 28% 14%, rgba(255, 255, 255, 0.22), transparent 28%),
+    linear-gradient(145deg, #4a2540, #25111f 65%, #130b12);
+  box-shadow:
+    inset 2px 3px 4px rgba(255, 255, 255, 0.14),
+    inset -3px -4px 5px rgba(0, 0, 0, 0.48),
+    0 4px 0 #0d070c,
+    0 7px 12px rgba(0, 0, 0, 0.3);
+  font: 850 12px/1.15 system-ui, -apple-system, sans-serif;
+  text-align: left;
+}
+
+.searchShortcut small {
+  margin-top: 4px;
+  color: #ff80bf;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.searchShortcut:active {
+  transform: translateY(3px);
+  box-shadow: inset 2px 3px 5px rgba(0, 0, 0, 0.45), 0 1px 0 #0d070c;
+}
 
 .searchNote {
   padding: 10px 4px 2px;
@@ -754,15 +881,12 @@
   }
 
   .mapTools {
-    transform: scale(0.76);
-    transform-origin: top right;
     gap: 2px;
   }
 
   .headerStack {
     left: 48px;
     right: 48px;
-    gap: 7px;
   }
 
   .aiTicker {
@@ -773,15 +897,9 @@
   }
 
   .aiTicker > span:last-child {
-    display: -webkit-box;
+    display: block;
     overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
-  .clock {
-    font-size: 12px;
-    letter-spacing: 0.35px;
-    -webkit-text-stroke-width: 1.3px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 }
