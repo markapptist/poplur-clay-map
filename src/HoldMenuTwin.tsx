@@ -34,7 +34,7 @@ interface Item {
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video' | 'detect' | 'ar' | 'live'
+  action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video' | 'roll' | 'detect' | 'ar' | 'live'
   /** drawn as letters instead of an icon file */
   glyph?: string
   /**
@@ -79,6 +79,9 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // tab's default favourite, so the cube shoots without visiting the menu.
     { icon: 'Create', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
     { icon: 'TVGuide', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
+    // Camera Roll no longer shares the zoom/channel buttons. This explicit
+    // hold-menu destination is its only entry point from the live camera.
+    { icon: 'CameraRoll', title: 'CAMERA ROLL', screen: 'camera-roll', action: 'roll' },
     // Going live is an act, not a screen: the broadcast starts on the camera
     // you are already looking through and lands in the feed's LIVE channel.
     { icon: 'YouTube', title: 'LIVE', screen: 'camera-live', action: 'live' },
@@ -183,6 +186,8 @@ export default function HoldMenuTwin({
   mapMode,
   mapTourTopics,
   onMapTourTopicsChange,
+  currentFeedChannelId,
+  onTuneFeedChannel,
   onSubscreenChange,
   bindGoBack,
 }: {
@@ -197,6 +202,9 @@ export default function HoldMenuTwin({
   /** June-style checklist controlling which kinds of places the tour visits. */
   mapTourTopics?: MapTourTopic[]
   onMapTourTopicsChange?: (topics: MapTourTopic[]) => void
+  /** Feed selection shared with TV Guide so a selected row can tune Home. */
+  currentFeedChannelId?: string
+  onTuneFeedChannel?: (channelId: string) => void
   /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the app */
   onSubscreenChange?: (open: boolean, screen?: string) => void
   /** Registers a "back one level" handler: closes an open subscreen, else the
@@ -557,7 +565,11 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'feed-tvguide') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="TV Guide">
-          <TVGuide onClose={() => { playPop(); onClose() }} />
+          <TVGuide
+            currentChannelId={currentFeedChannelId}
+            onTune={onTuneFeedChannel}
+            onClose={() => { playPop(); onClose() }}
+          />
         </div>
       )
     }

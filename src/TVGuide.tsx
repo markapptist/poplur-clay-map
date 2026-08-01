@@ -15,8 +15,8 @@ import ClayMuteButton from './ClayMuteButton'
 //   62px rows: channel logo, number, category, a marquee of the users on that
 //   channel, and a LIVE capsule
 //
-// Interaction matches the app: one tap previews a channel in the PiP band, two
-// taps tune to it. Escape or the clay close button dismisses.
+// Interaction matches the app: one tap selects/previews a channel in the PiP
+// band, then pressing that selected row tunes to it. Escape dismisses.
 
 export interface TVGuideChannel {
   id: string
@@ -113,7 +113,6 @@ export default function TVGuide({
   const [previewId, setPreviewId] = useState(currentChannelId ?? channels[0]?.id)
   const pipVideoRef = useRef<HTMLVideoElement>(null)
   const [muted, setMuted] = useState(isUserMuted)
-  const tapTimer = useRef<number | null>(null)
 
   const preview = channels.find(c => c.id === previewId) ?? channels[0]
 
@@ -130,13 +129,10 @@ export default function TVGuide({
     return onGateChange(apply)
   }, [previewId])
 
-  useEffect(() => () => { if (tapTimer.current) window.clearTimeout(tapTimer.current) }, [])
-
-  // One tap previews, two tunes — the app's own gesture split.
+  // Selection persists: the next press on that row tunes even if the user
+  // spent time watching the PiP preview first.
   const onRowTap = (channel: TVGuideChannel) => {
-    if (tapTimer.current) {
-      window.clearTimeout(tapTimer.current)
-      tapTimer.current = null
+    if (previewId === channel.id) {
       playPop()
       onTune?.(channel.id)
       onClose()
@@ -144,7 +140,6 @@ export default function TVGuide({
     }
     setPreviewId(channel.id)
     playPop()
-    tapTimer.current = window.setTimeout(() => { tapTimer.current = null }, 260)
   }
 
   return (
@@ -161,7 +156,7 @@ export default function TVGuide({
             onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next) }}
             size={40}
           />
-          <ClayCornerButton kind="close" label="Close TV Guide" size={50} onPress={onClose} />
+          {/* No ✕ — the cube is the back control for every subscreen. */}
         </div>
       </header>
 

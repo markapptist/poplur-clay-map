@@ -1,22 +1,15 @@
-import React, { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import styles from './GamesScreen.module.css'
-import PoplurgatchiGame, { PoplurgatchiPreview } from './PoplurgatchiGame'
+import PoplurgatchiPlayable from './PoplurgatchiPlayable'
 import { playPop } from './pop'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
-
-// PS5-style library for the Games channel (CH 102), listing the REAL Poplur
-// games — the same two the native GamePickerView ships (Poplurgatchi and FPS
-// Shooter). Both are playable here; iOS still hands Poplurgatchi to the native
-// SpriteKit game when its bridge handles that route.
 
 interface Game {
   id: 'fps' | 'poplurgatchi'
   title: string
   subtitle: string
-  emoji: string
   color: string
-  color2: string
-  /** playable right here in the web twin (real embedded build) */
+  preview: string
   web?: string
 }
 
@@ -25,42 +18,28 @@ const GAMES: Game[] = [
     id: 'poplurgatchi',
     title: 'Poplurgatchi',
     subtitle: 'Virtual pet — feed, play & grow',
-    emoji: '🥚',
     color: '#ff389e',
-    color2: '#a3095b',
+    preview: 'games/poplurgatchi/assets/device-rainbow.webp',
   },
   {
     id: 'fps',
     title: 'FPS Shooter',
     subtitle: 'Raycasting first-person shooter',
-    emoji: '🔫',
     color: '#33ccff',
-    color2: '#0b5f96',
+    preview: 'games/fps/reference/approved-gameplay.webp',
     web: 'games/fps/index.html',
-
   },
 ]
 
-/** Cover face built from the game's own accent + icon (no invented box art). */
 function Cover({ game, size }: { game: Game; size: 'hero' | 'tile' }) {
-  if (game.id === 'poplurgatchi') {
-    return (
-      <div
-        className={`${size === 'hero' ? styles.heroArt : styles.tileArt} ${styles.gatchArt}`}
-      >
-        <PoplurgatchiPreview compact={size === 'tile'} />
-        <span className={styles.coverSheen} aria-hidden="true" />
-      </div>
-    )
-  }
-
   return (
-    <div
-      className={size === 'hero' ? styles.heroArt : styles.tileArt}
-      style={{ background: `linear-gradient(150deg, ${game.color} 0%, ${game.color2} 78%)` }}
-    >
-      <span className={styles.coverGlyph} aria-hidden="true">{game.emoji}</span>
-      <span className={styles.coverTitle}>{game.title}</span>
+    <div className={size === 'hero' ? styles.heroArt : styles.tileArt}>
+      <img
+        className={`${styles.coverImage} ${game.id === 'fps' ? styles.pixelCover : styles.deviceCover}`}
+        src={game.preview}
+        alt=""
+        draggable={false}
+      />
       <span className={styles.coverSheen} aria-hidden="true" />
     </div>
   )
@@ -80,13 +59,6 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
 
   const launch = (g: Game) => {
     playPop()
-    // In the app shell the GAMES tile already routes to the native GamePickerView
-    // (HoldMenuNavigate "games"), so this screen is the browser path. If it does
-    // get mounted inside the shell, hand back to that same native route rather
-    // than pretending to run a native game in a web frame.
-    if (isNativeShell() && g.id === 'poplurgatchi') {
-      postNativeEvent({ type: 'holdMenuNavigate', action: 'games' })
-    }
     setBooting(g)
     if (bootTimer.current) window.clearTimeout(bootTimer.current)
     bootTimer.current = window.setTimeout(() => {
@@ -114,23 +86,48 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   })
 
   // ── running a game ────────────────────────────────────────────────────────
+  // Portalling the FPS to the document root lets it escape the hold-menu's
+  // stacking context. Without that, the persistent cube/channel chrome can
+  // remain above a nominally full-screen iframe.
+  if (running?.id === 'fps' && running.web) {
+    return createPortal(
+      <div
+        className={`${styles.stage} ${styles.fpsStage}`}
+        style={{ ['--accent' as string]: running.color }}
+        role="dialog"
+        aria-label={running.title}
+      >
+        <iframe
+          className={`${styles.gameFrame} ${styles.fpsFrame}`}
+          src={running.web}
+          title={running.title}
+          allow="autoplay; fullscreen; gamepad; accelerometer; gyroscope"
+          allowFullScreen
+        />
+        <button className={styles.quitFloating} onClick={quit} aria-label="Exit FPS game">
+          ■ EXIT
+        </button>
+      </div>,
+      document.body,
+    )
+  }
+
   if (running) {
     return (
       <div className={styles.stage} style={{ ['--accent' as string]: running.color }}>
         {running.id === 'poplurgatchi' ? (
-          <PoplurgatchiGame />
+          <PoplurgatchiPlayable />
         ) : running.web ? (
-          // The real game build, playing in the frame.
           <iframe
             className={styles.gameFrame}
             src={running.web}
             title={running.title}
             allow="autoplay; fullscreen; gamepad; accelerometer; gyroscope"
+            allowFullScreen
           />
         ) : null}
-        <button className={styles.quitFloating} onClick={quit} aria-label={`Quit ${running.title}`}>
-          ◼ QUIT
-        </button>
+        {/* Poplurgatchi keeps the app cube as its back control. FPS is portalled
+            above that chrome and therefore supplies its own EXIT button. */}
       </div>
     )
   }
@@ -144,7 +141,7 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
           <span className={styles.chPill}>CH 102</span>
           <span className={styles.chName}>GAMES</span>
         </div>
-        <button className={styles.close} aria-label="Close games" onClick={() => { playPop(); onClose() }}>✕</button>
+        {/* No ✕ — the cube closes every subscreen, this one included. */}
       </header>
 
       <section className={styles.hero} aria-live="polite">
@@ -183,8 +180,13 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
       {booting && (
         <div className={styles.boot} style={{ ['--accent' as string]: booting.color }}>
           <div className={styles.bootLogo} aria-label="PoplurStation">
-            <img className={styles.bootCube} src="clay_cube.png" alt="" draggable={false} />
-            <img className={styles.bootP} src="logo_icon.png" alt="" draggable={false} />
+            {/* One mark, flat, the way a PS5 boot is: the clay P badge. The old
+                boot layered this same badge over clay_cube.png — whose front
+                face is the PROFILE cube, a person icon — so the screen showed a
+                P pasted crooked over a person with the cube's frame poking out
+                underneath. It read as a rendering glitch, not an assembling
+                logo. */}
+            <img className={styles.bootCube} src="logo_icon.png" alt="" draggable={false} />
             <span className={styles.bootSweep} aria-hidden="true" />
           </div>
           <span className={styles.bootWord}>POPLUR<b>STATION</b></span>

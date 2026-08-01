@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { playPop } from './pop'
 
@@ -33,19 +33,26 @@ export default function ClayChannelArrows({
   dot = false,
   onUp,
   onDown,
+  upLabel = 'Channel up',
+  downLabel = 'Channel down',
   size = 176,
 }: {
   number: number
   /** replaces the channel number outright — the camera pages are not channels,
    *  so they show what is selected there instead of a number that means nothing */
   label?: string
-  /** the recording tell: a small red dot under the arrows */
+  /** the recording tell: a small clay light centered in the channel controls */
   dot?: boolean
   onUp: () => void
   onDown: () => void
+  /** Accessible labels can follow the arrows' tab-specific job (e.g. zoom). */
+  upLabel?: string
+  downLabel?: string
   size?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [rendererState, setRendererState] = useState<'mounting' | 'ready' | 'recovered'>('mounting')
+  const recoveryGradientId = useId().replace(/:/g, '')
   const width = Math.round(size / 2)
   // pressed pulse targets per arrow, read by the render loop
   const pulse = useRef({ up: 0, down: 0 })
@@ -57,7 +64,35 @@ export default function ClayChannelArrows({
     const w = canvas.clientWidth
     const h = canvas.clientHeight
 
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+    const markRenderer = (state: 'mounting' | 'ready' | 'recovered') => {
+      canvas.dataset.poplurChannelRenderer = state
+      setRendererState(state)
+    }
+    const onContextLost = (event: Event) => {
+      // Let the browser restore the context, but ask the home watchdog to
+      // remount the approved controls so all of their GPU resources are rebuilt.
+      event.preventDefault()
+      markRenderer('recovered')
+    }
+    // A restored context asks the home watchdog for one clean remount so the
+    // approved WebGL drawing gets a fresh resource set.
+    const onContextRestored = () => {
+      markRenderer('mounting')
+    }
+    canvas.addEventListener('webglcontextlost', onContextLost)
+    canvas.addEventListener('webglcontextrestored', onContextRestored)
+    markRenderer('mounting')
+
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+    } catch {
+      markRenderer('recovered')
+      return () => {
+        canvas.removeEventListener('webglcontextlost', onContextLost)
+        canvas.removeEventListener('webglcontextrestored', onContextRestored)
+      }
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(w, h, false)
     renderer.setClearColor(0x000000, 0)
@@ -157,10 +192,17 @@ export default function ClayChannelArrows({
     }
     const kick = () => { if (!raf) raf = requestAnimationFrame(loop) }
     kickRef.current = kick
-    draw() // one frame at mount so the clay marks are visible at rest
+    try {
+      draw() // one frame at mount so the clay marks are visible at rest
+      markRenderer('ready')
+    } catch {
+      markRenderer('recovered')
+    }
 
     return () => {
       cancelAnimationFrame(raf)
+      canvas.removeEventListener('webglcontextlost', onContextLost)
+      canvas.removeEventListener('webglcontextrestored', onContextRestored)
       geo.dispose()
       matUp.dispose()
       matDown.dispose()
@@ -181,10 +223,34 @@ export default function ClayChannelArrows({
     <div style={{ position: 'relative', width, height: size, pointerEvents: 'auto' }}>
       <canvas
         ref={canvasRef}
+        data-poplur-channel-renderer={rendererState}
         width={width}
         height={size}
         style={{ width, height: size, display: 'block', pointerEvents: 'none' }}
       />
+      {rendererState === 'recovered' && (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 88 176"
+          preserveAspectRatio="none"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+        >
+          <defs>
+            <linearGradient id={recoveryGradientId} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stopColor="#ffb0d2" />
+              <stop offset="0.42" stopColor="#ef62a6" />
+              <stop offset="1" stopColor="#9b275e" />
+            </linearGradient>
+            <filter id={`${recoveryGradientId}-shadow`} x="-30%" y="-30%" width="160%" height="180%">
+              <feDropShadow dx="0" dy="4" stdDeviation="3" floodColor="#210612" floodOpacity="0.75" />
+            </filter>
+          </defs>
+          <g fill={`url(#${recoveryGradientId})`} stroke="#ffc0dc" strokeWidth="1.5" strokeLinejoin="round" filter={`url(#${recoveryGradientId}-shadow)`}>
+            <path d="M 8 59 L 44 24 L 80 59 L 69 70 L 44 47 L 19 70 Z" />
+            <path d="M 8 117 L 44 152 L 80 117 L 69 106 L 44 129 L 19 106 Z" />
+          </g>
+        </svg>
+      )}
       {/* the channel number — or, on the camera, what the roll has selected */}
       <span
         style={{
@@ -204,20 +270,22 @@ export default function ClayChannelArrows({
       >
         {label ?? number}
       </span>
-      {/* recording tell */}
+      {/* Recording tell: centered in the channel buttons and modeled as a
+          rounded clay light, with a lit crown and a soft cast shadow. */}
       {dot && (
         <span
           aria-hidden="true"
           style={{
             position: 'absolute',
             left: '50%',
-            top: 'calc(50% + 16px)',
-            width: 8,
-            height: 8,
-            marginLeft: -4,
+            top: '50%',
+            width: 12,
+            height: 12,
+            transform: 'translate(-50%, -50%)',
             borderRadius: '50%',
-            background: '#ff2d4b',
-            boxShadow: '0 0 8px rgba(255,45,75,0.9)',
+            background: 'radial-gradient(circle at 34% 26%, #ffd4dc 0 8%, #ff5b72 24%, #e20f35 64%, #8c001b 100%)',
+            border: '1px solid rgba(255, 206, 216, 0.75)',
+            boxShadow: 'inset 1px 1px 2px rgba(255,255,255,0.75), inset -2px -2px 3px rgba(91,0,18,0.55), 0 3px 4px rgba(0,0,0,0.65), 0 0 9px rgba(255,45,75,0.75)',
             animation: 'poplurRecBlink 1s steps(1, end) infinite',
             pointerEvents: 'none',
           }}
@@ -226,14 +294,16 @@ export default function ClayChannelArrows({
       {/* transparent hit areas */}
       <button
         type="button"
+        data-poplur-channel-control="up"
         onPointerDown={() => press('up', onUp)}
-        aria-label="Channel up"
+        aria-label={upLabel}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
       />
       <button
         type="button"
+        data-poplur-channel-control="down"
         onPointerDown={() => press('down', onDown)}
-        aria-label="Channel down"
+        aria-label={downLabel}
         style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
       />
     </div>

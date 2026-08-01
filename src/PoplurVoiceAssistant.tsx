@@ -4,6 +4,7 @@ import { isGateMuted } from './audioGate'
 import { aiAnswer } from './ProfileTwin'
 import { playPop } from './pop'
 import type { CubeTab } from './CubeTab3D'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 
 type VoicePhase = 'idle' | 'listening' | 'thinking' | 'reply' | 'unavailable'
 
@@ -32,6 +33,12 @@ type RecognitionLike = {
 }
 
 type RecognitionConstructor = new () => RecognitionLike
+
+type NativeVoiceCommandDetail = {
+  tab?: CubeTab
+  channel?: string
+  feedback?: string
+}
 
 const RESTART_DELAY_MS = 260
 const RESPONSE_VISIBLE_MS = 4400
@@ -83,22 +90,33 @@ function speak(reply: string) {
   }
 }
 
-// The controller remains mounted above every Home tab. Browsers require the
-// first microphone start to be user initiated, so the Profile equaliser emits
-// `poplur-voice-request`; after that the same session continuously waits for
-// the wake phrase and then the next command.
-export default function PoplurVoiceAssistant({ onTabRequest }: { onTabRequest: (tab: CubeTab) => void }) {
+// The controller remains mounted above every Home tab and arms the wake phrase
+// as soon as Home is in the foreground. Browsers that require a user gesture
+// get one silent retry on the first app interaction; the Profile equaliser can
+// still explicitly open an immediate command session. Once permission is
+// granted, recognition continuously restarts for the lifetime of Home.
+export default function PoplurVoiceAssistant({
+  onTabRequest,
+  onChannelRequest,
+}: {
+  onTabRequest: (tab: CubeTab) => void
+  onChannelRequest?: (channel: string) => void
+}) {
   const [phase, setPhase] = useState<VoicePhase>('idle')
   const [message, setMessage] = useState('')
   const recognitionRef = useRef<RecognitionLike | null>(null)
   const recognitionRunningRef = useRef(false)
+  const recognitionStartingRef = useRef(false)
   const listeningEnabledRef = useRef(false)
+  const permissionBlockedRef = useRef(false)
   const awaitingCommandRef = useRef(false)
   const handlingCommandRef = useRef(false)
   const restartTimerRef = useRef<number | null>(null)
   const dismissTimerRef = useRef<number | null>(null)
   const tabRequestRef = useRef(onTabRequest)
   tabRequestRef.current = onTabRequest
+  const channelRequestRef = useRef(onChannelRequest)
+  channelRequestRef.current = onChannelRequest
 
   const clearDismissTimer = () => {
     if (dismissTimerRef.current != null) window.clearTimeout(dismissTimerRef.current)
@@ -152,14 +170,23 @@ export default function PoplurVoiceAssistant({ onTabRequest }: { onTabRequest: (
     if (awaitingCommandRef.current) completeCommand(transcript)
   }
 
-  const startRecognition = useCallback(() => {
+  const startRecognition = useCallback((): boolean => {
     const recognition = recognitionRef.current
-    if (!recognition || recognitionRunningRef.current) return
+    if (
+      !recognition
+      || recognitionRunningRef.current
+      || recognitionStartingRef.current
+      || document.visibilityState === 'hidden'
+    ) return false
     try {
+      recognitionStartingRef.current = true
       recognition.start()
+      return true
     } catch {
+      recognitionStartingRef.current = false
       // Chrome throws while a previous end event is still unwinding. Its
       // onend handler retries on the next short turn.
+      return false
     }
   }, [])
 
@@ -172,10 +199,15 @@ export default function PoplurVoiceAssistant({ onTabRequest }: { onTabRequest: (
     recognition.continuous = true
     recognition.interimResults = true
     recognition.lang = 'en-CA'
-    recognition.onstart = () => { recognitionRunningRef.current = true }
+    recognition.onstart = () => {
+      recognitionStartingRef.current = false
+      recognitionRunningRef.current = true
+      permissionBlockedRef.current = false
+    }
     recognition.onend = () => {
+      recognitionStartingRef.current = false
       recognitionRunningRef.current = false
-      if (!listeningEnabledRef.current) return
+      if (!listeningEnabledRef.current || document.visibilityState === 'hidden') return
       if (restartTimerRef.current != null) window.clearTimeout(restartTimerRef.current)
       restartTimerRef.current = window.setTimeout(() => {
         restartTimerRef.current = null
@@ -183,8 +215,22 @@ export default function PoplurVoiceAssistant({ onTabRequest }: { onTabRequest: (
       }, RESTART_DELAY_MS)
     }
     recognition.onerror = event => {
-      const blocked = event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture'
+      recognitionStartingRef.current = false
+      // Another mic client (Studio/camera/native voice) can temporarily own
+      // capture. That is contention, not a revoked permission: keep the wake
+      // listener armed and retry after the competing capture has released it.
+      if (event.error === 'audio-capture') {
+        recognitionRunningRef.current = false
+        if (restartTimerRef.current != null) window.clearTimeout(restartTimerRef.current)
+        restartTimerRef.current = window.setTimeout(() => {
+          restartTimerRef.current = null
+          if (listeningEnabledRef.current) startRecognition()
+        }, 1200)
+        return
+      }
+      const blocked = event.error === 'not-allowed' || event.error === 'service-not-allowed'
       if (!blocked) return
+      permissionBlockedRef.current = true
       listeningEnabledRef.current = false
       awaitingCommandRef.current = false
       setPhase('unavailable')
@@ -206,6 +252,15 @@ export default function PoplurVoiceAssistant({ onTabRequest }: { onTabRequest: (
     return recognition
   }, [startRecognition])
 
+  const startWakeListening = useCallback(() => {
+    const recognition = ensureRecognition()
+    if (!recognition || permissionBlockedRef.current) return
+    listeningEnabledRef.current = true
+    // Foreground/pageshow can arrive during an explicit command session. Keep
+    // that session intact while re-arming the underlying recognizer.
+    startRecognition()
+  }, [ensureRecognition, startRecognition])
+
   const startVoice = useCallback(() => {
     const recognition = ensureRecognition()
     if (!recognition) {
@@ -220,6 +275,7 @@ export default function PoplurVoiceAssistant({ onTabRequest }: { onTabRequest: (
       return
     }
 
+    permissionBlockedRef.current = false
     listeningEnabledRef.current = true
     awaitingCommandRef.current = true
     clearDismissTimer()
@@ -229,17 +285,70 @@ export default function PoplurVoiceAssistant({ onTabRequest }: { onTabRequest: (
   }, [ensureRecognition, startRecognition])
 
   useEffect(() => {
-    const requestVoice = () => startVoice()
+    const nativeShell = isNativeShell()
+    const requestVoice = () => {
+      // Native speech recognition is used on physical devices because neither
+      // WKWebView nor Android WebView offers a dependable Web Speech session.
+      // This bridge message is emitted only from the explicit HEY POPLUR tile,
+      // so the host may ask for OS permission without showing a sheet at launch.
+      if (nativeShell && postNativeEvent({ type: 'requestVoiceAssistant' })) return
+      startVoice()
+    }
+    const receiveNativeCommand = (event: Event) => {
+      const detail = (event as CustomEvent<NativeVoiceCommandDetail>).detail
+      if (!detail || typeof detail !== 'object') return
+      if (detail.tab === 'map' || detail.tab === 'feed' || detail.tab === 'post' || detail.tab === 'profile') {
+        tabRequestRef.current(detail.tab)
+      }
+      if (typeof detail.channel === 'string' && detail.channel.trim()) {
+        channelRequestRef.current?.(detail.channel)
+      }
+      // Deliberately do not render/speak/playPop here: the native assistant
+      // owns both its feedback overlay and sounds on physical devices. This
+      // event changes shared Home state only, preventing duplicate replies.
+    }
+    const resumeWakeListening = () => {
+      if (document.visibilityState === 'hidden') {
+        try { recognitionRef.current?.stop() } catch { /* already stopped */ }
+        return
+      }
+      startWakeListening()
+    }
+    // Some WebViews accept this immediately (permission was granted by the
+    // custom primer); Safari/Chrome variants that require a gesture throw or
+    // report not-allowed. Give those one retry on the first real interaction,
+    // without treating that ordinary tap as a voice command.
+    if (!nativeShell) startWakeListening()
+    const unlockWakeListening = () => {
+      permissionBlockedRef.current = false
+      startWakeListening()
+    }
     window.addEventListener('poplur-voice-request', requestVoice)
+    window.addEventListener('poplur-native-voice-command', receiveNativeCommand)
+    if (!nativeShell) {
+      window.addEventListener('focus', resumeWakeListening)
+      window.addEventListener('pageshow', resumeWakeListening)
+      document.addEventListener('visibilitychange', resumeWakeListening)
+      window.addEventListener('pointerdown', unlockWakeListening, { passive: true })
+      window.addEventListener('touchstart', unlockWakeListening, { passive: true })
+      window.addEventListener('keydown', unlockWakeListening)
+    }
     return () => {
       window.removeEventListener('poplur-voice-request', requestVoice)
+      window.removeEventListener('poplur-native-voice-command', receiveNativeCommand)
+      window.removeEventListener('focus', resumeWakeListening)
+      window.removeEventListener('pageshow', resumeWakeListening)
+      document.removeEventListener('visibilitychange', resumeWakeListening)
+      window.removeEventListener('pointerdown', unlockWakeListening)
+      window.removeEventListener('touchstart', unlockWakeListening)
+      window.removeEventListener('keydown', unlockWakeListening)
       listeningEnabledRef.current = false
       awaitingCommandRef.current = false
       if (restartTimerRef.current != null) window.clearTimeout(restartTimerRef.current)
       clearDismissTimer()
       try { recognitionRef.current?.stop() } catch { /* already stopped */ }
     }
-  }, [startVoice])
+  }, [startVoice, startWakeListening])
 
   if (phase === 'idle') return null
 

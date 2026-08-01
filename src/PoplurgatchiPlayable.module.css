@@ -1,6 +1,13 @@
 .game {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
   display: grid;
   /* A definite row. Without it the single auto row is content-sized, so the
      device's `max-height: 100%` has no definite height to resolve against and
@@ -12,16 +19,26 @@
   overflow: hidden;
   background: #f3f1f2;
   padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+  /* GamesScreen can be embedded inside a native WebView whose usable stage is
+     smaller than the browser's global vh/dvh. Query this exact game box so the
+     pet always fits the pixels actually available to it. */
+  container-type: size;
 }
 
 .device {
   position: relative;
-  /* Sit IN the screen, not against its edges: cap to 82% of the width and
-     leave headroom for the HUD below — full-bleed read as "way too big" on a
-     phone, and the egg needs margin to read as a device you are holding. */
-  width: min(82%, calc((100dvh - 180px) * 0.75));
+  /* The image is 3:4. Limit its width by BOTH axes: 82% of the actual stage
+     width and 69% of its height (which produces a device no taller than 92%
+     of the stage). This keeps the full shell visible on narrow phones,
+     landscape devices, split-screen tablets, and native WebViews. */
+  width: min(82%, 69vh);
+  width: min(82cqw, 69cqh);
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
   max-height: 100%;
   aspect-ratio: 1086 / 1448;
+  box-sizing: border-box;
   user-select: none;
 }
 

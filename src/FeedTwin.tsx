@@ -163,11 +163,11 @@ export interface ChannelPost {
 
 // Ordered by the post's radius intercepting your location, widest first.
 function postsFor(channel: Channel): ChannelPost[] {
-  // LIVE: whoever is streaming into your radius, your own broadcast first. If
-  // nobody reaches you the channel is genuinely empty — that is the honest
-  // answer, and the static card says so.
+  // LIVE: whoever is streaming into your radius, your own broadcast first.
+  // An empty channel still gets a playable Poplur clip: static is a transition,
+  // never a permanent startup state.
   if (channel.id === 'live') {
-    return interceptingLive().map(b => ({
+    const broadcasts = interceptingLive().map(b => ({
       user: b.user,
       video: b.video ?? '',
       stream: b.stream,
@@ -176,6 +176,14 @@ function postsFor(channel: Channel): ChannelPost[] {
       viewers: b.viewers,
       reachKm: reachKmFor(`${channel.id}:${b.user}:${b.video ?? ''}`),
     }))
+    if (broadcasts.length) return broadcasts
+    const video = STOCK_CLIPS[channel.number % STOCK_CLIPS.length]
+    return [{
+      user: '@poplur.live',
+      video,
+      caption: 'Live around your radius',
+      reachKm: reachKmFor(`${channel.id}:fallback:${video}`),
+    }]
   }
   const users = CHANNEL_USERS[channel.id] ?? [channel.user]
   const own = channel.videos ?? []
@@ -257,6 +265,9 @@ export default function FeedTwin({
   const gestureStart = useRef<{ pointerId: number; x: number; y: number } | null>(null)
   const wheelLock = useRef(false)
   const adVideoRef = useRef<HTMLVideoElement>(null)
+  const mediaUnlockedRef = useRef(false)
+  const recoveringAdSrcRef = useRef<string | null>(null)
+  const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   const ch = CHANNELS[index]
 
 
@@ -332,7 +343,47 @@ export default function FeedTwin({
   useSyncExternalStore(onLiveStore, isLive, isLive)
   const posts = postsFor(ch)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
-  const adSrc = post?.video
+  const desiredAdSrc = post?.stream
+    ? undefined
+    : (post?.video || STOCK_CLIPS[ch.number % STOCK_CLIPS.length])
+  const sourceCandidates = desiredAdSrc
+    ? [desiredAdSrc, ...STOCK_CLIPS.filter(source => source !== desiredAdSrc)]
+    : []
+  const sourceKey = `${ch.id}:${post?.user ?? 'no-user'}:${desiredAdSrc ?? 'stream'}`
+  const [recoveryAttempt, setRecoveryAttempt] = useState(0)
+  const adSrc = sourceCandidates.length
+    ? sourceCandidates[recoveryAttempt % sourceCandidates.length]
+    : undefined
+  useEffect(() => {
+    setRecoveryAttempt(0)
+    setReadyAdSrc(null)
+  }, [sourceKey])
+  useEffect(() => {
+    recoveringAdSrcRef.current = null
+  }, [adSrc])
+  const advanceAdSource = useCallback((expectedSource?: string) => {
+    const video = adVideoRef.current
+    if (
+      expectedSource
+      && (!video || video.getAttribute('src') !== expectedSource)
+    ) return
+    const failedSource = expectedSource ?? video?.getAttribute('src') ?? null
+    if (failedSource && recoveringAdSrcRef.current === failedSource) return
+    recoveringAdSrcRef.current = failedSource
+    setReadyAdSrc(null)
+    setRecoveryAttempt(attempt => attempt + 1)
+  }, [])
+  const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
+    if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
+    // Retrying playback must not accidentally turn a muted warm-up into an
+    // audible media session before the person has interacted with Feed.
+    if (!mediaUnlockedRef.current) video.muted = true
+    void video.play().catch(() => {
+      if (adVideoRef.current === video && video.getAttribute('src') === source) {
+        advanceAdSource(source)
+      }
+    })
+  }, [advanceAdSource])
   // read inside the action bridge without re-binding it every post
   const postRef = useRef(post)
   postRef.current = post
@@ -388,7 +439,6 @@ export default function FeedTwin({
   // once a DECODED frame has painted the static never returns mid-playback;
   // only a content or channel change re-arms it. `playing` alone is too early
   // in WebKit: it can fire while the first composited video frame is black.
-  const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   // GCL test hooks: ?static=1 pins the TV-static layer visible; ?transition=1
   // plays the app's feed_end_transition clip over it (the two pieces the native
   // feed uses — TVStaticLooping + the end-of-feed transition).
@@ -414,13 +464,29 @@ export default function FeedTwin({
     const frameAware = video as HTMLVideoElement & {
       requestVideoFrameCallback?: (listener: (now: number, metadata: unknown) => void) => number
     }
-    const settle = () => window.requestAnimationFrame(() => callback())
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      callback()
+    }
+    // WKWebView can defer rVFC while this video is occluded by the static
+    // transition. Loaded data plus a bounded two-paint fallback breaks that
+    // circular wait without ever allowing static to become a permanent screen.
+    const fallback = window.setTimeout(
+      () => window.requestAnimationFrame(() => window.requestAnimationFrame(finish)),
+      520,
+    )
+    const settle = () => window.requestAnimationFrame(() => {
+      window.clearTimeout(fallback)
+      finish()
+    })
     if (frameAware.requestVideoFrameCallback) {
       frameAware.requestVideoFrameCallback(() => settle())
     } else {
       // Browsers without requestVideoFrameCallback still need two paints after
       // loadeddata before it is safe to lift the cover.
-      window.requestAnimationFrame(() => window.requestAnimationFrame(callback))
+      window.requestAnimationFrame(() => settle())
     }
   }
 
@@ -444,6 +510,37 @@ export default function FeedTwin({
     if (!adReady) void staticVideoRef.current?.play().catch(() => {})
   }, [adReady, ch.id])
 
+  // A bad/blocked creative can never strand the channel on static. Retry play
+  // first, then rotate through bundled, decode-verified stock clips until time
+  // advances. Loop wrap counts as progress.
+  useEffect(() => {
+    const video = adVideoRef.current
+    if (!video || !adSrc || suppressed) return
+    let lastTime = video.currentTime
+    let stalledTicks = 0
+    const watchdog = window.setInterval(() => {
+      if (
+        adVideoRef.current !== video
+        || suppressedRef.current
+        || document.visibilityState === 'hidden'
+      ) return
+      const now = video.currentTime
+      const advanced = now > lastTime + 0.03 || now < lastTime - 0.5
+      if (advanced) {
+        lastTime = now
+        stalledTicks = 0
+        markAdReady(adSrc)
+        return
+      }
+      stalledTicks += 1
+      if (video.paused || video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+        retryAdPlayback(adSrc, video)
+      }
+      if (stalledTicks >= 3) advanceAdSource(adSrc)
+    }, 1000)
+    return () => window.clearInterval(watchdog)
+  }, [adSrc, suppressed, markAdReady, advanceAdSource, retryAdPlayback])
+
   // Channel audio. The ad creative is the channel's soundtrack, so it plays
   // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
   // and the shared gate must still win (user mute, backgrounded app). So the
@@ -457,6 +554,20 @@ export default function FeedTwin({
       // whatever the gate says — this effect used to resume playback the moment
       // it ran, which is why the feed kept going behind the paper.
       if (suppressedRef.current) { video.muted = true; video.pause(); return }
+      // Claim the floor even during the muted autoplay warm-up. Taking focus
+      // does not make Feed audible, but it does stop a late Map/radio callback
+      // before the first post-login gesture. requestAudioFocus deliberately
+      // re-broadcasts repeat claims so a remounted iframe hears this too.
+      requestAudioFocus('feed')
+      // Home warms underneath the signed-in splash. Until the first post-login
+      // gesture, keep its soundtrack out of the system media session so remote
+      // rewind/play/forward controls can never leak through the splash cover.
+      if (!mediaUnlockedRef.current) {
+        video.muted = true
+        video.volume = 0.85
+        if (video.paused) void video.play().catch(() => {})
+        return
+      }
       // The radio or the map holding the floor keeps the picture running and
       // takes the sound: a feed you can see but not hear beats a feed that
       // stops dead behind another voice.
@@ -472,7 +583,10 @@ export default function FeedTwin({
       if (video.paused) void video.play().catch(() => {})
     }
     apply()
-    const unlock = () => apply()
+    const unlock = () => {
+      mediaUnlockedRef.current = true
+      apply()
+    }
     window.addEventListener('pointerdown', unlock, { passive: true })
     window.addEventListener('touchstart', unlock, { passive: true })
     window.addEventListener('keydown', unlock)
@@ -480,7 +594,10 @@ export default function FeedTwin({
     const offFocus = onAudioFocusChange(() => {
       const video = adVideoRef.current
       if (!video || suppressedRef.current) return
-      // Someone else took the floor — go quiet without stopping the picture.
+      // Feed only exists while its tab is front-most. If a stale callback from
+      // the hidden Map frame tries to reclaim sound, immediately reassert the
+      // visible screen instead of leaving Feed muted until the next gesture.
+      if (currentAudioOwner() !== 'feed') requestAudioFocus('feed')
       video.muted = !mediaUnlockedRef.current
         || isGateMuted()
         || currentAudioOwner() !== 'feed'
@@ -702,8 +819,16 @@ export default function FeedTwin({
           muted
           loop
           playsInline
+          controls={false}
+          disablePictureInPicture
+          disableRemotePlayback
+          controlsList="nodownload noplaybackrate nofullscreen noremoteplayback"
+          onCanPlay={() => markAdReady(adSrc)}
           onLoadedData={() => markAdReady(adSrc)}
           onPlaying={() => markAdReady(adSrc)}
+          onTimeUpdate={() => markAdReady(adSrc)}
+          onError={event => retryAdPlayback(adSrc, event.currentTarget)}
+          onStalled={event => retryAdPlayback(adSrc, event.currentTarget)}
         />
       )}
 

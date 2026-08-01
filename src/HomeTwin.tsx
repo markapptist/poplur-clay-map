@@ -1,10 +1,10 @@
-import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import React, { useCallback, useState, useEffect, useRef } from 'react'
 import styles from './HomeTwin.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
-import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
+import Camera, { MAX_RECORD_MS, type CameraActions, type CameraMenuAction } from './Camera'
 import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import PermissionAlert from './PermissionAlert'
@@ -12,7 +12,6 @@ import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import ClayPhonePop from './ClayPhonePop'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, preloadPop } from './pop'
-import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
@@ -236,9 +235,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stops obstructing whatever is behind it, and any touch brings it straight
   // back. Applies on every tab, not just subscreens.
   const [chromeIdle, setChromeIdle] = useState(false)
-  // The cube pops into the Poplur clay phone when that screen opens. It comes
-  // BACK afterwards on purpose: the cube is the way out of a subscreen, so a
-  // flourish that left it gone would strand you on the phone screen.
+  // On the PHONE screen the cube IS the Poplur clay phone, for as long as that
+  // screen is up — not a 1.55s flourish that hands over and hands straight
+  // back. The cube element stays mounted and still takes the tap (the phone
+  // model is pointer-events:none over it), so it remains the way out; only its
+  // appearance changes.
   const [cubeIntoPhone, setCubeIntoPhone] = useState(false)
   // The post composer is a full-screen modal, but it lives inside .contentLayer
   // (z-index 4) so it can never stack above the home chrome at 260 — the radius
@@ -247,15 +248,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from inside a clamped stacking context, so the chrome stands down instead.
   const [composerOpen, setComposerOpen] = useState(false)
   const handleComposingChange = useCallback((open: boolean) => setComposerOpen(open), [])
-  // Cleared on a timer rather than onAnimationEnd: the wrapper also carries the
-  // idle-fade transition and the cube's own hover keyframes bubble through it,
-  // and in practice the flag was surviving the flourish — which meant the class
-  // was still set next time you opened PHONE, so the animation never replayed.
-  useEffect(() => {
-    if (!cubeIntoPhone) return
-    const t = window.setTimeout(() => setCubeIntoPhone(false), CUBE_INTO_PHONE_MS)
-    return () => window.clearTimeout(t)
-  }, [cubeIntoPhone])
+  // No timer any more: the state is now driven purely by whether the PHONE
+  // screen is open, so it clears when you leave rather than after 1.55s.
 
   // Stable identity on purpose. HoldMenuTwin re-runs its reporting effect
   // whenever this prop changes, so an inline arrow re-fired it every render —
@@ -264,8 +258,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const handleSubscreenChange = useCallback((open: boolean, screen?: string) => {
     setOverlayOpen(open)
     setCubeIntoPhone(prev => {
-      if (open && screen === 'profile-phone' && !prev) { playPop(); return true }
-      return prev
+      const wanted = open && screen === 'profile-phone'
+      if (wanted && !prev) playPop()
+      return wanted
     })
   }, [])
   const [popping, setPopping] = useState(false)
@@ -277,6 +272,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [showOnlineAudience, setShowOnlineAudience] = useState(false)
   // Left slot: channel up/down changer — drives the feed's channel directly.
   const [chanIndex, setChanIndex] = useState(0)
+  const tuneFeedChannel = useCallback((channelId: string) => {
+    const nextIndex = CHANNELS.findIndex(channel => channel.id === channelId)
+    if (nextIndex < 0) return
+    setChanIndex(nextIndex)
+    setActiveTab('feed')
+    setHoldOpen(false)
+  }, [])
+  const tuneFeedChannelFromVoice = useCallback((query: string) => {
+    const normalized = query.trim().toLowerCase()
+    const numeric = Number.parseInt(normalized.replace(/\D/g, ''), 10)
+    const channel = CHANNELS.find(candidate => (
+      candidate.id.toLowerCase() === normalized
+      || candidate.name.toLowerCase() === normalized
+      || (Number.isFinite(numeric) && candidate.number === numeric)
+    ))
+    if (channel) tuneFeedChannel(channel.id)
+  }, [tuneFeedChannel])
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
@@ -402,7 +414,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // you hear both at once.
   useEffect(() => {
     const send = () => {
-      const audible = activeTab === 'map' && !isGateMuted() && !overlayOpen
+      const audible = activeTab === 'map'
+        && !isGateMuted()
+        && !overlayOpen
+        && !holdOpen
+        && activePermission === null
       mapFrameRef.current?.contentWindow?.postMessage(
         audible ? { gcAudio: 'on' } : { gcAudio: 'off', type: 'poplur-audio-stop' },
         '*',
@@ -410,7 +426,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     send()
     return onGateChange(send)
-  }, [activeTab, mapReady, overlayOpen])
+  }, [activePermission, activeTab, holdOpen, mapReady, overlayOpen])
 
   // Rotate the loading copy only while the overlay is up.
   // Map lifetime. Coming back to the map remounts it immediately; leaving it
@@ -453,18 +469,25 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.clearInterval(iv)
   }, [loadingVisible])
 
-  // Camera's vertical pager: `step` counts arrow presses (up +1 / down -1);
-  // parity picks the page, so both directions cycle live ⇄ roll.
+  // Camera Roll remains the camera's second page, but it is entered only from
+  // the camera hold menu. Channel buttons now belong to zoom.
   const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
+  const cameraRollOpen = ((cameraStep % 2) + 2) % 2 === 1
+  const openCameraRoll = useCallback(() => {
+    setCameraStep(current => (((current % 2) + 2) % 2 === 0 ? current + 1 : current))
+  }, [])
+  const closeCameraRoll = useCallback(() => {
+    setCameraStep(current => (((current % 2) + 2) % 2 === 1 ? current - 1 : current))
+  }, [])
   // The camera's own actions, so the cube and the hold menu can fire them.
   const cameraActionsRef = useRef<CameraActions | null>(null)
+  const [cameraZoom, setCameraZoom] = useState(1)
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
   // Who the camera is currently looking at. While a user is detected the radius
   // label shows THEIR reach — the number that matters is the one belonging to
   // the person in frame, not your own.
   const [seenUser, setSeenUser] = useState<{ handle: string; radiusKm: number } | null>(null)
-  const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
   useEffect(() => {
     if (activeTab !== 'profile') { setViewingUser(null); setProfileOrigin(null) }
@@ -480,9 +503,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  const runMenuAction = (action: FeedAction | keyof CameraActions) => {
+  const runMenuAction = (action: FeedAction | CameraMenuAction) => {
     if (action === 'photo' || action === 'video' || action === 'detect'
-      || action === 'ar' || action === 'live') {
+      || action === 'ar' || action === 'live' || action === 'roll') {
       cameraActionsRef.current?.[action]()
       return
     }
@@ -499,10 +522,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
-    // On the camera tab the clay arrows page the camera itself: up slides
-    // up, down slides down, both directions wrap live ⇄ roll.
+    // On the camera tab the arrows zoom the viewfinder (up in, down out). The
+    // post composer gets first refusal so its filter/channel steps still work.
+    // Camera Roll is deliberately absent here; its hold-menu tile owns it.
     if (activeTab === 'post') {
-      setCameraStep(s => s + (dir === -1 ? 1 : -1))
+      cameraActionsRef.current?.arrow(dir)
       return
     }
     if (activeTab === 'profile') {
@@ -548,9 +572,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // Tapping the cube runs whatever you pinned in this tab's hold menu.
     const favourite = readFavourite(activeTab)
     if (activeTab === 'post') {
+      // The cube is the universal back control. A Camera Roll opened from the
+      // hold menu closes before the cube resumes its capture/favourite action.
+      if (cameraRollOpen) {
+        closeCameraRoll()
+        return
+      }
       // The camera's default is PHOTO — a camera whose button does nothing
       // until you have visited a menu is not a camera.
-      const camera: Record<string, keyof CameraActions> = { PHOTO: 'photo', VIDEO: 'video' }
+      const camera: Record<string, CameraMenuAction> = {
+        PHOTO: 'photo',
+        VIDEO: 'video',
+        'CAMERA ROLL': 'roll',
+      }
       const which = camera[favourite ?? 'PHOTO'] ?? 'photo'
       cameraActionsRef.current?.[which]()
       return
@@ -571,7 +605,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   return (
     <section
       className={styles.home}
-      data-poplur-watchdog={chromeFaded ? 'off' : 'on'}
+      data-poplur-watchdog={chromeFaded || cameraRollOpen ? 'off' : 'on'}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
       {/* The map iframe mounts only while the Map tab is front. CSS cannot make
@@ -595,7 +629,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             index={chanIndex}
             onIndexChange={setChanIndex}
             bindActions={fn => { feedActionsRef.current = fn }}
-            suppressed={overlayOpen || holdOpen}
+            suppressed={overlayOpen || holdOpen || activePermission !== null}
             onOpenProfile={user => {
               setProfileOrigin(activeTab)
               setViewingUser(user)
@@ -607,9 +641,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           <Camera
             onComposingChange={handleComposingChange}
             step={cameraStep}
-            onCloseRoll={() => setCameraStep(s => s - 1)}
+            onOpenRoll={openCameraRoll}
+            onCloseRoll={closeCameraRoll}
             bindActions={actions => { cameraActionsRef.current = actions }}
             onRecordingChange={setRecordMs}
+            onZoomChange={setCameraZoom}
             onDetectUser={setSeenUser}
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}
@@ -677,15 +713,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${composerOpen ? ` ${styles.chromeHidden}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
-        <div className={styles.chanSlot} data-poplur-channel-arrows>
+        <div
+          className={`${styles.chanSlot}${activeTab === 'post' && cameraRollOpen ? ` ${styles.chanSlotHidden}` : ''}`}
+          data-poplur-channel-arrows
+        >
           <ClayChannelArrows
             key={`channel-arrows-${uiRecoveryKey}`}
             size={cubeSize}
             number={activeTab === 'map' ? mapPostIdx + 1 : CHANNELS[chanIndex].number}
-            // The camera's two pages are not channels. The slot shows what the
-            // roll has selected instead, and carries the recording dot.
-            label={activeTab === 'post' ? (picked ? String(picked) : '') : undefined}
+            // Camera buttons are zoom controls now; show their current factor
+            // instead of a channel number or Camera Roll selection count.
+            label={activeTab === 'post' ? `${cameraZoom.toFixed(cameraZoom % 1 ? 1 : 0)}×` : undefined}
             dot={activeTab === 'post' && recordMs != null}
+            upLabel={activeTab === 'post' ? 'Zoom in' : undefined}
+            downLabel={activeTab === 'post' ? 'Zoom out' : undefined}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
           />
@@ -784,7 +825,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           was a testing shortcut that kept leaking into views of the app. Turn
           the cube, or long-press it for the hold menu. */}
 
-      <PoplurVoiceAssistant onTabRequest={tab => setActiveTab(tab)} />
+      <PoplurVoiceAssistant
+        onTabRequest={tab => setActiveTab(tab)}
+        onChannelRequest={tuneFeedChannelFromVoice}
+      />
 
       {/* Auth routing owns WHERE the primer appears. Signed-out users receive
           the matching sequence on Welcome; returning authenticated users are
@@ -832,6 +876,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           mapMode={liveMapMode}
           mapTourTopics={mapTourTopics}
           onMapTourTopicsChange={handleMapTourTopicsChange}
+          currentFeedChannelId={CHANNELS[chanIndex]?.id}
+          onTuneFeedChannel={tuneFeedChannel}
           onSubscreenChange={handleSubscreenChange}
           bindGoBack={fn => { goBackRef.current = fn }}
         />

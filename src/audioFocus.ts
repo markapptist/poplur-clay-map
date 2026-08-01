@@ -78,9 +78,11 @@ if (typeof window !== 'undefined') {
     if (!isFocusMessage(e.data)) return
     const owner = e.data[CHANNEL]
     // Somebody in another frame is sounding. Nothing here may be, and this
-    // document holds no claim it could later think it still has.
+    // document holds no claim it could later think it still has. Do not exempt
+    // a same-named owner: Feed/Radio in two documents are still two physical
+    // sound sources and only the remote claimant may remain audible.
     current = null
-    silenceLocal(owner ?? undefined)
+    silenceLocal()
     listeners.forEach(cb => cb(null))
   })
 }
