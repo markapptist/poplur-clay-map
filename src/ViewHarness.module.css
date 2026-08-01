@@ -343,6 +343,87 @@
   pointer-events: none;
 }
 
+.camDetectionTitle {
+  position: absolute;
+  top: max(62px, calc(env(safe-area-inset-top) + 46px));
+  left: 50%;
+  z-index: 27;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  max-width: min(74vw, 320px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.camDetectionTitle span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 950 clamp(14px, 4.2vw, 19px)/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 0;
+  color: transparent;
+  background: linear-gradient(105deg, #fff 0%, #d8fff0 30%, #65ff98 52%, #8ce9ff 76%, #fff 100%);
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-stroke: 1px rgba(0, 38, 14, 0.9);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 2px 0 rgba(0, 28, 12, 0.72))
+    drop-shadow(0 0 9px rgba(77, 255, 105, 0.65));
+  animation: cameraDetectionShader 4.8s linear infinite;
+}
+
+.camDetectionTitle small {
+  flex: none;
+  font: 850 10px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  color: #d8ffe3;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+}
+
+@keyframes cameraDetectionShader {
+  to { background-position: -240% 0; }
+}
+
+.camCameraUnavailable {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  place-items: center;
+  background: #050407;
+}
+
+.camRetry {
+  min-width: 142px;
+  min-height: 48px;
+  padding: 0 20px;
+  border: 2px solid rgba(255, 180, 220, 0.72);
+  border-radius: 24px;
+  color: #fff4fa;
+  background:
+    radial-gradient(circle at 34% 22%, rgba(255, 255, 255, 0.42), transparent 31%),
+    linear-gradient(180deg, #ff72b6 0%, #ed2f8b 52%, #821248 100%);
+  box-shadow:
+    inset 0 -7px 12px rgba(74, 0, 36, 0.36),
+    inset 0 2px 4px rgba(255, 255, 255, 0.5),
+    0 8px 0 rgba(82, 8, 46, 0.65),
+    0 14px 28px rgba(0, 0, 0, 0.58);
+  font: 950 12px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.camRetry:active {
+  transform: translateY(5px);
+  box-shadow:
+    inset 0 -4px 9px rgba(74, 0, 36, 0.38),
+    inset 0 2px 4px rgba(255, 255, 255, 0.44),
+    0 3px 0 rgba(82, 8, 46, 0.65),
+    0 8px 18px rgba(0, 0, 0, 0.5);
+}
+
 /* White flash on photo capture when flash is on. */
 .camFlashPulse {
   position: absolute;
@@ -941,7 +1022,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .camSpoofFeed,
-  .cameraFull .cameraFeedMirror { animation: none; }
+  .cameraFull .cameraFeedMirror,
+  .camDetectionTitle span { animation: none; }
 }
 
 /* The instant of capture: the screen blooms white. On the front camera this

@@ -33,6 +33,17 @@
   animation: subscreenIn 0.42s ease both;
 }
 
+/* Games run full-bleed (position/inset) so the game itself fills the screen,
+   but they must still sit UNDER the home chrome. The cube is the way out of
+   every subscreen; at a z-index above .overSubscreen (260) the cube vanished
+   and Poplurgatchi's only exit was its own QUIT button — the exact trap the
+   note on .overSubscreen in HomeTwin.module.css warns about. */
+.gameStage {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+}
+
 .subscreenFrame {
   display: block;
   width: 100%;

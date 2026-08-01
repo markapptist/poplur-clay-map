@@ -31,22 +31,36 @@
 .barBtn:active { transform: scale(0.92); }
 
 /* ── media preview ────────────────────────────────────────────────────────── */
+/* Full-bleed, like Snapchat: the capture fills the screen and the chrome floats
+   on top of it. It used to be an inset rounded card with object-fit:contain, so
+   a portrait capture sat in a letterbox with black above and below and a margin
+   down each side — the media was the smallest thing on a screen that exists to
+   show it. */
 .preview {
-  flex: 1 1 auto;
-  min-height: 0;
-  margin: 0 12px;
-  border-radius: 20px;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   overflow: hidden;
   background: #000;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   display: grid;
   place-items: center;
 }
-.media { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* cover, not contain: fill the frame and crop the overflow rather than shrink
+   the capture to fit inside it. */
+.media { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* The bar and the step panel sit above the full-bleed media, with a scrim so
+   their text stays legible over a bright capture. */
+.bar, .panel { position: relative; z-index: 1; }
+.bar { background: linear-gradient(180deg, rgba(7, 4, 12, 0.72), transparent); }
+.panel { background: linear-gradient(0deg, rgba(7, 4, 12, 0.82) 62%, transparent); }
 
 /* ── step panel ───────────────────────────────────────────────────────────── */
 .panel {
   flex: 0 0 auto;
+  /* The preview is out of flow now (absolute, full-bleed), so without this the
+     panel would sit directly under the bar at the top of the screen. */
+  margin-top: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;

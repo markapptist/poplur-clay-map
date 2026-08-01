@@ -88,12 +88,16 @@ export default function PostComposer({
   target,
   onClose,
   onPosted,
+  bindArrows,
 }: {
   media: ComposerMedia
   /** set when the post is bound to a map coordinate */
   target?: ComposerTarget
   onClose: () => void
   onPosted?: (post: PublishedPost) => void
+  /** Hands the clay channel arrows a job while the composer is open: stepping
+   *  the filter over the capture (and the channel on the channel step). */
+  bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
 }) {
   const [step, setStep] = useState<Step>('edit')
   const [filterId, setFilterId] = useState('none')
@@ -152,6 +156,31 @@ export default function PostComposer({
       reader.readAsDataURL(blob)
     })
   }
+
+  // The clay channel arrows drive the composer while it is open: on the edit
+  // step they walk the filters over your capture (so you can flick through
+  // looks without reaching for the rail), and on the channel step they walk the
+  // channels — in both cases the arrows do the thing the screen is about.
+  const stepRef = useRef(step)
+  stepRef.current = step
+  useEffect(() => {
+    if (!bindArrows) return
+    bindArrows((dir: 1 | -1) => {
+      playPop()
+      if (stepRef.current === 'channel') {
+        setChannelId(current => {
+          const i = CHANNELS.findIndex(c => c.id === current)
+          return CHANNELS[((i + dir) % CHANNELS.length + CHANNELS.length) % CHANNELS.length].id
+        })
+        return
+      }
+      setFilterId(current => {
+        const i = AR_FILTERS.findIndex(f => f.id === current)
+        return AR_FILTERS[((i + dir) % AR_FILTERS.length + AR_FILTERS.length) % AR_FILTERS.length].id
+      })
+    })
+    return () => bindArrows(null)
+  }, [bindArrows])
 
   const publish = async () => {
     playPop()

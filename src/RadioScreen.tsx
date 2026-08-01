@@ -181,7 +181,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
             onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next) }}
             size={40}
           />
-          <ClayCornerButton kind="close" label="Close the radio" size={44} activateOnClick onPress={onClose} />
+          {/* No ✕ — the cube is the back control for every subscreen. */}
         </div>
       </header>
 
