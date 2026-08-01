@@ -6,6 +6,20 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Vite replaces import.meta.env values at compile time. `.env` is intentionally
+# ignored by Git, so a clean release worktree must receive its env file
+# explicitly. Fail closed here rather than shipping the developer-only
+# missing-token screen to a device again.
+BUILD_ENV_FILE="${POPLUR_BUILD_ENV_FILE:-.env}"
+if [[ -z "${VITE_MAPBOX_TOKEN:-}" && -f "$BUILD_ENV_FILE" ]]; then
+  VITE_MAPBOX_TOKEN="$(sed -n 's/^VITE_MAPBOX_TOKEN=//p' "$BUILD_ENV_FILE" | head -n 1 | tr -d '\r')"
+fi
+if [[ ! "${VITE_MAPBOX_TOKEN:-}" =~ ^pk\. ]]; then
+  echo "Mobile release requires a valid VITE_MAPBOX_TOKEN; set it or provide POPLUR_BUILD_ENV_FILE." >&2
+  exit 1
+fi
+export VITE_MAPBOX_TOKEN
+
 IOS_DEST="/Users/matrix/Developer/Poplur2025-iOS/ClayMapWeb"
 ANDROID_DEST="/Users/matrix/Developer/Poplur2025-Android/app/src/main/assets/claymap"
 RN_DEST="/Users/matrix/Developer/Poplur2025-ReactNative/src/assets/claymap/claymap.zip"
@@ -44,6 +58,14 @@ acquire_publish_lock() {
 # directory and keep that exact snapshot for every downstream target.
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/vite build --outDir "$BUILD_DIR"
+if ! rg -l --glob '*.js' --fixed-strings "$VITE_MAPBOX_TOKEN" "$BUILD_DIR" >/dev/null; then
+  echo "Mobile release verification failed: Mapbox token was not embedded." >&2
+  exit 1
+fi
+if rg -l --glob '*.js' --fixed-strings 'Add VITE_MAPBOX_TOKEN' "$BUILD_DIR" >/dev/null; then
+  echo "Mobile release verification failed: missing-token UI survived production build." >&2
+  exit 1
+fi
 
 # Watchers can legitimately queue more than one isolated build. Serialize the
 # short publish phase so rsync --delete and the RN archive replacement cannot

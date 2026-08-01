@@ -110,6 +110,17 @@ export default function Camera({
   const [detections, setDetections] = useState<Detection[]>([])
   const detectorRef = useRef<FrameDetector | null>(null)
 
+  // The camera opens with ML running. DETECT OFF remains available in the
+  // hold menu, but a later visit starts from the useful default again instead
+  // of inheriting a stale in-memory toggle from the previous visit.
+  useEffect(() => {
+    setDetectOn(true)
+    const syncNative = window.setTimeout(() => {
+      if (isNativeShell()) postNativeEvent({ type: 'cameraControl', control: 'detect', on: true })
+    }, 0)
+    return () => window.clearTimeout(syncNative)
+  }, [])
+
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
   const filterCss = AR_FILTERS.find(f => f.id === arFilter)?.css ?? 'none'
