@@ -595,11 +595,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
-    // On the camera tab the clay arrows belong to the camera: zoom on the
-    // live viewfinder, and filter-flipping once a capture preview is up.
-    // (Live ⇄ roll paging moved to the hold menu's CAMERA ROLL tile.)
+    // On the camera tab a capture preview takes the arrows first (filter
+    // flipping). Otherwise they page the camera itself: viewfinder <-> Camera
+    // Roll, which is what the channel buttons have always meant here. Zoom
+    // has its own slider and does not need them.
     if (activeTab === 'post') {
-      cameraActionsRef.current?.arrow(dir)
+      if (!cameraActionsRef.current?.arrow(dir)) {
+        setCameraStep(s => s + (dir === -1 ? 1 : -1))
+      }
       return
     }
     if (activeTab === 'profile') {

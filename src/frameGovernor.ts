@@ -227,10 +227,14 @@ export function qualityPixelRatio(max = 2): number {
 }
 
 /**
- * Whether ambient decoration (flyers, boats, drifting parallax) should run at
- * all. Below full quality it is the first thing to go: it is pure decoration
- * and it is per-frame GPU work.
+ * Whether ambient decoration (flyers, boats, traffic) should run at all.
+ *
+ * Deliberately NOT `quality >= 3`: the ladder drops a step on any sustained
+ * overrun, and killing every moving thing in the city the first time a device
+ * gets warm is a worse regression than the frames cost. Decoration survives one
+ * step down (just slower, per the rate table) and only stops at the bottom two
+ * tiers, where the device is genuinely in trouble.
  */
 export function ambientAllowed(): boolean {
-  return quality >= 3
+  return quality >= 2
 }

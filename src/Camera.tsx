@@ -623,14 +623,15 @@ export default function Camera({
         else startBroadcast(streamRef.current ?? undefined)
       },
       roll: () => onOpenRoll?.(),
-      // Offer the arrows to the composer first. On the live camera the upper
-      // channel button zooms in and the lower one zooms out; Camera Roll is now
-      // entered only through its hold-menu tile.
+      // Offer the arrows to the composer first. On the live camera they page
+      // between the viewfinder and the Camera Roll, which is what the channel
+      // buttons have always meant here — the roll is one press away rather
+      // than buried in the hold menu. (Zoom has its own slider.)
       arrow: dir => {
         const handler = composerArrowsRef.current
-        if (handler) handler(dir)
-        else applyZoomStep(dir === -1 ? 1 : -1)
-        return true
+        if (handler) { handler(dir); return true }
+        // Unhandled: the home shell pages live <-> roll with it.
+        return false
       },
       composerBack: () => {
         if (!composingRef.current) return false

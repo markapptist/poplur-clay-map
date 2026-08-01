@@ -73,10 +73,20 @@ export default function ClayNotifIcon({ kind, size = 40 }: { kind: NotifKind; si
 
   useEffect(() => {
     const canvas = canvasRef.current!
+    // Render on a THROWAWAY canvas, blit the result to the visible one, then
+    // destroy the GL context. These icons draw exactly one frame and never
+    // change, so holding a live WebGL context per notification row costs a
+    // context (and its framebuffer) for the whole time the dropdown is open,
+    // for pixels that will never differ. The visible canvas ends up as plain
+    // 2D bitmap — the same trade modelSprite makes for static map objects.
+    const scratch = document.createElement('canvas')
+    const dpr = qualityPixelRatio(1.5)
+    scratch.width = Math.round(size * dpr)
+    scratch.height = Math.round(size * dpr)
     const renderer = new THREE.WebGLRenderer({
-      canvas, alpha: true, antialias: false, powerPreference: 'low-power',
+      canvas: scratch, alpha: true, antialias: false, powerPreference: 'low-power',
     })
-    renderer.setPixelRatio(qualityPixelRatio(1.5))
+    renderer.setPixelRatio(dpr)
     renderer.setSize(size, size, false)
     renderer.setClearColor(0x000000, 0)
 
@@ -155,18 +165,22 @@ export default function ClayNotifIcon({ kind, size = 40 }: { kind: NotifKind; si
     // perf-profiler's render-on-demand pattern for the other clay widgets).
     root.rotation.set(-0.12, -0.34, decreaseFlip)
     root.scale.setScalar(restScale)
-    const draw = () => renderer.render(scene, camera)
-    draw()
-    // One more after layout settles, so an early first paint can't ship a blank
-    // canvas (e.g. before the row has its final size).
-    const raf = requestAnimationFrame(draw)
+    renderer.render(scene, camera)
 
-    return () => {
-      cancelAnimationFrame(raf)
-      geos.forEach(g => g.dispose())
-      mat.dispose()
-      renderer.dispose()
-    }
+    // Copy the finished pixels across, then tear the GL context down for good.
+    canvas.width = scratch.width
+    canvas.height = scratch.height
+    canvas.getContext('2d')?.drawImage(scratch, 0, 0)
+
+    geos.forEach(g => g.dispose())
+    mat.dispose()
+    renderer.dispose()
+    // dispose() releases three's resources but leaves the context itself alive
+    // until GC gets to it, and browsers cap simultaneous contexts — losing it
+    // explicitly returns the slot now rather than whenever GC runs.
+    renderer.forceContextLoss()
+
+    return () => { /* nothing live to clean up: the context is already gone */ }
   }, [size, kind])
 
   return (
