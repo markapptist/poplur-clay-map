@@ -30,6 +30,7 @@ import {
 } from './regionAudio'
 import { postNativeEvent } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
+import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
 import ClayMuteButton from './ClayMuteButton'
@@ -805,10 +806,17 @@ export default function App() {
     }
     window.addEventListener('message', onMessage)
     const offGate = onGateChange(sync)
+    const offFocus = onAudioFocusChange(owner => {
+      // Another frame's AI voice actively stops the radio. Once that temporary
+      // lease releases, restore Map only if it is still front-most and the user
+      // had already requested sound; never resurrect audio for a hidden tab.
+      if (owner === null && mapAudioFrontRef.current && soundRequestedRef.current) sync()
+    })
     sync()
     return () => {
       window.removeEventListener('message', onMessage)
       offGate()
+      offFocus()
     }
   }, [applySoundState])
 

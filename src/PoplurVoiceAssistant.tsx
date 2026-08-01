@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './PoplurVoiceAssistant.module.css'
-import { isGateMuted } from './audioGate'
 import { aiAnswer } from './ProfileTwin'
 import { playPop } from './pop'
 import type { CubeTab } from './CubeTab3D'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
+import {
+  cancelVoiceSpeech,
+  holdVoiceAudioFocus,
+  speakWithVoiceAudioFocus,
+} from './voiceAudio'
 
 type VoicePhase = 'idle' | 'listening' | 'thinking' | 'reply' | 'unavailable'
 
@@ -73,23 +77,6 @@ function requestedTab(command: string): CubeTab | null {
   return null
 }
 
-function speak(reply: string) {
-  if (isGateMuted()) return
-  try {
-    const synth = window.speechSynthesis
-    if (!synth) return
-    synth.cancel()
-    const utterance = new SpeechSynthesisUtterance(reply)
-    utterance.rate = 0.98
-    utterance.pitch = 1.03
-    const voice = synth.getVoices().find(candidate => /^en-/i.test(candidate.lang))
-    if (voice) utterance.voice = voice
-    synth.speak(utterance)
-  } catch {
-    // Speech output is an enhancement; the visible reply remains available.
-  }
-}
-
 // The controller remains mounted above every Home tab and arms the wake phrase
 // as soon as Home is in the foreground. Browsers that require a user gesture
 // get one silent retry on the first app interaction; the Profile equaliser can
@@ -111,6 +98,7 @@ export default function PoplurVoiceAssistant({
   const permissionBlockedRef = useRef(false)
   const awaitingCommandRef = useRef(false)
   const handlingCommandRef = useRef(false)
+  const voiceSpeakingRef = useRef(false)
   const restartTimerRef = useRef<number | null>(null)
   const dismissTimerRef = useRef<number | null>(null)
   const tabRequestRef = useRef(onTabRequest)
@@ -143,7 +131,15 @@ export default function PoplurVoiceAssistant({
       playPop()
       setPhase('reply')
       setMessage(reply)
-      speak(reply)
+      voiceSpeakingRef.current = true
+      try { recognitionRef.current?.stop() } catch { /* already stopped */ }
+      const speaking = speakWithVoiceAudioFocus(reply, {
+        onDone: () => {
+          voiceSpeakingRef.current = false
+          if (listeningEnabledRef.current) startRecognition()
+        },
+      })
+      if (!speaking) voiceSpeakingRef.current = false
       window.dispatchEvent(new CustomEvent('poplur-voice-response', { detail: { reply } }))
       handlingCommandRef.current = false
       dismissTimerRef.current = window.setTimeout(() => {
@@ -176,6 +172,7 @@ export default function PoplurVoiceAssistant({
       !recognition
       || recognitionRunningRef.current
       || recognitionStartingRef.current
+      || voiceSpeakingRef.current
       || document.visibilityState === 'hidden'
     ) return false
     try {
@@ -207,7 +204,11 @@ export default function PoplurVoiceAssistant({
     recognition.onend = () => {
       recognitionStartingRef.current = false
       recognitionRunningRef.current = false
-      if (!listeningEnabledRef.current || document.visibilityState === 'hidden') return
+      if (
+        !listeningEnabledRef.current
+        || voiceSpeakingRef.current
+        || document.visibilityState === 'hidden'
+      ) return
       if (restartTimerRef.current != null) window.clearTimeout(restartTimerRef.current)
       restartTimerRef.current = window.setTimeout(() => {
         restartTimerRef.current = null
@@ -297,6 +298,10 @@ export default function PoplurVoiceAssistant({
     const receiveNativeCommand = (event: Event) => {
       const detail = (event as CustomEvent<NativeVoiceCommandDetail>).detail
       if (!detail || typeof detail !== 'object') return
+      // Native TTS lives outside the WebView's audio graph. Reserve the shared
+      // Voice owner for the length of its feedback so Feed/Map cannot continue
+      // underneath it, including while a command changes tabs.
+      holdVoiceAudioFocus(typeof detail.feedback === 'string' ? detail.feedback : '')
       if (detail.tab === 'map' || detail.tab === 'feed' || detail.tab === 'post' || detail.tab === 'profile') {
         tabRequestRef.current(detail.tab)
       }
@@ -347,6 +352,7 @@ export default function PoplurVoiceAssistant({
       if (restartTimerRef.current != null) window.clearTimeout(restartTimerRef.current)
       clearDismissTimer()
       try { recognitionRef.current?.stop() } catch { /* already stopped */ }
+      cancelVoiceSpeech()
     }
   }, [startVoice, startWakeListening])
 

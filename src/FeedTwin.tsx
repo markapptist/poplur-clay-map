@@ -558,7 +558,7 @@ export default function FeedTwin({
       // does not make Feed audible, but it does stop a late Map/radio callback
       // before the first post-login gesture. requestAudioFocus deliberately
       // re-broadcasts repeat claims so a remounted iframe hears this too.
-      requestAudioFocus('feed')
+      if (currentAudioOwner() !== 'voice') requestAudioFocus('feed')
       // Home warms underneath the signed-in splash. Until the first post-login
       // gesture, keep its soundtrack out of the system media session so remote
       // rewind/play/forward controls can never leak through the splash cover.
@@ -574,7 +574,7 @@ export default function FeedTwin({
       // Feed is front-most whenever this component is mounted. Claim the
       // shared floor before unmuting so a map/radio source cannot leak into the
       // first frame while its own stop callback is still running.
-      requestAudioFocus('feed')
+      if (currentAudioOwner() !== 'voice') requestAudioFocus('feed')
       const audible = !isGateMuted() && currentAudioOwner() === 'feed'
       video.muted = !audible
       video.volume = 0.85
@@ -591,9 +591,16 @@ export default function FeedTwin({
     window.addEventListener('touchstart', unlock, { passive: true })
     window.addEventListener('keydown', unlock)
     const offGate = onGateChange(apply)
-    const offFocus = onAudioFocusChange(() => {
+    const offFocus = onAudioFocusChange(owner => {
       const video = adVideoRef.current
       if (!video || suppressedRef.current) return
+      // AI speech is deliberately temporary and owns the floor even though
+      // Feed remains the visible picture. Reclaim as soon as Voice releases;
+      // do not steal focus mid-answer and make the assistant appear silent.
+      if (owner === 'voice') {
+        video.muted = true
+        return
+      }
       // Feed only exists while its tab is front-most. If a stale callback from
       // the hidden Map frame tries to reclaim sound, immediately reassert the
       // visible screen instead of leaving Feed muted until the next gesture.
@@ -755,7 +762,7 @@ export default function FeedTwin({
       video.pause()
       releaseAudioFocus('feed')
     } else {
-      if (mediaUnlockedRef.current) requestAudioFocus('feed')
+      if (mediaUnlockedRef.current && currentAudioOwner() !== 'voice') requestAudioFocus('feed')
       video.muted = !mediaUnlockedRef.current
         || isGateMuted()
         || currentAudioOwner() !== 'feed'

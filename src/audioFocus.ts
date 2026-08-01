@@ -10,7 +10,7 @@
 // several sounds (the map's region bed, weather and car passes) counts as one
 // voice and can keep its own internal mix.
 
-export type AudioOwner = 'feed' | 'radio' | 'map' | 'studio'
+export type AudioOwner = 'feed' | 'radio' | 'map' | 'studio' | 'voice'
 
 type Stop = () => void
 
@@ -77,13 +77,22 @@ if (typeof window !== 'undefined') {
   window.addEventListener('message', (e: MessageEvent) => {
     if (!isFocusMessage(e.data)) return
     const owner = e.data[CHANNEL]
+    // A release is a prompt for the visible local surface to resume. It must
+    // not silence a newer local claim that happened after the remote voice.
+    if (owner === null) {
+      listeners.forEach(cb => cb(null))
+      return
+    }
     // Somebody in another frame is sounding. Nothing here may be, and this
     // document holds no claim it could later think it still has. Do not exempt
     // a same-named owner: Feed/Radio in two documents are still two physical
     // sound sources and only the remote claimant may remain audible.
     current = null
     silenceLocal()
-    listeners.forEach(cb => cb(null))
+    // Report the remote owner even though `current` tracks local claims only.
+    // Visible surfaces can distinguish a temporary AI voice (stay muted) from
+    // a stale hidden surface (reassert themselves).
+    listeners.forEach(cb => cb(owner))
   })
 }
 
@@ -105,6 +114,7 @@ export function requestAudioFocus(owner: AudioOwner): void {
 export function releaseAudioFocus(owner: AudioOwner): void {
   if (current !== owner) return
   current = null
+  broadcast(null)
   listeners.forEach(cb => cb(null))
 }
 
