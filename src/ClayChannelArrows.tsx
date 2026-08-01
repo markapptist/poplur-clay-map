@@ -1,5 +1,6 @@
-import React, { useEffect, useId, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { qualityPixelRatio } from './frameGovernor'
 import { playPop } from './pop'
 
 // Clay channel changer for the home view's left slot: two wide, soft-edged
@@ -51,8 +52,7 @@ export default function ClayChannelArrows({
   size?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [rendererState, setRendererState] = useState<'mounting' | 'ready' | 'recovered' | 'failed'>('mounting')
-  const recoveryGradientId = useId().replace(/:/g, '')
+  const [rendererState, setRendererState] = useState<'mounting' | 'ready' | 'failed'>('mounting')
   const width = Math.round(size / 2)
   // pressed pulse targets per arrow, read by the render loop
   const pulse = useRef({ up: 0, down: 0 })
@@ -64,7 +64,7 @@ export default function ClayChannelArrows({
     const w = canvas.clientWidth
     const h = canvas.clientHeight
 
-    const markRenderer = (state: 'mounting' | 'ready' | 'recovered' | 'failed') => {
+    const markRenderer = (state: 'mounting' | 'ready' | 'failed') => {
       canvas.dataset.poplurChannelRenderer = state
       setRendererState(state)
     }
@@ -90,7 +90,9 @@ export default function ClayChannelArrows({
 
     let renderer: THREE.WebGLRenderer
     try {
-      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+      renderer = new THREE.WebGLRenderer({
+        canvas, alpha: true, antialias: false, powerPreference: 'low-power',
+      })
     } catch {
       markRenderer('failed')
       return () => {
@@ -98,7 +100,7 @@ export default function ClayChannelArrows({
         canvas.removeEventListener('webglcontextrestored', onContextRestored)
       }
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setPixelRatio(qualityPixelRatio(1.5))
     renderer.setSize(w, h, false)
     renderer.setClearColor(0x000000, 0)
 
@@ -201,7 +203,7 @@ export default function ClayChannelArrows({
       draw() // one frame at mount so the clay marks are visible at rest
       markRenderer('ready')
     } catch {
-      markRenderer('recovered')
+      markRenderer('failed')
     }
 
     return () => {
@@ -233,29 +235,11 @@ export default function ClayChannelArrows({
         height={size}
         style={{ width, height: size, display: 'block', pointerEvents: 'none' }}
       />
-      {(rendererState === 'recovered' || rendererState === 'failed') && (
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 88 176"
-          preserveAspectRatio="none"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-        >
-          <defs>
-            <linearGradient id={recoveryGradientId} x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#ffb0d2" />
-              <stop offset="0.42" stopColor="#ef62a6" />
-              <stop offset="1" stopColor="#9b275e" />
-            </linearGradient>
-            <filter id={`${recoveryGradientId}-shadow`} x="-30%" y="-30%" width="160%" height="180%">
-              <feDropShadow dx="0" dy="4" stdDeviation="3" floodColor="#210612" floodOpacity="0.75" />
-            </filter>
-          </defs>
-          <g fill={`url(#${recoveryGradientId})`} stroke="#ffc0dc" strokeWidth="1.5" strokeLinejoin="round" filter={`url(#${recoveryGradientId}-shadow)`}>
-            <path d="M 8 59 L 44 24 L 80 59 L 69 70 L 44 47 L 19 70 Z" />
-            <path d="M 8 117 L 44 152 L 80 117 L 69 106 L 44 129 L 19 106 Z" />
-          </g>
-        </svg>
-      )}
+      {/* No drawn stand-in here. A hand-built SVG of the arrows is invented
+          art, not the approved clay, and shipping it meant a hot phone
+          silently swapped the real buttons for something that only resembled
+          them. If the context is lost the canvas simply stays empty for the
+          moment it takes the home watchdog to remount the clay renderer. */}
       {/* the channel number — or, on the camera, what the roll has selected */}
       <span
         style={{
