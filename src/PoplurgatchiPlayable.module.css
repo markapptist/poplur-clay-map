@@ -17,7 +17,10 @@
   grid-template-rows: minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
-  background: #f3f1f2;
+  /* The device art sits on the app's own dark stage. A near-white plate
+     behind it read as a browser page bleeding through, and made the egg look
+     pasted on rather than held. */
+  background: #0b0710;
   padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
   /* GamesScreen can be embedded inside a native WebView whose usable stage is
      smaller than the browser's global vh/dvh. Query this exact game box so the
