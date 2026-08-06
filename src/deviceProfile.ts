@@ -20,8 +20,37 @@
 // time the page could not yield, which is exactly what a phone burns power on.
 
 import { postNativeEvent } from './nativeBridge'
+import { audioGateDebug } from './audioGate'
 
 const REPORT_MS = 5000
+
+/** Name every animation the compositor is still driving, deduped. The device
+    CPU trace blamed per-frame style recalc (createAnimatedElementUpdate) on
+    the idle map; the count alone cannot say WHICH animation, so name each one:
+    keyframe name (or transition property), first class of its target, and ∞
+    when it loops forever — an infinite animation on an idle screen is free
+    heat. Runs on the 5s report beat, no observers of its own. */
+function animCensus(): string {
+  try {
+    const seen = new Map<string, number>()
+    for (const a of document.getAnimations()) {
+      if (a.playState !== 'running') continue
+      const eff = a.effect instanceof KeyframeEffect ? a.effect : null
+      const target = eff?.target instanceof HTMLElement ? eff.target : null
+      const name = (a as CSSAnimation).animationName
+        || (a as CSSTransition).transitionProperty
+        || a.constructor.name
+      const cls = target
+        ? `${target.tagName.toLowerCase()}.${String(target.className).split(' ')[0] || '-'}`.slice(0, 44)
+        : '?'
+      const forever = eff?.getTiming().iterations === Infinity ? '∞' : ''
+      const key = `${name}${forever}@${cls}`
+      seen.set(key, (seen.get(key) || 0) + 1)
+    }
+    if (seen.size === 0) return 'none'
+    return [...seen].map(([k, n]) => (n > 1 ? `${k}x${n}` : k)).join(' ')
+  } catch { return 'n/a' }
+}
 
 interface Bucket { count: number; total: number; worst: number }
 
@@ -93,8 +122,31 @@ function surfaces(): string {
       playCount = 0; pauseCount = 0; seekCount = 0; rateChanges = 0; lastPauseStack = ''
     } catch { /* not implemented everywhere */ }
   }
+  // One-shot: what is ACTUALLY on screen in WebKit. Chrome shows exactly one
+  // stat card (the other at opacity 0) while the device shows both stacked, so
+  // the difference has to be read on the phone rather than inferred from a
+  // headless run that disagrees. Also reports the loaded bundle hash, which
+  // settles "is this even the build I just installed?" without another guess.
+  let cards = 'n/a'
+  try {
+    const found = [...document.querySelectorAll('[class*=statCard]')].map(c => {
+      const cs = getComputedStyle(c)
+      const r = c.getBoundingClientRect()
+      const cls = String((c as HTMLElement).className)
+      return `${cls.includes('Out') ? 'OUT' : 'IN '}op=${cs.opacity}`
+        + ` y=${Math.round(r.y)} vis=${cs.visibility}`
+        + ` "${(c.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 22)}"`
+    })
+    const script = [...document.querySelectorAll('script[src]')]
+      .map(el => (el as HTMLScriptElement).src.split('/').pop())
+      .filter(n => n && n.startsWith('index-'))[0] || '?'
+    cards = `bundle=${script} n=${found.length} :: ${found.join(' | ')}`
+  } catch { /* probe is never load-bearing */ }
+
   return `canvas=${canvases} video=${videos.length}(${playing} playing) iframe=${iframes} anim=${running}`
     + ` tiers=[${tiers}] videoFiltered=${filteredVideo} drops=${drops}`
+    + ` | STAT ${cards}`
+    + ` | ANIM ${animCensus()} | AUDIO ${audioGateDebug()}`
 }
 
 /** Re-buffering looks exactly like frame-dropping to the eye, so count it too. */

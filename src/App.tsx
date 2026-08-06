@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES } from './data'
-import ClayMap, { MAP_2D, MAP_LITE } from './ClayMap'
+import ClayMap, { MAP_2D, MAP_LITE, installComposeRadiusPreview, updateComposeRadiusPreview } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
@@ -1190,6 +1190,36 @@ export default function App() {
           if (poi) {
             setTourLine(`Pop ${next + 1} of ${POIS.length}: ${poi.name}`)
             flyToCenter(poi.coords as [number, number], TOUR_FLIGHT_MS)
+            // Tell the shell WHICH pop this is. The channel arrows used to count
+            // POST_COUNT (128) locally while the map flew through POIS, so the
+            // number between the arrows described a different list from the one
+            // the camera was visiting. The map owns the list, so the map owns
+            // the number.
+            // Show the pop's TAKEOVER — the ground it holds — using the same
+            // radius preview the composer draws, so arriving at a post looks
+            // like arriving at its claim rather than just a camera move.
+            const map = mapRef.current
+            if (map) {
+              try {
+                installComposeRadiusPreview(map)
+                const [lng, lat] = poi.coords as [number, number]
+                updateComposeRadiusPreview(map, new mapboxgl.LngLat(lng, lat), poi.radiusKm, theme)
+              } catch { /* style not ready yet; the next cycle draws it */ }
+            }
+            try {
+              window.parent?.postMessage(
+                {
+                  type: 'poplur-map-pop',
+                  index: next,
+                  total: POIS.length,
+                  name: poi.name,
+                  // The HUD's RADIUS card shows THIS pop's takeover while you
+                  // travel, not the signed-in user's own reach.
+                  radiusKm: poi.radiusKm,
+                },
+                '*',
+              )
+            } catch { /* no parent frame in the standalone map route */ }
           }
           break
         }

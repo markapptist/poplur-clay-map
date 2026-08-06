@@ -93,6 +93,18 @@ const NOTIFICATION_DOT_MAP_LAND: Array<Array<[number, number]>> = [
   [[.93,.40],[.96,.43],[.95,.50],[.92,.48]], [[.58,.69],[.60,.73],[.59,.80],[.57,.77]],
 ]
 
+/** Notification sheet look. CARDS is the approved design: no sheet at all, each
+ *  notification its own floating translucent pill over the live screen, so the
+ *  profile behind is untouched. The pink clay slab it replaced covered half the
+ *  screen and read as a wall. ?notif=clay|frost|glass still loads the rejected
+ *  alternatives for comparison. */
+type NotifSkin = 'clay' | 'frost' | 'glass' | 'cards'
+const NOTIF_SKIN: NotifSkin = (() => {
+  if (typeof window === 'undefined') return 'cards'
+  const v = new URLSearchParams(window.location.search).get('notif')
+  return v === 'frost' || v === 'glass' || v === 'clay' ? v : 'cards'
+})()
+
 function insideDotMapLand(x: number, y: number, polygon: Array<[number, number]>) {
   let hit = false
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
@@ -190,7 +202,7 @@ const NOTIF_ICON_LABEL: Record<NotificationKind, string> = {
 function NotificationIcon({ kind }: { kind: NotificationKind }) {
   return (
     <span className={styles.notifIcon3d} role="img" aria-label={NOTIF_ICON_LABEL[kind]}>
-      <ClayNotifIcon kind={kind} size={40} />
+      <ClayNotifIcon kind={kind} size={22} />
     </span>
   )
 }
@@ -942,13 +954,13 @@ export default function ProfileTwin({
           <div className={notifsClosing ? `${styles.notifMotionShell} ${styles.notifMotionShellClosing}` : styles.notifMotionShell}>
             <span className={styles.notifTopCover} aria-hidden="true" />
             <div
-              className={styles.notifBanner}
+              className={`${styles.notifBanner} ${styles[`notifSkin_${NOTIF_SKIN}`] ?? ''}`}
               role="dialog"
               aria-modal="true"
               aria-label="Notifications"
               onClick={e => e.stopPropagation()}
             >
-              <NotificationDotMap />
+              {NOTIF_SKIN === 'clay' && <NotificationDotMap />}
               <div className={styles.notifTitle}>Notifications</div>
               {NOTIFICATIONS.map(n => (
                 <div key={n.text} className={styles.notifRow}>

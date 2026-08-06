@@ -59,15 +59,24 @@ function isIOSPlatform(): boolean {
 // ?iosTier=1 forces it on in a plain browser (headless measurement, where
 // isNativeShell() is false); ?iosTier=0 forces it off on device for an A/B on
 // the same build. Anything else auto-detects.
-// DEFAULT OFF, deliberately. This tier was added to cut overheating and was
-// never shown to help: it reduced the COUNT of filtered elements in headless
-// Chrome, but composited-layer count and backing store did not move, and the
-// phone still ran hot. Chrome is not WebKit, so it could equally be neutral or
-// harmful there — removing a filter can change which elements get their own
-// layer, and that cuts both ways. Carrying an unproven compositing change makes
-// every later measurement ambiguous, so it is opt-in until something measures it
-// as a win: `?iosTier=1` turns it on for an A/B on the same build.
-if (params.get('iosTier') === '1') {
+// ON by default in the iOS app shell since 6 Aug 2026. It shipped default-off
+// because headless Chrome could not prove it; the on-device measurement now
+// has: the census (deviceProfile's ANIM line) named the tier's exact targets
+// as the only things running on the idle screen — the counter-trail blur
+// layers and the infinite background-position sweeps — and the device CPU
+// trace put 49% of the visible process's main thread in the per-frame style
+// recalc those animations force (createAnimatedElementUpdate, rule
+// re-matching, glyph re-shaping), with Mapbox's own draw at 3%. The tier's
+// scope is that list. `?iosTier=0` remains the same-build escape hatch —
+// re-measure with it after any change here.
+// The gate: the shell webviews (isIOSNativeShell) and any document served
+// over the app's own poplur-clay: scheme (the map iframe inside the home
+// document — a separate document that must not keep the full effect stack
+// while its parent drops it). Browsers keep the approved look.
+const inIOSAppShell =
+  isIOSNativeShell() || window.location.protocol === 'poplur-clay:'
+if (params.get('iosTier') === '1'
+  || (inIOSAppShell && params.get('iosTier') !== '0')) {
   document.documentElement.classList.add('tier-ios')
 }
 

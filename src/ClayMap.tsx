@@ -410,7 +410,7 @@ const COMPOSE_RADIUS_TEXTURE_IMAGE = 'poplur-compose-radius-hatch'
 const COMPOSE_RADIUS_EDGE = 'poplur-compose-radius-edge'
 const COMPOSE_RADIUS_LABEL = 'poplur-compose-radius-label'
 
-function installComposeRadiusPreview(map: mapboxgl.Map) {
+export function installComposeRadiusPreview(map: mapboxgl.Map) {
   if (!map.getSource(COMPOSE_RADIUS_SOURCE)) {
     map.addSource(COMPOSE_RADIUS_SOURCE, {
       type: 'geojson',
@@ -494,7 +494,7 @@ function installComposeRadiusPreview(map: mapboxgl.Map) {
   }
 }
 
-function updateComposeRadiusPreview(
+export function updateComposeRadiusPreview(
   map: mapboxgl.Map,
   center: mapboxgl.LngLat | null,
   radiusKm: number,

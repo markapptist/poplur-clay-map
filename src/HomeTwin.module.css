@@ -40,8 +40,13 @@
   z-index: 1;
   /* The iframe used to sit on the loading screen's blue while it booted. That
      screen is gone, so the blue just flashed behind the map — the map paints
-     its own sky and space. */
-  background: transparent;
+     its own sky and space.
+     Dark, NOT transparent. An iframe has its own document, and until that
+     document's CSS paints, WebKit fills it with the default WHITE — which sits
+     ABOVE the parent's background, so `transparent` here could never hide it.
+     That is the white screen seen while the map loads. The app's backdrop
+     colour keeps the boot dark without bringing back the old blue. */
+  background: #050407;
 }
 
 /* Off the map tab the embed stays MOUNTED (so the map keeps its style, tiles

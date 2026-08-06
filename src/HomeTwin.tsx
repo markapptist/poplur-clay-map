@@ -352,6 +352,29 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     finishPermission()
   }, [finishPermission])
+  // The NOTIFICATIONS tile in the profile hold menu is the opt-in.
+  //
+  // The card used to be queued automatically on the first authenticated launch,
+  // which meant Apple's sheet arrived seconds after opening the app for no
+  // reason the user had asked for. Apple's sheet cannot be replaced, so the only
+  // lever is WHEN it appears — and it should follow a deliberate tap on the
+  // thing called NOTIFICATIONS, nothing else. Opening that tile while the
+  // permission is still undetermined raises the clay card; Allow then raises
+  // Apple's sheet, exactly as before. Already-answered permissions are left
+  // alone, so this never nags.
+  useEffect(() => {
+    if (!isNativeShell()) return
+    const askIfUndecided = () => {
+      const params = new URLSearchParams(window.location.search)
+      // The native side reports undetermined status by adding this to the URL;
+      // without it we must not ask, because the OS prompt is one-shot.
+      if (params.get('notificationsUndetermined') !== '1') return
+      setPermissionQueue(queue => (queue.includes('notifications') ? queue : [...queue, 'notifications']))
+    }
+    window.addEventListener('poplur-open-notifications', askIfUndecided)
+    return () => window.removeEventListener('poplur-open-notifications', askIfUndecided)
+  }, [])
+
   const denyPermission = useCallback(() => {
     playPop()
     if (activePermission && isNativeShell()) {
@@ -489,6 +512,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     silenceAllAudio()
   }, [])
   const [popping, setPopping] = useState(false)
+
   // Start in the measurement system implied by the device locale. Tapping the
   // Radius card remains a deliberate local override for this session.
   const [unitMi, setUnitMi] = useState(shouldUseMiles)
@@ -550,6 +574,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
       if (event.data.type === 'poplur-map-loading') setMapReady(false)
+      // The map flew to a pop and is telling us which one. This is the only
+      // source of truth for the number shown between the channel arrows —
+      // counting locally meant the readout and the destination disagreed.
+      if (event.data.type === 'poplur-map-pop' && typeof event.data.index === 'number') {
+        setMapPostIdx(event.data.index)
+        // While you travel the map, RADIUS shows the POP's takeover — the ground
+        // that post holds — not the signed-in user's own reach. The map is the
+        // only thing that knows which pop you landed on, so it reports the
+        // number with the index.
+        if (typeof event.data.radiusKm === 'number') setMapPopRadiusKm(event.data.radiusKm)
+      }
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
       if (event.data.type === 'poplur-map-tour') setMapTourOn(Boolean(event.data.on))
@@ -768,6 +803,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [profileOrigin, setProfileOrigin] = useState<CubeTab | null>(null)
   // Which of the nearby posts the map arrows are parked on (1-based on screen).
   const [mapPostIdx, setMapPostIdx] = useState(0)
+  /** Takeover radius of the pop currently centred on the map, in km. */
+  const [mapPopRadiusKm, setMapPopRadiusKm] = useState<number | null>(null)
+  // What the RADIUS card is actually reporting, in km. Three cases, in order:
+  //   a recognised user in the camera — their reach
+  //   travelling the map            — the CURRENT POP's takeover
+  //   otherwise                     — your own radius
+  // One derivation so the number, the aria-label and the ceiling can never
+  // disagree about which radius is on screen.
+  const shownRadiusKm = seenUser
+    ? seenUser.radiusKm
+    : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : RADIUS_METERS / 1000)
+
+  // Off the map the card reports YOUR radius again — a pop's takeover must not
+  // linger on the HUD once you have left the map that showed it.
+  useEffect(() => {
+    if (activeTab !== 'map') setMapPopRadiusKm(null)
+  }, [activeTab])
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
@@ -788,7 +840,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (activeTab === 'map') {
       // On the map the arrows walk the posts around you: the map flies
       // pop-to-pop and the number between the arrows is which post you are on.
-      setMapPostIdx(i => ((i + dir) % POST_COUNT + POST_COUNT) % POST_COUNT)
+      // Do NOT advance a local counter here. It walked 0..POST_COUNT-1 (128)
+      // while the map walked its own pop list, so the two drifted apart
+      // immediately. Ask the map to move; it answers with the index it landed
+      // on (poplur-map-pop above), and that is what the arrows display.
       mapFrameRef.current?.contentWindow?.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir }, '*')
       return
     }
@@ -1012,11 +1067,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             className={recordMs != null || showOnlineAudience ? styles.statCardOut : styles.statCard}
             onClick={() => { playPop(); setUnitMi(v => !v) }}
             role="button"
-            aria-label={`Radius ${(unitMi ? (RADIUS_METERS / 1000) * KM_TO_MI : RADIUS_METERS / 1000).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
+            aria-label={`Radius ${(shownRadiusKm * (unitMi ? KM_TO_MI : 1)).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
           >
             <span className={styles.statLabel}>{seenUser ? `${seenUser.handle} ◆` : 'RADIUS ◆'}</span>
             <AnimatedRadiusMetrics
-              radius={(seenUser ? seenUser.radiusKm : RADIUS_METERS / 1000) * (unitMi ? KM_TO_MI : 1)}
+              radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
               active={recordMs == null && !showOnlineAudience}

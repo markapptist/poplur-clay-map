@@ -74,16 +74,21 @@ export interface POI {
   name: string
   distance: string
   likes: number
+  /** The pop's takeover radius on the map, in km. */
+  radiusKm: number
   category: 'food' | 'park' | 'shop' | 'arts' | 'nightlife'
   coords: [number, number]
 }
 
 export const POIS: POI[] = [
-  { id: 'liberty',     name: 'Liberty Village',    distance: '3.2 km', likes: 47, category: 'nightlife', coords: [-79.4208, 43.6383] },
-  { id: 'kensington',  name: 'Kensington Market',  distance: '1.8 km', likes: 83, category: 'food',      coords: [-79.4005, 43.6547] },
-  { id: 'queen',       name: 'Queen St W',          distance: '950 m',  likes: 24, category: 'shop',      coords: [-79.3975, 43.6483] },
-  { id: 'trinity',     name: 'Trinity Bellwoods',   distance: '2.1 km', likes: 61, category: 'park',      coords: [-79.4118, 43.6482] },
-  { id: 'distillery',  name: 'Distillery District', distance: '1.2 km', likes: 38, category: 'arts',      coords: [-79.3590, 43.6503] },
+  // radiusKm is the pop's TAKEOVER on the map — the ground it currently holds.
+  // It scales with reach (likes here, real engagement later), which is the
+  // product model: a pop earns radius and radius decays.
+  { id: 'liberty',     name: 'Liberty Village',    distance: '3.2 km', likes: 47, radiusKm: 12.4, category: 'nightlife', coords: [-79.4208, 43.6383] },
+  { id: 'kensington',  name: 'Kensington Market',  distance: '1.8 km', likes: 83, radiusKm: 28.6, category: 'food',      coords: [-79.4005, 43.6547] },
+  { id: 'queen',       name: 'Queen St W',          distance: '950 m',  likes: 24, radiusKm: 6.1,  category: 'shop',      coords: [-79.3975, 43.6483] },
+  { id: 'trinity',     name: 'Trinity Bellwoods',   distance: '2.1 km', likes: 61, radiusKm: 18.9, category: 'park',      coords: [-79.4118, 43.6482] },
+  { id: 'distillery',  name: 'Distillery District', distance: '1.2 km', likes: 38, radiusKm: 9.7,  category: 'arts',      coords: [-79.3590, 43.6503] },
 ]
 
 // GeoJSON paths connecting POIs for the clay road overlay

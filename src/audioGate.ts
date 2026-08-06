@@ -31,6 +31,17 @@ const listeners = new Set<(muted: boolean) => void>()
 
 export function isGateMuted(): boolean { return embedMuted || hidden || userMuted }
 
+/** One-line census for the on-device heat probe: every AudioContext this page
+    ever created (r=running s=suspended c=closed) and how many media elements
+    are actually playing. A context left `running` renders silence forever —
+    the audio thread stays hot for nothing — so the probe reports states, not
+    just counts. */
+export function audioGateDebug(): string {
+  const states = contexts.map(c => (c.state || '?')[0]).join('')
+  const playing = mediaEls.filter(el => !el.paused).length
+  return `ctx=${contexts.length}[${states}] media=${mediaEls.length}(${playing} playing)`
+}
+
 export function isUserMuted(): boolean { return userMuted }
 
 export function setUserMuted(value: boolean) {

@@ -1,5 +1,17 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+/* The document's own colour is the app's backdrop, never the browser default.
+   These had no background-color, so WebKit painted WHITE in every gap where the
+   app's own layers did not cover the viewport — between screen swaps, during a
+   reflow, and before the first paint of a newly mounted screen. A white flash
+   reads as the page loading, which is exactly what a native app must never
+   show. Matches the native backdrop (Color(red: 5/255, green: 4/255, blue: 7/255)
+   in PostLoginHomeSurface) so the seam between native and web is invisible. */
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #050407;
+}
 
 /* ── no text selection outside real text entry ─────────────────────────────
    A long-press anywhere in a native app must not raise the blue selection
@@ -25,6 +37,19 @@ input, textarea, select, [contenteditable]:not([contenteditable='false']) {
 
 /* Prototype: hide Mapbox chrome */
 .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib { display: none !important; }
+
+/* Mapbox's own container and canvas default to WHITE and stay that way until
+   its style JSON and first tiles arrive — which on a cold map is long enough to
+   read as "the app is loading a blank page". The document behind it is already
+   dark (see the inline style in index.html), but this canvas paints ON TOP of
+   it, so the page background could never cover this. Paint the map's own
+   surfaces in the app's backdrop instead, so a booting map is dark and the
+   clay world simply fades up out of it. */
+.mapboxgl-map,
+.mapboxgl-canvas-container,
+.mapboxgl-canvas {
+  background-color: #050407;
+}
 
 /* ── perf-lite (native app shell only) ─────────────────────────────────────
    Set on <html> by main.tsx when running inside the iOS/Android WebView.
@@ -175,6 +200,26 @@ html.camera-live,
    in an opacity blink on the same clock instead. */
 .tier-ios [class*="cubeRecording"] {
   animation-name: poplurRecCubeLite !important;
+}
+
+/* 2. Infinite background-position sweeps. The 6 Aug on-device census named
+   every animation running on the idle surface: homeLabelShader (both stat
+   labels), feedCenterTextShader (the feed's centre line) — 4.8s gradient
+   sweeps over background-clip:text — and staticFallbackShift, which shifts
+   FIVE stacked noise gradients at .14s steps(2): a full-area repaint seven
+   times a second, forever. background-position is a paint property, so every
+   frame of these restyles AND repaints; the same device's CPU trace put 49%
+   of the visible process's main thread in exactly that per-frame style work
+   (createAnimatedElementUpdate / rule re-matching / glyph re-shaping).
+   Freeze the sweep, keep the fill — the gradient text and the static texture
+   render identically as stills, only the crawl stops. cubeHover and
+   arrowPulse are transform/opacity and stay: composited animations are not
+   what heats the phone. */
+.tier-ios [class*="statLabel"],
+.tier-ios [class*="centerOn"],
+.tier-ios [class*="centerOff"],
+.tier-ios [class*="staticLayer"] {
+  animation: none !important;
 }
 
 /* 2. The HUD legibility recipe — hard plate + soft cast + coloured glow — is a
