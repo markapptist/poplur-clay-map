@@ -463,6 +463,9 @@ const TOUR_SPEED = (() => {
 })()
 const TOUR_FLIGHT_MS = Math.round(30_000 / TOUR_SPEED)
 const TOUR_DWELL_MS = 5 * 60 * 1000
+// How long the map must sit front-most and untouched before the ambient AI
+// radio tour is allowed to take the camera on its own.
+const TOUR_IDLE_MS = 3 * 60 * 1000
 
 function radioMarketForDestination(destination: TourDestination): string {
   return DESTINATION_RADIO_MARKET[destination.id] ?? 'global'
@@ -628,6 +631,12 @@ export default function App() {
   // to start false and was only flipped by a dev-only "sound on" button — with
   // that button gone, unmuting had nothing to switch back on.
   const soundRequestedRef = useRef(true)
+  // The audio-focus effect below needs the auto-tour idle controls, which are
+  // defined further down the body. Hand them over through a ref rather than
+  // reordering a long component around a two-line dependency.
+  const tourIdleRef = useRef<{ schedule: () => void; cancel: () => void }>({
+    schedule: () => {}, cancel: () => {},
+  })
   const lastTourDestinationRef = useRef<string | null>(null)
   useEffect(() => {
     if (harnessView) return
@@ -812,6 +821,8 @@ export default function App() {
       if (event.data?.type === 'poplur-audio-stop') {
         mapAudioFrontRef.current = false
         applySoundState(false)
+        // Off the map: the auto-tour countdown does not run in the background.
+        tourIdleRef.current.cancel()
         return
       }
       if (typeof event.data?.gcAudio !== 'string') return
@@ -819,6 +830,9 @@ export default function App() {
       // messages are posted with '*' and can land in any listening document, so
       // a harness view must not be able to talk itself into being the map.
       mapAudioFrontRef.current = mapSurfaceRef.current && event.data.gcAudio === 'on'
+      // Arriving on the map starts the idle wait from zero; leaving stops it.
+      if (mapAudioFrontRef.current) tourIdleRef.current.schedule()
+      else tourIdleRef.current.cancel()
       sync()
     }
     window.addEventListener('message', onMessage)
@@ -1051,6 +1065,60 @@ export default function App() {
     }
   }, [clearTourTimers, tourStep])
 
+  // ── Auto-tour: only from a genuinely idle map ────────────────────────────
+  // The AI radio tour is ambient, so it must never take the camera while the
+  // map is being used. It arms after the intro and fires only once the map has
+  // been front-most and untouched for this long. ANY input restarts the wait,
+  // and leaving the map cancels it outright.
+  const tourArmedRef = useRef(false)
+  const tourIdleTimerRef = useRef<number | null>(null)
+  const pendingTourDestRef = useRef<TourDestination | undefined>(undefined)
+
+  const cancelTourIdle = useCallback(() => {
+    if (tourIdleTimerRef.current != null) {
+      window.clearTimeout(tourIdleTimerRef.current)
+      tourIdleTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleTourIdle = useCallback(() => {
+    cancelTourIdle()
+    // Armed, not already touring, and the map is the surface you are looking at.
+    if (!tourArmedRef.current || tourStartedRef.current || !mapAudioFrontRef.current) return
+    tourIdleTimerRef.current = window.setTimeout(() => {
+      tourIdleTimerRef.current = null
+      if (!tourArmedRef.current || tourStartedRef.current || !mapAudioFrontRef.current) return
+      const nearest = pendingTourDestRef.current
+      setTourLine(nearest
+        ? `Poplur AI is finding the nearest ${TOUR_KIND_LABEL[nearest.kind]} radio stop.`
+        : 'Poplur AI is finding the next landmark radio stop.')
+      startTourLoop(0, nearest)
+    }, TOUR_IDLE_MS)
+  }, [cancelTourIdle, startTourLoop])
+
+  // Every real input restarts the countdown. Capture phase on the document:
+  // the map canvas, the clay controls and the zoom rail all stop propagation
+  // on their own handlers, so a bubble-phase listener would miss most touches.
+  useEffect(() => {
+    const bump = () => {
+      // Once the tour is running it is stopped by the controls that own it
+      // (cyclePop, route intent, the TOUR tile) — not by touching the map.
+      if (tourStartedRef.current) return
+      scheduleTourIdle()
+    }
+    const opts: AddEventListenerOptions = { passive: true, capture: true }
+    // NOT pointermove: it fires ~60×/s through a drag and would clear and
+    // re-arm the timer on every one. A drag always opens with a pointerdown.
+    const events = ['pointerdown', 'touchstart', 'wheel', 'keydown'] as const
+    for (const type of events) document.addEventListener(type, bump, opts)
+    return () => {
+      for (const type of events) document.removeEventListener(type, bump, opts)
+    }
+  }, [scheduleTourIdle])
+
+  useEffect(() => cancelTourIdle, [cancelTourIdle])
+  tourIdleRef.current = { schedule: scheduleTourIdle, cancel: cancelTourIdle }
+
   // The globe has painted: lift the Loading screen so the launch is revealed at
   // globe zoom (the dive to the user's location then plays in full view).
   const handleGlobeReady = useCallback(() => {
@@ -1064,12 +1132,16 @@ export default function App() {
     postNativeEvent({ type: 'mapReady' })
     if (landingCenter) setNavigationOrigin(landingCenter)
     if (tourStartedRef.current) return
-    const nearest = landingCenter ? nearestTourDestination(landingCenter, tourTopicsRef.current) : undefined
-    setTourLine(nearest
-      ? `Poplur AI is finding the nearest ${TOUR_KIND_LABEL[nearest.kind]} radio stop.`
-      : 'Poplur AI is finding the next landmark radio stop.')
-    startTourLoop(1200, nearest)
-  }, [startTourLoop])
+    // The tour used to launch 1.2s after the intro — it took the camera away
+    // before you had even looked at your own street. It now waits for the map
+    // to be genuinely idle: front-most and untouched for TOUR_IDLE_MS. The
+    // hold-menu TOUR tile still starts it at once, because that is a request.
+    pendingTourDestRef.current = landingCenter
+      ? nearestTourDestination(landingCenter, tourTopicsRef.current)
+      : undefined
+    tourArmedRef.current = true
+    scheduleTourIdle()
+  }, [scheduleTourIdle])
 
   // The home shell mirrors the tour state onto the hold-menu tile.
   useEffect(() => {
