@@ -14,7 +14,7 @@ import styles from './PermissionAlert.module.css'
 // roll did, so a permission asked after sign-in looked like a different app
 // from one asked before it.
 
-export type PermissionIcon = 'photos' | 'camera' | 'location'
+export type PermissionIcon = 'photos' | 'camera' | 'location' | 'notifications'
 
 export interface PermissionChoice {
   /** Button copy, in iOS's order: the declining choice sits left. */
@@ -41,7 +41,8 @@ export default function PermissionAlert({
   const iconClass =
     icon === 'camera' ? styles.iconCamera
       : icon === 'location' ? styles.iconLocation
-        : styles.iconPhotos
+        : icon === 'notifications' ? styles.iconNotifications
+          : styles.iconPhotos
 
   return (
     <div className={styles.scrim}>

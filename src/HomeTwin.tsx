@@ -219,7 +219,7 @@ function compactAudience(value: number): string {
   return value.toString()
 }
 
-type PostLoginPermission = 'location' | 'photos'
+type PostLoginPermission = 'location' | 'photos' | 'notifications'
 
 /**
  * Native hosts resolve authentication and real OS authorization before loading
@@ -233,6 +233,7 @@ function initialPostLoginPermissions(): PostLoginPermission[] {
   const queue: PostLoginPermission[] = []
   if (force || params.get('askLocation') === '1') queue.push('location')
   if (force || params.get('askPhotos') === '1') queue.push('photos')
+  if (force || params.get('askNotifications') === '1') queue.push('notifications')
   return queue
 }
 
@@ -339,6 +340,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     finishPermission()
   }, [activePermission, finishPermission])
+  // Notifications are the one permission whose OS prompt we DO fire from the
+  // card, because there is no later feature moment that naturally needs it —
+  // the ask exists so pops and radius changes can reach you at all. The system
+  // sheet therefore appears only behind an explicit Allow here, never cold.
+  const allowNotifications = useCallback(() => {
+    playPop()
+    if (isNativeShell()) {
+      postNativeEvent({ type: 'permissionHandled', permission: 'notifications', granted: true })
+      postNativeEvent({ type: 'requestNotifications' })
+    }
+    finishPermission()
+  }, [finishPermission])
   const denyPermission = useCallback(() => {
     playPop()
     if (activePermission && isNativeShell()) {
@@ -1091,6 +1104,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           choices={[
             { label: "Don't Allow", onPick: denyPermission },
             { label: 'Allow', grants: true, onPick: allowPhotos },
+          ]}
+        />
+      )}
+      {activePermission === 'notifications' && (
+        <PermissionAlert
+          icon="notifications"
+          label="Notifications permission"
+          title={'Allow "Poplur" to send you notifications?'}
+          copy="Know when your radius grows, when someone pops inside it, and when a venue near you heats up."
+          choices={[
+            { label: "Don't Allow", onPick: denyPermission },
+            { label: 'Allow', grants: true, onPick: allowNotifications },
           ]}
         />
       )}

@@ -141,6 +141,40 @@
   box-shadow: 0 1px 2px rgba(83, 0, 43, 0.28);
 }
 
+/* Notifications: the clay bell, same molded material as the map pin. */
+.iconNotifications {
+  width: 46px;
+  height: 46px;
+  filter: drop-shadow(0 5px 7px rgba(148, 10, 84, 0.35));
+}
+
+.iconNotifications::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 5px;
+  width: 28px;
+  height: 26px;
+  /* bell: domed top, flared skirt */
+  border-radius: 14px 14px 6px 6px;
+  background: linear-gradient(145deg, #ff69b3 0%, #ee2f8b 55%, #c40f66 100%);
+  box-shadow:
+    inset 2px 3px 3px rgba(255, 255, 255, 0.55),
+    inset -2px -3px 4px rgba(120, 4, 55, 0.45);
+}
+
+.iconNotifications::after {
+  content: "";
+  position: absolute;
+  left: 19px;
+  top: 32px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f6ecd7;
+  box-shadow: 0 1px 2px rgba(83, 0, 43, 0.3);
+}
+
 .title {
   margin: 0 0 7px;
   font-size: 15px;
