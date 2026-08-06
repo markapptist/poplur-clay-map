@@ -17,6 +17,26 @@ type VoiceSpeechOptions = {
   pitch?: number
 }
 
+// ── Voice master volume ─────────────────────────────────────────────────────
+// The map's VolumeBars used to scale the radio; with the radio gone the AI
+// voice is the only thing left to scale, so the control moves here. Persisted
+// the same way the radio's was, under its own key.
+const VOICE_VOLUME_KEY = 'poplur.voiceVolume'
+let voiceVolume = (() => {
+  try {
+    const raw = window.localStorage.getItem(VOICE_VOLUME_KEY)
+    const parsed = raw === null ? NaN : Number(raw)
+    return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 1
+  } catch { return 1 }
+})()
+
+export function getVoiceMasterVolume(): number { return voiceVolume }
+
+export function setVoiceMasterVolume(value: number) {
+  voiceVolume = Math.min(1, Math.max(0, value))
+  try { window.localStorage.setItem(VOICE_VOLUME_KEY, String(voiceVolume)) } catch { /* embedded */ }
+}
+
 let registered = false
 let sequence = 0
 let fallbackTimer: number | null = null
@@ -106,6 +126,7 @@ export function speakWithVoiceAudioFocus(text: string, options: VoiceSpeechOptio
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.rate = options.rate ?? 0.98
     utterance.pitch = options.pitch ?? 1.03
+    utterance.volume = voiceVolume
     const voices = synth.getVoices()
     const voice = voices.find(candidate => /^en-CA$/i.test(candidate.lang))
       ?? voices.find(candidate => /^en-/i.test(candidate.lang))

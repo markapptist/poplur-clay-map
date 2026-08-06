@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { getRadioMasterVolume, setRadioMasterVolume } from './mapRadio'
+// The radio is gone; the bars now scale the AI voice (and weather), the only
+// remaining map audio.
+import { getVoiceMasterVolume, setVoiceMasterVolume } from './voiceAudio'
 import { setWeatherMasterVolume } from './weatherAudio'
 import { playPop } from './pop'
 import styles from './VolumeBars.module.css'
@@ -18,7 +20,7 @@ const STEP = 1 / BAR_COUNT
 const POP_VOLUME = 0.16         // faint tick per bar step
 
 export default function VolumeBars() {
-  const [level, setLevel] = useState(() => getRadioMasterVolume())
+  const [level, setLevel] = useState(() => getVoiceMasterVolume())
   const [awake, setAwake] = useState(false)
   const railRef = useRef<HTMLDivElement>(null)
   const dimTimer = useRef<number | null>(null)
@@ -39,7 +41,7 @@ export default function VolumeBars() {
     }
     levelRef.current = clamped
     setLevel(clamped)
-    setRadioMasterVolume(clamped)
+    setVoiceMasterVolume(clamped)
     setWeatherMasterVolume(clamped)
     wake()
   }

@@ -108,6 +108,36 @@ function getAudioContext(): AudioContext | null {
   return audioContext
 }
 
+// ── Parking the audio clock ───────────────────────────────────────────────
+// Tearing the bed down leaves an AudioContext in the `running` state with
+// nothing connected to it: a live audio thread and a render quantum every
+// 128 samples, for as long as the tab lives. Suspend it once the radio is
+// genuinely off. Suspend and NOT close: close() is irreversible, and the next
+// tune-in has to be able to rebuild the bed on the same context.
+//
+// The delay lets the last fade finish; the re-check at fire time means a
+// tune-in during those few hundred ms simply cancels the park.
+let suspendTimer: number | null = null
+
+function cancelRadioSuspend() {
+  if (suspendTimer !== null && typeof window !== 'undefined') window.clearTimeout(suspendTimer)
+  suspendTimer = null
+}
+
+function suspendRadioContextSoon(delayMs = 450) {
+  if (typeof window === 'undefined') return
+  cancelRadioSuspend()
+  suspendTimer = window.setTimeout(() => {
+    suspendTimer = null
+    const ctx = audioContext
+    if (!ctx || ctx.state !== 'running') return
+    if (soundWanted && !isGateMuted()) return
+    void ctx.suspend()
+      .then(() => publishRadioState(isGateMuted() ? 'muted' : 'off'))
+      .catch(() => {})
+  }, delayMs)
+}
+
 function installUnlock() {
   if (unlockInstalled || typeof window === 'undefined') return
   const resume = () => {
@@ -379,7 +409,13 @@ function setRadioLevel(value: number, timeConstant = 0.18) {
     setFallbackRadioLevel(value, timeConstant)
     return
   }
-  void ctx.resume().catch(() => {})
+  // Only wake the clock for sound we actually intend to make. An unconditional
+  // resume here re-started a parked context from any level change at all —
+  // including the volume slider being moved with the radio switched off.
+  if (soundWanted && !isGateMuted()) {
+    cancelRadioSuspend()
+    void ctx.resume().catch(() => {})
+  }
   radioBed.master.gain.cancelScheduledValues(ctx.currentTime)
   radioBed.master.gain.setTargetAtTime(value * masterVolume, ctx.currentTime, timeConstant)
 }
@@ -646,6 +682,7 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
 
 export function startMapRadio(): boolean {
   soundWanted = true
+  cancelRadioSuspend()
   // Tuning in is a claim on the app's one voice: the feed goes quiet and the
   // map's ambience stops rather than playing underneath.
   requestAudioFocus('radio')
@@ -676,14 +713,17 @@ export function stopMapRadio() {
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.cancel()
   }
-  if (!radioBed) return
-  if (radioBed.pulseTimer) window.clearInterval(radioBed.pulseTimer)
-  radioBed.sources.forEach(source => {
-    try { source.stop() } catch { /* already stopped */ }
-    source.disconnect()
-  })
-  radioBed.nodes.forEach(node => node.disconnect())
-  radioBed = null
+  if (radioBed) {
+    if (radioBed.pulseTimer) window.clearInterval(radioBed.pulseTimer)
+    radioBed.sources.forEach(source => {
+      try { source.stop() } catch { /* already stopped */ }
+      source.disconnect()
+    })
+    radioBed.nodes.forEach(node => node.disconnect())
+    radioBed = null
+  }
+  // An empty context still runs an audio thread. Park it.
+  suspendRadioContextSoon()
 }
 
 export function announceMapTour(line: string, stations: ReadonlyArray<RadioStationCue> = []): boolean {
@@ -736,6 +776,9 @@ if (typeof window !== 'undefined') {
       setRadioLevel(targetRadioLevel, 0.12)
     }
     if (muted && radioBed) radioBed.master.gain.value = 0
+    // Muted or switched off, the context has nothing left to render.
+    if (muted || !soundWanted) suspendRadioContextSoon()
+    else cancelRadioSuspend()
   }
   onGateChange(applyGate)
   applyGate()
@@ -808,6 +851,7 @@ export function playStation(station: { name: string; url: string }): void {
   const audio = getLiveAudio()
   if (!audio) return
   soundWanted = true
+  cancelRadioSuspend()
   requestAudioFocus('radio')
   installUnlock()
   liveStation = { name: station.name, url: station.url }

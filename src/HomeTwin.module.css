@@ -653,7 +653,14 @@
    of being buried by it. The cube is then always reachable, which is what makes
    it usable as the back control — a subscreen whose only exit was one small
    clay button at the top-right was far too easy to get stuck in. */
-.overSubscreen {
+/* The class is doubled on purpose. `.groundGlow` is defined LATER in this file
+   and sets its own `z-index: 5`; at equal specificity the later rule wins, so
+   the glow silently stayed at 5 and was buried under every subscreen (240)
+   even though it carries this class. The cube and the bottom row happen to be
+   declared ABOVE this rule, which is the only reason they lifted correctly —
+   an accident of source order, not a design. Doubling the class raises
+   specificity to (0,2,0) so this wins wherever the element's own rule sits. */
+.overSubscreen.overSubscreen {
   z-index: 260;
   /* Coming BACK is governed by this rule (the idle class is being removed), so
      it is quick — waiting on a fade-in after you have already touched the

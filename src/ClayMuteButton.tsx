@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react'
+import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
 
@@ -171,7 +172,7 @@ export default function ClayMuteButton({
       cancelAnimationFrame(raf)
       geos.forEach(g => g.dispose())
       mat.dispose()
-      renderer.dispose()
+      releaseWebGL(renderer)
     }
   }, [size])
 

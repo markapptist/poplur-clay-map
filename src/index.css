@@ -1,6 +1,28 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 
+/* ── no text selection outside real text entry ─────────────────────────────
+   A long-press anywhere in a native app must not raise the blue selection
+   highlight, the drag handles, or the iOS callout/magnifier — that chrome is
+   browser furniture and instantly breaks the illusion that this is an app.
+   Individual components had each set `user-select: none` on themselves, which
+   meant every surface nobody had remembered yet was still selectable. This is
+   the base rule instead; `user-select` inherits, so one declaration on the
+   root covers every screen, including ones not written yet.
+   Text ENTRY is exempt below — you must still be able to select, place a
+   caret, and use the callout inside a field you are typing in. */
+html, body, #root {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input, textarea, select, [contenteditable]:not([contenteditable='false']) {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
 /* Prototype: hide Mapbox chrome */
 .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib { display: none !important; }
 
@@ -77,6 +99,128 @@ html.camera-live,
   text-shadow: none !important;
 }
 
+/* ── tier-ios (auto: iOS native shell only; force with ?iosTier=1) ─────────
+   Set on <html> by main.tsx. tier-low above can never reach iOS — WebKit does
+   not implement navigator.deviceMemory — so iOS has been running on perf-lite
+   alone, and perf-lite only kills backdrop-filter. Measured on the camera tab
+   inside the app: 71 composited layers holding 32.2MB of backing store, and
+   `filter` was by far the largest promoter category. Every drop-shadow/blur
+   promotes its element to its own layer, and a layer sitting over the live
+   camera — or riding a moving map sprite — re-rasterizes as it moves. The
+   device CPU trace blamed WebKit's commitLayerTree / applyBackingStoreToNode:
+   layer bookkeeping and backing-store churn, not paint. That is what heats the
+   phone.
+   A blanket `filter: none` (what tier-low does) is NOT usable here — the clay
+   look and half the HUD's legibility ride on drop-shadow — so this tier is
+   scoped by hand. Three moves:
+     1. drop decorative and per-frame full-screen filters outright;
+     2. swap the HUD's drop-shadow stacks for the identical text-shadow: same
+        pixels, no layer, because that text is a solid fill with a stroke;
+     3. leave every load-bearing filter alone — the clay grounding shadows on
+        map sprites and the cube, background-clip:text separation (.statLabel,
+        .filterNameShader, the feed comments), the AR filter preview itself
+        (the effect IS the product), and the two drop-shadows that draw glyph
+        geometry rather than a shadow.
+   The browser prototype is untouched — it keeps the approved look. */
+
+/* 1a. Full-screen filters that re-run every frame. The AI chat ring animates
+   hue-rotate over an inset:0 pseudo-element; the voice wake ring animates
+   brightness, and its paired opacity pulse survives to carry the listen beat;
+   the studio mic's pink bloom is invisible at object-fit:cover anyway (its
+   mix-blend-mode:screen cutout is the real effect and stays). */
+.tier-ios [class*="screen"]::after {
+  animation: none !important;
+  filter: none !important;
+}
+.tier-ios [class*="edge"],
+.tier-ios [class*="micArt"] {
+  filter: none !important;
+}
+
+/* 1b. Decoration on always-mounted chrome: the cube's ground glow (a radial
+   gradient that already fades to transparent at 70%, so blur(6px) buys almost
+   nothing), the camera logo, the feed's brand/channel halos over the playing
+   video, the near-invisible 0.1-alpha profile mode halos, and the trend arrows
+   (colour, not glow, tells direction). Nothing here carries state. */
+.tier-ios [class*="groundGlow"],
+.tier-ios [class*="camLogo"],
+.tier-ios [class*="staticIdentity"],
+.tier-ios [class*="brandIcon"],
+.tier-ios [class*="brandWordmark"],
+.tier-ios [class*="wordmark"],
+.tier-ios [class*="chIcon"],
+.tier-ios [class*="modeLabel"],
+.tier-ios [class*="trendUp"],
+.tier-ios [class*="trendDown"] {
+  filter: none !important;
+}
+
+/* 1c. The radius counter's motion trail is two absolutely-positioned duplicate
+   numbers whose whole job is to be blurred and animated at 120ms steps — four
+   promoted, continuously repainting layers behind a number that is already
+   legible on its own. Un-blurring them would leave crisp ghost numbers, which
+   is worse than no trail, so the trail is removed the same way that file's own
+   prefers-reduced-motion path removes it. */
+.tier-ios [class*="radiusCounter"]::before,
+.tier-ios [class*="radiusCounter"]::after,
+.tier-ios [class*="radiusMaxCounter"]::before,
+.tier-ios [class*="radiusMaxCounter"]::after {
+  display: none !important;
+}
+
+/* 1d. poplurRecCube animates `filter` and nothing else, on the always-mounted
+   cube, twice a second for as long as you are recording — the compositor
+   re-filters that layer the entire time. Nulling the filter would silently
+   delete the tell, since the keyframe has no other channel, so the tier swaps
+   in an opacity blink on the same clock instead. */
+.tier-ios [class*="cubeRecording"] {
+  animation-name: poplurRecCubeLite !important;
+}
+
+/* 2. The HUD legibility recipe — hard plate + soft cast + coloured glow — is a
+   three-deep drop-shadow stack on text that is a SOLID fill carrying
+   -webkit-text-stroke + paint-order: stroke fill. text-shadow reproduces it
+   and promotes nothing, so this is a straight swap, not a downgrade. It takes
+   roughly eight layers off the always-mounted home HUD, and the detection tags
+   transition position every 120ms, so each of those was re-rasterizing
+   continuously with one layer per box. */
+.tier-ios [class*="radiusValueShader"],
+.tier-ios [class*="onlineValueShader"],
+.tier-ios [class*="statMax"],
+.tier-ios [class*="aiTicker"],
+.tier-ios [class*="zoomTemp"],
+.tier-ios [class*="label"]:not([class*="labelOn"]) {
+  filter: none !important;
+  text-shadow:
+    0 3px 0 rgba(5, 14, 46, 0.55),
+    0 6px 10px rgba(0, 0, 0, 0.5),
+    0 0 8px rgba(74, 196, 255, 0.5) !important;
+}
+
+/* .labelOn already declares its own pink active-state text-shadow — it only
+   needs the filter dropped, or the swap above would erase the selection tell.
+   .statUnit likewise already carries a text-shadow at its over-video override. */
+.tier-ios [class*="labelOn"],
+.tier-ios [class*="statUnit"] {
+  filter: none !important;
+}
+
+/* Same swap for the camera's green detection type: the shader fill is clipped
+   text, but it carries a 1px stroke with paint-order, so the drop-shadow is
+   separation only and text-shadow gives the same dark plate and halo. One
+   layer per detection box, all of them moving. */
+.tier-ios [class*="tagText"],
+.tier-ios [class*="tagUserText"] {
+  filter: none !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9) !important;
+}
+.tier-ios [class*="camDetectionTitle"] span {
+  filter: none !important;
+  text-shadow:
+    0 2px 0 rgba(0, 28, 12, 0.72),
+    0 0 9px rgba(77, 255, 105, 0.5) !important;
+}
+
 /* The recording tell blinks under the camera's channel arrows, and the cube
    pulses with it — one clock for both, so they blink together. */
 @keyframes poplurRecBlink {
@@ -87,4 +231,12 @@ html.camera-live,
 @keyframes poplurRecCube {
   0%, 49% { filter: drop-shadow(0 0 0 rgba(255, 45, 75, 0)); }
   50%, 100% { filter: drop-shadow(0 0 18px rgba(255, 45, 75, 0.85)) brightness(1.12); }
+}
+
+/* tier-ios substitute for the above: the same clock and the same hard step, on
+   opacity instead of filter, so the cube still blinks while recording without
+   the compositor re-filtering its layer twice a second. */
+@keyframes poplurRecCubeLite {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.5; }
 }

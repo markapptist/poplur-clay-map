@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
 
@@ -339,7 +340,7 @@ export default function ClayCornerButton({
       geos.forEach(g => g.dispose())
       mat.dispose()
       creamMat.dispose()
-      renderer.dispose()
+      releaseWebGL(renderer)
     }
   }, [size, kind, tone, still])
 

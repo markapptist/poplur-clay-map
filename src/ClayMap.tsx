@@ -1912,15 +1912,32 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       } // end !REALISTIC_MAP fill-extrusion buildings
 
       if (!REALISTIC_MAP && MAP_2D) {
-        // Flat clay building footprints for the low-cost renderer. These use
-        // Mapbox Streets already resident in the style instead of the much
-        // larger Overture extrusion source, so neighborhoods remain legible
-        // without loading or tessellating any 3D geometry.
+        // Flat clay building footprints for the low-cost renderer.
+        //
+        // These used to read from Mapbox Streets purely because it was already
+        // resident in the style. The saving was real but the coverage was not:
+        // Streets carries surveyed OSM footprints only, so a residential street
+        // that nobody has traced comes back as a road grid over empty grass —
+        // houses plainly visible on the ground, no houses on the map. Overture
+        // merges OSM with Microsoft/Google ML-detected footprints, which is
+        // exactly the missing tail.
+        //
+        // The original objection does not apply here: the expense of Overture
+        // was never the download, it was TESSELLATING it into 3D. As a flat
+        // fill there is no extrusion geometry to build, and the archive tops
+        // out at z14 (verified against the live PMTiles header), so the tiles
+        // are small and overzoom covers everything closer.
+        const flatSource = (!import.meta.env.DEV && OVERTURE_BUILDINGS_FILL)
+          ? 'overture-buildings'
+          : 'clay-streets'
+        if (flatSource === 'overture-buildings' && !map.getSource('overture-buildings')) {
+          map.addSource('overture-buildings', { type: 'vector', url: OVERTURE_BUILDINGS_PMTILES })
+        }
         map.addLayer({
           id: 'clay-buildings-2d-shadow',
           slot: 'top',
           type: 'fill',
-          source: 'clay-streets',
+          source: flatSource,
           'source-layer': 'building',
           minzoom: 13.2,
           paint: {
@@ -1934,7 +1951,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           id: 'clay-buildings-2d',
           slot: 'top',
           type: 'fill',
-          source: 'clay-streets',
+          source: flatSource,
           'source-layer': 'building',
           minzoom: 13.2,
           paint: {

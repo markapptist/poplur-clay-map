@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import styles from './HomeTwin.module.css'
@@ -134,7 +135,7 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
       cancelAnimationFrame(raf)
       observer?.disconnect()
       disposeScene(scene)
-      renderer.dispose()
+      releaseWebGL(renderer)
     }
   }, [modelLoaded, visible])
 

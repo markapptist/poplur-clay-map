@@ -10,14 +10,20 @@ import WeatherFX, { modeForCode } from './WeatherFX'
 import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
 import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
-import {
-  announceMapTour,
-  onLiveStationChange,
-  startMapRadio,
-  stopMapRadio,
-  tuneLiveRadio,
-} from './mapRadio'
-import type { RadioStationCue } from './mapRadio'
+// The map's radio is gone — the AI voice is the map's only spoken audio now.
+// The live-station stream, the wav bed and the stingers all lived in mapRadio;
+// the tour host line goes through the shared voice surface instead, which
+// already owns focus correctly (Feed stays muted while it talks, reclaims
+// after). RadioStationCue survives as a local type: the native tourStop
+// payload still carries station cues for the iOS AI stack (PoplurAIStack reads
+// stationName), which is data, not web playback.
+import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
+
+interface RadioStationCue {
+  name: string
+  frequency?: string
+  style?: string
+}
 import {
   normalizeMapTourTopics,
   readMapTourTopics,
@@ -570,10 +576,9 @@ export default function App() {
   const [searching, setSearching] = useState(false)
   const [dayTime, setDayTime] = useState(true)
   // Tour narration stays separate from the visible status. The map header only
-  // says where the camera is and which real station is tuned.
+  // says where the camera is — the station readout left with the radio.
   const [tourLine, setTourLine] = useState<string | null>(null)
   const [currentPlace, setCurrentPlace] = useState('Toronto')
-  const [currentStation, setCurrentStation] = useState('Finding local radio…')
   // How many px the status line overruns its ticker — 0 means it fits. Drives
   // the back-and-forth glide; measured on every text change and resize.
   const tickerRef = useRef<HTMLDivElement>(null)
@@ -589,7 +594,7 @@ export default function App() {
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [currentPlace, currentStation])
+  }, [currentPlace])
   const [tourTopics, setTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
   const tourTopicsRef = useRef(tourTopics)
   tourTopicsRef.current = tourTopics
@@ -600,17 +605,29 @@ export default function App() {
   // Routing must follow the user/launch location, not the AI tour camera. The
   // camera may be visiting another continent when an address is entered.
   const [navigationOrigin, setNavigationOrigin] = useState<[number, number]>(DEFAULT_NAV_ORIGIN)
+  // THERE IS NO MAP ON A HARNESS VIEW, SO THERE IS NO MAP AUDIO.
+  //
+  // `?view=feed|post|profile` returns ViewHarness far below — but hooks cannot
+  // be skipped before an early return, so every effect in this component still
+  // runs on those screens, including the one that switches the map's sound on.
+  // Combined with "top-level document ⇒ front-most" that meant Feed, Camera and
+  // Profile each started the radio's synthesised bed — noise, five oscillators
+  // and a 690 ms pulse timer — under a screen with no map anywhere in it.
+  //
+  // Front-most is about which SURFACE the user is looking at; it can only be
+  // true in a document that actually draws the map.
+  const mapSurfaceRef = useRef(!harnessView)
   // The map lives in an always-mounted iframe behind Feed/Profile. It starts
   // unfocused there, so no map audio can win a resume race before Home sends
   // the first foreground message.
-  const mapAudioFrontRef = useRef(typeof window === 'undefined' || window.parent === window)
+  const mapAudioFrontRef = useRef(
+    mapSurfaceRef.current && (typeof window === 'undefined' || window.parent === window),
+  )
   // The map always WANTS sound; whether you hear it is the gate's decision
   // (your mute, the app being backgrounded, another tab being front). This used
   // to start false and was only flipped by a dev-only "sound on" button — with
   // that button gone, unmuting had nothing to switch back on.
   const soundRequestedRef = useRef(true)
-  // one tune per session unless it comes back empty
-  const liveStationTunedRef = useRef(false)
   const lastTourDestinationRef = useRef<string | null>(null)
   useEffect(() => {
     if (harnessView) return
@@ -749,7 +766,17 @@ export default function App() {
       updatePlace()
     }
     attach()
-    const timer = window.setInterval(attach, 250)
+    // The map arrives a beat after mount, so the first attach usually misses.
+    // What this poll must NOT do is keep going: on a harness view there is no
+    // ClayMap in this document at all, so `mapRef` is never set and a poll with
+    // no stop condition is a timer ticking four times a second for the life of
+    // the tab. Stop the moment it succeeds, and give up after ~15s.
+    let attempts = 0
+    const timer = window.setInterval(() => {
+      attach()
+      attempts += 1
+      if (attachedMap || attempts >= 60) window.clearInterval(timer)
+    }, 250)
     return () => {
       window.clearInterval(timer)
       attachedMap?.off('moveend', updatePlace)
@@ -758,31 +785,18 @@ export default function App() {
 
   const applySoundState = useCallback((on: boolean): boolean => {
     soundRequestedRef.current = on
-    const audible = on && mapAudioFrontRef.current && !isGateMuted()
+    const audible = on && mapSurfaceRef.current && mapAudioFrontRef.current && !isGateMuted()
     if (audible) {
-      // Radio and the Poplur AI host only. The procedural ambience bed (the
-      // hum) and the generative Poplur theme are gone: they ran under
-      // everything, forever, and read as noise rather than atmosphere. Silence
-      // between the host's lines and the station's own gaps is correct.
-      startMapRadio()
+      // The Poplur AI host only. The radio (live station stream + wav bed) is
+      // gone — redundant next to the voice — and the procedural ambience bed
+      // and generative theme were already dropped: they ran under everything,
+      // forever, and read as noise rather than atmosphere. Silence between the
+      // host's lines is correct. Nothing starts here; the voice speaks when
+      // the tour arrives somewhere.
       stopRegionAudio()
       stopPoplurTheme()
-      // Tune a real station for wherever the camera actually is. This used to
-      // happen only when the AI tour visited somewhere, so an ordinary session
-      // never got a station at all — you unmuted and heard nothing.
-      if (!liveStationTunedRef.current) {
-        liveStationTunedRef.current = true
-        const map = mapRef.current as unknown as { getCenter?: () => { lat: number; lng: number } } | null
-        const at = map?.getCenter?.()
-        const lat = at?.lat ?? DEFAULT_NAV_ORIGIN[1]
-        const lng = at?.lng ?? DEFAULT_NAV_ORIGIN[0]
-        void tuneLiveRadio(lat, lng).then(name => {
-          if (!name) liveStationTunedRef.current = false // nothing on air: try again next time
-          else setCurrentStation(name)
-        })
-      }
     } else {
-      stopMapRadio()
+      cancelVoiceSpeech()
       stopRegionAudio()
       stopPoplurTheme()
     }
@@ -801,7 +815,10 @@ export default function App() {
         return
       }
       if (typeof event.data?.gcAudio !== 'string') return
-      mapAudioFrontRef.current = event.data.gcAudio === 'on'
+      // `gcAudio: 'on'` is Home telling the MAP iframe it is front-most. These
+      // messages are posted with '*' and can land in any listening document, so
+      // a harness view must not be able to talk itself into being the map.
+      mapAudioFrontRef.current = mapSurfaceRef.current && event.data.gcAudio === 'on'
       sync()
     }
     window.addEventListener('message', onMessage)
@@ -821,12 +838,8 @@ export default function App() {
   }, [applySoundState])
 
   useEffect(() => {
-    return () => { stopMapRadio(); stopRegionAudio() }
+    return () => { cancelVoiceSpeech(); stopRegionAudio() }
   }, [])
-
-  useEffect(() => onLiveStationChange(name => {
-    if (name) setCurrentStation(name)
-  }), [])
 
   // Duck the whole bed under the AI radio host, mirroring the iOS voice-duck.
   useEffect(() => { setVoiceDucked(!!tourLine) }, [tourLine])
@@ -970,7 +983,6 @@ export default function App() {
     const cityName = cityNameForDestination(destination)
     lastTourDestinationRef.current = destination.id
     setCurrentPlace(displayPlaceName(destination.name))
-    if (stations[0]) setCurrentStation(stations[0].name)
     setTourLine(line)
     postNativeEvent({
       type: 'tourStop',
@@ -984,12 +996,11 @@ export default function App() {
       dwellMs: TOUR_DWELL_MS,
     })
     if (applySoundState(true)) {
-      // Tune only once the map owns audio focus. A background map must not
-      // spin up a live stream that can outlast the transition into Feed.
-      void tuneLiveRadio(destination.coords[1], destination.coords[0]).then(stationName => {
-        if (stationName) setCurrentStation(stationName)
-      })
-      announceMapTour(line, stations.slice(0, 1))
+      // The AI host speaks the stop; there is no station to tune under it any
+      // more. The voice surface owns focus for the duration, so Feed cannot
+      // talk over the line and a background map cannot leak speech either —
+      // applySoundState is already false when the map is not front.
+      speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
     }
     flyToCenter(destination.coords, TOUR_FLIGHT_MS)
   }, [applySoundState, flyToCenter])
@@ -1306,17 +1317,17 @@ export default function App() {
         </div>
       )}
 
-      {/* The map status stays deliberately terse: place, then tuned station.
+      {/* The map status stays deliberately terse: the place the camera is at.
           When the line still overruns the ticker, it glides back and forth so
           the tail is read rather than amputated by an ellipsis. */}
       <div className={styles.headerStack}>
         <div className={styles.aiTicker} aria-live="polite" ref={tickerRef}>
           <span
-            key={`${currentPlace}•${currentStation}`}
+            key={currentPlace}
             className={tickerOverflow > 0 ? styles.tickerScroll : undefined}
             style={{ '--tickerShift': `-${tickerOverflow}px` } as React.CSSProperties}
           >
-            {currentPlace} • {currentStation}
+            {currentPlace}
           </span>
         </div>
       </div>

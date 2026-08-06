@@ -130,6 +130,34 @@ export default function PostComposer({
 
   // The cube's back: one screen at a time, closing from the first. Matches
   // the Escape key exactly.
+  // The preview had `autoPlay loop muted playsInline` and still came up frozen
+  // on a black frame. Those attributes only make autoplay ALLOWED, not
+  // guaranteed: WKWebView routinely declines the automatic start for a source
+  // that is still arriving (a fresh MediaRecorder blob is exactly that), and a
+  // declined autoplay is silent — no error, no event, just a video that never
+  // moves. Asking explicitly once the data is there is what actually starts it.
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null)
+  useEffect(() => {
+    const v = previewVideoRef.current
+    if (!v || media.kind !== 'video') return
+    let cancelled = false
+    const kick = () => {
+      if (cancelled) return
+      // muted is what makes an unattended play() legal on iOS; set it here too
+      // in case something upstream cleared the attribute.
+      v.muted = true
+      void v.play().catch(() => { /* a later readiness event will retry */ })
+    }
+    kick()
+    v.addEventListener('loadeddata', kick)
+    v.addEventListener('canplay', kick)
+    return () => {
+      cancelled = true
+      v.removeEventListener('loadeddata', kick)
+      v.removeEventListener('canplay', kick)
+    }
+  }, [media.kind, media.src])
+
   const backRef = useRef({ step, onClose })
   backRef.current = { step, onClose }
   useEffect(() => {
@@ -245,10 +273,11 @@ export default function PostComposer({
     <div className={styles.preview}>
       {media.kind === 'video' ? (
         <video
+          ref={previewVideoRef}
           className={styles.media}
           src={media.src}
           style={{ filter: filterCss === 'none' ? undefined : filterCss }}
-          autoPlay loop muted playsInline
+          autoPlay loop muted playsInline preload="auto"
         />
       ) : (
         <img
@@ -305,7 +334,7 @@ export default function PostComposer({
 
       {/* ── 2. choice: post original, or hand it to Poplur AI ──────────────── */}
       {step === 'choice' && (
-        <div className={styles.panel}>
+        <div className={`${styles.panel} ${styles.panelCentered}`}>
           <h3 className={styles.choiceHead}>Post original or add Poplur AI?</h3>
           <button
             className={styles.primary}

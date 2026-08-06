@@ -6,7 +6,6 @@ import ClayCornerButton from './ClayCornerButton'
 import { isDetectOn, onCameraStore } from './cameraStore'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
-import RadioScreen from './RadioScreen'
 import GamesScreen from './GamesScreen'
 import MapShowMe from './MapShowMe'
 import AIChatScreen from './AIChatScreen'
@@ -59,7 +58,9 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   map: [
     { icon: 'Search', title: 'SEARCH', screen: 'map-search', mapAction: 'search' },
     { icon: 'Search', title: 'CURRENT LOCATION', screen: 'map-locate', mapAction: 'locate' },
-    { icon: 'Music', title: 'RADIO', screen: 'map-radio', native: true },
+    // RADIO left with the map's radio itself: the tour host voice is the map's
+    // audio now, and a tile opening a station browser for a removed feature
+    // would be a lie.
     { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true, glyph: '✓' },
     { icon: 'MapMode', title: '2D MAP', activeTitle: '3D MAP', screen: 'map-mode', mapAction: 'mapMode', glyph: '2D' },
     { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
@@ -544,13 +545,6 @@ export default function HoldMenuTwin({
       )
     }
     // TV GUIDE is a real screen in the app, not a Rough Copy capture.
-    if (activeScreen.native && activeScreen.screen === 'map-radio') {
-      return (
-        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Radio">
-          <RadioScreen onClose={() => { playPop(); onClose() }} />
-        </div>
-      )
-    }
     if (activeScreen.native && activeScreen.screen === 'feed-news') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Times">

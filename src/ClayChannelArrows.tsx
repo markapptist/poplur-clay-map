@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
 import { playPop } from './pop'
@@ -213,7 +214,7 @@ export default function ClayChannelArrows({
       geo.dispose()
       matUp.dispose()
       matDown.dispose()
-      renderer.dispose()
+      releaseWebGL(renderer)
     }
   }, [size, width])
 

@@ -601,6 +601,15 @@ export default function FeedTwin({
         video.muted = true
         return
       }
+      // A deliberate app-wide silence (page change) is NOT a free floor. Feed
+      // reclaims on anything that is not 'voice', so without this it un-muted
+      // itself immediately after silenceAllAudio() muted it — the reason sound
+      // kept following the user off the page.
+      if (owner === 'silenced') {
+        video.muted = true
+        video.pause()
+        return
+      }
       // Feed only exists while its tab is front-most. If a stale callback from
       // the hidden Map frame tries to reclaim sound, immediately reassert the
       // visible screen instead of leaving Feed muted until the next gesture.

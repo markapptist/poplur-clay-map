@@ -57,6 +57,22 @@
 
 .staticLayerHidden { opacity: 0; }
 
+/* Stop the noise animating once this cover is hidden.
+   `opacity: 0` hides a layer but does NOT stop its animations: the ::before
+   below is `inset: 0` and ticks every 140ms forever, so the buffering cover kept
+   handing the compositor a FULL-SCREEN repaint about seven times a second for
+   the entire session, for something nobody can see. Measured on device as
+   sustained compositor work with zero main-thread work (`blocking=none`), which
+   is exactly the commitLayerTree / applyBackingStoreToNode cost the CPU trace
+   blamed for the heat.
+   The 0.5s opacity fade-out above still plays; it just fades a static noise
+   texture instead of an animating one, which is not perceptible.
+   The class is DOUBLED deliberately: the rule that starts this animation is
+   declared further down the file, so at equal specificity it would win on source
+   order and this would silently do nothing (it did, on the first attempt — the
+   animation was still running when re-measured). (0,2,0) wins wherever it sits. */
+.staticLayerHidden.staticLayerHidden::before { animation: none; }
+
 /* The decoded TV-static clip is richer once it arrives, but it cannot be the
    first thing the user sees: Safari may paint its initial black frame before
    loadeddata. This immediate CSS noise is the non-black buffer state. */

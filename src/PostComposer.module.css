@@ -66,6 +66,23 @@
   gap: 10px;
   padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
 }
+/* The choice step is a QUESTION, not a bottom sheet.
+   Pinned to the base it landed directly under the home chrome — the clay cube
+   and the live-presence badge sit at z-index 260, deliberately above subscreens
+   so the cube stays reachable as the back control — which left "Post Original"
+   and "Add Poplur AI" half-buried behind the cube. Centring is the fix that
+   respects that rule instead of fighting it: the cube keeps the bottom, the
+   decision takes the middle, and nothing has to be restacked. */
+.panelCentered {
+  margin: auto;
+  width: min(340px, calc(100% - 40px));
+  padding: 22px 18px;
+  gap: 12px;
+  border-radius: 22px;
+  background: rgba(7, 4, 12, 0.92);
+  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
 .panelLabel {
   font-size: 10.5px; font-weight: 900; letter-spacing: 1.5px;
   color: rgba(255, 255, 255, 0.55);

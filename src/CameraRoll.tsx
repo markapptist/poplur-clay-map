@@ -16,8 +16,19 @@ interface RollItem {
   src: string
   /** mm:ss badge for videos */
   length?: string
+  /** bundled first frame for a clip — a thumbnail never needs a decoder */
+  poster?: string
   /** set on this session's own captures, which are selectable */
   id?: string
+}
+
+// A grid tile is a STILL. Every seeded clip already ships a first-frame jpg
+// (the feed uses the same files as its video posters), so the roll draws those
+// instead of mounting eleven <video> elements that each decoded a 1280x720
+// frame and then sat holding it — eleven live decoders for eleven thumbnails.
+const posterFor = (src: string): string | undefined => {
+  const clip = /^feed\/([\w.-]+)\.mp4$/.exec(src)
+  return clip ? `feed/posters/${clip[1]}.jpg` : undefined
 }
 
 const ROLL: RollItem[] = [
@@ -47,9 +58,17 @@ const ROLL: RollItem[] = [
   { kind: 'photo', src: 'clay_pin.png' },
 ]
 
-export default function CameraRoll({ onDeny, lite = false, onPick }: {
+export default function CameraRoll({ onDeny, lite = false, active = true, onPick }: {
   onDeny?: () => void
   lite?: boolean
+  /**
+   * Is this roll the page the user is actually looking at? The camera pager
+   * keeps the roll's slot, header, tile count and scroll position mounted at
+   * all times so the layout and the slide never move — but off the visible
+   * page it holds no media at all: no image loads, no decoders, and no
+   * permission alert running behind a screen nobody can see.
+   */
+  active?: boolean
   /** picking a capture sends it into the post composer, like the native roll */
   onPick?: (media: { kind: 'photo' | 'video'; src: string; length?: string }) => void
 } = {}) {
@@ -87,11 +106,14 @@ export default function CameraRoll({ onDeny, lite = false, onPick }: {
     if (isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
   }
   const deny = () => { onDeny?.() }
-  // Re-request on every open once granted, so the roll stays fresh.
+  // Re-request on every open once granted, so the roll stays fresh. "Open" now
+  // means the page is actually on screen — the pager keeps the roll mounted
+  // off-page, and asking the device for its photo library while nobody is
+  // looking at the roll is exactly the work this screen should not be doing.
   useEffect(() => {
-    if (granted && isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
+    if (active && granted && isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [granted])
+  }, [granted, active])
 
   // What the camera shot this session sits at the FRONT of the roll, newest
   // first — and only those tiles are selectable, because only they belong to
@@ -112,41 +134,60 @@ export default function CameraRoll({ onDeny, lite = false, onPick }: {
       </header>
 
       <div className={styles.rollGrid}>
-        {items.map((item, index) => (
-          <figure
-            key={item.id ?? index}
-            className={item.id && isSelected(item.id) ? `${styles.rollTile} ${styles.rollTileOn}` : styles.rollTile}
-            // Picking a capture opens the composer (filter → original/AI → post).
-            // Every tile is pickable, not just ones the store gave an id: the
-            // seeded roll has no ids, and a roll where most tiles do nothing when
-            // tapped is the bug, not the design. Selection stays the no-composer
-            // fallback, and it still needs an id.
-            onClick={onPick
-              ? () => { playPop(); onPick({ kind: item.kind, src: item.src, length: item.length }) }
-              : item.id
-                ? () => { playPop(); toggleSelected(item.id!) }
-                : undefined}
-          >
-            {item.kind === 'photo' ? (
-              <img className={styles.rollMedia} src={item.src} alt="" loading="lazy" draggable={false} />
-            ) : lite ? (
-              // Lite clone (the pager's wrap panel, visible only mid-slide):
-              // no <video> decoders, just the badge on a dark tile.
-              <span className={styles.rollBadge}>▶ {item.length}</span>
-            ) : (
-              <>
-                {/* #t=0.1 forces the browser to decode and paint a real first
-                    frame under preload=metadata (plain metadata stays blank) */}
-                <video className={styles.rollMedia} src={`${item.src}#t=0.1`} preload="metadata" muted playsInline />
+        {items.map((item, index) => {
+          const poster = item.poster ?? posterFor(item.src)
+          return (
+            <figure
+              key={item.id ?? index}
+              className={item.id && isSelected(item.id) ? `${styles.rollTile} ${styles.rollTileOn}` : styles.rollTile}
+              // Picking a capture opens the composer (filter → original/AI → post).
+              // Every tile is pickable, not just ones the store gave an id: the
+              // seeded roll has no ids, and a roll where most tiles do nothing when
+              // tapped is the bug, not the design. Selection stays the no-composer
+              // fallback, and it still needs an id.
+              onClick={onPick
+                ? () => { playPop(); onPick({ kind: item.kind, src: item.src, length: item.length }) }
+                : item.id
+                  ? () => { playPop(); toggleSelected(item.id!) }
+                  : undefined}
+            >
+              {!active ? (
+                // Off the visible page: the tile keeps its shape and its badge
+                // so the grid, the count and the scroll position are unchanged,
+                // and carries no media element at all — nothing to fetch, and
+                // nothing to decode, until you are looking at it.
+                item.kind === 'video' ? <span className={styles.rollBadge}>▶ {item.length}</span> : null
+              ) : item.kind === 'photo' ? (
+                <img className={styles.rollMedia} src={item.src} alt="" loading="lazy" draggable={false} />
+              ) : poster ? (
+                // A bundled first frame — the same still the feed uses as this
+                // clip's poster. Identical picture, no decoder.
+                <>
+                  <img className={styles.rollMedia} src={poster} alt="" loading="lazy" draggable={false} />
+                  <span className={styles.rollBadge}>▶ {item.length}</span>
+                </>
+              ) : lite ? (
+                // Lite clone (the pager's wrap panel, visible only mid-slide):
+                // no <video> decoders, just the badge on a dark tile.
                 <span className={styles.rollBadge}>▶ {item.length}</span>
-              </>
-            )}
-            {item.id && isSelected(item.id) && <span className={styles.rollTick} aria-hidden="true">✓</span>}
-          </figure>
-        ))}
+              ) : (
+                <>
+                  {/* This session's own recordings have no bundled still, so
+                      they still decode a frame. #t=0.1 forces the browser to
+                      paint a real first frame under preload=metadata (plain
+                      metadata stays blank). preload=none would leave the tile
+                      empty, so metadata is the floor here. */}
+                  <video className={styles.rollMedia} src={`${item.src}#t=0.1`} preload="metadata" muted playsInline />
+                  <span className={styles.rollBadge}>▶ {item.length}</span>
+                </>
+              )}
+              {item.id && isSelected(item.id) && <span className={styles.rollTick} aria-hidden="true">✓</span>}
+            </figure>
+          )
+        })}
       </div>
 
-      {!granted && !lite && (
+      {!granted && !lite && active && (
         <PermissionAlert
           icon="photos"
           label="Camera roll permission"

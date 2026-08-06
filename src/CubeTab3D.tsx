@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { playCubeTurnDetent, setCubeTurnSound } from './motionEffectsAudio'
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
+import { playCubeTurnPop, primeMotionAudio } from './motionEffectsAudio'
 
 // Live 3D cube tab navigator — the web twin of CubeTabView.swift.
 // Renders poplur_cube_v4.glb (a true 2×2×2 box built from the six designed clay
@@ -35,16 +37,95 @@ export interface CubeTab3DProps {
   onTap: () => void
   onHold: () => void
   size?: number
+  /** Clay model shown in the cube's place. Some screens take the navigator over
+      and become the object itself — the TV Guide turns it into the clay TV — so
+      the model is a prop rather than being baked in. Gestures are unchanged:
+      this is still the same navigator, just wearing a different shape. */
+  modelUrl?: string
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap, onHold, size = 200 }: CubeTab3DProps) {
+/** The designed cube is authored as a true box, so it is normalised per-axis to
+    an exact 2×2×2 and every face reads the same size as it turns. Any OTHER
+    model must NOT be stretched that way — a TV squashed into a cube stops being
+    a TV — so it is fitted uniformly into the same 2-unit box instead. */
+const CUBE_MODEL = 'poplur_cube_v4.glb'
+
+/** The clay GLBs ship Draco-compressed (see modelSprite.ts), so a bare
+    GLTFLoader downloads them fine and then never resolves the parse. The cube
+    itself is uncompressed, which is why loading it plainly worked and hid this
+    — clay_tv.glb fetched but silently never appeared. Every load here goes
+    through a loader with the bundled decoder wired up. */
+function clayLoader(): GLTFLoader {
+  const loader = new GLTFLoader()
+  const draco = new DRACOLoader()
+  draco.setDecoderPath('draco/')
+  loader.setDRACOLoader(draco)
+  return loader
+}
+
+/** Fit a loaded model into the same 2-unit box the ortho camera is framed for,
+    then add it to the group. The cube is stretched per-axis (it is authored as a
+    box, so this is ~1× and guarantees exactly square faces); anything else is
+    scaled uniformly so it keeps its proportions.
+    Centring is done AFTER scaling and from a re-measured box: recentring first
+    only lands on zero when the model's own bounds happen to be centred, which is
+    true of the designed cube but cannot be assumed of every clay model. */
+function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string) {
+  const box = new THREE.Box3().setFromObject(model)
+  const dims = box.getSize(new THREE.Vector3())
+  if (url === CUBE_MODEL) {
+    model.scale.set(2 / dims.x, 2 / dims.y, 2 / dims.z)
+  } else {
+    const largest = Math.max(dims.x, dims.y, dims.z) || 1
+    model.scale.setScalar(2 / largest)
+  }
+  model.updateMatrixWorld(true)
+  const centred = new THREE.Box3().setFromObject(model).getCenter(new THREE.Vector3())
+  model.position.sub(centred)
+  group.add(model)
+}
+
+/** Free the GPU memory a swapped-out model was holding. Dropping the reference
+    is not enough — three.js geometries and textures live on the GPU until they
+    are explicitly disposed, and this app is already fighting for GPU headroom. */
+function disposeModel(node: THREE.Object3D) {
+  node.traverse(child => {
+    const mesh = child as THREE.Mesh
+    if (!mesh.isMesh) return
+    mesh.geometry?.dispose()
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    for (const material of materials) {
+      if (!material) continue
+      for (const value of Object.values(material)) {
+        if (value && (value as THREE.Texture).isTexture) (value as THREE.Texture).dispose()
+      }
+      material.dispose()
+    }
+  })
+}
+
+export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
+  // Which clay model is actually ON SCREEN right now. Mirrored to a data
+  // attribute because the swap is otherwise unobservable from outside WebGL —
+  // inferring it from network fetches is unreliable once the loader caches.
+  const [loadedModel, setLoadedModel] = useState<string | null>(null)
   const targetTabRef = useRef(targetTab)
   // Restarts the parked render loop; set by the effect below.
   const wakeLoopRef = useRef<() => void>(() => {})
   const callbacksRef = useRef({ onFaceChange, onSpinChange, onTap, onHold })
   callbacksRef.current = { onFaceChange, onSpinChange, onTap, onHold }
+
+  // The scene is built once (the effect below is keyed on `size`); swapping the
+  // model must NOT tear it down, or the gesture handlers and render loop would
+  // be rebuilt mid-interaction. So the group is held in a ref and the model is
+  // hot-swapped into it by its own effect.
+  const groupRef = useRef<THREE.Group | null>(null)
+  const modelNodeRef = useRef<THREE.Object3D | null>(null)
+  const loadedUrlRef = useRef<string | null>(null)
+  const modelUrlRef = useRef(modelUrl)
+  modelUrlRef.current = modelUrl
 
   // imperative bridge: prop change → spring to that face
   const springToRef = useRef<(tab: CubeTab) => void>(() => {})
@@ -90,6 +171,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     const camera = new THREE.OrthographicCamera(-halfH, halfH, halfH, -halfH, 0.01, 100)
     const group = new THREE.Group()
     scene.add(group)
+    groupRef.current = group
 
     // ---- rotation state ----
     let yaw = -FACES.find(f => f.tab === targetTabRef.current)!.az
@@ -99,6 +181,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     let disposed = false
     let needsRender = true
     let lastTab = targetTabRef.current
+    let prevYaw = yaw
     let spinReported = false
 
     const reportSpin = (spinning: boolean) => {
@@ -112,29 +195,51 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       return FACES.find(f => ((Math.round(f.az / HALF_PI) % 4) + 4) % 4 === quarter)!.tab
     }
 
+    // Which way the tabs are travelling, for the turn sound. Drag maps dx to
+    // yaw directly (`startYaw + dx * 0.017`) and the front face is
+    // round(-yaw / HALF_PI), so FALLING yaw advances rightward through the
+    // faces — the carousel convention, where swiping left brings the next
+    // screen in from the right.
+    const travelOf = (deltaYaw: number): 'left' | 'right' => (deltaYaw < 0 ? 'right' : 'left')
+
+    // The single place a face becomes THE face. Fires the sound and tells the
+    // app, exactly once per destination.
+    const commitTo = (tab: CubeTab, travel: 'left' | 'right') => {
+      if (tab === lastTab) return
+      lastTab = tab
+      targetTabRef.current = tab
+      playCubeTurnPop(travel, Math.min(1, Math.abs(vel) / 12))
+      callbacksRef.current.onFaceChange(tab)
+    }
+
     const springTo = (tab: CubeTab) => {
       const az = FACES.find(f => f.tab === tab)!.az
       // nearest yaw equivalent of -az so we rotate the short way
       const base = -az
       const turns = Math.round((yaw - base) / (2 * Math.PI))
       springTarget = base + turns * 2 * Math.PI
+      // Driven from outside (a nav tap): the app already knows where it is
+      // going, so claim the face now to stop the rotation echoing a redundant
+      // onFaceChange back at it — but still sound the direction, because the
+      // turn the user is about to watch should agree with what they hear.
+      if (tab !== lastTab) {
+        playCubeTurnPop(travelOf(springTarget - yaw), 0.5)
+        lastTab = tab
+        targetTabRef.current = tab
+      }
       needsRender = true
       wakeLoopRef.current()
     }
     springToRef.current = springTo
 
     // ---- load model + face plates ----
-    const loader = new GLTFLoader()
-    loader.loadAsync('poplur_cube_v4.glb').then(gltf => {
+    const loader = clayLoader()
+    loader.loadAsync(modelUrlRef.current).then(gltf => {
       if (disposed) return
-      const model = gltf.scene
-      const box = new THREE.Box3().setFromObject(model)
-      const center = box.getCenter(new THREE.Vector3())
-      const dims = box.getSize(new THREE.Vector3())
-      model.position.sub(center)
-      // Normalise to a true 2×2×2 (the GLB is already a box, so this is ~1×).
-      model.scale.set(2 / dims.x, 2 / dims.y, 2 / dims.z)
-      group.add(model)
+      fitIntoGroup(gltf.scene, group, modelUrlRef.current)
+      modelNodeRef.current = gltf.scene
+      loadedUrlRef.current = modelUrlRef.current
+      setLoadedModel(modelUrlRef.current)
 
       // Straight-on (no pitch): the top face is never visible, and with the
       // ortho camera the front face is a perfect square that stays identical as
@@ -184,10 +289,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       if (Math.abs(dx) > 3 && !moved) {
         moved = true
         cancelHold()
-        // Do this inside the pointer gesture (not one rAF later) so iOS grants
-        // WebAudio activation to the procedural hydraulic turn effect.
         reportSpin(true)
-        setCubeTurnSound(0.08, true)
+        // Touch the audio clock inside the pointer gesture, not one rAF later:
+        // iOS only grants WebAudio activation from within the gesture, and the
+        // first pop of the turn has to be audible or the very first navigation
+        // a user ever makes is the one silent one.
+        primeMotionAudio()
       }
       if (!moved) return
       const now = performance.now()
@@ -216,6 +323,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       const current = Math.round(yaw / HALF_PI)
       const quarter = Math.max(current - 1, Math.min(current + 1, Math.round(projected / HALF_PI)))
       springTarget = quarter * HALF_PI
+      // The destination is decided RIGHT HERE — momentum has been resolved and
+      // the cube cannot land anywhere else. So commit now, on the frame the
+      // finger lifts, instead of waiting for the cube to physically rotate past
+      // 45°. That wait was the hesitation: the screen used to arrive a beat
+      // after the gesture that asked for it, which reads as the cube deciding
+      // whether to obey. The turn still plays out underneath — it is the
+      // animation of a decision already made, not the decision itself.
+      commitTo(frontTab(springTarget), travelOf(springTarget - yaw))
       needsRender = true
     }
 
@@ -238,8 +353,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       last = now
 
       if (!dragging && springTarget !== null) {
-        // underdamped spring: slight overshoot + settle, like the app
-        const accel = -90 * (yaw - springTarget) - 12 * vel
+        // Firmer and better damped than before (was 90 / 12). The cube has
+        // already told the app where it is going by this point, so the rotation
+        // is pure follow-through — it should arrive and stop, not drift in and
+        // wobble. Higher stiffness gets it there faster; the higher damping
+        // ratio that comes with it keeps a single crisp overshoot instead of a
+        // hesitant settle, which is what "confident" actually sounds like in
+        // motion terms.
+        const accel = -155 * (yaw - springTarget) - 21 * vel
         vel += accel * dt
         yaw += vel * dt
         needsRender = true
@@ -250,28 +371,23 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
         }
       }
 
-      // Commit the moment the new face WINS the front, not when the cube has
-      // finished settling on it. frontTab() rounds, so it flips at the halfway
-      // point of the quarter turn — past 45° that face is the one you are
-      // looking at, and waiting for the spring (overshoot included) to come to
-      // rest made the cube feel like it was asking permission. The screen is
-      // already changing under a cube that is still turning.
+      // Mid-drag crossings still commit here: a slow deliberate turn never
+      // reaches onPointerUp's momentum branch, and past 45° the new face IS the
+      // one you are looking at. Release commits earlier (see onPointerUp); this
+      // is the path for a finger that is still down.
       const front = frontTab(yaw)
-      if (front !== lastTab) {
-        lastTab = front
-        targetTabRef.current = front
-        playCubeTurnDetent(Math.min(1, Math.abs(vel) / 12))
-        callbacksRef.current.onFaceChange(front)
-      }
+      if (front !== lastTab) commitTo(front, travelOf(yaw - prevYaw))
+      prevYaw = yaw
 
-      // The restored drag/spring constants preserve the previous responsive
-      // feel. Angular speed only drives the physical cues layered on top: the
-      // hydraulic/exhaust bed and Feed's bottom smoke while the cube turns.
+      // Spin is still reported for the visual cues that ride on it (Feed's
+      // bottom smoke). The cube no longer sounds while it turns: a continuous
+      // hydraulic bed said "machinery is moving" for the whole rotation and
+      // buried the one event that carries meaning. Two crisp pops at the
+      // crossings say more, and say which way.
       const spinning = (dragging && moved)
         || springTarget !== null
         || (!dragging && Math.abs(vel) > 0.035)
       reportSpin(spinning)
-      setCubeTurnSound(Math.min(1, Math.abs(vel) / 12), spinning)
 
       if (needsRender) {
         group.rotation.y = yaw
@@ -290,7 +406,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       } else {
         raf = 0
         reportSpin(false)
-        setCubeTurnSound(0, false)
       }
     }
     const wake = () => {
@@ -305,7 +420,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     return () => {
       disposed = true
       reportSpin(false)
-      setCubeTurnSound(0, false)
       cancelAnimationFrame(raf)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)
@@ -321,14 +435,49 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
           m.dispose()
         })
       })
-      renderer.dispose()
+      releaseWebGL(renderer)
+      groupRef.current = null
+      modelNodeRef.current = null
+      loadedUrlRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
 
+  // Hot-swap the model when the screen asks the navigator to become something
+  // else (the TV Guide turns it into the clay TV). Deliberately separate from
+  // the scene effect above: rebuilding the renderer here would drop the gesture
+  // handlers and the WebGL context mid-interaction, and a lost context is
+  // exactly the failure this component already has recovery code for.
+  useEffect(() => {
+    const group = groupRef.current
+    // No group yet means the scene effect has not run, or its own initial load
+    // is still in flight — it reads modelUrlRef, so it will pick this up itself.
+    if (!group || loadedUrlRef.current === null || loadedUrlRef.current === modelUrl) return
+
+    let cancelled = false
+    clayLoader().loadAsync(modelUrl).then(gltf => {
+      // The group can be torn down while the GLB is in flight.
+      if (cancelled || groupRef.current !== group) { disposeModel(gltf.scene); return }
+      const previous = modelNodeRef.current
+      if (previous) { group.remove(previous); disposeModel(previous) }
+      fitIntoGroup(gltf.scene, group, modelUrl)
+      modelNodeRef.current = gltf.scene
+      loadedUrlRef.current = modelUrl
+      setLoadedModel(modelUrl)
+      wakeLoopRef.current()
+    }).catch(err => {
+      // Never silent: a swallowed rejection here is indistinguishable from a
+      // model that simply never appears, which cost real time to diagnose.
+      console.warn(`[CubeTab3D] could not load ${modelUrl}, keeping current model`, err)
+    })
+
+    return () => { cancelled = true }
+  }, [modelUrl])
+
   return (
     <div
       data-cube-renderer={glFailed ? 'failed' : 'ready'}
+      data-cube-model={loadedModel ?? undefined}
       style={{ position: 'relative', width: size, height: size }}
     >
       <canvas

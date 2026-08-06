@@ -1,13 +1,18 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './ARFilters.module.css'
 import { playPop } from './pop'
+import { listCaptures } from './cameraStore'
 
 // AR filters — the web twin of ARFilterManager.swift, carrying the same set it
 // ships (none · Smooth · Beauty · Brighten · Glow · Sharpen · Warm · Cool ·
-// Vintage). The native app runs them as CIFilters over the frame buffer; here
-// they are CSS filter chains over the live <video>, which the compositor
-// applies to every frame — so they are live on your face, not a preview of an
-// effect that happens later.
+// Vintage). Two renderers, one list: in a browser (and the Android shell) the
+// `css` chain below is applied to the live <video>. On iOS it is NOT — the
+// preview there is a native layer behind a transparent WebView, so that <video>
+// is never rendered and styling it changed nothing on screen for as long as
+// this rail has existed. There, picking a filter posts a `cameraControl`
+// /`filter` event and ARFilterManager runs the matching CIFilter over the frame
+// buffer. The ids here match ARFilter's rawValues case-insensitively, which is
+// what lets one selection drive both.
 //
 // The rail is the hold menu laid flat: the same scrub physics from
 // CubeMenuWheelController (drag with momentum, friction, snap-to-nearest, the
@@ -52,6 +57,17 @@ export default function ARFilters({
   onPick: (id: string) => void
   onClose: () => void
 }) {
+  // Every swatch used to be the same clay cube wearing a different filter
+  // chain, which is why the rail read as nine identical cubes: a cube under
+  // `sepia(0.28)` looks like a cube. A swatch is only useful if it previews the
+  // effect on the kind of thing you are pointing at, so it uses your most
+  // recent capture when there is one. No capture yet -> the cube, as before.
+  // (The live camera cannot supply this on iOS: the preview is native, so the
+  // page's <video> has no pixels to sample.)
+  const swatchSrc = useMemo(() => {
+    const shot = [...listCaptures()].reverse().find(c => c.kind === 'photo')
+    return shot?.src ?? null
+  }, [])
   const startIndex = Math.max(0, AR_FILTERS.findIndex(f => f.id === active))
   const [offset, setOffset] = useState(startIndex)
   const [selected, setSelected] = useState(startIndex)
@@ -215,7 +231,13 @@ export default function ARFilters({
             >
               {/* the swatch wears the filter it applies, so the rail previews
                   itself instead of naming nine effects you cannot see */}
-              <span className={styles.swatch} style={{ filter: f.css === 'none' ? undefined : f.css }} />
+              <span
+                className={styles.swatch}
+                style={{
+                  filter: f.css === 'none' ? undefined : f.css,
+                  ...(swatchSrc ? { backgroundImage: `url(${swatchSrc})` } : null),
+                }}
+              />
             </button>
           )
         })}

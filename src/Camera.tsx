@@ -131,6 +131,11 @@ export default function Camera({
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  // The stream effect deliberately hands ownership of the camera to a live
+  // broadcast rather than killing the picture mid-air, and clears streamRef
+  // when it does. This ref keeps hold of the tracks anyway, so unmount can
+  // always release the hardware no matter who thinks they own it.
+  const heldStreamRef = useRef<MediaStream | null>(null)
   const [streamOn, setStreamOn] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
   const [streamRequest, setStreamRequest] = useState(0)
@@ -168,6 +173,13 @@ export default function Camera({
 
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
+  // On iOS the preview is a native layer behind a transparent WebView, so the
+  // CSS chain below styles a <video> that is never rendered. The filter has to
+  // be handed to the native pipeline instead — see WebHomeCameraLayer's
+  // "filter" control. Harmless elsewhere: postNativeEvent no-ops off-shell.
+  useEffect(() => {
+    if (isNativeShell()) postNativeEvent({ type: 'cameraControl', control: 'filter', id: arFilter })
+  }, [arFilter])
   const filterCss = AR_FILTERS.find(f => f.id === arFilter)?.css ?? 'none'
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
@@ -217,6 +229,14 @@ export default function Camera({
         })
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
         streamRef.current = stream
+        // Release whatever we were holding before taking a new one. While ON AIR
+        // the cleanup below deliberately does NOT stop the outgoing tracks, so
+        // every live<->roll round trip used to acquire a fresh camera stream and
+        // orphan the previous one — a real hardware leak, not just a reference.
+        if (heldStreamRef.current && heldStreamRef.current !== stream) {
+          heldStreamRef.current.getTracks().forEach(t => t.stop())
+        }
+        heldStreamRef.current = stream
         const videoTrack = stream.getVideoTracks()[0]
         const zoomRange = videoTrack?.getCapabilities?.() as ZoomTrackCapabilities | undefined
         const deviceZoom = zoomRange?.zoom
@@ -267,11 +287,16 @@ export default function Camera({
     void start()
     return () => {
       cancelled = true
-      // A live broadcast OWNS the stream once it starts. Leaving the camera to
-      // go and watch the feed must not kill the camera out from under the
-      // broadcast — you would appear on the LIVE channel as a black rectangle.
-      // Ending the broadcast is what releases it.
-      if (!isLive()) streamRef.current?.getTracks().forEach(t => t.stop())
+      // A live broadcast OWNS the stream once it starts. Paging to the roll or
+      // flipping the camera must not kill it out from under the broadcast —
+      // you would appear on the LIVE channel as a black rectangle. Ending the
+      // broadcast is what releases it. This is a re-run of the effect, NOT the
+      // end of the screen: leaving the camera entirely is handled on unmount
+      // below, where the hardware is stopped unconditionally.
+      if (!isLive()) {
+        streamRef.current?.getTracks().forEach(t => t.stop())
+        heldStreamRef.current = null
+      }
       streamRef.current = null
       hardwareZoomRef.current = false
       setHardwareZoom(false)
@@ -289,7 +314,29 @@ export default function Camera({
   // Reads the real frame ~8 times a second. An interval, not rAF, for the same
   // reason the counter is: it must not silently stop when the page is not
   // compositing and then look like the model died.
+  // In the app the boxes come from NATIVE Vision (people, animals, screens,
+  // barcodes) — real detections with real coordinates. The FrameDetector below
+  // is explicitly a simulation (see mlDetect.ts) and must never be what draws
+  // boxes over a live lens; it also cannot run here, because the iOS camera is
+  // native behind a transparent WebView so this page's <video> has no frames.
   useEffect(() => {
+    if (!isNativeShell()) return
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<Detection[]>).detail
+      if (!Array.isArray(detail)) return
+      if (!detectOn || page !== 'live') { setDetections([]); return }
+      setDetections(detail)
+    }
+    window.addEventListener('poplur-native-detections', receive)
+    return () => {
+      window.removeEventListener('poplur-native-detections', receive)
+      setDetections([])
+    }
+  }, [detectOn, page])
+
+  useEffect(() => {
+    // Native supplies real boxes; do not also run the simulator over them.
+    if (isNativeShell()) return
     if (!detectOn || page !== 'live') { setDetections([]); onDetectUser?.(null); return }
     detectorRef.current ??= new FrameDetector()
     detectorRef.current.reset()
@@ -591,14 +638,27 @@ export default function Camera({
     return () => window.clearInterval(timer)
   }, [recStart, onRecordingChange, stopVideo])
 
-  // A recording must not survive the screen — but a BROADCAST is meant to:
-  // going live and then opening the feed to watch yourself is the point. It
-  // ends when you end it.
+  // Nothing this screen started may outlive it. A recording is obvious — but
+  // the BROADCAST was the leak: going live took ownership of the getUserMedia
+  // track so paging and flipping could not black out the air, and then nothing
+  // ever took that ownership back. Leaving the camera tab while ON AIR left the
+  // camera hardware — and the camera light — running with no screen left to
+  // stop it. The screen that owns the broadcast is the screen that ends it.
   useEffect(() => () => {
     recorderRef.current?.stop()
     if (nativeRecordingRef.current) {
       nativeRecordingRef.current = false
       postNativeEvent({ type: 'cameraControl', control: 'record' })
+    }
+    // Do NOT end the broadcast here. Camera renders only while
+    // `committedTab === 'post'`, so simply turning the cube unmounts this
+    // screen — ending the stream on unmount meant a glance at the feed killed
+    // the user's live broadcast. A broadcast outliving its screen is correct;
+    // the camera staying on for it is the POINT, not a leak.
+    // What must never survive is a camera held for a broadcast that is over.
+    if (!isLive()) {
+      heldStreamRef.current?.getTracks().forEach(t => t.stop())
+      heldStreamRef.current = null
     }
   }, [])
 
@@ -676,6 +736,63 @@ export default function Camera({
     const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => setAnimated(true)) })
     return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2) }
   }, [animated])
+
+  // ── what the pager actually BUILDS ───────────────────────────────────────
+  // The track has four slots — roll clone, live, roll, live clone — and only
+  // ever shows one of them. Building all four cost a second viewfinder holding
+  // two more WebGL contexts and a full camera roll decoding eleven 720p frames
+  // behind a live camera nobody could see past. Each slot is now built only
+  // while it is on screen or sliding.
+  //
+  // All four slots stay in the DOM as elements: the track positions its
+  // children by nth-child, so dropping one would move the others and break the
+  // paging geometry. An unbuilt slot is an empty panel of the same size.
+
+  // Everything here keys off `pos`, NOT off `page`. `pos` is the same state the
+  // track's transform is built from, so "which slot is on screen" and "which
+  // slot is built" cannot drift apart. A first cut gated on `page` and a frame
+  // trace caught it blanking the live panel for ~18ms — the two are derived
+  // from `step` by different routes (parity vs. accumulated delta, plus the
+  // wrap snap), and that is one route too many for something that decides
+  // whether the screen has any content on it.
+
+  // The slot you are sliding OFF is kept for the length of one slide — the
+  // track's 0.52s transition plus the 560ms wrap snap that can follow it — so
+  // paging never slides out of a panel that is already being torn down. One
+  // neighbour, one transition.
+  //
+  // Derived DURING RENDER, not in an effect. `pos` moves in its own commit, so
+  // an effect learns which slot is being left one render too late — and that
+  // render has already torn the outgoing panel out from under a slide that has
+  // not started yet. The frame trace caught exactly that. Adjusting state
+  // while rendering is the supported way to react to a changed value without
+  // paying a commit for it.
+  const [slide, setSlide] = useState<{ at: number; from: number | null }>({ at: pos, from: null })
+  if (slide.at !== pos) setSlide({ at: pos, from: slide.at })
+  // In the pass that triggers the re-render above, `slide.at` IS the outgoing
+  // slot — so even the discarded pass renders the correct pair.
+  const heldSlot = slide.at === pos ? slide.from : slide.at
+
+  useEffect(() => {
+    if (slide.from === null) return
+    const release = window.setTimeout(() => setSlide(s => ({ at: s.at, from: null })), 700)
+    return () => window.clearTimeout(release)
+  }, [slide])
+
+  // A wrap slide ends in a snap: pos 0 jumps to 2 and pos 3 jumps to 1, with
+  // the transition off. The snap target therefore has to be built BEFORE the
+  // snap, or the wrap lands on an empty panel — so resting on a clone also
+  // asks for its twin.
+  const slotBuilt = (slot: number) => {
+    const wants = (p: number) => p === slot
+      || (p === 0 && slot === 2)
+      || (p === 3 && slot === 1)
+    return wants(pos) || (heldSlot !== null && wants(heldSlot))
+  }
+  const rollActive = slotBuilt(2)
+
+  /** An unbuilt slot: the panel's size and its black, and nothing else. */
+  const emptySlot = () => <div className={styles.cameraFull} aria-hidden="true" />
 
   // Punch the transparent hole for the native viewfinder while the live page
   // is front (native shells) — the roll is a normal opaque screen.
@@ -781,7 +898,17 @@ export default function Camera({
           onPress={() => setFlashEnabled(!flashRef.current)}
         />
       </div>
-      <img className={styles.camLogo} src="logo_text.png" alt="poplur" draggable={false} />
+      {/* Hands the spot to the ML readout while something is detected, then
+          takes it back — the wordmark and the scan result never print over each
+          other. Mirrors the feed's brand/channel-info flip. */}
+      <img
+        className={real && detectOn && detections.length > 0
+          ? `${styles.camLogo} ${styles.camLogoOut}`
+          : styles.camLogo}
+        src="logo_text.png"
+        alt="poplur"
+        draggable={false}
+      />
       {real && detectOn && detections.length > 0 && (() => {
         const detected = detections.find(item => item.user) ?? detections[0]
         return (
@@ -834,10 +961,13 @@ export default function Camera({
         className={animated ? styles.camPagerTrack : `${styles.camPagerTrack} ${styles.camPagerSnap}`}
         style={{ transform: `translateY(${-pos * 25}%)` }}
       >
-        <CameraRoll lite />
-        {live('live-a', true)}
-        <CameraRoll onDeny={onCloseRoll} onPick={setComposing} />
-        {live('live-b', false)}
+        {slotBuilt(0) ? <CameraRoll lite active /> : emptySlot()}
+        {slotBuilt(1) ? live('live-a', true) : emptySlot()}
+        {/* The real roll keeps its slot at all times so its scroll position and
+            tile count survive paging — `active` is what decides whether it
+            holds any media. */}
+        <CameraRoll active={rollActive} onDeny={onCloseRoll} onPick={setComposing} />
+        {slotBuilt(3) ? live('live-b', false) : emptySlot()}
       </div>
       {/* Every capture route — shutter, recording, roll pick — ends here. */}
       {composing && (

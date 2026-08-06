@@ -1,6 +1,10 @@
 .stage {
   width: 100%;
-  height: 100%;
+  /* The held viewport height (stableViewport.ts), not the live 100%: iOS
+     resizes the layout viewport for keyboards/inset transitions, and a stage
+     that tracks it slides every bottom-anchored control (cube, counters,
+     corner buttons) mid-session. Falls back to 100% where the var is absent. */
+  height: var(--poplur-app-height, 100%);
   display: grid;
   place-items: stretch;
   background:
@@ -86,7 +90,14 @@
   inset: 0;
   overflow: hidden;
   animation: screenReveal 280ms ease both;
-  will-change: opacity;
+  /* NO will-change here. This element is full-screen (inset: 0) and the reveal
+     it hints at is a one-shot 280ms fade — but `will-change: opacity` is a
+     PERMANENT promise, so the compositor kept a full-screen backing store for
+     the entire session and re-uploaded it whenever anything underneath moved.
+     That is the cost the device CPU trace saw as commitLayerTree /
+     applyBackingStoreToNode. The browser already promotes an element by itself
+     while an opacity animation is actually running, so the reveal composites
+     exactly as before and the layer is released when it finishes. */
 }
 
 @keyframes screenReveal {
@@ -370,7 +381,18 @@
 .camZoomPreset:active { transform: scale(0.92); }
 
 /* poplur logo, kept centered at the top of the camera. */
+/* The wordmark and the ML readout share this spot, so they take turns rather
+   than stack — the same trick the feed's top bar uses to alternate its brand
+   face with the channel info. Without it the native detection banner printed
+   straight through the poplur logo.
+   Same 0.34s ease as .flipSlot in FeedTwin.module.css, so the two surfaces
+   feel like one behaviour. */
+.camLogoOut {
+  opacity: 0;
+}
+
 .camLogo {
+  transition: opacity 0.34s ease;
   position: absolute;
   top: 12px;
   left: 50%;

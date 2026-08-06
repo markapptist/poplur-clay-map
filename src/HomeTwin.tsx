@@ -2,6 +2,7 @@ import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore }
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
+import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
@@ -44,6 +45,10 @@ const CUBE_INTO_PHONE_MS = 1_600
 
 // The approved Loading screen's rotating copy (gcl-prototype loadingPage()),
 // cycled on the same 1.8s beat with the same 200ms cross-fade.
+/** The clay TV the navigator becomes while the TV Guide is open. Supplied art
+    in public/, like every other clay model — never a drawn substitute. */
+const CLAY_TV_MODEL = 'clay_tv.glb'
+
 const LOADING_MESSAGES = [
   'Warming up the pinetrees',
   'Rolling out the clay roads',
@@ -140,6 +145,57 @@ function AnimatedRadiusMetrics({
   )
 }
 
+/** ONLINE NOW counts up with the same money-counter beat, ticks and motion trail
+    as RADIUS. The two cards share one slot and swap on alternate beats, so only
+    one is ever counting — the tick/done sounds never double up.
+    The count runs on the RAW number and is compacted every frame, so it reads
+    0 → 1.2M rather than animating the digits of an already-shortened string. */
+function AnimatedOnlineCount({ value, active }: { value: number; active: boolean }) {
+  const [progress, setProgress] = useState(active ? 0 : 1)
+  const [counting, setCounting] = useState(active)
+
+  useEffect(() => {
+    let raf = 0
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!active || reduced) {
+      setProgress(1)
+      setCounting(false)
+      return
+    }
+
+    setProgress(0)
+    setCounting(true)
+    const started = performance.now()
+    const frame = (now: number) => {
+      const raw = Math.max(0, Math.min(1, (now - started) / 880))
+      // Same easing as the radius counter: hard out of the gate, then clicks
+      // precisely onto the final figure instead of coasting past it.
+      const eased = 1 - Math.pow(1 - raw, 2.35)
+      setProgress(eased)
+      playRadiusCounterTick(eased)
+      if (raw < 1) {
+        raf = requestAnimationFrame(frame)
+      } else {
+        setProgress(1)
+        setCounting(false)
+        playRadiusCounterDone()
+      }
+    }
+    raf = requestAnimationFrame(frame)
+    return () => cancelAnimationFrame(raf)
+  }, [active, value])
+
+  const text = compactAudience(Math.round(value * progress))
+  return (
+    <span
+      className={`${styles.statValue} ${styles.onlineValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
+      data-counter-value={text}
+    >
+      {text}
+    </span>
+  )
+}
+
 function shouldUseMiles(): boolean {
   if (typeof window === 'undefined') return false
   const params = new URLSearchParams(window.location.search)
@@ -233,6 +289,20 @@ const ANDROID_SHELL =
 // map route already uses. `?map-grace=<seconds>` opts back into a warm bounce
 // for testing (the iframe lingers that long so a quick return to Map is free);
 // the default 0 keeps the map off every non-map tab.
+// How long `activeTab` must hold still before the map layer acts on it. Long
+// enough to swallow a spin (the cube commits a face every ~150-250ms while
+// turning), short enough to be invisible on a deliberate tab change.
+// `?map-settle=<ms>` overrides it for testing; 0 restores the old behaviour of
+// mounting on every face the spin passes through.
+const MAP_SETTLE_MS = (() => {
+  const fallback = 350
+  if (typeof window === 'undefined') return fallback
+  const raw = new URLSearchParams(window.location.search).get('map-settle')
+  if (raw === null) return fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+})()
+
 const MAP_GRACE_MS = (() => {
   const fallback = 0
   if (typeof window === 'undefined') return fallback
@@ -314,6 +384,66 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // model is pointer-events:none over it), so it remains the way out; only its
   // appearance changes.
   const [cubeIntoPhone, setCubeIntoPhone] = useState(false)
+  // True from the first drag until the cube's spring has fully settled. Only the
+  // map layer reads it — see the map lifetime effect. CubeTab3D only reports on
+  // CHANGE, and reports false on teardown, so this cannot latch on.
+  const [cubeSpinning, setCubeSpinning] = useState(false)
+
+  // ONE PAGE, ONE VOICE.
+  //
+  // Leaving a page silences everything, everywhere — including inside the map
+  // iframe, which is a separate document with its own module state and its own
+  // radio. Whatever the new page plays then claims the floor for itself on
+  // start, which is how audioFocus is already designed to work
+  // ("the next source to start asks for itself").
+  //
+  // Silencing on the way OUT rather than claiming on the way IN is deliberate:
+  // requestAudioFocus can only ever silence the OTHERS, so pages that own no
+  // audio at all (camera, profile) had no way to say "nobody is playing" — they
+  // could only hand the floor to a different surface, which is exactly how sound
+  // kept arriving from a page the user had already left.
+  //
+  // Gated on cubeSpinning for the same reason the map layer is: the cube commits
+  // a tab every 45 degrees, so an ungated version would cut the audio several
+  // times during a single flick.
+  // Silence in CLEANUP, i.e. on the way out of a tab. Running it in the effect
+  // body silenced the tab being landed ON: child effects run before parent
+  // effects, so FeedTwin had already claimed the floor and unmuted, and this
+  // immediately revoked it with 'silenced' — which FeedTwin answers by muting
+  // AND pausing. The ad watchdog then restarted playback a second later without
+  // unmuting or reclaiming, leaving the feed playing silently with the floor at
+  // null until the next stray tap. React flushes all cleanups before any of the
+  // new effects, so the outgoing tab is silenced before the incoming one claims.
+  useEffect(() => {
+    if (cubeSpinning) return
+    return () => { silenceAllAudio() }
+  }, [activeTab, cubeSpinning])
+
+  // THE PAGE YOU LAND ON IS THE ONLY PAGE THAT GETS BUILT.
+  //
+  // `activeTab` is committed the instant a face wins the front — halfway through
+  // each quarter turn — which is the right feel for the CHROME but catastrophic
+  // for the screens. Measured, ONE map->feed navigation mounted and destroyed:
+  //     feed -> profile -> camera -> feed -> camera -> feed
+  // Camera, with 12 video elements and 6 WebGL contexts, was built and torn down
+  // TWICE in transit. Over 8 navigations that created 156 GL contexts and left
+  // 152 detached, because the clay components dispose() without
+  // forceContextLoss() — which is also why "clay arrows recover after GPU context
+  // loss" exists as a known bug. That churn is the overheating.
+  //
+  // The map layer already had this guard (MAP_SETTLE_MS + cubeSpinning); the
+  // content layer never did. `committedTab` is what the heavy screens render
+  // from, so a face the spin merely passes THROUGH is never built. The chrome and
+  // the cube keep tracking `activeTab`, so the app still feels immediate.
+  const [committedTab, setCommittedTab] = useState<CubeTab>(initialTab)
+  useEffect(() => {
+    if (cubeSpinning) return
+    if (committedTab === activeTab) return
+    const settle = window.setTimeout(() => setCommittedTab(activeTab), MAP_SETTLE_MS)
+    return () => window.clearTimeout(settle)
+  }, [activeTab, cubeSpinning, committedTab])
+  // undefined = the designed cube. Set while a screen takes the navigator over.
+  const [cubeModel, setCubeModel] = useState<string | undefined>(undefined)
   // The post composer is a full-screen modal, but it lives inside .contentLayer
   // (z-index 4) so it can never stack above the home chrome at 260 — the radius
   // readout, channel arrows and cube drew straight over it, with the cube
@@ -335,6 +465,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (wanted && !prev) playPop()
       return wanted
     })
+    // On TV Guide the navigator stops being a cube and becomes the clay TV —
+    // the screen you are on IS the object in your hand. It still turns, still
+    // holds to open the wheel, and is still the way back out.
+    setCubeModel(open && screen === 'feed-tvguide' ? CLAY_TV_MODEL : undefined)
+    // A subscreen IS a page change. Radio, TV Guide and Games each bring their
+    // own sound, and the tab-change rule below never fires for them because
+    // `activeTab` does not move — so opening or closing one used to leave the
+    // previous page still playing underneath.
+    silenceAllAudio()
   }, [])
   const [popping, setPopping] = useState(false)
   // Start in the measurement system implied by the device locale. Tapping the
@@ -507,7 +646,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Clearing mapReady on teardown puts the map's own loading screen back, so a
   // remounted map shows the loading globe instead of a blank layer.
   useEffect(() => {
-    if (activeTab === 'map') { setMapMounted(true); return }
+    let dropTimer = 0
     const drop = () => {
       const mapWindow = mapFrameRef.current?.contentWindow as (Window & {
         __poplurDisposeMap?: () => void
@@ -520,10 +659,34 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setMapMounted(false)
       setMapReady(false)
     }
-    if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
-    const timer = window.setTimeout(drop, MAP_GRACE_MS)
-    return () => window.clearTimeout(timer)
-  }, [activeTab])
+    const apply = () => {
+      if (activeTab === 'map') { setMapMounted(true); return }
+      if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
+      dropTimer = window.setTimeout(drop, MAP_GRACE_MS)
+    }
+    // Wait for the cube to STOP before touching the map at all.
+    //
+    // The cube commits a face the moment it wins the front (see CubeTab3D), i.e.
+    // halfway through each quarter turn — deliberate, so the screen changes under
+    // a cube that is still moving. But `activeTab` is also what decides whether a
+    // Mapbox iframe exists, so one spin was booting and destroying an entire map
+    // for every face it passed THROUGH. Measured on one gesture: 2 mounts and 2
+    // disposes, median frame 16.7ms -> 33.3ms, and a single 5.9-SECOND frame.
+    // That is the "sticky cube".
+    // Restarting this timer on every commit coalesces the whole gesture into one
+    // decision, taken on the face you actually land on. Deliberate navigation
+    // pays MAP_SETTLE_MS once, which is nothing against Mapbox's own boot — and
+    // the map route already covers that wait with the loading globe.
+    //
+    // The timer alone was not enough: the release spring keeps crossing faces
+    // after your finger is gone, and a crossing in its tail landed outside the
+    // window, so a map still got built and thrown away (measured: 2 mounts per
+    // spin -> 1). `cubeSpinning` covers that tail — while the cube is moving at
+    // all, the map layer does nothing.
+    if (cubeSpinning) return
+    const settleTimer = window.setTimeout(apply, MAP_SETTLE_MS)
+    return () => { window.clearTimeout(settleTimer); window.clearTimeout(dropTimer) }
+  }, [activeTab, cubeSpinning])
 
   // No loading screen over the map any more. The map itself opens on the globe
   // (zoomed all the way out) and eases in once its tiles are actually ready —
@@ -696,7 +859,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       )}
 
       <div className={styles.contentLayer}>
-        {activeTab === 'feed' && (
+        {committedTab === 'feed' && (
           <FeedTwin
             index={chanIndex}
             onIndexChange={setChanIndex}
@@ -709,7 +872,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
           />
         )}
-        {activeTab === 'post' && (
+        {committedTab === 'post' && (
           <Camera
             onComposingChange={handleComposingChange}
             step={cameraStep}
@@ -721,7 +884,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onPostTargetUsed={() => setPostTarget(null)}
           />
         )}
-        {activeTab === 'profile' && (
+        {committedTab === 'profile' && (
           <ProfileTwin
             bindArrows={fn => { profileArrowsRef.current = fn }}
             bindGoBack={fn => { profileBackRef.current = fn }}
@@ -852,9 +1015,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             aria-label={`${compactAudience(SPOOFED_ONLINE_AUDIENCE)} users online in your reach`}
           >
             <span className={styles.statLabel}>ONLINE NOW</span>
-            <span className={`${styles.statValue} ${styles.onlineValueShader}`}>
-              {compactAudience(SPOOFED_ONLINE_AUDIENCE)}
-            </span>
+            <AnimatedOnlineCount
+              value={SPOOFED_ONLINE_AUDIENCE}
+              active={recordMs == null && showOnlineAudience}
+            />
             <span className={styles.statSub}>users in reach</span>
             <span className={styles.statTrend}>LIVE PRESENCE</span>
           </div>
@@ -879,8 +1043,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           <CubeTab3D
             key={`cube-${uiRecoveryKey}`}
             size={cubeSize}
+            modelUrl={cubeModel}
             targetTab={activeTab}
             onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}
+            onSpinChange={setCubeSpinning}
             onTap={popCube}
             onHold={() => {
               playPop()
