@@ -41,12 +41,42 @@
   /* The iframe used to sit on the loading screen's blue while it booted. That
      screen is gone, so the blue just flashed behind the map — the map paints
      its own sky and space.
-     Dark, NOT transparent. An iframe has its own document, and until that
-     document's CSS paints, WebKit fills it with the default WHITE — which sits
-     ABOVE the parent's background, so `transparent` here could never hide it.
-     That is the white screen seen while the map loads. The app's backdrop
-     colour keeps the boot dark without bringing back the old blue. */
+     Dark, NOT transparent — but this alone is NOT what fixes the white boot,
+     and believing it did cost a long hunt. An iframe has its own document, and
+     until that document's CSS applies WebKit fills the subframe with its base
+     background. That base paints ABOVE this element's background, so no colour
+     set here can hide it. Two things actually cover that gap: the subframe now
+     declares a dark colour scheme (index.html's `color-scheme` meta, which makes
+     the base dark instead of white), and `.mapBoot` below covers the frames
+     before the subframe's document exists at all. This background stays as the
+     backdrop for the iframe's own box. */
   background: #050407;
+}
+
+/* ---------- boot cover (the white-flash fix) ---------- */
+
+/* Leaving the map unmounts the iframe, so every return builds a NEW document —
+   and a new document is exactly when the base-background gap above is visible.
+   This layer lives in the parent, which has long since painted, so it is dark
+   from the very frame the iframe attaches. It lifts on the map's first
+   postMessage, which cannot arrive before that document has rendered its own
+   dark backdrop; the globe boot the app deliberately shows is untouched. */
+.mapBoot {
+  position: absolute;
+  inset: 0;
+  /* above .mapLayer (1), below .contentLayer (4) */
+  z-index: 2;
+  background: #050407;
+  pointer-events: none;
+}
+
+.mapBootLifted {
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mapBootLifted { transition: none; }
 }
 
 /* Off the map tab the embed stays MOUNTED (so the map keeps its style, tiles

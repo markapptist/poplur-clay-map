@@ -13,6 +13,13 @@ html, body, #root {
   background-color: #050407;
 }
 
+/* The declaration above only covers gaps once this stylesheet has loaded. Before
+   that, the colour is WebKit's base background for the document, which is white
+   unless the document says it is dark — hence the matching `color-scheme` meta in
+   index.html, which lands while the head is still parsing. Repeated here so the
+   scheme survives independently of that tag. */
+html { color-scheme: dark; }
+
 /* ── no text selection outside real text entry ─────────────────────────────
    A long-press anywhere in a native app must not raise the blue selection
    highlight, the drag handles, or the iOS callout/magnifier — that chrome is

@@ -308,6 +308,12 @@ const MAP_SETTLE_MS = (() => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 })()
 
+// Longest the boot cover may sit over a mounting map before it lifts on its own.
+// The cover normally comes off on the map's first postMessage; this is the
+// backstop for a shell where that message never lands, so a failure mode is a
+// visible booting map rather than a permanently blank panel.
+const MAP_COVER_MAX_MS = 1500
+
 const MAP_GRACE_MS = (() => {
   const fallback = 0
   if (typeof window === 'undefined') return fallback
@@ -559,6 +565,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stays absent so Profile / Feed / Camera keep their full frame budget. It is
   // torn down once the user leaves the map (after MAP_GRACE_MS, default 0).
   const [mapMounted, setMapMounted] = useState(initialTab === 'map')
+  // Has the map's own document painted since this iframe mounted?
+  //
+  // A remount is a brand-new DOCUMENT, and until that document's CSS applies
+  // WebKit fills the subframe with its base background — white, unless the
+  // document declares a dark colour scheme (it now does; see index.html). The
+  // subframe's base paints ABOVE the iframe element's own background, which is
+  // why `.mapLayer`'s dark colour never hid it and the map tab still flashed
+  // white on device. This flag drives an opaque cover in THIS document — already
+  // painted, so it is dark from the frame the iframe attaches — and the cover
+  // lifts on the map's first postMessage, which cannot arrive before its
+  // document has rendered. The globe boot stays visible; only the pre-CSS gap
+  // is hidden.
+  const [mapPainted, setMapPainted] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState(0)
   const [messageShown, setMessageShown] = useState(true)
   const [loadingMuted, setLoadingMuted] = useState(isUserMuted)
@@ -591,6 +610,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const onMapMessage = (event: MessageEvent) => {
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
+      // Any message at all proves the map's document is up and has painted its
+      // own dark backdrop — the boot cover can come off. Deliberately not tied
+      // to `poplur-map-ready`: that waits for the globe, and hiding the globe
+      // boot is exactly what this app decided not to do.
+      setMapPainted(true)
       if (event.data.type === 'poplur-map-loading') setMapReady(false)
       // The map flew to a pop and is telling us which one. This is the only
       // source of truth for the number shown between the channel arrows —
@@ -796,6 +820,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const settleTimer = window.setTimeout(apply, MAP_SETTLE_MS)
     return () => { window.clearTimeout(settleTimer); window.clearTimeout(dropTimer) }
   }, [activeTab, cubeSpinning])
+
+  // Boot cover lifecycle. Unmounting re-arms it, so the NEXT mount renders
+  // covered in the same commit that attaches the iframe — there is no frame in
+  // which the new subframe is visible before its document has painted.
+  useEffect(() => {
+    if (!mapMounted) { setMapPainted(false); return }
+    const fallback = window.setTimeout(() => setMapPainted(true), MAP_COVER_MAX_MS)
+    return () => window.clearTimeout(fallback)
+  }, [mapMounted])
 
   // No loading screen over the map any more. The map itself opens on the globe
   // (zoomed all the way out) and eases in once its tiles are actually ready —
@@ -1003,13 +1036,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           and returning remounts a fresh iframe (see MAP_GRACE_MS). This keeps
           the map from starving Profile / Feed / Camera of frames. */}
       {mapMounted && (
-        <iframe
-          ref={mapFrameRef}
-          className={activeTab === 'map' ? styles.mapLayer : `${styles.mapLayer} ${styles.mapLayerIdle}`}
-          src={CLAY_MAP_SRC}
-          title="Poplur clay map"
-          allow="autoplay; geolocation"
-        />
+        <>
+          <iframe
+            ref={mapFrameRef}
+            className={activeTab === 'map' ? styles.mapLayer : `${styles.mapLayer} ${styles.mapLayerIdle}`}
+            src={CLAY_MAP_SRC}
+            title="Poplur clay map"
+            allow="autoplay; geolocation"
+          />
+          {/* Opaque cover over the booting map — the white-flash fix. It belongs
+              to THIS document, which has already painted, so it is dark in the
+              same frame the iframe attaches; the iframe's own background cannot
+              do this job because a subframe paints its base background above it.
+              Lifts on the map's first message (see mapPainted). */}
+          <div
+            aria-hidden="true"
+            className={[
+              styles.mapBoot,
+              mapPainted ? styles.mapBootLifted : '',
+              activeTab === 'map' ? '' : styles.mapLayerIdle,
+            ].filter(Boolean).join(' ')}
+          />
+        </>
       )}
 
       <div className={styles.contentLayer}>
