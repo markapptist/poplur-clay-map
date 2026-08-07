@@ -18,6 +18,7 @@ const CLAIMS_TEXTURE = 'poplur-claims-texture'
 const CLAIMS_TEXTURE_IMAGE = 'poplur-claims-hatch'
 const CLAIMS_RIM = 'poplur-claims-rim'
 const CLAIMS_GLOBE = 'poplur-claims-globe'
+const CLAIMS_GLOBE_BLOOM = 'poplur-claims-globe-bloom'
 const CLAIMS_POINTS_SOURCE = 'poplur-claims-points'
 
 /** 72-point circle polygon around a center, `radiusKm` on the ground. */
@@ -95,13 +96,64 @@ if (!liteTier())   map.addLayer({
     }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
 
   // ── Globe presence ────────────────────────────────────────────────────────
-  // A 28km territory is sub-pixel from space, so zoomed out the pops simply
-  // vanished — the globe looked like nobody owned anything. Each claim keeps a
-  // glowing clay dot at planet scale, sized by its radius, fading out as the
-  // real territory fill becomes visible. Points, not polygons: a circle layer
+  // A 28km territory is sub-pixel from space (0.5px at zoom 0.9), so zoomed out
+  // the pops simply vanished — the globe looked like nobody owned anything.
+  // Each claim keeps a glowing clay dot at planet scale, fading out as the real
+  // territory fill becomes visible. Points, not polygons: a circle layer
   // renders polygon VERTICES, which would draw 72 dots per pop.
+  //
+  // CLUSTERED, and that is the whole fix rather than a detail. Measured at zoom
+  // 0.9, all five Toronto pops project to the SAME PIXEL — five translucent
+  // 4-8px discs stacked on one another, which read as a single smudge under the
+  // CN Tower pin, not as territory. Worse, stacking is anti-proportional: an
+  // empire of twenty pops in one city looks exactly like one pop there.
+  //
+  // So co-located claims merge into ONE mark whose size encodes the SUM of
+  // their radii. That is the honest planet-scale statement — from space you do
+  // not see individual posts, you see how much ground you hold — and it is what
+  // makes the globe answer "how much of this is mine". Clustering also kills
+  // the same-pixel overdraw instead of paying for it.
   if (!map.getSource(CLAIMS_POINTS_SOURCE)) {
-    map.addSource(CLAIMS_POINTS_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addSource(CLAIMS_POINTS_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+      cluster: true,
+      // Only merge while the world is the subject. Past zoom 6 a 28km claim is
+      // a 16px disc and the individual pops are worth seeing apart again.
+      clusterMaxZoom: 6,
+      clusterRadius: 44,
+      clusterProperties: { sumKm: ['+', ['get', 'radiusKm']] },
+    })
+  }
+  // A cluster carries sumKm; a lone pop carries its own radiusKm. One
+  // expression feeds both layers so the two can never drift apart.
+  const claimedKm: unknown = ['coalesce', ['get', 'sumKm'], ['get', 'radiusKm'], 0]
+  // sqrt, not linear: radius is already a linear measure of reach, so scaling
+  // the DOT linearly by it made a 28km pop nine times the area of a 9km one and
+  // pinned every small claim under the visibility floor. Square root keeps the
+  // big empires big without letting them eat the planet.
+  const grow = (base: number, k: number, cap: number): unknown =>
+    ['min', cap, ['+', base, ['*', k, ['sqrt', claimedKm]]]]
+
+  if (!map.getLayer(CLAIMS_GLOBE_BLOOM)) {
+    map.addLayer({
+      id: CLAIMS_GLOBE_BLOOM,
+      slot: 'top',
+      type: 'circle',
+      source: CLAIMS_POINTS_SOURCE,
+      paint: {
+        'circle-color': '#FF4BA1',
+        // The soft halo around the claim — this is what actually reads as
+        // "glowing" from space and what survives being partly covered by the
+        // clay landmark pins, which are DOM markers and always paint on top.
+        'circle-radius': ['interpolate', ['linear'], ['zoom'],
+          0, grow(5, 3.4, 40),
+          6, grow(8, 5.8, 70),
+        ] as never,
+        'circle-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.32, 6, 0.28, 7.5, 0],
+        'circle-blur': 1,
+      },
+    })
   }
   if (!map.getLayer(CLAIMS_GLOBE)) {
     map.addLayer({
@@ -114,14 +166,16 @@ if (!liteTier())   map.addLayer({
         // Bigger claims read bigger from space, but even the smallest stays a
         // visible mark — presence first, proportion second.
         'circle-radius': ['interpolate', ['linear'], ['zoom'],
-          0, ['+', 3, ['*', 0.16, ['get', 'radiusKm']]],
-          6, ['+', 5, ['*', 0.3, ['get', 'radiusKm']]],
-        ],
-        'circle-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.95, 6.5, 0.9, 8, 0],
+          0, grow(2.4, 1.5, 18),
+          6, grow(3.5, 2.6, 30),
+        ] as never,
+        'circle-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.97, 6.5, 0.92, 8, 0],
         'circle-stroke-color': '#FFD7EC',
-        'circle-stroke-width': 1.5,
-        'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.9, 8, 0],
-        'circle-blur': 0.35,
+        'circle-stroke-width': 1.6,
+        'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.95, 8, 0],
+        // Nearly crisp: the bloom layer above owns the soft edge, so blurring
+        // the core too just made the mark mushy at planet scale.
+        'circle-blur': 0.15,
       },
     })
   }
@@ -166,13 +220,20 @@ export function onClaimsSettled(cb: ClaimsListener): () => void {
   return () => { claimsListeners.delete(cb) }
 }
 
-function pushClaims(map: mapboxgl.Map) {
+/** `points: false` skips the globe-dot source. The dot source is CLUSTERED, so
+ *  every setData rebuilds a supercluster index — paying that on all ~37 frames
+ *  of a claim's grow-in animation is pure waste, because the globe dots are
+ *  fully faded out (opacity 0 past zoom 8) at any zoom where you are actually
+ *  dropping a pop. The growing disc still animates; only the invisible planet
+ *  mark waits for the settle. */
+function pushClaims(map: mapboxgl.Map, options?: { points?: boolean }) {
   const src = map.getSource(CLAIMS_SOURCE) as mapboxgl.GeoJSONSource | undefined
   if (!src) return
   src.setData({
     type: 'FeatureCollection',
     features: [...claims.values()].map(c => circlePolygon(c.center, c.radiusKm)),
   })
+  if (options?.points === false) return
   const points = map.getSource(CLAIMS_POINTS_SOURCE) as mapboxgl.GeoJSONSource | undefined
   points?.setData({
     type: 'FeatureCollection',
@@ -213,7 +274,7 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
     const eased = 1 + Math.sin(t * Math.PI) * 0.14 - Math.pow(1 - t, 3)
     const r = from + (to - from) * Math.min(1, eased)
     claims.set(claim.id, { ...claim, radiusKm: Math.max(0, r) })
-    pushClaims(map)
+    pushClaims(map, { points: false })
     if (t < 1) requestAnimationFrame(step)
     else { claims.set(claim.id, claim); pushClaims(map); claimsListeners.forEach(fn => fn()) }
   }
