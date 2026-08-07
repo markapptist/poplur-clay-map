@@ -103,9 +103,14 @@
 .cloudB { width: 150px; top: 16%; animation: drift 46s linear infinite reverse; opacity: 0.75; }
 .cloudC { width: 180px; top: 26%; animation: drift 58s linear infinite; opacity: 0.6; }
 
+/* Animating `left` makes the browser lay out and paint these clouds on every
+   single frame, forever, for as long as the map is on screen — three of them,
+   at 34s/46s/58s. `translate` runs on the compositor instead: same motion, no
+   layout, no repaint. The start offset moves onto the element so the travel is
+   expressed purely as a transform. */
 @keyframes drift {
-  from { left: -240px; }
-  to   { left: 110%; }
+  from { translate: -240px 0; }
+  to   { translate: 110vw 0; }
 }
 
 /* ── Fog: soft clay mist rolling over everything ── */

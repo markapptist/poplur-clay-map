@@ -38,7 +38,7 @@
     radial-gradient(circle, #ff2d96 0 2px, transparent 2.5px) 18px 24px / 92px 86px,
     radial-gradient(circle, #8f76ff 0 1.5px, transparent 2px) 54px 12px / 126px 118px,
     radial-gradient(circle, #ff9dca 0 1px, transparent 1.5px) 8px 70px / 104px 96px;
-  animation: confettiDrift 14s linear infinite;
+  animation: confettiDrift 14s linear 3;
 }
 
 .header {

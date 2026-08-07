@@ -44,7 +44,7 @@
     #ffe9f4 50%,
     #f63b9a 58%, #a06bd8 78%, #5fe1ea 100%);
   background-size: 320% 320%;
-  animation: frameSheen 5.5s ease-in-out infinite;
+  animation: frameSheen 5.5s ease-in-out 3;
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -376,7 +376,7 @@
   background-clip: text;
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.4)) drop-shadow(0 0 6px rgba(255, 84, 166, 0.12));
-  animation: profileTextShader 4.8s linear infinite;
+  animation: profileTextShader 4.8s linear 3;
 }
 
 /* ---- Media / Messages / Saved switcher with cyan underline ---- */
@@ -416,7 +416,7 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 0 4px rgba(255, 84, 166, 0.1));
-  animation: profileTextShader 4.8s linear infinite;
+  animation: profileTextShader 4.8s linear 3;
 }
 
 .modeOn .modeLabel {
@@ -762,7 +762,7 @@
   filter:
     drop-shadow(0 2px 2px rgba(70, 2, 34, 0.7))
     drop-shadow(0 1px 0 rgba(60, 0, 28, 0.85));
-  animation: notifTitleShader 4.8s linear infinite;
+  animation: notifTitleShader 4.8s linear 3;
 }
 
 @keyframes notifTitleShader { to { background-position: 260% 0; } }
@@ -1275,7 +1275,7 @@
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: shareTextShader 4.8s linear infinite;
+  animation: shareTextShader 4.8s linear 3;
 }
 
 .shareShader {

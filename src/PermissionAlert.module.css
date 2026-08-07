@@ -200,7 +200,7 @@
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: permTextShader 4.8s linear infinite;
+  animation: permTextShader 4.8s linear 3;
 }
 
 .shader {

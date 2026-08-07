@@ -435,7 +435,7 @@
   filter:
     drop-shadow(0 2px 0 rgba(0, 28, 12, 0.72))
     drop-shadow(0 0 9px rgba(77, 255, 105, 0.65));
-  animation: cameraDetectionShader 4.8s linear infinite;
+  animation: cameraDetectionShader 4.8s linear 3;
 }
 
 .camDetectionTitle small {
@@ -996,7 +996,7 @@
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: rollPermTextShader 4.8s linear infinite;
+  animation: rollPermTextShader 4.8s linear 3;
 }
 
 .rollPermShader {

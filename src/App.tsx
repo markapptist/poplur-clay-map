@@ -937,6 +937,40 @@ export default function App() {
     return true
   }, [streetView])
 
+  /**
+   * Travelling between pops, as distinct from the ambient tour.
+   *
+   * The arrows used to reuse TOUR_FLIGHT_MS — a THIRTY SECOND flight that rises
+   * all the way to the globe. That is right for a cinematic tour and wrong for
+   * pressing a button: you press, nothing appears to happen, and pressing again
+   * interrupts the flight you could not see. This is the same camera language —
+   * rise, cross, dive, with pitch and a bearing swing — compressed to the length
+   * of a deliberate action, and it lifts only to city height rather than orbit,
+   * so you can still see the ground you are travelling over.
+   */
+  const flyToPop = useCallback((center: [number, number]) => {
+    const map = mapRef.current
+    if (!map) return false
+    const api = map as unknown as { __cinematic?: boolean }
+    api.__cinematic = true
+    map.flyTo({
+      center,
+      zoom: BUILDING_REVEAL_ZOOM,
+      pitch: 62,
+      bearing: map.getBearing() + 28,
+      duration: 3200,
+      // High enough that the hop clearly LEAVES the ground and arrives
+      // somewhere else, low enough that the terrain never leaves the frame.
+      minZoom: 11.2,
+      curve: 1.5,
+      essential: true,
+    })
+    // Hand the camera back when the trip ends, or the idle orbit stays parked
+    // forever behind a __cinematic flag nothing ever clears.
+    map.once('moveend', () => { api.__cinematic = false })
+    return true
+  }, [])
+
   const tourTimers = useRef<number[]>([])
   const tourStartedRef = useRef(false)
   const clearTourTimers = useCallback(() => {
@@ -1189,7 +1223,7 @@ export default function App() {
           const poi = POIS[next]
           if (poi) {
             setTourLine(`Pop ${next + 1} of ${POIS.length}: ${poi.name}`)
-            flyToCenter(poi.coords as [number, number], TOUR_FLIGHT_MS)
+            flyToPop(poi.coords as [number, number])
             // Tell the shell WHICH pop this is. The channel arrows used to count
             // POST_COUNT (128) locally while the map flew through POIS, so the
             // number between the arrows described a different list from the one
@@ -1227,7 +1261,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startTourLoop, stopTour, flyToCenter])
+  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startTourLoop, stopTour, flyToCenter, flyToPop, theme])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()

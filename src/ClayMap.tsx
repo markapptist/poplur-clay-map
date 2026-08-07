@@ -435,19 +435,27 @@ export function installComposeRadiusPreview(map: mapboxgl.Map) {
   if (!map.getLayer(COMPOSE_RADIUS_FILL)) {
     map.addLayer({
       id: COMPOSE_RADIUS_FILL,
-      slot: 'bottom',
+      // NO `slot` here. A slot competes with the `beforeId` below — and the
+      // beforeId is the whole trick: inserting UNDER `clay-water-fill` means the
+      // water paints back over the claim, so the takeover appears on LAND ONLY
+      // and stops at the shoreline. That is what makes it read as territory
+      // rather than a radius: Poplur is land acquisition, and you cannot own a
+      // lake. With a slot set, the layer was ordered by the slot instead and sat
+      // under the terrain, invisible — which is why only the dashed edge showed.
       type: 'fill',
       source: COMPOSE_RADIUS_SOURCE,
       paint: {
         'fill-color': '#E04791',
-        'fill-opacity': 0.76,
+        // Strong enough to read as painted ground at a glance while the clay
+        // roads and buildings still show through as YOUR streets.
+        'fill-opacity': 0.62,
       },
     }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
   }
   if (!map.getLayer(COMPOSE_RADIUS_TEXTURE)) {
     map.addLayer({
       id: COMPOSE_RADIUS_TEXTURE,
-      slot: 'bottom',
+      // Same reasoning as the fill: beforeId, not slot, so water masks it.
       type: 'fill',
       source: COMPOSE_RADIUS_SOURCE,
       paint: {

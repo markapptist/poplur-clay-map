@@ -402,7 +402,13 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 0 7px rgba(246, 59, 154, .38));
-  animation: homeLabelShader 4.8s linear infinite;
+  /* Ran `infinite`. background-position on background-clip:text cannot be
+     composited, so this repainted the label every frame for as long as the app
+     was open — and this HUD is mounted on EVERY screen, so it never stopped,
+     even with the phone sitting idle. Three passes still reads as a shimmer
+     that catches the light when the value appears; after that the gradient
+     simply sits, which is what it looks like mid-cycle anyway. */
+  animation: homeLabelShader 4.8s linear 3;
 }
 
 @keyframes homeLabelShader { to { background-position: -260% 0; } }
