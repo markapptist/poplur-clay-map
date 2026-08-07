@@ -18,7 +18,7 @@ import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 // after). RadioStationCue survives as a local type: the native tourStop
 // payload still carries station cues for the iOS AI stack (PoplurAIStack reads
 // stationName), which is data, not web playback.
-import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
+import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus } from './voiceAudio'
 import { smartCardFor, type SmartCard } from './tourSmarts'
 import { startEngagementChips } from './engagement'
 import PopupHost, { showPopup, clearPopups } from './popups'
@@ -677,6 +677,12 @@ export default function App() {
   // to start false and was only flipped by a dev-only "sound on" button — with
   // that button gone, unmuting had nothing to switch back on.
   const soundRequestedRef = useRef(true)
+  // Lines the host WANTED to say while the map was still behind another tab.
+  // The greeting fires on a timer 900ms after the intro, but on device the
+  // map warms up hidden behind Feed — applySoundState was false, the line was
+  // dropped forever, and the map simply never spoke. Park it; the gcAudio
+  // 'on' handler below says it the moment you actually arrive on the map.
+  const pendingSpeechRef = useRef<string[]>([])
   // The audio-focus effect below needs the auto-tour idle controls, which are
   // defined further down the body. Hand them over through a ref rather than
   // reordering a long component around a two-line dependency.
@@ -876,6 +882,13 @@ export default function App() {
       // messages are posted with '*' and can land in any listening document, so
       // a harness view must not be able to talk itself into being the map.
       mapAudioFrontRef.current = mapSurfaceRef.current && event.data.gcAudio === 'on'
+      // Anything the host queued while the map was hidden is said NOW, as one
+      // utterance — arriving on the map is the moment the words are about.
+      if (mapAudioFrontRef.current && pendingSpeechRef.current.length && applySoundState(true)) {
+        const line = pendingSpeechRef.current.join(' ')
+        pendingSpeechRef.current = []
+        speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
+      }
       // Arriving on the map starts the idle wait from zero; leaving stops it.
       if (mapAudioFrontRef.current) tourIdleRef.current.schedule()
       else tourIdleRef.current.cancel()
@@ -1385,22 +1398,61 @@ export default function App() {
     tourArmedRef.current = true
     scheduleTourIdle()
 
-    // The HOST still greets you on arrival. Narration used to live only inside
-    // tourStep, so gating the camera also silenced the AI radio entirely —
-    // the map came up mute. This is the voice without the camera move: it
-    // names where you actually are, and the flying tour still waits for an
-    // idle map. applySoundState is the same gate the tour uses, so a muted or
-    // backgrounded map stays silent.
+    // The landing is YOUR CURRENT LOCATION before it is a neighbourhood. The
+    // title said "Downtown" the instant the reverse geocode landed, which
+    // reads as the map deciding where you are before telling you it found
+    // you. Show the plain fact first; the geocode's name replaces it when it
+    // arrives (updatePlace on the same landing's moveend).
+    setCurrentPlace('Current location')
+
+    // The HOST still greets you on arrival — current location first, then the
+    // named place once the geocode has resolved it. If the map is warming
+    // BEHIND another tab (the normal case on device), the words are parked in
+    // pendingSpeechRef and said when you actually arrive on the map; dropping
+    // them on the floor here is why the map never spoke on the phone.
     window.setTimeout(() => {
       if (tourStartedRef.current) return
-      const nearest = pendingTourDestRef.current
       const here = currentPlaceRef.current
-      const line = nearest
-        ? `You're in ${here}. Poplur AI radio is live — the nearest stop is ${nearest.name}.`
-        : `You're in ${here}. Poplur AI radio is live around you.`
+      const greeting = here && here !== 'Current location'
+        ? `You're at your current location — ${here}.`
+        : `You're at your current location.`
       if (applySoundState(true)) {
-        speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
+        speakWithVoiceAudioFocus(greeting, { rate: 0.95, pitch: 0.98 })
+      } else {
+        pendingSpeechRef.current.push(greeting)
       }
+
+      // What is HAPPENING around you, before any tour: the claims growing
+      // fastest and where people are posting. The tour stays idle-gated
+      // (TOUR_IDLE_MS, or the hold-menu tile) — this is a tip, not a takeover
+      // of the camera.
+      const growing = [...POIS].sort((a, b) => b.radiusKm - a.radiusKm)[0]
+      const posting = [...POIS].sort((a, b) => b.likes - a.likes)
+        .find(poi => poi.id !== growing?.id)
+      if (!growing || !posting) return
+      const tip = `Nearby, ${growing.name} is growing fast — a ${growing.radiusKm} kilometre radius. `
+        + `People are posting around ${posting.name}. Use the channel buttons to visit them.`
+      const card = {
+        icon: 'tip' as const,
+        title: 'Growing near you',
+        headline: `${growing.name} · ${growing.radiusKm} km and climbing`,
+        rows: [
+          { label: 'GROWING', value: `${growing.name} · ${growing.radiusKm} km` },
+          { label: 'POSTING', value: `${posting.name} · ${posting.likes} recent` },
+        ],
+        line: tip,
+      }
+      const recommend = window.setTimeout(() => {
+        if (tourStartedRef.current) return
+        if (applySoundState(true)) {
+          showPopup({ kind: 'suggestion', card })
+          setSmartCard(card)
+          speakWithVoiceAudioFocus(tip, { rate: 0.95, pitch: 0.98 })
+        } else {
+          pendingSpeechRef.current.push(tip)
+        }
+      }, estimatedVoiceDurationMs(greeting) + 1200)
+      tourTimers.current.push(recommend)
     }, 900)
   }, [applySoundState, scheduleTourIdle])
 

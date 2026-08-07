@@ -632,25 +632,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
         postNativeEvent({ type: 'homeReady' })
       }
-      // Map → camera: the user picked a spot to post to. Switch to the camera
-      // and carry the coordinate + claim radius through to the composer.
-      if (event.data.type === 'poplur-pick-spot') {
-        // The composer parked a captured draft and wants a coordinate: send
-        // the user to the map. Their tap comes back as poplur-post-here below,
-        // which returns them to the camera with the target attached.
-        setActiveTab('map')
-      }
       if (event.data.type === 'poplur-post-here') {
         setPostTarget({
           lat: Number(event.data.lat),
           lng: Number(event.data.lng),
           radiusKm: Number(event.data.radiusKm) || undefined,
+          // Resume the parked draft ONLY if this spot answers a pick-spot
+          // trip. A plain "Post here" must open a fresh camera — resuming
+          // whatever draft happened to be parked showed an old capture.
+          resume: pickingSpotRef.current || undefined,
         })
+        pickingSpotRef.current = false
         setActiveTab('post')
       }
     }
+    // Camera→map hand-off. A CustomEvent on this window, deliberately NOT a
+    // message through onMapMessage: that handler's first line filters to
+    // event.source === the map iframe, which is exactly right for map traffic
+    // and exactly wrong for the composer, which lives in this document.
+    const onPickSpot = () => { pickingSpotRef.current = true; setActiveTab('map') }
+    window.addEventListener('poplur-pick-spot', onPickSpot)
     window.addEventListener('message', onMapMessage)
-    return () => window.removeEventListener('message', onMapMessage)
+    return () => {
+      window.removeEventListener('poplur-pick-spot', onPickSpot)
+      window.removeEventListener('message', onMapMessage)
+    }
   }, [])
 
   // Dismiss the native/embedding loading screen as soon as the HOME has painted.
@@ -714,7 +720,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [mapReady, mapTourTopics])
   // A spot picked on the map to post to ("Post here"), pending until the next
   // capture goes through the composer.
-  const [postTarget, setPostTarget] = useState<{ lat: number; lng: number; radiusKm?: number } | null>(null)
+  const [postTarget, setPostTarget] = useState<{ lat: number; lng: number; radiusKm?: number; resume?: boolean } | null>(null)
+  /** a "pick a spot on the map" trip is in flight (set by the composer's
+   *  button, consumed by the next Post here) */
+  const pickingSpotRef = useRef(false)
 
   // The map iframe stays mounted on every tab, so its audio (radio, ambience,
   // pops) must be gated here: audible only while the MAP tab is front-most AND
@@ -816,6 +825,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // label shows THEIR reach — the number that matters is the one belonging to
   // the person in frame, not your own.
   const [seenUser, setSeenUser] = useState<{ handle: string; radiusKm: number } | null>(null)
+  /** The camera-scanner's session total: object-radius collected by ML finds.
+   *  Rides on TOP of your own radius so the number visibly climbs per find. */
+  const [scanKm, setScanKm] = useState<number | null>(null)
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
   useEffect(() => {
@@ -870,7 +882,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     ? seenUser.radiusKm
     : activeTab === 'map' && mapWorldTotalKm != null
       ? mapWorldTotalKm
-      : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : RADIUS_METERS / 1000)
+      // The scanner: on the camera, each ML find adds the radius that object
+      // holds in other people's posts, so the number climbs as you sweep the
+      // room — the money counter re-tallies on every change, which is the
+      // scanner's readout.
+      : activeTab === 'post' && scanKm != null && scanKm > 0
+        ? RADIUS_METERS / 1000 + scanKm
+        : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : RADIUS_METERS / 1000)
 
   // Off the map the card reports YOUR radius again — a pop's takeover must not
   // linger on the HUD once you have left the map that showed it.
@@ -1016,6 +1034,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             bindActions={actions => { cameraActionsRef.current = actions }}
             onRecordingChange={setRecordMs}
             onDetectUser={setSeenUser}
+            onScanTotal={setScanKm}
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}
             onPosted={post => {

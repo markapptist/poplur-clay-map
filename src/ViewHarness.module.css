@@ -408,7 +408,12 @@
 
 .camDetectionTitle {
   position: absolute;
-  top: max(62px, calc(env(safe-area-inset-top) + 46px));
+  /* The readout takes the WORDMARK'S OWN LINE. It sat 46px below the title's
+     spot, so during the crossfade both were on screen in the same region and
+     the scan text read as printing into the logo. A swap has to be a swap:
+     same line as .camLogo (12px / safe-area in .cameraFull below), and the
+     fading logo leaves before the text lands. */
+  top: 14px;
   left: 50%;
   z-index: 27;
   display: inline-flex;
@@ -1081,6 +1086,10 @@
 .cameraFull .camLogo {
   top: max(18px, env(safe-area-inset-top));
   z-index: 8;
+}
+
+.cameraFull .camDetectionTitle {
+  top: max(20px, calc(env(safe-area-inset-top) + 2px));
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -4,10 +4,12 @@ import ClayCornerButton from './ClayCornerButton'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
+import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
 import { addCapture, isDetectOn, setDetectOn, onCameraStore, takePendingMapPost, type PendingMapPost } from './cameraStore'
 import { startBroadcast, stopBroadcast, isLive, onLiveStore } from './liveStore'
 import DetectionOverlay from './DetectionOverlay'
 import { FrameDetector, type Detection } from './mlDetect'
+import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
 import ARFilters, { AR_FILTERS } from './ARFilters'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
 import PermissionAlert from './PermissionAlert'
@@ -96,6 +98,7 @@ export default function Camera({
   onRecordingChange,
   onZoomChange,
   onDetectUser,
+  onScanTotal,
   postTarget,
   onPosted,
   onPostTargetUsed,
@@ -113,6 +116,9 @@ export default function Camera({
   onZoomChange?: (zoom: number) => void
   /** the detected user, whose OWN reach the radius label adopts */
   onDetectUser?: (user: { handle: string; radiusKm: number } | null) => void
+  /** The scanner: the session's accumulated object-radius, climbing with each
+   *  new ML find. null when not scanning. */
+  onScanTotal?: (totalKm: number | null) => void
   /** a map spot picked with "Post here" — the next capture posts to it */
   postTarget?: ComposerTarget | null
   /** fired when a post actually publishes — the shell closes the map loop */
@@ -193,8 +199,11 @@ export default function Camera({
   // channel step instead of demanding a fresh capture.
   useEffect(() => {
     if (!postTarget) return
+    // Drain the parked draft on EVERY target: a stale draft from an abandoned
+    // pick-spot trip must never resurface. Only a target tagged `resume`
+    // actually uses it — a plain map "Post here" gets a fresh camera.
     const pending = takePendingMapPost()
-    if (!pending) return
+    if (!postTarget.resume || !pending) return
     setComposerDraft(pending)
     setComposing(pending.media)
   }, [postTarget])
@@ -346,6 +355,42 @@ export default function Camera({
   // is explicitly a simulation (see mlDetect.ts) and must never be what draws
   // boxes over a live lens; it also cannot run here, because the iOS camera is
   // native behind a transparent WebView so this page's <video> has no frames.
+  // ── The AI's voice on the lens ───────────────────────────────────────────
+  // Speaks what the model is seeing — in the LIVE camera only. Detections
+  // arrive ~8×/s; the voice announces when the SET of things changes (a person
+  // walks in, a barcode appears), never per frame, and not more than once
+  // every few seconds. Leaving the live page or switching detection off cuts
+  // the sentence mid-word: the voice belongs to the lens, not the app.
+  const lastSpokenLabelsRef = useRef('')
+  const lastSpokenAtRef = useRef(0)
+  useEffect(() => {
+    if (!detectOn || page !== 'live') {
+      lastSpokenLabelsRef.current = ''
+      return
+    }
+    if (detections.length === 0) return
+    const labels = [...new Set(detections.map(item => item.user?.handle ?? item.label))].sort()
+    const key = labels.join('|')
+    const now = performance.now()
+    if (key === lastSpokenLabelsRef.current || now - lastSpokenAtRef.current < 3500) return
+    lastSpokenLabelsRef.current = key
+    lastSpokenAtRef.current = now
+    const known = detections.find(item => item.user)
+    const spoken = labels.map(label => label.startsWith('@') ? label.slice(1) : `a ${label.toLowerCase()}`)
+    const list = spoken.length === 1
+      ? spoken[0]
+      : `${spoken.slice(0, -1).join(', ')} and ${spoken[spoken.length - 1]}`
+    speakWithVoiceAudioFocus(
+      known ? `That's ${known.user!.handle.replace('@', '')}. I can see ${list}.` : `I can see ${list}.`,
+      { rate: 1.0, pitch: 1.05 },
+    )
+  }, [detections, detectOn, page])
+  // Cut the voice the moment the live lens is no longer the page.
+  useEffect(() => {
+    if (detectOn && page === 'live') return
+    cancelVoiceSpeech()
+  }, [detectOn, page])
+
   useEffect(() => {
     if (!isNativeShell()) return
     const receive = (event: Event) => {
@@ -353,11 +398,19 @@ export default function Camera({
       if (!Array.isArray(detail)) return
       if (!detectOn || page !== 'live') { setDetections([]); return }
       setDetections(detail)
+      // The scanner: each DISTINCT object cashes in the radius it holds in
+      // other people's posts. A new find pops, exactly like a claim landing.
+      if (recordScanDetections(detail.map(d => d.label)).length) {
+        playPop(0.35)
+        onScanTotal?.(scanTotalKm())
+      }
     }
     window.addEventListener('poplur-native-detections', receive)
     return () => {
       window.removeEventListener('poplur-native-detections', receive)
       setDetections([])
+      resetScan()
+      onScanTotal?.(null)
     }
   }, [detectOn, page])
 
@@ -373,10 +426,16 @@ export default function Camera({
       const found = detectorRef.current!.detect(video, { facing })
       setDetections(found)
       onDetectUser?.(found.find(d => d.user)?.user ?? null)
+      if (recordScanDetections(found.map(d => d.label)).length) {
+        playPop(0.35)
+        onScanTotal?.(scanTotalKm())
+      }
     }, 120)
     return () => {
       window.clearInterval(timer)
       onDetectUser?.(null)
+      resetScan()
+      onScanTotal?.(null)
     }
   }, [detectOn, page, facing, streamOn, onDetectUser])
 

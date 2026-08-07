@@ -198,12 +198,26 @@ function postsFor(channel: Channel): ChannelPost[] {
   const users = CHANNEL_USERS[channel.id] ?? [channel.user]
   const own = channel.videos ?? []
   // Each user posts something different: the channel's own clips first, then
-  // stock ones — repeating a single clip across users made stepping look broken.
+  // REAL AD CREATIVES from the bundled pool — not stock footage. Six channels
+  // (beauty, modelling, fashion, tech, news, live-adjacent) shipped no clips
+  // of their own and fell back to stock, which read as "no real ads in the
+  // feed": an advertiser's creative intercepts your radius on ANY channel, so
+  // the pool rotates through every supplied ad, offset per channel so
+  // neighbouring channels do not mirror each other.
   return users.map((user, i) => {
-    const video = own[i] ?? STOCK_CLIPS[(channel.number + i * 5) % STOCK_CLIPS.length]
+    const video = own[i] ?? AD_POOL[(channel.number * 3 + i) % AD_POOL.length]
     return { user, video, reachKm: reachKmFor(`${channel.id}:${user}:${video}`) }
   })
 }
+
+// Every bundled ad creative — the pool channels without their own clips draw
+// from. All supplied assets; nothing synthesized.
+const AD_POOL = [
+  'feed/ad-food.mp4', 'feed/ad-sports.mp4', 'feed/ad-music.mp4',
+  'feed/ad-shopping.mp4', 'feed/ad-french.mp4', 'feed/ad-spanish-1.mp4',
+  'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4', 'feed/ad-cartoon.mp4',
+  'feed/ad-comedy.mp4', 'feed/ad-kids.mp4',
+]
 
 // Captions come from the clip's own audio (transcribed with whisper.cpp), so
 // they are keyed by VIDEO — each user's post has its own track.

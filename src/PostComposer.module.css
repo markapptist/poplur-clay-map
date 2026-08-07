@@ -131,11 +131,16 @@
 }
 
 /* ── edit step: fullscreen capture chrome ─────────────────────────────────── */
-/* Forward is the only button on the capture preview — back is the cube. */
+/* Forward is the only button on the capture preview — back is the cube.
+   It sits bottom-right, directly ABOVE the RADIUS/presence block: after a
+   capture, the thumb is already at the bottom of the screen (that is where the
+   cube that took the shot lives), and the top-right corner was the one place
+   on the screen furthest from it. The clearance formula is the same one the
+   step panel uses to stay off the home chrome. */
 .nextFab {
   position: absolute;
   z-index: 2;
-  top: max(14px, env(safe-area-inset-top));
+  bottom: calc(18px + var(--cube-size, 176px) + 12px + env(safe-area-inset-bottom));
   right: 14px;
   padding: 12px 18px;
   border: 0;

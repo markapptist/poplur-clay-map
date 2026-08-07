@@ -1,3 +1,4 @@
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { isGateMuted, onGateChange } from './audioGate'
 import {
   currentAudioOwner,
@@ -70,6 +71,9 @@ function finish(token: number) {
 
 /** Stop this document's AI speech when another surface/frame takes focus. */
 export function cancelVoiceSpeech() {
+  // The native voice must stop with the web one — leaving the page that asked
+  // for a line must not leave the phone finishing the sentence.
+  if (typeof window !== 'undefined' && isNativeShell()) postNativeEvent({ type: 'cancelSpeak' })
   sequence += 1
   clearTimers()
   activeDone = null
@@ -104,13 +108,25 @@ function startFocusHeartbeat(token: number) {
  * already held during that tiny gap, so no previous screen can leak through.
  */
 export function speakWithVoiceAudioFocus(text: string, options: VoiceSpeechOptions = {}): boolean {
-  if (
-    typeof window === 'undefined'
-    || typeof SpeechSynthesisUtterance === 'undefined'
-    || !window.speechSynthesis
-    || isGateMuted()
-    || !text.trim()
-  ) return false
+  if (typeof window === 'undefined' || isGateMuted() || !text.trim()) return false
+
+  // In the app shell the words are spoken by NATIVE TTS. WKWebView's own
+  // speechSynthesis silently drops lines on device (no error, no sound) —
+  // which is exactly the "I don't hear AI voice in the map" report: the same
+  // code spoke fine in Chrome and said nothing on the phone. The lease below
+  // still takes the shared 'voice' focus so feed/map duck under the line.
+  if (isNativeShell() && postNativeEvent({
+    type: 'speak',
+    text,
+    rate: options.rate ?? 0.98,
+    pitch: options.pitch ?? 1.03,
+  })) {
+    holdVoiceAudioFocus(text)
+    if (options.onDone) window.setTimeout(options.onDone, estimatedVoiceDurationMs(text))
+    return true
+  }
+
+  if (typeof SpeechSynthesisUtterance === 'undefined' || !window.speechSynthesis) return false
 
   ensureRegistered()
   const synth = window.speechSynthesis

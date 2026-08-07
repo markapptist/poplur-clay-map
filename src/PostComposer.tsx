@@ -34,6 +34,10 @@ export interface ComposerTarget {
   lng: number
   /** the claim radius chosen on the map, carried through to the post */
   radiusKm?: number
+  /** true only when this spot answers a "pick a spot on the map" trip — the
+   *  signal that a parked draft should resume. A plain map "Post here" leaves
+   *  it unset and gets a FRESH camera. */
+  resume?: boolean
 }
 
 export interface PublishedPost {
@@ -435,7 +439,11 @@ export default function PostComposer({
               onClick={() => {
                 playPop()
                 setPendingMapPost({ media, caption, channelId, filterId, usedAI })
-                window.postMessage({ type: 'poplur-pick-spot' }, '*')
+                // CustomEvent, NOT postMessage: HomeTwin's message handler
+                // opens with `event.source !== mapIframe → return`, so a
+                // same-document postMessage is silently dropped. Same-document
+                // signals here travel as CustomEvents (see poplur-engagement).
+                window.dispatchEvent(new CustomEvent('poplur-pick-spot'))
                 onClose()
               }}
             >
