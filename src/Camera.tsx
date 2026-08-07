@@ -194,6 +194,11 @@ export default function Camera({
     onComposingChange?.(Boolean(composing))
   }, [composing, onComposingChange])
 
+  // Turning the torch off is needed by listeners mounted above the real
+  // setFlashEnabled, so it is reached through this ref (assigned once the
+  // callback exists further down).
+  const flashOffRef = useRef<() => void>(() => {})
+
   // Native shells capture through the device camera and hand the finished
   // media back to this exact composer. Keeping the editor in the web layer
   // gives RN and iOS the same filters/channel flow as browser capture.
@@ -205,6 +210,14 @@ export default function Camera({
       setRecStart(null)
       const capture = addCapture(media)
       setComposing({ kind: capture.kind, src: capture.src, length: capture.length })
+      // Put the torch out once the device hands the media back. This is THE
+      // path on a native shell: capturePhoto returns early at the
+      // `cameraShutter` post (there is no <video> to read), so the web-side
+      // flash reset never ran and the light stayed on through the composer.
+      // Done on arrival rather than at the shutter post, so the light is still
+      // there for the shot itself. Reached through a ref because this listener
+      // is mounted above setFlashEnabled's declaration.
+      flashOffRef.current()
     }
     window.addEventListener('poplur-native-capture', onNativeCapture)
     return () => window.removeEventListener('poplur-native-capture', onNativeCapture)
@@ -384,6 +397,7 @@ export default function Camera({
     if (!on) applyTorch(false)
     postNativeEvent({ type: 'cameraControl', control: 'flash', on })
   }, [applyTorch])
+  flashOffRef.current = () => setFlashEnabled(false)
 
   const applyZoomValue = useCallback((value: number, direction?: 1 | -1) => {
     const range = zoomRangeRef.current
@@ -561,7 +575,12 @@ export default function Camera({
     // A capture that only lands in the roll looks like nothing happened. Open
     // the composer on it, the way the native flow does.
     setComposing({ kind: 'photo', src: shot.src })
-  }, [facing, flash, filterCss])
+    // The shot is taken — put the light out. "Flash on" drives a continuous
+    // TORCH on the rear camera, and nothing was turning it off, so it burned
+    // on through the composer while you reviewed the photo (and kept burning
+    // on the device, since the native side had last been told `on: true`).
+    setFlashEnabled(false)
+  }, [facing, flash, filterCss, setFlashEnabled])
 
   // ── record ───────────────────────────────────────────────────────────────
   const stopVideo = useCallback(() => {
@@ -589,12 +608,15 @@ export default function Camera({
       playPop()
       // Same as a photo: the recording goes straight into the composer.
       setComposing({ kind: 'video', src: clip.src })
+      // …and the same for the light: recording is over, so the torch goes out
+      // instead of running on into the composer.
+      setFlashEnabled(false)
     }
     recorderRef.current = rec
     rec.start(250)
     setRecStart(started)
     playPop()
-  }, [])
+  }, [setFlashEnabled])
 
   const toggleVideo = useCallback(() => {
     if (NATIVE_SHELL && !streamRef.current) {

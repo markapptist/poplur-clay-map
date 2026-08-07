@@ -64,7 +64,21 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+  /* Clear the home chrome. The cube and the bottom row sit at `bottom: 18px`
+     with a height of --cube-size, ABOVE subscreens at z-index 260 so the cube
+     stays reachable as the universal back control. Without this reserve the
+     channel grid and the Post button rendered underneath them — picking a
+     channel meant aiming at buttons hidden behind the cube.
+     --cube-size is set on the home shell; 176px matches its default for the
+     standalone/browser case where the variable is absent. */
+  padding:
+    12px 14px
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+  /* A tall step (channel: caption + radius + 15 channels + Post) must scroll
+     inside the space that is left rather than grow under the chrome. */
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* The choice step is a QUESTION, not a bottom sheet.
    Pinned to the base it landed directly under the home chrome — the clay cube
