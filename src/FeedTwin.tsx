@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
+import { feedSuggestionFor, type SmartCard } from './tourSmarts'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
 // hands back on its own; background radio is a standing choice the user made
@@ -276,6 +277,23 @@ export default function FeedTwin({
   const recoveringAdSrcRef = useRef<string | null>(null)
   const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   const ch = CHANNELS[index]
+
+  // The AI's quiet offer for the post you are watching — the feed twin of the
+  // tour's smart card. Appears after you have SETTLED on a channel (3.5s: a
+  // zap-through must never flash cards), holds ~9s, and leaves. Never speaks:
+  // the post's own soundtrack owns the floor here. Dismissed by tap, and
+  // suppressed with everything else when News / TV Guide / the hold menu is
+  // over the feed.
+  const [suggestion, setSuggestion] = useState<SmartCard | null>(null)
+  useEffect(() => {
+    setSuggestion(null)
+    if (suppressed) return
+    const show = window.setTimeout(() => {
+      setSuggestion(feedSuggestionFor(CHANNELS[index]))
+    }, 3_500)
+    const hide = window.setTimeout(() => setSuggestion(null), 12_500)
+    return () => { window.clearTimeout(show); window.clearTimeout(hide) }
+  }, [index, suppressed])
 
 
   const change = useCallback((dir: 1 | -1) => {
@@ -935,6 +953,37 @@ export default function FeedTwin({
                 <span>CH {ch.number}</span>
                 <span>{ch.name.toUpperCase()}</span>
               </div>
+              {suggestion && (
+                <button
+                  type="button"
+                  className={styles.suggestCard}
+                  onClick={() => setSuggestion(null)}
+                  aria-label="Dismiss suggestion"
+                >
+                  <span className={styles.suggestKicker}>POPLUR AI · {suggestion.title}</span>
+                  <span className={styles.suggestHeadline}>{suggestion.headline}</span>
+                  {suggestion.rows && suggestion.rows.length > 0 && (
+                    <span className={styles.suggestRows}>
+                      {suggestion.rows.slice(0, 2).map(row => (
+                        <span key={row.label + row.value}>{row.label} <b>{row.value}</b></span>
+                      ))}
+                    </span>
+                  )}
+                  {suggestion.link && (
+                    <span
+                      className={styles.suggestLink}
+                      role="link"
+                      onClick={e => {
+                        e.stopPropagation()
+                        postNativeEvent({ type: 'openExternal', url: suggestion.link!.url })
+                        try { window.open(suggestion.link!.url, '_blank', 'noopener') } catch { /* shell routes it */ }
+                      }}
+                    >
+                      {suggestion.link.label}
+                    </span>
+                  )}
+                </button>
+              )}
             </div>
           )}
         </div>

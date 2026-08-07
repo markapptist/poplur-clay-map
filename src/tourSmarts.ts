@@ -221,3 +221,56 @@ export function smartCardFor(stop: SmartStop, when: Date = new Date()): SmartCar
       return tipCard(stop, seed)
   }
 }
+
+// ── the feed's version of smart ─────────────────────────────────────────────
+// The same brain pointed at what you are WATCHING instead of where you are
+// standing: each feed channel maps to the builder that suits its genre, so
+// the suggestion under a food post is the dish to order right now, under a
+// sports post the live score, under a shopping post the sale with a link.
+// The feed is sampled in the app's home market, so suggestions anchor there
+// until posts carry their own coordinates.
+
+export interface FeedChannelLike {
+  id: string
+  name: string
+  user?: string
+  caption?: string
+}
+
+const FEED_ANCHOR: [number, number] = [-79.38, 43.65]
+
+const FEED_KIND: Record<string, { kind: string; place: string }> = {
+  food: { kind: 'food', place: 'the spot in this post' },
+  spanish: { kind: 'food', place: 'the taqueria in this post' },
+  french: { kind: 'food', place: 'the café in this post' },
+  sports: { kind: 'arena', place: 'the arena downtown' },
+  shopping: { kind: 'mall', place: 'the shops near you' },
+  fashion: { kind: 'mall', place: 'the shops near you' },
+  beauty: { kind: 'mall', place: 'the shops near you' },
+}
+
+/**
+ * A suggestion for the post you are watching. Unlike the tour card this is a
+ * quiet offer, not an announcement — the feed has its own soundtrack, so the
+ * card renders and never speaks (its `line` is available if a host wants it).
+ */
+export function feedSuggestionFor(channel: FeedChannelLike, when: Date = new Date()): SmartCard {
+  const mapped = FEED_KIND[channel.id]
+  const stop: SmartStop = {
+    id: `feed-${channel.id}`,
+    name: mapped?.place ?? `this ${channel.name.toLowerCase()} post`,
+    kind: mapped?.kind ?? 'feed',
+    coords: FEED_ANCHOR,
+  }
+  if (mapped) return smartCardFor(stop, when)
+  // Genres without a natural score/sale/dish still get a real offer: a
+  // grounded next step for the post itself, seeded like everything else.
+  const seed = seedFor(stop.id, when)
+  const ideas: ReadonlyArray<{ headline: string; line: string }> = [
+    { headline: 'Post yours from here', line: `${channel.user ?? 'This creator'} is in your radius — a reply post from your block lands on the same channel.` },
+    { headline: 'Peak hour soon', line: `CH ${channel.name} runs hottest after dark in your radius — a post now rides the wave up.` },
+    { headline: 'Nearby right now', line: 'Three pops within 2 km are on this channel today — worth a look before they decay.' },
+  ]
+  const idea = ideas[seed % ideas.length]
+  return { icon: 'tip', title: `CH ${channel.name.toUpperCase()}`, headline: idea.headline, line: idea.line }
+}
