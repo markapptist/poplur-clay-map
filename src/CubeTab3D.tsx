@@ -78,6 +78,14 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string) {
   } else {
     const largest = Math.max(dims.x, dims.y, dims.z) || 1
     model.scale.setScalar(2 / largest)
+    // Face the viewer on arrival. The group carries the yaw of whichever cube
+    // face the current tab fronts, and TV Guide opens from Feed — the -X face,
+    // so the group is parked at +90°. A cube does not care which way it is
+    // turned; the clay TV does, and it arrived showing you its side panel.
+    // Counter-rotating the MODEL (not the group) squares it to the camera
+    // without touching the face mapping, and it still turns with the group from
+    // there — the TV is the navigator, so it has to keep spinning.
+    model.rotation.y = -group.rotation.y
   }
   model.updateMatrixWorld(true)
   const centred = new THREE.Box3().setFromObject(model).getCenter(new THREE.Vector3())

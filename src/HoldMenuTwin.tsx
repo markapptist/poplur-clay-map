@@ -193,6 +193,7 @@ export default function HoldMenuTwin({
   onTuneFeedChannel,
   onSubscreenChange,
   bindGoBack,
+  bindArrows,
 }: {
   tab: CubeTab
   onClose: () => void
@@ -213,6 +214,9 @@ export default function HoldMenuTwin({
   /** Registers a "back one level" handler: closes an open subscreen, else the
       menu itself. The cube calls it so there is always a way out. */
   bindGoBack?: (fn: (() => boolean) | null) => void
+  /** Registers the channel arrows while a subscreen is up, so up/down walks
+      the tab's subscreens instead of the screen buried underneath them. */
+  bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
 }) {
   // The item set is fixed to the tab the menu was opened from. The three
   // mutable controls retain their current state while the wheel is open.
@@ -260,6 +264,43 @@ export default function HoldMenuTwin({
     return () => bindGoBack?.(null)
   }, [activeScreen, bindGoBack, onClose])
 
+  // The channel arrows belong to whatever is IN FRONT. With TV Guide or Mail
+  // covering the app they were still driving the feed or flying the map
+  // underneath — you were tuning a screen you could not see. While a subscreen
+  // is up they step sideways through the tab's other subscreens instead.
+  //
+  // Only tiles that actually OPEN something are in the walk. Roughly half the
+  // menu acts on the live screen behind it (LIKE, PHOTO, the map tools) or
+  // fires an event (NOTIFICATIONS, HEY POPLUR); stepping onto one of those
+  // would fire it rather than move you, so the arrows skip them.
+  useEffect(() => {
+    if (!bindArrows) return
+    // Read through a ref: `items` is rebuilt every render (the toggle tiles
+    // re-label themselves), so listing it as a dependency would unbind and
+    // rebind the arrows on every frame of the wheel.
+    const live = itemsRef.current
+    const stops = live.filter(it => !it.action && !it.mapAction && !it.event)
+    if (!activeScreen || stops.length < 2) { bindArrows(null); return () => bindArrows(null) }
+    bindArrows((dir: 1 | -1) => {
+      const here = stops.findIndex(it => it.screen === activeScreen.screen && it.title === activeScreen.title)
+      const next = stops[((here + dir) % stops.length + stops.length) % stops.length]
+      if (!next) return false
+      playPop()
+      setActiveScreen(next)
+      // Keep the wheel behind in step, so backing out of the subscreen leaves
+      // you standing on the tile you actually arrived at.
+      const wheelIdx = live.findIndex(it => it === next)
+      if (wheelIdx >= 0) {
+        offsetRef.current = wheelIdx
+        lastNotchRef.current = wheelIdx
+        setOffset(wheelIdx)
+        setSelected(wheelIdx)
+      }
+      return true
+    })
+    return () => bindArrows(null)
+  }, [activeScreen, bindArrows])
+
   // Whether the embedded Rough Copy capture can actually be fetched. Inside the
   // app shell it usually CANNOT: the web home is served from poplur-clay://app
   // out of the bundled dist, which has no `.claude/artifacts/` in it, so the
@@ -302,6 +343,8 @@ export default function HoldMenuTwin({
   const snapIndexRef = useRef<number | null>(null) // tap-to-spin target item
   const countRef = useRef(items.length)
   countRef.current = items.length
+  const itemsRef = useRef(items)
+  itemsRef.current = items
 
   // Held tile → this tab's favourite (what a plain cube tap fires).
   const [favourite, setFavourite] = useState<string | null>(() => readFavourite(tab))

@@ -403,6 +403,48 @@ function circlePolygon(center: mapboxgl.LngLat, radiusMeters: number, steps = 28
   }
 }
 
+/**
+ * The ground a pop holds. A radius is a number, but a TERRITORY is not a disc —
+ * "it still looks like a circle" was the whole complaint, and painting a
+ * perfect compass circle over a city says "here is a measurement", not "here is
+ * land somebody took".
+ *
+ * So the reach is modulated by a few beating sines: the claim bulges down some
+ * bearings and falls short on others, the way real ground gets taken. The area
+ * still averages the stated radius, so the RADIUS card keeps telling the truth.
+ *
+ * Seeded off the centre coordinates, so a pop's territory is the SAME shape
+ * every time you fly back to it. A random one would re-draw its own borders on
+ * every visit, which is worse than a circle.
+ */
+function territoryPolygon(center: mapboxgl.LngLat, radiusMeters: number, steps = 128) {
+  const coordinates: [number, number][] = []
+  const latRadius = radiusMeters / 110_540
+  const lngRadius = radiusMeters / (111_320 * Math.max(0.2, Math.cos(center.lat * Math.PI / 180)))
+  // Deterministic phases from the centre. Irrational multipliers keep the three
+  // waves from lining up into something that reads as a regular polygon.
+  const seed = Math.abs(center.lng * 1000) + Math.abs(center.lat * 1000)
+  const p1 = seed % (Math.PI * 2)
+  const p2 = (seed * 1.618) % (Math.PI * 2)
+  const p3 = (seed * 2.414) % (Math.PI * 2)
+  for (let i = 0; i <= steps; i += 1) {
+    const angle = (i / steps) * Math.PI * 2
+    const wobble =
+      1
+      + 0.20 * Math.sin(angle * 3 + p1)
+      + 0.12 * Math.sin(angle * 5 + p2)
+      + 0.07 * Math.sin(angle * 8 + p3)
+    coordinates.push([
+      center.lng + Math.cos(angle) * lngRadius * wobble,
+      center.lat + Math.sin(angle) * latRadius * wobble,
+    ])
+  }
+  // Close on the exact first point. A seam of a few metres is invisible in the
+  // fill but shows as a nick in the dashed edge drawn from the same ring.
+  coordinates[coordinates.length - 1] = coordinates[0]
+  return { type: 'Polygon' as const, coordinates: [coordinates] }
+}
+
 const COMPOSE_RADIUS_SOURCE = 'poplur-compose-radius'
 const COMPOSE_RADIUS_FILL = 'poplur-compose-radius-fill'
 const COMPOSE_RADIUS_TEXTURE = 'poplur-compose-radius-texture'
@@ -413,26 +455,31 @@ const COMPOSE_RADIUS_LABEL = 'poplur-compose-radius-label'
 /**
  * Where the takeover paint belongs in the layer stack.
  *
- * It must sit ABOVE the land polygons (or it is buried and you see only the
- * dashed edge — which is exactly what happened when this was pinned to a hard
- * coded `clay-water-fill` that sits low in the order) and BELOW the water fill,
- * so the lake paints back over the claim and the territory stops at the
- * shoreline. Poplur is land acquisition; you cannot own water.
+ * Measured, not guessed: the clay world is NOT the Mapbox base style. The base
+ * ends around layer 50 and the clay is painted over the top of it —
+ * clay-water-fill, clay-grass-fill, the coast rims, the roads, the buildings.
+ * So "above the land, below the water" has to mean the CLAY water, layer 55;
+ * anything inserted near the Mapbox water at layer 7 is buried under the entire
+ * clay world and only the dashed edge survives, which is exactly the "I still
+ * only see a circle outline" report.
  *
- * Resolved from the LIVE style rather than a guessed id, because the clay style
- * renames layers and a missing id silently means "add on top of everything".
+ * Sitting directly beneath clay-water-fill is what makes the claim land-shaped:
+ * the clay land colour is a BACKGROUND layer, so the paint covers the ground
+ * everywhere it reaches and the clay water then paints back over it. The
+ * territory stops at the shoreline for free. You cannot own water.
  */
 function takeoverInsertBefore(map: mapboxgl.Map): string | undefined {
   let layers: Array<{ id: string; type: string }> = []
   try { layers = map.getStyle().layers as Array<{ id: string; type: string }> } catch { return undefined }
-  // Prefer the water FILL: everything before it is ground, everything after is
-  // water and the chrome above it.
-  const water = layers.find(l => l.type === 'fill' && /water|ocean|lake|sea/i.test(l.id))
-  if (water) return water.id
-  // No water fill in this style — fall back to the first line layer, i.e. just
-  // under the roads. Visible over the terrain, still beneath the clay streets.
-  const firstLine = layers.find(l => l.type === 'line')
-  return firstLine?.id
+  // The clay water by name, then the LAST water fill in the stack (never the
+  // first — that is the base style's, far below the clay).
+  if (layers.some(l => l.id === 'clay-water-fill')) return 'clay-water-fill'
+  const waters = layers.filter(l => l.type === 'fill' && /water|ocean|lake|sea/i.test(l.id))
+  if (waters.length) return waters[waters.length - 1].id
+  // No water fill at all — fall back to just under the topmost road casing so
+  // the paint is at least on the ground rather than over the labels.
+  const lines = layers.filter(l => l.type === 'line')
+  return lines[lines.length - 1]?.id
 }
 
 export function installComposeRadiusPreview(map: mapboxgl.Map) {
@@ -542,7 +589,7 @@ export function updateComposeRadiusPreview(
   }
 
   const radiusMeters = radiusKm * 1000
-  const polygon = circlePolygon(center, radiusMeters, 72)
+  const polygon = territoryPolygon(center, radiusMeters)
   const latRadius = radiusMeters / 110_540
   const lngRadius = radiusMeters / (111_320 * Math.max(0.2, Math.cos(center.lat * Math.PI / 180)))
   const diameterKm = radiusKm * 2
@@ -1140,6 +1187,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // with the rest of the ambient layer when the thermal ladder steps down.
       stopOrbitFrames = onFrame(frame, 'ambient')
     }
+    // The pop-to-pop trip (App.flyToPop) parks the moveend→orbit handoff for
+    // its whole span via __tripping, so the trip's final moveend cannot
+    // restart the orbit through the handler below — the trip does it itself
+    // through this handle when it lands.
+    ;(map as unknown as { __startOrbit?: () => void }).__startOrbit = startOrbit
     const interactionEvents = ['dragstart', 'zoomstart', 'rotatestart', 'pitchstart'] as const
     interactionEvents.forEach(ev =>
       map.on(ev, e => { if ((e as { originalEvent?: Event }).originalEvent) stopOrbit() }))
@@ -1214,12 +1266,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     ;(map as unknown as { __setStreetView?: (enabled: boolean) => void }).__setStreetView = setStreetViewMode
 
     map.on('moveend', () => {
-      const flagged = map as unknown as { __cinematic?: boolean }
+      const flagged = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
       updateLabelCull()
       if ((map as unknown as { __streetView?: boolean }).__streetView) {
         flagged.__cinematic = false
         return
       }
+      // A pop-to-pop trip is SEVERAL camera animations, and Mapbox fires a
+      // synchronous moveend every time one interrupts the previous (the climb
+      // being taken over by the crossing). Treating any of those as "flight
+      // over" restarted the idle orbit mid-trip, whose globe shot then stomped
+      // the crossing — the camera snapped to a spinning globe and the arrows
+      // read as "it just flips to each post". The trip holds __tripping for
+      // its WHOLE span and clears it on its own final moveend; until then this
+      // handler keeps its hands off the orbit.
+      if (flagged.__tripping) return
       if (flagged.__cinematic) {
         flagged.__cinematic = false
         startOrbit()
