@@ -156,9 +156,15 @@ export function claimsFeatureCollection(): GeoJSON.FeatureCollection {
 }
 
 type ClaimsListener = () => void
-let claimsListener: ClaimsListener | null = null
-/** Fires when a claim SETTLES (not per animation frame). */
-export function onClaimsSettled(cb: ClaimsListener) { claimsListener = cb }
+const claimsListeners = new Set<ClaimsListener>()
+/** Fires when a claim SETTLES (not per animation frame). Multi-listener: the
+ *  map repaints territory off this AND the shell re-reports the accumulated
+ *  world total — a single slot meant whoever subscribed second silently won.
+ *  Returns an unsubscribe. */
+export function onClaimsSettled(cb: ClaimsListener): () => void {
+  claimsListeners.add(cb)
+  return () => { claimsListeners.delete(cb) }
+}
 
 function pushClaims(map: mapboxgl.Map) {
   const src = map.getSource(CLAIMS_SOURCE) as mapboxgl.GeoJSONSource | undefined
@@ -196,7 +202,7 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
   if (!animate) {
     claims.set(claim.id, claim)
     pushClaims(map)
-    claimsListener?.()
+    claimsListeners.forEach(fn => fn())
     return
   }
   const started = performance.now()
@@ -209,7 +215,7 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
     claims.set(claim.id, { ...claim, radiusKm: Math.max(0, r) })
     pushClaims(map)
     if (t < 1) requestAnimationFrame(step)
-    else { claims.set(claim.id, claim); pushClaims(map); claimsListener?.() }
+    else { claims.set(claim.id, claim); pushClaims(map); claimsListeners.forEach(fn => fn()) }
   }
   requestAnimationFrame(step)
 }
@@ -223,7 +229,7 @@ export function seedClaims(map: mapboxgl.Map, list: Claim[]) {
   installClaimsLayer(map)
   for (const claim of list) claims.set(claim.id, claim)
   pushClaims(map)
-  claimsListener?.()
+  claimsListeners.forEach(fn => fn())
 }
 
 export function clearClaims(map: mapboxgl.Map) {

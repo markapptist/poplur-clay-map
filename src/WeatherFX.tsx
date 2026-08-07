@@ -37,8 +37,15 @@ function makeParticles(count: number, seed: number): Particle[] {
 }
 
 export default function WeatherFX({ mode }: { mode: WeatherMode }) {
-  const drops = useMemo(() => makeParticles(46, 7), [])
-  const flakes = useMemo(() => makeParticles(36, 13), [])
+  // Every particle is its own composited layer riding WebKit's remote layer
+  // tree — the device traces' "fewer layers" lever, applied to weather. The
+  // shell tier thins the storm rather than cancelling it: a dozen flakes still
+  // read as snow on a 6" screen, at a third of the layer bill. Browsers keep
+  // the full show.
+  const lite = typeof document !== 'undefined'
+    && document.documentElement.classList.contains('tier-ios')
+  const drops = useMemo(() => makeParticles(lite ? 16 : 46, 7), [lite])
+  const flakes = useMemo(() => makeParticles(lite ? 12 : 36, 13), [lite])
   const stones = useMemo(() => makeParticles(38, 29), [])
 
   // The provided clay cloud GLB, rendered once to a transparent sprite.

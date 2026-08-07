@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES } from './data'
-import { setClaim, seedClaims, totalClaimedKm } from './mapClaims'
+import { setClaim, seedClaims, totalClaimedKm, onClaimsSettled } from './mapClaims'
 import ClayMap, { MAP_2D, MAP_LITE, installComposeRadiusPreview, updateComposeRadiusPreview } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
@@ -1340,20 +1340,33 @@ export default function App() {
     if (!map || !mapLive) return
     let world: boolean | null = null
     const GLOBE_SCOPE_ZOOM = 3.4
+    const send = (isWorld: boolean) => window.parent?.postMessage(
+      isWorld
+        ? { type: 'poplur-map-scope', scope: 'world', totalRadiusKm: totalClaimedKm() }
+        : { type: 'poplur-map-scope', scope: 'local' },
+      '*',
+    )
     const report = () => {
       const isWorld = map.getZoom() <= GLOBE_SCOPE_ZOOM
       if (isWorld === world) return
       world = isWorld
-      window.parent?.postMessage(
-        isWorld
-          ? { type: 'poplur-map-scope', scope: 'world', totalRadiusKm: totalClaimedKm() }
-          : { type: 'poplur-map-scope', scope: 'local' },
-        '*',
-      )
+      send(isWorld)
     }
+    // The crossing alone is not enough: booting at globe zoom reported the
+    // total BEFORE any claim had seeded or synced, and the boundary check then
+    // suppressed every later update — so the planet said "0.0 km" to a user
+    // whose posts plainly hold ground. Re-send the total whenever a claim
+    // settles while the world is in view.
+    const offSettle = onClaimsSettled(() => {
+      if (world) send(true)
+      // The profile lives in another document, and this iframe unmounts when
+      // its tab is not front — a message would find nobody listening. Cache
+      // the total where any surface can read it at its own mount time.
+      try { window.localStorage.setItem('poplur.totalRadiusKm', String(totalClaimedKm())) } catch { /* private */ }
+    })
     map.on('zoom', report)
     report()
-    return () => { map.off('zoom', report) }
+    return () => { map.off('zoom', report); offSettle() }
   }, [mapLive])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {

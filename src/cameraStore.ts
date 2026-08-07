@@ -63,3 +63,28 @@ export function clearSelection(): void {
   selected.clear()
   emit()
 }
+
+// ── camera-first map posting ────────────────────────────────────────────────
+// The May '26 CaptureFlow had two directions; the web home rebuilt only
+// map→camera. This is the other half's hand-off: the composer stashes its
+// draft here, the user goes to the map and taps a spot, and when the target
+// comes back the camera resumes the SAME draft instead of demanding a new
+// capture. Module-level on purpose — the composer unmounts during the trip.
+export interface PendingMapPost {
+  media: { kind: 'photo' | 'video'; src: string; length?: string }
+  caption: string
+  channelId: string
+  filterId: string
+  usedAI: boolean
+}
+
+let pendingMapPost: PendingMapPost | null = null
+
+export function setPendingMapPost(draft: PendingMapPost): void { pendingMapPost = draft }
+
+/** One-shot: reading it clears it, so a stale draft can never resurface. */
+export function takePendingMapPost(): PendingMapPost | null {
+  const draft = pendingMapPost
+  pendingMapPost = null
+  return draft
+}

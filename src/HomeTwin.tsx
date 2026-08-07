@@ -80,11 +80,15 @@ function AnimatedRadiusMetrics({
   ceiling,
   unit,
   active,
+  accumulated = false,
 }: {
   radius: number
   ceiling: number
   unit: 'mi' | 'km'
   active: boolean
+  /** Planet scope: the number is every pop's reach COMBINED, and it wears gold
+   *  so it can never be misread as one post's radius. */
+  accumulated?: boolean
 }) {
   const [progress, setProgress] = useState(active ? 0 : 1)
   const [counting, setCounting] = useState(active)
@@ -125,7 +129,7 @@ function AnimatedRadiusMetrics({
   return (
     <>
       <span
-        className={`${styles.statValue} ${styles.radiusValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
+        className={`${styles.statValue} ${accumulated ? styles.radiusValueAccum : styles.radiusValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
         data-counter-value={`${currentText}${unit}`}
       >
         {currentText}
@@ -630,6 +634,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
       // Map → camera: the user picked a spot to post to. Switch to the camera
       // and carry the coordinate + claim radius through to the composer.
+      if (event.data.type === 'poplur-pick-spot') {
+        // The composer parked a captured draft and wants a coordinate: send
+        // the user to the map. Their tap comes back as poplur-post-here below,
+        // which returns them to the camera with the target attached.
+        setActiveTab('map')
+      }
       if (event.data.type === 'poplur-post-here') {
         setPostTarget({
           lat: Number(event.data.lat),
@@ -1141,12 +1151,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             role="button"
             aria-label={`Radius ${(shownRadiusKm * (unitMi ? KM_TO_MI : 1)).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
           >
-            <span className={styles.statLabel}>{seenUser ? `${seenUser.handle} ◆` : 'RADIUS ◆'}</span>
+            <span className={styles.statLabel}>{seenUser ? `${seenUser.handle} ◆` : (mapWorldTotalKm != null && activeTab === 'map' ? 'TOTAL RADIUS ◆' : 'RADIUS ◆')}</span>
             <AnimatedRadiusMetrics
               radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
               active={recordMs == null && !showOnlineAudience}
+              accumulated={!seenUser && activeTab === 'map' && mapWorldTotalKm != null}
             />
             <span className={styles.statTrend}>{POST_COUNT} nearby</span>
           </div>

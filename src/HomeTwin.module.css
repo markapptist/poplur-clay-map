@@ -440,6 +440,22 @@
     drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
 }
 
+/* The ACCUMULATED total — every pop combined at planet scope. Gold on purpose:
+   the individual radius is cyan, and the one thing this number must never do
+   is pass for a single post's reach. Same rim/glow recipe so it still reads
+   over any clay. */
+.radiusValueAccum {
+  color: #ffd36b;
+  background: none;
+  -webkit-text-fill-color: #ffd36b;
+  animation: none;
+  -webkit-text-stroke: 2px rgba(9, 5, 2, 0.9);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 3px 0 rgba(46, 26, 5, 0.55))
+    drop-shadow(0 0 14px rgba(255, 187, 61, 0.42));
+}
+
 .radiusValueShader {
   background-image: linear-gradient(105deg, #ffffff 0%, #ffe7f4 24%, #ffb8dc 43%, #ffffff 53%, #b9f1ff 72%, #ffffff 100%);
 }

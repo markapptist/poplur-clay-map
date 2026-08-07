@@ -4,6 +4,7 @@ import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
 import { playPop } from './pop'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { setPendingMapPost, type PendingMapPost } from './cameraStore'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -86,6 +87,7 @@ function awaitNativeUpload(requestId: string): Promise<void> {
 export default function PostComposer({
   media,
   target,
+  draft,
   onClose,
   onPosted,
   bindArrows,
@@ -94,6 +96,9 @@ export default function PostComposer({
   media: ComposerMedia
   /** set when the post is bound to a map coordinate */
   target?: ComposerTarget
+  /** a draft resumed from "pick a spot on the map" — reopens at the channel
+   *  step with the caption/channel/filter the user had already chosen */
+  draft?: Omit<PendingMapPost, 'media'>
   onClose: () => void
   onPosted?: (post: PublishedPost) => void
   /** Hands the clay channel arrows a job while the composer is open: stepping
@@ -103,12 +108,12 @@ export default function PostComposer({
    *  control now that the header's ‹ and ✕ are gone. */
   bindBack?: (fn: (() => void) | null) => void
 }) {
-  const [step, setStep] = useState<Step>('edit')
-  const [filterId, setFilterId] = useState('none')
-  const [caption, setCaption] = useState('')
+  const [step, setStep] = useState<Step>(draft ? 'channel' : 'edit')
+  const [filterId, setFilterId] = useState(draft?.filterId ?? 'none')
+  const [caption, setCaption] = useState(draft?.caption ?? '')
   const [aiPrompt, setAiPrompt] = useState('')
-  const [usedAI, setUsedAI] = useState(false)
-  const [channelId, setChannelId] = useState(CHANNELS[0]?.id ?? 'food')
+  const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
+  const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
   const [radiusKm, setRadiusKm] = useState(target?.radiusKm ?? 3)
   const [posted, setPosted] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -419,6 +424,24 @@ export default function PostComposer({
               </button>
             ))}
           </div>
+          {!target && (
+            /* Camera→map: the May '26 CaptureFlow direction the web home lost.
+               The draft (media + choices) is stashed module-side, the map tab
+               opens, and the spot the user taps comes back as a normal
+               poplur-post-here target — the composer then resumes right here
+               with everything kept. */
+            <button
+              className={styles.secondary}
+              onClick={() => {
+                playPop()
+                setPendingMapPost({ media, caption, channelId, filterId, usedAI })
+                window.postMessage({ type: 'poplur-pick-spot' }, '*')
+                onClose()
+              }}
+            >
+              📍 Pick a spot on the map
+            </button>
+          )}
           <button className={styles.primary} onClick={() => { void publish() }} disabled={publishing}>
             {publishing ? 'Uploading…' : target ? 'Post to this spot' : 'Post to Channel'}
           </button>

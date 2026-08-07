@@ -256,8 +256,28 @@ export default function ProfileTwin({
    *  own ✕. Returns false when nothing is open, so the cube falls through
    *  to this tab's favourite action. */
   bindGoBack?: (fn: (() => boolean) | null) => void
+
 } = {}) {
   const [mode, setMode] = useState<Mode>('media')
+  // The map writes poplur.totalRadiusKm every time a claim settles; reading it
+  // here keeps the profile honest even while the map iframe is unmounted.
+  const [totalReachKm, setTotalReachKm] = useState<number | null>(() => {
+    try {
+      const v = parseFloat(window.localStorage.getItem('poplur.totalRadiusKm') ?? '')
+      return Number.isFinite(v) ? v : null
+    } catch { return null }
+  })
+  useEffect(() => {
+    const read = () => {
+      try {
+        const v = parseFloat(window.localStorage.getItem('poplur.totalRadiusKm') ?? '')
+        if (Number.isFinite(v)) setTotalReachKm(v)
+      } catch { /* private */ }
+    }
+    window.addEventListener('storage', read)
+    return () => window.removeEventListener('storage', read)
+  }, [])
+
   const [readyTiles, setReadyTiles] = useState<Set<string>>(() => new Set())
   // Tiles whose static overlay has finished fading — it is then unmounted so the
   // grid doesn't keep 15 animating layers alive forever (the feed does the same:
@@ -859,6 +879,15 @@ export default function ProfileTwin({
         )}
 
         <h1 className={styles.username}>{shownName.toUpperCase()}</h1>
+        {/* Every pop's reach combined — the number the globe shows at planet
+            scope, carried onto the identity it belongs to. Gold everywhere it
+            appears, so it can never be confused with one post's radius. */}
+        {totalReachKm != null && totalReachKm > 0 && (
+          <div className={styles.totalReach} aria-label={`Total radius ${totalReachKm.toFixed(1)} kilometres`}>
+            <span className={styles.totalReachLabel}>TOTAL RADIUS ◆</span>
+            <span className={styles.totalReachValue}>{totalReachKm.toFixed(1)}<i>km</i></span>
+          </div>
+        )}
 
         <div className={styles.modeSwitch}>
           {(['media', 'messages', 'saved'] as Mode[]).map(m => (

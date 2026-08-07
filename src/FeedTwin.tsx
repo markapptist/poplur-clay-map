@@ -309,7 +309,14 @@ export default function FeedTwin({
   const gestureStart = useRef<{ pointerId: number; x: number; y: number } | null>(null)
   const wheelLock = useRef(false)
   const adVideoRef = useRef<HTMLVideoElement>(null)
-  const mediaUnlockedRef = useRef(false)
+  // The gesture gate is a BROWSER defense: Chrome/Safari block unmuted
+  // autoplay until the user touches the page, so on the web the feed must warm
+  // up muted and unlock on the first tap. The app shell explicitly allows
+  // sound-on autoplay (mediaTypesRequiringUserActionForPlayback = []), so
+  // starting locked there meant the feed always LAUNCHED silent and stayed
+  // silent until the first incidental touch — reported on device as "the feed
+  // is still not starting with any sound".
+  const mediaUnlockedRef = useRef(isNativeShell())
   const recoveringAdSrcRef = useRef<string | null>(null)
   const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   const ch = CHANNELS[index]

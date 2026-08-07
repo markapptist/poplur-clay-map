@@ -1460,3 +1460,40 @@
 .notifSkin_cards .notifTop strong { color: #fff; }
 .notifSkin_cards .notifTop span { color: rgba(255, 255, 255, 0.45); }
 .notifSkin_cards .notifBody p { color: rgba(255, 255, 255, 0.7); }
+
+/* ── total reach: every pop combined ─────────────────────────────────────── */
+/* Gold, matching the HUD's accumulated readout at planet scope — one colour
+   for "all of it", everywhere it appears. */
+.totalReach {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.totalReachLabel {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1.6px;
+  color: rgba(255, 211, 107, 0.72);
+}
+
+.totalReachValue {
+  font-size: 19px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: #ffd36b;
+  -webkit-text-stroke: 1.4px rgba(9, 5, 2, 0.85);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 2px 0 rgba(46, 26, 5, 0.5))
+    drop-shadow(0 0 10px rgba(255, 187, 61, 0.4));
+}
+
+.totalReachValue i {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 800;
+  margin-left: 2px;
+  color: rgba(255, 211, 107, 0.8);
+}

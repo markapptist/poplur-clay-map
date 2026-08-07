@@ -4,7 +4,7 @@ import ClayCornerButton from './ClayCornerButton'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
-import { addCapture, isDetectOn, setDetectOn, onCameraStore } from './cameraStore'
+import { addCapture, isDetectOn, setDetectOn, onCameraStore, takePendingMapPost, type PendingMapPost } from './cameraStore'
 import { startBroadcast, stopBroadcast, isLive, onLiveStore } from './liveStore'
 import DetectionOverlay from './DetectionOverlay'
 import { FrameDetector, type Detection } from './mlDetect'
@@ -187,6 +187,17 @@ export default function Camera({
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
+  const [composerDraft, setComposerDraft] = useState<Omit<PendingMapPost, 'media'> | null>(null)
+  // Camera→map, the return leg: a target arriving while a parked draft exists
+  // means the user just picked their spot — resume the SAME draft at the
+  // channel step instead of demanding a fresh capture.
+  useEffect(() => {
+    if (!postTarget) return
+    const pending = takePendingMapPost()
+    if (!pending) return
+    setComposerDraft(pending)
+    setComposing(pending.media)
+  }, [postTarget])
   // Set while the composer is open so the clay arrows can drive its filters.
   const composerArrowsRef = useRef<((dir: 1 | -1) => void) | null>(null)
   // The composer's own back-one-screen, driven by the cube while it is open.
@@ -999,8 +1010,9 @@ export default function Camera({
         <PostComposer
           media={composing}
           target={postTarget ?? undefined}
+          draft={composerDraft ?? undefined}
           onPosted={onPosted}
-          onClose={() => { setComposing(null); onPostTargetUsed?.() }}
+          onClose={() => { setComposing(null); setComposerDraft(null); onPostTargetUsed?.() }}
           bindArrows={fn => { composerArrowsRef.current = fn }}
           bindBack={fn => { composerBackRef.current = fn }}
         />
