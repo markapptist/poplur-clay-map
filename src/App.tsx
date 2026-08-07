@@ -20,7 +20,8 @@ import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 // stationName), which is data, not web playback.
 import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus } from './voiceAudio'
 import { smartCardFor, type SmartCard } from './tourSmarts'
-import { startEngagementChips } from './engagement'
+import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
+import { ambientAllowed } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups } from './popups'
 
 interface RadioStationCue {
@@ -476,6 +477,33 @@ const TOUR_DWELL_MS = 5 * 60 * 1000
 // radio tour is allowed to take the camera on its own.
 const TOUR_IDLE_MS = 3 * 60 * 1000
 
+// ── The pop-to-pop trip ─────────────────────────────────────────────────────
+// Climb, cross, descend (see flyToPop). Module-level because the trip is no
+// longer the only thing that needs its length: whatever draws the arrival has
+// to land WITH the camera, and a second hand-tuned delay somewhere else would
+// drift the moment these are retuned.
+const TRIP_CLIMB_MS = 950
+const TRIP_CROSS_MS = 2200
+/** Take-off to touchdown. The crossing starts 60ms before the climb settles. */
+const TRIP_TOTAL_MS = TRIP_CLIMB_MS - 60 + TRIP_CROSS_MS
+
+// ── Engagement traversal ────────────────────────────────────────────────────
+// Engagement is news about a post, and a post is a place: when one lands while
+// the map is the surface you are looking at, the camera travels to it.
+//
+// The numbers below all exist for the same reason — likes arrive in BURSTS. A
+// camera that restarted its flight on every one would be unwatchable, and worse,
+// un-driveable: you would never win a gesture against it. So at most one trip
+// per window, never while a hand is on the map, and never to somewhere the
+// camera is already standing.
+const ENGAGEMENT_FLY_COOLDOWN_MS = 25_000
+/** Hands-off window after the last touch/drag/wheel on the map. */
+const ENGAGEMENT_GESTURE_GRACE_MS = 6_000
+/** Close enough that flying there would be a lurch, not a journey. */
+const ENGAGEMENT_ARRIVED_M = 220
+/** Coordinate slop when matching an engagement to a known pop. */
+const ENGAGEMENT_POP_MATCH_M = 400
+
 function radioMarketForDestination(destination: TourDestination): string {
   return DESTINATION_RADIO_MARKET[destination.id] ?? 'global'
 }
@@ -635,24 +663,57 @@ export default function App() {
   const navigationOriginRef = useRef<[number, number]>(DEFAULT_NAV_ORIGIN)
   useEffect(() => { navigationOriginRef.current = navigationOrigin }, [navigationOrigin])
 
+  // When the user last had their hands on the map. Engagement will not take a
+  // camera someone is already driving (see traverseToEngagement).
+  const lastGestureRef = useRef(0)
+  // The traversal itself is defined much further down, next to the trip it
+  // flies. Reach it through a ref so the chips below start ONCE, at boot,
+  // instead of restarting every time a dependency of that callback changes.
+  const engagementTraverseRef = useRef<((event: EngagementEvent) => void) | null>(null)
+
   // Live engagement chips: named likes/views popping at your claim. Starts
   // once the map exists (ClayMap fills mapRef during boot — poll briefly
   // rather than thread another callback through its props) and stops with the
   // app. The module gates itself on visibility and the thermal ladder.
   useEffect(() => {
     let stopChips: (() => void) | null = null
+    let releaseGestures: (() => void) | null = null
     let tries = 0
     const arm = window.setInterval(() => {
       const map = mapRef.current
       tries += 1
       if (map) {
         window.clearInterval(arm)
-        stopChips = startEngagementChips()
+        // Every way a person can grab this map, in one place. `pointerdown`
+        // and `wheel` catch the START of a gesture; the Mapbox events (which
+        // only count when they carry an originalEvent, i.e. a real input and
+        // not our own camera work) extend the grace to where the gesture ENDS,
+        // so a long drag is protected for its whole length.
+        const noteGesture = () => { lastGestureRef.current = Date.now() }
+        const container = map.getContainer()
+        container.addEventListener('pointerdown', noteGesture, { passive: true })
+        container.addEventListener('wheel', noteGesture, { passive: true })
+        const gestureEvents = ['dragstart', 'zoomstart', 'rotatestart', 'pitchstart', 'moveend'] as const
+        // Same cast ClayMap uses for the identical test: Mapbox's v3 types omit
+        // originalEvent from these events, but it is there on the real ones and
+        // it is the only thing separating a person from our own camera moves.
+        const onGesture = (e: unknown) => {
+          if ((e as { originalEvent?: Event }).originalEvent) noteGesture()
+        }
+        gestureEvents.forEach(name => map.on(name, onGesture))
+        releaseGestures = () => {
+          container.removeEventListener('pointerdown', noteGesture)
+          container.removeEventListener('wheel', noteGesture)
+          gestureEvents.forEach(name => map.off(name, onGesture))
+        }
+        stopChips = startEngagementChips({
+          onEngagement: event => engagementTraverseRef.current?.(event),
+        })
       } else if (tries > 120) {
         window.clearInterval(arm)
       }
     }, 500)
-    return () => { window.clearInterval(arm); stopChips?.() }
+    return () => { window.clearInterval(arm); releaseGestures?.(); stopChips?.() }
   }, [])
   // THERE IS NO MAP ON A HARNESS VIEW, SO THERE IS NO MAP AUDIO.
   //
@@ -671,6 +732,22 @@ export default function App() {
   // the first foreground message.
   const mapAudioFrontRef = useRef(
     mapSurfaceRef.current && (typeof window === 'undefined' || window.parent === window),
+  )
+  // Is the map the surface being LOOKED at? Deliberately separate from the
+  // audio flag above: that one answers "may this document make noise", and it
+  // goes false when the app is muted or a hold-menu screen takes audio — while
+  // the map may still be the thing filling the screen. Engagement moves a
+  // camera the user can see, so it asks this instead.
+  //
+  // `front=0` in the URL is the shell's existing way of saying this map is NOT
+  // the surface in front (CLAY_MAP_SRC sets it for every tab but Map), and it
+  // is also how the thermal gate measures a genuinely idle map. Honour it, or a
+  // top-level map document declares itself front-most on a screen nobody is
+  // looking at — and then travels there.
+  const mapFrontRef = useRef(
+    mapSurfaceRef.current
+    && (typeof window === 'undefined' || window.parent === window)
+    && params.get('front') !== '0',
   )
   // The map always WANTS sound; whether you hear it is the gate's decision
   // (your mute, the app being backgrounded, another tab being front). This used
@@ -870,6 +947,13 @@ export default function App() {
   useEffect(() => {
     const sync = () => { applySoundState(soundRequestedRef.current) }
     const onMessage = (event: MessageEvent) => {
+      // Which surface is in front, told plainly by the shell. Same guard as
+      // gcAudio below: these are posted with '*' and land in any listening
+      // document, so a harness view must not talk itself into being the map.
+      if (event.data?.type === 'poplur-map-front') {
+        mapFrontRef.current = mapSurfaceRef.current && event.data.front === true
+        return
+      }
       if (event.data?.type === 'poplur-audio-stop') {
         mapAudioFrontRef.current = false
         applySoundState(false)
@@ -1036,8 +1120,8 @@ export default function App() {
     // arriving at in the same shot; low enough that the clay terrain never
     // flattens into a basemap.
     const TRAVEL_ZOOM = 12.8
-    const CLIMB_MS = 950
-    const CROSS_MS = 2200
+    const CLIMB_MS = TRIP_CLIMB_MS
+    const CROSS_MS = TRIP_CROSS_MS
 
     // Beat 1 — climb straight up off the current pop. Centre is untouched, so
     // the ground you are leaving stays under you while the camera rises.
@@ -1467,6 +1551,91 @@ export default function App() {
   // Directions/Street View/Locate buttons moved there to declutter the map.
   const [directionsSignal, setDirectionsSignal] = useState(0)
   const popCycleRef = useRef(-1)
+
+  // ── Engagement travels the camera ─────────────────────────────────────────
+  //
+  // Someone just touched a post. The notice (popups.tsx) tells you WHO; this
+  // tells you WHERE, by flying the same climb-cross-descend trip the channel
+  // arrows use and landing on the ground that post holds. That is the whole
+  // product read: the map is your takeover, and engagement is it breathing.
+  //
+  // Everything below is about NOT stealing the camera. It may only move when
+  // the map is the surface you are actually looking at, and it must lose every
+  // contest against a person or another camera owner: a hand on the map, a trip
+  // already flying, the ambient tour, street view. Losing is silent and cheap —
+  // engagement keeps arriving, and the next one is a few seconds away.
+  const lastEngagementFlyRef = useRef(0)
+  const engagementClaimTimer = useRef(0)
+  useEffect(() => () => window.clearTimeout(engagementClaimTimer.current), [])
+
+  const traverseToEngagement = useCallback((event: EngagementEvent) => {
+    const map = mapRef.current
+    const coords = event.coords
+    if (!map || !coords) return
+    // Front-most, and actually on screen.
+    if (!mapFrontRef.current || document.visibilityState !== 'visible') return
+    // A cinematic trip is the most expensive thing this map does on its own.
+    // When the quality ladder has already dropped ambient decoration the device
+    // is telling us it is hot, and answering engagement with a three-second 3D
+    // flight is the last thing it needs — the notice still pops, the camera
+    // just stays put. Same gate the demo generator idles behind.
+    if (!ambientAllowed()) return
+    // Someone else is driving.
+    const api = map as unknown as { __tripping?: boolean; __streetView?: boolean }
+    if (api.__tripping || api.__streetView || tourOnRef.current) return
+    const now = Date.now()
+    if (now - lastGestureRef.current < ENGAGEMENT_GESTURE_GRACE_MS) return
+    // Already standing on it. Checked BEFORE the cooldown is spent, so a burst
+    // of likes on the pop you are parked over does not eat the window that the
+    // next engagement somewhere else would have used.
+    const center = map.getCenter()
+    if (distanceMeters([center.lng, center.lat], coords) < ENGAGEMENT_ARRIVED_M) return
+    if (now - lastEngagementFlyRef.current < ENGAGEMENT_FLY_COOLDOWN_MS) return
+    if (!flyToPop(coords)) return
+    lastEngagementFlyRef.current = now
+
+    // What the map knows about this place. The live wire may send coordinates
+    // and nothing else, so a pop standing at those coordinates fills the rest.
+    const poi = POIS.find(p => distanceMeters(p.coords, coords) < ENGAGEMENT_POP_MATCH_M)
+    const radiusKm = event.radiusKm ?? poi?.radiusKm ?? 2
+    const place = event.place ?? poi?.name
+    const line = `${event.user} ${engagementVerb(event.kind)}`
+    setTourLine(place ? `${line} · ${displayPlaceName(place)}` : line)
+
+    if (poi) {
+      // The channel arrows count from wherever the camera IS. Without this the
+      // next arrow press would resume from the pop before the engagement and
+      // fly you backwards.
+      popCycleRef.current = POIS.indexOf(poi)
+      try {
+        window.parent?.postMessage(
+          {
+            type: 'poplur-map-pop',
+            index: popCycleRef.current,
+            total: POIS.length,
+            name: poi.name,
+            radiusKm: poi.radiusKm,
+          },
+          '*',
+        )
+      } catch { /* no parent frame in the standalone map route */ }
+    }
+
+    // The takeover lands WITH the camera. Drawing it at take-off would show you
+    // the claim you are still three seconds away from — and fit:false because
+    // the trip owns the camera until it touches down (see the note on
+    // updateComposeRadiusPreview).
+    window.clearTimeout(engagementClaimTimer.current)
+    engagementClaimTimer.current = window.setTimeout(() => {
+      const live = mapRef.current
+      if (!live) return
+      try {
+        installComposeRadiusPreview(live)
+        updateComposeRadiusPreview(live, new mapboxgl.LngLat(coords[0], coords[1]), radiusKm, theme, { fit: false })
+      } catch { /* style not ready yet; the next arrival draws it */ }
+    }, TRIP_TOTAL_MS)
+  }, [flyToPop, theme])
+  engagementTraverseRef.current = traverseToEngagement
   useEffect(() => {
     const onAction = (event: MessageEvent) => {
       if (event.data?.type !== 'poplur-map-action') return
@@ -1506,6 +1675,24 @@ export default function App() {
           window.setTimeout(() => {
             try { setClaim(map, { id: `drop-${center[0].toFixed(4)},${center[1].toFixed(4)}`, center, radiusKm }) } catch { /* torn down */ }
           }, 2400)
+          break
+        }
+        // Engagement that was delivered to the SHELL. The live wire posts into
+        // whichever document the host can reach — the top one — and that
+        // document owns no camera, so the destination is handed down here. The
+        // notice has already been shown up there; this is only the travel.
+        case 'engagement': {
+          const coords = event.data.coords
+          if (!Array.isArray(coords) || coords.length !== 2) break
+          if (typeof coords[0] !== 'number' || typeof coords[1] !== 'number') break
+          const kind = event.data.kind
+          traverseToEngagement({
+            user: typeof event.data.user === 'string' ? event.data.user : 'Someone',
+            kind: kind === 'view' || kind === 'comment' ? kind : 'like',
+            coords: [coords[0], coords[1]],
+            radiusKm: typeof event.data.radiusKm === 'number' ? event.data.radiusKm : undefined,
+            place: typeof event.data.place === 'string' ? event.data.place : undefined,
+          })
           break
         }
         case 'cyclePop': {
@@ -1558,10 +1745,15 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startTourLoop, stopTour, flyToCenter, flyToPop, theme])
+  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startTourLoop, stopTour, flyToCenter, flyToPop, theme, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
+    // Planning a route is someone taking the camera on purpose — it ends in
+    // map.stop() below — so it counts as a gesture and engagement stands down
+    // for the same grace. Actually DRIVING the route is street view, which
+    // traverseToEngagement refuses outright.
+    lastGestureRef.current = Date.now()
     const map = mapRef.current
     if (!map) return
     const mapApi = map as unknown as { __cinematic?: boolean; __stopOrbit?: () => void }

@@ -683,6 +683,49 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [])
 
+  // Engagement reaches the SHELL, but the camera lives in the map.
+  //
+  // A host — the native app, or the Aug-2026 live service — dispatches
+  // engagement into the document it can actually reach, which is this one. The
+  // post it is about stands somewhere on the map, and only the map's document
+  // owns flyToPop and every rule about when the camera may be taken. So hand
+  // the destination down and let it decide; if the map is not mounted, or not
+  // the tab you are on, this is simply a message nobody answers.
+  //
+  // Only the destination travels, never the notice: whichever surface showed
+  // it, showed it. Sending it on would pop the same engagement twice.
+  useEffect(() => {
+    const forward = (detail: unknown) => {
+      const d = detail as {
+        user?: unknown; kind?: unknown; coords?: unknown
+        radiusKm?: unknown; place?: unknown
+      } | null
+      if (!d || !Array.isArray(d.coords) || d.coords.length !== 2) return
+      mapFrameRef.current?.contentWindow?.postMessage({
+        type: 'poplur-map-action',
+        action: 'engagement',
+        user: d.user,
+        kind: d.kind,
+        coords: d.coords,
+        radiusKm: d.radiusKm,
+        place: d.place,
+      }, '*')
+    }
+    const onEngagementEvent = (e: Event) => forward((e as CustomEvent).detail)
+    const onEngagementMessage = (e: MessageEvent) => {
+      // Downward only. Anything arriving FROM the map iframe is our own message
+      // coming back, and forwarding it would put the camera in a loop.
+      if (e.source === mapFrameRef.current?.contentWindow) return
+      if (e.data?.type === 'poplur-engagement') forward(e.data)
+    }
+    window.addEventListener('poplur-engagement', onEngagementEvent)
+    window.addEventListener('message', onEngagementMessage)
+    return () => {
+      window.removeEventListener('poplur-engagement', onEngagementEvent)
+      window.removeEventListener('message', onEngagementMessage)
+    }
+  }, [])
+
   // Dismiss the native/embedding loading screen as soon as the HOME has painted.
   // This used to ride on the map's `poplur-map-ready`, but the map now mounts
   // only on the Map tab (perf) — so when Home opens on Feed the map never boots
@@ -771,6 +814,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     send()
     return onGateChange(send)
+  }, [activePermission, activeTab, holdOpen, mapReady, overlayOpen])
+
+  // Whether the map is the surface the user is LOOKING at — which the audio
+  // message above cannot answer. That one goes quiet whenever the app is muted,
+  // and being muted plainly does not mean you stopped watching the map. Anything
+  // that moves the camera on its own (engagement traversal) needs the honest
+  // signal, or a muted phone would sit on a map that never travels. Sent on the
+  // same triggers, minus the mute, and resent on mapReady because a remounted
+  // iframe misses whatever was sent while it was booting.
+  useEffect(() => {
+    mapFrameRef.current?.contentWindow?.postMessage({
+      type: 'poplur-map-front',
+      front: activeTab === 'map' && !overlayOpen && !holdOpen && activePermission === null,
+    }, '*')
   }, [activePermission, activeTab, holdOpen, mapReady, overlayOpen])
 
   // Rotate the loading copy only while the overlay is up.
