@@ -697,6 +697,56 @@
   transition: opacity 0.9s ease;
 }
 
+/* The map's status title, hoisted out of the map iframe into the shell. Sits
+   under the wordmark on the same line the map used to draw it on, so nothing
+   moves visually — it just belongs to the home chrome now. */
+.mapTitle {
+  position: absolute;
+  top: calc(max(calc(env(safe-area-inset-top, 0px) + 8px), clamp(34px, 5vh, 44px)) + 56px);
+  left: 24px;
+  right: 24px;
+  display: grid;
+  justify-items: center;
+  pointer-events: none;
+  /* The scrolling marquee was retired with the move: the shell has the full
+     width and the line is a place name, so it fits. Ellipsis is the honest
+     fallback for a very long one, and costs nothing per frame — the animated
+     version re-rasterised filtered text forever on the A03. */
+  overflow: hidden;
+}
+
+.mapTitleText {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.24;
+  text-align: center;
+  /* Same outlined blue as the radius numbers and the clock, so hoisting it
+     out of the iframe changed nothing about how it reads. */
+  color: #7fe3ff;
+  -webkit-text-fill-color: #7fe3ff;
+  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.92);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
+  animation: mapTitleIn 0.6s ease-out both;
+}
+
+@keyframes mapTitleIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 0.92; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mapTitleText { animation: none; }
+}
+
 /* The cube pops INTO the clay phone when the PHONE screen opens: it lifts
    toward the phone, gets small, and disappears behind the supplied clay-phone
    model. There is deliberately no rotation here — this is a clean shrink and

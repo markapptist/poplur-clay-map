@@ -18,6 +18,8 @@ import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 // payload still carries station cues for the iOS AI stack (PoplurAIStack reads
 // stationName), which is data, not web playback.
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
+import { smartCardFor, type SmartCard } from './tourSmarts'
+import { startEngagementChips } from './engagement'
 
 interface RadioStationCue {
   name: string
@@ -116,6 +118,7 @@ const LOCATE_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16"
 const STREET_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 25 C10 19 12 13 16 7 C20 13 22 19 26 25" fill="none" stroke="#FFF2F8" stroke-width="2.2" stroke-linecap="round"/><path d="M16 9 L16 13M16 17 L16 21M16 25 L16 27" stroke="#F63B9A" stroke-width="2.3" stroke-linecap="round"/><path d="M8 25H24" stroke="#FF8AC6" stroke-width="2" stroke-linecap="round"/></svg>`
 
 type TourKind =
+  | 'transit'
   | 'landmark'
   | 'mall'
   | 'arena'
@@ -144,6 +147,7 @@ interface RadioStation extends RadioStationCue {
 }
 
 const TOUR_KIND_LABEL: Record<TourKind, string> = {
+  transit: 'station',
   landmark: 'landmark',
   mall: 'mall',
   arena: 'arena',
@@ -161,6 +165,7 @@ const TOUR_KIND_LABEL: Record<TourKind, string> = {
 }
 
 const TOUR_TOPIC_FOR_KIND: Record<TourKind, MapTourTopic> = {
+  transit: 'downtown',
   landmark: 'landmarks',
   museum: 'landmarks',
   park: 'landmarks',
@@ -403,6 +408,8 @@ const TOUR_DESTINATIONS: TourDestination[] = [
   { id: 'union-station-toronto', name: 'Toronto Union Station', kind: 'venue', coords: [-79.3806, 43.6453] },
   { id: 'grand-central', name: 'Grand Central Terminal', kind: 'venue', coords: [-73.9772, 40.7527] },
   { id: 'hollywood-bowl', name: 'the Hollywood Bowl', kind: 'venue', coords: [-118.3391, 34.1122] },
+  { id: 'union-station', name: 'Union Station', kind: 'transit', coords: [-79.3807, 43.6453] },
+  { id: 'grand-central', name: 'Grand Central Terminal', kind: 'transit', coords: [-73.9772, 40.7527] },
   { id: 'st-lawrence-market', name: 'St. Lawrence Market', kind: 'food', coords: [-79.3716, 43.6487] },
   { id: 'borough-market', name: 'Borough Market', kind: 'food', coords: [-0.0911, 51.5055] },
   { id: 'chelsea-market', name: 'Chelsea Market', kind: 'food', coords: [-74.0055, 40.7424] },
@@ -581,7 +588,21 @@ export default function App() {
   // Tour narration stays separate from the visible status. The map header only
   // says where the camera is — the station readout left with the radio.
   const [tourLine, setTourLine] = useState<string | null>(null)
+  // What the AI knows about the CURRENT stop — scores, sales, departures, the
+  // dish to order. Set on arrival, cleared on departure and when the tour ends.
+  const [smartCard, setSmartCard] = useState<SmartCard | null>(null)
   const [currentPlace, setCurrentPlace] = useState('Toronto')
+  // Read by the arrival greeting, which fires on a timer after the reverse
+  // geocode has usually landed — a captured value would still say "Toronto".
+  const currentPlaceRef = useRef(currentPlace)
+  currentPlaceRef.current = currentPlace
+  // Inside the home's map iframe the shell draws the status title; standalone
+  // the map draws its own.
+  const isEmbedded = typeof window !== 'undefined' && window.parent !== window
+  useEffect(() => {
+    if (!isEmbedded) return
+    window.parent.postMessage({ type: 'poplur-map-status', place: currentPlace }, '*')
+  }, [isEmbedded, currentPlace])
   // How many px the status line overruns its ticker — 0 means it fits. Drives
   // the back-and-forth glide; measured on every text change and resize.
   const tickerRef = useRef<HTMLDivElement>(null)
@@ -608,6 +629,29 @@ export default function App() {
   // Routing must follow the user/launch location, not the AI tour camera. The
   // camera may be visiting another continent when an address is entered.
   const [navigationOrigin, setNavigationOrigin] = useState<[number, number]>(DEFAULT_NAV_ORIGIN)
+  // Mirror for callbacks that outlive renders (the engagement chips' anchor).
+  const navigationOriginRef = useRef<[number, number]>(DEFAULT_NAV_ORIGIN)
+  useEffect(() => { navigationOriginRef.current = navigationOrigin }, [navigationOrigin])
+
+  // Live engagement chips: named likes/views popping at your claim. Starts
+  // once the map exists (ClayMap fills mapRef during boot — poll briefly
+  // rather than thread another callback through its props) and stops with the
+  // app. The module gates itself on visibility and the thermal ladder.
+  useEffect(() => {
+    let stopChips: (() => void) | null = null
+    let tries = 0
+    const arm = window.setInterval(() => {
+      const map = mapRef.current
+      tries += 1
+      if (map) {
+        window.clearInterval(arm)
+        stopChips = startEngagementChips(map, () => navigationOriginRef.current)
+      } else if (tries > 120) {
+        window.clearInterval(arm)
+      }
+    }, 500)
+    return () => { window.clearInterval(arm); stopChips?.() }
+  }, [])
   // THERE IS NO MAP ON A HARNESS VIEW, SO THERE IS NO MAP AUDIO.
   //
   // `?view=feed|post|profile` returns ViewHarness far below — but hooks cannot
@@ -948,26 +992,81 @@ export default function App() {
    * of a deliberate action, and it lifts only to city height rather than orbit,
    * so you can still see the ground you are travelling over.
    */
+  // A trip has three beats: climb, cross, descend. Mapbox's flyTo will not do
+  // this on its own — it sizes its arc from the DISTANCE travelled, and the
+  // pops are neighbourhoods 2-3km apart, so at street zoom the arc never
+  // leaves the rooftops and the camera reads as sliding sideways. That is the
+  // "it just flips to the next post" report. `minZoom` does not fix it either:
+  // it is a floor on how far flyTo MAY zoom out, not an altitude to climb to.
+  // So the altitude is commanded rather than inferred.
+  const tripTimer = useRef(0)
+
   const flyToPop = useCallback((center: [number, number]) => {
     const map = mapRef.current
     if (!map) return false
-    const api = map as unknown as { __cinematic?: boolean }
+    const api = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
+    // __cinematic keeps the orbit's per-frame hands off the camera, but it is
+    // cleared by ClayMap's moveend — and Mapbox fires a synchronous moveend
+    // when the crossing interrupts the climb, which restarted the orbit in the
+    // middle of the trip and snapped the camera to its globe shot (the
+    // "flips to each post" report, second edition). __tripping spans the WHOLE
+    // trip: ClayMap's moveend leaves the orbit alone while it is up, and only
+    // the trip's own final moveend (or the user grabbing the map mid-flight,
+    // which also ends in a moveend) takes it down.
     api.__cinematic = true
-    map.flyTo({
-      center,
-      zoom: BUILDING_REVEAL_ZOOM,
-      pitch: 62,
-      bearing: map.getBearing() + 28,
-      duration: 3200,
-      // High enough that the hop clearly LEAVES the ground and arrives
-      // somewhere else, low enough that the terrain never leaves the frame.
-      minZoom: 11.2,
-      curve: 1.5,
+    api.__tripping = true
+    window.clearTimeout(tripTimer.current)
+
+    // High enough that you see the city you are leaving and the one you are
+    // arriving at in the same shot; low enough that the clay terrain never
+    // flattens into a basemap.
+    const TRAVEL_ZOOM = 12.8
+    const CLIMB_MS = 950
+    const CROSS_MS = 2200
+
+    // Beat 1 — climb straight up off the current pop. Centre is untouched, so
+    // the ground you are leaving stays under you while the camera rises.
+    map.easeTo({
+      zoom: Math.min(map.getZoom(), TRAVEL_ZOOM),
+      pitch: 26,
+      duration: CLIMB_MS,
       essential: true,
     })
-    // Hand the camera back when the trip ends, or the idle orbit stays parked
-    // forever behind a __cinematic flag nothing ever clears.
-    map.once('moveend', () => { api.__cinematic = false })
+
+    // Beats 2 and 3 — cross at altitude and settle onto the new claim, as one
+    // flight so the descent is the tail of the crossing rather than a cut.
+    // Driven by a timer, not `moveend`: the climb's moveend is also ClayMap's
+    // cue to restart the orbit, and chaining off it puts this flight and that
+    // orbit in the same tick.
+    tripTimer.current = window.setTimeout(() => {
+      const live = mapRef.current
+      if (!live) return
+      const liveApi = live as unknown as { __cinematic?: boolean; __tripping?: boolean }
+      liveApi.__cinematic = true
+      liveApi.__tripping = true
+      live.flyTo({
+        center,
+        zoom: BUILDING_REVEAL_ZOOM,
+        pitch: 62,
+        bearing: live.getBearing() + 28,
+        duration: CROSS_MS,
+        curve: 1.1,
+        essential: true,
+      })
+      // Registered AFTER the flight starts, so the interruption-moveend from
+      // the climb has already passed: this fires when the crossing itself ends
+      // — or when the user grabs the map and ends it early. Either way the
+      // trip is over; hand the camera back to ClayMap's idle orbit.
+      live.once('moveend', () => {
+        liveApi.__tripping = false
+        liveApi.__cinematic = false
+        // ClayMap's own moveend ran before this listener and — correctly —
+        // left the orbit alone while __tripping was up, so the trip restarts
+        // it here or the camera sits dead until the next user pan.
+        ;(live as unknown as { __startOrbit?: () => void }).__startOrbit?.()
+      })
+    }, CLIMB_MS - 60)
+
     return true
   }, [])
 
@@ -985,6 +1084,8 @@ export default function App() {
     clearTourTimers()
     tourOnRef.current = false
     setTourOn(false)
+    setSmartCard(null)
+    ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = false
   }, [clearTourTimers])
   searchInterruptRef.current = stopTour
   useEffect(() => clearTourTimers, [clearTourTimers])
@@ -1032,6 +1133,10 @@ export default function App() {
     lastTourDestinationRef.current = destination.id
     setCurrentPlace(displayPlaceName(destination.name))
     setTourLine(line)
+    // Departure clears the previous stop's card immediately — a sale from the
+    // last city must not ride along on the flight to the next one.
+    setSmartCard(null)
+    const smart = smartCardFor(destination)
     postNativeEvent({
       type: 'tourStop',
       id: destination.id,
@@ -1039,6 +1144,12 @@ export default function App() {
       kind: destination.kind,
       cityName,
       script: line,
+      // The iOS AI stack gets the same brain: the card's speakable line and
+      // rows travel with the stop, so the native host can say and show them.
+      smartLine: smart.line,
+      smartHeadline: smart.headline,
+      smartRows: smart.rows,
+      smartLink: smart.link?.url,
       stationName: stations[0] ? `${stations[0].name} ${stations[0].frequency}` : undefined,
       stations,
       dwellMs: TOUR_DWELL_MS,
@@ -1051,6 +1162,20 @@ export default function App() {
       speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
     }
     flyToCenter(destination.coords, TOUR_FLIGHT_MS)
+    // The ARRIVAL beat. The card and its spoken line land when the camera
+    // does, not when it lifts off — announcing a score thirty seconds before
+    // you can see the arena reads as noise. Tracked in tourTimers so stopping
+    // the tour mid-flight cancels the landing too.
+    const arrive = window.setTimeout(() => {
+      if (!tourOnRef.current) return
+      setSmartCard(smart)
+      // Headless drives read these; the UI never does.
+      ;(window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard = smart
+      if (applySoundState(true)) {
+        speakWithVoiceAudioFocus(smart.line, { rate: 0.95, pitch: 0.98 })
+      }
+    }, TOUR_FLIGHT_MS)
+    tourTimers.current.push(arrive)
   }, [applySoundState, flyToCenter])
 
   // ── AI place tour: each stop holds for five minutes after arrival ─────────
@@ -1084,12 +1209,16 @@ export default function App() {
     tourStartedRef.current = true
     tourOnRef.current = true
     setTourOn(true)
+    ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = true
     let pendingFirst = firstDestination
     const runStop = () => {
       tourStep(pendingFirst)
       pendingFirst = undefined
       const next = window.setTimeout(runStop, TOUR_FLIGHT_MS + TOUR_DWELL_MS)
-      tourTimers.current = [next]
+      // push, not replace: the stop's own ARRIVAL timer (activateTourDestination)
+      // is already in this list, and replacing the array orphaned it — a
+      // stopped tour would still land its card and speak into the silence.
+      tourTimers.current.push(next)
     }
     if (initialDelayMs > 0) {
       const first = window.setTimeout(runStop, initialDelayMs)
@@ -1175,7 +1304,25 @@ export default function App() {
       : undefined
     tourArmedRef.current = true
     scheduleTourIdle()
-  }, [scheduleTourIdle])
+
+    // The HOST still greets you on arrival. Narration used to live only inside
+    // tourStep, so gating the camera also silenced the AI radio entirely —
+    // the map came up mute. This is the voice without the camera move: it
+    // names where you actually are, and the flying tour still waits for an
+    // idle map. applySoundState is the same gate the tour uses, so a muted or
+    // backgrounded map stays silent.
+    window.setTimeout(() => {
+      if (tourStartedRef.current) return
+      const nearest = pendingTourDestRef.current
+      const here = currentPlaceRef.current
+      const line = nearest
+        ? `You're in ${here}. Poplur AI radio is live — the nearest stop is ${nearest.name}.`
+        : `You're in ${here}. Poplur AI radio is live around you.`
+      if (applySoundState(true)) {
+        speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
+      }
+    }, 900)
+  }, [applySoundState, scheduleTourIdle])
 
   // The home shell mirrors the tour state onto the hold-menu tile.
   useEffect(() => {
@@ -1455,18 +1602,62 @@ export default function App() {
 
       {/* The map status stays deliberately terse: the place the camera is at.
           When the line still overruns the ticker, it glides back and forth so
-          the tail is read rather than amputated by an ellipsis. */}
-      <div className={styles.headerStack}>
-        <div className={styles.aiTicker} aria-live="polite" ref={tickerRef}>
-          <span
-            key={currentPlace}
-            className={tickerOverflow > 0 ? styles.tickerScroll : undefined}
-            style={{ '--tickerShift': `-${tickerOverflow}px` } as React.CSSProperties}
-          >
-            {currentPlace}
-          </span>
+          the tail is read rather than amputated by an ellipsis.
+
+          EMBEDDED, the HOME shell draws this instead (the status is posted to
+          it below). Rendered inside the iframe it lived in the map's own
+          stacking context, so on a tab change it sat over home chrome that was
+          animating in — the title overlapping mid-switch. The shell owns it
+          now and it fades with the rest of the home chrome. Standalone (the
+          :5199 map artifact) keeps drawing its own. */}
+      {!isEmbedded && (
+        <div className={styles.headerStack}>
+          <div className={styles.aiTicker} aria-live="polite" ref={tickerRef}>
+            <span
+              key={currentPlace}
+              className={tickerOverflow > 0 ? styles.tickerScroll : undefined}
+              style={{ '--tickerShift': `-${tickerOverflow}px` } as React.CSSProperties}
+            >
+              {currentPlace}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* The AI's smart card for the current tour stop — scores at the arena,
+          the sale inside the mall, the next trains, the dish to order. Lands
+          with the camera (arrival beat in activateTourDestination) and leaves
+          with it. Entrance is transform/opacity only. */}
+      {smartCard && (
+        <aside className={styles.smartCard} key={smartCard.title + smartCard.headline} aria-live="polite">
+          <div className={styles.smartCardTitle}>{smartCard.title}</div>
+          <div className={styles.smartCardHeadline}>{smartCard.headline}</div>
+          {smartCard.rows && (
+            <div className={styles.smartCardRows}>
+              {smartCard.rows.map(row => (
+                <div className={styles.smartCardRow} key={row.label + row.value}>
+                  <span>{row.label}</span>
+                  <b>{row.value}</b>
+                </div>
+              ))}
+            </div>
+          )}
+          {smartCard.link && (
+            <button
+              type="button"
+              className={styles.smartCardLink}
+              onClick={() => {
+                // Let the shell route it natively when it can; the window.open
+                // covers the browser and any shell that honours target=_blank.
+                postNativeEvent({ type: 'openExternal', url: smartCard.link!.url })
+                try { window.open(smartCard.link!.url, '_blank', 'noopener') } catch { /* shell may route it */ }
+              }}
+            >
+              {smartCard.link.label}
+            </button>
+          )}
+        </aside>
+      )}
 
       {/* Locate + Street View moved into the HOLD MENU (declutter): they now
           arrive as poplur-map-action messages — see the listener effect. */}

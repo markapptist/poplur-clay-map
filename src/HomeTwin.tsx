@@ -494,6 +494,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // whenever this prop changes, so an inline arrow re-fired it every render —
   // which re-set the flourish flag, restarted its timer and left the class on
   // forever, so the animation never played a second time.
+  /** Set by the hold menu while a subscreen is up; walks its sibling screens. */
+  const subscreenArrowsRef = useRef<((dir: 1 | -1) => boolean) | null>(null)
+  const bindSubscreenArrows = useCallback((fn: ((dir: 1 | -1) => boolean) | null) => {
+    subscreenArrowsRef.current = fn
+  }, [])
+
   const handleSubscreenChange = useCallback((open: boolean, screen?: string) => {
     setOverlayOpen(open)
     setCubeIntoPhone(prev => {
@@ -588,6 +594,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
       if (event.data.type === 'poplur-map-tour') setMapTourOn(Boolean(event.data.on))
+      // The map's status title is drawn by the SHELL, not inside the iframe —
+      // see the note in App.tsx. Owning it here is what stops it colliding
+      // with home chrome mid tab-change.
+      if (event.data.type === 'poplur-map-status' && typeof event.data.place === 'string') {
+        setMapPlace(event.data.place)
+      }
       if (
         event.data.type === 'poplur-map-mode'
         && (event.data.mode === '2d' || event.data.mode === '3d')
@@ -638,6 +650,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // vanished — so the fade only applies while a subscreen is covering the app.
   const chromeFaded = chromeIdle && overlayOpen
   const [mapTourOn, setMapTourOn] = useState(false)
+  // The map's status title, drawn by the shell so it can never collide with
+  // home chrome during a tab change.
+  const [mapPlace, setMapPlace] = useState<string | null>(null)
   const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>(() => initialMapMode())
   const [mapTourTopics, setMapTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
   const handleMapTourTopicsChange = useCallback((topics: MapTourTopic[]) => {
@@ -823,6 +838,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
   const changeChannel = (dir: 1 | -1) => {
+    // A subscreen covering the app owns the arrows. Otherwise they reached
+    // straight past it to the tab underneath, so pressing up on TV Guide tuned
+    // a feed you could not see. Registered by the hold menu, and null whenever
+    // no subscreen is up.
+    if (subscreenArrowsRef.current?.(dir)) return
     // On the camera tab a capture preview takes the arrows first (filter
     // flipping). Otherwise they page the camera itself: viewfinder <-> Camera
     // Roll, which is what the channel buttons have always meant here. Zoom
@@ -1093,6 +1113,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         </div>
       </div>
 
+      {/* The map's status title, owned by the shell. It lives in the same
+          chrome layer as the cube and the bottom row, so it idles and hides
+          with them instead of floating out of the map iframe over a screen
+          that is animating in. Map tab only. */}
+      {activeTab === 'map' && mapPlace && (
+        <div
+          className={`${styles.mapTitle} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
+          aria-live="polite"
+        >
+          <span key={mapPlace} className={styles.mapTitleText}>{mapPlace}</span>
+        </div>
+      )}
+
       {/* The cube is the persistent navigator — visible on every tab, floating
           over whatever content is active. Its face tracks the current tab. */}
       {/* The HUD used to duck out while the composer was up. It stays now: the
@@ -1194,6 +1227,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           currentFeedChannelId={CHANNELS[chanIndex]?.id}
           onTuneFeedChannel={tuneFeedChannel}
           onSubscreenChange={handleSubscreenChange}
+          bindArrows={bindSubscreenArrows}
           bindGoBack={fn => { goBackRef.current = fn }}
         />
       )}
