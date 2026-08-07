@@ -906,8 +906,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     let timer = 0
     const wake = () => {
       setChromeIdle(false)
+      ;(window as unknown as { __poplurChromeIdle?: boolean }).__poplurChromeIdle = false
       window.clearTimeout(timer)
-      timer = window.setTimeout(() => setChromeIdle(true), CHROME_IDLE_MS)
+      timer = window.setTimeout(() => {
+        setChromeIdle(true)
+        // The heat probe prints this: "did idle actually engage" must be
+        // readable off the device, not inferred from which animations ran.
+        ;(window as unknown as { __poplurChromeIdle?: boolean }).__poplurChromeIdle = true
+      }, CHROME_IDLE_MS)
     }
     wake()
     // CAPTURE phase, on the document: the cube, the feed and the menu all stop

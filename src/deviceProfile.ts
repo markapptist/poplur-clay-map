@@ -147,6 +147,7 @@ function surfaces(): string {
     + ` tiers=[${tiers}] videoFiltered=${filteredVideo} drops=${drops}`
     + ` | STAT ${cards}`
     + ` | ANIM ${animCensus()} | AUDIO ${audioGateDebug()}`
+    + ` idle=${String((window as unknown as { __poplurChromeIdle?: boolean }).__poplurChromeIdle ?? '?')}`
 }
 
 /** Re-buffering looks exactly like frame-dropping to the eye, so count it too. */
