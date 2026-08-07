@@ -23,6 +23,10 @@ export interface Detection {
   confidence: number
   /** a Poplur user rather than an object — carries their handle and reach */
   user?: { handle: string; radiusKm: number }
+  /** THIS user: the face matched their profile picture (on-device). Set by the
+   *  native Vision matcher when it ships; the browser twin approximates it via
+   *  faceIdEnabled() so the aura's owner state is demonstrable today. */
+  isUser?: boolean
 }
 
 // What the native model reports around a city — the COCO-ish classes its
@@ -172,4 +176,18 @@ export class FrameDetector {
     this.tracked = next
     return next
   }
+}
+
+
+// ── Face ID consent ─────────────────────────────────────────────────────────
+// Recognition of YOUR face is opt-in and keyed to your profile picture: the
+// picture is the on-device reference, which is exactly what the disclaimer on
+// the profile-photo flow discloses. Both flags are written there
+// (ProfileTwin): consent when the user picks "Use my face", reference once a
+// photo actually exists.
+export function faceIdEnabled(): boolean {
+  try {
+    return window.localStorage.getItem('poplur.faceid.consent') === '1'
+      && window.localStorage.getItem('poplur.faceid.reference') === '1'
+  } catch { return false }
 }

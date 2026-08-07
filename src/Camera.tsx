@@ -7,8 +7,8 @@ import { playPop } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
 import { addCapture, isDetectOn, setDetectOn, onCameraStore, takePendingMapPost, type PendingMapPost } from './cameraStore'
 import { startBroadcast, stopBroadcast, isLive, onLiveStore } from './liveStore'
-import DetectionOverlay from './DetectionOverlay'
-import { FrameDetector, type Detection } from './mlDetect'
+import RecognitionAura from './RecognitionAura'
+import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
 import ARFilters, { AR_FILTERS } from './ARFilters'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
@@ -975,9 +975,15 @@ export default function Camera({
         </div>
       )}
 
-      {/* the model's read on the frame */}
-      {real && detectOn && detections.length > 0 && (
-        <DetectionOverlay detections={detections} mirrored={facing === 'user'} />
+      {/* The model's read on the frame — the rainbow the assistant wears,
+          not tracker boxes. Owner state: the native matcher sets isUser from
+          the profile-picture feature print; until it ships, a recognised
+          PERSON while face ID is enabled counts as you in the twin. */}
+      {real && detectOn && (
+        <RecognitionAura
+          active={detections.length > 0}
+          userSeen={detections.some(d => d.isUser || (faceIdEnabled() && !!d.user))}
+        />
       )}
 
       {/* Screen flash exists only on the front camera. The back uses its torch. */}

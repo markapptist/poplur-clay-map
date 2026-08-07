@@ -1,0 +1,91 @@
+/* The recognition ring — the voice assistant's rainbow, worn by the camera.
+   Same conic recipe and rotating-angle mechanic as PoplurVoiceAssistant's wake
+   ring; hollow via the border mask; glow is box-shadow (filter would promote
+   and re-rasterize — the 6 Aug device trace is why that rule exists). */
+
+@property --recogAngle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.aura {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ring {
+  position: absolute;
+  inset: max(5px, env(safe-area-inset-top)) max(5px, env(safe-area-inset-right)) max(5px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left));
+  border-radius: clamp(22px, 6vw, 42px);
+  padding: 4px;
+  background: conic-gradient(from var(--recogAngle),
+    #ff2d95, #ff8a3d, #ffe23d, #6cf05a, #35d9cf,
+    #3d9dff, #8a6bff, #d762ff, #ff4d9e, #ff2d95);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  box-shadow:
+    0 0 30px rgba(246, 59, 154, 0.5),
+    0 0 24px rgba(94, 225, 234, 0.4),
+    0 0 40px rgba(139, 107, 255, 0.32),
+    inset 0 0 18px rgba(255, 240, 250, 0.32);
+  /* Present but dark until something is recognised: the ∞ spin/pulse run ONLY
+     while .ringOn is applied, so an idle camera carries zero running
+     animations from this layer. */
+  opacity: 0;
+  transition: opacity 0.24s ease-out;
+}
+
+.ringOn {
+  opacity: 1;
+  animation: recogSpin 4s linear infinite, recogPulse 1.35s ease-in-out infinite;
+}
+
+/* The camera knows its owner: brighter, quicker breath. */
+.ringUser {
+  padding: 6px;
+  animation: recogSpin 2.6s linear infinite, recogPulse 0.9s ease-in-out infinite;
+  box-shadow:
+    0 0 44px rgba(246, 59, 154, 0.65),
+    0 0 34px rgba(94, 225, 234, 0.55),
+    0 0 56px rgba(139, 107, 255, 0.45),
+    inset 0 0 26px rgba(255, 240, 250, 0.45);
+}
+
+@keyframes recogSpin {
+  to { --recogAngle: 360deg; }
+}
+
+@keyframes recogPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.62; }
+}
+
+/* Small confirmation under the top edge when your own face is the lock. Same
+   outlined-solid text treatment as the HUD (stroke + paint-order), no filter. */
+.youTag {
+  position: absolute;
+  top: calc(max(5px, env(safe-area-inset-top)) + 18px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff2f8;
+  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.9);
+  paint-order: stroke fill;
+  animation: youTagIn 0.35s cubic-bezier(0.22, 1.32, 0.42, 1) both;
+}
+
+@keyframes youTagIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(0.9); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
