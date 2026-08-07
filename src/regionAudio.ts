@@ -12,7 +12,7 @@
 // Ducking: setVoiceDucked(true) pulls everything down under the radio host TTS,
 // mirroring the iOS rainAmbientAudio.setVoiceDucked pattern.
 
-import { registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
+import { currentRemoteOwner, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import { stopWeatherAudio } from './weatherAudio'
 import { stopCarAudio } from './carAudio'
 
@@ -178,6 +178,13 @@ let started = false
 
 export function startRegionAudio() {
   if (started) return
+  // Background radio outranks ambience. This document is the map iframe; the
+  // station plays in the PARENT document, so the only visible trace of it here
+  // is the remote owner the focus channel last announced. Claiming 'map' now
+  // would broadcast into the parent and stop the user's station mid-song for
+  // the sake of wind and crickets — stay quiet instead, and the next region
+  // change after the radio releases (null prompts a resume) starts the bed.
+  if (currentRemoteOwner() === 'radio') return
   const c = ensureCtx(); if (!c) return
   // The map's bed is a voice too — starting it quiets the feed and the radio.
   requestAudioFocus('map')

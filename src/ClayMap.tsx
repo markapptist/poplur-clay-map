@@ -410,6 +410,31 @@ const COMPOSE_RADIUS_TEXTURE_IMAGE = 'poplur-compose-radius-hatch'
 const COMPOSE_RADIUS_EDGE = 'poplur-compose-radius-edge'
 const COMPOSE_RADIUS_LABEL = 'poplur-compose-radius-label'
 
+/**
+ * Where the takeover paint belongs in the layer stack.
+ *
+ * It must sit ABOVE the land polygons (or it is buried and you see only the
+ * dashed edge — which is exactly what happened when this was pinned to a hard
+ * coded `clay-water-fill` that sits low in the order) and BELOW the water fill,
+ * so the lake paints back over the claim and the territory stops at the
+ * shoreline. Poplur is land acquisition; you cannot own water.
+ *
+ * Resolved from the LIVE style rather than a guessed id, because the clay style
+ * renames layers and a missing id silently means "add on top of everything".
+ */
+function takeoverInsertBefore(map: mapboxgl.Map): string | undefined {
+  let layers: Array<{ id: string; type: string }> = []
+  try { layers = map.getStyle().layers as Array<{ id: string; type: string }> } catch { return undefined }
+  // Prefer the water FILL: everything before it is ground, everything after is
+  // water and the chrome above it.
+  const water = layers.find(l => l.type === 'fill' && /water|ocean|lake|sea/i.test(l.id))
+  if (water) return water.id
+  // No water fill in this style — fall back to the first line layer, i.e. just
+  // under the roads. Visible over the terrain, still beneath the clay streets.
+  const firstLine = layers.find(l => l.type === 'line')
+  return firstLine?.id
+}
+
 export function installComposeRadiusPreview(map: mapboxgl.Map) {
   if (!map.getSource(COMPOSE_RADIUS_SOURCE)) {
     map.addSource(COMPOSE_RADIUS_SOURCE, {
@@ -450,7 +475,7 @@ export function installComposeRadiusPreview(map: mapboxgl.Map) {
         // roads and buildings still show through as YOUR streets.
         'fill-opacity': 0.62,
       },
-    }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+    }, takeoverInsertBefore(map))
   }
   if (!map.getLayer(COMPOSE_RADIUS_TEXTURE)) {
     map.addLayer({
@@ -462,7 +487,7 @@ export function installComposeRadiusPreview(map: mapboxgl.Map) {
         'fill-pattern': COMPOSE_RADIUS_TEXTURE_IMAGE,
         'fill-opacity': 0.72,
       },
-    }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+    }, takeoverInsertBefore(map))
   }
   if (!map.getLayer(COMPOSE_RADIUS_EDGE)) {
     map.addLayer({
@@ -1006,6 +1031,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       map.setMaxPitch(0)
     }
     mapRef.current = map
+    // QA hook, same spirit as __poplurDisposeMap: the camera cannot be verified
+    // from outside the frame otherwise, and "does the flight actually fly?"
+    // has to be measurable rather than argued about.
+    ;(window as unknown as { __poplurMap?: mapboxgl.Map }).__poplurMap = map
     // Mapbox 3.7 exposes FOV through the camera transform rather than a
     // public map.setFov() method.
     map.transform.fov = FOV_DEFAULT

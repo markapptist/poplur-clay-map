@@ -5,7 +5,7 @@ import { isUserMuted, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import RadioBoot from './RadioBootScreen'
-import { listLocalStations, playStation, stopMapRadio, nowPlayingStation, type LocalStation } from './mapRadio'
+import { isRadioBackgroundEnabled, listLocalStations, playStation, stopMapRadio, nowPlayingStation, type LocalStation } from './mapRadio'
 
 // POPLUR RADIO — the station deck.
 //
@@ -94,10 +94,15 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     return () => window.clearInterval(t)
   }, [])
 
-  // Closing the deck takes it off the air. The station runs from THIS document,
-  // so without this it kept streaming behind the app — you would leave the
-  // radio, land on the feed, and hear both at once.
-  useEffect(() => stopMapRadio, [])
+  // Closing the deck takes it off the air — unless Settings says the radio may
+  // play in the background (default off). With the setting on, the station
+  // keeps the audio floor after the deck closes: FeedTwin defers (its picture
+  // runs muted) and the map's ambience stays out of the way, so "hear both at
+  // once" — the failure that made this stop unconditional — cannot recur; the
+  // floor still has exactly one voice on it.
+  useEffect(() => () => {
+    if (!isRadioBackgroundEnabled()) stopMapRadio()
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }

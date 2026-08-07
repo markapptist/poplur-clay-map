@@ -111,6 +111,15 @@ function silenceLocal(except?: AudioOwner) {
   }
 }
 
+// The owner sounding in ANOTHER frame, when one is. Surfaces that start audio
+// of their own accord (the map's region ambience) must be able to ask "is a
+// remote voice holding the floor?" before claiming it — background radio plays
+// in the parent document while the map iframe's ambience would otherwise
+// wander in on top and steal the floor from it.
+let remoteOwner: AudioOwner | null = null
+
+export function currentRemoteOwner(): AudioOwner | null { return remoteOwner }
+
 if (typeof window !== 'undefined') {
   window.addEventListener('message', (e: MessageEvent) => {
     if (!isFocusMessage(e.data)) return
@@ -118,12 +127,14 @@ if (typeof window !== 'undefined') {
     // A release is a prompt for the visible local surface to resume. It must
     // not silence a newer local claim that happened after the remote voice.
     if (owner === null) {
+      remoteOwner = null
       listeners.forEach(cb => cb(null))
       return
     }
     // A remote silence is still a silence: stop, and do not let anyone here
     // treat it as a free floor.
     if (owner === 'silenced') {
+      remoteOwner = null
       current = null
       silenceLocal()
       listeners.forEach(cb => cb('silenced'))
@@ -133,6 +144,7 @@ if (typeof window !== 'undefined') {
     // document holds no claim it could later think it still has. Do not exempt
     // a same-named owner: Feed/Radio in two documents are still two physical
     // sound sources and only the remote claimant may remain audible.
+    remoteOwner = owner
     current = null
     silenceLocal()
     // Report the remote owner even though `current` tracks local claims only.
@@ -151,6 +163,9 @@ export function requestAudioFocus(owner: AudioOwner): void {
   // focus heartbeat: it is cheap, idempotent, and makes late/remounted peers
   // silence themselves immediately.
   current = owner
+  // A local claim IS the floor now; whatever remote voice this document last
+  // heard about has just been silenced by the broadcast below.
+  remoteOwner = null
   silenceLocal(owner)
   broadcast(owner)
   listeners.forEach(cb => cb(current))
@@ -165,8 +180,32 @@ export function requestAudioFocus(owner: AudioOwner): void {
  * asking for one owner in order to quieten the rest just moves the noise. That
  * gap is why audio kept arriving from a page the user had already left.
  */
+/**
+ * An owner that may HOLD the floor through a page change. Background radio is
+ * the one user of this: with the setting on, leaving the radio screen must not
+ * stop the station, so the page-change silence skips it — and reports that
+ * owner as still holding the floor rather than declaring it free. The
+ * predicate is consulted at silence time (the setting can change between
+ * navigations); registration is module-side (mapRadio), keeping this file free
+ * of feature imports.
+ */
+const silenceHolds = new Map<AudioOwner, () => boolean>()
+
+export function holdThroughSilence(owner: AudioOwner, keep: () => boolean): () => void {
+  silenceHolds.set(owner, keep)
+  return () => { silenceHolds.delete(owner) }
+}
+
+function heldOwner(): AudioOwner | null {
+  for (const [owner, keep] of silenceHolds) {
+    let held = false
+    try { held = owners.has(owner) && keep() } catch { /* holder must not break silence */ }
+    if (held) return owner
+  }
+  return null
+}
+
 export function silenceAllAudio(): void {
-  current = null
   // 'ui' is EXEMPT. The rule the user asked for is "only the page you are on
   // makes sound" — that is about page CONTENT (the feed video, the radio, the
   // map bed), not about interface feedback. The cube's pop, its turn detent and
@@ -174,10 +213,20 @@ export function silenceAllAudio(): void {
   // silencing them on every tab and subscreen change made the app go mute
   // exactly when you were touching it. Reported as no pop on the cube and no
   // pop swiping the feed.
+  const held = heldOwner()
+  current = held
   owners.forEach((stops, owner) => {
-    if (owner === 'ui') return
+    if (owner === 'ui' || owner === held) return
     stopAll(stops)
   })
+  if (held) {
+    // The floor is NOT free and it is not silenced either — the held owner is
+    // still sounding. Tell every surface who has it, exactly as a fresh claim
+    // would, so nothing resumes underneath it and nothing pauses its picture.
+    broadcast(held)
+    listeners.forEach(cb => cb(held))
+    return
+  }
   // 'silenced', NOT null — null means "the floor is free", which listeners
   // correctly read as permission to start again.
   broadcast('silenced')

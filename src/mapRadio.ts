@@ -1,5 +1,5 @@
 import { isGateMuted, onGateChange } from './audioGate'
-import { registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
+import { holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 
 /** Where we last looked for a station, so a dead stream can be replaced. */
 let lastTuneCoords: { lat: number; lng: number } | null = null
@@ -55,6 +55,51 @@ let masterVolume = (() => {
     return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.8
   } catch { return 0.8 }
 })()
+
+// ── Background radio ────────────────────────────────────────────────────────
+// Default OFF: the radio plays only while the RADIO screen is open, and
+// closing the screen stops it (RadioScreen's unmount). ON: the station keeps
+// playing after you leave — it holds the app's audio floor while you browse,
+// so the feed runs muted-with-picture underneath it (FeedTwin defers) and
+// map ambience stays out of its way (regionAudio defers). The AI voice still
+// interrupts and hands back, exactly as it does over every other source.
+// This governs IN-APP navigation only; minimizing the app still silences
+// everything through audioGate's visibility gate.
+const RADIO_BG_KEY = 'poplur.radio.background'
+
+export function isRadioBackgroundEnabled(): boolean {
+  try { return window.localStorage.getItem(RADIO_BG_KEY) === '1' } catch { return false }
+}
+
+export function setRadioBackgroundEnabled(on: boolean) {
+  try { window.localStorage.setItem(RADIO_BG_KEY, on ? '1' : '0') } catch { /* embedded */ }
+}
+
+// With the setting on and a station actually sounding, the page-change silence
+// (HomeTwin's silenceAllAudio on tab/subscreen changes) keeps its hands off the
+// radio and reports it as still holding the floor. Consulted at silence time,
+// so flipping the setting mid-play changes the very next navigation.
+holdThroughSilence('radio', () => soundWanted && isRadioBackgroundEnabled())
+
+// The Settings twin renders inside an iframe. In the app shell it shares this
+// document's origin (both come off the poplur-clay:// bundle), so its direct
+// localStorage write is enough — but on the dev workbench the twin is served
+// from :8945 against the app on :5173, a different origin with a different
+// localStorage. The twin therefore also posts its state up, and asks for the
+// current value when it opens; answer both here, where the setting lives.
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (e: MessageEvent) => {
+    const d = e.data as Record<string, unknown> | null
+    if (!d || typeof d !== 'object') return
+    if ('poplurRadioBackground' in d) setRadioBackgroundEnabled(!!d.poplurRadioBackground)
+    if (d.poplurRadioBackgroundQuery) {
+      try {
+        (e.source as Window | null)?.postMessage(
+          { poplurRadioBackground: isRadioBackgroundEnabled() }, '*')
+      } catch { /* iframe went away */ }
+    }
+  })
+}
 
 export function getRadioMasterVolume(): number { return masterVolume }
 

@@ -2,7 +2,14 @@ import React, { useEffect, useRef, useState, useCallback, useSyncExternalStore }
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
-import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
+import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
+
+// Owners the feed never steals the floor from. The AI voice is temporary and
+// hands back on its own; background radio is a standing choice the user made
+// on the radio deck — in both cases the feed keeps its picture running muted
+// and waits for the release (null) to resume sounding.
+const deferToOwner = (owner: AudioOwner | null): boolean =>
+  owner === 'voice' || owner === 'radio'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -558,7 +565,7 @@ export default function FeedTwin({
       // does not make Feed audible, but it does stop a late Map/radio callback
       // before the first post-login gesture. requestAudioFocus deliberately
       // re-broadcasts repeat claims so a remounted iframe hears this too.
-      if (currentAudioOwner() !== 'voice') requestAudioFocus('feed')
+      if (!deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
       // Home warms underneath the signed-in splash. Until the first post-login
       // gesture, keep its soundtrack out of the system media session so remote
       // rewind/play/forward controls can never leak through the splash cover.
@@ -574,7 +581,7 @@ export default function FeedTwin({
       // Feed is front-most whenever this component is mounted. Claim the
       // shared floor before unmuting so a map/radio source cannot leak into the
       // first frame while its own stop callback is still running.
-      if (currentAudioOwner() !== 'voice') requestAudioFocus('feed')
+      if (!deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
       const audible = !isGateMuted() && currentAudioOwner() === 'feed'
       video.muted = !audible
       video.volume = 0.85
@@ -598,6 +605,15 @@ export default function FeedTwin({
       // Feed remains the visible picture. Reclaim as soon as Voice releases;
       // do not steal focus mid-answer and make the assistant appear silent.
       if (owner === 'voice') {
+        video.muted = true
+        return
+      }
+      // Background radio holds the floor across page changes by design — the
+      // user tuned a station and then went browsing. The feed is the picture
+      // under it, not a competitor: keep playing, muted, and do not reclaim.
+      // When the radio stops it releases the floor (null), and the reassert
+      // branch below brings the feed's sound back without another gesture.
+      if (owner === 'radio') {
         video.muted = true
         return
       }
@@ -771,7 +787,7 @@ export default function FeedTwin({
       video.pause()
       releaseAudioFocus('feed')
     } else {
-      if (mediaUnlockedRef.current && currentAudioOwner() !== 'voice') requestAudioFocus('feed')
+      if (mediaUnlockedRef.current && !deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
       video.muted = !mediaUnlockedRef.current
         || isGateMuted()
         || currentAudioOwner() !== 'feed'
