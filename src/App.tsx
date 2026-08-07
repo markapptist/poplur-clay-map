@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES } from './data'
+import { setClaim, seedClaims, totalClaimedKm } from './mapClaims'
 import ClayMap, { MAP_2D, MAP_LITE, installComposeRadiusPreview, updateComposeRadiusPreview } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
@@ -1293,7 +1294,67 @@ export default function App() {
   const handleGlobeReady = useCallback(() => {
     if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-ready' }, '*')
     postNativeEvent({ type: 'mapReady' })
+    // The style is painted by now — claims and scope reporting can bind.
+    setMapLive(n => n + 1)
   }, [])
+
+  const [mapLive, setMapLive] = useState(0)
+
+  // ── The pops EXIST on the map, always ────────────────────────────────────
+  // Your posts are territory, and territory does not appear only when a camera
+  // flies at it. Every pop is seeded as a standing claim: painted ground at
+  // street zoom, a glowing clay dot from space (mapClaims' globe layer). This
+  // is also what makes the planet view mean something — see the scope report
+  // below.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLive) return
+    // One batch, and only once the launch flight has settled — seeding during
+    // the intro contends with the dive on the main thread, and the A03 profile
+    // billed that burst to whichever tab was front.
+    let seeded = false
+    const seed = () => {
+      if (seeded) return
+      seeded = true
+      try {
+        seedClaims(map, POIS.map(poi => ({
+          id: `pop-${poi.id}`,
+          center: poi.coords as [number, number],
+          radiusKm: poi.radiusKm,
+        })))
+      } catch { /* map torn down */ }
+    }
+    map.once('idle', seed)
+    // An orbiting map never idles — make sure the pops still exist.
+    const fallback = window.setTimeout(seed, 8000)
+    return () => { map.off('idle', seed); window.clearTimeout(fallback) }
+  }, [mapLive])
+
+  // ── Planet scope: zoomed all the way out, the HUD shows your EMPIRE ──────
+  // At globe zoom the individual pop is not the subject — the sum of them is.
+  // Tell the shell when the camera crosses into planet range so the RADIUS
+  // card can switch from one pop's takeover to the accumulated total, and
+  // hand it that total (the map owns the claims; the shell owns the card).
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLive) return
+    let world: boolean | null = null
+    const GLOBE_SCOPE_ZOOM = 3.4
+    const report = () => {
+      const isWorld = map.getZoom() <= GLOBE_SCOPE_ZOOM
+      if (isWorld === world) return
+      world = isWorld
+      window.parent?.postMessage(
+        isWorld
+          ? { type: 'poplur-map-scope', scope: 'world', totalRadiusKm: totalClaimedKm() }
+          : { type: 'poplur-map-scope', scope: 'local' },
+        '*',
+      )
+    }
+    map.on('zoom', report)
+    report()
+    return () => { map.off('zoom', report) }
+  }, [mapLive])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
     // Safety net: if 'idle' never fired at globe zoom, this still reveals.
@@ -1364,6 +1425,22 @@ export default function App() {
         case 'tour': {
           if (tourOnRef.current) stopTour()
           else startTourLoop(0)
+          break
+        }
+        // A post just published to a coordinate (map→camera capture flow).
+        // Paint the territory and fly the trip camera at it, so posting ends
+        // on the land you now hold, watching it pop.
+        case 'dropClaim': {
+          const map = mapRef.current
+          const center = event.data.center as [number, number] | undefined
+          if (!map || !center) break
+          const radiusKm = typeof event.data.radiusKm === 'number' ? event.data.radiusKm : 2
+          stopTour()
+          flyToPop(center)
+          // Let the claim pop AS the camera arrives, not before it.
+          window.setTimeout(() => {
+            try { setClaim(map, { id: `drop-${center[0].toFixed(4)},${center[1].toFixed(4)}`, center, radiusKm }) } catch { /* torn down */ }
+          }, 2400)
           break
         }
         case 'cyclePop': {

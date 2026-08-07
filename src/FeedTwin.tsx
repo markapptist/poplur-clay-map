@@ -14,8 +14,9 @@ const deferToOwner = (owner: AudioOwner | null): boolean =>
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
-import { playPop } from './pop'
+import { playPop, playPopAmbient } from './pop'
 import { showPopup, clearPopups } from './popups'
+import { readFeedCommentsAtEnd } from './feedPreferences'
 import styles from './FeedTwin.module.css'
 import { interceptingLive, isLive, onLiveStore } from './liveStore'
 import profileStyles from './ProfileTwin.module.css'
@@ -254,6 +255,40 @@ export default function FeedTwin({
   suppressedRef.current = suppressed
   const [commentOpen, setCommentOpen] = useState(false)
   const [commentClosing, setCommentClosing] = useState(false)
+  // End-of-clip comments: the roll runs when the video finishes, then leaves.
+  // Deliberately NOT the comment window — that one autofocuses its input and
+  // would throw the keyboard up over a post you are only watching.
+  const [endComments, setEndComments] = useState(false)
+  const endCommentsTimerRef = useRef<number | null>(null)
+  const adTimeRef = useRef(0)
+
+  const showEndComments = useCallback(() => {
+    if (!readFeedCommentsAtEnd()) return
+    if (endCommentsTimerRef.current != null) return // already rolling
+    // Ambient: this fires on every clip wrap with nobody touching the screen,
+    // so it must not hold the audio context open the way a tap's pop does.
+    playPopAmbient()
+    setEndComments(true)
+    endCommentsTimerRef.current = window.setTimeout(() => {
+      setEndComments(false)
+      endCommentsTimerRef.current = null
+    }, 7_000)
+  }, [])
+
+  // A channel change is a different post: drop the roll rather than let it run
+  // over the clip that just started.
+  useEffect(() => {
+    setEndComments(false)
+    adTimeRef.current = 0
+    if (endCommentsTimerRef.current != null) {
+      window.clearTimeout(endCommentsTimerRef.current)
+      endCommentsTimerRef.current = null
+    }
+  }, [index])
+
+  useEffect(() => () => {
+    if (endCommentsTimerRef.current != null) window.clearTimeout(endCommentsTimerRef.current)
+  }, [])
   const [commentText, setCommentText] = useState('')
   const [commentSent, setCommentSent] = useState<string | null>(null)
   const [captionsOn, setCaptionsOn] = useState(() => {
@@ -879,7 +914,16 @@ export default function FeedTwin({
           onCanPlay={() => markAdReady(adSrc)}
           onLoadedData={() => markAdReady(adSrc)}
           onPlaying={() => markAdReady(adSrc)}
-          onTimeUpdate={() => markAdReady(adSrc)}
+          onTimeUpdate={event => {
+            markAdReady(adSrc)
+            // The clip is `loop`ed, so `ended` never fires. A wrap — playhead
+            // jumping back toward zero — IS the end of a play-through, and is
+            // where the comments roll.
+            const t = event.currentTarget.currentTime
+            const previous = adTimeRef.current
+            adTimeRef.current = t
+            if (previous - t > 0.4) showEndComments()
+          }}
           onError={event => retryAdPlayback(adSrc, event.currentTarget)}
           onStalled={event => retryAdPlayback(adSrc, event.currentTarget)}
         />
@@ -1039,6 +1083,41 @@ export default function FeedTwin({
       {captionsOn && !suppressed && captionLine && typeof document !== 'undefined' && createPortal(
         <div className={styles.captions}><span>{captionLine}</span></div>,
         document.body,
+      )}
+
+      {/* End-of-clip comments: the roll drifts up when a play-through wraps,
+          then leaves on its own. Watching only — no input, no keyboard. The
+          COMMENT tile still opens the full window. Tap dismisses early. */}
+      {endComments && !commentOpen && (
+        <div
+          className={styles.endComments}
+          onClick={() => {
+            playPop()
+            setEndComments(false)
+            if (endCommentsTimerRef.current != null) {
+              window.clearTimeout(endCommentsTimerRef.current)
+              endCommentsTimerRef.current = null
+            }
+          }}
+        >
+          <div className={styles.commentRoll}>
+            <div className={styles.commentRollTrack}>
+              {[0, 1].map(copy => (
+                <div key={copy} aria-hidden={copy === 1}>
+                  {COMMENT_ROLL.map(c => (
+                    <p className={styles.commentLine} key={`${copy}-${c.who}`}>
+                      <img className={styles.commentAvatar} src={c.pic} alt="" draggable="false" />
+                      <span className={styles.commentText}>
+                        <span className={styles.commentWho}>{c.who}</span>
+                        <span className={styles.commentBody}>{c.body}</span>
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Comment box drops from the top, in the app's clay/glass language. */}

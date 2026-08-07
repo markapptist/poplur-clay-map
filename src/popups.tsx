@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import styles from './popups.module.css'
 import type { SmartCard } from './tourSmarts'
 import { postNativeEvent } from './nativeBridge'
+import { playPopAmbient } from './pop'
 
 // The app's one transient popup layer: engagement and suggestions, centred on
 // screen, alive for a few seconds, then gone.
@@ -38,10 +39,12 @@ export interface PopupItem {
   ttl: number
 }
 
-/** Engagement is a glance; a suggestion is something you might act on. */
+/** Engagement is a glance; a suggestion is something you might act on. Both
+ *  live inside one 5–10s window: long enough to read a suggestion, short
+ *  enough that nothing lingers on the screen you are trying to watch. */
 const TTL: Record<PopupKind, number> = {
-  engagement: 3_400,
-  suggestion: 11_000,
+  engagement: 6_000,
+  suggestion: 9_500,
 }
 
 // More than a few at once is a pile nobody reads. Oldest goes first.
@@ -81,6 +84,12 @@ export function showPopup(item: Omit<PopupItem, 'id' | 'ttl'> & { ttl?: number }
   // because by the time a queued notice surfaced it would be stale news.
   if (items.length > MAX_LIVE) items = items.slice(items.length - MAX_LIVE)
   emit()
+  // Everything that pops, pops — the house sound, on both surfaces. The
+  // AMBIENT variant: it parks the audio context the moment the sample ends,
+  // because these fire on a cadence with nobody touching the screen and the
+  // ordinary pop's 8s volley-nap kept the audio thread running at idle (the
+  // exact thing the thermal gate fails builds for). Muted app stays silent.
+  playPopAmbient()
   window.setTimeout(() => dismissPopup(id), ttl)
   return id
 }

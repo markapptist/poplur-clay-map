@@ -258,6 +258,9 @@ export default function PostComposer({
         window.setTimeout(onClose, 1800)
       } else {
         setUploadNote('Posting needs your Poplur account, so it uploads from the app — nothing was sent from this browser preview.')
+        // The claim still paints: the browser preview is where flows are
+        // inspected, and the map half of the capture loop is part of the flow.
+        onPosted?.(post)
         setPosted(true)
         window.setTimeout(onClose, 2600)
       }

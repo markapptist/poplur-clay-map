@@ -554,6 +554,33 @@
   background: rgba(8, 3, 12, 0.18);
 }
 
+/* End-of-clip roll: the same drifting credits, lower third, no input row —
+   for watching, not typing. Tap anywhere on it to dismiss early. */
+.endComments {
+  position: absolute;
+  left: 50%;
+  bottom: 24%;
+  transform: translateX(-50%);
+  width: min(92%, 460px);
+  max-height: 34%;
+  overflow: hidden;
+  z-index: 5;
+  cursor: pointer;
+  animation: endCommentsIn 0.4s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+  /* the roll fades at its edges so lines appear/disappear softly */
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
+}
+
+@keyframes endCommentsIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(14px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .endComments { animation: none; }
+}
+
 /* Centred, translucent window: the post keeps playing behind it. */
 .commentWindow {
   position: absolute;

@@ -847,7 +847,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
-  const postSeqRef = useRef(0)
   // Drop a pop by tapping the map. This used to require ?compose=1 — a
   // prototype flag from when posting lived only in the camera flow — which is
   // why tapping the map did nothing. ?compose=0 opts back out.
@@ -2949,39 +2948,30 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             >
               Cancel
             </button>
+            {/* THE post action — the map→camera half of the May '26
+                CaptureFlow (CaptureFlowManager). Posting from the map takes
+                you to the CAMERA to shoot or pick the content; the coordinate
+                and claim radius ride along to the composer, and publishing
+                brings you back here to watch the territory pop. A pop is a
+                post — there is no contentless drop; the old "Drop pop" claimed
+                ground with nothing on it, which is why posting from the map
+                never reached the camera. */}
             <button
               type="button"
               className={styles.composeDrop}
               onClick={() => {
-                const map = mapRef.current
-                if (!map) return
-                const id = `post-${postSeqRef.current++}`
-                setClaim(map, { id, center: [composeAt.lng, composeAt.lat], radiusKm: composeRadiusKm })
+                const { lat, lng } = composeAt
                 playPop()
                 setComposeAt(null)
+                window.parent?.postMessage(
+                  { type: 'poplur-post-here', lat, lng, radiusKm: composeRadiusKm },
+                  '*',
+                )
               }}
             >
-              Drop pop
+              ✚ Post here
             </button>
           </div>
-          {/* Post real media to this spot — the map→camera half of the native
-              CaptureFlow. The home switches to the camera and carries this
-              coordinate + radius through to the post composer. */}
-          <button
-            type="button"
-            className={styles.composeDirections}
-            onClick={() => {
-              const { lat, lng } = composeAt
-              playPop()
-              setComposeAt(null)
-              window.parent?.postMessage(
-                { type: 'poplur-post-here', lat, lng, radiusKm: composeRadiusKm },
-                '*',
-              )
-            }}
-          >
-            ✚ Post here
-          </button>
           <button
             type="button"
             className={styles.composeDirections}

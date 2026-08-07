@@ -17,6 +17,8 @@ const CLAIMS_FILL = 'poplur-claims-fill'
 const CLAIMS_TEXTURE = 'poplur-claims-texture'
 const CLAIMS_TEXTURE_IMAGE = 'poplur-claims-hatch'
 const CLAIMS_RIM = 'poplur-claims-rim'
+const CLAIMS_GLOBE = 'poplur-claims-globe'
+const CLAIMS_POINTS_SOURCE = 'poplur-claims-points'
 
 /** 72-point circle polygon around a center, `radiusKm` on the ground. */
 function circlePolygon(center: [number, number], radiusKm: number): GeoJSON.Feature<GeoJSON.Polygon> {
@@ -40,6 +42,15 @@ function circlePolygon(center: [number, number], radiusKm: number): GeoJSON.Feat
  *  buildings (top) — so the ground ITSELF recolors clay-pink inside a pop's
  *  radius while streets and towers ride on top untinted. That's the takeover
  *  read: the map changes colour where you own it. Idempotent. */
+/** The lite tier (perf-lite class, set before first paint on native shells and
+ *  low-memory devices) drops the hatch texture: it is a SECOND full-screen
+ *  translucent fill once a big claim covers the viewport, and on Mali-class
+ *  GPUs that overdraw alone regressed the map frame from 73ms to 105ms. The
+ *  solid fill + rim + recolored streets still read as takeover. */
+function liteTier(): boolean {
+  return typeof document !== 'undefined' && document.documentElement.classList.contains('perf-lite')
+}
+
 export function installClaimsLayer(map: mapboxgl.Map) {
   if (map.getSource(CLAIMS_SOURCE)) return
   map.addSource(CLAIMS_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
@@ -72,16 +83,48 @@ export function installClaimsLayer(map: mapboxgl.Map) {
     },
   }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
 
-  map.addLayer({
-    id: CLAIMS_TEXTURE,
-    slot: 'bottom',
-    type: 'fill',
-    source: CLAIMS_SOURCE,
-    paint: {
-      'fill-pattern': CLAIMS_TEXTURE_IMAGE,
-      'fill-opacity': 0.66,
-    },
-  }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+if (!liteTier())   map.addLayer({
+      id: CLAIMS_TEXTURE,
+      slot: 'bottom',
+      type: 'fill',
+      source: CLAIMS_SOURCE,
+      paint: {
+        'fill-pattern': CLAIMS_TEXTURE_IMAGE,
+        'fill-opacity': 0.66,
+      },
+    }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+
+  // ── Globe presence ────────────────────────────────────────────────────────
+  // A 28km territory is sub-pixel from space, so zoomed out the pops simply
+  // vanished — the globe looked like nobody owned anything. Each claim keeps a
+  // glowing clay dot at planet scale, sized by its radius, fading out as the
+  // real territory fill becomes visible. Points, not polygons: a circle layer
+  // renders polygon VERTICES, which would draw 72 dots per pop.
+  if (!map.getSource(CLAIMS_POINTS_SOURCE)) {
+    map.addSource(CLAIMS_POINTS_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+  }
+  if (!map.getLayer(CLAIMS_GLOBE)) {
+    map.addLayer({
+      id: CLAIMS_GLOBE,
+      slot: 'top',
+      type: 'circle',
+      source: CLAIMS_POINTS_SOURCE,
+      paint: {
+        'circle-color': '#FF5FA8',
+        // Bigger claims read bigger from space, but even the smallest stays a
+        // visible mark — presence first, proportion second.
+        'circle-radius': ['interpolate', ['linear'], ['zoom'],
+          0, ['+', 3, ['*', 0.16, ['get', 'radiusKm']]],
+          6, ['+', 5, ['*', 0.3, ['get', 'radiusKm']]],
+        ],
+        'circle-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.95, 6.5, 0.9, 8, 0],
+        'circle-stroke-color': '#FFD7EC',
+        'circle-stroke-width': 1.5,
+        'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.9, 8, 0],
+        'circle-blur': 0.35,
+      },
+    })
+  }
 
   map.addLayer({
     id: CLAIMS_RIM,
@@ -124,6 +167,23 @@ function pushClaims(map: mapboxgl.Map) {
     type: 'FeatureCollection',
     features: [...claims.values()].map(c => circlePolygon(c.center, c.radiusKm)),
   })
+  const points = map.getSource(CLAIMS_POINTS_SOURCE) as mapboxgl.GeoJSONSource | undefined
+  points?.setData({
+    type: 'FeatureCollection',
+    features: [...claims.values()].map(c => ({
+      type: 'Feature' as const,
+      properties: { radiusKm: c.radiusKm },
+      geometry: { type: 'Point' as const, coordinates: c.center },
+    })),
+  })
+}
+
+/** Every claimed kilometre, summed — the accumulated reach the HUD reports at
+ *  planet zoom. The world view is the scoreboard: how much of Earth is yours. */
+export function totalClaimedKm(): number {
+  let total = 0
+  for (const c of claims.values()) total += c.radiusKm
+  return total
 }
 
 /** Add or grow a claim, animating the disc out to `radiusKm` (the land-grab
@@ -152,6 +212,18 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
     else { claims.set(claim.id, claim); pushClaims(map); claimsListener?.() }
   }
   requestAnimationFrame(step)
+}
+
+/** Seed many claims at once — ONE source push and ONE settle notification.
+ *  Seeding pops one-by-one via setClaim fired the per-claim recolor pass (a
+ *  dozen setPaintProperty calls across roads/grass/buildings) once PER POP,
+ *  and that startup burst is what pushed the feed's p99 over a second on the
+ *  A03: the map does this work behind whichever tab is actually front. */
+export function seedClaims(map: mapboxgl.Map, list: Claim[]) {
+  installClaimsLayer(map)
+  for (const claim of list) claims.set(claim.id, claim)
+  pushClaims(map)
+  claimsListener?.()
 }
 
 export function clearClaims(map: mapboxgl.Map) {

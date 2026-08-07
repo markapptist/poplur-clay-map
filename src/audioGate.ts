@@ -63,10 +63,25 @@ export function onGateChange(cb: (muted: boolean) => void): () => void {
   return () => { listeners.delete(cb) }
 }
 
+// Contexts THIS GATE suspended, as opposed to ones parked by their own idle
+// clocks (pop's nap, the motion-effects idle, the radio's suspended clock).
+// The gate must restore exactly what it silenced and nothing more: the old
+// blanket resume() un-parked every napping context on every gate flip, which
+// is how "idle" surfaces kept a running context warming the audio thread —
+// the owner resumes its own context at next use.
+const gateSuspended = new WeakSet<AudioContext>()
+
 function apply() {
   const muted = isGateMuted()
   for (const c of contexts) {
-    try { muted ? void c.suspend() : void c.resume() } catch { /* ignore */ }
+    try {
+      if (muted) {
+        if (c.state === 'running') { gateSuspended.add(c); void c.suspend() }
+      } else if (gateSuspended.has(c)) {
+        gateSuspended.delete(c)
+        void c.resume()
+      }
+    } catch { /* ignore */ }
   }
   for (const el of mediaEls) {
     try { el.muted = muted } catch { /* ignore */ }

@@ -9,7 +9,7 @@ import { startBroadcast, stopBroadcast, isLive, onLiveStore } from './liveStore'
 import DetectionOverlay from './DetectionOverlay'
 import { FrameDetector, type Detection } from './mlDetect'
 import ARFilters, { AR_FILTERS } from './ARFilters'
-import PostComposer, { type ComposerMedia, type ComposerTarget } from './PostComposer'
+import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
 import PermissionAlert from './PermissionAlert'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
@@ -97,6 +97,7 @@ export default function Camera({
   onZoomChange,
   onDetectUser,
   postTarget,
+  onPosted,
   onPostTargetUsed,
   onComposingChange,
 }: {
@@ -114,6 +115,8 @@ export default function Camera({
   onDetectUser?: (user: { handle: string; radiusKm: number } | null) => void
   /** a map spot picked with "Post here" — the next capture posts to it */
   postTarget?: ComposerTarget | null
+  /** fired when a post actually publishes — the shell closes the map loop */
+  onPosted?: (post: PublishedPost) => void
   /** the pending map spot has been consumed (posted or cancelled) */
   onPostTargetUsed?: () => void
   /** The composer is a modal — the home HUD must step aside while it is up. */
@@ -996,6 +999,7 @@ export default function Camera({
         <PostComposer
           media={composing}
           target={postTarget ?? undefined}
+          onPosted={onPosted}
           onClose={() => { setComposing(null); onPostTargetUsed?.() }}
           bindArrows={fn => { composerArrowsRef.current = fn }}
           bindBack={fn => { composerBackRef.current = fn }}

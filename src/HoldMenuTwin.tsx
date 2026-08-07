@@ -12,6 +12,7 @@ import MapShowMe from './MapShowMe'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
+import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -28,7 +29,7 @@ interface Item {
   screen: string
   format?: 'png' | 'svg'
   preview?: boolean
-  toggle?: 'tour' | 'captions' | 'detection'
+  toggle?: 'tour' | 'captions' | 'detection' | 'comments'
   activeTitle?: string
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
@@ -76,6 +77,8 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
     { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
     { icon: 'CC', title: 'CC ON', activeTitle: 'CC OFF', toggle: 'captions', screen: 'feed-cc', format: 'svg', action: 'captions' },
+    // The end-of-clip comment roll (defaults on) — this is its off switch.
+    { icon: 'Chat', title: 'COMMENTS ON', activeTitle: 'COMMENTS OFF', toggle: 'comments', screen: 'feed-comments' },
   ],
   post: [
     // PHOTO and VIDEO act on the camera behind the menu. PHOTO is also the
@@ -165,10 +168,13 @@ const FRICTION = 0.955
 const MAX_VELOCITY = 16
 const SNAP_VELOCITY = 0.9
 const CENTER_Y_FRAC = 0.46
-type HoldMenuState = { tour: boolean; captions: boolean; detection: boolean }
+type HoldMenuState = { tour: boolean; captions: boolean; detection: boolean; comments: boolean }
 // ML detection ships ON: the native viewfinder has it running from the moment
-// it opens, so the tile's job is to turn it OFF.
-let persistedMenuState: HoldMenuState = { tour: false, captions: true, detection: true }
+// it opens, so the tile's job is to turn it OFF. End-of-clip comments also
+// ship ON, and unlike the others their answer persists across sessions.
+let persistedMenuState: HoldMenuState = {
+  tour: false, captions: true, detection: true, comments: readFeedCommentsAtEnd(),
+}
 
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
@@ -377,6 +383,18 @@ export default function HoldMenuTwin({
   const activateItem = (item: Item) => {
     // a hold set the favourite; don't also fire the item
     if (heldRef.current) { heldRef.current = false; return }
+    // COMMENTS is a pure setting: flip, persist, done. It must not fall
+    // through to the subscreen branch below.
+    if (item.toggle === 'comments') {
+      playPop()
+      setMenuState(current => {
+        const next = { ...current, comments: writeFeedCommentsAtEnd(!current.comments) }
+        persistedMenuState = next
+        return next
+      })
+      onClose()
+      return
+    }
     // LIKE / COMMENT / CC / PROFILE happen on the screen behind the menu —
     // they were never really sub-screens.
     if (item.action) {

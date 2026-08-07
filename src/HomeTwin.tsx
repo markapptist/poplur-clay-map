@@ -571,9 +571,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    // The beat sleeps with the chrome. Every swap replays the money-counter —
+    // an 880ms rAF count, per-frame text restyle, tick sounds, and a wake of
+    // the motion-effects AudioContext — which on an untouched phone repeated
+    // every 7.6s forever: the device census showed that context still running
+    // at idle (ctx=[sr]) purely from this drumbeat. Chrome-idle (30s without
+    // a touch) already fades this HUD; the swap pauses with it and the first
+    // touch brings both back.
+    if (chromeIdle) return
     const interval = window.setInterval(() => setShowOnlineAudience(showingOnline => !showingOnline), 7600)
     return () => window.clearInterval(interval)
-  }, [])
+  }, [chromeIdle])
 
   useEffect(() => {
     const onMapMessage = (event: MessageEvent) => {
@@ -594,6 +602,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
       if (event.data.type === 'poplur-map-tour') setMapTourOn(Boolean(event.data.on))
+      // Planet scope: all the way out, RADIUS reports the accumulated reach of
+      // every pop combined; back inside, it returns to the current pop.
+      if (event.data.type === 'poplur-map-scope') {
+        setMapWorldTotalKm(
+          event.data.scope === 'world' && typeof event.data.totalRadiusKm === 'number'
+            ? event.data.totalRadiusKm
+            : null,
+        )
+      }
       // The map's status title is drawn by the SHELL, not inside the iframe —
       // see the note in App.tsx. Owning it here is what stops it colliding
       // with home chrome mid tab-change.
@@ -653,6 +670,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
   const [mapPlace, setMapPlace] = useState<string | null>(null)
+
+  // Feed monetisation stayed native when the feed went web: the AdMob
+  // interstitial only ever fired from the retired native FeedView, so the ads
+  // silently vanished. Report channel changes to the shell; IT owns the
+  // probability gate (FeedAdProbability) and the presentation, exactly as the
+  // native feed did.
+  useEffect(() => {
+    if (activeTab !== 'feed' || !isNativeShell()) return
+    postNativeEvent({ type: 'feedChannelChanged', channelId: CHANNELS[chanIndex].id, index: chanIndex })
+  }, [activeTab, chanIndex])
   const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>(() => initialMapMode())
   const [mapTourTopics, setMapTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
   const handleMapTourTopicsChange = useCallback((topics: MapTourTopic[]) => {
@@ -820,6 +847,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [mapPostIdx, setMapPostIdx] = useState(0)
   /** Takeover radius of the pop currently centred on the map, in km. */
   const [mapPopRadiusKm, setMapPopRadiusKm] = useState<number | null>(null)
+  /** Sum of every pop's radius — set while the map camera is at planet zoom.
+      Zoomed all the way out no single pop is the subject; your EMPIRE is. */
+  const [mapWorldTotalKm, setMapWorldTotalKm] = useState<number | null>(null)
   // What the RADIUS card is actually reporting, in km. Three cases, in order:
   //   a recognised user in the camera — their reach
   //   travelling the map            — the CURRENT POP's takeover
@@ -828,12 +858,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // disagree about which radius is on screen.
   const shownRadiusKm = seenUser
     ? seenUser.radiusKm
-    : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : RADIUS_METERS / 1000)
+    : activeTab === 'map' && mapWorldTotalKm != null
+      ? mapWorldTotalKm
+      : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : RADIUS_METERS / 1000)
 
   // Off the map the card reports YOUR radius again — a pop's takeover must not
   // linger on the HUD once you have left the map that showed it.
   useEffect(() => {
-    if (activeTab !== 'map') setMapPopRadiusKm(null)
+    if (activeTab !== 'map') { setMapPopRadiusKm(null); setMapWorldTotalKm(null) }
   }, [activeTab])
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
@@ -970,6 +1002,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onDetectUser={setSeenUser}
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}
+            onPosted={post => {
+              // The other half of the map→camera capture flow (May '26
+              // CaptureFlowManager): a post bound to a coordinate ends back on
+              // the MAP, watching the new territory pop at that spot. The map
+              // draws the claim; the tab switch shows it to you.
+              if (!post.target) return
+              mapFrameRef.current?.contentWindow?.postMessage({
+                type: 'poplur-map-action',
+                action: 'dropClaim',
+                center: [post.target.lng, post.target.lat],
+                radiusKm: post.target.radiusKm ?? 2,
+              }, '*')
+              setActiveTab('map')
+            }}
           />
         )}
         {committedTab === 'profile' && (
