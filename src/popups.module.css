@@ -1,0 +1,128 @@
+/* The centred transient popup layer — engagement and suggestions.
+
+   Positioned mid-screen rather than pinned to an edge or to the world: these
+   are momentary notices, and the middle is the one place that reads the same
+   on the map, the feed and any other surface, with no HUD or status bar to
+   collide with. Pointer events are off on the container so the layer never
+   blocks the map or the feed underneath; only the cards themselves take taps.
+
+   One keyframe per item covers its whole life (in, hold, out) with its
+   duration set from the item's TTL in JS, so the fade-out always lands just as
+   the timer removes it — no second timer, and nothing can be left mid-fade if
+   the item is dismissed early. */
+
+.host {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: min(360px, calc(100vw - 44px));
+  pointer-events: none;
+}
+
+.host > * {
+  pointer-events: auto;
+  cursor: pointer;
+  will-change: transform, opacity;
+}
+
+/* ── engagement: a glance ─────────────────────────────────────────────────── */
+.engage {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(18, 6, 24, 0.88);
+  border: 1px solid rgba(255, 138, 198, 0.34);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 22px rgba(255, 45, 145, 0.24);
+  color: #fff2f8;
+  font: 800 14px/1.2 system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+  animation-name: popLife;
+  animation-timing-function: ease;
+  animation-fill-mode: both;
+}
+
+.engageIcon {
+  color: #ff5fa8;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.engageText strong { color: #7fe3ff; font-weight: 900; }
+
+/* ── suggestion: something you might act on ───────────────────────────────── */
+.suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(14, 5, 20, 0.92);
+  border: 1px solid rgba(255, 138, 198, 0.28);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  color: #fff2f8;
+  text-align: left;
+  font-family: system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+  animation-name: popLife;
+  animation-timing-function: ease;
+  animation-fill-mode: both;
+}
+
+.suggestKicker {
+  font-size: 9.5px;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+  color: #ff8ac6;
+}
+
+.suggestHeadline { font-size: 17px; font-weight: 900; line-height: 1.2; }
+
+.suggestRows { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+
+.suggestRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: rgba(255, 226, 242, 0.72);
+}
+.suggestRow b { color: #7fe3ff; font-weight: 900; }
+
+.suggestLink {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff2d91, #c40f66);
+  color: #fff;
+  font: 900 13px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+}
+.suggestLink:active { transform: scale(0.97); }
+
+/* in → hold → out, across the item's whole TTL */
+@keyframes popLife {
+  0%   { opacity: 0; transform: translateY(10px) scale(0.94); }
+  6%   { opacity: 1; transform: translateY(0) scale(1); }
+  90%  { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-8px) scale(0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .engage, .suggest { animation-name: popFade; }
+  @keyframes popFade {
+    0% { opacity: 0; }
+    6% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+}

@@ -20,6 +20,7 @@ import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
 import { smartCardFor, type SmartCard } from './tourSmarts'
 import { startEngagementChips } from './engagement'
+import PopupHost, { showPopup, clearPopups } from './popups'
 
 interface RadioStationCue {
   name: string
@@ -645,7 +646,7 @@ export default function App() {
       tries += 1
       if (map) {
         window.clearInterval(arm)
-        stopChips = startEngagementChips(map, () => navigationOriginRef.current)
+        stopChips = startEngagementChips()
       } else if (tries > 120) {
         window.clearInterval(arm)
       }
@@ -1168,6 +1169,11 @@ export default function App() {
     // the tour mid-flight cancels the landing too.
     const arrive = window.setTimeout(() => {
       if (!tourOnRef.current) return
+      // Through the shared popup layer: centred, and it LEAVES on its own.
+      // setSmartCard alone had no timer — the card was only ever cleared when
+      // the next trip started, so on a stop that was never followed by another
+      // flight it simply stayed on screen for the rest of the session.
+      showPopup({ kind: 'suggestion', card: smart })
       setSmartCard(smart)
       // Headless drives read these; the UI never does.
       ;(window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard = smart
@@ -1384,7 +1390,9 @@ export default function App() {
               try {
                 installComposeRadiusPreview(map)
                 const [lng, lat] = poi.coords as [number, number]
-                updateComposeRadiusPreview(map, new mapboxgl.LngLat(lng, lat), poi.radiusKm, theme)
+                // fit:false — the trip owns the camera. Framing the claim here
+                // is a flyTo under the hood and would cancel the flight.
+                updateComposeRadiusPreview(map, new mapboxgl.LngLat(lng, lat), poi.radiusKm, theme, { fit: false })
               } catch { /* style not ready yet; the next cycle draws it */ }
             }
             try {
@@ -1433,6 +1441,9 @@ export default function App() {
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
         <ViewHarness initialView={harnessView} />
         <VolumeBars />
+        {/* Feed / post / profile get the same centred notices as the map. This
+            is the half engagement could never reach as a Mapbox marker. */}
+        <PopupHost />
       </div>
     )
   }
@@ -1450,6 +1461,10 @@ export default function App() {
   return (
     <div className={styles.shell}>
       <VolumeBars />
+      {/* Engagement + suggestions, centred and transient. Mounted here so the
+          map gets them; the harness render below mounts it too, which is what
+          puts the same notices on the feed. */}
+      <PopupHost />
       {/* ── Full-screen clay map — the signature world. ──
           Premium once swapped in a Cesium/Google-3D-tiles photoreal surface
           here. It was parked deliberately: matching the clay world meant
@@ -1628,36 +1643,9 @@ export default function App() {
           the sale inside the mall, the next trains, the dish to order. Lands
           with the camera (arrival beat in activateTourDestination) and leaves
           with it. Entrance is transform/opacity only. */}
-      {smartCard && (
-        <aside className={styles.smartCard} key={smartCard.title + smartCard.headline} aria-live="polite">
-          <div className={styles.smartCardTitle}>{smartCard.title}</div>
-          <div className={styles.smartCardHeadline}>{smartCard.headline}</div>
-          {smartCard.rows && (
-            <div className={styles.smartCardRows}>
-              {smartCard.rows.map(row => (
-                <div className={styles.smartCardRow} key={row.label + row.value}>
-                  <span>{row.label}</span>
-                  <b>{row.value}</b>
-                </div>
-              ))}
-            </div>
-          )}
-          {smartCard.link && (
-            <button
-              type="button"
-              className={styles.smartCardLink}
-              onClick={() => {
-                // Let the shell route it natively when it can; the window.open
-                // covers the browser and any shell that honours target=_blank.
-                postNativeEvent({ type: 'openExternal', url: smartCard.link!.url })
-                try { window.open(smartCard.link!.url, '_blank', 'noopener') } catch { /* shell may route it */ }
-              }}
-            >
-              {smartCard.link.label}
-            </button>
-          )}
-        </aside>
-      )}
+      {/* The tour suggestion is rendered by the shared popup layer now, which
+          centres it and gives it a TTL. smartCard state is kept only because
+          headless drives read __poplurSmartCard from it. */}
 
       {/* Locate + Street View moved into the HOLD MENU (declutter): they now
           arrive as poplur-map-action messages — see the listener effect. */}

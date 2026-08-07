@@ -579,6 +579,17 @@ export function updateComposeRadiusPreview(
   center: mapboxgl.LngLat | null,
   radiusKm: number,
   theme: MapTheme,
+  /**
+   * Frame the whole claim after drawing it. Right for the COMPOSER — you are
+   * sizing a radius with a slider and need to see all of what you are claiming.
+   * Wrong for anything with its own camera: fitBounds is a flyTo underneath, so
+   * it calls stop() on whatever move is running and teleports you to the claim
+   * at whatever zoom contains it. That is what made travelling between posts
+   * read as a cut — the cinematic climb was killed 100ms in, the camera was
+   * already standing on the destination at zoom 9.6, and the only thing left to
+   * watch was the descent.
+   */
+  options?: { fit?: boolean },
 ) {
   const source = map.getSource(COMPOSE_RADIUS_SOURCE) as mapboxgl.GeoJSONSource | undefined
   if (!source) return
@@ -616,6 +627,8 @@ export function updateComposeRadiusPreview(
   }
   source.setData(preview)
   applyComposeSurfacePreview(map, preview, theme)
+
+  if (options?.fit === false) return
 
   // Keep the entire selected distance visible as the slider moves. Asymmetric
   // phone padding leaves room above the anchor for the composer bubble.

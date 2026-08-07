@@ -42,6 +42,12 @@ export function audioGateDebug(): string {
   return `ctx=${contexts.length}[${states}] media=${mediaEls.length}(${playing} playing)`
 }
 
+// The thermal gate (.codex/thermal-gate.mjs) and headless drives read this off
+// the window — module exports are unreachable from an injected probe.
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __poplurAudioDebug?: () => string }).__poplurAudioDebug = audioGateDebug
+}
+
 export function isUserMuted(): boolean { return userMuted }
 
 export function setUserMuted(value: boolean) {

@@ -77,6 +77,14 @@ if js_contains 'Add VITE_MAPBOX_TOKEN' "$BUILD_DIR"; then
   exit 1
 fi
 
+# Thermal gate: EVERY build re-measures the surfaces that have burned the
+# phone before (running infinite animations, idle long tasks, WebGL contexts,
+# running AudioContexts, playing videos — headless, in the device's tier) and
+# a regression against .codex/thermal-budgets.json aborts the publish. Raising
+# a budget is a deliberate edit shipped with the feature that needs the heat.
+# POPLUR_THERMAL_SKIP=1 skips in an emergency, loudly.
+node /Users/matrix/Developer/.codex/thermal-gate.mjs
+
 # Watchers can legitimately queue more than one isolated build. Serialize the
 # short publish phase so rsync --delete and the RN archive replacement cannot
 # interleave two otherwise-valid snapshots.

@@ -15,6 +15,7 @@ import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
+import { showPopup, clearPopups } from './popups'
 import styles from './FeedTwin.module.css'
 import { interceptingLive, isLive, onLiveStore } from './liveStore'
 import profileStyles from './ProfileTwin.module.css'
@@ -284,15 +285,17 @@ export default function FeedTwin({
   // the post's own soundtrack owns the floor here. Dismissed by tap, and
   // suppressed with everything else when News / TV Guide / the hold menu is
   // over the feed.
-  const [suggestion, setSuggestion] = useState<SmartCard | null>(null)
+  // The channel suggestion goes through the shared popup layer: centred like
+  // engagement, and self-expiring. It used to be a bottom-left card owned by
+  // this component alone, which meant the two kinds of transient notice in the
+  // app appeared in different places and obeyed different lifetime rules.
   useEffect(() => {
-    setSuggestion(null)
+    clearPopups('suggestion')
     if (suppressed) return
     const show = window.setTimeout(() => {
-      setSuggestion(feedSuggestionFor(CHANNELS[index]))
+      showPopup({ kind: 'suggestion', card: feedSuggestionFor(CHANNELS[index]) })
     }, 3_500)
-    const hide = window.setTimeout(() => setSuggestion(null), 12_500)
-    return () => { window.clearTimeout(show); window.clearTimeout(hide) }
+    return () => { window.clearTimeout(show); clearPopups('suggestion') }
   }, [index, suppressed])
 
 
@@ -953,37 +956,7 @@ export default function FeedTwin({
                 <span>CH {ch.number}</span>
                 <span>{ch.name.toUpperCase()}</span>
               </div>
-              {suggestion && (
-                <button
-                  type="button"
-                  className={styles.suggestCard}
-                  onClick={() => setSuggestion(null)}
-                  aria-label="Dismiss suggestion"
-                >
-                  <span className={styles.suggestKicker}>POPLUR AI · {suggestion.title}</span>
-                  <span className={styles.suggestHeadline}>{suggestion.headline}</span>
-                  {suggestion.rows && suggestion.rows.length > 0 && (
-                    <span className={styles.suggestRows}>
-                      {suggestion.rows.slice(0, 2).map(row => (
-                        <span key={row.label + row.value}>{row.label} <b>{row.value}</b></span>
-                      ))}
-                    </span>
-                  )}
-                  {suggestion.link && (
-                    <span
-                      className={styles.suggestLink}
-                      role="link"
-                      onClick={e => {
-                        e.stopPropagation()
-                        postNativeEvent({ type: 'openExternal', url: suggestion.link!.url })
-                        try { window.open(suggestion.link!.url, '_blank', 'noopener') } catch { /* shell routes it */ }
-                      }}
-                    >
-                      {suggestion.link.label}
-                    </span>
-                  )}
-                </button>
-              )}
+              {/* Suggestions render in the shared centred popup layer now. */}
             </div>
           )}
         </div>
