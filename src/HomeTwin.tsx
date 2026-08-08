@@ -5,6 +5,8 @@ import CubeTab3D, { type CubeTab } from './CubeTab3D'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
+import MapLevelButton from './MapLevelButton'
+import type { PopLevel } from './data'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
@@ -68,6 +70,25 @@ const LOADING_MESSAGES = [
 function cubeSizeFor(): number {
   if (typeof window === 'undefined') return 176
   return Math.round(Math.min(176, Math.max(124, window.innerWidth * 0.37)))
+}
+
+// Page visibility is part of the screen lifecycle, not just an animation hint.
+// A hidden native webview must shed its expensive children immediately so a
+// locked phone or another app cannot leave Mapbox/camera/media burning power.
+function subscribePageVisibility(onChange: () => void): () => void {
+  if (typeof document === 'undefined') return () => undefined
+  document.addEventListener('visibilitychange', onChange)
+  window.addEventListener('pagehide', onChange)
+  window.addEventListener('pageshow', onChange)
+  return () => {
+    document.removeEventListener('visibilitychange', onChange)
+    window.removeEventListener('pagehide', onChange)
+    window.removeEventListener('pageshow', onChange)
+  }
+}
+
+function pageIsVisible(): boolean {
+  return typeof document === 'undefined' || document.visibilityState === 'visible'
 }
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
@@ -329,6 +350,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
+  // Message listeners are installed once, so read the current face through a
+  // ref instead of capturing the initial tab forever.
+  const activeTabRef = useRef(activeTab)
+  activeTabRef.current = activeTab
   const [permissionQueue, setPermissionQueue] = useState<PostLoginPermission[]>(initialPostLoginPermissions)
   const activePermission = permissionQueue[0] ?? null
   const uiRecoveryKey = useUIRecoveryWatchdog()
@@ -567,6 +592,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stays absent so Profile / Feed / Camera keep their full frame budget. It is
   // torn down once the user leaves the map (after MAP_GRACE_MS, default 0).
   const [mapMounted, setMapMounted] = useState(initialTab === 'map')
+  // iOS sends its real ProcessInfo thermal state to the main document. The map
+  // lives in a child document with its own frame governor, so forward every
+  // transition and replay the latest state after each low-memory remount.
+  const nativeThermalRef = useRef<string | null>(null)
+  useEffect(() => {
+    const forward = (event: Event) => {
+      const detail = (event as CustomEvent<{ state?: unknown } | string>).detail
+      const state = typeof detail === 'string' ? detail : String(detail?.state ?? '')
+      if (!state) return
+      nativeThermalRef.current = state
+      mapFrameRef.current?.contentWindow?.postMessage(
+        { type: 'poplur-native-thermal', state }, '*',
+      )
+    }
+    window.addEventListener('poplur-native-thermal', forward)
+    return () => window.removeEventListener('poplur-native-thermal', forward)
+  }, [])
+  useEffect(() => {
+    const state = nativeThermalRef.current
+    if (!mapReady || !state) return
+    mapFrameRef.current?.contentWindow?.postMessage(
+      { type: 'poplur-native-thermal', state }, '*',
+    )
+  }, [mapReady])
+  const pageVisible = useSyncExternalStore(subscribePageVisibility, pageIsVisible, () => true)
   // Has the map's own document painted since this iframe mounted?
   //
   // A remount is a brand-new DOCUMENT, and until that document's CSS applies
@@ -652,6 +702,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
       if (event.data.type === 'poplur-map-tour') setMapTourOn(Boolean(event.data.on))
+      // A pop pin was tapped. The pin is a PERSON before it is a place, so this
+      // goes to their profile with the post that took that ground lit up — for
+      // your own pins that is your own grid, no visit.
+      if (event.data.type === 'poplur-map-open-profile') {
+        const who = typeof event.data.user === 'string' ? event.data.user : null
+        const popId = typeof event.data.popId === 'string' ? event.data.popId : null
+        setProfileOrigin(tabForHoldRef.current)
+        setViewingUser(who)
+        if (popId) setProfilePopFlash(prev => ({ ids: [popId], seq: (prev?.seq ?? 0) + 1 }))
+        setActiveTab('profile')
+      }
       // Planet scope: all the way out, RADIUS reports the accumulated reach of
       // every pop combined; back inside, it returns to the current pop.
       if (event.data.type === 'poplur-map-scope') {
@@ -823,6 +884,32 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // ghost) so the clip truly owns the screen. FeedTwin resets this on exit and
   // on unmount, so a tab change can never strand the home with no chrome.
   const [feedFullscreen, setFeedFullscreen] = useState(false)
+  // Which pops the map shows. The SHELL owns this because the control lives in
+  // the shell's HUD; the map is told and does the drawing.
+  const [popLevel, setPopLevel] = useState<PopLevel>('mine')
+  // Your profile picture, forwarded to the map so your pins wear your face.
+  // The map is a CROSS-ORIGIN iframe (:5199 against the shell's :5173), so it
+  // cannot read poplur.profile.photo out of localStorage itself — the shell is
+  // the only side that can see the key, and the bridge is the only way across.
+  const [ownPhoto, setOwnPhoto] = useState<string | null>(() => {
+    try { return window.localStorage.getItem('poplur.profile.photo') } catch { return null }
+  })
+  useEffect(() => {
+    const onPhoto = (event: Event) => {
+      const next = (event as CustomEvent<{ photo?: string | null }>).detail?.photo ?? null
+      setOwnPhoto(next)
+    }
+    window.addEventListener('poplur-profile-photo', onPhoto)
+    return () => window.removeEventListener('poplur-profile-photo', onPhoto)
+  }, [])
+  // Re-sent on every map (re)load as well as every change: the iframe remounts
+  // on tab changes and a message sent to a dead frame is simply lost.
+  useEffect(() => {
+    if (!mapReady) return
+    mapFrameRef.current?.contentWindow?.postMessage(
+      { type: 'poplur-map-action', action: 'setOwnPhoto', photo: ownPhoto }, '*',
+    )
+  }, [ownPhoto, mapReady])
   const feedChromeGone = feedFullscreen && committedTab === 'feed'
   const [mapTourOn, setMapTourOn] = useState(false)
   // The map's status title, drawn by the shell so it can never collide with
@@ -935,10 +1022,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setMapMounted(false)
       setMapReady(false)
     }
+    const screenCanRender = pageVisible && !overlayOpen && activePermission === null
     const apply = () => {
-      if (activeTab === 'map') { setMapMounted(true); return }
+      if (activeTab === 'map' && screenCanRender) { setMapMounted(true); return }
       if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
       dropTimer = window.setTimeout(drop, MAP_GRACE_MS)
+    }
+    // Covered and backgrounded surfaces are not a navigation animation. Drop
+    // them synchronously instead of waiting for the cube's settle window.
+    if (!screenCanRender) {
+      drop()
+      return
     }
     // Wait for the cube to STOP before touching the map at all.
     //
@@ -962,7 +1056,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (cubeSpinning) return
     const settleTimer = window.setTimeout(apply, MAP_SETTLE_MS)
     return () => { window.clearTimeout(settleTimer); window.clearTimeout(dropTimer) }
-  }, [activeTab, cubeSpinning])
+  }, [activePermission, activeTab, cubeSpinning, overlayOpen, pageVisible])
 
   // Boot cover lifecycle. Unmounting re-arms it, so the NEXT mount renders
   // covered in the same commit that attaches the iframe — there is no frame in
@@ -1195,6 +1289,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         'CC ON': 'captions',
         'CC OFF': 'captions',
         PROFILE: 'profile',
+        'VIEW PROFILE': 'profile',
       }
       const action = map[favourite]
       if (action) runMenuAction(action)
@@ -1238,14 +1333,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       )}
 
       <div className={styles.contentLayer}>
-        {committedTab === 'feed' && (
+        {pageVisible && !overlayOpen && activePermission === null && committedTab === 'feed' && (
           <FeedTwin
             index={chanIndex}
             onIndexChange={setChanIndex}
             onPostReach={onFeedPostReach}
             bindActions={fn => { feedActionsRef.current = fn }}
             suppressed={overlayOpen || holdOpen || activePermission !== null}
-            engagementTarget={feedEngagement}
             onPlayerModeChange={setFeedFullscreen}
             onOpenProfile={user => {
               setProfileOrigin(activeTab)
@@ -1254,7 +1348,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
           />
         )}
-        {committedTab === 'post' && (
+        {pageVisible && !overlayOpen && activePermission === null && committedTab === 'post' && (
           <Camera
             onComposingChange={handleComposingChange}
             step={cameraStep}
@@ -1281,7 +1375,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
           />
         )}
-        {committedTab === 'profile' && (
+        {pageVisible && !overlayOpen && activePermission === null && committedTab === 'profile' && (
           <ProfileTwin
             bindArrows={fn => { profileArrowsRef.current = fn }}
             bindGoBack={fn => { profileBackRef.current = fn }}
@@ -1351,6 +1445,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
+          {/* Whose pops the map is drawing. Map tab only: on the feed or the
+              camera there is no board to filter, and a dead control there
+              would read as broken. */}
+          {activeTab === 'map' && (
+            <div className={styles.levelAbove}>
+            <MapLevelButton
+              level={popLevel}
+              onPick={next => {
+                setPopLevel(next)
+                mapFrameRef.current?.contentWindow?.postMessage(
+                  { type: 'poplur-map-action', action: 'setPopLevel', level: next }, '*',
+                )
+              }}
+            />
+            </div>
+          )}
           <ClayChannelArrows
             key={`channel-arrows-${uiRecoveryKey}`}
             size={cubeSize}

@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { isNativeShell } from './nativeBridge'
-import { onFrame, ambientAllowed, boostFrames } from './frameGovernor'
+import { onFrame, ambientAllowed, boostFrames, setSurfaceFront } from './frameGovernor'
 import { CLAY_ROUTES, PALETTE } from './data'
+import { pinWithFace, warmPinSprites } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
@@ -48,6 +49,33 @@ export interface ClayMapProps {
    *  lifts the Loading screen, so the launch is revealed at globe zoom rather
    *  than after the 7s descent (which hid the globe entirely). */
   onGlobeReady?: () => void
+  /** Who holds what, right now — one pin per pop, per the active pop level. */
+  pins?: PopPin[]
+  /** A pin was tapped: go to that poster's profile, with this pop's post lit. */
+  onPinOpen?: (pin: PopPin) => void
+}
+
+/** A pop standing on the map: whose it is, where, and how much it holds. */
+export interface PopPin {
+  id: string
+  /** '@handle', or null for your own pops */
+  user: string | null
+  name: string
+  coords: [number, number]
+  radiusKm: number
+  /** the owner's takeover colour */
+  color: string
+  /** profile picture for the pin's head */
+  avatar: string | null
+  /** Feed channel and optional uploaded creative for the intercept window. */
+  channel?: string
+  media?: {
+    kind: 'image' | 'video'
+    src: string
+    poster?: string
+    alt: string
+  }
+  mine: boolean
 }
 
 export const MAP_2D = initialMapMode() === '2d'
@@ -88,6 +116,14 @@ const CLAY_LABEL_EMISSIVE = 0.8
 // Sky follows the real time of day: clear blue by day, pitch-black space with
 // stars by night (like the lock-screen reference).
 function applySky(map: mapboxgl.Map, day: boolean) {
+  // The fallback map is deliberately FLAT. Fog/atmosphere only makes sense on
+  // the globe; keeping it on in 2D leaves Mapbox's atmosphere pass alive and
+  // was one of the GPU costs that survived after visible animation stopped on
+  // iPhone. It also produced the stray launch halo.
+  if (MAP_2D) {
+    try { map.setFog(null) } catch { /* fog unsupported */ }
+    return
+  }
   try {
     map.setFog(day ? {
       range: [0.6, 8],
@@ -799,9 +835,15 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherTemp }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherTemp, pins, onPinOpen }: ClayMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
+  const pinMarkersRef = useRef<mapboxgl.Marker[]>([])
+  // Read through a ref inside the marker's click listener: the listener is
+  // attached once when the pin is built, and capturing the prop directly would
+  // freeze whatever callback identity existed at that moment.
+  const onPinOpenRef = useRef(onPinOpen)
+  onPinOpenRef.current = onPinOpen
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -809,8 +851,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const stopOrbitRef = useRef<() => void>(() => {})
   const streetViewRef = useRef(streetView)
   const nativeLocationRef = useRef<[number, number] | null>(null)
-  // True while the map tab is front (the home signals via gcAudio messages);
-  // ambient animation pauses when another tab covers the map.
+  // True while the map tab is front. The dedicated poplur-map-front message is
+  // authoritative; gcAudio remains a compatibility fallback for old shells.
   // The embed's `front=0` says the map booted behind another tab; the home
   // still posts gcAudio as tabs change, but that arrives too late to decide
   // whether the intro should be cinematic.
@@ -818,6 +860,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     typeof window === 'undefined'
       || new URLSearchParams(window.location.search).get('front') !== '0',
   )
+  const explicitMapFrontRef = useRef(false)
   // Bumped when a new map instance finishes loading, so the marker effect
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
@@ -919,10 +962,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const onLocation = (event: Event) => apply((event as CustomEvent).detail)
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === 'poplur-location') apply(event.data)
-      // The home posts gcAudio on/off as the map tab gains/loses the front —
-      // reuse it as the visibility signal for ambient animation.
-      if (typeof event.data?.gcAudio === 'string') {
+      if (event.data?.type === 'poplur-map-front') {
+        explicitMapFrontRef.current = true
+        mapIsFrontRef.current = event.data.front === true
+        setSurfaceFront(mapIsFrontRef.current && !document.hidden)
+        if (!mapIsFrontRef.current) stopCarAudio()
+      } else if (!explicitMapFrontRef.current && typeof event.data?.gcAudio === 'string') {
+        // Compatibility with shells that predate poplur-map-front. Audio mute
+        // is not visibility once the explicit signal has been observed.
         mapIsFrontRef.current = event.data.gcAudio === 'on'
+        setSurfaceFront(mapIsFrontRef.current && !document.hidden)
         if (!mapIsFrontRef.current) {
           // The animated car loop otherwise retains the most recent engine
           // gain while Feed covers the map.
@@ -944,11 +993,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     window.addEventListener('poplur-location', onLocation)
     window.addEventListener('poplur-native-location', onLocation)
     window.addEventListener('message', onMessage)
+    const syncFrameSurface = () => setSurfaceFront(mapIsFrontRef.current && !document.hidden)
+    document.addEventListener('visibilitychange', syncFrameSurface)
+    syncFrameSurface()
     apply((window as typeof window & { __poplurNativeLocation?: unknown }).__poplurNativeLocation)
     return () => {
       window.removeEventListener('poplur-location', onLocation)
       window.removeEventListener('poplur-native-location', onLocation)
       window.removeEventListener('message', onMessage)
+      document.removeEventListener('visibilitychange', syncFrameSurface)
+      setSurfaceFront(false)
     }
   }, [])
 
@@ -1057,6 +1111,27 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
     // Live pop animations (building id → rAF handle) so unmount can cancel them
     const popRafs = new Map<string | number, number>()
+    // Every delayed map job is owned by this map instance. A removed iframe
+    // must not remain strongly retained for sixteen seconds by late boot,
+    // sample-claim, or repaint closures.
+    const ownedTimeouts = new Set<number>()
+    const ownedRafs = new Set<number>()
+    const later = (fn: () => void, ms: number) => {
+      const id = window.setTimeout(() => {
+        ownedTimeouts.delete(id)
+        if (!disposed) fn()
+      }, ms)
+      ownedTimeouts.add(id)
+      return id
+    }
+    const nextFrame = (fn: () => void) => {
+      const id = window.requestAnimationFrame(() => {
+        ownedRafs.delete(id)
+        if (!disposed) fn()
+      })
+      ownedRafs.add(id)
+      return id
+    }
     // Flyer animation unsubscribe (shared frameGovernor clock)
     let stopFlyerFrames: (() => void) | null = null
     let disposed = false
@@ -1112,12 +1187,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // fill-extrusion cost at zero perceptible gain on small screens.
         antialias: !MAP_2D && !MAP_LITE && !isNativeShell(),
         attributionControl: false,
-        // Keep the same globe projection for both render tiers. The 2D tier is
-        // top-down (pitch/bearing are locked below) and removes the expensive
-        // 3D layers, while using the globe projection avoids the blank canvas
-        // that Android/WebView can produce when switching this classic style
-        // to mercator at runtime.
-        projection: 'globe',
+        // 2D means a genuinely flat renderer, not a top-down camera pointed at
+        // the still-expensive globe shader. Constructing in Mercator is stable
+        // in WebView (the historical blank-canvas bug came from switching an
+        // already-running classic style at runtime). 3D keeps the globe.
+        projection: MAP_2D ? 'mercator' : 'globe',
       })
     } catch (error) {
       fallBackAfterWebGLFailure(error)
@@ -1136,6 +1210,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       map.setMaxPitch(0)
     }
     mapRef.current = map
+    // Passive device profiler counter: Mapbox only emits this when it actually
+    // draws, so the 5s health report can distinguish a parked event-driven map
+    // from a canvas that is silently repainting at display rate. No rAF/timer is
+    // introduced by the measurement itself.
+    const profiledWindow = window as typeof window & { __poplurMapRenderCount?: number }
+    profiledWindow.__poplurMapRenderCount = 0
+    map.on('render', () => {
+      profiledWindow.__poplurMapRenderCount = (profiledWindow.__poplurMapRenderCount ?? 0) + 1
+    })
     // QA hook, same spirit as __poplurDisposeMap: the camera cannot be verified
     // from outside the frame otherwise, and "does the flight actually fly?"
     // has to be measurable rather than argued about.
@@ -1148,14 +1231,26 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     ;(window as unknown as { __map?: mapboxgl.Map }).__map = map
 
     // ── Zoom slider sync ──────────────────────────────────────────────────────
-    map.on('zoom', () => {
+    // Camera animations can emit `zoom` at display rate. Updating React state
+    // for every event re-rendered the entire map HUD hundreds of times during
+    // the old launch dive while Mapbox was also streaming and uploading tiles.
+    // Refs still track every frame; the visible slider needs a 10 Hz sample and
+    // one exact final update.
+    let lastZoomUiAt = 0
+    const syncZoom = (force = false) => {
       const next = map.getZoom()
       zoomValueRef.current = next
-      setZoomValue(next)
       // Pinch/wheel/cinematic zooms become the new resting point. While our
       // slider spring owns the camera, keep its destination intact instead.
       if (!zoomAnimationRef.current) zoomTargetRef.current = next
-    })
+      const now = performance.now()
+      if (force || now - lastZoomUiAt >= 100) {
+        lastZoomUiAt = now
+        setZoomValue(next)
+      }
+    }
+    map.on('zoom', () => syncZoom(false))
+    map.on('zoomend', () => syncZoom(true))
 
     // ── Zoom-dependent marker visibility ─────────────────────────────────────
     // Globe zoom shows the flyers; street zoom shows the POI pins.
@@ -1174,6 +1269,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           mk.getElement().style.display = isCity ? '' : 'none'
         }))
       markersRef.current.forEach(mk => {
+        mk.getElement().style.display = isGlobe ? 'none' : ''
+      })
+      // Pins are the whole point of the map at region/street zoom, but from
+      // space the claim BLOOMS already say who holds what — a field of faces
+      // out there would just be confetti over the planet.
+      pinMarkersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? 'none' : ''
       })
     }
@@ -1319,7 +1420,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           essential: true,
         })
       }
-      window.setTimeout(updateLabelCull, 150)
+      later(updateLabelCull, 150)
     }
     ;(map as unknown as { __setStreetView?: (enabled: boolean) => void }).__setStreetView = setStreetViewMode
 
@@ -1473,9 +1574,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         }, firstLayerId)
       }
 
-      // ── Launch flight: out to space, then fall onto the user at full zoom ───
-      map.jumpTo({ center: HOME_CENTER, zoom: 0.85, pitch: 0, bearing: 0 })
-      setZoomValue(0.85)
+      // The 3D experience keeps its globe-to-city reveal. The default 2D map
+      // starts directly on useful ground: the old six-second world dive forced
+      // Mapbox to stream, layout and upload every intermediate zoom level and
+      // was enough to push an already-warm iPhone into OS throttling on launch.
+      const launchZoom = MAP_2D ? INTRO_LANDING_ZOOM : 0.85
+      map.jumpTo({ center: HOME_CENTER, zoom: launchZoom, pitch: 0, bearing: 0 })
+      zoomValueRef.current = launchZoom
+      zoomTargetRef.current = launchZoom
+      setZoomValue(launchZoom)
 
       // Reveal HERE — with the globe on screen and drawn. Waiting for the dive
       // to finish meant the Loading screen covered the entire launch and lifted
@@ -1492,10 +1599,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         onGlobeReady?.()
       }
       map.once('idle', revealAtGlobe)
-      window.setTimeout(revealAtGlobe, 1200)
+      later(revealAtGlobe, 1200)
 
       let introDone = false
       const landOn = (center: [number, number]) => {
+        // 2D is an event-driven map, not a cinematic. One camera jump loads
+        // only the tiles the user will actually see and leaves the renderer
+        // parked as soon as that frame is complete.
+        if (MAP_2D) {
+          map.jumpTo({ center, zoom: INTRO_LANDING_ZOOM, pitch: 0, bearing: 0 })
+          if (!introDone) {
+            introDone = true
+            onIntroComplete?.(center)
+          }
+          return
+        }
         // Behind another tab there is nobody to watch the dive — flying it just
         // streams tiles and uploads textures for seven seconds while Feed or
         // Profile is trying to hold 60fps. Land immediately instead; the map is
@@ -1540,7 +1658,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // A tile request can remain pending indefinitely on a constrained
           // WebView. Do not leave the 2D camera at the black space zoom while
           // waiting for an idle event; the map will fill its tiles as they land.
-          window.setTimeout(startOnce, MAP_2D ? 1800 : 5000)
+          later(startOnce, MAP_2D ? 1800 : 5000)
         }
         map.once('moveend', () => {
           if (introDone) return
@@ -1553,11 +1671,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // indefinitely, which strands the launch on the globe instead of diving
       // into the 3D-building view.
       let landingCenter: [number, number] = nativeLocationRef.current ?? HOME_CENTER
-      const startIntro = () => window.setTimeout(() => landOn(nativeLocationRef.current ?? landingCenter), 1400)
+      const startIntro = () => later(
+        () => landOn(nativeLocationRef.current ?? landingCenter),
+        MAP_2D ? 120 : 1400,
+      )
       const deferInitialGeolocation = new URLSearchParams(window.location.search).get('deferLocation') === '1'
       if (!deferInitialGeolocation && !nativeLocationRef.current && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          pos => { landingCenter = [pos.coords.longitude, pos.coords.latitude] },
+          pos => {
+            landingCenter = [pos.coords.longitude, pos.coords.latitude]
+            // The direct 2D launch may already have painted its cached fallback
+            // before Core Location answers. Recenter once, without animating
+            // through another set of intermediate tiles.
+            if (MAP_2D && introDone) landOn(landingCenter)
+          },
           () => { /* fallback already scheduled */ },
           { timeout: 1200, maximumAge: 300000 },
         )
@@ -1839,11 +1966,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         modelSprite('zoom_buildings.glb', { yaw: 25, pitch: 14, size: 256 })
           .then(url => { citySpriteUrl = url; syncCityMarkers() })
           .catch(err => console.warn('[modelSprite]', 'zoom_buildings.glb', err))
+        // Settlement queries are camera-settle work. Running them on every
+        // `zoom` frame rebuilt up to 24 DOM markers while the camera was also
+        // rendering, and the backup interval repeated the same full rendered-
+        // feature query forever on a motionless phone.
         map.on('moveend', syncCityMarkers)
-        map.on('zoom', syncCityMarkers)
-        const citySyncTimer = window.setInterval(syncCityMarkers, MAP_LITE ? 5000 : 2500)
+        map.on('zoomend', syncCityMarkers)
         map.once('remove', () => {
-          window.clearInterval(citySyncTimer)
           cityMarkers.forEach(mk => mk.remove())
         })
       }
@@ -2309,6 +2438,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // branch can clear it once instead of re-clearing an empty source on
       // every ambient frame.
       let carFeaturesLive = false
+      let ambientMotionLive = false
       const setCarFeatures = (features: Array<{
         type: 'Feature'
         geometry: { type: 'Point'; coordinates: [number, number] }
@@ -2363,8 +2493,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       let claimPaintQueue = 0
       const applyClaimRoadPaint = () => {
         const fc = claimsWithinCollection()
-        if (!fc.features.length) return
-        const w = ['within', fc]
+        // No claims of YOUR OWN on the board — switching the pop level to
+        // "other pops" is the case that produces this. Bailing here left the
+        // last takeover's paint burned into the streets, so the map still read
+        // as yours while showing nothing but other people's territory. Paint
+        // the plain palette back instead of returning.
+        const held = fc.features.length > 0
+        const w = held ? ['within', fc] : false
         // ONE layer per frame. Each setPaintProperty with a `within` forces a
         // style recalculation over that layer's features; five in one call was
         // a single long task in the idle window. Spread out, each stays under
@@ -2372,12 +2507,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // frames. The two extrusion layers ride the same queue rather than a
         // separate pass, so a claim change can never cost more than one layer
         // recalc per frame.
+        // `within false` is not a valid expression, so an empty board hands each
+        // layer its plain colour directly rather than a case that can never match.
+        const claimed = (taken: unknown, plain: unknown) => (held ? ['case', w, taken, plain] : plain)
         const sets: Array<[string, string, unknown]> = [
-          ['clay-real-road-body', 'line-color', ['case', w, takeoverTint('#8a2260'), PALETTE.road]],
-          ['clay-minor-roads', 'line-color', ['case', w, takeoverTint('#9c2a6e'), PALETTE.road]],
-          ['clay-real-road-rim', 'line-color', ['case', w, takeoverTint('#ff9ccd'), PALETTE.roadHighlight]],
-          ['clay-grass-fill', 'fill-color', ['case', w, takeoverTint('#D85D96'), theme.park]],
-          ['clay-buildings-2d', 'fill-color', ['case', w, claimedFlatBuildingColor(), flatBuildingColor()]],
+          ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), PALETTE.road)],
+          ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), PALETTE.road)],
+          ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), PALETTE.roadHighlight)],
+          ['clay-grass-fill', 'fill-color', claimed(takeoverTint('#D85D96'), theme.park)],
+          ['clay-buildings-2d', 'fill-color', claimed(claimedFlatBuildingColor(), flatBuildingColor())],
           ['clay-buildings-3d', 'fill-extrusion-color', building3DColor()],
           ['clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor()],
         ]
@@ -2386,7 +2524,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           if (generation !== claimPaintQueue || i >= sets.length) return
           const [layer, prop, value] = sets[i]
           try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* layer not ready */ }
-          requestAnimationFrame(() => step(i + 1))
+          nextFrame(() => step(i + 1))
         }
         step(0)
       }
@@ -2395,11 +2533,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // a newly loaded building tile evaluates the expression itself as its
       // bucket builds, so late tiles come up already claimed.
       onClaimsSettled(() => { applyClaimRoadPaint() })
-      // Late safety passes: tiles and theme applies can land after the seeds
-      // settle, so re-assert the takeover paint a few times after load.
-      ;[4000, 9000, 16000].forEach(ms => window.setTimeout(() => {
-        applyClaimRoadPaint()
-      }, ms))
 
       // ── The colour circle: takeover recolour ────────────────────────────────
       // The circle under the zoom slider transposes the takeover family to a
@@ -2448,16 +2581,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // bearing road/grass/2d passes stay on the existing one-layer-per-frame
         // spread; the two extrusion palettes get a frame each after that.
         const beat = ++recolorBeat
-        window.setTimeout(() => {
+        later(() => {
           if (beat !== recolorBeat) return // a faster second click owns the repaint
           try {
             applyClaimsPalette(map)
             applyClaimRoadPaint()
-            requestAnimationFrame(() => requestAnimationFrame(() => {
+            nextFrame(() => nextFrame(() => {
               if (beat !== recolorBeat) return
               try {
                 if (map.getLayer('clay-buildings-3d')) map.setPaintProperty('clay-buildings-3d', 'fill-extrusion-color', building3DColor() as never)
-                requestAnimationFrame(() => {
+                nextFrame(() => {
                   if (beat !== recolorBeat) return
                   try {
                     if (map.getLayer('clay-building-caps')) map.setPaintProperty('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor() as never)
@@ -2486,7 +2619,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       ]
       if (prototypeClaimSeeds) {
         SAMPLE_POPS.forEach((pop, i) => {
-          window.setTimeout(() => {
+          later(() => {
             try { setClaim(map, pop) } catch { /* map torn down */ }
           }, 1200 + i * 420)
         })
@@ -2511,10 +2644,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       map.on('idle', harvestCarPaths)
       map.on('moveend', harvestCarPaths)
-      // Lite skips the car system: road harvesting queries rendered features on
-      // the main thread and cars add per-frame marker updates.
-      const carHarvestTimer = MAP_LITE && !MAP_2D ? 0 : window.setInterval(harvestCarPaths, 2500)
-      if (carHarvestTimer) map.once('remove', () => window.clearInterval(carHarvestTimer))
+      // No polling fallback: rendered roads only change after the camera/style
+      // changes, and both paths already emit idle/moveend. The old 2.5s timer
+      // queried every rendered road forever even while the phone sat untouched.
 
       const flyerStart = performance.now()
       // Ambient decoration on the shared 30Hz clock (frameGovernor), not a
@@ -2530,7 +2662,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // every device class. MAP_LITE devices skip the ambient layer entirely.
         // A low-memory 3D device still skips the ambient loop entirely. The
         // default 2D map is also "lite", but keeps only budget-capped cars.
-        if ((MAP_LITE && !MAP_2D) || !mapIsFrontRef.current || !ambientAllowed()) return
+        const canAnimate = !((MAP_LITE && !MAP_2D) || !mapIsFrontRef.current)
+          && ambientAllowed()
+        if (!canAnimate) {
+          // Leave the cars/boats visibly parked, but silence their synthetic
+          // engine bed once ambient motion sleeps. Do this only on the edge so
+          // an idle subscriber does not keep touching the audio graph.
+          if (ambientMotionLive) {
+            ambientMotionLive = false
+            setCarProximity(0)
+          }
+          return
+        }
+        ambientMotionLive = true
         const frameNow = performance.now()
         const zoom = map.getZoom()
         const t = (frameNow - flyerStart) / 1000
@@ -2565,14 +2709,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // go when the thermal ladder steps down — the same rule the rest of
           // the ambient layer already follows.
           if (carPaths.length && map.hasImage('poplur-car') && ambientAllowed()) {
-            if (frameNow - lastCarUpdateAt >= (MAP_2D ? 200 : 125)) {
+            if (frameNow - lastCarUpdateAt >= (MAP_2D ? 1000 : 250)) {
             lastCarUpdateAt = frameNow
             // Traffic: a couple of cars per harvested road, staggered along it
             // with per-car speed jitter so they bunch, pass and overlap like
             // real flow. Capped hard — at street level only a handful are ever
             // on screen, and the rest were paying full price to be invisible.
             const carsPerRoad = MAP_2D ? 1 : 2
-            const maxCars = MAP_2D ? 8 : 12
+            const maxCars = MAP_2D ? 4 : 8
             const container = map.getContainer()
             const ccx = container.clientWidth / 2
             const ccy = container.clientHeight / 2
@@ -2629,11 +2773,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             marker.setLngLat(onWater ? drifted : boat.coords)
           })
         } else {
-          setCarFeatures([])
+          // `setData([])` is not a harmless clear: Mapbox treats every call as
+          // a source mutation and schedules a full render. At globe zoom this
+          // path used to mutate an already-empty source on every ambient tick.
+          if (carFeaturesLive) {
+            carFeaturesLive = false
+            setCarFeatures([])
+          }
           setCarProximity(0)
         }
       }
-      stopFlyerFrames = onFrame(animateFlyers, 'ambient')
+      stopFlyerFrames = onFrame(animateFlyers, MAP_2D ? 'idle' : 'ambient')
 
       // ── Cinematic landmark tour: long curved flights landmark to landmark ──
       // The tour is shot, not merely navigated. Every stop is a three-beat
@@ -2769,20 +2919,38 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const disposeMap = () => {
       if (disposed) return
       disposed = true
+      setSurfaceFront(false)
       mapCanvas.removeEventListener('webglcontextlost', handleContextLost)
       window.clearInterval(bootPoll)
+      ownedTimeouts.forEach(id => window.clearTimeout(id))
+      ownedTimeouts.clear()
+      ownedRafs.forEach(id => window.cancelAnimationFrame(id))
+      ownedRafs.clear()
       stopOrbit()
       stopFlyerFrames?.()
       stopCarAudio()
       popRafs.forEach(raf => cancelAnimationFrame(raf))
       popRafs.clear()
-      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef].forEach(ref => {
+      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef].forEach(ref => {
         ref.current.forEach(mk => mk.remove())
         ref.current = []
       })
       markersRef.current.forEach(m => m.remove())
+      let gl: WebGLRenderingContext | WebGL2RenderingContext | null = null
+      try {
+        gl = mapCanvas.getContext('webgl2') ?? mapCanvas.getContext('webgl')
+      } catch { /* context already unavailable */ }
       map.remove()
+      // Mapbox removes handlers and workers, but WebKit may retain the backing
+      // store until the webview dies. Explicitly release the GL context and its
+      // full-resolution buffers while this canvas is still reachable.
+      try { gl?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* already lost */ }
+      mapCanvas.width = 1
+      mapCanvas.height = 1
       if (mapRef.current === map) mapRef.current = null
+      const debugWindow = window as typeof window & { __map?: mapboxgl.Map; __poplurMap?: mapboxgl.Map }
+      if (debugWindow.__map === map) delete debugWindow.__map
+      if (debugWindow.__poplurMap === map) delete debugWindow.__poplurMap
     }
     const mapWindow = window as typeof window & { __poplurDisposeMap?: () => void }
     const handleDisposeMessage = (event: MessageEvent) => {
@@ -2830,6 +2998,85 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     if (!map || mapEpoch === 0) return
     addMarkers(map)
   }, [pois, selectedId, mapEpoch])
+
+  // ── Pop pins: one Poplur pin per takeover, wearing its owner's face ───────
+  // Rebuilt only when the SET of pops changes (id+colour+avatar), not on every
+  // camera move: the sprite composite is async and re-running it per frame
+  // would thrash. Markers are plain DOM, so they inherit the existing viewport
+  // cull and the zoom-band visibility rules for free.
+  const pinKey = (pins ?? []).map(p => `${p.id}:${p.color}:${p.avatar ?? ''}`).join('|')
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapEpoch === 0) return
+    let dropped = false
+    const list = pins ?? []
+
+    pinMarkersRef.current.forEach(m => m.remove())
+    pinMarkersRef.current = []
+    if (!list.length) return
+
+    // The pin's look follows the render tier: dimensional in 3D, flat in 2D.
+    const tier: '2d' | '3d' = MAP_2D ? '2d' : '3d'
+    // Bake-only: .codex/prerender-sprites.mjs installs this collector before any
+    // app code runs. A bake run boots in ONE tier, so it would only ever capture
+    // that tier's pin and the other would be left decoding 29MB of GLB on a real
+    // device. Warming both here costs the bake a few seconds and costs a user's
+    // phone nothing — the collector does not exist in a shipped app.
+    if ((window as unknown as { __poplurSpriteCaptures?: unknown }).__poplurSpriteCaptures) {
+      warmPinSprites()
+    }
+    void Promise.all(list.map(pin =>
+      pinWithFace({ avatar: pin.avatar, color: pin.color, mode: tier })
+        .then(src => ({ pin, src }))
+        .catch(() => null),
+    )).then(built => {
+      // The map (or the level) moved on while the sprites composited.
+      if (dropped || mapRef.current !== map) return
+      built.forEach(entry => {
+        if (!entry) return
+        const { pin, src } = entry
+        // Mapbox owns the marker root's inline transform and rewrites it while
+        // the camera moves. Keep that positioning transform off the button
+        // that owns Poplur's press/ownership transition; sharing one element
+        // restarted five CSS transitions on every map frame.
+        const markerRoot = document.createElement('div')
+        markerRoot.className = MAP_2D
+          ? `${styles.popPinMarker} ${styles.popPinMarkerFlat}`
+          : styles.popPinMarker
+        const el = document.createElement('button')
+        el.className = MAP_2D ? `${styles.popPin} ${styles.popPinFlat}` : styles.popPin
+        el.type = 'button'
+        el.setAttribute('aria-label', pin.mine
+          ? `Your pop at ${pin.name}, ${pin.radiusKm} km`
+          : `${pin.user} holds ${pin.name}, ${pin.radiusKm} km`)
+        const img = document.createElement('img')
+        img.src = src
+        img.alt = ''
+        img.draggable = false
+        el.appendChild(img)
+        markerRoot.appendChild(el)
+        // Your own pops get a quiet marker of ownership so a crowded board
+        // still answers "which of these are mine" without reading faces.
+        if (pin.mine) el.classList.add(styles.popPinMine)
+        el.addEventListener('click', event => {
+          event.stopPropagation()
+          playPop()
+          onPinOpenRef.current?.(pin)
+        })
+        // The pin stands ON its coordinate, so the tip is the anchor.
+        const marker = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
+          .setLngLat(pin.coords)
+          .addTo(map)
+        pinMarkersRef.current.push(marker)
+      })
+    })
+
+    return () => {
+      dropped = true
+      pinMarkersRef.current.forEach(m => m.remove())
+      pinMarkersRef.current = []
+    }
+  }, [pinKey, mapEpoch])
 
   // Re-skin the map whenever the theme changes (matches the app's cube skins)
   useEffect(() => {

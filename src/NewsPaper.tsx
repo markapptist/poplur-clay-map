@@ -2,6 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './NewsPaper.module.css'
 import { playPop } from './pop'
 import ClayCornerButton from './ClayCornerButton'
+import {
+  distanceKm,
+  onNewsMessages,
+  readNewsMessages,
+  relativeWhen,
+  type NewsMessage,
+} from './newsMessages'
 
 // THE POPLUR TIMES — the News screen.
 //
@@ -16,6 +23,11 @@ import ClayCornerButton from './ClayCornerButton'
 //
 // The edition keeps setting more type as you scroll, and stops only when the
 // next messages no longer intercept where you are standing.
+//
+// The messages YOU drop from the map composer lead the edition. They are real
+// (newsMessages, written by ClayMap's "Post message"), they carry the radius
+// you chose, and their map plate is the actual ground you claimed — everything
+// below them is the synthetic edition until the live service takes over.
 
 export interface Entry {
   id: string
@@ -32,6 +44,10 @@ export interface Entry {
   replies: number
   repops: number
   likes: number
+  /** dropped by you, from the map composer */
+  mine?: boolean
+  /** real drops know where they are: lng, lat */
+  coords?: [number, number]
 }
 
 const AVATARS = [
@@ -122,16 +138,39 @@ const HOME: [number, number] = [-79.3832, 43.6532]
 
 function snapshotFor(entry: Entry): string | null {
   if (!MAPBOX_TOKEN) return null
-  // step the centre out with the story's distance so each snapshot differs
+  // A real drop knows its own ground; only the synthetic edition has to step
+  // the centre out with the story's distance so each snapshot differs.
   const bearing = (entry.distanceKm * 37) % 360
   const rad = (bearing * Math.PI) / 180
-  const lng = HOME[0] + (entry.distanceKm / 85) * Math.cos(rad)
-  const lat = HOME[1] + (entry.distanceKm / 111) * Math.sin(rad)
+  const lng = entry.coords ? entry.coords[0] : HOME[0] + (entry.distanceKm / 85) * Math.cos(rad)
+  const lat = entry.coords ? entry.coords[1] : HOME[1] + (entry.distanceKm / 111) * Math.sin(rad)
   const zoom = entry.radiusKm > 24 ? 8.4 : entry.radiusKm > 10 ? 10.2 : 12.4
   const pin = `pin-l+f63b9a(${lng.toFixed(4)},${lat.toFixed(4)})`
   return `https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/${pin}/`
     + `${lng.toFixed(4)},${lat.toFixed(4)},${zoom},0/640x360@2x`
     + `?access_token=${MAPBOX_TOKEN}&logo=false&attribution=false`
+}
+
+// Your own drops always run, even when the radius you chose does not reach
+// where you are standing: you wrote it, so it is your news by definition. The
+// reach line under it still tells the truth about who else it covers.
+function myEntries(list: NewsMessage[], nowMs: number): Entry[] {
+  return list.map(m => ({
+    id: m.id,
+    kind: 'message' as const,
+    who: 'You',
+    handle: '@you',
+    avatar: 'mark_talk0.png',
+    body: m.body,
+    radiusKm: m.radiusKm,
+    distanceKm: +distanceKm(HOME, m.lng, m.lat).toFixed(1),
+    when: relativeWhen(m.at, nowMs),
+    replies: 0,
+    repops: 0,
+    likes: 0,
+    mine: true,
+    coords: [m.lng, m.lat] as [number, number],
+  }))
 }
 
 function editionStamp(now: Date) {
@@ -152,15 +191,21 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
     return () => window.clearInterval(id)
   }, [])
   const stamp = editionStamp(now)
+  // The pops you dropped from the map, live. They arrive in this document
+  // either through the shell's forward or through the storage event — the map
+  // composer runs in the iframe, which has its own module state.
+  const [dropped, setDropped] = useState<NewsMessage[]>(() => readNewsMessages())
+  useEffect(() => onNewsMessages(setDropped), [])
   const [exhausted, setExhausted] = useState(false)
   const [liked, setLiked] = useState<Set<string>>(() => new Set())
   const sentinel = useRef<HTMLDivElement>(null)
 
   const entries = useMemo(() => {
-    const all: Entry[] = []
+    // What you dropped leads the edition; the rest of the paper follows.
+    const all: Entry[] = myEntries(dropped, now.getTime())
     for (let p = 0; p < pages; p += 1) all.push(...buildPage(p))
     return all
-  }, [pages])
+  }, [pages, dropped, now])
 
   // Keep setting type while the presses have something in reach.
   const loadMore = useCallback(() => {
@@ -217,7 +262,9 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
 
         {lead && (
           <article className={styles.lead}>
-            <div className={styles.kicker}>{lead.kind === 'dispatch' ? 'MAP DISPATCH' : 'FROM THE STREET'}</div>
+            <div className={styles.kicker}>
+              {lead.kind === 'dispatch' ? 'MAP DISPATCH' : lead.mine ? 'YOUR POP' : 'FROM THE STREET'}
+            </div>
             <h2 className={`${styles.leadHead} ${styles.inkShader}`}>{lead.body.split(/[:.]/)[0]}</h2>
             <p className={styles.leadBody}>
               <span className={styles.dropCap}>{lead.body.trim()[0]}</span>
@@ -232,7 +279,8 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
               </figure>
             )}
             <div className={styles.byline}>
-              By {lead.who} · {lead.radiusKm} km radius · {lead.distanceKm} km away · {lead.when} ago
+              By {lead.who} · {lead.radiusKm} km radius · {lead.distanceKm} km away
+              {' · '}{lead.when === 'now' ? 'just now' : `${lead.when} ago`}
             </div>
           </article>
         )}
@@ -253,12 +301,22 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
                   <span className={styles.dot}>·</span>
                   <span className={styles.when}>{entry.when}</span>
                   {entry.kind === 'dispatch' && <span className={styles.aiTag}>MAP DISPATCH</span>}
+                  {entry.mine && <span className={styles.mineTag}>YOUR POP</span>}
                 </div>
                 <p className={styles.body}>{entry.body}</p>
-                {entry.kind === 'dispatch' && snapshotFor(entry) && (
+                {(entry.kind === 'dispatch' || entry.mine) && snapshotFor(entry) && (
                   <figure className={styles.plateSmall}>
-                    <img className={styles.plateImg} src={snapshotFor(entry)!} alt="Map of the area this dispatch covers" loading="lazy" />
-                    <figcaption className={styles.plateCap}>THE MAP · {entry.distanceKm} KM OUT</figcaption>
+                    <img
+                      className={styles.plateImg}
+                      src={snapshotFor(entry)!}
+                      alt={entry.mine ? 'Map of the ground this pop claims' : 'Map of the area this dispatch covers'}
+                      loading="lazy"
+                    />
+                    <figcaption className={styles.plateCap}>
+                      {entry.mine
+                        ? `YOUR GROUND · ${entry.radiusKm} KM RADIUS`
+                        : `THE MAP · ${entry.distanceKm} KM OUT`}
+                    </figcaption>
                   </figure>
                 )}
                 <div className={styles.reach}>

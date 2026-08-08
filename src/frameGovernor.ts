@@ -39,10 +39,21 @@ type Sub = {
 const subs = new Set<Sub>()
 
 let raf = 0
+let wakeTimer = 0
 let running = false
 let surfaceFront = true
 let quality: Quality = 3
+// The JS ladder infers pressure from missed deadlines. Native iOS has the real
+// ProcessInfo thermal state, so it can impose a ceiling before WebKit becomes
+// slow enough for inference to notice. `fair` already means the phone is warm;
+// decorative motion should be gone by then, not after serious throttling.
+let nativeThermalCeiling: Quality = 3
 let boostUntil = 0
+const AMBIENT_IDLE_MS = 15_000
+let ambientAwakeUntil = typeof performance !== 'undefined'
+  ? performance.now() + AMBIENT_IDLE_MS
+  : Number.POSITIVE_INFINITY
+let ambientSleepTimer = 0
 
 const qualityListeners = new Set<(q: Quality) => void>()
 
@@ -54,8 +65,12 @@ const qualityListeners = new Set<(q: Quality) => void>()
 const HZ: Record<Rate, [number, number, number, number]> = {
   //           q0  q1  q2  q3
   interactive: [30, 45, 60, 60],
-  ambient:     [10, 15, 24, 30],
-  idle:        [2,   4,  6,  8],
+  // Ambient decoration must have a hard energy ceiling even on a phone that
+  // can still hit every deadline. Waiting for thermal throttling before
+  // reducing it means the device is already hot. Twenty frames is enough for
+  // slow clay drift; the interactive boost still gives a gesture 60.
+  ambient:     [5,  10, 15, 20],
+  idle:        [1,   2,  3,  4],
 }
 
 /** Frame interval the current quality asks of a rate class, in ms. */
@@ -93,8 +108,9 @@ function median(xs: number[]): number {
 }
 
 function setQuality(next: Quality) {
-  if (next === quality) return
-  quality = next
+  const bounded = Math.min(next, nativeThermalCeiling) as Quality
+  if (bounded === quality) return
+  quality = bounded
   intervals.length = 0
   overrunStreak = 0
   comfortStreak = 0
@@ -125,8 +141,20 @@ function sampleThermals(dt: number) {
 }
 
 // ── the loop ─────────────────────────────────────────────────────────────────
+function scheduleNext() {
+  if (!running) return
+  // Do not keep a ProMotion display awake at 120 Hz just to discover that the
+  // fastest subscriber only asked for 4/20/60 Hz. Sleep until the requested
+  // deadline, then align the actual draw with the next compositor frame.
+  const delay = Math.max(0, currentDeadlineMs() - 2)
+  wakeTimer = window.setTimeout(() => {
+    wakeTimer = 0
+    if (running) raf = requestAnimationFrame(tick)
+  }, delay)
+}
+
 function tick(now: number) {
-  raf = requestAnimationFrame(tick)
+  raf = 0
 
   const dt = lastFrame ? now - lastFrame : 0
   lastFrame = now
@@ -145,6 +173,8 @@ function tick(now: number) {
       // One bad subscriber must not stop every animation in the app.
     }
   }
+
+  scheduleNext()
 }
 
 function shouldRun(): boolean {
@@ -161,12 +191,76 @@ function sync() {
   } else if (!want && running) {
     running = false
     cancelAnimationFrame(raf)
+    window.clearTimeout(wakeTimer)
     raf = 0
+    wakeTimer = 0
   }
 }
 
 if (typeof document !== 'undefined') {
-  document.addEventListener('visibilitychange', sync)
+  const setAmbientSleeping = (sleeping: boolean) => {
+    document.documentElement.classList.toggle('poplur-ambient-sleep', sleeping)
+  }
+  const sleepAmbient = () => {
+    window.clearTimeout(ambientSleepTimer)
+    ambientSleepTimer = 0
+    ambientAwakeUntil = 0
+    setAmbientSleeping(true)
+  }
+  const wakeAmbient = () => {
+    ambientAwakeUntil = performance.now() + AMBIENT_IDLE_MS
+    setAmbientSleeping(false)
+    window.clearTimeout(ambientSleepTimer)
+    ambientSleepTimer = window.setTimeout(sleepAmbient, AMBIENT_IDLE_MS)
+    boostFrames()
+  }
+  const onVisibility = () => {
+    if (document.hidden || !surfaceFront) sleepAmbient()
+    else wakeAmbient()
+    sync()
+  }
+
+  // Continuous decoration is useful while somebody is exploring, but it has
+  // no value once the phone is sitting on the same map. Freeze it after a
+  // short untouched window; any real input wakes it immediately. This is an
+  // energy gate, not a quality downgrade — the objects remain visible.
+  const opts: AddEventListenerOptions = { passive: true, capture: true }
+  for (const type of ['pointerdown', 'touchstart', 'wheel', 'keydown'] as const) {
+    document.addEventListener(type, wakeAmbient, opts)
+  }
+  const applyNativeThermal = (raw: unknown) => {
+    const state = typeof raw === 'string'
+      ? raw.toLowerCase()
+      : typeof raw === 'object' && raw
+        ? String((raw as { state?: unknown }).state ?? '').toLowerCase()
+        : ''
+    if (!state) return
+
+    const previousCeiling = nativeThermalCeiling
+    nativeThermalCeiling = state === 'critical' || state === 'serious'
+      ? 0
+      : state === 'fair'
+        ? 1
+        : 3
+    document.documentElement.dataset.poplurThermal = state
+    if (quality > nativeThermalCeiling) setQuality(nativeThermalCeiling)
+    if (nativeThermalCeiling < 2) {
+      sleepAmbient()
+    } else if (previousCeiling < 2) {
+      // Recover conservatively: native has returned to nominal, but jumping
+      // straight from survival to every effect can heat it again immediately.
+      setQuality(2)
+      if (surfaceFront && !document.hidden) wakeAmbient()
+    }
+  }
+  window.addEventListener('poplur-native-thermal', event => {
+    applyNativeThermal((event as CustomEvent).detail)
+  })
+  window.addEventListener('message', event => {
+    if (event.data?.type === 'poplur-native-thermal') applyNativeThermal(event.data)
+  })
+  document.addEventListener('visibilitychange', onVisibility)
+  wakeAmbient()
 }
 
 // ── public API ───────────────────────────────────────────────────────────────
@@ -194,6 +288,14 @@ export function onFrame(cb: (dtMs: number, now: number) => void, rate: Rate = 'a
  */
 export function boostFrames(ms = 400): void {
   boostUntil = Math.max(boostUntil, performance.now() + ms)
+  // A parked ambient/idle timer may be tens or hundreds of milliseconds from
+  // its next beat. A touch deserves an immediate frame, then the normal
+  // interactive schedule takes over.
+  if (running && wakeTimer) {
+    window.clearTimeout(wakeTimer)
+    wakeTimer = 0
+    if (!raf) raf = requestAnimationFrame(tick)
+  }
 }
 
 /**
@@ -203,6 +305,22 @@ export function boostFrames(ms = 400): void {
  */
 export function setSurfaceFront(front: boolean): void {
   surfaceFront = front
+  if (typeof document !== 'undefined') {
+    if (front && !document.hidden) {
+      ambientAwakeUntil = performance.now() + AMBIENT_IDLE_MS
+      document.documentElement.classList.remove('poplur-ambient-sleep')
+      window.clearTimeout(ambientSleepTimer)
+      ambientSleepTimer = window.setTimeout(() => {
+        ambientAwakeUntil = 0
+        document.documentElement.classList.add('poplur-ambient-sleep')
+      }, AMBIENT_IDLE_MS)
+    } else {
+      ambientAwakeUntil = 0
+      document.documentElement.classList.add('poplur-ambient-sleep')
+      window.clearTimeout(ambientSleepTimer)
+      ambientSleepTimer = 0
+    }
+  }
   sync()
 }
 
@@ -237,4 +355,5 @@ export function qualityPixelRatio(max = 2): number {
  */
 export function ambientAllowed(): boolean {
   return quality >= 2
+    && (typeof performance === 'undefined' || performance.now() < ambientAwakeUntil)
 }

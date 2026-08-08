@@ -1,0 +1,106 @@
+/* The pop-level switch: three isometric map slabs, sitting straight on the
+   live map with no plate behind them. */
+.root {
+  position: relative;
+  display: block;
+  pointer-events: auto;
+  line-height: 0;
+}
+
+/* No background, no border, no box — the glyph IS the button. Only enough
+   padding to keep the tap target honest on a phone. */
+.button {
+  display: block;
+  padding: 7px;
+  margin: -7px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease;
+}
+.button:active { transform: translateY(1px) scale(0.94); }
+
+.glyph {
+  display: block;
+  overflow: visible;
+  /* Lifts the whole stack off whatever terrain is under it. This is the third
+     leg of legibility with the outline and the top highlight — none of the
+     three alone survives both pink claimed ground and dark water. */
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+}
+
+/* Every face carries the same dark outline, which is what holds the shape
+   together over a bright map. */
+.slabTop,
+.slabEdge {
+  stroke: #2a0518;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+/* A LIT sheet: pink top face, deeper pink edge — the takeover palette, so the
+   control is visibly made of the same material as the ground it switches. */
+.slabOn .slabTop { fill: #ff5fa8; }
+.slabOn .slabEdge { fill: #a81f63; }
+
+/* An unlit sheet is still a solid object, just an unclaimed one: charcoal clay
+   rather than a ghost outline, so the stack keeps its three-layer silhouette
+   at every state instead of appearing to lose sheets. */
+.slabOff .slabTop { fill: #6c6473; }
+.slabOff .slabEdge { fill: #38323d; }
+
+.caption { display: none; }
+
+/* ── Hold menu ──
+   Opens UPWARD: this control sits low in the HUD, so a downward menu would run
+   off the bottom of the phone. */
+.menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  display: grid;
+  gap: 2px;
+  min-width: 178px;
+  padding: 5px;
+  border-radius: 14px;
+  background: rgba(18, 14, 22, 0.93);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  z-index: 40;
+  line-height: normal;
+  animation: levelMenuIn 0.16s ease-out both;
+}
+
+@keyframes levelMenuIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: #fff2f8;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.item:active { background: rgba(255, 255, 255, 0.08); }
+.itemOn { background: rgba(246, 59, 154, 0.20); }
+
+.itemText { display: grid; gap: 1px; min-width: 0; }
+.itemLabel { font-size: 12px; font-weight: 900; letter-spacing: 0.02em; }
+.itemBlurb {
+  font-size: 9.5px;
+  font-weight: 650;
+  color: rgba(255, 242, 248, 0.62);
+  white-space: nowrap;
+}

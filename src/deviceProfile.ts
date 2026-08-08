@@ -22,7 +22,23 @@
 import { postNativeEvent } from './nativeBridge'
 import { audioGateDebug } from './audioGate'
 
-const REPORT_MS = 5000
+const INITIAL_REPORT_MS = 5000
+const SETTLED_REPORT_MS = 30_000
+const SETTLED_AFTER_MS = 60_000
+let previousMapRenders = 0
+let previousMapRenderAt = typeof performance === 'undefined' ? 0 : performance.now()
+
+function mapRenderRate(): string {
+  const total = (window as typeof window & { __poplurMapRenderCount?: number })
+    .__poplurMapRenderCount
+  if (typeof total !== 'number') return 'n/a'
+  const now = performance.now()
+  const seconds = Math.max(0.001, (now - previousMapRenderAt) / 1000)
+  const delta = Math.max(0, total - previousMapRenders)
+  previousMapRenders = total
+  previousMapRenderAt = now
+  return `${(delta / seconds).toFixed(1)}fps(${delta})`
+}
 
 /** Name every animation the compositor is still driving, deduped. The device
     CPU trace blamed per-frame style recalc (createAnimatedElementUpdate) on
@@ -144,6 +160,7 @@ function surfaces(): string {
   } catch { /* probe is never load-bearing */ }
 
   return `canvas=${canvases} video=${videos.length}(${playing} playing) iframe=${iframes} anim=${running}`
+    + ` mapDraw=${mapRenderRate()}`
     + ` tiers=[${tiers}] videoFiltered=${filteredVideo} drops=${drops}`
     + ` | STAT ${cards}`
     + ` | ANIM ${animCensus()} | AUDIO ${audioGateDebug()}`
@@ -201,11 +218,14 @@ function watchStalls(): void {
   }
   attach()
   // The feed swaps video elements as channels change, so re-attach periodically.
-  window.setInterval(attach, 4000)
+  window.setInterval(attach, 15_000)
 }
 
 export function startDeviceProfile(): void {
   if (typeof window === 'undefined' || typeof PerformanceObserver === 'undefined') return
+  const profiledWindow = window as typeof window & { __poplurDeviceProfileStarted?: boolean }
+  if (profiledWindow.__poplurDeviceProfileStarted) return
+  profiledWindow.__poplurDeviceProfileStarted = true
   watchStalls()
 
   const bucket: Bucket = { count: 0, total: 0, worst: 0 }
@@ -222,19 +242,23 @@ export function startDeviceProfile(): void {
     // are still worth having, so do not bail out entirely.
   }
 
-  let tick = 0
-  window.setInterval(() => {
-    tick += 1
-    const line = `[PoplurProfile ${tick * (REPORT_MS / 1000)}s] blocking=${summarise(bucket)} | ${surfaces()}`
+  let elapsedMs = 0
+  const report = () => {
+    const interval = elapsedMs < SETTLED_AFTER_MS ? INITIAL_REPORT_MS : SETTLED_REPORT_MS
+    elapsedMs += interval
+    const line = `[PoplurProfile ${elapsedMs / 1000}s] blocking=${summarise(bucket)} | ${surfaces()}`
     // A WKWebView's console.log goes to Web Inspector, NOT to the app's stdout —
     // so a probe that only console.logs is invisible to `devicectl --console`,
     // which is the whole point of running it on the device. Push it across the
     // existing `poplur` bridge so Swift can print it where it can be read.
-    postNativeEvent({ type: 'profile', line })
-    // eslint-disable-next-line no-console
-    console.log(line)
+    const posted = postNativeEvent({ type: 'profile', line })
+    // Native already prints bridged reports. Logging the same long census to
+    // WebKit as well doubled console traffic on device for no added evidence.
+    if (!posted) console.log(line) // eslint-disable-line no-console
     bucket.count = 0
     bucket.total = 0
     bucket.worst = 0
-  }, REPORT_MS)
+    window.setTimeout(report, elapsedMs < SETTLED_AFTER_MS ? INITIAL_REPORT_MS : SETTLED_REPORT_MS)
+  }
+  window.setTimeout(report, INITIAL_REPORT_MS)
 }

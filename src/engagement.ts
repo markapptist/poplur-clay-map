@@ -97,6 +97,24 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
       icon,
       // The host renders this as text, never markup — usernames are data.
       text: `${event.user} ${VERB[event.kind]}`,
+      // Tapping the notice opens the POST it is about, in the feed, with the
+      // engagement lit up (the comment highlighted, the like/view pulsed).
+      // The feed lives in the SHELL document; this layer runs inside the map
+      // iframe, so the tap posts the engagement up rather than navigating
+      // anything itself. Standalone (no parent) it falls back to a local
+      // event, which the shell-less map route simply has nobody listening to.
+      onActivate: () => {
+        const payload = {
+          type: 'poplur-open-engagement',
+          user: event.user,
+          kind: event.kind,
+          coords: event.coords,
+          radiusKm: event.radiusKm,
+          place: event.place,
+        }
+        if (window.parent !== window) window.parent.postMessage(payload, '*')
+        else window.dispatchEvent(new CustomEvent('poplur-open-engagement', { detail: payload }))
+      },
     })
     // The notice is out; now whoever owns a camera may answer it. Shown-only,
     // so an engagement suppressed by visibility can never move the map behind

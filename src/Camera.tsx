@@ -13,6 +13,9 @@ import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
 import ARFilters, { AR_FILTERS } from './ARFilters'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
 import PermissionAlert from './PermissionAlert'
+import CommerceSuggestionWindow from './CommerceSuggestionWindow'
+import { purchaseSuggestionForDetection } from './commerceSuggestions'
+import type { SmartCard } from './tourSmarts'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
@@ -168,6 +171,11 @@ export default function Camera({
   const onAir = useSyncExternalStore(onLiveStore, isLive, isLive)
   const [detections, setDetections] = useState<Detection[]>([])
   const detectorRef = useRef<FrameDetector | null>(null)
+  const [commerceCard, setCommerceCard] = useState<SmartCard | null>(null)
+  const [commercePinned, setCommercePinned] = useState(false)
+  const commerceTimerRef = useRef<number | null>(null)
+  const commerceKeyRef = useRef<string | null>(null)
+  const dismissedCommerceRef = useRef(new Map<string, number>())
 
   // The camera opens with ML running. DETECT OFF remains available in the
   // hold menu, but a later visit starts from the useful default again instead
@@ -413,6 +421,65 @@ export default function Camera({
       onScanTotal?.(null)
     }
   }, [detectOn, page])
+
+  // A purchasable object has to remain stable under the lens before an ad can
+  // appear. Native shells receive real ML detections; the browser simulator is
+  // intentionally excluded unless the explicit visual-test flag is present.
+  const commerceMatch = detections
+    .map(detection => ({ detection, card: purchaseSuggestionForDetection(detection) }))
+    .find(match => match.card !== null) ?? null
+  const commerceKey = commerceMatch
+    ? `${commerceMatch.detection.label.toLowerCase()}:${commerceMatch.card!.link?.url ?? ''}`
+    : null
+  const cameraCommerceDemo = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('cameraCommerceDemo') === '1'
+  const commerceAllowed = detectOn
+    && page === 'live'
+    && !composing
+    && recStart === null
+    && !onAir
+    && (NATIVE_SHELL || cameraCommerceDemo)
+
+  useEffect(() => {
+    if (commerceTimerRef.current != null) {
+      window.clearTimeout(commerceTimerRef.current)
+      commerceTimerRef.current = null
+    }
+    if (!commerceAllowed) {
+      commerceKeyRef.current = null
+      setCommercePinned(false)
+      setCommerceCard(null)
+      return
+    }
+    // Once a person starts using the ad/browser controls, a momentary ML miss
+    // must not close the window under their finger.
+    if (commercePinned) return
+    if (!commerceKey || !commerceMatch?.card) {
+      commerceKeyRef.current = null
+      setCommerceCard(null)
+      return
+    }
+    if (commerceKeyRef.current === commerceKey && commerceCard) return
+    const dismissedAt = dismissedCommerceRef.current.get(commerceKey) ?? 0
+    if (Date.now() - dismissedAt < 30_000) return
+
+    const nextCard = commerceMatch.card
+    commerceTimerRef.current = window.setTimeout(() => {
+      commerceTimerRef.current = null
+      commerceKeyRef.current = commerceKey
+      setCommerceCard(nextCard)
+    }, 900)
+    return () => {
+      if (commerceTimerRef.current != null) {
+        window.clearTimeout(commerceTimerRef.current)
+        commerceTimerRef.current = null
+      }
+    }
+  }, [commerceAllowed, commerceCard, commerceKey, commercePinned])
+
+  useEffect(() => () => {
+    if (commerceTimerRef.current != null) window.clearTimeout(commerceTimerRef.current)
+  }, [])
 
   useEffect(() => {
     // Native supplies real boxes; do not also run the simulator over them.
@@ -1019,6 +1086,23 @@ export default function Camera({
           </div>
         )
       })()}
+      {real && commerceCard && (
+        <div className={styles.cameraCommerceOverlay}>
+          <CommerceSuggestionWindow
+            card={commerceCard}
+            variant="camera"
+            onInteract={() => setCommercePinned(true)}
+            onClose={() => {
+              if (commerceKeyRef.current) {
+                dismissedCommerceRef.current.set(commerceKeyRef.current, Date.now())
+              }
+              commerceKeyRef.current = null
+              setCommercePinned(false)
+              setCommerceCard(null)
+            }}
+          />
+        </div>
+      )}
       {real && arOpen && (
         <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
       )}

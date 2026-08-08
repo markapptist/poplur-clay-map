@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import styles from './popups.module.css'
 import type { SmartCard } from './tourSmarts'
-import { postNativeEvent } from './nativeBridge'
-import { playPopAmbient } from './pop'
+import CommerceSuggestionWindow, { type SuggestionPrimaryAction } from './CommerceSuggestionWindow'
+import { playPop, playPopAmbient } from './pop'
 
 // The app's one transient popup layer: engagement and suggestions, centred on
 // screen, alive for a few seconds, then gone.
@@ -36,18 +36,27 @@ export interface PopupItem {
   text?: string
   icon?: string
   card?: SmartCard
+  /** Optional app-owned primary action, such as opening a creator profile. */
+  action?: SuggestionPrimaryAction
   ttl: number
+  /** Tapping the notice DOES something (an engagement opens its post in the
+   *  feed). Runs on tap, then the notice leaves; without it a tap only
+   *  dismisses, exactly as before. */
+  onActivate?: () => void
 }
 
-/** Engagement is a glance; a suggestion is something you might act on. Both
- *  live inside one 5–7s window: long enough to read a suggestion, short
- *  enough that nothing lingers on the screen you are trying to watch. The
- *  suggestion used to hold 9.5s and read as a squatter over the video —
- *  "shown for too long" verbatim — so it now gets barely longer than the
- *  engagement glance. */
+/** A suggestion is something you might act on, so it holds still and waits.
+ *  An engagement is a GLANCE — it pops, climbs past you and is gone, the way
+ *  the feed's comments roll, only much faster. Its whole life is the climb, so
+ *  the TTL and the animation are the same number: 3.4s is long enough to read
+ *  one line ("@citydesk liked your post") and short enough that the motion
+ *  reads as a pop rather than a drift.
+ *
+ *  The suggestion used to hold 9.5s and read as a squatter over the video —
+ *  "shown for too long" verbatim — so it stays at the shorter window. */
 const TTL: Record<PopupKind, number> = {
-  engagement: 6_000,
-  suggestion: 6_500,
+  engagement: 3_400,
+  suggestion: 12_000,
 }
 
 // More than a few at once is a pile nobody reads. Oldest goes first.
@@ -56,6 +65,8 @@ const MAX_LIVE = 3
 let nextId = 1
 let items: PopupItem[] = []
 const listeners = new Set<(items: PopupItem[]) => void>()
+const expiryTimers = new Map<number, number>()
+const suppressedKinds = new Set<PopupKind>()
 
 // The feed's fullscreen player owns the whole screen: while it is up, nothing
 // pops — not suggestions, not engagement. A flag here rather than a prop chain
@@ -65,7 +76,17 @@ let suppressedAll = false
 export function setPopupsSuppressed(on: boolean): void {
   if (suppressedAll === on) return
   suppressedAll = on
-  if (on && items.length) { items = []; emit() }
+  if (on && items.length) clearPopups()
+}
+
+/** A surface can silence one kind without hiding useful cards of the other. */
+export function setPopupKindSuppressed(kind: PopupKind, on: boolean): void {
+  if (on) {
+    suppressedKinds.add(kind)
+    clearPopups(kind)
+  } else {
+    suppressedKinds.delete(kind)
+  }
 }
 
 const emit = () => { const snapshot = items; listeners.forEach(fn => fn(snapshot)) }
@@ -77,10 +98,20 @@ function subscribe(fn: (items: PopupItem[]) => void): () => void {
 }
 
 export function dismissPopup(id: number): void {
+  const timer = expiryTimers.get(id)
+  if (timer != null) window.clearTimeout(timer)
+  expiryTimers.delete(id)
   const next = items.filter(i => i.id !== id)
   if (next.length === items.length) return
   items = next
   emit()
+}
+
+/** Once somebody uses the window controls, it must not expire underneath them. */
+export function keepPopupOpen(id: number): void {
+  const timer = expiryTimers.get(id)
+  if (timer != null) window.clearTimeout(timer)
+  expiryTimers.delete(id)
 }
 
 /**
@@ -94,7 +125,7 @@ export function showPopup(item: Omit<PopupItem, 'id' | 'ttl'> & { ttl?: number }
   const id = nextId++
   // Silently dropped, not queued: by the time the player closes this notice
   // would be stale news, same rule as the MAX_LIVE overflow below.
-  if (suppressedAll) return id
+  if (suppressedAll || suppressedKinds.has(item.kind)) return id
   const ttl = item.ttl ?? TTL[item.kind]
   items = [...items, { ...item, id, ttl }]
   // Never let the stack grow past MAX_LIVE: drop the oldest rather than queue,
@@ -107,12 +138,18 @@ export function showPopup(item: Omit<PopupItem, 'id' | 'ttl'> & { ttl?: number }
   // ordinary pop's 8s volley-nap kept the audio thread running at idle (the
   // exact thing the thermal gate fails builds for). Muted app stays silent.
   playPopAmbient()
-  window.setTimeout(() => dismissPopup(id), ttl)
+  expiryTimers.set(id, window.setTimeout(() => dismissPopup(id), ttl))
   return id
 }
 
 /** Clear everything — used when a surface tears down or a trip restarts. */
 export function clearPopups(kind?: PopupKind): void {
+  const removed = kind ? items.filter(i => i.kind === kind) : items
+  removed.forEach(item => {
+    const timer = expiryTimers.get(item.id)
+    if (timer != null) window.clearTimeout(timer)
+    expiryTimers.delete(item.id)
+  })
   items = kind ? items.filter(i => i.kind !== kind) : []
   emit()
 }
@@ -131,9 +168,17 @@ export default function PopupHost() {
       {live.map(item => (
         <div
           key={item.id}
-          className={item.kind === 'engagement' ? styles.engage : styles.suggest}
-          style={{ animationDuration: `${item.ttl}ms` }}
-          onClick={() => dismissPopup(item.id)}
+          className={item.kind === 'engagement' ? styles.engage : styles.suggestWrap}
+          style={item.kind === 'engagement' ? { animationDuration: `${item.ttl}ms` } : undefined}
+          onClick={item.kind === 'engagement' ? () => {
+            // A tap that ACTS pops (it is a real gesture, the full house
+            // sound); a tap that merely dismisses stays silent, as ever.
+            if (item.onActivate) {
+              playPop()
+              item.onActivate()
+            }
+            dismissPopup(item.id)
+          } : undefined}
         >
           {item.kind === 'engagement' ? (
             <>
@@ -141,37 +186,12 @@ export default function PopupHost() {
               <span className={styles.engageText}>{item.text}</span>
             </>
           ) : item.card ? (
-            <>
-              <span className={styles.suggestKicker}>POPLUR AI · {item.card.title}</span>
-              <span className={styles.suggestHeadline}>{item.card.headline}</span>
-              {item.card.rows && item.card.rows.length > 0 && (
-                <span className={styles.suggestRows}>
-                  {item.card.rows.slice(0, 2).map(row => (
-                    <span className={styles.suggestRow} key={row.label + row.value}>
-                      <span>{row.label}</span><b>{row.value}</b>
-                    </span>
-                  ))}
-                </span>
-              )}
-              {item.card.link && (
-                <button
-                  type="button"
-                  className={styles.suggestLink}
-                  onClick={e => {
-                    e.stopPropagation()
-                    const url = item.card!.link!.url
-                    // Let the shell route it natively where it can; window.open
-                    // covers the browser and any shell honouring target=_blank.
-                    // Same pair both previous call sites used.
-                    postNativeEvent({ type: 'openExternal', url })
-                    try { window.open(url, '_blank', 'noopener') } catch { /* shell routes it */ }
-                    dismissPopup(item.id)
-                  }}
-                >
-                  {item.card.link.label}
-                </button>
-              )}
-            </>
+            <CommerceSuggestionWindow
+              card={item.card}
+              action={item.action}
+              onClose={() => dismissPopup(item.id)}
+              onInteract={() => keepPopupOpen(item.id)}
+            />
           ) : null}
         </div>
       ))}

@@ -493,6 +493,29 @@
   box-shadow: 0 6px 16px rgba(246, 59, 154, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
+/* Lit by the map's "N pops in this area" tap: a takeover-pink ring with a
+   FINITE pulse (three beats, then still — nothing here may animate forever),
+   cleared entirely a few seconds later by the component. */
+.tileLit {
+  z-index: 1;
+  animation: tileLitPulse 1.4s ease-in-out 3;
+  box-shadow:
+    0 0 0 3px #FF4BA1,
+    0 0 18px rgba(255, 75, 161, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+@keyframes tileLitPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 3px #FF4BA1, 0 0 18px rgba(255, 75, 161, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+  50% {
+    transform: scale(1.035);
+    box-shadow: 0 0 0 5px #FF8AC6, 0 0 26px rgba(255, 75, 161, 1), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+}
+
 .tile:active { transform: scale(0.96); }
 
 /* The poster paints the instant it decodes — its visibility is NOT gated on a
@@ -633,63 +656,78 @@
   /* Portalled to the document root so this layer clears the harness chrome,
      including the separately stacked Poplur wordmark. */
   z-index: 2147483000;
+  /* The app behind goes soft. This is the ONLY backdrop-filter in the sheet —
+     the panel above it is plain translucency over this already-blurred layer.
+     A full-screen backdrop-filter is real GPU work, and stacking a second one
+     doubles it for a difference nobody can see. */
+  /* 18px, not 26: at 26 the profile behind dissolved into an even fog and the
+     sheet stopped reading as GLASS — glass shows you a softened version of
+     what is behind it, not a blank wall. The tint is cool and neutral because
+     the profile ground is warm cream: a warm tint over it went muddy brown. */
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  background: rgba(12, 10, 24, 0.34);
+  animation: notifScrimIn 280ms ease-out both;
+}
+
+@keyframes notifScrimIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .notifScrimClosing {
   pointer-events: none;
+  animation: notifScrimOut 300ms ease-in both;
 }
 
-.notifDismiss {
-  position: absolute;
-  top: 430px;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 0;
-  width: 100%;
-  height: auto;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: default;
+@keyframes notifScrimOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 
+/* The sheet is the whole page now, and it simply SLIDES: down from the top on
+   open, back up on press-off. No spring, no overshoot, no scale — a full-page
+   panel that bounces reads as the screen coming loose, and the old drop-bounce
+   (a banner falling in and jiggling six times) read cheap at this size. One
+   move, decelerating into place; the content scrolls inside it. */
 .notifMotionShell {
   position: absolute;
-  top: 0;
-  left: 10px;
-  right: 10px;
+  inset: 0;
   z-index: 1;
-  transform-origin: center top;
   will-change: transform;
-  animation: notifDropBounce 1060ms cubic-bezier(0.2, 0.82, 0.28, 1.08) both;
+  animation: notifSheetDown 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
 .notifMotionShellClosing {
-  animation: notifSpringUp 840ms cubic-bezier(0.34, 0.02, 0.42, 1) both;
+  animation: notifSheetUp 300ms cubic-bezier(0.5, 0, 0.75, 0) both;
 }
 
-.notifTopCover {
-  position: absolute;
-  top: -92px;
-  left: 0;
-  right: 0;
-  z-index: 0;
-  height: 80px;
-  pointer-events: none;
-  background-color: #ff2d96;
-  background-image:
-    radial-gradient(110% 160% at 50% 6%, rgba(255, 182, 221, 0.4), transparent 66%),
-    radial-gradient(rgba(214, 16, 108, 0.40) 1.6px, transparent 2.2px);
-  background-size: auto, 10px 10px;
+@keyframes notifSheetDown {
+  from { transform: translateY(-100%); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes notifSheetUp {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-100%); }
 }
 
 .notifBanner {
   position: relative;
   z-index: 1;
-  padding: 38px 12px 10px;
-  border-radius: 0 0 22px 22px;
-  overflow: hidden;
+  /* Full page. It used to be a ~430px banner pinned to the top, which left the
+     profile grid and the wordmark showing around and through it — the
+     "notification screen still looks bad" report. */
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding:
+    calc(env(safe-area-inset-top, 0px) + 58px) 14px
+    calc(env(safe-area-inset-bottom, 0px) + 18px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   isolation: isolate;
   /* Pre-login clay slab: soft centre light + quilted all-over dot press over the
      signature pink, with a deep rim vignette and a top clay highlight — the same
@@ -722,26 +760,6 @@
 .notifRow {
   position: relative;
   z-index: 1;
-}
-
-@keyframes notifDropBounce {
-  0% { transform: translateY(-138%) scaleY(0.96); }
-  44% { transform: translateY(60px) scaleY(0.99); }
-  60% { transform: translateY(-30px) scaleY(1.02); }
-  73% { transform: translateY(22px) scaleY(0.99); }
-  85% { transform: translateY(-12px) scaleY(1.01); }
-  94% { transform: translateY(6px) scaleY(0.995); }
-  100% { transform: translateY(0); }
-}
-
-@keyframes notifSpringUp {
-  0% { transform: translateY(0) scaleY(1); }
-  18% { transform: translateY(22px) scaleY(0.965); }
-  40% { transform: translateY(-42px) scaleY(1.02); }
-  54% { transform: translateY(-24px) scaleY(0.99); }
-  78% { transform: translateY(-126%) scaleY(1.01); }
-  89% { transform: translateY(-112%) scaleY(0.99); }
-  100% { transform: translateY(-142%) scaleY(1); }
 }
 
 .notifTitle {
@@ -790,6 +808,24 @@
 }
 
 .notifRow + .notifRow { margin-top: 5px; }
+
+/* Says how to leave, since a full-page sheet has no visible "outside" and the
+   cube is the app's only other way back. Sits under the last notification. */
+.notifFoot {
+  margin-top: auto;
+  padding: 22px 0 4px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  text-align: center;
+  font: 700 10px system-ui, -apple-system, sans-serif;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgba(255, 240, 250, 0.42);
+}
+
+.notifFoot:active { color: rgba(255, 240, 250, 0.75); }
 
 .notifIcon {
   flex: none;
@@ -1355,17 +1391,14 @@
 }
 
 /* ─── Notification sheet skins ────────────────────────────────────────────────
-   Three minimal, translucent alternatives to the pink clay slab, chosen with
-   ?notif=frost|glass|cards. Each drops the slab, the dot-map and the heavy row
-   cards, and lets the profile show through instead. Shared resets first. */
+   GLASS is the sheet (below, and the default). frost|cards|clay stay reachable
+   with ?notif= for comparison: two flat translucent variants and the original
+   pink clay slab. Shared resets for the flat pair first. */
 .notifSkin_frost,
-.notifSkin_glass,
 .notifSkin_cards {
   background-image: none;
-  padding: 38px 14px 12px;
 }
 .notifSkin_frost .notifRow,
-.notifSkin_glass .notifRow,
 .notifSkin_cards .notifRow {
   background: none;
   box-shadow: none;
@@ -1374,7 +1407,6 @@
   margin-top: 0;
 }
 .notifSkin_frost .notifIcon,
-.notifSkin_glass .notifIcon,
 .notifSkin_cards .notifIcon {
   background: none;
   box-shadow: none;
@@ -1382,7 +1414,6 @@
   height: 26px;
 }
 .notifSkin_frost .notifTitle,
-.notifSkin_glass .notifTitle,
 .notifSkin_cards .notifTitle {
   animation: none;
   background-image: none;
@@ -1394,7 +1425,6 @@
   margin-bottom: 6px;
 }
 .notifSkin_frost .notifTop strong,
-.notifSkin_glass .notifTop strong,
 .notifSkin_cards .notifTop strong {
   background-image: none;
   -webkit-text-fill-color: currentColor;
@@ -1419,18 +1449,84 @@
 
 /* B ── GLASS: the same list, dark. Smoked glass over the screen, hairlines in
    white. Reads as system chrome rather than a Poplur panel. */
+/* G ── GLASS (the default): one full-page frosted pane. Deliberately NO
+   backdrop-filter of its own — .notifScrim underneath has already blurred the
+   whole app, and this pane sits on top of that result, so a second full-screen
+   filter would double the GPU cost for a difference nobody can see. A pale
+   gradient wash, a top sheen and a hairline edge are what make it read glass. */
 .notifSkin_glass {
-  background-color: rgba(16, 9, 20, 0.58);
-  backdrop-filter: blur(24px) saturate(1.3);
-  -webkit-backdrop-filter: blur(24px) saturate(1.3);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 14px 32px rgba(0, 0, 0, 0.4);
+  background-image:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.20) 0%,
+      rgba(255, 255, 255, 0.08) 30%,
+      rgba(255, 120, 190, 0.06) 72%,
+      rgba(120, 220, 255, 0.08) 100%);
+  background-color: rgba(14, 10, 26, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38);
   color: #fff;
 }
-.notifSkin_glass .notifTitle { color: rgba(255, 255, 255, 0.5); }
-.notifSkin_glass .notifRow + .notifRow { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09); }
-.notifSkin_glass .notifTop strong { color: #fff; }
-.notifSkin_glass .notifTop span { color: rgba(255, 255, 255, 0.42); }
-.notifSkin_glass .notifBody p { color: rgba(255, 255, 255, 0.66); }
+
+.notifSkin_glass .notifTitle {
+  flex: none;
+  margin-bottom: 14px;
+  animation: none;
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
+  filter: none;
+  font: 800 12px system-ui, -apple-system, sans-serif;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+}
+
+/* Each notification is its own smaller pane floating on the sheet — a hairline
+   rim and a top sheen, so the stack reads as panes of glass rather than the
+   flat grey slabs the old default drew. */
+.notifSkin_glass .notifRow {
+  padding: 11px 12px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.19), rgba(255, 255, 255, 0.06));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 8px 20px rgba(20, 0, 14, 0.26);
+}
+
+.notifSkin_glass .notifRow + .notifRow { margin-top: 9px; }
+
+/* The icon sits in a clear well rather than the dark clay dish — on glass a
+   black disc reads as a hole punched through the pane. */
+.notifSkin_glass .notifIcon {
+  width: 40px;
+  height: 40px;
+  background: radial-gradient(circle at 50% 34%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05) 72%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    inset 0 2px 4px rgba(255, 255, 255, 0.16);
+}
+
+.notifSkin_glass .notifTop strong {
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
+  filter: none;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.notifSkin_glass .notifTop span { color: rgba(255, 255, 255, 0.5); }
+
+/* Full page means full lines: the old sheet clipped every message to one
+   ellipsised row because it had ~430px to work with. */
+.notifSkin_glass .notifBody p {
+  color: rgba(255, 255, 255, 0.78);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.35;
+}
 
 /* C ── CARDS: no sheet at all. Each notification is its own floating glass pill
    over the live profile — the most "these arrived on top of your screen" of the

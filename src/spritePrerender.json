@@ -12,5 +12,7 @@
   "palm_clay.glb|20|8|320": "sprites/palm_clay_y20_p8_s320.png",
   "zoom_airplane.glb|35|10|256": "sprites/zoom_airplane_y35_p10_s256.png",
   "zoom_buildings.glb|25|14|256": "sprites/zoom_buildings_y25_p14_s256.png",
-  "zoom_globe.glb|20|12|256": "sprites/zoom_globe_y20_p12_s256.png"
+  "zoom_globe.glb|20|12|256": "sprites/zoom_globe_y20_p12_s256.png",
+  "models/poplur_pin.glb|0|0|256": "sprites/poplur_pin_y0_p0_s256.png",
+  "models/poplur_pin.glb|20|14|256": "sprites/poplur_pin_y20_p14_s256.png"
 }

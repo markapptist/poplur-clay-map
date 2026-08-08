@@ -78,17 +78,75 @@ export interface POI {
   radiusKm: number
   category: 'food' | 'park' | 'shop' | 'arts' | 'nightlife'
   coords: [number, number]
+  /** The FEED channel this pop posted to (FeedTwin CHANNELS id). An
+   *  engagement on the pop opens the feed tuned here. August (real data):
+   *  a post will carry its channel natively; this is that field, spoofed. */
+  channel: string
 }
 
 export const POIS: POI[] = [
   // radiusKm is the pop's TAKEOVER on the map — the ground it currently holds.
   // It scales with reach (likes here, real engagement later), which is the
   // product model: a pop earns radius and radius decays.
-  { id: 'liberty',     name: 'Liberty Village',    distance: '3.2 km', likes: 47, radiusKm: 12.4, category: 'nightlife', coords: [-79.4208, 43.6383] },
-  { id: 'kensington',  name: 'Kensington Market',  distance: '1.8 km', likes: 83, radiusKm: 28.6, category: 'food',      coords: [-79.4005, 43.6547] },
-  { id: 'queen',       name: 'Queen St W',          distance: '950 m',  likes: 24, radiusKm: 6.1,  category: 'shop',      coords: [-79.3975, 43.6483] },
-  { id: 'trinity',     name: 'Trinity Bellwoods',   distance: '2.1 km', likes: 61, radiusKm: 18.9, category: 'park',      coords: [-79.4118, 43.6482] },
-  { id: 'distillery',  name: 'Distillery District', distance: '1.2 km', likes: 38, radiusKm: 9.7,  category: 'arts',      coords: [-79.3590, 43.6503] },
+  { id: 'liberty',     name: 'Liberty Village',    distance: '3.2 km', likes: 47, radiusKm: 12.4, category: 'nightlife', coords: [-79.4208, 43.6383], channel: 'music' },
+  { id: 'kensington',  name: 'Kensington Market',  distance: '1.8 km', likes: 83, radiusKm: 28.6, category: 'food',      coords: [-79.4005, 43.6547], channel: 'food' },
+  { id: 'queen',       name: 'Queen St W',          distance: '950 m',  likes: 24, radiusKm: 6.1,  category: 'shop',      coords: [-79.3975, 43.6483], channel: 'shopping' },
+  { id: 'trinity',     name: 'Trinity Bellwoods',   distance: '2.1 km', likes: 61, radiusKm: 18.9, category: 'park',      coords: [-79.4118, 43.6482], channel: 'kids' },
+  { id: 'distillery',  name: 'Distillery District', distance: '1.2 km', likes: 38, radiusKm: 9.7,  category: 'arts',      coords: [-79.3590, 43.6503], channel: 'cartoon' },
+]
+
+/**
+ * Somebody ELSE's takeover.
+ *
+ * The map used to be a map of your own pops, which quietly said the world is
+ * empty apart from you. A takeover only means something against other people's
+ * — "who is in the lead here" is unanswerable on a one-player map. These are
+ * the other holders, and each carries its OWN colour: on a shared map the
+ * colour is how you read two overlapping claims apart, so it belongs to the
+ * pop, not to the app's one takeover pink.
+ *
+ * Spoofed like the rest of the twin, and deliberately so: handles and avatars
+ * are reused from the feed's channel posters (the same stills FeedTwin and
+ * ProfileTwin already ship), never invented artwork. Real accounts replace this
+ * list wholesale in Aug 2026 — the shape is what the real feed will hand over.
+ */
+export interface OtherPop {
+  id: string
+  /** the poster, matching a FeedTwin channel user so their profile resolves */
+  user: string
+  name: string
+  radiusKm: number
+  coords: [number, number]
+  /** this pop's takeover colour — theirs, not the app's */
+  color: string
+  /** face for the pin's head — the same still their feed posts use */
+  avatar: string
+  /** the FeedTwin channel it posted to */
+  channel: string
+}
+
+export const OTHER_POPS: OtherPop[] = [
+  { id: 'other-sauceboss',  user: '@sauceboss',    name: 'St. Lawrence',    radiusKm: 21.5, coords: [-79.3717, 43.6487], color: '#FF8A3D', avatar: 'feed/posters/ad-food.jpg', channel: 'food' },
+  { id: 'other-pitchside',  user: '@pitchside',    name: 'BMO Field',       radiusKm: 33.2, coords: [-79.4185, 43.6332], color: '#4FD6B8', avatar: 'feed/posters/ad-sports.jpg', channel: 'sports' },
+  { id: 'other-basement',   user: '@basement.set', name: 'The Junction',    radiusKm: 15.8, coords: [-79.4680, 43.6653], color: '#A97BFF', avatar: 'feed/posters/ad-music.jpg', channel: 'music' },
+  { id: 'other-hauls',      user: '@hauls',        name: 'Yorkdale',        radiusKm: 26.4, coords: [-79.4522, 43.7256], color: '#FFD24B', avatar: 'feed/posters/ad-shopping.jpg', channel: 'shopping' },
+  { id: 'other-doodlecast', user: '@doodlecast',   name: 'Leslieville',     radiusKm: 11.3, coords: [-79.3320, 43.6640], color: '#5FB0FF', avatar: 'feed/posters/ad-cartoon.jpg', channel: 'cartoon' },
+  { id: 'other-playtime',   user: '@playtime',     name: 'High Park',       radiusKm: 19.7, coords: [-79.4637, 43.6465], color: '#7CE04F', avatar: 'feed/posters/ad-kids.jpg', channel: 'kids' },
+  { id: 'other-bitmerchant',user: '@bitmerchant',  name: 'The Beaches',     radiusKm: 24.9, coords: [-79.2960, 43.6710], color: '#FF5F8F', avatar: 'feed/posters/ad-comedy.jpg', channel: 'comedy' },
+]
+
+/**
+ * Which pops the map is showing. Your own takeover, everyone else's, or the
+ * whole board — on ALL the two sets are drawn together and the bigger radius
+ * simply wins the ground where they overlap, which is what "who is in the
+ * lead" looks like on a map.
+ */
+export type PopLevel = 'mine' | 'others' | 'all'
+
+export const POP_LEVELS: Array<{ id: PopLevel; label: string; blurb: string }> = [
+  { id: 'mine',   label: 'My pops',    blurb: 'Only the ground you hold' },
+  { id: 'others', label: 'Other pops', blurb: 'Everyone else’s takeovers' },
+  { id: 'all',    label: 'All pops',   blurb: 'The whole board — who leads' },
 ]
 
 // GeoJSON paths connecting POIs for the clay road overlay

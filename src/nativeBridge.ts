@@ -30,9 +30,8 @@ export function postNativeEvent(message: Record<string, unknown>): boolean {
     let posted = false
     if (w.webkit?.messageHandlers?.poplur) {
       w.webkit.messageHandlers.poplur.postMessage(message)
-      posted = true
-    }
-    if (w.PoplurNative) {
+      return true
+    } else if (w.PoplurNative) {
       w.PoplurNative.onEvent(JSON.stringify(message))
       posted = true
     }

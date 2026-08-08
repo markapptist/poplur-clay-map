@@ -21,7 +21,7 @@
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  width: min(360px, calc(100vw - 44px));
+  width: min(420px, calc(100vw - 20px));
   pointer-events: none;
 }
 
@@ -29,6 +29,13 @@
   pointer-events: auto;
   cursor: pointer;
   will-change: transform, opacity;
+}
+
+.suggestWrap {
+  width: 100%;
+  display: grid;
+  place-items: center;
+  cursor: default;
 }
 
 /* ── engagement: a glance ─────────────────────────────────────────────────── */
@@ -43,8 +50,14 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 22px rgba(255, 45, 145, 0.24);
   color: #fff2f8;
   font: 800 14px/1.2 system-ui, -apple-system, "SF Pro Rounded", sans-serif;
-  animation-name: popLife;
-  animation-timing-function: ease;
+  /* Engagement POPS and drifts. A suggestion is something you might act on, so
+     it holds still and waits; an engagement is news about you that you catch
+     out of the corner of your eye, so it behaves like the feed's comment roll
+     — rising, continuously, past you — only much faster, because it is one
+     line and not a credits scroll. Per-keyframe timing functions do the work:
+     an overshooting spring for the pop, then linear for the climb. */
+  animation-name: engageRise;
+  animation-timing-function: linear;
   animation-fill-mode: both;
 }
 
@@ -108,6 +121,22 @@
   cursor: pointer;
 }
 .suggestLink:active { transform: scale(0.97); }
+
+/* Pop, then climb. 0-12% is the pop itself: up from nothing through a 1.12
+   overshoot, on a spring curve, landing on the same beat as the pop SOUND that
+   showPopup fires. From 22% it is a steady linear rise of ~150px — the feed's
+   comment roll travels its track in 26s, this covers its distance in about
+   two and a half, which is the "but faster" part. Opacity holds until 72% so
+   the line is readable for most of the climb and only lets go near the top. */
+@keyframes engageRise {
+  0%   { opacity: 0; transform: translateY(16px) scale(0.5);
+         animation-timing-function: cubic-bezier(0.18, 1.7, 0.4, 1); }
+  12%  { opacity: 1; transform: translateY(2px) scale(1.12);
+         animation-timing-function: ease-out; }
+  22%  { transform: translateY(-4px) scale(1); }
+  72%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-150px) scale(0.97); }
+}
 
 /* in → hold → out, across the item's whole TTL */
 @keyframes popLife {

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
-import { feedSuggestionFor, type SmartCard } from './tourSmarts'
+import { feedSuggestionFor } from './tourSmarts'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
 // hands back on its own; background radio is a standing choice the user made
@@ -13,13 +13,12 @@ const deferToOwner = (owner: AudioOwner | null): boolean =>
   owner === 'voice' || owner === 'radio'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { isNativeShell } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
-import { showPopup, clearPopups, setPopupsSuppressed } from './popups'
+import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
 import { readFeedCommentsAtEnd } from './feedPreferences'
 import styles from './FeedTwin.module.css'
 import { interceptingLive, isLive, onLiveStore } from './liveStore'
-import profileStyles from './ProfileTwin.module.css'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -107,15 +106,6 @@ export const CHANNELS: Channel[] = [
   { id: 'cartoon', number: 113, name: 'Cartoon', emoji: '🎨', icon: 'poplur_channel_113_cartoon', flag: '🇰🇷', user: '@doodlecast', caption: 'animating my clay OC', lang: 'KO', theme: ['#0a1a2a', '#0891b2', '#fb7185'], videos: ['feed/ad-cartoon.mp4'] },
   { id: 'kids', number: 114, name: 'Kids', emoji: '🧸', icon: 'poplur_channel_114_kids', flag: '🇨🇦', user: '@playtime', caption: 'building the biggest blanket fort', lang: 'EN', theme: ['#1a1030', '#7c3aed', '#fbcfe8'], videos: ['feed/ad-kids.mp4'] },
   { id: 'comedy', number: 115, name: 'Comedy', emoji: '😂', icon: 'poplur_channel_115_comedy', flag: '🇦🇺', user: '@bitmerchant', caption: 'when the barista spells your name wrong', lang: 'EN', theme: ['#2a2404', '#ca8a04', '#fde047'], videos: ['feed/ad-comedy.mp4'] },
-]
-
-// Match the Profile post viewer's share destinations and avatars exactly. The
-// Feed button opens that same Poplur-first flow for whichever post is active.
-const SHARE_FRIENDS = [
-  { handle: 'kensington_eats', name: 'Kensington', avatar: 'feed/posters/ad-food.jpg' },
-  { handle: 'harbourfront', name: 'Harbour', avatar: 'feed/posters/ad-comedy.jpg' },
-  { handle: 'queenwest', name: 'Queen W', avatar: 'feed/posters/ad-shopping.jpg' },
-  { handle: 'the_annex', name: 'Annex', avatar: 'mark_talk0.png' },
 ]
 
 // The feed renders pure channel CONTENT — the channel changer and the
@@ -273,7 +263,6 @@ export default function FeedTwin({
   // Centered line cycles: video title → channel username → coordinates.
   const [centerIdx, setCenterIdx] = useState(0)
   const [muted, setMuted] = useState(isUserMuted)
-  const [heart, setHeart] = useState<{ x: number; y: number; id: number } | null>(null)
   const suppressedRef = useRef(suppressed)
   suppressedRef.current = suppressed
   const [commentOpen, setCommentOpen] = useState(false)
@@ -323,7 +312,8 @@ export default function FeedTwin({
   }, [])
 
   // A channel change is a different post: drop the roll rather than let it run
-  // over the clip that just started.
+  // over the clip that just started — and the engagement comment with it, or
+  // the NEXT post's roll would open led by a comment about the previous one.
   useEffect(() => {
     adTimeRef.current = 0
     clearCommentRoll()
@@ -347,8 +337,6 @@ export default function FeedTwin({
   // The caption line follows the video's clock: whichever cue's start time has
   // passed most recently is the one on screen, and it clears between cues.
   const [captionLine, setCaptionLine] = useState('')
-  const [shareOpen, setShareOpen] = useState(false)
-  const [shareNote, setShareNote] = useState<string | null>(null)
   const gestureStart = useRef<{ pointerId: number; x: number; y: number } | null>(null)
   const wheelLock = useRef(false)
   const adVideoRef = useRef<HTMLVideoElement>(null)
@@ -382,6 +370,14 @@ export default function FeedTwin({
     }, 3_500)
     return () => { window.clearTimeout(show); clearPopups('suggestion') }
   }, [index, suppressed, playerMode])
+
+  // Feed intentionally has no engagement chips/heart/share overlays. Keep
+  // suggestions and comments available; silence only the shared engagement
+  // kind for exactly as long as this (front-most) Feed instance is mounted.
+  useEffect(() => {
+    setPopupKindSuppressed('engagement', true)
+    return () => setPopupKindSuppressed('engagement', false)
+  }, [])
 
   // Player mode is the whole screen going quiet: the ref mirrors for the
   // pointer handlers, the popup layer stops popping (suggestions AND
@@ -585,49 +581,6 @@ export default function FeedTwin({
   // read inside the action bridge without re-binding it every post
   const postRef = useRef(post)
   postRef.current = post
-  const shareLink = `https://poplur.app/p/ch${ch.number}`
-
-  const flashShareNote = (text: string) => {
-    setShareNote(text)
-    window.setTimeout(() => setShareNote(null), 2100)
-  }
-
-  const dmShare = (friend: typeof SHARE_FRIENDS[number]) => {
-    playPop()
-    if (isNativeShell()) {
-      postNativeEvent({ type: 'sharePost', to: friend.handle, link: shareLink })
-    }
-    setShareOpen(false)
-    flashShareNote(`Sent to ${friend.name}`)
-  }
-
-  const shareOutside = async () => {
-    playPop()
-    const payload = { title: 'Poplur', text: ch.caption, url: shareLink }
-    setShareOpen(false)
-    try {
-      if (navigator.share) {
-        await navigator.share(payload)
-        return
-      }
-      await navigator.clipboard?.writeText(shareLink)
-      flashShareNote('Link copied')
-    } catch {
-      flashShareNote('Sharing cancelled')
-    }
-  }
-
-  const copyShareLink = async () => {
-    playPop()
-    setShareOpen(false)
-    try {
-      await navigator.clipboard.writeText(shareLink)
-      flashShareNote('Link copied')
-    } catch {
-      flashShareNote('Could not copy the link')
-    }
-  }
-
   // The static layer uses tv_static_clean.mp4 — the logo-free 0-4s window of
   // tv_static.mp4 (the full clip bursts a Poplur 'P' at ~4.2-8.5s, which would
   // double up with the channel identity drawn over it).
@@ -964,24 +917,15 @@ export default function FeedTwin({
       return
     }
 
-    // Double-tap to like (heart pop), like the app. A drag never counts.
-    const now = Date.now()
-    if (now - lastTap.current < 300) popHeart(e.clientX, e.clientY)
-    lastTap.current = now
-  }
-
-  // One like animation, whatever triggered it: double tap on the video, or
-  // LIKE from the hold menu (which has no pointer position, so it pops centre).
-  const popHeart = (x?: number, y?: number) => {
-    const id = Date.now()
-    setHeart({ x: x ?? window.innerWidth / 2, y: y ?? window.innerHeight / 2, id })
-    window.setTimeout(() => setHeart(h => (h && h.id === id ? null : h)), 900)
+    // A plain tap has no engagement overlay. Comments and ad windows are the
+    // only transient layers on Feed; navigation gestures still work above.
+    lastTap.current = 0
   }
 
   useEffect(() => {
     if (!bindActions) return
     bindActions(action => {
-      if (action === 'like') { playPop(); popHeart(); return }
+      if (action === 'like') { playPop(); return }
       if (action === 'comment') { playPop(); setCommentOpen(true); return }
       if (action === 'captions') {
         playPop()
@@ -1058,6 +1002,8 @@ export default function FeedTwin({
   }, [suppressed, adSrc])
 
   const [c0, c1, c2] = ch.theme
+
+  const liveRoll = COMMENT_ROLL
 
   return (
     <div
@@ -1223,14 +1169,6 @@ export default function FeedTwin({
             </div>
           )}
         </div>
-        <div className={styles.shareSlot}>
-          <ClayCornerButton
-            kind="share"
-            label={`Share CH ${ch.number} post`}
-            size={40}
-            onPress={() => { playPop(); setShareOpen(true) }}
-          />
-        </div>
       </div>
       )}
 
@@ -1249,56 +1187,6 @@ export default function FeedTwin({
 
       {/* Channel changer + RADIUS⇄TRENDING label: OWNED BY THE HOME HUD.
           The feed itself only swipes/wheels between channels. */}
-
-      {/* Same Poplur-first share alert used by the Profile post viewer. */}
-      {shareOpen && (
-        <div className={profileStyles.shareScrim} onClick={() => setShareOpen(false)}>
-          <div className={profileStyles.shareAlert} onClick={e => e.stopPropagation()}>
-            <div className={profileStyles.shareContent}>
-              <div className={profileStyles.shareIcon} aria-hidden="true" />
-              <h2 className={`${profileStyles.shareTitle} ${profileStyles.shareShader}`}>Send this pop</h2>
-              <p className={`${profileStyles.shareCopy} ${profileStyles.shareShaderSoft}`}>
-                DM a friend inside your radius, or share it anywhere.
-              </p>
-              <div className={profileStyles.shareFriends}>
-                {SHARE_FRIENDS.map(friend => (
-                  <button
-                    key={friend.handle}
-                    className={profileStyles.shareFriend}
-                    onClick={() => dmShare(friend)}
-                    title={`Send to ${friend.handle}`}
-                  >
-                    <img className={profileStyles.shareFriendFace} src={friend.avatar} alt="" draggable="false" />
-                    <span className={profileStyles.shareFriendName}>{friend.name}</span>
-                  </button>
-                ))}
-              </div>
-              <div className={profileStyles.shareActions}>
-                <div className={profileStyles.shareTool}>
-                  <ClayCornerButton kind="link" label="Copy link" size={52} onPress={copyShareLink} />
-                  <span className={profileStyles.shareToolName}>Copy link</span>
-                </div>
-                <div className={profileStyles.shareTool}>
-                  <ClayCornerButton kind="share" label="Share outside Poplur" size={52} onPress={shareOutside} />
-                  <span className={profileStyles.shareToolName}>Share out</span>
-                </div>
-                <div className={profileStyles.shareTool}>
-                  <ClayCornerButton
-                    kind="close"
-                    label="Cancel"
-                    size={52}
-                    onPress={() => { playPop(); setShareOpen(false) }}
-                  />
-                  <span className={profileStyles.shareToolName}>Cancel</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {shareNote && <div className={profileStyles.shareNote}>{shareNote}</div>}
-      {heart && <span className={styles.heart} style={{ left: heart.x, top: heart.y }}>♥</span>}
 
       {/* Closed captions ride above the home chrome (cube, counters), so they
           are portalled out of the feed's stacking context. Language stays a
@@ -1327,8 +1215,11 @@ export default function FeedTwin({
             <div className={styles.commentRollTrack}>
               {[0, 1].map(copy => (
                 <div key={copy} aria-hidden={copy === 1}>
-                  {COMMENT_ROLL.map(c => (
-                    <p className={styles.commentLine} key={`${copy}-${c.who}`}>
+                  {liveRoll.map((c, i) => (
+                    <p
+                      className={'lit' in c && c.lit ? `${styles.commentLine} ${styles.commentLineLit}` : styles.commentLine}
+                      key={`${copy}-${c.who}-${i}`}
+                    >
                       <img className={styles.commentAvatar} src={c.pic} alt="" draggable="false" />
                       <span className={styles.commentText}>
                         <span className={styles.commentWho}>{c.who}</span>
@@ -1355,8 +1246,11 @@ export default function FeedTwin({
               <div className={styles.commentRollTrack}>
                 {[0, 1].map(copy => (
                   <div key={copy} aria-hidden={copy === 1}>
-                    {COMMENT_ROLL.map(c => (
-                      <p className={styles.commentLine} key={`${copy}-${c.who}`}>
+                    {liveRoll.map((c, i) => (
+                      <p
+                        className={'lit' in c && c.lit ? `${styles.commentLine} ${styles.commentLineLit}` : styles.commentLine}
+                        key={`${copy}-${c.who}-${i}`}
+                      >
                         <img className={styles.commentAvatar} src={c.pic} alt="" draggable="false" />
                         <span className={styles.commentText}>
                           <span className={styles.commentWho}>{c.who}</span>

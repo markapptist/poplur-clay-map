@@ -73,7 +73,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   feed: [
     { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg', action: 'like' },
     { icon: 'Chat', title: 'COMMENT', screen: 'feed-comments', action: 'comment' },
-    { icon: 'Home', title: 'PROFILE', screen: 'profile-stats', action: 'profile' },
+    { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
     { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
     { icon: 'CC', title: 'CC ON', activeTitle: 'CC OFF', toggle: 'captions', screen: 'feed-cc', format: 'svg', action: 'captions' },

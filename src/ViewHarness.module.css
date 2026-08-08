@@ -1092,6 +1092,21 @@
   top: max(20px, calc(env(safe-area-inset-top) + 2px));
 }
 
+.cameraCommerceOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 32;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: max(72px, calc(env(safe-area-inset-top) + 56px));
+  padding-inline: 10px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.cameraCommerceOverlay > * { pointer-events: auto; }
+
 @media (prefers-reduced-motion: reduce) {
   .camSpoofFeed,
   .cameraFull .cameraFeedMirror,

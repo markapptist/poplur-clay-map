@@ -1,7 +1,8 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react'
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import mapboxgl from 'mapbox-gl'
-import { POIS, MAP_THEMES } from './data'
-import { setClaim, seedClaims, totalClaimedKm, onClaimsSettled } from './mapClaims'
+import { POIS, MAP_THEMES, OTHER_POPS, PALETTE, type PopLevel } from './data'
+import { takeoverTint, onTakeoverColor } from './takeoverColor'
+import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled } from './mapClaims'
 import ClayMap, { MAP_2D, MAP_LITE, installComposeRadiusPreview, updateComposeRadiusPreview } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
@@ -20,6 +21,7 @@ import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 // stationName), which is data, not web playback.
 import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus } from './voiceAudio'
 import { smartCardFor, type SmartCard } from './tourSmarts'
+import { suggestionForMapPin, suggestionForMapPlace } from './commerceSuggestions'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups } from './popups'
@@ -579,6 +581,10 @@ export default function App() {
   const isMapEmbed = params.get('map') === '1'
   const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
   const mapRef = useRef<mapboxgl.Map | null>(null)
+  const placeSuggestionTimerRef = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (placeSuggestionTimerRef.current != null) window.clearTimeout(placeSuggestionTimerRef.current)
+  }, [])
   const currentMapMode = MAP_2D ? '2d' : '3d'
   const handleToggleMapMode = useCallback(() => {
     const nextMode = MAP_2D ? '3d' : '2d'
@@ -1478,6 +1484,87 @@ export default function App() {
     return () => { map.off('idle', seed); window.clearTimeout(fallback) }
   }, [mapLive])
 
+  // ── Pop level: whose takeovers the map is showing ────────────────────────
+  // A map of only your own pops cannot answer "am I winning here", because
+  // there is nobody to be winning against. The level switch (shell HUD, above
+  // the channel arrows) puts other holders on the board — each in their OWN
+  // colour, with their face on the pin standing in their territory.
+  const [popLevel, setPopLevel] = useState<PopLevel>('mine')
+  const popLevelRef = useRef(popLevel)
+  popLevelRef.current = popLevel
+
+  // Your own claims are seeded above and never re-pushed by the level switch;
+  // only the OTHERS half arrives and leaves, which is why this uses the
+  // owner-partitioned setter rather than clear-and-reseed.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLive) return
+    const apply = () => {
+      try {
+        setClaimGroup(map, 'others', popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
+          id: pop.id,
+          center: pop.coords,
+          radiusKm: pop.radiusKm,
+          color: pop.color,
+          user: pop.user,
+        })))
+        // 'others' means ONLY theirs: your ground comes off the board so the
+        // level reads as a filter rather than an addition.
+        setClaimGroup(map, 'mine', popLevel === 'others' ? [] : POIS.map(poi => ({
+          id: `pop-${poi.id}`,
+          center: poi.coords as [number, number],
+          radiusKm: poi.radiusKm,
+        })))
+      } catch { /* map torn down */ }
+    }
+    // Let the first seed land before the level starts rearranging the board.
+    const t = window.setTimeout(apply, 60)
+    return () => window.clearTimeout(t)
+  }, [popLevel, mapLive])
+
+  // The pins the map should stand up, derived from the same level. Your own
+  // pops wear YOUR profile picture — the one the profile tab persisted.
+  // Seeded from this origin's own storage so the standalone map still shows a
+  // face; replaced by whatever the shell sends when it is the host.
+  const [ownAvatar, setOwnAvatar] = useState<string | null>(() => {
+    try {
+      const raw = window.localStorage.getItem('poplur.profile.photo')
+      return raw && raw.startsWith('data:image/') ? raw : null
+    } catch { return null }
+  })
+  // YOUR pops are painted in YOUR takeover colour, and follow it live — the
+  // colour knob repaints the claimed ground already, and a pin that kept its
+  // old rim would be the one thing on the map still wearing the old palette.
+  // Other users keep their own colour: it is their identity, not your setting.
+  const [myColor, setMyColor] = useState(() => takeoverTint(PALETTE.pinkHot))
+  useEffect(() => onTakeoverColor(() => setMyColor(takeoverTint(PALETTE.pinkHot))), [])
+  const mapPins = useMemo(() => {
+    const mine = popLevel === 'others' ? [] : POIS.map(poi => ({
+      id: `pop-${poi.id}`,
+      user: null,
+      name: poi.name,
+      coords: poi.coords as [number, number],
+      radiusKm: poi.radiusKm,
+      color: myColor,
+      avatar: ownAvatar,
+      channel: poi.channel,
+      mine: true,
+    }))
+    const others = popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
+      id: pop.id,
+      user: pop.user,
+      name: pop.name,
+      coords: pop.coords,
+      radiusKm: pop.radiusKm,
+      color: pop.color,
+      avatar: pop.avatar,
+      channel: pop.channel,
+      media: { kind: 'image' as const, src: pop.avatar, alt: `${pop.user} post at ${pop.name}` },
+      mine: false,
+    }))
+    return [...others, ...mine]
+  }, [popLevel, ownAvatar, myColor])
+
   // ── Planet scope: zoomed all the way out, the HUD shows your EMPIRE ──────
   // At globe zoom the individual pop is not the subject — the sum of them is.
   // Tell the shell when the camera crosses into planet range so the RADIUS
@@ -1569,7 +1656,10 @@ export default function App() {
       const tip = `Nearby, ${growing.name} is growing fast — a ${growing.radiusKm} kilometre radius. `
         + `People are posting around ${posting.name}. Use the channel buttons to visit them.`
       const card = {
-        icon: 'tip' as const,
+        // The nearby callout is also a real ad window: use the place resolver
+        // for approved fallback media, sponsor treatment and an HTTPS detail
+        // destination, then retain the radius-specific headline and rows.
+        ...suggestionForMapPlace(growing),
         title: 'Growing near you',
         headline: `${growing.name} · ${growing.radiusKm} km and climbing`,
         rows: [
@@ -1706,6 +1796,20 @@ export default function App() {
         // search button opens — the menu tile is another way in, not a copy.
         case 'search': setSearchOpen(true); break
         case 'mapMode': handleToggleMapMode(); break
+        // The shell's level switch (tap to cycle, hold to pick) sends the
+        // chosen level down; the map owns what that means on the ground.
+        case 'setPopLevel': {
+          const next = event.data.level
+          if (next === 'mine' || next === 'others' || next === 'all') setPopLevel(next)
+          break
+        }
+        // Your profile picture, handed down by the shell (the photo lives in
+        // the shell's localStorage, which this origin cannot read).
+        case 'setOwnPhoto': {
+          const photo = event.data.photo
+          setOwnAvatar(typeof photo === 'string' && photo.startsWith('data:image/') ? photo : null)
+          break
+        }
         case 'setTourTopics': {
           const next = writeMapTourTopics(normalizeMapTourTopics(event.data.topics))
           tourTopicsRef.current = next
@@ -1833,7 +1937,15 @@ export default function App() {
     const poi = POIS.find(p => p.id === id)
     if (!poi) return
     setCurrentPlace(displayPlaceName(poi.name))
+    if (placeSuggestionTimerRef.current != null) window.clearTimeout(placeSuggestionTimerRef.current)
+    clearPopups('suggestion')
     flyToCenter(poi.coords, 4600)
+    // Let the flight complete before the place window lands. Selecting another
+    // pin cancels this timer, so an interrupted trip never shows a stale deal.
+    placeSuggestionTimerRef.current = window.setTimeout(() => {
+      placeSuggestionTimerRef.current = null
+      showPopup({ kind: 'suggestion', card: suggestionForMapPlace(poi) })
+    }, 4_700)
   }, [flyToCenter])
 
   if (harnessView) {
@@ -1875,6 +1987,31 @@ export default function App() {
       <ClayMap
         token={TOKEN}
         pois={POIS}
+        pins={mapPins}
+        onPinOpen={pin => {
+          if (placeSuggestionTimerRef.current != null) {
+            window.clearTimeout(placeSuggestionTimerRef.current)
+            placeSuggestionTimerRef.current = null
+          }
+          clearPopups('suggestion')
+          showPopup({
+            kind: 'suggestion',
+            card: suggestionForMapPin(pin),
+            action: {
+              label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
+              onActivate: () => {
+                // The shell owns tabs and profiles; the ad retains the proven
+                // route and identifies the exact pop to light up in the grid.
+                window.parent?.postMessage({
+                  type: 'poplur-map-open-profile',
+                  user: pin.user,
+                  popId: pin.id,
+                  name: pin.name,
+                }, '*')
+              },
+            },
+          })
+        }}
         selectedId={selectedId}
         onSelectPoi={handleSelectPoi}
         mapRef={mapRef}

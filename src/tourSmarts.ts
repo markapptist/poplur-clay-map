@@ -1,3 +1,5 @@
+import { decorateFeedSuggestion } from './commerceSuggestions'
+
 // The tour's brain: what the AI knows about a stop when it lands there.
 //
 // Every stop kind gets a SMART CARD — something concrete the host can show and
@@ -35,6 +37,19 @@ export interface SmartCard {
   /** what the AI host speaks on arrival */
   line: string
   link?: { label: string; url: string }
+  /** Optional approved/uploaded creative. Videos are always presented muted. */
+  media?: {
+    kind: 'image' | 'video'
+    src: string
+    poster?: string
+    alt: string
+  }
+  /** Shopping-window presentation metadata; narration ignores these fields. */
+  sponsor?: string
+  badge?: string
+  channelTag?: string
+  accent?: string
+  accent2?: string
 }
 
 // Deterministic per (stop, hour-slot, weekday): stable while you dwell,
@@ -115,6 +130,10 @@ function sportsCard(stop: SmartStop, when: Date, seed: number): SmartCard {
       { label: 'Now', value: period },
     ],
     line: `Tonight at ${stop.name}: ${home} against ${away} — ${home} lead ${homeScore} to ${awayScore} in the ${period}.`,
+    link: {
+      label: 'CHECK THE GAME',
+      url: `https://www.google.com/search?igu=1&q=${encodeURIComponent(`${home} vs ${away} score`)}`,
+    },
   }
 }
 
@@ -188,6 +207,10 @@ function dishCard(stop: SmartStop, when: Date, seed: number): SmartCard {
     headline: `Order ${dish}`,
     rows: [{ label: day, value: special ? 'special today' : `best at ${slot === 'morning' ? 'breakfast' : slot}` }],
     line: `At ${stop.name}, order ${dish} — ${reason}.`,
+    link: {
+      label: 'SEE THE MENU',
+      url: `https://www.google.com/search?igu=1&q=${encodeURIComponent(`${stop.name} menu deals`)}`,
+    },
   }
 }
 
@@ -262,7 +285,7 @@ export function feedSuggestionFor(channel: FeedChannelLike, when: Date = new Dat
     kind: mapped?.kind ?? 'feed',
     coords: FEED_ANCHOR,
   }
-  if (mapped) return smartCardFor(stop, when)
+  if (mapped) return decorateFeedSuggestion(smartCardFor(stop, when), channel.id)
   // Genres without a natural score/sale/dish still get a real offer: a
   // grounded next step for the post itself, seeded like everything else.
   const seed = seedFor(stop.id, when)
@@ -272,5 +295,8 @@ export function feedSuggestionFor(channel: FeedChannelLike, when: Date = new Dat
     { headline: 'Nearby right now', line: 'Three pops within 2 km are on this channel today — worth a look before they decay.' },
   ]
   const idea = ideas[seed % ideas.length]
-  return { icon: 'tip', title: `CH ${channel.name.toUpperCase()}`, headline: idea.headline, line: idea.line }
+  return decorateFeedSuggestion(
+    { icon: 'tip', title: `CH ${channel.name.toUpperCase()}`, headline: idea.headline, line: idea.line },
+    channel.id,
+  )
 }

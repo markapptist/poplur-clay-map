@@ -175,6 +175,17 @@
   letter-spacing: 1px;
 }
 
+/* Your own drop. Set in the ink the paper reserves for what you wrote. */
+.mineTag {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid #16120c;
+  background: #16120c;
+  color: #f7f1e4;
+  font: 800 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1px;
+}
+
 .body {
   margin: 5px 0 0;
   font-size: 15px;

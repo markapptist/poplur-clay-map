@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './ProfileTwin.module.css'
+import { OTHER_POPS } from './data'
 import { playPop } from './pop'
 import { isGateMuted, onGateChange } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -47,6 +48,45 @@ const POSTS: Post[] = [
   { ch: 'CH 133', title: 'thrift haul hall of fame', video: 'feed/ad-shopping.mp4' },
 ]
 const SAVED: Post[] = [...POSTS].reverse().slice(0, 6)
+
+// ── The profile picture, on disk ────────────────────────────────────────────
+// One key, a data URI. The capture is already downscaled to 320px square and
+// re-encoded as JPEG before it is stored (~20-40KB) — a 320px PNG runs to
+// ~250KB, and localStorage is a ~5MB budget shared with everything else the
+// app keeps. Every access is guarded: an embedded/partitioned shell can throw
+// on localStorage access, and a profile picture is never worth a thrown error.
+const PHOTO_KEY = 'poplur.profile.photo'
+
+function readStoredPhoto(): string | null {
+  try {
+    const raw = window.localStorage.getItem(PHOTO_KEY)
+    return raw && raw.startsWith('data:image/') ? raw : null
+  } catch { return null }
+}
+
+function writeStoredPhoto(dataUri: string | null): void {
+  try {
+    if (dataUri) window.localStorage.setItem(PHOTO_KEY, dataUri)
+    else window.localStorage.removeItem(PHOTO_KEY)
+  } catch { /* quota or a partitioned shell — the photo still shows this session */ }
+}
+
+// The map's pops, standing in this grid. Real data (Aug 2026) joins posts to
+// pops by id; until then the first five grid posts stand in for the five map
+// pops, in POIS order — the same order the channel arrows fly them.
+const TILE_BY_POP_ID: Record<string, number> = {
+  liberty: 0, kensington: 1, queen: 2, trinity: 3, distillery: 4,
+  // The map prefixes its own claim ids; a pin hands back the claim id, not the
+  // bare pop id, so both spellings have to resolve to the same tile.
+  'pop-liberty': 0, 'pop-kensington': 1, 'pop-queen': 2, 'pop-trinity': 3, 'pop-distillery': 4,
+}
+
+/** Which grid tile is "the post that took this ground" on someone ELSE's
+ *  profile. Same standing-in rule as your own pops above — in order, until
+ *  real data joins posts to pops by id. */
+const VISITING_TILE_BY_POP_ID: Record<string, number> = Object.fromEntries(
+  OTHER_POPS.map((pop, i) => [pop.id, i % POSTS.length]),
+)
 
 // Grid tiles show the post's first frame as a still (feed/posters/*.jpg, cut
 // from the clips themselves). A <video> per tile meant a decoder per tile —
@@ -100,10 +140,14 @@ const NOTIFICATION_DOT_MAP_LAND: Array<Array<[number, number]>> = [
  *  screen and read as a wall. ?notif=clay|frost|glass still loads the rejected
  *  alternatives for comparison. */
 type NotifSkin = 'clay' | 'frost' | 'glass' | 'cards'
+// GLASS is the sheet: a full-page frosted panel over a blurred app. The other
+// three stay reachable with ?notif=frost|cards|clay for comparison — `cards`
+// was the previous default and read as a grey slab floating over a profile
+// you could still see through, which is the look this replaces.
 const NOTIF_SKIN: NotifSkin = (() => {
-  if (typeof window === 'undefined') return 'cards'
+  if (typeof window === 'undefined') return 'glass'
   const v = new URLSearchParams(window.location.search).get('notif')
-  return v === 'frost' || v === 'glass' || v === 'clay' ? v : 'cards'
+  return v === 'frost' || v === 'cards' || v === 'clay' ? v : 'glass'
 })()
 
 function insideDotMapLand(x: number, y: number, polygon: Array<[number, number]>) {
@@ -247,6 +291,7 @@ export default function ProfileTwin({
   viewUser = null,
   onBackToOwn,
   bindGoBack,
+  highlightPops = null,
 }: {
   bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
   /** a handle when you opened someone else's profile from the feed */
@@ -257,9 +302,35 @@ export default function ProfileTwin({
    *  own ✕. Returns false when nothing is open, so the cube falls through
    *  to this tab's favourite action. */
   bindGoBack?: (fn: (() => boolean) | null) => void
+  /** "N pops in this area" tapped on the map: these pop ids light up in the
+   *  grid for a few seconds. seq re-fires the same set. */
+  highlightPops?: { ids: string[]; seq: number } | null
 
 } = {}) {
   const [mode, setMode] = useState<Mode>('media')
+  // Grid tiles lit by the map's "N pops in this area" tap. A few seconds of
+  // takeover-pink ring, then the grid goes back to normal.
+  const [litTiles, setLitTiles] = useState<Set<number> | null>(null)
+  useEffect(() => {
+    if (!highlightPops) return
+    // Visiting someone else's profile lights THEIR pop's post. This used to
+    // bail whenever viewUser was set, which is exactly the case a tapped pin
+    // creates — you arrived because of one specific takeover, and nothing on
+    // the grid said which post it was.
+    const table = viewUser ? VISITING_TILE_BY_POP_ID : TILE_BY_POP_ID
+    const lit = new Set(
+      highlightPops.ids
+        .map(id => table[id])
+        .filter((i): i is number => typeof i === 'number'),
+    )
+    if (!lit.size) return
+    // The pops live in the MEDIA grid; arrive there even if the profile was
+    // left on saved/messages.
+    setMode('media')
+    setLitTiles(lit)
+    const timer = window.setTimeout(() => setLitTiles(null), 4_200)
+    return () => window.clearTimeout(timer)
+  }, [highlightPops, viewUser])
   const [readyTiles, setReadyTiles] = useState<Set<string>>(() => new Set())
   // Tiles whose static overlay has finished fading — it is then unmounted so the
   // grid doesn't keep 15 animating layers alive forever (the feed does the same:
@@ -270,7 +341,12 @@ export default function ProfileTwin({
   const [staticGone, setStaticGone] = useState<Set<string>>(() => new Set())
   const [capturing, setCapturing] = useState(false)
   const [launchingCamera, setLaunchingCamera] = useState(false)
-  const [photo, setPhoto] = useState<string | null>(null)
+  // The profile picture, PERSISTED. This tab unmounts every time the cube
+  // turns (HomeTwin gates it on committedTab), so plain state meant a photo
+  // you had just taken was gone the moment you left the screen and the card
+  // read "no profile image set" forever — the reported bug. Stored as a data
+  // URI under one key, rehydrated on mount.
+  const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
   const [camError, setCamError] = useState(false)
   const [flash, setFlash] = useState(false)
   const [facingMode, setFacingMode] = useState<CaptureFacing>('user')
@@ -372,11 +448,15 @@ export default function ProfileTwin({
   const closeNotifs = () => {
     if (!showNotifs || notifsClosing) return
     setNotifsClosing(true)
+    // Matches the slide-up in ProfileTwin.module.css (.notifMotionShellClosing).
+    // The old value was 840ms for a spring that no longer exists; leaving it
+    // would hold an invisible full-page layer over the profile for half a
+    // second after the sheet had gone.
     notifCloseTimerRef.current = window.setTimeout(() => {
       setShowNotifs(false)
       setNotifsClosing(false)
       notifCloseTimerRef.current = null
-    }, 840)
+    }, 300)
   }
 
   const toggleNotifs = () => {
@@ -615,7 +695,16 @@ export default function ProfileTwin({
       }
       g.drawImage(video, sx, sy, s, s, 0, 0, size, size)
       g.restore()
-      setPhoto(canvas.toDataURL('image/png'))
+      // JPEG, not PNG: this is a camera frame, so PNG buys nothing but ~10x
+      // the bytes — and it has to fit in localStorage to survive the next tab
+      // change. Quality 0.86 is indistinguishable at 320px.
+      const dataUri = canvas.toDataURL('image/jpeg', 0.86)
+      setPhoto(dataUri)
+      writeStoredPhoto(dataUri)
+      // The map lives in a cross-origin iframe, so it cannot read this out of
+      // localStorage the way the rest of the shell does. Announce it instead;
+      // HomeTwin forwards it over the bridge and your pins wear your face.
+      window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: dataUri } }))
       // A photo now exists to match against; recognition turns on only if the
       // disclosure was answered "Use my face".
       try { window.localStorage.setItem('poplur.faceid.reference', '1') } catch { /* embedded */ }
@@ -944,7 +1033,11 @@ export default function ProfileTwin({
           ) : (
             <div className={styles.grid}>
               {posts.map((post, i) => (
-                <button key={post.video + i} className={styles.tile} onClick={() => { playPop(); setViewerIdx(i) }}>
+                <button
+                  key={post.video + i}
+                  className={mode === 'media' && litTiles?.has(i) ? `${styles.tile} ${styles.tileLit}` : styles.tile}
+                  onClick={() => { playPop(); setViewerIdx(i) }}
+                >
                   {/* the post's own first frame… */}
                   <img
                     // A cached poster can finish decoding before React attaches
@@ -985,25 +1078,21 @@ export default function ProfileTwin({
           className={notifsClosing ? `${styles.notifScrim} ${styles.notifScrimClosing}` : styles.notifScrim}
           onClick={closeNotifs}
         >
-          <button
-            type="button"
-            className={styles.notifDismiss}
-            aria-label="Close notifications"
-            onClick={closeNotifs}
-          />
           <div className={notifsClosing ? `${styles.notifMotionShell} ${styles.notifMotionShellClosing}` : styles.notifMotionShell}>
-            <span className={styles.notifTopCover} aria-hidden="true" />
             <div
               className={`${styles.notifBanner} ${styles[`notifSkin_${NOTIF_SKIN}`] ?? ''}`}
               role="dialog"
               aria-modal="true"
               aria-label="Notifications"
-              onClick={e => e.stopPropagation()}
             >
               {NOTIF_SKIN === 'clay' && <NotificationDotMap />}
               <div className={styles.notifTitle}>Notifications</div>
+              {/* The sheet covers the page, so there is no "outside" left to
+                  tap. Anything that is NOT a notification closes it (and the
+                  cube still does, like every other layer here) — the rows stop
+                  the event so reading one never dismisses the sheet. */}
               {NOTIFICATIONS.map(n => (
-                <div key={n.text} className={styles.notifRow}>
+                <div key={n.text} className={styles.notifRow} onClick={e => e.stopPropagation()}>
                   <div className={styles.notifIcon}>
                     <NotificationIcon kind={n.kind} />
                   </div>
@@ -1013,6 +1102,11 @@ export default function ProfileTwin({
                   </div>
                 </div>
               ))}
+              {/* The only visible close control, and the accessible one. The
+                  scrim behind still closes on any tap that is not a row. */}
+              <button type="button" className={styles.notifFoot} onClick={closeNotifs}>
+                tap anywhere to close
+              </button>
             </div>
           </div>
         </div>,

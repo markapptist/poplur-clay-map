@@ -1143,3 +1143,54 @@
     -webkit-text-stroke-width: 1.3px;
   }
 }
+
+/* ── Pop pins ────────────────────────────────────────────────────────────────
+   One Poplur pin per takeover, standing on its coordinate with the owner's
+   face set into the head. The sprite carries all the shading; this is only
+   sizing, the tap target and the standing shadow. */
+.popPinMarker {
+  width: 64px;
+  height: 64px;
+  overflow: visible;
+}
+
+.popPinMarkerFlat {
+  width: 60px;
+  height: 60px;
+}
+
+.popPin {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  /* The sprite is a square frame with the pin drawn inside it, so the tip sits
+     a little above the frame's bottom edge. Nudging down lands the TIP on the
+     coordinate rather than the empty frame edge. */
+  transform: translateY(6px);
+  transition: transform 0.14s ease;
+}
+.popPin img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Ground contact. Without it the pin reads as floating above the clay. */
+  filter: drop-shadow(0 5px 5px rgba(0, 0, 0, 0.58));
+}
+.popPin:active { transform: translateY(6px) scale(0.92); }
+
+/* Flat map, flat pin: no lift, a tighter shadow. The sprite itself is already
+   the straight-on camera — this stops the 3D tier's floating look coming with
+   it into 2D. */
+.popPinFlat {
+  width: 60px;
+  height: 60px;
+}
+.popPinFlat img { filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5)); }
+
+/* Yours, on a board full of other people's. */
+.popPinMine { transform: translateY(6px) scale(1.16); }
+.popPinMine:active { transform: translateY(6px) scale(1.02); }

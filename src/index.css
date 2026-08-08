@@ -229,6 +229,22 @@ html.camera-live,
   animation: none !important;
 }
 
+/* Once the shared frame governor marks the untouched surface asleep, pause
+   the remaining compositor-only ambience too. These animations are cheap per
+   frame but otherwise keep WebKit/GPU work alive forever: the home cube, map
+   boats, weather particles/clouds/fog and the globe sun/moon. The scene stays
+   visually complete at its current frame and resumes on the next gesture. */
+.tier-ios.poplur-ambient-sleep [class*="cubeFloat"],
+.tier-ios.poplur-ambient-sleep [class*="boatInner"],
+.tier-ios.poplur-ambient-sleep [class*="cloud"],
+.tier-ios.poplur-ambient-sleep [class*="celestial"],
+.tier-ios.poplur-ambient-sleep [class*="drop_"],
+.tier-ios.poplur-ambient-sleep [class*="flake_"],
+.tier-ios.poplur-ambient-sleep [class*="stone_"],
+.tier-ios.poplur-ambient-sleep [class*="fog_"] {
+  animation-play-state: paused !important;
+}
+
 /* 2. The HUD legibility recipe — hard plate + soft cast + coloured glow — is a
    three-deep drop-shadow stack on text that is a SOLID fill carrying
    -webkit-text-stroke + paint-order: stroke fill. text-shadow reproduces it

@@ -364,6 +364,11 @@
 /* ── LEFT slot: clay channel up/down arrows, hugging the cube's left gap ── */
 .chanSlot {
   display: flex;
+  /* The row is exactly one cube tall, so the level switch canNOT be a second
+     item in this box — stacking it here pushed the channel arrows out of the
+     row. It floats above instead (.levelAbove), which leaves the arrows on the
+     exact pixel they have always been on. */
+  position: relative;
   align-items: center;
   justify-self: end;
   min-width: 0;
@@ -789,6 +794,37 @@
   to   { opacity: 0.92; transform: translateY(0); }
 }
 
+/* "N pops in this area" — the place line's smaller sibling, one size down in
+   the same outlined-blue voice. A real button (the title layer around it is
+   pointer-events: none), keyed per pop so it replays its entrance. */
+.mapAreaPops {
+  pointer-events: auto;
+  margin-top: 2px;
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.24;
+  white-space: nowrap;
+  color: #7fe3ff;
+  -webkit-text-fill-color: #7fe3ff;
+  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.92);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
+  animation: mapTitleIn 0.6s ease-out both;
+}
+
+.mapAreaPops:active {
+  transform: scale(0.94);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mapTitleText { animation: none; }
 }
@@ -1090,4 +1126,14 @@
 /* The cube flashes for as long as the recording runs. */
 .cubeRecording {
   animation: poplurRecCube 1s steps(1, end) infinite;
+}
+
+/* The pop-level switch, hovering directly over the channel arrows. Absolute so
+   it cannot take part in the bottom row's grid and shift the arrows. */
+.levelAbove {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto;
 }
