@@ -1267,6 +1267,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // The capture preview is the same deal: with the composer up, the cube is
     // its back button (step back, then close) — never the shutter.
     if (composerOpen && cameraActionsRef.current?.composerBack()) { playPop(); return }
+    // The Camera Roll is a PAGE of the camera rather than a modal, so it had
+    // nothing here to answer for it and the cube fell through to the shutter —
+    // pressing it while browsing your library took a photo of whatever the lens
+    // happened to be pointed at. On the roll the cube is the way OUT of it,
+    // back to the viewfinder, the same step-back `onCloseRoll` performs.
+    if (activeTab === 'post' && ((cameraStep % 2) + 2) % 2 === 1) {
+      setCameraStep(s => s - 1)
+      playPop()
+      return
+    }
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
