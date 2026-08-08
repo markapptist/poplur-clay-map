@@ -126,6 +126,69 @@ export function suggestionForMapPlace(place: MapPlaceSuggestionInput): SmartCard
   }
 }
 
+/**
+ * A brand's own look, so a sponsored match is presented in the ADVERTISER's
+ * identity rather than in Poplur's house palette.
+ *
+ * Before this, "chair" resolved to IKEA but the card still wore Poplur
+ * Shopping Network magenta and played a generic channel clip — the brand was
+ * a line of text, which is not what an advertiser is buying. A brand slot has
+ * to read as the brand's own.
+ *
+ * DELIBERATELY colour, wording and layout ONLY — no logos, wordmarks or
+ * product imagery. Those are the advertiser's to supply under licence, and
+ * fabricating them would both invent artwork and put a forged ad in front of a
+ * user. `media` stays empty for a branded match so the card renders as a
+ * brand-styled frame awaiting real creative; `creativeSlot` names the
+ * inventory key a real ad server would fill. Poplur attribution stays on the
+ * card (`sponsor`), which is also what ad disclosure rules require.
+ */
+type BrandLook = {
+  /** the brand's primary surface colour */
+  accent: string
+  /** its secondary/highlight colour */
+  accent2: string
+  /** badge language in the brand's own voice */
+  badge: string
+  /** how the match is described when the detector names this brand */
+  voice: (item: string) => string
+}
+
+const BRAND_LOOK: Record<string, BrandLook> = {
+  IKEA: {
+    accent: '#0058A3', accent2: '#FFDB00', badge: 'IN STORE NOW',
+    voice: item => `Flat-pack ${item}, assembled in an afternoon.`,
+  },
+  Apple: {
+    accent: '#1D1D1F', accent2: '#F5F5F7', badge: 'LEARN MORE',
+    voice: item => `${item[0].toUpperCase()}${item.slice(1)}, considered down to the last detail.`,
+  },
+  Nike: {
+    accent: '#111111', accent2: '#D7FF3E', badge: 'JUST DO IT',
+    voice: item => `${item[0].toUpperCase()}${item.slice(1)} built to move.`,
+  },
+  YETI: {
+    accent: '#13294B', accent2: '#D3BC8D', badge: 'BUILT FOR THE WILD',
+    voice: item => `${item[0].toUpperCase()}${item.slice(1)} that keeps its cool.`,
+  },
+  Trek: {
+    accent: '#E52534', accent2: '#1A1A1A', badge: 'RIDE MORE',
+    voice: item => `${item[0].toUpperCase()}${item.slice(1)} for the long way round.`,
+  },
+  Indigo: {
+    accent: '#0F4C4A', accent2: '#EFE6D6', badge: 'STAFF PICK',
+    voice: item => `${item[0].toUpperCase()}${item.slice(1)} worth an evening.`,
+  },
+  'Best Buy': {
+    accent: '#0046BE', accent2: '#FFE000', badge: 'DEAL OF THE DAY',
+    voice: item => `${item[0].toUpperCase()}${item.slice(1)}, side by side.`,
+  },
+  Logitech: {
+    accent: '#00B8FC', accent2: '#0A0A0A', badge: 'WORK BETTER',
+    voice: item => `${item[0].toUpperCase()}${item.slice(1)} that disappear under your hands.`,
+  },
+}
+
 type ItemOffer = {
   match: RegExp
   name: string
@@ -133,20 +196,24 @@ type ItemOffer = {
   channel: string
   url: string
   badge: string
+  /** Which advertiser owns this category, keyed into BRAND_LOOK. */
+  brand?: string
+  /** What the brand actually sells here, in its own words. */
+  product?: string
 }
 
 // These are destinations, not invented live prices. A production resolver can
 // replace this table with licensed, attributed inventory without changing UI.
 const ITEM_OFFERS: ItemOffer[] = [
-  { match: /cell phone|phone|mobile/i, name: 'phones', sponsor: 'Apple', channel: 'shopping', url: 'https://www.apple.com/iphone/', badge: 'SHOP NOW' },
-  { match: /laptop|computer/i, name: 'laptops', sponsor: 'Apple', channel: 'shopping', url: 'https://www.apple.com/macbook-air/', badge: 'COMPARE!' },
-  { match: /screen|television|\btv\b/i, name: 'screens', sponsor: 'Best Buy', channel: 'shopping', url: 'https://www.bestbuy.ca/en-ca/category/televisions/21344', badge: 'BIG SCREEN!' },
-  { match: /keyboard/i, name: 'keyboards', sponsor: 'Logitech', channel: 'shopping', url: 'https://www.logitech.com/en-ca/products/keyboards.html', badge: 'TYPE THIS!' },
-  { match: /bottle|cup|mug/i, name: 'drinkware', sponsor: 'YETI', channel: 'food', url: 'https://www.yeti.ca/drinkware', badge: 'HOT PICK' },
-  { match: /chair|couch|sofa/i, name: 'seating', sponsor: 'IKEA', channel: 'shopping', url: 'https://www.ikea.com/ca/en/cat/furniture-fu001/', badge: 'ROOM DEAL' },
-  { match: /book/i, name: 'books', sponsor: 'Indigo', channel: 'cartoon', url: 'https://www.indigo.ca/en-ca/books/', badge: 'READ THIS!' },
-  { match: /backpack|bag/i, name: 'backpacks', sponsor: 'Nike', channel: 'sports', url: 'https://www.nike.com/ca/w?q=backpack', badge: 'GEAR UP!' },
-  { match: /bicycle|bike/i, name: 'bikes', sponsor: 'Trek', channel: 'sports', url: 'https://www.trekbikes.com/ca/en_CA/bikes/c/B100/', badge: 'RIDE!' },
+  { match: /cell phone|phone|mobile/i, name: 'phones', sponsor: 'Apple', brand: 'Apple', product: 'iPhone', channel: 'shopping', url: 'https://www.apple.com/iphone/', badge: 'SHOP NOW' },
+  { match: /laptop|computer/i, name: 'laptops', sponsor: 'Apple', brand: 'Apple', product: 'MacBook Air', channel: 'shopping', url: 'https://www.apple.com/macbook-air/', badge: 'COMPARE!' },
+  { match: /screen|television|\btv\b/i, name: 'screens', sponsor: 'Best Buy', brand: 'Best Buy', product: 'TVs', channel: 'shopping', url: 'https://www.bestbuy.ca/en-ca/category/televisions/21344', badge: 'BIG SCREEN!' },
+  { match: /keyboard/i, name: 'keyboards', sponsor: 'Logitech', brand: 'Logitech', product: 'keyboards', channel: 'shopping', url: 'https://www.logitech.com/en-ca/products/keyboards.html', badge: 'TYPE THIS!' },
+  { match: /bottle|cup|mug/i, name: 'drinkware', sponsor: 'YETI', brand: 'YETI', product: 'Rambler', channel: 'food', url: 'https://www.yeti.ca/drinkware', badge: 'HOT PICK' },
+  { match: /chair|couch|sofa/i, name: 'seating', sponsor: 'IKEA', brand: 'IKEA', product: 'chairs', channel: 'shopping', url: 'https://www.ikea.com/ca/en/cat/chairs-fu002/', badge: 'ROOM DEAL' },
+  { match: /book/i, name: 'books', sponsor: 'Indigo', brand: 'Indigo', product: 'books', channel: 'cartoon', url: 'https://www.indigo.ca/en-ca/books/', badge: 'READ THIS!' },
+  { match: /backpack|bag/i, name: 'backpacks', sponsor: 'Nike', brand: 'Nike', product: 'backpacks', channel: 'sports', url: 'https://www.nike.com/ca/w?q=backpack', badge: 'GEAR UP!' },
+  { match: /bicycle|bike/i, name: 'bikes', sponsor: 'Trek', brand: 'Trek', product: 'bikes', channel: 'sports', url: 'https://www.trekbikes.com/ca/en_CA/bikes/c/B100/', badge: 'RIDE!' },
   { match: /car|vehicle/i, name: 'cars', sponsor: 'AutoTrader', channel: 'sports', url: 'https://www.autotrader.ca/', badge: 'FOUND IT!' },
   { match: /barcode|qr code/i, name: 'this item', sponsor: 'Shopping results', channel: 'shopping', url: 'https://www.google.com/search?igu=1&tbm=shop&q=barcode+product', badge: 'SCAN & SHOP' },
 ]
@@ -155,20 +222,58 @@ export function purchaseSuggestionForDetection(detection: Detection): SmartCard 
   if (detection.user || detection.confidence < 0.72) return null
   const offer = ITEM_OFFERS.find(item => item.match.test(detection.label))
   if (!offer) return null
+
+  const look = offer.brand ? BRAND_LOOK[offer.brand] : undefined
+  const item = detection.label.toLowerCase()
+
+  // No brand owns this category yet: keep the house look.
+  if (!look || !offer.brand) {
+    return {
+      icon: 'sale',
+      title: detection.label.toUpperCase(),
+      headline: `Shop ${offer.name}`,
+      rows: [
+        { label: 'MATCH', value: `${Math.round(detection.confidence * 100)}%` },
+        { label: 'RESULTS', value: `from ${offer.sponsor}` },
+      ],
+      line: `I found shopping results for ${offer.name}.`,
+      link: { label: `SHOP ${offer.name}`, url: offer.url },
+      ...creative(offer.channel, {
+        sponsor: `Sponsored · ${offer.sponsor}`,
+        badge: offer.badge,
+        channelTag: 'CAMERA SHOP · LIVE SEARCH',
+      }),
+    }
+  }
+
+  // A sponsored match: the card wears the ADVERTISER's identity.
+  //
+  // The wording is careful on purpose. The detector recognises an OBJECT
+  // CLASS ("chair"), not a manufacturer — so the card says the brand SELLS
+  // this, never that the object in frame IS one of theirs. Claiming
+  // "that's an IKEA chair" about someone else's furniture would be a
+  // fabricated identification, and the first wrong one costs the advertiser
+  // more than the placement is worth. When a real brand/logo classifier
+  // lands it can set `detection.brand` and this can promote to a direct
+  // claim; the copy below is the honest version until then.
+  const product = offer.product ?? offer.name
   return {
     icon: 'sale',
-    title: detection.label.toUpperCase(),
-    headline: `Shop ${offer.name}`,
+    title: offer.brand.toUpperCase(),
+    headline: `${offer.brand} ${product}`,
     rows: [
-      { label: 'MATCH', value: `${Math.round(detection.confidence * 100)}%` },
-      { label: 'RESULTS', value: `from ${offer.sponsor}` },
+      { label: 'SPOTTED', value: `${item} · ${Math.round(detection.confidence * 100)}%` },
+      { label: 'IN RANGE', value: `${offer.brand} ${offer.name}` },
     ],
-    line: `I found shopping results for ${offer.name}.`,
-    link: { label: `SHOP ${offer.name}`, url: offer.url },
-    ...creative(offer.channel, {
-      sponsor: `Sponsored · ${offer.sponsor}`,
-      badge: offer.badge,
-      channelTag: 'CAMERA SHOP · LIVE SEARCH',
-    }),
+    line: look.voice(product),
+    link: { label: `SHOP ${offer.brand.toUpperCase()}`, url: offer.url },
+    // No `media`: a branded slot renders as the brand's own frame and waits
+    // for licensed creative rather than borrowing an unrelated channel clip.
+    // See BRAND_LOOK — nothing here invents a logo or a product photo.
+    sponsor: `Sponsored · ${offer.brand}`,
+    badge: look.badge,
+    channelTag: `${offer.brand.toUpperCase()} · CAMERA SHOP`,
+    accent: look.accent,
+    accent2: look.accent2,
   }
 }
