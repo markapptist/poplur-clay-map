@@ -315,6 +315,11 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<BlobPart[]>([])
   const analyserRef = useRef<AnalyserNode | null>(null)
+  // The analyser's own context, held so it can be CLOSED. Stopping the mic
+  // tracks silences the input but leaves this context `running` — an audio
+  // render thread mixing nothing, forever, one per mic start. That is the exact
+  // thing the thermal budget's maxRunningAudioContexts: 0 exists to catch.
+  const micCtxRef = useRef<AudioContext | null>(null)
   const levelTimer = useRef(0)
   const [levels, setLevels] = useState<number[]>([])
   const [takeUrl, setTakeUrl] = useState<string | null>(null)
@@ -327,6 +332,8 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
     analyserRef.current = null
+    micCtxRef.current?.close().catch(() => { /* already closed */ })
+    micCtxRef.current = null
   }
 
   useEffect(() => () => { stopCapture(); if (takeUrl) URL.revokeObjectURL(takeUrl) }, [takeUrl])
@@ -337,7 +344,10 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       streamRef.current = stream
       setMicDenied(false)
 
+      // Starting the mic twice without stopping would strand the first context.
+      micCtxRef.current?.close().catch(() => { /* already closed */ })
       const ctx = new AudioContext()
+      micCtxRef.current = ctx
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
       ctx.createMediaStreamSource(stream).connect(analyser)

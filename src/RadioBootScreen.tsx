@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import styles from './RadioScreen.module.css'
+import { releaseWebGL } from './threeCleanup'
 import { playRadioPowerOn } from './radioPowerSound'
 
 // POWER ON — the deck warming up.
@@ -113,8 +114,13 @@ export default function RadioBootScreen({ onDone }: { onDone: () => void }) {
         if (Array.isArray(mat)) mat.forEach(m => m.dispose())
         else mat?.dispose()
       })
+      // Detach FIRST, then release: releaseWebGL only forces context loss on a
+      // canvas that is off the DOM, which is what tells it the element will not
+      // be reused. dispose() alone left this context alive until GC happened to
+      // collect the canvas — one stranded context per radio boot, and WKWebView
+      // accumulates them rather than evicting (see threeCleanup).
       renderer?.domElement.remove()
-      renderer?.dispose()
+      releaseWebGL(renderer)
       renderer = null
     }
   }, [])

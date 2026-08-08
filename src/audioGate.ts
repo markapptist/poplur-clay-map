@@ -15,8 +15,42 @@
 //    Applies everywhere, standalone included.
 
 const embedded = window.parent !== window
-const contexts: AudioContext[] = []
-const mediaEls: HTMLMediaElement[] = []
+
+// The gate WATCHES every context and media element; it must never OWN one.
+//
+// These were plain arrays, pushed to from the patched constructors below and
+// never emptied — so the gate held a strong reference to every AudioContext and
+// every Audio element the app had ever created, for the life of the page. That
+// makes the gate the thing that keeps a leak alive: a screen can drop its own
+// reference perfectly and the object still cannot be collected, because this
+// list is holding it. Weak references let the collector do its job while the
+// census and the mute sweep still see everything that is actually alive.
+const contexts: WeakRef<AudioContext>[] = []
+const mediaEls: WeakRef<HTMLMediaElement>[] = []
+
+/** Live contexts, compacting away any that were collected or closed. A closed
+ *  context can neither be heard nor resumed, so keeping it is pure bookkeeping
+ *  — and a census that lists it forever hides the ones that matter. */
+function liveContexts(): AudioContext[] {
+  const live: AudioContext[] = []
+  for (let i = contexts.length - 1; i >= 0; i -= 1) {
+    const ctx = contexts[i].deref()
+    if (!ctx || ctx.state === 'closed') { contexts.splice(i, 1); continue }
+    live.unshift(ctx)
+  }
+  return live
+}
+
+/** Live media elements, same compaction. */
+function liveMedia(): HTMLMediaElement[] {
+  const live: HTMLMediaElement[] = []
+  for (let i = mediaEls.length - 1; i >= 0; i -= 1) {
+    const el = mediaEls[i].deref()
+    if (!el) { mediaEls.splice(i, 1); continue }
+    live.unshift(el)
+  }
+  return live
+}
 
 const MUTE_STORAGE_KEY = 'poplur.muted'
 
@@ -37,9 +71,11 @@ export function isGateMuted(): boolean { return embedMuted || hidden || userMute
     the audio thread stays hot for nothing — so the probe reports states, not
     just counts. */
 export function audioGateDebug(): string {
-  const states = contexts.map(c => (c.state || '?')[0]).join('')
-  const playing = mediaEls.filter(el => !el.paused).length
-  return `ctx=${contexts.length}[${states}] media=${mediaEls.length}(${playing} playing)`
+  const live = liveContexts()
+  const media = liveMedia()
+  const states = live.map(c => (c.state || '?')[0]).join('')
+  const playing = media.filter(el => !el.paused).length
+  return `ctx=${live.length}[${states}] media=${media.length}(${playing} playing)`
 }
 
 // The thermal gate (.codex/thermal-gate.mjs) and headless drives read this off
@@ -73,7 +109,7 @@ const gateSuspended = new WeakSet<AudioContext>()
 
 function apply() {
   const muted = isGateMuted()
-  for (const c of contexts) {
+  for (const c of liveContexts()) {
     try {
       if (muted) {
         if (c.state === 'running') { gateSuspended.add(c); void c.suspend() }
@@ -83,7 +119,7 @@ function apply() {
       }
     } catch { /* ignore */ }
   }
-  for (const el of mediaEls) {
+  for (const el of liveMedia()) {
     try { el.muted = muted } catch { /* ignore */ }
   }
   // Silence the AI host mid-sentence when the gate closes.
@@ -111,7 +147,7 @@ const NativeCtx: typeof AudioContext | undefined =
 if (NativeCtx) {
   const Patched = function (this: unknown, ...args: unknown[]) {
     const c = new (NativeCtx as unknown as new (...a: unknown[]) => AudioContext)(...args)
-    contexts.push(c)
+    contexts.push(new WeakRef(c))
     if (isGateMuted()) { try { void c.suspend() } catch { /* ignore */ } }
     return c
   } as unknown as typeof AudioContext
@@ -147,7 +183,7 @@ const NativeAudio = window.Audio
 if (NativeAudio) {
   const PatchedAudio = function (this: unknown, ...args: unknown[]) {
     const el = new (NativeAudio as unknown as new (...a: unknown[]) => HTMLAudioElement)(...args)
-    mediaEls.push(el)
+    mediaEls.push(new WeakRef(el))
     if (isGateMuted()) el.muted = true
     return el
   } as unknown as typeof Audio
