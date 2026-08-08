@@ -516,6 +516,17 @@ function cityNameForDestination(destination: TourDestination): string {
   return RADIO_MARKET_CITY[radioMarketForDestination(destination)] ?? RADIO_MARKET_CITY.global
 }
 
+// "This area" for the pops-in-area readout: pops whose centres stand within
+// 2km of the one you are on, counted from the SAME list the channel arrows
+// walk. 2km is tuned to the demo geography — downtown pops cluster (2-4 in an
+// area) while Distillery stands alone (1) — and will be revisited when real
+// posts land in Aug 2026.
+const POPS_NEARBY_M = 2_000
+function popsNearby(poi: { coords: number[] }): typeof POIS {
+  return POIS.filter(p =>
+    distanceMeters(p.coords as [number, number], poi.coords as [number, number]) <= POPS_NEARBY_M)
+}
+
 function distanceMeters(a: [number, number], b: [number, number]): number {
   const toRad = (value: number) => (value * Math.PI) / 180
   const lat1 = toRad(a[1])
@@ -622,6 +633,10 @@ export default function App() {
   // dish to order. Set on arrival, cleared on departure and when the tour ends.
   const [smartCard, setSmartCard] = useState<SmartCard | null>(null)
   const [currentPlace, setCurrentPlace] = useState('Toronto')
+  // The pops-in-this-area readout: set on every pop arrival (channel arrows,
+  // engagement trips). The EMBEDDED shell renders it from poplur-map-pop and
+  // routes the tap to the profile; standalone draws its own inert line.
+  const [areaPops, setAreaPops] = useState<{ count: number; ids: string[] } | null>(null)
   // Read by the arrival greeting, which fires on a timer after the reverse
   // geocode has usually landed — a captured value would still say "Toronto".
   const currentPlaceRef = useRef(currentPlace)
@@ -939,6 +954,42 @@ export default function App() {
       stopPoplurTheme()
     }
     return audible
+  }, [])
+
+  // A queued host line must never be stranded. The ONLY drain used to live
+  // inside the gcAudio message handler, so a line parked while the map was
+  // still coming up got spoken only if ANOTHER gcAudio message happened to
+  // arrive afterwards. Since the map iframe mounts already front-most, that
+  // second message often never comes — the greeting sat in the queue and the
+  // map was silent, which is exactly the "I don't hear the AI on the map"
+  // report. This drains on its own clock as soon as audio is really available.
+  //
+  // The wait is side-effect free on purpose: it reads the same three
+  // conditions applySoundState would, and only calls it once it will succeed.
+  // Polling applySoundState itself would flag sound-requested (and stop the
+  // bed) once a second while the map was not even front.
+  const speechDrainRef = useRef(0)
+  const drainPendingSpeech = useCallback(() => {
+    if (speechDrainRef.current) return
+    let tries = 0
+    const stop = () => {
+      if (speechDrainRef.current) window.clearInterval(speechDrainRef.current)
+      speechDrainRef.current = 0
+    }
+    speechDrainRef.current = window.setInterval(() => {
+      tries += 1
+      // 20s is longer than any arrival takes; past that the line is stale and
+      // saying it would narrate somewhere the user has already left.
+      if (!pendingSpeechRef.current.length || tries > 20) return stop()
+      if (!(mapSurfaceRef.current && mapAudioFrontRef.current && !isGateMuted())) return
+      const line = pendingSpeechRef.current.join(' ')
+      pendingSpeechRef.current = []
+      if (applySoundState(true)) speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
+      stop()
+    }, 1000)
+  }, [applySoundState])
+  useEffect(() => () => {
+    if (speechDrainRef.current) window.clearInterval(speechDrainRef.current)
   }, [])
 
   // `gcAudio` is the map's audio-focus contract with the Home shell. The
@@ -1504,6 +1555,7 @@ export default function App() {
         speakWithVoiceAudioFocus(greeting, { rate: 0.95, pitch: 0.98 })
       } else {
         pendingSpeechRef.current.push(greeting)
+        drainPendingSpeech()
       }
 
       // What is HAPPENING around you, before any tour: the claims growing
@@ -1534,11 +1586,12 @@ export default function App() {
           speakWithVoiceAudioFocus(tip, { rate: 0.95, pitch: 0.98 })
         } else {
           pendingSpeechRef.current.push(tip)
+          drainPendingSpeech()
         }
       }, estimatedVoiceDurationMs(greeting) + 1200)
       tourTimers.current.push(recommend)
     }, 900)
-  }, [applySoundState, scheduleTourIdle])
+  }, [applySoundState, scheduleTourIdle, drainPendingSpeech])
 
   // The home shell mirrors the tour state onto the hold-menu tile.
   useEffect(() => {
@@ -1607,6 +1660,8 @@ export default function App() {
       // next arrow press would resume from the pop before the engagement and
       // fly you backwards.
       popCycleRef.current = POIS.indexOf(poi)
+      const nearby = popsNearby(poi)
+      setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
       try {
         window.parent?.postMessage(
           {
@@ -1615,6 +1670,10 @@ export default function App() {
             total: POIS.length,
             name: poi.name,
             radiusKm: poi.radiusKm,
+            // How many of YOUR pops stand in this area — the shell renders the
+            // count under the place title and routes a tap to the profile.
+            nearby: nearby.length,
+            nearbyIds: nearby.map(p => p.id),
           },
           '*',
         )
@@ -1705,6 +1764,8 @@ export default function App() {
           const poi = POIS[next]
           if (poi) {
             setTourLine(`Pop ${next + 1} of ${POIS.length}: ${poi.name}`)
+            const nearby = popsNearby(poi)
+            setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
             flyToPop(poi.coords as [number, number])
             // Tell the shell WHICH pop this is. The channel arrows used to count
             // POST_COUNT (128) locally while the map flew through POIS, so the
@@ -1734,6 +1795,11 @@ export default function App() {
                   // The HUD's RADIUS card shows THIS pop's takeover while you
                   // travel, not the signed-in user's own reach.
                   radiusKm: poi.radiusKm,
+                  // How many of YOUR pops stand in this area — the shell
+                  // renders the count under the place title and routes a tap
+                  // to the profile.
+                  nearby: nearby.length,
+                  nearbyIds: nearby.map(p => p.id),
                 },
                 '*',
               )
@@ -1970,6 +2036,15 @@ export default function App() {
               {currentPlace}
             </span>
           </div>
+          {/* Your pops standing in this area, in the same outlined-blue voice
+              as the place line above it. Standalone has no profile to open, so
+              the line is informational here; the embedded shell owns the
+              clickable version (see HomeTwin). */}
+          {areaPops && (
+            <div className={styles.areaPops} key={`area-${areaPops.count}-${areaPops.ids[0] ?? ''}`}>
+              {areaPops.count === 1 ? '1 pop in this area' : `${areaPops.count} pops in this area`}
+            </div>
+          )}
         </div>
       )}
 
