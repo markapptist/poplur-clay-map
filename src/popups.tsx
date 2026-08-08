@@ -40,11 +40,14 @@ export interface PopupItem {
 }
 
 /** Engagement is a glance; a suggestion is something you might act on. Both
- *  live inside one 5–10s window: long enough to read a suggestion, short
- *  enough that nothing lingers on the screen you are trying to watch. */
+ *  live inside one 5–7s window: long enough to read a suggestion, short
+ *  enough that nothing lingers on the screen you are trying to watch. The
+ *  suggestion used to hold 9.5s and read as a squatter over the video —
+ *  "shown for too long" verbatim — so it now gets barely longer than the
+ *  engagement glance. */
 const TTL: Record<PopupKind, number> = {
   engagement: 6_000,
-  suggestion: 9_500,
+  suggestion: 6_500,
 }
 
 // More than a few at once is a pile nobody reads. Oldest goes first.
@@ -53,6 +56,17 @@ const MAX_LIVE = 3
 let nextId = 1
 let items: PopupItem[] = []
 const listeners = new Set<(items: PopupItem[]) => void>()
+
+// The feed's fullscreen player owns the whole screen: while it is up, nothing
+// pops — not suggestions, not engagement. A flag here rather than a prop chain
+// because engagement.ts drives showPopup from plain event listeners that never
+// see React state.
+let suppressedAll = false
+export function setPopupsSuppressed(on: boolean): void {
+  if (suppressedAll === on) return
+  suppressedAll = on
+  if (on && items.length) { items = []; emit() }
+}
 
 const emit = () => { const snapshot = items; listeners.forEach(fn => fn(snapshot)) }
 
@@ -78,6 +92,9 @@ export function dismissPopup(id: number): void {
  */
 export function showPopup(item: Omit<PopupItem, 'id' | 'ttl'> & { ttl?: number }): number {
   const id = nextId++
+  // Silently dropped, not queued: by the time the player closes this notice
+  // would be stale news, same rule as the MAX_LIVE overflow below.
+  if (suppressedAll) return id
   const ttl = item.ttl ?? TTL[item.kind]
   items = [...items, { ...item, id, ttl }]
   // Never let the stack grow past MAX_LIVE: drop the oldest rather than queue,

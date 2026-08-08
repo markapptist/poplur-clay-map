@@ -749,6 +749,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // chrome IS the screen — fading it there just makes the app look like it
   // vanished — so the fade only applies while a subscreen is covering the app.
   const chromeFaded = chromeIdle && overlayOpen
+  // The feed's long-press fullscreen player: the FEED asks, the shell obeys —
+  // cube, HUD row and stat cards leave entirely (chromeHidden, not the idle
+  // ghost) so the clip truly owns the screen. FeedTwin resets this on exit and
+  // on unmount, so a tab change can never strand the home with no chrome.
+  const [feedFullscreen, setFeedFullscreen] = useState(false)
+  const feedChromeGone = feedFullscreen && committedTab === 'feed'
   const [mapTourOn, setMapTourOn] = useState(false)
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
@@ -957,6 +963,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [profileOrigin, setProfileOrigin] = useState<CubeTab | null>(null)
   // Which of the nearby posts the map arrows are parked on (1-based on screen).
   const [mapPostIdx, setMapPostIdx] = useState(0)
+  /** The reach of the video playing in the feed right now. Every video change
+      re-reports it, and the RADIUS card re-runs its money counter on the new
+      value — the user is shown how much radius each video carries. */
+  const [feedReachKm, setFeedReachKm] = useState<number | null>(null)
+  const onFeedPostReach = useCallback((km: number | null) => setFeedReachKm(km), [])
+
+  // Every pop's reach combined, read from the slot the map writes on every
+  // claim settle. Shown on the RADIUS card while Profile is front: the profile
+  // is the identity the total belongs to, and the card is the home view's one
+  // honest place for radius numbers — a second label inside ProfileTwin was
+  // just the same fact in a second font.
+  const [profileTotalKm, setProfileTotalKm] = useState<number | null>(() => {
+    try {
+      const v = parseFloat(window.localStorage.getItem('poplur.totalRadiusKm') ?? '')
+      return Number.isFinite(v) ? v : null
+    } catch { return null }
+  })
+  useEffect(() => {
+    if (activeTab !== 'profile') return
+    try {
+      const v = parseFloat(window.localStorage.getItem('poplur.totalRadiusKm') ?? '')
+      if (Number.isFinite(v)) setProfileTotalKm(v)
+    } catch { /* private */ }
+  }, [activeTab])
+
   /** Takeover radius of the pop currently centred on the map, in km. */
   const [mapPopRadiusKm, setMapPopRadiusKm] = useState<number | null>(null)
   /** Sum of every pop's radius — set while the map camera is at planet zoom.
@@ -978,7 +1009,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // scanner's readout.
       : activeTab === 'post' && scanKm != null && scanKm > 0
         ? RADIUS_METERS / 1000 + scanKm
-        : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : RADIUS_METERS / 1000)
+        // Profile is the identity every claim belongs to, so its card reports
+        // the ACCUMULATED total — the same number the planet-scope globe shows.
+        : activeTab === 'profile' && profileTotalKm != null
+          ? profileTotalKm
+          // On the feed the card reads the PLAYING VIDEO's reach, re-counting
+          // on every change — the same fact as the "reached you from" line,
+          // but told by the counter that owns radius numbers.
+          : activeTab === 'feed' && feedReachKm != null
+            ? feedReachKm
+            : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : RADIUS_METERS / 1000)
 
   // Off the map the card reports YOUR radius again — a pop's takeover must not
   // linger on the HUD once you have left the map that showed it.
@@ -1122,8 +1162,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           <FeedTwin
             index={chanIndex}
             onIndexChange={setChanIndex}
+            onPostReach={onFeedPostReach}
             bindActions={fn => { feedActionsRef.current = fn }}
             suppressed={overlayOpen || holdOpen || activePermission !== null}
+            onPlayerModeChange={setFeedFullscreen}
             onOpenProfile={user => {
               setProfileOrigin(activeTab)
               setViewingUser(user)
@@ -1223,7 +1265,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           floated and the arrows and radius label it sits between vanished
           underneath. The whole HUD is one piece of home chrome. */}
       <div
-        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
+        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${feedChromeGone ? ` ${styles.chromeHidden}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
@@ -1252,7 +1294,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             there was no way to stop turn-by-turn at all. The unit toggle still
             works on feed, profile and camera; drop 'map' from this test to put
             it back on the map too. */}
-        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}`}>
+        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}${feedChromeGone ? ` ${styles.chromeHidden}` : ''}`}>
           {recordMs != null && (
             <div className={styles.statCard} aria-label="Recording">
               <span className={styles.statLabel}>RECORDING ◆</span>
@@ -1275,13 +1317,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             role="button"
             aria-label={`Radius ${(shownRadiusKm * (unitMi ? KM_TO_MI : 1)).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
           >
-            <span className={styles.statLabel}>{seenUser ? `${seenUser.handle} ◆` : (mapWorldTotalKm != null && activeTab === 'map' ? 'TOTAL RADIUS ◆' : 'RADIUS ◆')}</span>
+            <span className={styles.statLabel}>{seenUser ? `${seenUser.handle} ◆` : ((mapWorldTotalKm != null && activeTab === 'map') || (profileTotalKm != null && activeTab === 'profile') ? 'TOTAL RADIUS ◆' : 'RADIUS ◆')}</span>
             <AnimatedRadiusMetrics
               radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
               active={recordMs == null && !showOnlineAudience}
-              accumulated={!seenUser && activeTab === 'map' && mapWorldTotalKm != null}
+              accumulated={!seenUser && ((activeTab === 'map' && mapWorldTotalKm != null) || (activeTab === 'profile' && profileTotalKm != null))}
             />
             <span className={styles.statTrend}>{POST_COUNT} nearby</span>
           </div>
@@ -1317,11 +1359,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           over whatever content is active. Its face tracks the current tab. */}
       {/* The HUD used to duck out while the composer was up. It stays now: the
           capture preview is a home surface — cube back, arrows flip filters. */}
-      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`} />
+      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${feedChromeGone ? ` ${styles.chromeHidden}` : ''}`} />
       <ClayPhonePop visible={cubeIntoPhone} />
       <div
         data-poplur-cube
-        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}`}
+        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}${feedChromeGone ? ` ${styles.chromeHidden}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div

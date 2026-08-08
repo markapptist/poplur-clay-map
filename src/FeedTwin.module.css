@@ -844,3 +844,135 @@
   font-weight: 900;
   letter-spacing: 0.06em;
 }
+
+/* ── Fullscreen player mode ──────────────────────────────────────────────────
+   Long-press strips every overlay; these are the only two things left over the
+   clip. Above everything local (share scrim is 300) so nothing racing a state
+   change can paint over the controls. */
+.playerControls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 40px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 30px;
+  z-index: 320;
+}
+
+.playerBtn {
+  width: 46px;
+  height: 46px;
+  padding: 10px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(10, 8, 12, 0.42);
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.playerBtn:active { transform: scale(0.9); background: rgba(10, 8, 12, 0.62); }
+.playerBtn svg { width: 100%; height: 100%; display: block; }
+
+.playerBtnMain { width: 58px; height: 58px; padding: 14px; }
+
+/* The strip is a fat invisible hit target; the LINE inside is the visual. A
+   2px line cannot be dragged by a thumb, so the touchable area is 30px tall
+   and sits on the very bottom of the screen. */
+.playerTimeline {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: max(6px, env(safe-area-inset-bottom));
+  height: 30px;
+  display: flex;
+  align-items: center;
+  z-index: 320;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.playerTrack {
+  position: relative;
+  width: 100%;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* How much is sitting in the buffer — the ghost ahead of the playhead. */
+.playerBuffered {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+/* The played run: solid white. Eased between the ~4Hz timeupdate ticks so the
+   line glides instead of stepping; the transition drops while a thumb is
+   scrubbing, where the finger IS the clock and easing would read as lag. */
+.playerPlayed {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 1px;
+  background: #fff;
+  transition: width 0.25s linear;
+}
+.playerPlayedScrubbing { transition: none; }
+
+.playerHandle {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+/* ── comments on WIDE screens (tablet, desktop): same posture as the phone ──
+   Every rule above centres the comment surfaces with percentage offsets, and
+   on a phone that ARRIVES at the right look by accident: min(92%, 460px)
+   centred in 393px hugs both edges, and bottom: 24% of an 852px screen is
+   ~204px — exactly the strip above the channel buttons. Scale the viewport up
+   and the same maths puts a 460px rail in the middle of the screen, floating
+   over the video (the tablet screenshot). The phone look is the DESIGN, so
+   wide screens pin it explicitly: left corner, just above the channel-button
+   band, in device pixels rather than percentages. Phones never enter this
+   block, which is what keeps the iPhone pixel-identical. */
+/* The left-anchored entrance (no -50% X): keyframes are defined at top level
+   because redefinition inside a media query is not reliably honoured. */
+@keyframes endCommentsInLeft {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (min-width: 700px) {
+  .endComments {
+    left: 18px;
+    transform: none;
+    bottom: calc(18px + var(--cube-size, 176px) + 12px);
+  }
+  .endComments { animation-name: endCommentsInLeft; }
+  .commentWindow {
+    left: 18px;
+    top: auto;
+    bottom: calc(18px + var(--cube-size, 176px) + 12px);
+    transform: none;
+  }
+  .captions {
+    left: 18px;
+    transform: none;
+    text-align: left;
+  }
+}

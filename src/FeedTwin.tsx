@@ -15,7 +15,7 @@ import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
-import { showPopup, clearPopups } from './popups'
+import { showPopup, clearPopups, setPopupsSuppressed } from './popups'
 import { readFeedCommentsAtEnd } from './feedPreferences'
 import styles from './FeedTwin.module.css'
 import { interceptingLive, isLive, onLiveStore } from './liveStore'
@@ -246,6 +246,8 @@ export default function FeedTwin({
   bindActions,
   onOpenProfile,
   suppressed = false,
+  onPostReach,
+  onPlayerModeChange,
 }: {
   index?: number
   onIndexChange?: (index: number) => void
@@ -255,6 +257,13 @@ export default function FeedTwin({
   onOpenProfile?: (user: string) => void
   /** something is covering the feed (hold menu, News, TV Guide): go quiet */
   suppressed?: boolean
+  /** The playing post's reach, reported on every video change so the home
+      RADIUS card can re-run its money counter — the user is shown how much
+      radius each video carries, in the card that owns that number. */
+  onPostReach?: (km: number | null) => void
+  /** Long-press fullscreen: the shell hides its own chrome (cube, HUD, stat
+      cards) while the feed is in player mode, and brings it back on exit. */
+  onPlayerModeChange?: (on: boolean) => void
 } = {}) {
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
@@ -276,12 +285,36 @@ export default function FeedTwin({
   const endCommentsTimerRef = useRef<number | null>(null)
   const adTimeRef = useRef(0)
 
-  const showEndComments = useCallback(() => {
+  // ── Long-press fullscreen player ──────────────────────────────────────────
+  // Hold the video and every overlay leaves — the feed becomes a plain player:
+  // the clip, a thin white timeline you can scrub, play/pause and ±10s. Hold
+  // again to get the feed back. The mode is a TOGGLE owned by the press, not a
+  // press-and-hold peek: releasing does not exit, the second hold does.
+  const [playerMode, setPlayerMode] = useState(false)
+  const playerModeRef = useRef(false)
+  const [playerPaused, setPlayerPaused] = useState(false)
+  const [playerTime, setPlayerTime] = useState(0)
+  const [playerDuration, setPlayerDuration] = useState(0)
+  const [playerBuffered, setPlayerBuffered] = useState(0)
+  const longPressTimerRef = useRef<number | null>(null)
+  const longPressAnchorRef = useRef<{ x: number; y: number } | null>(null)
+
+  const clearCommentRoll = useCallback(() => {
+    setEndComments(false)
+    if (endCommentsTimerRef.current != null) {
+      window.clearTimeout(endCommentsTimerRef.current)
+      endCommentsTimerRef.current = null
+    }
+  }, [])
+
+  const showCommentRoll = useCallback((opts?: { silent?: boolean }) => {
     if (!readFeedCommentsAtEnd()) return
+    if (playerModeRef.current) return // fullscreen: the video owns the screen
     if (endCommentsTimerRef.current != null) return // already rolling
-    // Ambient: this fires on every clip wrap with nobody touching the screen,
-    // so it must not hold the audio context open the way a tap's pop does.
-    playPopAmbient()
+    // Ambient: the wrap fires with nobody touching the screen, so it must not
+    // hold the audio context open the way a tap's pop does. The START of a clip
+    // rolls silently — the channel detent just popped, an echo teaches nothing.
+    if (!opts?.silent) playPopAmbient()
     setEndComments(true)
     endCommentsTimerRef.current = window.setTimeout(() => {
       setEndComments(false)
@@ -292,13 +325,9 @@ export default function FeedTwin({
   // A channel change is a different post: drop the roll rather than let it run
   // over the clip that just started.
   useEffect(() => {
-    setEndComments(false)
     adTimeRef.current = 0
-    if (endCommentsTimerRef.current != null) {
-      window.clearTimeout(endCommentsTimerRef.current)
-      endCommentsTimerRef.current = null
-    }
-  }, [index])
+    clearCommentRoll()
+  }, [index, clearCommentRoll])
 
   useEffect(() => () => {
     if (endCommentsTimerRef.current != null) window.clearTimeout(endCommentsTimerRef.current)
@@ -347,16 +376,80 @@ export default function FeedTwin({
   // app appeared in different places and obeyed different lifetime rules.
   useEffect(() => {
     clearPopups('suggestion')
-    if (suppressed) return
+    if (suppressed || playerMode) return
     const show = window.setTimeout(() => {
       showPopup({ kind: 'suggestion', card: feedSuggestionFor(CHANNELS[index]) })
     }, 3_500)
     return () => { window.clearTimeout(show); clearPopups('suggestion') }
-  }, [index, suppressed])
+  }, [index, suppressed, playerMode])
+
+  // Player mode is the whole screen going quiet: the ref mirrors for the
+  // pointer handlers, the popup layer stops popping (suggestions AND
+  // engagement), the shell hides its cube/HUD, and any rolling comments leave.
+  // Exiting resumes playback — a paused frame under returning chrome reads as
+  // the feed having crashed, not as a choice you made.
+  useEffect(() => {
+    playerModeRef.current = playerMode
+    setPopupsSuppressed(playerMode)
+    onPlayerModeChange?.(playerMode)
+    if (playerMode) {
+      clearCommentRoll()
+    } else {
+      setPlayerPaused(false)
+      const video = adVideoRef.current
+      if (video && !suppressedRef.current) void video.play().catch(() => {})
+    }
+  }, [playerMode])
+  // Unmount (tab change) must hand the popup layer and the shell chrome back.
+  useEffect(() => () => {
+    setPopupsSuppressed(false)
+    onPlayerModeChange?.(false)
+  }, [])
+
+  const togglePlayback = useCallback(() => {
+    const video = adVideoRef.current
+    if (!video) return
+    playPop()
+    if (video.paused) void video.play().catch(() => {})
+    else video.pause()
+  }, [])
+
+  const seekBy = useCallback((deltaSeconds: number) => {
+    const video = adVideoRef.current
+    if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return
+    playPop()
+    // Clamp shy of the very end: landing exactly on duration makes the looped
+    // clip wrap instantly, which reads as FF teleporting to the start.
+    video.currentTime = Math.min(
+      Math.max(0, video.currentTime + deltaSeconds),
+      Math.max(0, video.duration - 0.05),
+    )
+    setPlayerTime(video.currentTime)
+  }, [])
+
+  // Scrub: drag anywhere on the timeline's hit strip. Direct currentTime
+  // writes — the clips are small bundled files, seeks land within a frame.
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const scrubbingRef = useRef(false)
+  const [scrubbing, setScrubbing] = useState(false)
+  const seekToClientX = useCallback((clientX: number) => {
+    const video = adVideoRef.current
+    const strip = timelineRef.current
+    if (!video || !strip || !Number.isFinite(video.duration) || video.duration <= 0) return
+    const rect = strip.getBoundingClientRect()
+    const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+    video.currentTime = Math.min(fraction * video.duration, video.duration - 0.05)
+    setPlayerTime(video.currentTime)
+  }, [])
 
 
   const change = useCallback((dir: 1 | -1) => {
     const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
+    if (next === index) return
+    // The pop IS the detent. Horizontal (changeContent) always had one;
+    // vertical went silent because the sound lived in the arrows component
+    // and a swipe never touches the arrows.
+    playPop()
     if (onIndexChange) onIndexChange(next)
     else setOwnIndex(next)
   }, [index, onIndexChange])
@@ -404,8 +497,16 @@ export default function FeedTwin({
   }, [ch])
 
   // Keyboard twin of the gestures: up/down = channel, left/right = content.
+  // In the fullscreen player the same keys drive the PLAYER instead: space
+  // toggles playback, left/right step ±10s — what fingers do on the buttons.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (playerModeRef.current) {
+        if (e.key === ' ' || e.key === 'k') { e.preventDefault(); togglePlayback() }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); seekBy(-10) }
+        if (e.key === 'ArrowRight') { e.preventDefault(); seekBy(10) }
+        return
+      }
       if (e.key === 'ArrowUp') { e.preventDefault(); change(-1) }
       if (e.key === 'ArrowDown') { e.preventDefault(); change(1) }
       if (e.key === 'ArrowLeft') { e.preventDefault(); changeContent(-1) }
@@ -413,9 +514,10 @@ export default function FeedTwin({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [change, changeContent])
+  }, [change, changeContent, togglePlayback, seekBy])
 
   const onWheel = (e: React.WheelEvent) => {
+    if (playerModeRef.current) return // fullscreen player: not a pager
     if (wheelLock.current) return
     if (Math.abs(e.deltaY) < 20) return
     wheelLock.current = true
@@ -427,6 +529,18 @@ export default function FeedTwin({
   useSyncExternalStore(onLiveStore, isLive, isLive)
   const posts = postsFor(ch)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
+  // Every video change re-reports its reach — channel swipe, content swipe,
+  // or a live broadcast replacing the fallback clip. Cleared on unmount so the
+  // card falls back to your own radius the moment the feed is gone.
+  const reportedReachRef = useRef<number | null>(null)
+  useEffect(() => {
+    const km = post?.reachKm ?? null
+    if (km === reportedReachRef.current) return
+    reportedReachRef.current = km
+    onPostReach?.(km)
+  })
+  useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
+
   const desiredAdSrc = post?.stream
     ? undefined
     : (post?.video || STOCK_CLIPS[ch.number % STOCK_CLIPS.length])
@@ -537,6 +651,40 @@ export default function FeedTwin({
 
   const adReady = Boolean(adSrc) && readyAdSrc === adSrc
   useEffect(() => { if (adReady) setStaticArmed(false) }, [adReady])
+
+  // While the player is up, mirror the video's clock into the timeline. Native
+  // media events only — no rAF loop, so the layer is idle between events and
+  // the thermal census sees nothing running. Keyed on adSrc because the <video>
+  // element itself is keyed on it: a clip change is a NEW node to listen to.
+  useEffect(() => {
+    if (!playerMode) return
+    const video = adVideoRef.current
+    if (!video) return
+    const sync = () => {
+      setPlayerPaused(video.paused)
+      setPlayerTime(video.currentTime)
+      setPlayerDuration(Number.isFinite(video.duration) ? video.duration : 0)
+      const ranges = video.buffered
+      setPlayerBuffered(ranges.length ? ranges.end(ranges.length - 1) : 0)
+    }
+    sync()
+    const events = ['timeupdate', 'progress', 'durationchange', 'loadedmetadata', 'play', 'pause', 'seeked'] as const
+    events.forEach(name => video.addEventListener(name, sync))
+    return () => events.forEach(name => video.removeEventListener(name, sync))
+  }, [playerMode, adSrc])
+
+  // Every clip OPENS with its comments already rolling — the roll is part of
+  // watching a post (feedPreferences' words), so it fronts the clip instead of
+  // waiting for the wrap. Slightly delayed so the roll enters over the picture,
+  // not over the static cover that is still fading. The wrap roll stays: a
+  // full watch-through gets the roll twice, start and end, which is the shape
+  // the user asked for ("every video starts with comments").
+  useEffect(() => {
+    if (!adReady) return
+    if (suppressedRef.current || playerModeRef.current) return
+    const settle = window.setTimeout(() => showCommentRoll({ silent: true }), 650)
+    return () => window.clearTimeout(settle)
+  }, [adReady, index, showCommentRoll])
   const showStatic = (staticArmed && !adReady) || forceStatic || forceTransition
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
@@ -731,21 +879,50 @@ export default function FeedTwin({
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
   // dominant axis wins: vertical changes channel; horizontal steps through
-  // the current channel's content.
+  // the current channel's content. A HELD press (550ms, still) is neither —
+  // it toggles the fullscreen player.
   const lastTap = useRef(0)
+  const cancelLongPress = () => {
+    longPressAnchorRef.current = null
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return
     const target = e.target
     if (
       target instanceof Element
-      && target.closest('button, a, input, textarea, select, [role="button"]')
+      && target.closest('button, a, input, textarea, select, [role="button"], [role="slider"]')
     ) return
 
     gestureStart.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY }
     e.currentTarget.setPointerCapture(e.pointerId)
+
+    // Arm the long press. Firing consumes the gesture: gestureStart is nulled
+    // so the eventual pointerup cannot read the same press as a tap or swipe.
+    cancelLongPress()
+    longPressAnchorRef.current = { x: e.clientX, y: e.clientY }
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null
+      longPressAnchorRef.current = null
+      gestureStart.current = null
+      lastTap.current = 0
+      playPop()
+      setPlayerMode(on => !on)
+    }, 550)
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    // A press that travels is a swipe being born, not a hold.
+    const anchor = longPressAnchorRef.current
+    if (!anchor || gestureStart.current?.pointerId !== e.pointerId) return
+    if (Math.hypot(e.clientX - anchor.x, e.clientY - anchor.y) > 12) cancelLongPress()
   }
 
   const onPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    cancelLongPress()
     if (gestureStart.current?.pointerId !== e.pointerId) return
     gestureStart.current = null
     lastTap.current = 0
@@ -755,11 +932,19 @@ export default function FeedTwin({
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
+    cancelLongPress()
     const start = gestureStart.current
     if (!start || start.pointerId !== e.pointerId) return
     gestureStart.current = null
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+
+    // Fullscreen player: the surface is a viewing pane, not a pager. Swipes
+    // and double-taps stand down until the next long press exits the mode.
+    if (playerModeRef.current) {
+      lastTap.current = 0
+      return
     }
 
     const dx = e.clientX - start.x
@@ -879,22 +1064,27 @@ export default function FeedTwin({
       className={styles.feed}
       onWheel={onWheel}
       onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
       {/* Tap the left or right edge to step through the other users posting on
           this channel — the tap twin of the horizontal swipe. The middle is
           left clear so double-tap-to-like still works. */}
-      <button
-        className={`${styles.userStep} ${styles.userStepLeft}`}
-        onClick={() => changeContent(-1)}
-        aria-label="Previous user on this channel"
-      />
-      <button
-        className={`${styles.userStep} ${styles.userStepRight}`}
-        onClick={() => changeContent(1)}
-        aria-label="Next user on this channel"
-      />
+      {!playerMode && (
+        <>
+          <button
+            className={`${styles.userStep} ${styles.userStepLeft}`}
+            onClick={() => changeContent(-1)}
+            aria-label="Previous user on this channel"
+          />
+          <button
+            className={`${styles.userStep} ${styles.userStepRight}`}
+            onClick={() => changeContent(1)}
+            aria-label="Next user on this channel"
+          />
+        </>
+      )}
 
       {/* Behind the creative is black, not a themed wash — a channel change
           shows STATIC, never a coloured card. */}
@@ -939,11 +1129,12 @@ export default function FeedTwin({
             markAdReady(adSrc)
             // The clip is `loop`ed, so `ended` never fires. A wrap — playhead
             // jumping back toward zero — IS the end of a play-through, and is
-            // where the comments roll.
+            // where the comments roll. Never in player mode: a scrub backwards
+            // is indistinguishable from a wrap, and fullscreen means NO UI.
             const t = event.currentTarget.currentTime
             const previous = adTimeRef.current
             adTimeRef.current = t
-            if (previous - t > 0.4) showEndComments()
+            if (previous - t > 0.4 && !playerModeRef.current) showCommentRoll()
           }}
           onError={event => retryAdPlayback(adSrc, event.currentTarget)}
           onStalled={event => retryAdPlayback(adSrc, event.currentTarget)}
@@ -951,7 +1142,7 @@ export default function FeedTwin({
       )}
 
       {/* A broadcast says so, and says who is watching. */}
-      {post?.live && (
+      {post?.live && !playerMode && (
         <div className={styles.liveTag} aria-label="Live broadcast">
           <span className={styles.liveDot} aria-hidden="true" />
           LIVE
@@ -987,15 +1178,22 @@ export default function FeedTwin({
           <span className={styles.staticCat}>{ch.name.toUpperCase()}</span>
         </div>
       </div>
-      <div className={styles.grain} aria-hidden="true" />
-      <div className={styles.scanlines} aria-hidden="true" />
-      <div className={styles.vignette} aria-hidden="true" />
+      {/* The TV dressing leaves with the rest of the chrome: fullscreen means
+          the clip as shot, not the clip as broadcast. */}
+      {!playerMode && (
+        <>
+          <div className={styles.grain} aria-hidden="true" />
+          <div className={styles.scanlines} aria-hidden="true" />
+          <div className={styles.vignette} aria-hidden="true" />
+        </>
+      )}
 
       {/* ── Top bar ──
           Far left: the clay 3D mute mark (same extruded-clay recipe as the
           channel arrows) — always present, never part of the swap. The rest is
           ONE slot that cross-fades between the poplur brand and the channel
           info row: [channel logo | title⇄username⇄coords | CH + name]. */}
+      {!playerMode && (
       <div className={styles.topBar}>
         <ClayMuteButton muted={muted} onToggle={toggleMute} size={40} />
         <div className={flipOut ? `${styles.flipSlot} ${styles.flipSlotOut}` : styles.flipSlot}>
@@ -1034,16 +1232,20 @@ export default function FeedTwin({
           />
         </div>
       </div>
+      )}
 
       {/* Why this post is in front of you. Deliberately NOT part of the top
           bar's logo⇄info flip or the caption⇄handle rotation: in the ticker it
           was only on screen ~1 slot in 6, which is too rare to teach anyone the
-          mechanic. Radius is the product, so this line is always up. */}
+          mechanic. Radius is the product, so this line is always up — except in
+          the fullscreen player, where NOTHING is up. */}
+      {!playerMode && (
       <div className={styles.reachLine}>
         <span className={styles.reachText}>
           {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
         </span>
       </div>
+      )}
 
       {/* Channel changer + RADIUS⇄TRENDING label: OWNED BY THE HOME HUD.
           The feed itself only swipes/wheels between channels. */}
@@ -1101,7 +1303,7 @@ export default function FeedTwin({
       {/* Closed captions ride above the home chrome (cube, counters), so they
           are portalled out of the feed's stacking context. Language stays a
           Settings choice. */}
-      {captionsOn && !suppressed && captionLine && typeof document !== 'undefined' && createPortal(
+      {captionsOn && !suppressed && !playerMode && captionLine && typeof document !== 'undefined' && createPortal(
         <div className={styles.captions}><span>{captionLine}</span></div>,
         document.body,
       )}
@@ -1109,7 +1311,7 @@ export default function FeedTwin({
       {/* End-of-clip comments: the roll drifts up when a play-through wraps,
           then leaves on its own. Watching only — no input, no keyboard. The
           COMMENT tile still opens the full window. Tap dismisses early. */}
-      {endComments && !commentOpen && (
+      {endComments && !commentOpen && !playerMode && (
         <div
           className={styles.endComments}
           onClick={() => {
@@ -1184,6 +1386,88 @@ export default function FeedTwin({
       )}
 
       {commentSent && <div className={styles.commentToast}>Comment posted</div>}
+
+      {/* ── Fullscreen player chrome ──
+          The ONLY thing on screen besides the clip: a thin white timeline you
+          can scrub (buffered range in ghost white, played in solid), and the
+          three transport buttons. A live broadcast gets neither — there is no
+          duration to scrub and no frame to pause on; fullscreen there is just
+          the clean picture. */}
+      {playerMode && adSrc && !post?.stream && (
+        <>
+          <div className={styles.playerControls}>
+            <button
+              className={styles.playerBtn}
+              onClick={() => seekBy(-10)}
+              aria-label="Rewind 10 seconds"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M11.5 5 4.5 12l7 7v-5.2l6 5.2V5l-6 5.2V5Z" fill="currentColor" />
+              </svg>
+            </button>
+            <button
+              className={`${styles.playerBtn} ${styles.playerBtnMain}`}
+              onClick={togglePlayback}
+              aria-label={playerPaused ? 'Play' : 'Pause'}
+            >
+              {playerPaused ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 4.5v15L20 12 8 4.5Z" fill="currentColor" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6.5 4.5h4v15h-4v-15Zm7 0h4v15h-4v-15Z" fill="currentColor" />
+                </svg>
+              )}
+            </button>
+            <button
+              className={styles.playerBtn}
+              onClick={() => seekBy(10)}
+              aria-label="Fast forward 10 seconds"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12.5 5 19.5 12l-7 7v-5.2l-6 5.2V5l6 5.2V5Z" fill="currentColor" />
+              </svg>
+            </button>
+          </div>
+          <div
+            ref={timelineRef}
+            className={styles.playerTimeline}
+            role="slider"
+            aria-label="Video position"
+            aria-valuemin={0}
+            aria-valuemax={Math.max(0, Math.round(playerDuration))}
+            aria-valuenow={Math.min(Math.round(playerTime), Math.max(0, Math.round(playerDuration)))}
+            onPointerDown={e => {
+              // The scrub owns this pointer: the feed root must never read the
+              // drag as a swipe or arm its long press from it.
+              e.stopPropagation()
+              scrubbingRef.current = true
+              setScrubbing(true)
+              e.currentTarget.setPointerCapture(e.pointerId)
+              seekToClientX(e.clientX)
+            }}
+            onPointerMove={e => { if (scrubbingRef.current) seekToClientX(e.clientX) }}
+            onPointerUp={() => { scrubbingRef.current = false; setScrubbing(false) }}
+            onPointerCancel={() => { scrubbingRef.current = false; setScrubbing(false) }}
+          >
+            <div className={styles.playerTrack}>
+              <span
+                className={styles.playerBuffered}
+                style={{ width: `${playerDuration > 0 ? Math.min(100, (playerBuffered / playerDuration) * 100) : 0}%` }}
+              />
+              <span
+                className={scrubbing ? `${styles.playerPlayed} ${styles.playerPlayedScrubbing}` : styles.playerPlayed}
+                style={{ width: `${playerDuration > 0 ? Math.min(100, (playerTime / playerDuration) * 100) : 0}%` }}
+              />
+              <span
+                className={styles.playerHandle}
+                style={{ left: `${playerDuration > 0 ? Math.min(100, (playerTime / playerDuration) * 100) : 0}%` }}
+              />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

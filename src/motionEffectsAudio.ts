@@ -355,7 +355,10 @@ export function playRadiusCounterTick(progress: number) {
   filter.type = 'highpass'
   filter.frequency.value = 420
   const gain = c.createGain()
-  gain.gain.setValueAtTime(0.022, now)
+  // 0.022 was tuned against a silent map; under a playing feed video the tick
+  // vanished entirely, and the counter is the whole point of the beat — the
+  // user is being SHOWN how much radius the post carries.
+  gain.gain.setValueAtTime(0.06, now)
   gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.022)
   osc.connect(filter).connect(gain).connect(c.destination)
   osc.start(now)
@@ -375,7 +378,7 @@ export function playRadiusCounterDone() {
     osc.type = 'sine'
     osc.frequency.value = i === 0 ? 1180 : 1540
     const gain = c.createGain()
-    gain.gain.setValueAtTime(0.026, now + delay)
+    gain.gain.setValueAtTime(0.07, now + delay)
     gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.045)
     osc.connect(gain).connect(c.destination)
     osc.start(now + delay)

@@ -22,9 +22,8 @@ const CLAIMS_GLOBE_BLOOM = 'poplur-claims-globe-bloom'
 const CLAIMS_POINTS_SOURCE = 'poplur-claims-points'
 
 /** 72-point circle polygon around a center, `radiusKm` on the ground. */
-function circlePolygon(center: [number, number], radiusKm: number): GeoJSON.Feature<GeoJSON.Polygon> {
+function circlePolygon(center: [number, number], radiusKm: number, steps = 72): GeoJSON.Feature<GeoJSON.Polygon> {
   const [lng, lat] = center
-  const steps = 72
   const kmPerDegLat = 110.574
   const kmPerDegLng = 111.320 * Math.cos((lat * Math.PI) / 180)
   const ring: [number, number][] = []
@@ -206,6 +205,23 @@ export function claimsFeatureCollection(): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
     features: [...claims.values()].map(c => circlePolygon(c.center, c.radiusKm)),
+  }
+}
+
+/**
+ * The same claims, coarse — for `within` PAINT EXPRESSIONS only.
+ *
+ * `within` is evaluated per feature per layer and its cost scales with the
+ * polygon's vertex count. Five road/grass/building layers each carrying the
+ * full 72-vertex rings was 470ms of long tasks in the map's idle window (the
+ * thermal gate's budget is 250ms). At the granularity of "is this street
+ * inside the claim", a 20-vertex ring is indistinguishable — the detailed ring
+ * is still what the FILL draws.
+ */
+export function claimsWithinCollection(): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: [...claims.values()].map(c => circlePolygon(c.center, c.radiusKm, 20)),
   }
 }
 
