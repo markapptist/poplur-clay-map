@@ -2,7 +2,8 @@ import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES, OTHER_POPS, PALETTE, type PopLevel } from './data'
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
-import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled } from './mapClaims'
+import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
+import { userUnitsToKm } from './units'
 import ClayMap, { MAP_2D, MAP_LITE, installComposeRadiusPreview, updateComposeRadiusPreview } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
@@ -506,6 +507,18 @@ const ENGAGEMENT_ARRIVED_M = 220
 /** Coordinate slop when matching an engagement to a known pop. */
 const ENGAGEMENT_POP_MATCH_M = 400
 
+// ── What a comment is worth ─────────────────────────────────────────────────
+// Two, in whatever unit you read the map in — 2 km, or 2 miles of real ground
+// if you are on miles (see units.ts, which is why that preference had to be
+// shared between documents rather than living in the HUD).
+//
+// A comment is the most expensive thing anyone gives you here: a like is a
+// thumb, a view is an accident, a comment is someone stopping to say
+// something. So it is the engagement that pays ground, and it pays into the
+// pop it was left on — the disc grows on the map where the conversation
+// happened, which is the whole takeover idea working in your favour.
+const COMMENT_RADIUS_STEP = 2
+
 function radioMarketForDestination(destination: TourDestination): string {
   return DESTINATION_RADIO_MARKET[destination.id] ?? 'global'
 }
@@ -523,6 +536,26 @@ function cityNameForDestination(destination: TourDestination): string {
 // walk. 2km is tuned to the demo geography — downtown pops cluster (2-4 in an
 // area) while Distillery stands alone (1) — and will be revisited when real
 // posts land in Aug 2026.
+/**
+ * An AMBIENT card shows its poster, never a running video.
+ *
+ * `creative()` attaches kind:'video' to every suggestion, which is right for a
+ * card the user asked for and wrong for one that arrives on its own: the tour
+ * lands on a stop nobody is watching and a decoder starts on an idle map. The
+ * thermal gate fails a build for exactly that (map budget: 0 playing videos),
+ * and it is the one metric a busy machine cannot fake — a decoder is a decoder.
+ *
+ * The still carries the same creative, so the card looks the same; it just
+ * stops costing a video pipeline until someone actually asks for it.
+ */
+function stillOnly(card: SmartCard): SmartCard {
+  if (card.media?.kind !== 'video') return card
+  return {
+    ...card,
+    media: { kind: 'image', src: card.media.poster ?? card.media.src, alt: card.media.alt },
+  }
+}
+
 const POPS_NEARBY_M = 2_000
 function popsNearby(poi: { coords: number[] }): typeof POIS {
   return POIS.filter(p =>
@@ -728,7 +761,13 @@ export default function App() {
           gestureEvents.forEach(name => map.off(name, onGesture))
         }
         stopChips = startEngagementChips({
-          onEngagement: event => engagementTraverseRef.current?.(event),
+          onEngagement: event => {
+            // The reward is NOT behind the traversal's guards. Whether the
+            // camera is allowed to fly right now has nothing to do with
+            // whether you earned the ground.
+            growRadiusForComment(event)
+            engagementTraverseRef.current?.(event)
+          },
         })
       } else if (tries > 120) {
         window.clearInterval(arm)
@@ -1328,7 +1367,7 @@ export default function App() {
       // setSmartCard alone had no timer — the card was only ever cleared when
       // the next trip started, so on a stop that was never followed by another
       // flight it simply stayed on screen for the rest of the session.
-      showPopup({ kind: 'suggestion', card: smart })
+      showPopup({ kind: 'suggestion', card: stillOnly(smart) })
       setSmartCard(smart)
       // Headless drives read these; the UI never does.
       ;(window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard = smart
@@ -1605,6 +1644,9 @@ export default function App() {
       if (!ambientAllowed()) return
       const api = map as unknown as { __tripping?: boolean; __streetView?: boolean }
       if (api.__streetView) return
+      // An arrival the AUTO-TOUR flew to is not one you asked for. Same rule as
+      // the tour's own card: nothing ambient starts a video decoder.
+      if (tourOnRef.current) return
       if (map.getZoom() < ARRIVE_ZOOM) { arrivedPinRef.current = null; return }
       const c = map.getCenter()
       let best: (typeof mapPinsRef.current)[number] | null = null
@@ -1745,7 +1787,7 @@ export default function App() {
       const recommend = window.setTimeout(() => {
         if (tourStartedRef.current) return
         if (applySoundState(true)) {
-          showPopup({ kind: 'suggestion', card })
+          showPopup({ kind: 'suggestion', card: stillOnly(card) })
           setSmartCard(card)
           speakWithVoiceAudioFocus(tip, { rate: 0.95, pitch: 0.98 })
         } else {
