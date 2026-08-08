@@ -442,12 +442,17 @@
 
 /* ---- content (grid directly under the tabs) ---- */
 
+/* The grid starts right under the switcher and runs to the bottom edge. It used
+   to open 438px down — a band of empty ground under the tabs wide enough to
+   read as a mistake — and stopped 34px short, which floated the last row above
+   nothing. Content scrolling under the bottom cluster is correct here: the
+   cluster is chrome over the page, not a shelf the page sits on. */
 .content {
   position: absolute;
   left: 16px;
   right: 16px;
-  top: 438px;
-  bottom: 34px;
+  top: 404px;
+  bottom: 0;
   overflow-y: auto;
   overflow-x: hidden;
   touch-action: pan-y;
@@ -467,6 +472,41 @@
 }
 
 .spin { animation: spin 0.7s linear infinite; }
+
+/* ── Pull-to-refresh fireworks ──────────────────────────────────────────────
+   Confetti rising out of the top of the grid while you hold the page down.
+   One-shot keyframes on transform and opacity only, capped at 16 pieces, and
+   the host is emptied 1.5s after a burst — nothing here survives the gesture
+   that fired it, which is the rule every animated layer in this app follows. */
+.confetti {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.confettiPiece {
+  position: absolute;
+  width: 7px;
+  height: 11px;
+  margin: -5px 0 0 -3px;
+  border-radius: 2px;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: confettiRise 1.15s cubic-bezier(0.16, 0.72, 0.3, 1) var(--delay, 0ms) 1 both;
+}
+
+@keyframes confettiRise {
+  0% { transform: translate3d(0, 10px, 0) rotate(0deg) scale(0.6); opacity: 0; }
+  16% { opacity: 1; }
+  100% {
+    transform: translate3d(var(--dx, 0), calc(var(--rise, 90px) * -1), 0) rotate(var(--spin, 180deg)) scale(1);
+    opacity: 0;
+  }
+}
 
 @keyframes spin { to { transform: translateX(-50%) rotate(360deg); } }
 
@@ -648,6 +688,43 @@
   text-overflow: ellipsis;
 }
 
+/* How far the message travelled — the same ◆ + km the radius card uses, so the
+   number reads as the app's one radius idea rather than a second unit. */
+.msgRadius {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(246, 59, 154, 0.1);
+  color: #c92e7d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.msgRadius i { font-style: normal; font-size: 9px; opacity: 0.85; }
+
+/* A notification sent you to this conversation — same pink pulse the grid uses
+   when the map hands it a pop, so "the thing I tapped" reads identically on
+   both tabs. Three beats, then it stops; nothing is left permanently marked. */
+.msgRowLit {
+  animation: msgRowLitPulse 1.4s ease-in-out 3;
+  box-shadow: 0 0 0 3px #FF4BA1, 0 0 18px rgba(255, 75, 161, 0.55);
+}
+
+@keyframes msgRowLitPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 3px #FF4BA1, 0 0 18px rgba(255, 75, 161, 0.55);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 0 5px #FF8AC6, 0 0 26px rgba(255, 75, 161, 0.85);
+  }
+}
+
 /* ---- notifications banner (pink, springs down from the top) ---- */
 
 .notifScrim {
@@ -690,12 +767,20 @@
    panel that bounces reads as the screen coming loose, and the old drop-bounce
    (a banner falling in and jiggling six times) read cheap at this size. One
    move, decelerating into place; the content scrolls inside it. */
+/* The sheet FADES, quickly — then the rows come down after it, one behind the
+   next. Sliding the whole slab down as one piece put the last notification on
+   screen at the same instant as the first, which reads as a panel appearing
+   rather than a list arriving. 150ms of fade, then the rows (see .notifSwipe). */
 .notifMotionShell {
   position: absolute;
   inset: 0;
   z-index: 1;
-  will-change: transform;
-  animation: notifSheetDown 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  animation: notifSheetFade 150ms ease-out both;
+}
+
+@keyframes notifSheetFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .notifMotionShellClosing {
@@ -760,6 +845,10 @@
 .notifRow {
   position: relative;
   z-index: 1;
+  /* The swipe itself. Transform only, so it composites. */
+  transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  touch-action: pan-y;
+  cursor: pointer;
 }
 
 .notifTitle {
@@ -807,7 +896,50 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
-.notifRow + .notifRow { margin-top: 5px; }
+.notifSwipe + .notifSwipe { margin-top: 5px; }
+
+/* One row, arriving after the sheet has faded in and after the row above it.
+   The entrance lives on the WRAPPER so the row itself keeps its transform free
+   for the swipe — an animation with fill-mode `both` would otherwise pin
+   transform and the row could never slide. */
+.notifSwipe {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  animation: notifRowDown 300ms cubic-bezier(0.32, 0.72, 0, 1) calc(150ms + var(--i, 0) * 55ms) 1 both;
+}
+
+@keyframes notifRowDown {
+  from { opacity: 0; transform: translate3d(0, -14px, 0); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Swipe left, then tap — the way Messages clears a thread. */
+.notifClear {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 88px;
+  border: 0;
+  border-radius: 0 16px 16px 0;
+  background: linear-gradient(180deg, #ff3b7f, #c81358);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.notifRowSwiped { transform: translate3d(-92px, 0, 0); }
+
+.notifEmpty {
+  padding: 18px 10px;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 233, 246, 0.66);
+}
 
 /* Says how to leave, since a full-page sheet has no visible "outside" and the
    cube is the app's only other way back. Sits under the last notification. */

@@ -14,7 +14,7 @@ import ClayNotifIcon from './ClayNotifIcon'
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
 // dropped for performance) in a shader-swept gradient squircle, a notification
 // bell and 3D camera flanking it responsively, the real username, and the
-// Media / Messages / Saved switcher.
+// Media / Messages / Liked switcher.
 //
 // - Business accounts show the 3D Poplur building instead of the head.
 // - A captured profile photo crossfades with the head/building occasionally.
@@ -47,7 +47,20 @@ const POSTS: Post[] = [
   { ch: 'CH 130', title: 'rooftop DJ set', video: 'feed/ad-music.mp4' },
   { ch: 'CH 133', title: 'thrift haul hall of fame', video: 'feed/ad-shopping.mp4' },
 ]
-const SAVED: Post[] = [...POSTS].reverse().slice(0, 6)
+// LIKED is other people's work, not yours — that is the whole difference from
+// the Media grid, and why it carries a handle. It was "Saved", built by
+// reversing your OWN posts, which made the tab a second copy of your grid.
+// The clips are ones the app already ships (the same feed stills every other
+// surface uses); the handles are the feed's own cast.
+interface LikedPost extends Post { who: string }
+const LIKED: LikedPost[] = [
+  { who: 'kensington_eats', ch: 'CH 133', title: 'thrift haul hall of fame', video: 'feed/ad-shopping.mp4' },
+  { who: 'harbourfront', ch: 'CH 130', title: 'rooftop DJ set', video: 'feed/ad-music.mp4' },
+  { who: 'queenwest', ch: 'CH 127', title: 'midnight ramen counter', video: 'feed/ad-food.mp4' },
+  { who: 'the_annex', ch: 'CH 124', title: 'crowd goes clay', video: 'feed/ad-sports.mp4' },
+  { who: 'kensington_eats', ch: 'CH 121', title: 'la banda del barrio', video: 'feed/ad-spanish-3.mp4' },
+  { who: 'harbourfront', ch: 'CH 118', title: 'mercado de flores', video: 'feed/ad-spanish-2.mp4' },
+]
 
 // ── The profile picture, on disk ────────────────────────────────────────────
 // One key, a data URI. The capture is already downscaled to 320px square and
@@ -96,12 +109,26 @@ const posterFor = (video: string) => video.replace('feed/', 'feed/posters/').rep
 
 type NotificationKind = 'growth' | 'decrease' | 'pop' | 'trend' | 'message'
 
-const NOTIFICATIONS: Array<{ who: string; text: string; when: string; kind: NotificationKind }> = [
-  { who: 'Poplur AI', text: 'Your radius grew 1.2 km near Queen West.', when: '2m', kind: 'growth' },
-  { who: 'Poplur AI', text: 'Your radius decreased 0.6 km after a downtown pop expired.', when: '7m', kind: 'decrease' },
-  { who: 'takeover', text: 'Your downtown pop now covers 3.0 km.', when: '9m', kind: 'pop' },
-  { who: 'kensington_eats', text: 'that shawarma shot is trending 🔥', when: '18m', kind: 'trend' },
-  { who: 'harbourfront', text: 'blue hour meetup this Friday?', when: '1h', kind: 'message' },
+/** Where a notification LEADS. A notice you cannot follow is just a label, so
+ *  every one of these names the thing it is about: the tile that took the
+ *  ground, or the conversation it came from. Tapping goes there and lights it
+ *  up, the same highlight the map uses when it hands a pop to this screen. */
+type NotifTarget = { mode: 'media'; tile: number } | { mode: 'messages'; who: string }
+
+interface Notification {
+  who: string
+  text: string
+  when: string
+  kind: NotificationKind
+  target: NotifTarget
+}
+
+const NOTIFICATIONS: Notification[] = [
+  { who: 'Poplur AI', text: 'Your radius grew 1.2 km near Queen West.', when: '2m', kind: 'growth', target: { mode: 'media', tile: TILE_BY_POP_ID.queen } },
+  { who: 'Poplur AI', text: 'Your radius decreased 0.6 km after a downtown pop expired.', when: '7m', kind: 'decrease', target: { mode: 'media', tile: TILE_BY_POP_ID.liberty } },
+  { who: 'takeover', text: 'Your downtown pop now covers 3.0 km.', when: '9m', kind: 'pop', target: { mode: 'media', tile: TILE_BY_POP_ID.distillery } },
+  { who: 'kensington_eats', text: 'that shawarma shot is trending 🔥', when: '18m', kind: 'trend', target: { mode: 'media', tile: TILE_BY_POP_ID.kensington } },
+  { who: 'harbourfront', text: 'blue hour meetup this Friday?', when: '1h', kind: 'message', target: { mode: 'messages', who: 'harbourfront' } },
 ]
 
 // Friends offered first in the share sheet — DM inside Poplur. Their pictures
@@ -114,10 +141,18 @@ const FRIENDS = [
   { handle: 'the_annex', name: 'Annex', avatar: 'mark_talk0.png' },
 ]
 
-const MESSAGES = [
-  { who: 'Poplur AI', text: 'Your radius grew 1.2 km near Queen West.', when: '2m' },
-  { who: 'kensington_eats', text: 'that shawarma shot is trending 🔥', when: '18m' },
-  { who: 'harbourfront', text: 'blue hour meetup this Friday?', when: '1h' },
+// Your inbox. Every message carries the RADIUS it reached you across, the same
+// number the feed's "reached you from" line and the HUD's radius card report —
+// a message is a pop like anything else here, so the distance it travelled is
+// part of what it is, not decoration. Presented the way The Poplur Times
+// presents its stories: a standing list you read down, not three sample rows.
+const MESSAGES: Array<{ who: string; text: string; when: string; radiusKm: number }> = [
+  { who: 'Poplur AI', text: 'Your radius grew 1.2 km near Queen West.', when: '2m', radiusKm: 1.2 },
+  { who: 'kensington_eats', text: 'that shawarma shot is trending 🔥', when: '18m', radiusKm: 28.6 },
+  { who: 'queenwest', text: 'saw your pop on the corner — nice one', when: '42m', radiusKm: 6.1 },
+  { who: 'harbourfront', text: 'blue hour meetup this Friday?', when: '1h', radiusKm: 12.4 },
+  { who: 'the_annex', text: 'that ramen counter is still open at 2am', when: '3h', radiusKm: 18.9 },
+  { who: 'Poplur AI', text: 'A pop you liked expired downtown.', when: '5h', radiusKm: 3.0 },
 ]
 
 // Same continent silhouette used by the pre-login animated clay dot map. The
@@ -252,7 +287,7 @@ function NotificationIcon({ kind }: { kind: NotificationKind }) {
   )
 }
 
-type Mode = 'media' | 'messages' | 'saved'
+type Mode = 'media' | 'messages' | 'liked'
 type CaptureFacing = 'user' | 'environment'
 
 type TorchVideoTrack = MediaStreamTrack & {
@@ -311,6 +346,16 @@ export default function ProfileTwin({
   // Grid tiles lit by the map's "N pops in this area" tap. A few seconds of
   // takeover-pink ring, then the grid goes back to normal.
   const [litTiles, setLitTiles] = useState<Set<number> | null>(null)
+  // Notifications you have cleared, and the one currently swiped open. Local
+  // state: a cleared notice must stay cleared for the session, and the module
+  // list is the incoming feed, not your copy of it.
+  const [notifs, setNotifs] = useState<Notification[]>(NOTIFICATIONS)
+  const [swipedNotif, setSwipedNotif] = useState<string | null>(null)
+  const notifSwipeRef = useRef<{ key: string; x0: number; moved: boolean } | null>(null)
+  /** The message row a notification just sent you to, lit like a grid tile. */
+  const [litMessage, setLitMessage] = useState<string | null>(null)
+  const litTimer = useRef(0)
+  useEffect(() => () => window.clearTimeout(litTimer.current), [])
   useEffect(() => {
     if (!highlightPops) return
     // Visiting someone else's profile lights THEIR pop's post. This used to
@@ -431,6 +476,7 @@ export default function ProfileTwin({
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
   const spinnerRef = useRef<HTMLDivElement>(null)
+  const confettiRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -464,6 +510,32 @@ export default function ProfileTwin({
     else openNotifs()
   }
 
+  /** Follow a notification to the thing it is about, and light it up there. */
+  const openNotification = (n: Notification) => {
+    playPop()
+    setSwipedNotif(null)
+    closeNotifs()
+    setMode(n.target.mode)
+    window.clearTimeout(litTimer.current)
+    if (n.target.mode === 'media') {
+      setLitMessage(null)
+      setLitTiles(new Set([n.target.tile]))
+    } else {
+      setLitTiles(null)
+      setLitMessage(n.target.who)
+    }
+    // Same dwell the map's pop highlight uses — long enough to find, short
+    // enough that the screen is not left permanently marked.
+    litTimer.current = window.setTimeout(() => { setLitTiles(null); setLitMessage(null) }, 4_200)
+  }
+
+  /** Swipe-then-tap, the way Messages clears a thread. */
+  const dismissNotification = (key: string) => {
+    playPop()
+    setSwipedNotif(null)
+    setNotifs(list => list.filter(n => n.text !== key))
+  }
+
   useEffect(() => () => {
     if (notifCloseTimerRef.current != null) window.clearTimeout(notifCloseTimerRef.current)
   }, [])
@@ -487,7 +559,7 @@ export default function ProfileTwin({
     if (!bindArrows) return
     bindArrows(dir => {
       if (viewerIdxRef.current != null) {
-        const posts = modeRef.current === 'saved' ? SAVED : POSTS
+        const posts = modeRef.current === 'liked' ? LIKED : POSTS
         setViewerIdx(i => (i == null ? i : ((i + dir) % posts.length + posts.length) % posts.length))
         return
       }
@@ -537,16 +609,48 @@ export default function ProfileTwin({
     const spinner = spinnerRef.current
     if (!content || !inner || !spinner) return
     let pulling = false, startY = 0, pull = 0, refreshing = false
+    // Confetti fireworks, fired while you hold the page down. Built in the DOM
+    // rather than React state on purpose: a burst mid-gesture must not re-render
+    // the grid under the finger. Thermal rules, same as every other effect in
+    // this app — transform and opacity only, one-shot keyframes, a hard cap on
+    // how many pieces exist, and the whole burst removes itself.
+    let burstFired = false
+    let burstTimer = 0
+    const CONFETTI = ['#f63b9a', '#ff8ac6', '#67dcff', '#ffd166', '#b06cff', '#48e6a0']
+    const burst = () => {
+      const host = confettiRef.current
+      if (!host || host.childElementCount) return
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      const frag = document.createDocumentFragment()
+      for (let i = 0; i < 16; i += 1) {
+        const piece = document.createElement('i')
+        piece.className = styles.confettiPiece
+        piece.style.setProperty('--dx', `${(Math.random() * 2 - 1) * 96}px`)
+        piece.style.setProperty('--rise', `${76 + Math.random() * 66}px`)
+        piece.style.setProperty('--spin', `${(Math.random() * 2 - 1) * 340}deg`)
+        piece.style.setProperty('--delay', `${Math.round(Math.random() * 170)}ms`)
+        piece.style.background = CONFETTI[i % CONFETTI.length]
+        frag.appendChild(piece)
+      }
+      host.appendChild(frag)
+      window.clearTimeout(burstTimer)
+      burstTimer = window.setTimeout(() => host.replaceChildren(), 1500)
+    }
     const apply = () => {
       inner.style.transform = `translateY(${pull}px)`
       spinner.style.opacity = String(Math.min(1, pull / 48))
       if (!refreshing) spinner.style.transform = `translateX(-50%) rotate(${pull * 6}deg)`
     }
-    const onDown = (e: PointerEvent) => { if (!refreshing && content.scrollTop <= 0) { pulling = true; startY = e.clientY } }
+    const onDown = (e: PointerEvent) => {
+      if (!refreshing && content.scrollTop <= 0) { pulling = true; startY = e.clientY; burstFired = false }
+    }
     const onMove = (e: PointerEvent) => {
       if (!pulling) return
       const dy = e.clientY - startY
       pull = dy > 0 ? Math.min(72, dy * 0.5) : 0
+      // The fireworks go off while you are still holding it down — that is the
+      // moment they are for, not the release.
+      if (pull > 30 && !burstFired) { burstFired = true; burst() }
       apply()
     }
     const onUp = () => {
@@ -556,6 +660,8 @@ export default function ProfileTwin({
         refreshing = true
         spinner.classList.add(styles.spin)
         playPop()
+        // One more on the commit, so letting go lands rather than just stops.
+        burst()
         window.setTimeout(() => {
           refreshing = false
           spinner.classList.remove(styles.spin)
@@ -580,6 +686,9 @@ export default function ProfileTwin({
       content.removeEventListener('pointermove', onMove)
       content.removeEventListener('pointerup', onUp)
       content.removeEventListener('pointercancel', onUp)
+      // A burst mid-flight must not outlive the screen that fired it.
+      window.clearTimeout(burstTimer)
+      confettiRef.current?.replaceChildren()
     }
   }, [])
 
@@ -867,7 +976,7 @@ export default function ProfileTwin({
     return onGateChange(apply)
   }, [viewerIdx])
 
-  const posts = mode === 'saved' ? SAVED : POSTS
+  const posts = mode === 'liked' ? LIKED : POSTS
   const viewerPost = viewerIdx != null ? posts[viewerIdx % posts.length] : null
   // Someone else's profile: their handle, their picture, and none of your own
   // controls (you cannot set another person's photo or read their bell).
@@ -990,7 +1099,7 @@ export default function ProfileTwin({
 
         <h1 className={styles.username}>{shownName.toUpperCase()}</h1>
         <div className={styles.modeSwitch}>
-          {(['media', 'messages', 'saved'] as Mode[]).map(m => (
+          {(['media', 'messages', 'liked'] as Mode[]).map(m => (
             <button
               key={m}
               type="button"
@@ -1013,12 +1122,18 @@ export default function ProfileTwin({
             <path d="M20 4v4h-4" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </div>
+        {/* Fireworks rise from here while the page is held down. Empty until a
+            pull fires one, and empty again 1.5s later. */}
+        <div className={styles.confetti} ref={confettiRef} aria-hidden="true" />
 
         <div className={styles.pullInner} ref={pullRef}>
           {mode === 'messages' ? (
             <div className={styles.messages}>
               {MESSAGES.map(m => (
-                <div key={m.who} className={styles.msgRow}>
+                <div
+                  key={m.who + m.when}
+                  className={litMessage === m.who ? `${styles.msgRow} ${styles.msgRowLit}` : styles.msgRow}
+                >
                   <div className={styles.msgAvatar}>{m.who[0].toUpperCase()}</div>
                   <div className={styles.msgBody}>
                     <div className={styles.msgTop}>
@@ -1026,6 +1141,10 @@ export default function ProfileTwin({
                       <span>{m.when}</span>
                     </div>
                     <p>{m.text}</p>
+                    {/* How far this one travelled to reach you. */}
+                    <span className={styles.msgRadius}>
+                      <i aria-hidden="true">◆</i>{m.radiusKm.toFixed(1)} km
+                    </span>
                   </div>
                 </div>
               ))}
@@ -1091,17 +1210,63 @@ export default function ProfileTwin({
                   tap. Anything that is NOT a notification closes it (and the
                   cube still does, like every other layer here) — the rows stop
                   the event so reading one never dismisses the sheet. */}
-              {NOTIFICATIONS.map(n => (
-                <div key={n.text} className={styles.notifRow} onClick={e => e.stopPropagation()}>
-                  <div className={styles.notifIcon}>
-                    <NotificationIcon kind={n.kind} />
-                  </div>
-                  <div className={styles.notifBody}>
-                    <div className={styles.notifTop}><strong>{n.who}</strong><span>{n.when}</span></div>
-                    <p>{n.text}</p>
+              {notifs.map((n, i) => (
+                <div
+                  key={n.text}
+                  className={styles.notifSwipe}
+                  style={{ '--i': i } as React.CSSProperties}
+                  onClick={e => e.stopPropagation()}
+                >
+                  {/* Revealed by the swipe, and only then tappable. */}
+                  <button
+                    type="button"
+                    className={styles.notifClear}
+                    tabIndex={swipedNotif === n.text ? 0 : -1}
+                    aria-hidden={swipedNotif !== n.text}
+                    onClick={() => dismissNotification(n.text)}
+                  >
+                    Clear
+                  </button>
+                  <div
+                    className={swipedNotif === n.text ? `${styles.notifRow} ${styles.notifRowSwiped}` : styles.notifRow}
+                    role="button"
+                    tabIndex={0}
+                    onPointerDown={e => { notifSwipeRef.current = { key: n.text, x0: e.clientX, moved: false } }}
+                    onPointerMove={e => {
+                      const s = notifSwipeRef.current
+                      if (!s || s.key !== n.text) return
+                      const dx = e.clientX - s.x0
+                      if (Math.abs(dx) > 8) s.moved = true
+                      // Left opens the clear action, right puts it away —
+                      // committed on the drag itself, so a flick works without
+                      // having to land the finger anywhere in particular.
+                      if (dx < -34) { setSwipedNotif(n.text); notifSwipeRef.current = null }
+                      else if (dx > 34) { setSwipedNotif(null); notifSwipeRef.current = null }
+                    }}
+                    onPointerUp={() => {
+                      const s = notifSwipeRef.current
+                      notifSwipeRef.current = null
+                      // A drag is never a tap. An open row closes instead of
+                      // navigating, so the clear action cannot be tapped past.
+                      if (!s || s.moved) return
+                      if (swipedNotif === n.text) { setSwipedNotif(null); return }
+                      openNotification(n)
+                    }}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNotification(n) } }}
+                  >
+                    <div className={styles.notifIcon}>
+                      <NotificationIcon kind={n.kind} />
+                    </div>
+                    <div className={styles.notifBody}>
+                      <div className={styles.notifTop}><strong>{n.who}</strong><span>{n.when}</span></div>
+                      <p>{n.text}</p>
+                    </div>
                   </div>
                 </div>
               ))}
+              {notifs.length === 0 && (
+                <div className={styles.notifEmpty}>You are all caught up.</div>
+              )}
               {/* The only visible close control, and the accessible one. The
                   scrim behind still closes on any tap that is not a row. */}
               <button type="button" className={styles.notifFoot} onClick={closeNotifs}>
