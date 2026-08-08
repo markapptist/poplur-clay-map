@@ -56,6 +56,17 @@ let ambientAwakeUntil = typeof performance !== 'undefined'
 let ambientSleepTimer = 0
 
 const qualityListeners = new Set<(q: Quality) => void>()
+const ambientSleepListeners = new Set<(sleeping: boolean) => void>()
+let ambientSleeping = false
+
+function setAmbientSleeping(sleeping: boolean): void {
+  if (ambientSleeping === sleeping) return
+  ambientSleeping = sleeping
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('poplur-ambient-sleep', sleeping)
+  }
+  ambientSleepListeners.forEach(listener => listener(sleeping))
+}
 
 // ── rate table ───────────────────────────────────────────────────────────────
 // Hz per rate class at each quality level. Interactive stays at 60 until the
@@ -198,9 +209,6 @@ function sync() {
 }
 
 if (typeof document !== 'undefined') {
-  const setAmbientSleeping = (sleeping: boolean) => {
-    document.documentElement.classList.toggle('poplur-ambient-sleep', sleeping)
-  }
   const sleepAmbient = () => {
     window.clearTimeout(ambientSleepTimer)
     ambientSleepTimer = 0
@@ -308,15 +316,15 @@ export function setSurfaceFront(front: boolean): void {
   if (typeof document !== 'undefined') {
     if (front && !document.hidden) {
       ambientAwakeUntil = performance.now() + AMBIENT_IDLE_MS
-      document.documentElement.classList.remove('poplur-ambient-sleep')
+      setAmbientSleeping(false)
       window.clearTimeout(ambientSleepTimer)
       ambientSleepTimer = window.setTimeout(() => {
         ambientAwakeUntil = 0
-        document.documentElement.classList.add('poplur-ambient-sleep')
+        setAmbientSleeping(true)
       }, AMBIENT_IDLE_MS)
     } else {
       ambientAwakeUntil = 0
-      document.documentElement.classList.add('poplur-ambient-sleep')
+      setAmbientSleeping(true)
       window.clearTimeout(ambientSleepTimer)
       ambientSleepTimer = 0
     }
@@ -331,6 +339,17 @@ export function currentQuality(): Quality {
 export function onQualityChange(cb: (q: Quality) => void): () => void {
   qualityListeners.add(cb)
   return () => { qualityListeners.delete(cb) }
+}
+
+/**
+ * Observe the hard idle/thermal gate. Mapbox camera animations and source
+ * transitions are not frame-governor subscribers, so a 2D map uses this edge
+ * to stop any in-flight autonomous camera work and truly park its renderer.
+ */
+export function onAmbientSleepChange(cb: (sleeping: boolean) => void): () => void {
+  ambientSleepListeners.add(cb)
+  cb(ambientSleeping)
+  return () => { ambientSleepListeners.delete(cb) }
 }
 
 /**

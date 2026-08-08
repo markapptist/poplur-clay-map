@@ -40,6 +40,24 @@ function mapRenderRate(): string {
   return `${(delta / seconds).toFixed(1)}fps(${delta})`
 }
 
+function mapState(): string {
+  const map = (window as typeof window & {
+    __poplurMap?: {
+      isMoving?: () => boolean
+      isEasing?: () => boolean
+      areTilesLoaded?: () => boolean
+      repaint?: boolean
+    }
+  }).__poplurMap
+  if (!map) return 'n/a'
+  const thermal = document.documentElement.dataset.poplurThermal || '?'
+  return `moving=${Boolean(map.isMoving?.())}`
+    + ` easing=${Boolean(map.isEasing?.())}`
+    + ` tiles=${Boolean(map.areTilesLoaded?.())}`
+    + ` repaint=${Boolean(map.repaint)}`
+    + ` thermal=${thermal}`
+}
+
 /** Name every animation the compositor is still driving, deduped. The device
     CPU trace blamed per-frame style recalc (createAnimatedElementUpdate) on
     the idle map; the count alone cannot say WHICH animation, so name each one:
@@ -161,6 +179,7 @@ function surfaces(): string {
 
   return `canvas=${canvases} video=${videos.length}(${playing} playing) iframe=${iframes} anim=${running}`
     + ` mapDraw=${mapRenderRate()}`
+    + ` mapState=[${mapState()}]`
     + ` tiers=[${tiers}] videoFiltered=${filteredVideo} drops=${drops}`
     + ` | STAT ${cards}`
     + ` | ANIM ${animCensus()} | AUDIO ${audioGateDebug()}`

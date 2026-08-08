@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { isNativeShell } from './nativeBridge'
-import { onFrame, ambientAllowed, boostFrames, setSurfaceFront } from './frameGovernor'
+import { onFrame, ambientAllowed, boostFrames, onAmbientSleepChange, setSurfaceFront } from './frameGovernor'
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites } from './popPins'
 import type { POI, MapTheme } from './data'
@@ -2448,6 +2448,24 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         source?.setData({ type: 'FeatureCollection', features } as GeoJSON.FeatureCollection)
         if (import.meta.env.DEV) document.documentElement.dataset.poplurCars = String(features.length)
       }
+
+      // Mapbox camera/source work lives outside the shared frame governor. On
+      // 2D, crossing the idle or native-thermal gate must therefore stop any
+      // autonomous camera animation explicitly; otherwise an engagement trip
+      // or a source transition can leave Mapbox emitting render frames long
+      // after every DOM animation and governor subscriber has gone quiet.
+      const stopAmbientParking = onAmbientSleepChange(sleeping => {
+        if (!MAP_2D || !sleeping) return
+        map.stop()
+        stopOrbit()
+        if (carFeaturesLive) {
+          carFeaturesLive = false
+          setCarFeatures([])
+        }
+        setCarProximity(0)
+        ;(map as unknown as { repaint: boolean }).repaint = false
+      })
+      map.once('remove', stopAmbientParking)
       const harvestCarPaths = () => {
         if (map.getZoom() < 12.5) return
         const center = map.getCenter()
