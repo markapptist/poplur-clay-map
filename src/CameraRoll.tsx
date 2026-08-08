@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useSyncExternalStore } from 'react'
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import styles from './ViewHarness.module.css'
 import { playPop } from './pop'
@@ -20,7 +20,27 @@ interface RollItem {
   poster?: string
   /** set on this session's own captures, which are selectable */
   id?: string
+  /** Native Photos identifier. The grid receives only a thumbnail; selection
+   *  resolves this asset separately so the composer never stretches the tile. */
+  assetId?: string
+  /** Native shells that can register an original-resolution local route may
+   *  return it with the thumbnail. It is never assigned to the grid image. */
+  fullSrc?: string
 }
+
+interface NativeRollAssetResult {
+  requestId?: string
+  assetId?: string
+  kind?: 'photo' | 'video'
+  src?: string
+  fullSrc?: string
+  pixelWidth?: number
+  pixelHeight?: number
+  error?: string
+}
+
+const MAX_ROLL_ASSET_EDGE = 3840
+const ROLL_ASSET_TIMEOUT_MS = 30_000
 
 // A grid tile is a STILL. Every seeded clip already ships a first-frame jpg
 // (the feed uses the same files as its video posters), so the roll draws those
@@ -73,12 +93,26 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
   onPick?: (media: { kind: 'photo' | 'video'; src: string; length?: string }) => void
 } = {}) {
   // Native shell: the REAL device photo library replaces the mock grid. The
-  // app answers requestCameraRoll with recent photo thumbnails (data URIs) via
-  // window.poplurCameraRoll; a denied OS permission flips back to the camera.
+  // list remains thumbnail-only so opening it does not marshal 24 full-size
+  // photos into JavaScript. A picked asset is resolved separately at up to 4K.
   const [nativeRoll, setNativeRoll] = useState<RollItem[] | null>(null)
+  const [resolvingAssetId, setResolvingAssetId] = useState<string | null>(null)
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const pendingAssetRequests = useRef(new Map<string, {
+    assetId: string
+    fallback: () => void
+    resolve: (src: string, kind: 'photo' | 'video') => void
+    timer: number
+  }>())
   useEffect(() => {
-    if (!isNativeShell()) return
-    const w = window as unknown as { poplurCameraRoll?: (payload: unknown) => void }
+    // The vertical pager can briefly mount a lightweight wrap clone. Only the
+    // real roll may own native callbacks, or the clone can steal a 4K result.
+    if (lite || !isNativeShell()) return
+    const w = window as unknown as {
+      poplurCameraRoll?: (payload: unknown) => void
+      poplurCameraRollAsset?: (payload: unknown) => void
+    }
     w.poplurCameraRoll = payload => {
       if (Array.isArray(payload)) {
         setNativeRoll(payload.filter((it): it is RollItem =>
@@ -87,9 +121,35 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
         onDeny?.()
       }
     }
-    return () => { delete w.poplurCameraRoll }
+    w.poplurCameraRollAsset = payload => {
+      if (!payload || typeof payload !== 'object') return
+      const result = payload as NativeRollAssetResult
+      if (!result.requestId) return
+      const pending = pendingAssetRequests.current.get(result.requestId)
+      if (!pending || result.assetId !== pending.assetId) return
+      window.clearTimeout(pending.timer)
+      pendingAssetRequests.current.delete(result.requestId)
+      setResolvingAssetId(current => current === pending.assetId ? null : current)
+      // The roll remains mounted off-page to preserve its grid position. A
+      // late iCloud response must not open the composer over the live lens.
+      if (!activeRef.current) return
+      const resolvedSrc = result.fullSrc || result.src
+      if (typeof resolvedSrc === 'string' && resolvedSrc.length > 0) {
+        pending.resolve(resolvedSrc, result.kind === 'video' ? 'video' : 'photo')
+      } else {
+        pending.fallback()
+      }
+    }
+    return () => {
+      delete w.poplurCameraRoll
+      delete w.poplurCameraRollAsset
+      for (const request of pendingAssetRequests.current.values()) {
+        window.clearTimeout(request.timer)
+      }
+      pendingAssetRequests.current.clear()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [lite])
   // First-open permission alert, in the Poplur clay alert style (twin of the
   // pre-login camera/location permission cards). Only a GRANT persists;
   // denying flips back to the live camera and the alert returns next time.
@@ -111,9 +171,18 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
   // off-page, and asking the device for its photo library while nobody is
   // looking at the roll is exactly the work this screen should not be doing.
   useEffect(() => {
-    if (active && granted && isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
+    if (!lite && active && granted && isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [granted, active])
+  }, [granted, active, lite])
+
+  useEffect(() => {
+    if (active) return
+    for (const request of pendingAssetRequests.current.values()) {
+      window.clearTimeout(request.timer)
+    }
+    pendingAssetRequests.current.clear()
+    setResolvingAssetId(null)
+  }, [active])
 
   // What the camera shot this session sits at the FRONT of the roll, newest
   // first — and only those tiles are selectable, because only they belong to
@@ -122,6 +191,50 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   const shot: RollItem[] = captures.map(c => ({ kind: c.kind, src: c.src, length: c.length, id: c.id }))
   const items = [...shot, ...(nativeRoll ?? ROLL)]
+
+  const pickItem = (item: RollItem) => {
+    playPop()
+    if (!onPick) {
+      if (item.id) toggleSelected(item.id)
+      return
+    }
+    const fallback = () => onPick({
+      kind: item.kind,
+      src: item.fullSrc || item.src,
+      length: item.length,
+    })
+    if (!isNativeShell() || !item.assetId) {
+      fallback()
+      return
+    }
+    if (resolvingAssetId) return
+
+    const requestId = `roll-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+    setResolvingAssetId(item.assetId)
+    const finishFallback = () => {
+      const pending = pendingAssetRequests.current.get(requestId)
+      if (!pending) return
+      pendingAssetRequests.current.delete(requestId)
+      setResolvingAssetId(current => current === item.assetId ? null : current)
+      fallback()
+    }
+    const timer = window.setTimeout(finishFallback, ROLL_ASSET_TIMEOUT_MS)
+    pendingAssetRequests.current.set(requestId, {
+      assetId: item.assetId,
+      timer,
+      fallback,
+      resolve: (src, kind) => onPick({ kind, src, length: item.length }),
+    })
+    if (!postNativeEvent({
+      type: 'requestCameraRollAsset',
+      requestId,
+      assetId: item.assetId,
+      maxPixelSize: MAX_ROLL_ASSET_EDGE,
+    })) {
+      window.clearTimeout(timer)
+      finishFallback()
+    }
+  }
 
   return (
     <section className={styles.cameraRoll} aria-label="Camera roll">
@@ -140,16 +253,13 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
             <figure
               key={item.id ?? index}
               className={item.id && isSelected(item.id) ? `${styles.rollTile} ${styles.rollTileOn}` : styles.rollTile}
+              aria-busy={Boolean(item.assetId && resolvingAssetId === item.assetId)}
               // Picking a capture opens the composer (filter → original/AI → post).
               // Every tile is pickable, not just ones the store gave an id: the
               // seeded roll has no ids, and a roll where most tiles do nothing when
               // tapped is the bug, not the design. Selection stays the no-composer
               // fallback, and it still needs an id.
-              onClick={onPick
-                ? () => { playPop(); onPick({ kind: item.kind, src: item.src, length: item.length }) }
-                : item.id
-                  ? () => { playPop(); toggleSelected(item.id!) }
-                  : undefined}
+              onClick={(onPick || item.id) ? () => pickItem(item) : undefined}
             >
               {!active ? (
                 // Off the visible page: the tile keeps its shape and its badge

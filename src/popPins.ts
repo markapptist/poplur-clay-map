@@ -78,7 +78,32 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
+// Composited sprites, newest-used last. BOUNDED: each entry is a 256px PNG
+// data URI (~30-45KB of string that the JS heap holds, not a texture the GPU
+// can evict), and the board is now the whole world — one composite per holder
+// per colour, which on a long session with the colour wheel is unbounded
+// growth for faces nobody is looking at any more. 48 covers every pin a
+// screenful can show several times over; past that the coldest goes.
 const composed = new Map<string, Promise<string>>()
+const COMPOSED_MAX = 48
+
+function touch(key: string, job: Promise<string>): void {
+  // Map preserves insertion order, so delete+set moves a key to the newest
+  // end and the FIRST key is always the least recently used.
+  composed.delete(key)
+  composed.set(key, job)
+  while (composed.size > COMPOSED_MAX) {
+    const oldest = composed.keys().next().value
+    if (oldest === undefined) break
+    composed.delete(oldest)
+  }
+}
+
+/** How many composites are held — read by the headless fps/thermal drives to
+ *  prove the cache stays bounded while the globe is panned. */
+export function composedSpriteCount(): number {
+  return composed.size
+}
 
 export interface PinFace {
   /** Profile picture: a bundled still, or the owner's own data URI. */
@@ -97,11 +122,8 @@ export interface PinFace {
  */
 export function pinWithFace(face: PinFace): Promise<string> {
   const key = `${face.mode}|${face.avatar ?? 'none'}|${face.color}`
-  let job = composed.get(key)
-  if (!job) {
-    job = compose(face).catch(() => pinSprite(face.mode))
-    composed.set(key, job)
-  }
+  const job = composed.get(key) ?? compose(face).catch(() => pinSprite(face.mode))
+  touch(key, job)
   return job
 }
 

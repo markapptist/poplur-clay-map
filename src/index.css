@@ -200,11 +200,9 @@ html.camera-live,
   display: none !important;
 }
 
-/* 1d. poplurRecCube animates `filter` and nothing else, on the always-mounted
-   cube, twice a second for as long as you are recording — the compositor
-   re-filters that layer the entire time. Nulling the filter would silently
-   delete the tell, since the keyframe has no other channel, so the tier swaps
-   in an opacity blink on the same clock instead. */
+/* 1d. poplurRecCube animates a glow plus a clear opacity blink on the
+   always-mounted cube for as long as recording runs. The thermal iOS tier
+   keeps the opacity channel but drops the continuously re-filtered glow. */
 .tier-ios [class*="cubeRecording"] {
   animation-name: poplurRecCubeLite !important;
 }
@@ -297,8 +295,8 @@ html.camera-live,
 }
 
 @keyframes poplurRecCube {
-  0%, 49% { filter: drop-shadow(0 0 0 rgba(255, 45, 75, 0)); }
-  50%, 100% { filter: drop-shadow(0 0 18px rgba(255, 45, 75, 0.85)) brightness(1.12); }
+  0%, 49% { opacity: 1; filter: drop-shadow(0 0 0 rgba(255, 45, 75, 0)); }
+  50%, 100% { opacity: 0.24; filter: drop-shadow(0 0 18px rgba(255, 45, 75, 0.85)) brightness(1.12); }
 }
 
 /* tier-ios substitute for the above: the same clock and the same hard step, on
@@ -306,7 +304,7 @@ html.camera-live,
    the compositor re-filtering its layer twice a second. */
 @keyframes poplurRecCubeLite {
   0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0.5; }
+  50%, 100% { opacity: 0.24; }
 }
 
 /* ── Engagement chips (map) ─────────────────────────────────────────────────

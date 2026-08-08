@@ -1489,7 +1489,10 @@ export default function App() {
   // there is nobody to be winning against. The level switch (shell HUD, above
   // the channel arrows) puts other holders on the board — each in their OWN
   // colour, with their face on the pin standing in their territory.
-  const [popLevel, setPopLevel] = useState<PopLevel>('mine')
+  // ALL by default: a map that opens on your own pops says the world is empty
+  // apart from you, and the whole point of a takeover is reading it against
+  // everyone else's. You arrive on a board that is already owned.
+  const [popLevel, setPopLevel] = useState<PopLevel>('all')
   const popLevelRef = useRef(popLevel)
   popLevelRef.current = popLevel
 
@@ -1548,6 +1551,16 @@ export default function App() {
       color: myColor,
       avatar: ownAvatar,
       channel: poi.channel,
+      // Your OWN pops carry their post too: arriving on your ground should
+      // play what you put there, exactly as arriving on someone else's does.
+      // Every POI channel ships a clip, so this never falls back to a still.
+      media: {
+        kind: 'video' as const,
+        src: `feed/ad-${poi.channel}.mp4`,
+        poster: `feed/posters/ad-${poi.channel}.jpg`,
+        alt: `Your post at ${poi.name}`,
+      },
+      world: false,
       mine: true,
     }))
     const others = popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
@@ -1559,11 +1572,72 @@ export default function App() {
       color: pop.color,
       avatar: pop.avatar,
       channel: pop.channel,
-      media: { kind: 'image' as const, src: pop.avatar, alt: `${pop.user} post at ${pop.name}` },
+      media: pop.video
+        ? { kind: 'video' as const, src: pop.video, poster: pop.avatar, alt: `${pop.user} post at ${pop.name}` }
+        : { kind: 'image' as const, src: pop.avatar, alt: `${pop.user} post at ${pop.name}` },
+      world: pop.world === true,
       mine: false,
     }))
     return [...others, ...mine]
   }, [popLevel, ownAvatar, myColor])
+
+  // ── Arriving on a pop plays what is standing there ────────────────────────
+  // Zooming into a holder's pin — yours or anyone else's — raises their post.
+  // That is the product read: the ground is owned BY a piece of content, so
+  // getting close enough to read the ground should show you the content.
+  //
+  // Fires on SETTLE only (moveend), never per frame, and only when the pin
+  // under the camera CHANGES: panning around one city must not re-raise the
+  // same window, and the guard is what stops a pan turning into a slideshow.
+  const arrivedPinRef = useRef<string | null>(null)
+  const mapPinsRef = useRef(mapPins)
+  mapPinsRef.current = mapPins
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLive) return
+    // Close enough that the pop is the subject of the shot, not scenery.
+    const ARRIVE_ZOOM = 9
+    const ARRIVE_M = 1_800
+    const onSettle = () => {
+      if (!mapFrontRef.current || document.visibilityState !== 'visible') return
+      // A hot device has already told us to stop decorating; a video window is
+      // the most expensive thing this surface can raise, so it goes first.
+      if (!ambientAllowed()) return
+      const api = map as unknown as { __tripping?: boolean; __streetView?: boolean }
+      if (api.__streetView) return
+      if (map.getZoom() < ARRIVE_ZOOM) { arrivedPinRef.current = null; return }
+      const c = map.getCenter()
+      let best: (typeof mapPinsRef.current)[number] | null = null
+      let bestM = Infinity
+      for (const pin of mapPinsRef.current) {
+        const d = distanceMeters([c.lng, c.lat], pin.coords)
+        if (d < bestM) { bestM = d; best = pin }
+      }
+      // Left the pop you were on: arm the next arrival, including a return to
+      // this same one.
+      if (!best || bestM > ARRIVE_M) { arrivedPinRef.current = null; return }
+      if (arrivedPinRef.current === best.id) return
+      arrivedPinRef.current = best.id
+      clearPopups('suggestion')
+      showPopup({
+        kind: 'suggestion',
+        card: suggestionForMapPin(best),
+        action: {
+          label: best.user ? `VIEW ${best.user}` : 'VIEW YOUR PROFILE',
+          onActivate: () => {
+            window.parent?.postMessage({
+              type: 'poplur-map-open-profile',
+              user: best.user,
+              popId: best.id,
+              name: best.name,
+            }, '*')
+          },
+        },
+      })
+    }
+    map.on('moveend', onSettle)
+    return () => { map.off('moveend', onSettle) }
+  }, [mapLive])
 
   // ── Planet scope: zoomed all the way out, the HUD shows your EMPIRE ──────
   // At globe zoom the individual pop is not the subject — the sum of them is.

@@ -106,6 +106,7 @@ export default function Camera({
   onPosted,
   onPostTargetUsed,
   onComposingChange,
+  onPhotoCapture,
 }: {
   step?: number
   onCloseRoll?: () => void
@@ -130,6 +131,8 @@ export default function Camera({
   onPostTargetUsed?: () => void
   /** The composer is a modal — the home HUD must step aside while it is up. */
   onComposingChange?: (open: boolean) => void
+  /** One-shot feedback for the persistent cube when a live photo is taken. */
+  onPhotoCapture?: () => void
 }) {
   const [flash, setFlash] = useState(false)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
@@ -176,17 +179,19 @@ export default function Camera({
   const commerceTimerRef = useRef<number | null>(null)
   const commerceKeyRef = useRef<string | null>(null)
   const dismissedCommerceRef = useRef(new Map<string, number>())
+  const dismissCommerce = useCallback(() => {
+    if (commerceKeyRef.current) {
+      dismissedCommerceRef.current.set(commerceKeyRef.current, Date.now())
+    }
+    commerceKeyRef.current = null
+    setCommercePinned(false)
+    setCommerceCard(null)
+  }, [])
 
   // The camera opens with ML running. DETECT OFF remains available in the
   // hold menu, but a later visit starts from the useful default again instead
   // of inheriting a stale in-memory toggle from the previous visit.
-  useEffect(() => {
-    setDetectOn(true)
-    const syncNative = window.setTimeout(() => {
-      if (isNativeShell()) postNativeEvent({ type: 'cameraControl', control: 'detect', on: true })
-    }, 0)
-    return () => window.clearTimeout(syncNative)
-  }, [])
+  useEffect(() => { setDetectOn(true) }, [])
 
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
@@ -224,6 +229,33 @@ export default function Camera({
   useEffect(() => {
     onComposingChange?.(Boolean(composing))
   }, [composing, onComposingChange])
+
+  // Camera, roll and composer share one mounted pager. Native therefore needs
+  // an explicit visibility signal: the tab name remains "post" even when the
+  // live lens is fully covered by a selected image or edit/preview screen.
+  const liveSurfaceVisible = page === 'live' && !composing
+  const liveDetectionActive = detectOn && liveSurfaceVisible
+  useEffect(() => {
+    if (isNativeShell()) {
+      postNativeEvent({ type: 'cameraLiveVisibilityChanged', visible: liveSurfaceVisible })
+    }
+  }, [liveSurfaceVisible])
+  useEffect(() => () => {
+    if (isNativeShell()) {
+      postNativeEvent({ type: 'cameraLiveVisibilityChanged', visible: false })
+    }
+  }, [])
+  useEffect(() => {
+    if (isNativeShell()) {
+      postNativeEvent({ type: 'cameraControl', control: 'detect', on: liveDetectionActive })
+    }
+    if (!liveDetectionActive) {
+      setDetections([])
+      resetScan()
+      onScanTotal?.(null)
+      cancelVoiceSpeech()
+    }
+  }, [liveDetectionActive, onScanTotal])
 
   // Turning the torch off is needed by listeners mounted above the real
   // setFlashEnabled, so it is reached through this ref (assigned once the
@@ -372,7 +404,7 @@ export default function Camera({
   const lastSpokenLabelsRef = useRef('')
   const lastSpokenAtRef = useRef(0)
   useEffect(() => {
-    if (!detectOn || page !== 'live') {
+    if (!liveDetectionActive) {
       lastSpokenLabelsRef.current = ''
       return
     }
@@ -392,19 +424,19 @@ export default function Camera({
       known ? `That's ${known.user!.handle.replace('@', '')}. I can see ${list}.` : `I can see ${list}.`,
       { rate: 1.0, pitch: 1.05 },
     )
-  }, [detections, detectOn, page])
+  }, [detections, liveDetectionActive])
   // Cut the voice the moment the live lens is no longer the page.
   useEffect(() => {
-    if (detectOn && page === 'live') return
+    if (liveDetectionActive) return
     cancelVoiceSpeech()
-  }, [detectOn, page])
+  }, [liveDetectionActive])
 
   useEffect(() => {
     if (!isNativeShell()) return
     const receive = (event: Event) => {
       const detail = (event as CustomEvent<Detection[]>).detail
       if (!Array.isArray(detail)) return
-      if (!detectOn || page !== 'live') { setDetections([]); return }
+      if (!liveDetectionActive) { setDetections([]); return }
       setDetections(detail)
       // The scanner: each DISTINCT object cashes in the radius it holds in
       // other people's posts. A new find pops, exactly like a claim landing.
@@ -420,7 +452,7 @@ export default function Camera({
       resetScan()
       onScanTotal?.(null)
     }
-  }, [detectOn, page])
+  }, [liveDetectionActive, onScanTotal])
 
   // A purchasable object has to remain stable under the lens before an ad can
   // appear. Native shells receive real ML detections; the browser simulator is
@@ -484,7 +516,7 @@ export default function Camera({
   useEffect(() => {
     // Native supplies real boxes; do not also run the simulator over them.
     if (isNativeShell()) return
-    if (!detectOn || page !== 'live') { setDetections([]); onDetectUser?.(null); return }
+    if (!liveDetectionActive) { setDetections([]); onDetectUser?.(null); return }
     detectorRef.current ??= new FrameDetector()
     detectorRef.current.reset()
     const timer = window.setInterval(() => {
@@ -504,7 +536,7 @@ export default function Camera({
       resetScan()
       onScanTotal?.(null)
     }
-  }, [detectOn, page, facing, streamOn, onDetectUser])
+  }, [liveDetectionActive, facing, streamOn, onDetectUser, onScanTotal])
 
   // ── flash ────────────────────────────────────────────────────────────────
   // Back camera: the real torch, where the device exposes it. Front camera:
@@ -674,7 +706,11 @@ export default function Camera({
 
   // ── take a picture ───────────────────────────────────────────────────────
   const capturePhoto = useCallback(() => {
+    // Camera Roll is browse/select only. Both the cube and a pinned PHOTO
+    // favourite terminate here while the roll or composer is visible.
+    if (page !== 'live' || composingRef.current) return
     playPop()
+    onPhotoCapture?.()
     if (flash && facing === 'user') {
       setBloom(true)
       window.setTimeout(() => setBloom(false), 220)
@@ -720,7 +756,7 @@ export default function Camera({
     // on through the composer while you reviewed the photo (and kept burning
     // on the device, since the native side had last been told `on: true`).
     setFlashEnabled(false)
-  }, [facing, flash, filterCss, setFlashEnabled])
+  }, [facing, flash, filterCss, onPhotoCapture, page, setFlashEnabled])
 
   // ── record ───────────────────────────────────────────────────────────────
   const stopVideo = useCallback(() => {
@@ -759,6 +795,11 @@ export default function Camera({
   }, [setFlashEnabled])
 
   const toggleVideo = useCallback(() => {
+    // A roll/composer tap must never begin recording. An already-active
+    // recording may still be stopped if a page transition completes mid-tap.
+    if ((page !== 'live' || composingRef.current)
+      && !nativeRecordingRef.current
+      && !recorderRef.current) return
     if (NATIVE_SHELL && !streamRef.current) {
       const nextRecording = !nativeRecordingRef.current
       nativeRecordingRef.current = nextRecording
@@ -769,7 +810,7 @@ export default function Camera({
     }
     if (recorderRef.current) stopVideo()
     else startVideo()
-  }, [startVideo, stopVideo])
+  }, [page, startVideo, stopVideo])
 
   // The counter, and the one-minute ceiling. Reported upward every tick so the
   // radius label can BE the counter while this runs.
@@ -831,10 +872,8 @@ export default function Camera({
       detect: () => {
         const next = !isDetectOn()
         setDetectOn(next)
-        // The native shells own the real detector; the web store only drives
-        // the browser overlay. Without this the DETECT toggle looked like it
-        // worked and changed nothing on a device.
-        if (isNativeShell()) postNativeEvent({ type: 'cameraControl', control: 'detect', on: next })
+        // Native synchronization is owned by liveDetectionActive above, which
+        // refuses to activate ML on roll/composer pages.
       },
       ar: () => setArOpen(v => !v),
       // Going live hands the LIVE channel this camera's own stream — the feed
@@ -1087,19 +1126,18 @@ export default function Camera({
         )
       })()}
       {real && commerceCard && (
-        <div className={styles.cameraCommerceOverlay}>
+        <div
+          className={styles.cameraCommerceOverlay}
+          onClick={() => {
+            playPop()
+            dismissCommerce()
+          }}
+        >
           <CommerceSuggestionWindow
             card={commerceCard}
             variant="camera"
             onInteract={() => setCommercePinned(true)}
-            onClose={() => {
-              if (commerceKeyRef.current) {
-                dismissedCommerceRef.current.set(commerceKeyRef.current, Date.now())
-              }
-              commerceKeyRef.current = null
-              setCommercePinned(false)
-              setCommerceCard(null)
-            }}
+            onClose={dismissCommerce}
           />
         </div>
       )}

@@ -170,7 +170,16 @@ export default function TVGuide({
         } as React.CSSProperties}
       >
         <div className={styles.pipSet}>
-          <div className={styles.pipPane}>
+          <button
+            type="button"
+            className={styles.pipPane}
+            aria-label={`Watch ${preview.name} in the feed`}
+            onClick={() => {
+              playPop()
+              onTune?.(preview.id)
+              onClose()
+            }}
+          >
             {preview && (
               <video
                 key={clipFor(preview)}
@@ -200,7 +209,7 @@ export default function TVGuide({
                 </p>
               )}
             </div>
-          </div>
+          </button>
         </div>
       </div>
 

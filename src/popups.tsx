@@ -170,15 +170,23 @@ export default function PopupHost() {
           key={item.id}
           className={item.kind === 'engagement' ? styles.engage : styles.suggestWrap}
           style={item.kind === 'engagement' ? { animationDuration: `${item.ttl}ms` } : undefined}
-          onClick={item.kind === 'engagement' ? () => {
-            // A tap that ACTS pops (it is a real gesture, the full house
-            // sound); a tap that merely dismisses stays silent, as ever.
-            if (item.onActivate) {
-              playPop()
-              item.onActivate()
-            }
-            dismissPopup(item.id)
-          } : undefined}
+          onClick={item.kind === 'engagement'
+            ? () => {
+                // A tap that ACTS pops (it is a real gesture, the full house
+                // sound); a tap that merely dismisses stays silent, as ever.
+                if (item.onActivate) {
+                  playPop()
+                  item.onActivate()
+                }
+                dismissPopup(item.id)
+              }
+            : () => {
+                // CommerceSuggestionWindow stops propagation for its real
+                // controls. Reaching this full-screen wrapper means the user
+                // tapped anywhere around the ad, which is also a dismissal.
+                playPop()
+                dismissPopup(item.id)
+              }}
         >
           {item.kind === 'engagement' ? (
             <>

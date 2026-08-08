@@ -905,6 +905,42 @@
     cubeHover 3.6s ease-in-out infinite;
 }
 
+/* Photo shutter feedback: pressure compresses then pops straight outward,
+   throwing a ring of small bubbles. cubeHover is deliberately absent for this
+   beat, so a capture cannot read as a vertical jump or a flip. */
+.cubePhotoPop {
+  animation: cubePhotoCapture 0.46s cubic-bezier(0.16, 1, 0.3, 1) both;
+  translate: 0 0;
+  isolation: isolate;
+}
+
+.cubePhotoPop::before,
+.cubePhotoPop::after {
+  content: '';
+  position: absolute;
+  inset: 18%;
+  z-index: -1;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.cubePhotoPop::before {
+  border: 4px solid rgba(255, 98, 173, 0.9);
+  box-shadow: 0 0 24px rgba(246, 59, 154, 0.72);
+  animation: cubePhotoBurstRing 0.56s ease-out both;
+}
+
+.cubePhotoPop::after {
+  background:
+    radial-gradient(circle at 50% 0%, #fff 0 5px, #ff62ad 6px 9px, transparent 10px),
+    radial-gradient(circle at 92% 22%, #ffd6eb 0 4px, #f63b9a 5px 8px, transparent 9px),
+    radial-gradient(circle at 100% 70%, #fff 0 5px, #ff62ad 6px 10px, transparent 11px),
+    radial-gradient(circle at 56% 100%, #ffd6eb 0 5px, #f63b9a 6px 9px, transparent 10px),
+    radial-gradient(circle at 4% 76%, #fff 0 4px, #ff62ad 5px 8px, transparent 9px),
+    radial-gradient(circle at 8% 18%, #ffd6eb 0 5px, #f63b9a 6px 9px, transparent 10px);
+  animation: cubePhotoBurstBubbles 0.58s ease-out both;
+}
+
 .cubeFloat canvas {
   filter:
     drop-shadow(0 0 22px rgba(246, 59, 154, 0.28))
@@ -922,6 +958,23 @@
   30% { scale: 0.9 0.78; }
   60% { scale: 1.06 1.1; }
   100% { scale: 1 1; }
+}
+
+@keyframes cubePhotoCapture {
+  0% { scale: 1; }
+  24% { scale: 0.86; }
+  58% { scale: 1.14; }
+  100% { scale: 1; }
+}
+
+@keyframes cubePhotoBurstRing {
+  0% { scale: 0.45; opacity: 0.95; }
+  100% { scale: 2.6; opacity: 0; }
+}
+
+@keyframes cubePhotoBurstBubbles {
+  0% { scale: 0.46; opacity: 1; }
+  100% { scale: 2.8; opacity: 0; }
 }
 
 .groundGlow {
@@ -1125,7 +1178,7 @@
 
 /* The cube flashes for as long as the recording runs. */
 .cubeRecording {
-  animation: poplurRecCube 1s steps(1, end) infinite;
+  animation: poplurRecCube 0.72s steps(1, end) infinite;
 }
 
 /* The pop-level switch, hovering directly over the channel arrows. Absolute so
@@ -1136,4 +1189,20 @@
   left: 50%;
   transform: translateX(-50%);
   pointer-events: auto;
+}
+.tabStatic {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  overflow: hidden;
+  pointer-events: none;
+  background: #050505;
+}
+
+.tabStaticVideo {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  filter: contrast(1.18) brightness(1.06);
 }

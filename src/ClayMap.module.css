@@ -582,6 +582,34 @@
   will-change: bottom;
 }
 
+/* While the WORLD is the subject, the globe on the knob turns — the slider
+   says what you are looking at, and at planet scale that is a spinning planet.
+   Only in the globe stage: this is the app's one deliberately-infinite knob
+   animation, and it must not still be running at street zoom where the thumb
+   is a building. transform-only, so it composites without layout or paint. */
+.zoomThumbSpin {
+  animation:
+    zoomStagePop 420ms cubic-bezier(0.2, 1.6, 0.4, 1) both,
+    zoomGlobeSpin 9s linear infinite;
+}
+
+@keyframes zoomGlobeSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Sleeps with the rest of the ambience when the frame governor parks an
+   untouched surface, same as the boats and the weather. */
+:global(.tier-ios.poplur-ambient-sleep) .zoomThumbSpin {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zoomThumbSpin {
+    animation: zoomStagePop 420ms cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  }
+}
+
 .zoomWrap:active .zoomRail {
   box-shadow:
     inset 0 2px 2px rgba(255, 255, 255, 0.62),

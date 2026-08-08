@@ -285,7 +285,7 @@ export default function HoldMenuTwin({
     // re-label themselves), so listing it as a dependency would unbind and
     // rebind the arrows on every frame of the wheel.
     const live = itemsRef.current
-    const stops = live.filter(it => !it.action && !it.mapAction && !it.event)
+    const stops = live.filter(it => !it.action && !it.mapAction && !it.event && !it.toggle)
     if (!activeScreen || stops.length < 2) { bindArrows(null); return () => bindArrows(null) }
     bindArrows((dir: 1 | -1) => {
       const here = stops.findIndex(it => it.screen === activeScreen.screen && it.title === activeScreen.title)

@@ -123,17 +123,64 @@ export interface OtherPop {
   avatar: string
   /** the FeedTwin channel it posted to */
   channel: string
+  /** The post standing on this ground — what the intercept window plays when
+   *  the camera arrives. A clip where the pop has one, otherwise its still. */
+  video?: string
+  /** True for the handful of holders whose reach spans a whole region. They
+   *  are what the world board is FOR: zoomed out you should be reading who
+   *  owns each part of the planet, not a scattering of equal dots. */
+  world?: boolean
 }
 
-export const OTHER_POPS: OtherPop[] = [
+
+// ── The world board ─────────────────────────────────────────────────────────
+// Zoomed out, the map has to answer "who owns the planet". Toronto alone made
+// the globe read as one lit city on a dark world — technically your rivals,
+// but not a board. These are the holders dominating each region: bigger radii
+// than the city-level pops so they survive being drawn at planet scale, spread
+// so no continent is empty.
+//
+// Same spoofing rule as the Toronto set and for the same reason: handles,
+// faces and clips are the feed's own shipped assets, never invented artwork.
+// Real accounts replace this list wholesale in Aug 2026.
+const WORLD_POPS: OtherPop[] = [
+  { id: 'w-nyc',       user: '@citydesk',       name: 'New York',      radiusKm: 340, coords: [-74.0060, 40.7128],  color: '#FF5F8F', avatar: 'feed/posters/ad-comedy.jpg',    channel: 'news',     video: 'feed/ad-comedy.mp4',    world: true },
+  { id: 'w-la',        user: '@hauls',          name: 'Los Angeles',   radiusKm: 300, coords: [-118.2437, 34.0522], color: '#FFD24B', avatar: 'feed/posters/ad-shopping.jpg',  channel: 'shopping', video: 'feed/ad-shopping.mp4',  world: true },
+  { id: 'w-mexico',    user: '@vibra.cdmx',     name: 'Mexico City',   radiusKm: 290, coords: [-99.1332, 19.4326],  color: '#FF8A3D', avatar: 'feed/posters/ad-spanish-1.jpg', channel: 'spanish',  video: 'feed/ad-spanish-1.mp4', world: true },
+  { id: 'w-saopaulo',  user: '@mercado',        name: 'São Paulo',     radiusKm: 310, coords: [-46.6333, -23.5505], color: '#7CE04F', avatar: 'feed/posters/ad-spanish-2.jpg', channel: 'spanish',  video: 'feed/ad-spanish-2.mp4', world: true },
+  { id: 'w-london',    user: '@pitchside',      name: 'London',        radiusKm: 320, coords: [-0.1276, 51.5072],   color: '#4FD6B8', avatar: 'feed/posters/ad-sports.jpg',    channel: 'sports',   video: 'feed/ad-sports.mp4',    world: true },
+  { id: 'w-paris',     user: '@boulangerie',    name: 'Paris',         radiusKm: 280, coords: [2.3522, 48.8566],    color: '#A97BFF', avatar: 'feed/posters/ad-french.jpg',    channel: 'french',   video: 'feed/ad-french.mp4',    world: true },
+  { id: 'w-lagos',     user: '@basement.set',   name: 'Lagos',         radiusKm: 270, coords: [3.3792, 6.5244],     color: '#FF4BA1', avatar: 'feed/posters/ad-music.jpg',     channel: 'music',    video: 'feed/ad-music.mp4',     world: true },
+  { id: 'w-cairo',     user: '@localwire',      name: 'Cairo',         radiusKm: 260, coords: [31.2357, 30.0444],   color: '#F0C22E', avatar: 'feed/posters/ad-sports.jpg',    channel: 'news',     video: 'feed/ad-sports.mp4',    world: true },
+  { id: 'w-mumbai',    user: '@fitcheckdaily',  name: 'Mumbai',        radiusKm: 300, coords: [72.8777, 19.0760],   color: '#FF8AC6', avatar: 'feed/posters/ad-cartoon.jpg',   channel: 'fashion',  video: 'feed/ad-cartoon.mp4',   world: true },
+  { id: 'w-tokyo',     user: '@doodlecast',     name: 'Tokyo',         radiusKm: 330, coords: [139.6917, 35.6895],  color: '#5FB0FF', avatar: 'feed/posters/ad-cartoon.jpg',   channel: 'cartoon',  video: 'feed/ad-cartoon.mp4',   world: true },
+  { id: 'w-seoul',     user: '@bpm',            name: 'Seoul',         radiusKm: 280, coords: [126.9780, 37.5665],  color: '#29A6E6', avatar: 'feed/posters/ad-music.jpg',     channel: 'music',    video: 'feed/ad-music.mp4',     world: true },
+  { id: 'w-shanghai',  user: '@shipit',         name: 'Shanghai',      radiusKm: 300, coords: [121.4737, 31.2304],  color: '#2EE0FF', avatar: 'feed/posters/ad-kids.jpg',      channel: 'tech',     video: 'feed/ad-kids.mp4',      world: true },
+  { id: 'w-sydney',    user: '@bitmerchant',    name: 'Sydney',        radiusKm: 290, coords: [151.2093, -33.8688], color: '#F23535', avatar: 'feed/posters/ad-comedy.jpg',    channel: 'comedy',   video: 'feed/ad-comedy.mp4',    world: true },
+  { id: 'w-madrid',    user: '@alpastor',       name: 'Madrid',        radiusKm: 250, coords: [-3.7038, 40.4168],   color: '#FB7185', avatar: 'feed/posters/ad-spanish-3.jpg', channel: 'spanish',  video: 'feed/ad-spanish-3.mp4', world: true },
+  { id: 'w-berlin',    user: '@warehouse',      name: 'Berlin',        radiusKm: 240, coords: [13.4050, 52.5200],   color: '#8FA63E', avatar: 'feed/posters/ad-music.jpg',     channel: 'music',    video: 'feed/ad-music.mp4',     world: true },
+  { id: 'w-vancouver', user: '@playtime',       name: 'Vancouver',     radiusKm: 230, coords: [-123.1207, 49.2827], color: '#7CE04F', avatar: 'feed/posters/ad-kids.jpg',      channel: 'kids',     video: 'feed/ad-kids.mp4',      world: true },
+  { id: 'w-buenos',    user: '@openmic',        name: 'Buenos Aires',  radiusKm: 250, coords: [-58.3816, -34.6037], color: '#FFD24B', avatar: 'feed/posters/ad-comedy.jpg',    channel: 'comedy',   video: 'feed/ad-comedy.mp4',    world: true },
+  { id: 'w-joburg',    user: '@harbourfront',   name: 'Johannesburg',  radiusKm: 240, coords: [28.0473, -26.2041],  color: '#FF6FB1', avatar: 'feed/posters/ad-french.jpg',    channel: 'news',     video: 'feed/ad-french.mp4',    world: true },
+  { id: 'w-dubai',     user: '@atelier',        name: 'Dubai',         radiusKm: 260, coords: [55.2708, 25.2048],   color: '#E8A83F', avatar: 'feed/posters/ad-shopping.jpg',  channel: 'fashion',  video: 'feed/ad-shopping.mp4',  world: true },
+  { id: 'w-singapore', user: '@benchmark',      name: 'Singapore',     radiusKm: 220, coords: [103.8198, 1.3521],   color: '#4FD6B8', avatar: 'feed/posters/ad-kids.jpg',      channel: 'tech',     video: 'feed/ad-kids.mp4',      world: true },
+]
+
+// The city-level board — the rivals you meet at street zoom.
+const CITY_POPS: OtherPop[] = [
   { id: 'other-sauceboss',  user: '@sauceboss',    name: 'St. Lawrence',    radiusKm: 21.5, coords: [-79.3717, 43.6487], color: '#FF8A3D', avatar: 'feed/posters/ad-food.jpg', channel: 'food' },
   { id: 'other-pitchside',  user: '@pitchside',    name: 'BMO Field',       radiusKm: 33.2, coords: [-79.4185, 43.6332], color: '#4FD6B8', avatar: 'feed/posters/ad-sports.jpg', channel: 'sports' },
   { id: 'other-basement',   user: '@basement.set', name: 'The Junction',    radiusKm: 15.8, coords: [-79.4680, 43.6653], color: '#A97BFF', avatar: 'feed/posters/ad-music.jpg', channel: 'music' },
   { id: 'other-hauls',      user: '@hauls',        name: 'Yorkdale',        radiusKm: 26.4, coords: [-79.4522, 43.7256], color: '#FFD24B', avatar: 'feed/posters/ad-shopping.jpg', channel: 'shopping' },
   { id: 'other-doodlecast', user: '@doodlecast',   name: 'Leslieville',     radiusKm: 11.3, coords: [-79.3320, 43.6640], color: '#5FB0FF', avatar: 'feed/posters/ad-cartoon.jpg', channel: 'cartoon' },
   { id: 'other-playtime',   user: '@playtime',     name: 'High Park',       radiusKm: 19.7, coords: [-79.4637, 43.6465], color: '#7CE04F', avatar: 'feed/posters/ad-kids.jpg', channel: 'kids' },
-  { id: 'other-bitmerchant',user: '@bitmerchant',  name: 'The Beaches',     radiusKm: 24.9, coords: [-79.2960, 43.6710], color: '#FF5F8F', avatar: 'feed/posters/ad-comedy.jpg', channel: 'comedy' },
+  { id: 'other-bitmerchant',user: '@bitmerchant',  name: 'The Beaches',     radiusKm: 24.9, coords: [-79.2960, 43.6710], color: '#FF5F8F', avatar: 'feed/posters/ad-comedy.jpg', channel: 'comedy', video: 'feed/ad-comedy.mp4' },
 ]
+
+/** Everyone else on the board: the world's dominant holders first (they are
+ *  what the zoomed-out map is about), then the city rivals. Order matters —
+ *  the pin renderer ranks by it when it caps how many faces stand at once. */
+export const OTHER_POPS: OtherPop[] = [...WORLD_POPS, ...CITY_POPS]
 
 /**
  * Which pops the map is showing. Your own takeover, everyone else's, or the

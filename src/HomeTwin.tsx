@@ -22,6 +22,7 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
 import { initialMapMode, type PoplurMapMode } from './mapMode'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
+import { playStaticNoise } from './staticNoise'
 import {
   readMapTourTopics,
   writeMapTourTopics,
@@ -97,6 +98,10 @@ const RADIUS_METERS = 41_800
 const EARTH_RADIUS_KM = 6_371
 // Stable spoofed reach until presence is wired to the live audience service.
 const SPOOFED_ONLINE_AUDIENCE = 1_200_000
+// Radius describes the content currently playing, so it owns most of the HUD
+// cycle. Presence is a brief status beat, not an equal-priority alternate.
+const RADIUS_STAT_HOLD_MS = 10_000
+const ONLINE_STAT_HOLD_MS = 2_000
 
 function AnimatedRadiusMetrics({
   radius,
@@ -515,6 +520,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const settle = window.setTimeout(() => setCommittedTab(activeTab), MAP_SETTLE_MS)
     return () => window.clearTimeout(settle)
   }, [activeTab, cubeSpinning, committedTab])
+  const previousCommittedTab = useRef<CubeTab>(initialTab)
+  const [staticTransition, setStaticTransition] = useState(0)
+  useEffect(() => {
+    const previous = previousCommittedTab.current
+    previousCommittedTab.current = committedTab
+    if (previous === committedTab || committedTab === 'feed') return
+
+    setStaticTransition(value => value + 1)
+    playStaticNoise()
+    navigator.vibrate?.([9, 5, 12])
+    const timer = window.setTimeout(() => setStaticTransition(0), 620)
+    return () => window.clearTimeout(timer)
+  }, [committedTab])
   // undefined = the designed cube. Set while a screen takes the navigator over.
   const [cubeModel, setCubeModel] = useState<string | undefined>(undefined)
   // The post composer is a full-screen modal, but it lives inside .contentLayer
@@ -555,6 +573,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     silenceAllAudio()
   }, [])
   const [popping, setPopping] = useState(false)
+  const [photoPopping, setPhotoPopping] = useState(false)
 
   // Start in the measurement system implied by the device locale. Tapping the
   // Radius card remains a deliberate local override for this session.
@@ -649,7 +668,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // The beat sleeps with the chrome. Every swap replays the money-counter —
     // an 880ms rAF count, per-frame text restyle, tick sounds, and a wake of
     // the motion-effects AudioContext — which on an untouched phone repeated
-    // every 7.6s forever: the device census showed that context still running
+    // on every cycle forever: the device census showed that context still running
     // at idle (ctx=[sr]) purely from this drumbeat. Chrome-idle (30s without
     // a touch) already fades this HUD; the swap pauses with it and the first
     // touch brings both back.
@@ -657,13 +676,32 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // On the MAP the card does not rotate. Travelling the map is a sequence of
     // arrivals at other people's posts, and the number that means anything at
     // each one is THAT POST'S RADIUS — the ground it holds. Swapping to a
-    // global online count every 7.6s meant you landed on a pop and were shown
-    // a number about everybody instead of a number about where you just
-    // arrived, and half of every visit read as the wrong statistic.
+    // global online count meant you landed on a pop and were shown a number
+    // about everybody instead of a number about where you just arrived.
     if (activeTab === 'map') { setShowOnlineAudience(false); return }
-    const interval = window.setInterval(() => setShowOnlineAudience(showingOnline => !showingOnline), 7600)
-    return () => window.clearInterval(interval)
+    let timer = 0
+    const showRadius = () => {
+      setShowOnlineAudience(false)
+      timer = window.setTimeout(showOnline, RADIUS_STAT_HOLD_MS)
+    }
+    const showOnline = () => {
+      setShowOnlineAudience(true)
+      timer = window.setTimeout(showRadius, ONLINE_STAT_HOLD_MS)
+    }
+    showRadius()
+    return () => window.clearTimeout(timer)
   }, [chromeIdle, activeTab])
+
+  useEffect(() => {
+    const onPhoneMessage = (event: MessageEvent) => {
+      if (!event.data || typeof event.data !== 'object') return
+      if (event.data.type === 'poplur-phone-boot-effects') {
+        postNativeEvent({ type: 'phoneBootEffects' })
+      }
+    }
+    window.addEventListener('message', onPhoneMessage)
+    return () => window.removeEventListener('message', onPhoneMessage)
+  }, [])
 
   useEffect(() => {
     const onMapMessage = (event: MessageEvent) => {
@@ -1281,7 +1319,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
     playPop()
-    setPopping(true)
     // Tapping the cube runs whatever you pinned in this tab's hold menu.
     const favourite = readFavourite(activeTab)
     if (activeTab === 'post') {
@@ -1289,9 +1326,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // until you have visited a menu is not a camera.
       const camera: Record<string, Exclude<HomeCameraAction, 'roll'>> = { PHOTO: 'photo', VIDEO: 'video' }
       const which = camera[favourite ?? 'PHOTO'] ?? 'photo'
+      if (which !== 'photo') setPopping(true)
       cameraActionsRef.current?.[which]()
       return
     }
+    setPopping(true)
     if (favourite) {
       const map: Record<string, 'like' | 'comment' | 'captions' | 'profile'> = {
         LIKE: 'like',
@@ -1312,6 +1351,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       data-poplur-watchdog={chromeFaded ? 'off' : 'on'}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
+      {staticTransition > 0 && (
+        <div className={styles.tabStatic} aria-hidden="true">
+          <video
+            key={staticTransition}
+            className={styles.tabStaticVideo}
+            src="tv_static_clean.mp4"
+            autoPlay
+            muted
+            playsInline
+          />
+        </div>
+      )}
       {/* The map iframe mounts only while the Map tab is front. CSS cannot make
           an idle map cheap (a hidden iframe still holds its GL context, tile
           workers and full-res canvas), so leaving the map unmounts it entirely
@@ -1361,6 +1412,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         {pageVisible && !overlayOpen && activePermission === null && committedTab === 'post' && (
           <Camera
             onComposingChange={handleComposingChange}
+            onPhotoCapture={() => {
+              setPopping(false)
+              setPhotoPopping(true)
+            }}
             step={cameraStep}
             onCloseRoll={() => setCameraStep(s => s - 1)}
             bindActions={actions => { cameraActionsRef.current = actions }}
@@ -1477,7 +1532,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             number={activeTab === 'map' ? mapPostIdx + 1 : CHANNELS[chanIndex].number}
             // The camera's two pages are not channels. The slot shows what the
             // roll has selected instead, and carries the recording dot.
-            label={activeTab === 'post' ? (picked ? String(picked) : '') : undefined}
+            label={overlayOpen ? '' : activeTab === 'post' ? (picked ? String(picked) : '') : undefined}
             dot={activeTab === 'post' && recordMs != null}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
@@ -1587,8 +1642,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
-          className={popping ? `${styles.cubePop} ${styles.cubeFloat}` : styles.cubeFloat}
-          onAnimationEnd={e => { if (e.animationName.includes('Pop')) setPopping(false) }}
+          className={photoPopping
+            ? `${styles.cubePhotoPop} ${styles.cubeFloat}`
+            : popping ? `${styles.cubePop} ${styles.cubeFloat}` : styles.cubeFloat}
+          onAnimationEnd={e => {
+            if (e.animationName.includes('cubePhotoCapture')) setPhotoPopping(false)
+            else if (e.animationName.includes('Pop')) setPopping(false)
+          }}
         >
           <CubeTab3D
             key={`cube-${uiRecoveryKey}`}

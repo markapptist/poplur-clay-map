@@ -82,6 +82,17 @@ export default function CommerceSuggestionWindow({
     '--ad-accent-2': card.accent2 ?? '#67dcff',
   } as React.CSSProperties
 
+  const closeFromSurface = (event: React.MouseEvent<HTMLElement>) => {
+    // The creative itself is dismissible, not just the tiny red light. Keep
+    // actual controls/CTAs interactive; everything else is one large, easy
+    // close target on a phone.
+    event.stopPropagation()
+    const target = event.target
+    if (target instanceof Element && target.closest('button, a, iframe')) return
+    playPop()
+    onClose()
+  }
+
   return (
     <section
       className={[
@@ -96,7 +107,7 @@ export default function CommerceSuggestionWindow({
       aria-label={browserMode ? `In-app browser for ${card.title}` : card.headline}
       onPointerDown={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()}
-      onClick={event => event.stopPropagation()}
+      onClick={closeFromSurface}
     >
       <header className={styles.titleBar}>
         <div className={styles.traffic} aria-label="Window controls">

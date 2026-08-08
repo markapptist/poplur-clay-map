@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import styles from './GamesScreen.module.css'
 import PoplurgatchiPlayable from './PoplurgatchiPlayable'
 import { playPop } from './pop'
@@ -86,48 +85,21 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   })
 
   // ── running a game ────────────────────────────────────────────────────────
-  // Portalling the FPS to the document root lets it escape the hold-menu's
-  // stacking context. Without that, the persistent cube/channel chrome can
-  // remain above a nominally full-screen iframe.
-  if (running?.id === 'fps' && running.web) {
-    return createPortal(
-      <div
-        className={`${styles.stage} ${styles.fpsStage}`}
-        style={{ ['--accent' as string]: running.color }}
-        role="dialog"
-        aria-label={running.title}
-      >
-        <iframe
-          className={`${styles.gameFrame} ${styles.fpsFrame}`}
-          src={running.web}
-          title={running.title}
-          allow="autoplay; fullscreen; gamepad; accelerometer; gyroscope"
-          allowFullScreen
-        />
-        <button className={styles.quitFloating} onClick={quit} aria-label="Exit FPS game">
-          ■ EXIT
-        </button>
-      </div>,
-      document.body,
-    )
-  }
-
   if (running) {
     return (
-      <div className={styles.stage} style={{ ['--accent' as string]: running.color }}>
+      <div className={`${styles.stage} ${running.id === 'fps' ? styles.fpsStage : ''}`} style={{ ['--accent' as string]: running.color }}>
         {running.id === 'poplurgatchi' ? (
           <PoplurgatchiPlayable />
         ) : running.web ? (
           <iframe
-            className={styles.gameFrame}
+            className={`${styles.gameFrame} ${running.id === 'fps' ? styles.fpsFrame : ''}`}
             src={running.web}
             title={running.title}
             allow="autoplay; fullscreen; gamepad; accelerometer; gyroscope"
             allowFullScreen
           />
         ) : null}
-        {/* Poplurgatchi keeps the app cube as its back control. FPS is portalled
-            above that chrome and therefore supplies its own EXIT button. */}
+        {/* The app cube remains above this stage and is the one back control. */}
       </div>
     )
   }

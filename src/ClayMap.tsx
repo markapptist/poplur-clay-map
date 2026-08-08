@@ -3,7 +3,7 @@ import mapboxgl from 'mapbox-gl'
 import { isNativeShell } from './nativeBridge'
 import { onFrame, ambientAllowed, boostFrames, onAmbientSleepChange, setSurfaceFront } from './frameGovernor'
 import { CLAY_ROUTES, PALETTE } from './data'
-import { pinWithFace, warmPinSprites } from './popPins'
+import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
@@ -75,6 +75,9 @@ export interface PopPin {
     poster?: string
     alt: string
   }
+  /** A regional holder rather than a street-level one. Ranked first when the
+   *  board is capped, so zooming out never drops the pins that ARE the board. */
+  world?: boolean
   mine: boolean
 }
 
@@ -1134,6 +1137,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }
     // Flyer animation unsubscribe (shared frameGovernor clock)
     let stopFlyerFrames: (() => void) | null = null
+    let stopRendererParking: (() => void) | null = null
     let disposed = false
 
     const fallBackAfterWebGLFailure = (error: unknown) => {
@@ -1219,10 +1223,54 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     map.on('render', () => {
       profiledWindow.__poplurMapRenderCount = (profiledWindow.__poplurMapRenderCount ?? 0) + 1
     })
+
+    // Install this before the clay world boots. A partial style build can throw
+    // before the later traffic/prop setup is reached; putting the energy gate
+    // there meant the map looked usable but never actually registered its idle
+    // renderer park. Patch both repaint entry points because Mapbox's own render
+    // tail calls the private `_triggerFrame` directly even when public
+    // `triggerRepaint` has been suppressed.
+    {
+      const parkedMap = map as unknown as {
+        repaint: boolean
+        triggerRepaint: () => void
+        _triggerFrame: (render: boolean) => void
+        _frame?: { cancel?: () => void } | null
+        _renderNextFrame?: boolean | null
+      }
+      const liveTriggerRepaint = map.triggerRepaint.bind(map)
+      const liveTriggerFrame = parkedMap._triggerFrame.bind(map)
+      let rendererParked = false
+      stopRendererParking = onAmbientSleepChange(sleeping => {
+        if (!sleeping) {
+          if (rendererParked) {
+            rendererParked = false
+            parkedMap.triggerRepaint = liveTriggerRepaint
+            parkedMap._triggerFrame = liveTriggerFrame
+            delete document.documentElement.dataset.poplurMapPark
+            liveTriggerRepaint()
+          }
+          return
+        }
+
+        map.stop()
+        parkedMap.repaint = false
+        if (!rendererParked) {
+          rendererParked = true
+          parkedMap.triggerRepaint = () => {}
+          parkedMap._triggerFrame = () => {}
+        }
+        parkedMap._frame?.cancel?.()
+        parkedMap._frame = null
+        parkedMap._renderNextFrame = false
+        document.documentElement.dataset.poplurMapPark = '1'
+      })
+    }
     // QA hook, same spirit as __poplurDisposeMap: the camera cannot be verified
     // from outside the frame otherwise, and "does the flight actually fly?"
     // has to be measurable rather than argued about.
     ;(window as unknown as { __poplurMap?: mapboxgl.Map }).__poplurMap = map
+    ;(window as unknown as { __poplurSpriteCount?: () => number }).__poplurSpriteCount = composedSpriteCount
     // Mapbox 3.7 exposes FOV through the camera transform rather than a
     // public map.setFov() method.
     map.transform.fov = FOV_DEFAULT
@@ -2455,7 +2503,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // or a source transition can leave Mapbox emitting render frames long
       // after every DOM animation and governor subscriber has gone quiet.
       const stopAmbientParking = onAmbientSleepChange(sleeping => {
-        if (!MAP_2D || !sleeping) return
+        if (!sleeping) return
         map.stop()
         stopOrbit()
         if (carFeaturesLive) {
@@ -2463,7 +2511,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           setCarFeatures([])
         }
         setCarProximity(0)
-        ;(map as unknown as { repaint: boolean }).repaint = false
       })
       map.once('remove', stopAmbientParking)
       const harvestCarPaths = () => {
@@ -2946,6 +2993,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       ownedRafs.clear()
       stopOrbit()
       stopFlyerFrames?.()
+      stopRendererParking?.()
+      stopRendererParking = null
       stopCarAudio()
       popRafs.forEach(raf => cancelAnimationFrame(raf))
       popRafs.clear()
@@ -3033,6 +3082,46 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     pinMarkersRef.current = []
     if (!list.length) return
 
+    // ── Level of detail: which pops get a DOM pin at all ────────────────────
+    // The board is the whole planet now. One mapboxgl.Marker per pop was fine
+    // for a dozen in one city; at world scale it is a DOM node, a composited
+    // 256px sprite and a per-frame transform for every holder on Earth,
+    // including everyone behind the horizon.
+    //
+    // So the pins are NOT the world board — the claim discs and their
+    // clustered globe dots are, and those are GPU layers that already cost
+    // nothing per pop (see mapClaims). Pins are the close-up detail on top:
+    // only holders whose ground is actually on screen, capped, and ranked so
+    // the cap can never drop the regional holders that ARE the board.
+    //
+    // Planet zoom draws NO pins deliberately: at zoom 2 every face projects
+    // into a few pixels and thirty of them read as noise over the dots that
+    // are already saying who owns what.
+    const PIN_MIN_ZOOM = 3.2
+    const PIN_MAX_LIVE = 18
+    const visiblePins = (): PopPin[] => {
+      const zoom = map.getZoom()
+      if (zoom < PIN_MIN_ZOOM) return []
+      const b = map.getBounds()
+      if (!b) return list.slice(0, PIN_MAX_LIVE)
+      // A pop's PIN stands on its centre, but its ground extends radiusKm
+      // around it — pad the test so a holder whose territory fills the screen
+      // still gets a face while its centre is just off the edge.
+      const pad = (pin: PopPin) => pin.radiusKm / 111
+      const inView = list.filter(pin => {
+        const d = pad(pin)
+        return pin.coords[0] >= b.getWest() - d && pin.coords[0] <= b.getEast() + d
+          && pin.coords[1] >= b.getSouth() - d && pin.coords[1] <= b.getNorth() + d
+      })
+      // Dominance first: world holders, then by how much ground they hold.
+      // Your own pops sort with the rest — on a shared board the question is
+      // who leads here, and pinning yours to the top would answer a different
+      // one.
+      inView.sort((a, c) =>
+        (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0) || c.radiusKm - a.radiusKm)
+      return inView.slice(0, PIN_MAX_LIVE)
+    }
+
     // The pin's look follows the render tier: dimensional in 3D, flat in 2D.
     const tier: '2d' | '3d' = MAP_2D ? '2d' : '3d'
     // Bake-only: .codex/prerender-sprites.mjs installs this collector before any
@@ -3043,55 +3132,94 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     if ((window as unknown as { __poplurSpriteCaptures?: unknown }).__poplurSpriteCaptures) {
       warmPinSprites()
     }
-    void Promise.all(list.map(pin =>
-      pinWithFace({ avatar: pin.avatar, color: pin.color, mode: tier })
-        .then(src => ({ pin, src }))
-        .catch(() => null),
-    )).then(built => {
-      // The map (or the level) moved on while the sprites composited.
-      if (dropped || mapRef.current !== map) return
-      built.forEach(entry => {
-        if (!entry) return
-        const { pin, src } = entry
-        // Mapbox owns the marker root's inline transform and rewrites it while
-        // the camera moves. Keep that positioning transform off the button
-        // that owns Poplur's press/ownership transition; sharing one element
-        // restarted five CSS transitions on every map frame.
-        const markerRoot = document.createElement('div')
-        markerRoot.className = MAP_2D
-          ? `${styles.popPinMarker} ${styles.popPinMarkerFlat}`
-          : styles.popPinMarker
-        const el = document.createElement('button')
-        el.className = MAP_2D ? `${styles.popPin} ${styles.popPinFlat}` : styles.popPin
-        el.type = 'button'
-        el.setAttribute('aria-label', pin.mine
-          ? `Your pop at ${pin.name}, ${pin.radiusKm} km`
-          : `${pin.user} holds ${pin.name}, ${pin.radiusKm} km`)
-        const img = document.createElement('img')
-        img.src = src
-        img.alt = ''
-        img.draggable = false
-        el.appendChild(img)
-        markerRoot.appendChild(el)
-        // Your own pops get a quiet marker of ownership so a crowded board
-        // still answers "which of these are mine" without reading faces.
-        if (pin.mine) el.classList.add(styles.popPinMine)
-        el.addEventListener('click', event => {
-          event.stopPropagation()
-          playPop()
-          onPinOpenRef.current?.(pin)
-        })
-        // The pin stands ON its coordinate, so the tip is the anchor.
-        const marker = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
-          .setLngLat(pin.coords)
-          .addTo(map)
-        pinMarkersRef.current.push(marker)
+    // Markers live in a map keyed by pop id so a camera move REUSES the pins
+    // that are still on screen and only builds the ones that just arrived.
+    // Rebuilding all of them on every moveend re-ran the sprite composite and
+    // re-created every DOM node for a board that had barely changed — the
+    // exact per-frame churn this LOD exists to avoid.
+    const livePins = new Map<string, mapboxgl.Marker>()
+
+    const buildMarker = (pin: PopPin, src: string): mapboxgl.Marker => {
+      // Mapbox owns the marker root's inline transform and rewrites it while
+      // the camera moves. Keep that positioning transform off the button
+      // that owns Poplur's press/ownership transition; sharing one element
+      // restarted five CSS transitions on every map frame.
+      const markerRoot = document.createElement('div')
+      markerRoot.className = MAP_2D
+        ? `${styles.popPinMarker} ${styles.popPinMarkerFlat}`
+        : styles.popPinMarker
+      const el = document.createElement('button')
+      el.className = MAP_2D ? `${styles.popPin} ${styles.popPinFlat}` : styles.popPin
+      el.type = 'button'
+      el.setAttribute('aria-label', pin.mine
+        ? `Your pop at ${pin.name}, ${pin.radiusKm} km`
+        : `${pin.user} holds ${pin.name}, ${pin.radiusKm} km`)
+      const img = document.createElement('img')
+      img.src = src
+      img.alt = ''
+      img.draggable = false
+      el.appendChild(img)
+      markerRoot.appendChild(el)
+      // Your own pops get a quiet marker of ownership so a crowded board
+      // still answers "which of these are mine" without reading faces.
+      if (pin.mine) el.classList.add(styles.popPinMine)
+      el.addEventListener('click', event => {
+        event.stopPropagation()
+        playPop()
+        onPinOpenRef.current?.(pin)
       })
-    })
+      // The pin stands ON its coordinate, so the tip is the anchor.
+      return new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
+        .setLngLat(pin.coords)
+        .addTo(map)
+    }
+
+    let syncing = false
+    const syncPins = () => {
+      if (dropped || mapRef.current !== map || syncing) return
+      const want = visiblePins()
+      const wanted = new Set(want.map(p => p.id))
+      // Leaving the screen means leaving the DOM. A hidden marker still costs
+      // Mapbox a transform write every frame, which is what made the old
+      // display:none cull insufficient once the board went global.
+      for (const [id, marker] of livePins) {
+        if (!wanted.has(id)) { marker.remove(); livePins.delete(id) }
+      }
+      const missing = want.filter(p => !livePins.has(p.id))
+      if (!missing.length) return
+      syncing = true
+      void Promise.all(missing.map(pin =>
+        pinWithFace({ avatar: pin.avatar, color: pin.color, mode: tier })
+          .then(src => ({ pin, src }))
+          .catch(() => null),
+      )).then(built => {
+        syncing = false
+        // The map (or the level) moved on while the sprites composited.
+        if (dropped || mapRef.current !== map) return
+        built.forEach(entry => {
+          if (!entry) return
+          // The camera may have moved past this pop while it composited.
+          if (livePins.has(entry.pin.id)) return
+          livePins.set(entry.pin.id, buildMarker(entry.pin, entry.src))
+        })
+        pinMarkersRef.current = [...livePins.values()]
+      })
+      pinMarkersRef.current = [...livePins.values()]
+    }
+
+    syncPins()
+    // moveend/zoomend only — NOT `move`. Re-selecting the board mid-gesture
+    // would run a bounds test and a DOM diff on every frame of every pan,
+    // which is the one thing a fps budget cannot absorb.
+    map.on('moveend', syncPins)
+    map.on('zoomend', syncPins)
 
     return () => {
       dropped = true
-      pinMarkersRef.current.forEach(m => m.remove())
+      map.off('moveend', syncPins)
+      map.off('zoomend', syncPins)
+      livePins.forEach(m => m.remove())
+      livePins.clear()
       pinMarkersRef.current = []
     }
   }, [pinKey, mapEpoch])
@@ -3555,7 +3683,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         <div className={styles.zoomRail} ref={zoomRailRef}>
           <div
             key={`thumb-${zoomStage.id}-${popTick}`}
-            className={styles.zoomThumb}
+            className={zoomStage.id === 'globe' ? `${styles.zoomThumb} ${styles.zoomThumbSpin}` : styles.zoomThumb}
             style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
           />
         </div>

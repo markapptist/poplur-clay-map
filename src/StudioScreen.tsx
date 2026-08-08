@@ -340,7 +340,17 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
 
   const startCapture = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+        throw new Error('Audio recording is unavailable')
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      })
       streamRef.current = stream
       setMicDenied(false)
 
@@ -348,6 +358,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       micCtxRef.current?.close().catch(() => { /* already closed */ })
       const ctx = new AudioContext()
       micCtxRef.current = ctx
+      if (ctx.state === 'suspended') await ctx.resume()
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
       ctx.createMediaStreamSource(stream).connect(analyser)
@@ -364,7 +375,11 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       }, 55)
 
       chunksRef.current = []
-      const rec = new MediaRecorder(stream)
+      const preferredMime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
+        .find(type => MediaRecorder.isTypeSupported(type))
+      const rec = preferredMime
+        ? new MediaRecorder(stream, { mimeType: preferredMime })
+        : new MediaRecorder(stream)
       rec.ondataavailable = e => { if (e.data.size) chunksRef.current.push(e.data) }
       rec.onstop = () => {
         if (!chunksRef.current.length) return
@@ -374,7 +389,9 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       rec.start()
       recorderRef.current = rec
       return true
-    } catch {
+    } catch (error) {
+      console.warn('[Poplur Studio] microphone could not start', error)
+      stopCapture()
       setMicDenied(true)      // refused or no mic — say so rather than pretend
       return false
     }

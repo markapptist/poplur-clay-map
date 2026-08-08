@@ -1102,7 +1102,7 @@
   padding-top: max(72px, calc(env(safe-area-inset-top) + 56px));
   padding-inline: 10px;
   overflow: hidden;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .cameraCommerceOverlay > * { pointer-events: auto; }

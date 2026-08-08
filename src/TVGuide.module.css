@@ -74,6 +74,13 @@
 }
 
 .pipPane {
+  appearance: none;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
   position: absolute;
   inset: 11px;
   overflow: hidden;
@@ -81,6 +88,9 @@
   background: #05130a;
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55), inset 0 0 0 1.5px color-mix(in srgb, var(--ch-bright) 55%, transparent);
 }
+
+.pipPane:active { transform: scale(0.992); }
+.pipPane:focus-visible { outline: 3px solid #ff3fa4; outline-offset: 3px; }
 
 .pipVideo,
 .pipLogo {

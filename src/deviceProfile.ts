@@ -23,7 +23,10 @@ import { postNativeEvent } from './nativeBridge'
 import { audioGateDebug } from './audioGate'
 
 const INITIAL_REPORT_MS = 5000
-const SETTLED_REPORT_MS = 30_000
+// Keep the physical-device watchdog at full cadence for the entire map
+// session. Thermal degradation often arrives several minutes after launch;
+// backing off to 30s hid the slope just when it mattered most.
+const SETTLED_REPORT_MS = 5000
 const SETTLED_AFTER_MS = 60_000
 let previousMapRenders = 0
 let previousMapRenderAt = typeof performance === 'undefined' ? 0 : performance.now()
@@ -46,15 +49,21 @@ function mapState(): string {
       isMoving?: () => boolean
       isEasing?: () => boolean
       areTilesLoaded?: () => boolean
+      getProjection?: () => { name?: string }
+      getPitch?: () => number
       repaint?: boolean
     }
   }).__poplurMap
   if (!map) return 'n/a'
   const thermal = document.documentElement.dataset.poplurThermal || '?'
+  const parked = document.documentElement.dataset.poplurMapPark === '1'
+  const projection = map.getProjection?.().name || '?'
   return `moving=${Boolean(map.isMoving?.())}`
     + ` easing=${Boolean(map.isEasing?.())}`
     + ` tiles=${Boolean(map.areTilesLoaded?.())}`
     + ` repaint=${Boolean(map.repaint)}`
+    + ` parked=${parked}`
+    + ` mode=${projection}/${Math.round(map.getPitch?.() ?? 0)}°`
     + ` thermal=${thermal}`
 }
 
