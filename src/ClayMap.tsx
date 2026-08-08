@@ -6,7 +6,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, onClaimsSettled } from './mapClaims'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled } from './mapClaims'
 import {
   fetchRoute,
   installRouteLayers,
@@ -240,7 +240,7 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
   set('clay-coast-rim', 'line-color', 'rgba(255, 255, 255, 0.55)')
   set('clay-land-background', 'background-color', theme.land)
   set('clay-water-fill', 'fill-color', theme.water)
-  const claimFeatures = claimsFeatureCollection()
+  const claimFeatures = claimsWithinCollection()
   const claimedPaint = (normal: unknown, claimed: unknown) =>
     claimFeatures.features.length
       ? ['case', ['within', claimFeatures], claimed, normal]
@@ -282,7 +282,7 @@ function applyComposeSurfacePreview(
     return
   }
   const withinPreview = ['within', preview]
-  const committed = claimsFeatureCollection()
+  const committed = claimsWithinCollection()
   const takeover = (
     normal: unknown,
     committedColor: unknown,
@@ -2306,15 +2306,31 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // footprints whose anchor point falls in a claim circle; the extrusion
       // palette then re-molds them in the pink family.
       const claimBuildingSource = import.meta.env.DEV ? 'clay-streets' : 'overture-buildings'
-      const recolorClaimedBuildings = () => {
+      // Feature-state is written ONCE per building and remembered here.
+      // Re-marking the same ids every pass kept the source's feature-state
+      // permanently dirty, so Mapbox re-read state across every building on
+      // every bucket refresh — measured at 55% of all JS self time (getState)
+      // with the ambient orbit running, and the single largest allocation
+      // source (setFeatureState/updateState, 27% of sampled bytes). Marked
+      // once, both stop.
+      const claimedBuildingIds = new Set<string | number>()
+      // `recheck: false` (tile arrival): only unknown ids are tested and
+      // marked — already-marked ids are skipped, so feature-state stays
+      // untouched and Mapbox has nothing to re-read. `recheck: true` (claims
+      // changed): every visible id is re-tested and only the DELTA is applied.
+      // Never wipe state wholesale — a wipe re-dirties every loaded tile and
+      // re-runs the whole mark pass, which is the allocation storm again.
+      const recolorClaimedBuildings = (recheck: boolean) => {
         const circles = getClaims()
-        if (!circles.length) return
+        if (!circles.length && !claimedBuildingIds.size) return
         let feats: mapboxgl.GeoJSONFeature[] = []
         try {
           feats = map.querySourceFeatures(claimBuildingSource, { sourceLayer: 'building' }) as mapboxgl.GeoJSONFeature[]
         } catch { return }
         for (const f of feats) {
           if (f.id == null) continue
+          const known = claimedBuildingIds.has(f.id)
+          if (known && !recheck) continue
           const g = f.geometry
           let pt: [number, number] | null = null
           if (g.type === 'Polygon') pt = g.coordinates[0][0] as [number, number]
@@ -2326,42 +2342,75 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             const dLng = (anchor[0] - c.center[0]) * 111.320 * Math.cos((c.center[1] * Math.PI) / 180)
             return dLat * dLat + dLng * dLng <= c.radiusKm * c.radiusKm
           })
-          if (claimed) {
-            try {
+          try {
+            if (claimed && !known) {
+              claimedBuildingIds.add(f.id)
               map.setFeatureState({ source: claimBuildingSource, sourceLayer: 'building', id: f.id }, { claimed: true })
-            } catch { /* map torn down */ }
-          }
+            } else if (!claimed && known) {
+              claimedBuildingIds.delete(f.id)
+              map.removeFeatureState({ source: claimBuildingSource, sourceLayer: 'building', id: f.id })
+            }
+          } catch { /* map torn down */ }
         }
       }
       let recolorTimer = 0
-      const scheduleRecolor = () => {
+      let recolorRecheck = false
+      const scheduleRecolor = (delayMs = 700, recheck = false) => {
+        recolorRecheck = recolorRecheck || recheck
         if (recolorTimer) return
-        recolorTimer = window.setTimeout(() => { recolorTimer = 0; recolorClaimedBuildings() }, 700)
+        recolorTimer = window.setTimeout(() => {
+          recolorTimer = 0
+          const doRecheck = recolorRecheck
+          recolorRecheck = false
+          recolorClaimedBuildings(doRecheck)
+        }, delayMs)
       }
-      map.on('moveend', scheduleRecolor)
+      // No moveend trigger: claim membership is geo-fixed, so camera motion
+      // cannot change it — and the ambient orbit means the camera never stops
+      // moving, which made moveend + this debounce a metronome: the full
+      // querySourceFeatures scan (thousands of fresh feature objects) every
+      // 700ms, forever. That was the 0.7s stall beat on device and the GC
+      // storm behind the map's Serious thermal state. Only NEW building tiles
+      // can introduce unmarked features, so tile arrival is the one trigger
+      // that matters, on a lazy debounce — the once-per-id guard above keeps
+      // even those passes cheap.
       map.on('sourcedata', e => {
         const ev = e as { sourceId?: string; isSourceLoaded?: boolean }
-        if (ev.sourceId === claimBuildingSource && ev.isSourceLoaded) scheduleRecolor()
+        if (ev.sourceId === claimBuildingSource && ev.isSourceLoaded) scheduleRecolor(4000)
       })
 
+      // ONE layer per frame. Each setPaintProperty with a `within` forces a
+      // style recalculation over that layer's features; five in one call was a
+      // single long task in the idle window. Spread out, each stays under the
+      // long-task threshold and the takeover still lands within ~5 frames.
+      let claimPaintQueue = 0
       const applyClaimRoadPaint = () => {
-        const fc = claimsFeatureCollection()
+        const fc = claimsWithinCollection()
         if (!fc.features.length) return
         const w = ['within', fc]
-        try {
-          map.setPaintProperty('clay-real-road-body', 'line-color',
-            ['case', w, '#8a2260', PALETTE.road] as never)
-          map.setPaintProperty('clay-minor-roads', 'line-color',
-            ['case', w, '#9c2a6e', PALETTE.road] as never)
-          map.setPaintProperty('clay-real-road-rim', 'line-color',
-            ['case', w, '#ff9ccd', PALETTE.roadHighlight] as never)
-          map.setPaintProperty('clay-grass-fill', 'fill-color',
-            ['case', w, '#D85D96', theme.park] as never)
-          map.setPaintProperty('clay-buildings-2d', 'fill-color',
-            ['case', w, claimedFlatBuildingColor(), flatBuildingColor()] as never)
-        } catch { /* layers not ready */ }
+        const sets: Array<[string, string, unknown]> = [
+          ['clay-real-road-body', 'line-color', ['case', w, '#8a2260', PALETTE.road]],
+          ['clay-minor-roads', 'line-color', ['case', w, '#9c2a6e', PALETTE.road]],
+          ['clay-real-road-rim', 'line-color', ['case', w, '#ff9ccd', PALETTE.roadHighlight]],
+          ['clay-grass-fill', 'fill-color', ['case', w, '#D85D96', theme.park]],
+          ['clay-buildings-2d', 'fill-color', ['case', w, claimedFlatBuildingColor(), flatBuildingColor()]],
+        ]
+        const generation = ++claimPaintQueue
+        const step = (i: number) => {
+          if (generation !== claimPaintQueue || i >= sets.length) return
+          const [layer, prop, value] = sets[i]
+          try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* layer not ready */ }
+          requestAnimationFrame(() => step(i + 1))
+        }
+        step(0)
       }
-      onClaimsSettled(() => { applyClaimRoadPaint(); scheduleRecolor() })
+      // Claims changed (they grow with pops and decay over time): re-test the
+      // visible ids and apply the delta. Settles happen per claim event, not
+      // per frame. Ids marked in tiles that are currently unloaded keep their
+      // persisted state until the next settle pass that sees them — a bounded
+      // staleness that costs nothing, versus a wholesale wipe that re-dirties
+      // every loaded tile.
+      onClaimsSettled(() => { applyClaimRoadPaint(); scheduleRecolor(700, true) })
       // Late safety passes: tiles and theme applies can land after the seeds
       // settle, so re-assert the takeover paint a few times after load.
       ;[4000, 9000, 16000].forEach(ms => window.setTimeout(() => {
