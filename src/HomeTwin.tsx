@@ -30,8 +30,8 @@ import {
 } from './mapTourPreferences'
 import { noteNewsMessage } from './newsMessages'
 import { POIS } from './data'
+import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
 
-const KM_TO_MI = 0.621371
 
 /** Home chrome fades out after this long without a touch (see chromeIdle). */
 const CHROME_IDLE_MS = 30_000
@@ -226,22 +226,6 @@ function AnimatedOnlineCount({ value, active }: { value: number; active: boolean
       {text}
     </span>
   )
-}
-
-function shouldUseMiles(): boolean {
-  if (typeof window === 'undefined') return false
-  const params = new URLSearchParams(window.location.search)
-  const forcedUnit = params.get('units')
-  if (forcedUnit === 'mi') return true
-  if (forcedUnit === 'km') return false
-
-  const locale = navigator.languages?.[0] ?? navigator.language
-  try {
-    const region = new Intl.Locale(locale).region
-    return region === 'US' || region === 'LR' || region === 'MM'
-  } catch {
-    return /-(US|LR|MM)$/i.test(locale)
-  }
 }
 
 function compactAudience(value: number): string {
@@ -1147,6 +1131,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const profileArrowsRef = useRef<((dir: 1 | -1) => void) | null>(null)
   // ProfileTwin's "close the top open layer", for the cube.
   const profileBackRef = useRef<(() => boolean) | null>(null)
+  /** The feed's own layer (the comment box) answering the cube. */
+  const feedBackRef = useRef<(() => boolean) | null>(null)
   // LIKE / COMMENT / CC are performed by the feed itself.
   const feedActionsRef = useRef<((action: FeedAction) => void) | null>(null)
 
@@ -1315,6 +1301,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       playPop()
       return
     }
+    // The feed's comment box is the same kind of layer — no ✕ of its own, so
+    // the cube is how you leave it.
+    if (activeTab === 'feed' && feedBackRef.current?.()) { playPop(); return }
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
@@ -1400,6 +1389,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onIndexChange={setChanIndex}
             onPostReach={onFeedPostReach}
             bindActions={fn => { feedActionsRef.current = fn }}
+            bindGoBack={fn => { feedBackRef.current = fn }}
             suppressed={overlayOpen || holdOpen || activePermission !== null}
             onPlayerModeChange={setFeedFullscreen}
             onOpenProfile={user => {
@@ -1570,7 +1560,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               this exact slot on the next beat. */}
           <div
             className={recordMs != null || showOnlineAudience ? styles.statCardOut : styles.statCard}
-            onClick={() => { playPop(); setUnitMi(v => !v) }}
+            onClick={() => { playPop(); setUnitMi(v => { setUseMiles(!v); return !v }) }}
             role="button"
             aria-label={`Radius ${(shownRadiusKm * (unitMi ? KM_TO_MI : 1)).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
           >

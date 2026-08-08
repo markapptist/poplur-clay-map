@@ -113,9 +113,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages' },
     { icon: 'Store', title: 'STORE', screen: 'profile-store' },
     { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
-    // NOTIFICATIONS springs down the real dropdown (owned by Profile) rather than
-    // opening a captured screen. `screen` stays for inspection/fallback only.
-    { icon: 'Notifications', title: 'NOTIFICATIONS', screen: 'profile-alerts', format: 'svg', event: 'notifications' },
+    // No NOTIFICATIONS tile: the bell on the profile already opens the sheet,
+    // and it is on screen the whole time this menu takes two gestures to reach.
+    // The `poplur-open-notifications` event it used to fire is still listened
+    // for (ProfileTwin), so a host can open the sheet without a tile here.
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
     // A real screen now, not a Rough Copy capture: Settings holds REFER A
     // FRIEND, which gives away a day of worldwide radius and therefore has to

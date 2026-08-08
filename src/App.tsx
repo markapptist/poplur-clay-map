@@ -717,6 +717,26 @@ export default function App() {
   const navigationOriginRef = useRef<[number, number]>(DEFAULT_NAV_ORIGIN)
   useEffect(() => { navigationOriginRef.current = navigationOrigin }, [navigationOrigin])
 
+  /**
+   * A comment landed on one of your pops — grow it by COMMENT_RADIUS_STEP.
+   *
+   * `setClaim` is built for exactly this ("call again with a larger radius as
+   * the post's reach climbs") and animates the disc out to the new size, so the
+   * ground visibly grows where the conversation happened. Only YOUR claims pay:
+   * other people's carry a colour, and their ground is not yours to grow.
+   */
+  const growRadiusForComment = useCallback((event: EngagementEvent) => {
+    if (event.kind !== 'comment' || !event.coords) return
+    const map = mapRef.current
+    if (!map) return
+    const coords = event.coords
+    const mine = getClaims().find(c => !c.color && distanceMeters(c.center, coords) < ENGAGEMENT_POP_MATCH_M)
+    if (!mine) return
+    try {
+      setClaim(map, { ...mine, radiusKm: mine.radiusKm + userUnitsToKm(COMMENT_RADIUS_STEP) })
+    } catch { /* style not ready; the next comment grows it */ }
+  }, [])
+
   // When the user last had their hands on the map. Engagement will not take a
   // camera someone is already driving (see traverseToEngagement).
   const lastGestureRef = useRef(0)

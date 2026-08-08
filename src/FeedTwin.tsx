@@ -238,6 +238,7 @@ export default function FeedTwin({
   suppressed = false,
   onPostReach,
   onPlayerModeChange,
+  bindGoBack,
 }: {
   index?: number
   onIndexChange?: (index: number) => void
@@ -247,6 +248,10 @@ export default function FeedTwin({
   onOpenProfile?: (user: string) => void
   /** something is covering the feed (hold menu, News, TV Guide): go quiet */
   suppressed?: boolean
+  /** The cube is the universal back. The comment box is a layer over the feed
+   *  with no ✕ of its own, so it answers the cube the way every subscreen and
+   *  the composer already do. Returns true when it consumed the press. */
+  bindGoBack?: (fn: (() => boolean) | null) => void
   /** The playing post's reach, reported on every video change so the home
       RADIUS card can re-run its money counter — the user is shown how much
       radius each video carries, in the card that owns that number. */
@@ -324,6 +329,8 @@ export default function FeedTwin({
   }, [])
   const [commentText, setCommentText] = useState('')
   const [commentSent, setCommentSent] = useState<string | null>(null)
+  /** Comments YOU have left, per post — see rollKey where the roll is built. */
+  const [myComments, setMyComments] = useState<Record<string, Array<{ who: string; body: string; pic: string; mine: true }>>>({})
   const [captionsOn, setCaptionsOn] = useState(() => {
     try { return window.localStorage.getItem('poplur.captions') === '1' } catch { return false }
   })
@@ -364,12 +371,15 @@ export default function FeedTwin({
   // app appeared in different places and obeyed different lifetime rules.
   useEffect(() => {
     clearPopups('suggestion')
-    if (suppressed || playerMode) return
+    // Not while you are writing. An ad landing on top of the comment box is
+    // interrupting the one thing on this screen that takes real attention —
+    // and it covers the box you are typing into.
+    if (suppressed || playerMode || commentOpen) return
     const show = window.setTimeout(() => {
       showPopup({ kind: 'suggestion', card: feedSuggestionFor(CHANNELS[index]) })
     }, 3_500)
     return () => { window.clearTimeout(show); clearPopups('suggestion') }
-  }, [index, suppressed, playerMode])
+  }, [index, suppressed, playerMode, commentOpen])
 
   // Feed intentionally has no engagement chips/heart/share overlays. Keep
   // suggestions and comments available; silence only the shared engagement
@@ -950,10 +960,33 @@ export default function FeedTwin({
     }, 360)
   }
 
+  // Hand the cube a back handler while the comment box is up, and take it away
+  // when it is not — so on the feed proper the cube still runs your pinned
+  // favourite rather than swallowing the press.
+  useEffect(() => {
+    if (!bindGoBack) return
+    bindGoBack(() => {
+      if (!commentOpen || commentClosing) return false
+      closeComments()
+      return true
+    })
+    return () => bindGoBack(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bindGoBack, commentOpen, commentClosing])
+
   const sendComment = () => {
     const body = commentText.trim()
     if (!body) return
     playPop()
+    // Into the roll for THIS post, at the top, before anything else happens —
+    // a comment you cannot see afterwards reads as one that did not send.
+    const key = `${ch.id}:${post?.user ?? ''}`
+    let mine: string | null = null
+    try { mine = window.localStorage.getItem('poplur.profile.photo') } catch { /* partitioned */ }
+    setMyComments(all => ({
+      ...all,
+      [key]: [{ who: '@you', body, pic: mine ?? 'mark_talk0.png', mine: true }, ...(all[key] ?? [])],
+    }))
     setCommentText('')
     closeComments()
     setCommentSent(body)
@@ -1003,7 +1036,11 @@ export default function FeedTwin({
 
   const [c0, c1, c2] = ch.theme
 
-  const liveRoll = COMMENT_ROLL
+  // Your comment belongs in the comments, on the post you left it on. Keyed by
+  // the post rather than held in one list, or a comment written on the ramen
+  // clip would show up under the football one.
+  const rollKey = `${ch.id}:${post?.user ?? ''}`
+  const liveRoll = [...(myComments[rollKey] ?? []), ...COMMENT_ROLL]
 
   return (
     <div
@@ -1248,7 +1285,11 @@ export default function FeedTwin({
                   <div key={copy} aria-hidden={copy === 1}>
                     {liveRoll.map((c, i) => (
                       <p
-                        className={'lit' in c && c.lit ? `${styles.commentLine} ${styles.commentLineLit}` : styles.commentLine}
+                        className={[
+                          styles.commentLine,
+                          'lit' in c && c.lit ? styles.commentLineLit : '',
+                          'mine' in c && c.mine ? styles.commentLineMine : '',
+                        ].filter(Boolean).join(' ')}
                         key={`${copy}-${c.who}-${i}`}
                       >
                         <img className={styles.commentAvatar} src={c.pic} alt="" draggable="false" />
