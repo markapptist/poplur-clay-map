@@ -3683,7 +3683,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         <div className={styles.zoomRail} ref={zoomRailRef}>
           <div
             key={`thumb-${zoomStage.id}-${popTick}`}
-            className={zoomStage.id === 'globe' ? `${styles.zoomThumb} ${styles.zoomThumbSpin}` : styles.zoomThumb}
+            className={styles.zoomThumb}
             style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
           />
         </div>

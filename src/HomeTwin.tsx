@@ -22,7 +22,6 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
 import { initialMapMode, type PoplurMapMode } from './mapMode'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
-import { playStaticNoise } from './staticNoise'
 import {
   readMapTourTopics,
   writeMapTourTopics,
@@ -504,19 +503,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const settle = window.setTimeout(() => setCommittedTab(activeTab), MAP_SETTLE_MS)
     return () => window.clearTimeout(settle)
   }, [activeTab, cubeSpinning, committedTab])
-  const previousCommittedTab = useRef<CubeTab>(initialTab)
-  const [staticTransition, setStaticTransition] = useState(0)
-  useEffect(() => {
-    const previous = previousCommittedTab.current
-    previousCommittedTab.current = committedTab
-    if (previous === committedTab || committedTab === 'feed') return
-
-    setStaticTransition(value => value + 1)
-    playStaticNoise()
-    navigator.vibrate?.([9, 5, 12])
-    const timer = window.setTimeout(() => setStaticTransition(0), 620)
-    return () => window.clearTimeout(timer)
-  }, [committedTab])
   // undefined = the designed cube. Set while a screen takes the navigator over.
   const [cubeModel, setCubeModel] = useState<string | undefined>(undefined)
   // The post composer is a full-screen modal, but it lives inside .contentLayer
@@ -1340,18 +1326,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       data-poplur-watchdog={chromeFaded ? 'off' : 'on'}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
-      {staticTransition > 0 && (
-        <div className={styles.tabStatic} aria-hidden="true">
-          <video
-            key={staticTransition}
-            className={styles.tabStaticVideo}
-            src="tv_static_clean.mp4"
-            autoPlay
-            muted
-            playsInline
-          />
-        </div>
-      )}
       {/* The map iframe mounts only while the Map tab is front. CSS cannot make
           an idle map cheap (a hidden iframe still holds its GL context, tile
           workers and full-res canvas), so leaving the map unmounts it entirely
