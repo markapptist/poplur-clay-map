@@ -11,6 +11,7 @@ import GamesScreen from './GamesScreen'
 import MapShowMe from './MapShowMe'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
+import SettingsScreen from './SettingsScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 
@@ -116,7 +117,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // opening a captured screen. `screen` stays for inspection/fallback only.
     { icon: 'Notifications', title: 'NOTIFICATIONS', screen: 'profile-alerts', format: 'svg', event: 'notifications' },
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
-    { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings' },
+    // A real screen now, not a Rough Copy capture: Settings holds REFER A
+    // FRIEND, which gives away a day of worldwide radius and therefore has to
+    // actually work.
+    { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings', native: true },
     // HEY POPLUR wakes the assistant directly — no wake phrase needed.
     { icon: 'HeyPoplur', title: 'HEY POPLUR', screen: 'profile-voice', event: 'voice' },
   ],
@@ -645,6 +649,13 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Studio">
           <StudioScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-settings') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Settings">
+          <SettingsScreen onClose={() => { playPop(); onClose() }} />
         </div>
       )
     }

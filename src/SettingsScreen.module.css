@@ -1,0 +1,189 @@
+/* Settings — same dark clay subscreen ground as SHOW ME and the other native
+   hold-menu screens, so this reads as one of them rather than a new place. */
+
+.screen {
+  width: 100%;
+  min-height: 100%;
+  padding: max(24px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  color: #fff4fa;
+  background:
+    radial-gradient(circle at 22% 8%, rgba(246, 59, 154, 0.32), transparent 31%),
+    radial-gradient(circle at 86% 86%, rgba(104, 57, 191, 0.34), transparent 35%),
+    linear-gradient(165deg, #2b1124 0%, #100813 58%, #09060c 100%);
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+
+.header {
+  max-width: 420px;
+  margin: 0 auto 18px;
+  text-align: center;
+}
+
+.header h2 {
+  margin: 2px 0 6px;
+  color: #ff80bf;
+  font-size: clamp(30px, 8vw, 42px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  text-shadow: 0 3px 0 #751c4a, 0 8px 18px rgba(0, 0, 0, 0.58);
+}
+
+.eyebrow {
+  margin: 0;
+  color: #7fe3ff;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.22em;
+}
+
+.body {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+/* ── Refer a friend ─────────────────────────────────────────────────────────
+   The one card here that gives something away, so it is allowed to look like
+   a prize: pink clay rim, dark dough fill, the house recipe. */
+.refer {
+  padding: 16px 16px 14px;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 20% 12%, rgba(255, 255, 255, 0.12), transparent 58%),
+    linear-gradient(180deg, #3a2027 0%, #2a151c 58%, #1a0b11 100%);
+  box-shadow:
+    0 0 0 1px rgba(244, 69, 156, 0.5),
+    0 10px 26px rgba(30, 0, 16, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Live: the rim goes cyan, because the planet is currently yours. */
+.referOn {
+  box-shadow:
+    0 0 0 1px rgba(127, 227, 255, 0.75),
+    0 10px 30px rgba(0, 40, 60, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.referTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.referKicker {
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.18em;
+  color: #ff80bf;
+}
+
+.referPrize {
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  color: #7fe3ff;
+}
+
+.referLine {
+  margin: 8px 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: rgba(255, 238, 247, 0.78);
+}
+
+.code {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.codeLabel {
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+  color: rgba(255, 238, 247, 0.5);
+}
+
+.codeValue {
+  flex: 1;
+  font: 950 22px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 0.16em;
+  color: #fff4fa;
+}
+
+.codeHint {
+  font-size: 10px;
+  font-weight: 800;
+  color: rgba(255, 238, 247, 0.45);
+}
+
+.invite {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff5fae, #f4459c 46%, #b81566);
+  box-shadow: 0 6px 16px rgba(244, 69, 156, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.invite:active { transform: scale(0.97); }
+
+/* How much of the day is left, as a bar that empties. */
+.meter {
+  margin-top: 12px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7fe3ff, #ff80bf);
+  transition: width 0.4s ease;
+}
+
+.note {
+  margin: 12px 2px 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: #7fe3ff;
+}
+
+.done {
+  display: block;
+  width: 100%;
+  margin: 18px 0 6px;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  color: #fff4fa;
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+}
