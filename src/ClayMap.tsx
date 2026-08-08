@@ -2305,6 +2305,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       let carPaths: number[][][] = []
       let lastCarHarvest: mapboxgl.LngLat | null = null
       let lastCarUpdateAt = 0
+      // Whether the car source currently holds features, so the "no traffic"
+      // branch can clear it once instead of re-clearing an empty source on
+      // every ambient frame.
+      let carFeaturesLive = false
       const setCarFeatures = (features: Array<{
         type: 'Feature'
         geometry: { type: 'Point'; coordinates: [number, number] }
@@ -2549,14 +2553,26 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           }
           // The 2D fallback still has moving traffic, just at a budget-phone
           // cadence and cap instead of rebuilding GeoJSON at display refresh.
-          if (carPaths.length && map.hasImage('poplur-car')) {
-            if (frameNow - lastCarUpdateAt >= (MAP_2D ? 100 : 50)) {
+          // Traffic is ambient decoration, and it was the most expensive
+          // decoration in the app. Every rebuild calls setData on a GeoJSON
+          // source, and Mapbox answers a source change by re-rendering the
+          // WHOLE 3D scene — so 36 cars at 20Hz pinned the map at 60fps
+          // forever, camera still or not (measured: 60 render passes/sec with
+          // a motionless camera, ~42 source-data events/sec). Sustained draw
+          // is what heats a phone.
+          //
+          // So: fewer cars, a slower clock, and traffic is the first thing to
+          // go when the thermal ladder steps down — the same rule the rest of
+          // the ambient layer already follows.
+          if (carPaths.length && map.hasImage('poplur-car') && ambientAllowed()) {
+            if (frameNow - lastCarUpdateAt >= (MAP_2D ? 200 : 125)) {
             lastCarUpdateAt = frameNow
-            // Traffic: several cars per harvested road, staggered along it with
-            // per-car speed jitter so they bunch, pass and overlap like real
-            // flow. Fast, and capped so dense downtowns don't overwhelm.
-            const carsPerRoad = MAP_2D ? 2 : 3
-            const maxCars = MAP_2D ? 18 : 36
+            // Traffic: a couple of cars per harvested road, staggered along it
+            // with per-car speed jitter so they bunch, pass and overlap like
+            // real flow. Capped hard — at street level only a handful are ever
+            // on screen, and the rest were paying full price to be invisible.
+            const carsPerRoad = MAP_2D ? 1 : 2
+            const maxCars = MAP_2D ? 8 : 12
             const container = map.getContainer()
             const ccx = container.clientWidth / 2
             const ccy = container.clientHeight / 2
@@ -2579,13 +2595,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
               }
             }
             setCarFeatures(features)
+            carFeaturesLive = true
             // Engines swell only at street level; proximity 1 when a car is ~in
             // the centre, fading out past ~40% of the screen height away.
             const reach = container.clientHeight * 0.42
             const near = Math.max(0, 1 - nearest / reach)
             setCarProximity(zoom >= 14.5 ? near : 0)
             }
-          } else {
+          } else if (carFeaturesLive) {
+            // Clear ONCE when traffic stops (out of zoom, or the ladder pulled
+            // it). This used to setData([]) on every ambient frame, which is
+            // the same full-scene re-render the cars themselves cost — the map
+            // paid for traffic it had already decided not to draw.
+            carFeaturesLive = false
             setCarFeatures([])
             setCarProximity(0)
           }
