@@ -441,6 +441,63 @@
 
 /* ── Clay zoom slider ─────────────────────────────────── */
 
+/* The takeover colour circle, riding under the zoom slider's rail. Same
+   right-edge anchor as the rail (8px bezel + half the thumb overhang) so the
+   circle sits centred beneath the track, not beneath the invisible catchment.
+   Clay language: hard rim, inner sheen, drop shadow — a button-sized disc of
+   whatever colour your takeover currently wears (painted via --takeoverFace).
+   The key remount on colour change replays the one-shot pop-in. */
+.colorCircle {
+  position: absolute;
+  /* Centres the disc on the rail's centre line: bezel + half the thumb's
+     overhang, less half its own overhang. Keep the 28px in step with the
+     width below or the wheel drifts off the slider. */
+  right: calc(8px + (72px - 16px) / 2 - (28px - 16px) / 2);
+  top: calc(50% + min(29vh, 220px) + 16px);
+  z-index: 26;
+  /* 40px read as a third control stacked under the slider. This is a colour
+     PICKER, not a button — smaller states that, and the wheel below is legible
+     at 28 because hue is carried by the ring, not by detail inside it. */
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  /* An RGB wheel in clay: the full hue circle as a conic ring, the CURRENT
+     takeover colour filling the hub, and the same sheen/rim/shadow every other
+     clay control wears. Layer order is top-down — sheen, hub, ring — so the
+     hub reads as pressed into the wheel rather than floating over it. The
+     conic starts at 90deg so red sits at the top, the orientation a colour
+     wheel is normally drawn in. */
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 44%),
+    radial-gradient(circle at 50% 50%,
+      var(--takeoverFace, #F63B9A) 0 33%,
+      rgba(5, 2, 9, 0.55) 33% 38%,
+      transparent 38.5%),
+    conic-gradient(from 90deg,
+      #ff2d55, #ff7a00, #ffcc00, #46d33a, #00c7be,
+      #1f9dff, #4b4bff, #a24bff, #ff3ba7, #ff2d55);
+  box-shadow:
+    inset 0 2px 2px rgba(255, 255, 255, 0.5),
+    inset 0 -3px 5px rgba(0, 0, 0, 0.38),
+    0 0 0 3px rgba(5, 2, 9, 0.85),
+    0 4px 0 rgba(5, 2, 9, 0.55),
+    0 8px 14px rgba(0, 0, 0, 0.45);
+  animation: colorCirclePop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.colorCircle:active {
+  transform: scale(0.9);
+}
+
+@keyframes colorCirclePop {
+  from { transform: scale(0.6); }
+  to   { transform: scale(1); }
+}
+
 .zoomWrap {
   --zoom-track-size: 16px;
   --zoom-thumb-size: 72px;
@@ -486,9 +543,17 @@
   border-radius: 9px;
   /* 0deg fills from the BOTTOM up, matching the knob: bottom = globe, top =
      street. (The old rail was drawn horizontally and rotated into place.) */
+  /* The filled part of the rail wears the TAKEOVER colour, so spinning the
+     wheel under the slider recolours the slider too — the control and the
+     world it paints stay the same material. The three stripe stops are the
+     original pinks transposed by the same hue delta every claim surface uses
+     (takeoverTint), so delta 0 is byte-identical to the reviewed look. */
   background-image:
     linear-gradient(0deg, transparent 0 var(--zoomProgress, 0%), #17131a var(--zoomProgress, 0%) 100%),
-    repeating-linear-gradient(45deg, #ffe1f1 0 15px, #ff86c4 15px 29px, #f53c99 29px 44px);
+    repeating-linear-gradient(45deg,
+      var(--zoomFillA, #ffe1f1) 0 15px,
+      var(--zoomFillB, #ff86c4) 15px 29px,
+      var(--zoomFillC, #f53c99) 29px 44px);
   background-size: 100% 100%, 62px 62px;
   background-repeat: no-repeat, repeat;
   box-shadow:
@@ -740,6 +805,42 @@
   accent-color: #F63B9A;
   margin: 2px 0 10px;
 }
+
+/* The words on the pop. Sits between the radius and the actions because that
+   is the order of the decision: where it reaches, what it says, send it. */
+.composeMessage {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 12px;
+  resize: none;
+  color: #FFF2F8;
+  background: rgba(10, 8, 14, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(246, 59, 154, 0.42);
+  font: 600 12px/1.35 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+
+.composeMessage::placeholder { color: rgba(255, 217, 236, 0.5); font-weight: 700; }
+
+.composeMessage:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px #F63B9A, 0 0 12px rgba(246, 59, 154, 0.35);
+}
+
+.composeMessageHint {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: -4px 0 8px;
+  color: #FF9CCE;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.composeCount { color: rgba(255, 217, 236, 0.6); font-variant-numeric: tabular-nums; }
 
 .composeActions {
   display: flex;
