@@ -25,6 +25,8 @@ import {
   writeMapTourTopics,
   type MapTourTopic,
 } from './mapTourPreferences'
+import { noteNewsMessage } from './newsMessages'
+import { POIS } from './data'
 
 const KM_TO_MI = 0.621371
 
@@ -602,9 +604,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // a touch) already fades this HUD; the swap pauses with it and the first
     // touch brings both back.
     if (chromeIdle) return
+    // On the MAP the card does not rotate. Travelling the map is a sequence of
+    // arrivals at other people's posts, and the number that means anything at
+    // each one is THAT POST'S RADIUS — the ground it holds. Swapping to a
+    // global online count every 7.6s meant you landed on a pop and were shown
+    // a number about everybody instead of a number about where you just
+    // arrived, and half of every visit read as the wrong statistic.
+    if (activeTab === 'map') { setShowOnlineAudience(false); return }
     const interval = window.setInterval(() => setShowOnlineAudience(showingOnline => !showingOnline), 7600)
     return () => window.clearInterval(interval)
-  }, [chromeIdle])
+  }, [chromeIdle, activeTab])
 
   useEffect(() => {
     const onMapMessage = (event: MessageEvent) => {
@@ -626,6 +635,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         // only thing that knows which pop you landed on, so it reports the
         // number with the index.
         if (typeof event.data.radiusKm === 'number') setMapPopRadiusKm(event.data.radiusKm)
+        // "N pops in this area", drawn under the place title. The map counts
+        // (it owns the pop list); the shell renders and routes the tap to the
+        // profile with the ids to light up.
+        setMapAreaPops(
+          typeof event.data.nearby === 'number' && event.data.nearby > 0
+            ? {
+                count: event.data.nearby,
+                ids: Array.isArray(event.data.nearbyIds)
+                  ? (event.data.nearbyIds as unknown[]).filter((x): x is string => typeof x === 'string')
+                  : [],
+              }
+            : null,
+        )
       }
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
@@ -655,6 +677,53 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapReady(true)
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
         postNativeEvent({ type: 'homeReady' })
+      }
+      // A WRITTEN pop needs no camera — it is already content. The map has
+      // claimed the ground and stored the message; this is the shell's copy,
+      // because The Poplur Times renders in THIS document (NewsPaper, under
+      // the hold menu) and its module state is not the iframe's. Idempotent by
+      // id: the same drop also arrives through the `storage` event.
+      if (event.data.type === 'poplur-post-message') {
+        noteNewsMessage(event.data.message)
+      }
+      // A tapped engagement notice: take the user to the FEED, on the post the
+      // engagement landed on, with the engagement itself lit up. The notice
+      // lives in the map iframe (its popup layer), the feed lives here — so
+      // the tap travels as a message and the shell does the navigation.
+      if (event.data.type === 'poplur-open-engagement') {
+        const rawCoords = event.data.coords
+        const coords = Array.isArray(rawCoords) && rawCoords.length === 2
+          && typeof rawCoords[0] === 'number' && typeof rawCoords[1] === 'number'
+          ? [rawCoords[0], rawCoords[1]] as [number, number]
+          : null
+        const place = typeof event.data.place === 'string' ? event.data.place : undefined
+        // Which of YOUR pops is this about? Same resolution the map uses:
+        // exact name first, else the nearest pop within 400m of the post.
+        let poi = place ? POIS.find(p => p.name === place) : undefined
+        if (!poi && coords) {
+          let bestM = Infinity
+          for (const p of POIS) {
+            const dLat = (coords[1] - p.coords[1]) * 110_574
+            const dLng = (coords[0] - p.coords[0]) * 111_320 * Math.cos((p.coords[1] * Math.PI) / 180)
+            const d = Math.hypot(dLat, dLng)
+            if (d < bestM) { bestM = d; poi = p }
+          }
+          if (bestM > 400) poi = undefined
+        }
+        // Tune the feed to the channel the pop posted to BEFORE the tab
+        // switch, so the feed opens already on the post.
+        if (poi) {
+          const chIdx = CHANNELS.findIndex(c => c.id === poi.channel)
+          if (chIdx >= 0) setChanIndex(chIdx)
+        }
+        engagementSeqRef.current += 1
+        setFeedEngagement({
+          user: typeof event.data.user === 'string' ? event.data.user : 'Someone',
+          kind: event.data.kind === 'view' || event.data.kind === 'comment' ? event.data.kind : 'like',
+          place: poi?.name,
+          seq: engagementSeqRef.current,
+        })
+        setActiveTab('feed')
       }
       if (event.data.type === 'poplur-post-here') {
         setPostTarget({
@@ -759,6 +828,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
   const [mapPlace, setMapPlace] = useState<string | null>(null)
+  // "N pops in this area" under the title — the map counts on every pop
+  // arrival (it owns the pop list); a tap opens the profile with these pops
+  // lit up.
+  const [mapAreaPops, setMapAreaPops] = useState<{ count: number; ids: string[] } | null>(null)
+  // One-shot signals down into the tabs: which profile tiles to light up, and
+  // which engagement the feed should open on. seq re-fires an identical target.
+  const [profilePopFlash, setProfilePopFlash] = useState<{ ids: string[]; seq: number } | null>(null)
+  const [feedEngagement, setFeedEngagement] = useState<{
+    user: string; kind: 'like' | 'view' | 'comment'; place?: string; seq: number
+  } | null>(null)
+  const engagementSeqRef = useRef(0)
 
   // Feed monetisation stayed native when the feed went web: the AdMob
   // interstitial only ever fired from the retired native FeedView, so the ads
@@ -1165,6 +1245,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onPostReach={onFeedPostReach}
             bindActions={fn => { feedActionsRef.current = fn }}
             suppressed={overlayOpen || holdOpen || activePermission !== null}
+            engagementTarget={feedEngagement}
             onPlayerModeChange={setFeedFullscreen}
             onOpenProfile={user => {
               setProfileOrigin(activeTab)
@@ -1205,6 +1286,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             bindArrows={fn => { profileArrowsRef.current = fn }}
             bindGoBack={fn => { profileBackRef.current = fn }}
             viewUser={viewingUser}
+            highlightPops={profilePopFlash}
             onBackToOwn={() => {
               setActiveTab(profileOrigin ?? 'feed')
               setViewingUser(null)
@@ -1352,6 +1434,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           aria-live="polite"
         >
           <span key={mapPlace} className={styles.mapTitleText}>{mapPlace}</span>
+          {/* Your pops standing in this area — same outlined-blue voice as the
+              place line, one size down. A tap opens the profile with exactly
+              these pops lit up. */}
+          {mapAreaPops && (
+            <button
+              type="button"
+              key={`area-${mapAreaPops.count}-${mapAreaPops.ids[0] ?? ''}`}
+              className={styles.mapAreaPops}
+              onClick={() => {
+                playPop()
+                setProfilePopFlash(prev => ({ ids: mapAreaPops.ids, seq: (prev?.seq ?? 0) + 1 }))
+                setViewingUser(null)
+                setActiveTab('profile')
+              }}
+            >
+              {mapAreaPops.count === 1 ? '1 pop in this area' : `${mapAreaPops.count} pops in this area`}
+            </button>
+          )}
         </div>
       )}
 
