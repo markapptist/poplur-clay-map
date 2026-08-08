@@ -6,7 +6,8 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled } from './mapClaims'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette } from './mapClaims'
+import { takeoverTint, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
 import {
   fetchRoute,
   installRouteLayers,
@@ -22,6 +23,7 @@ import { setCarProximity, stopCarAudio } from './carAudio'
 import type { WeatherMode } from './WeatherFX'
 import styles from './ClayMap.module.css'
 import { initialMapMode } from './mapMode'
+import { dropNewsMessage, MESSAGE_MAX } from './newsMessages'
 
 export interface ClayMapProps {
   token: string
@@ -215,14 +217,61 @@ function flatBuildingColor() {
 }
 
 function claimedFlatBuildingColor() {
+  // Every shade reads through takeoverTint: the colour circle transposes the
+  // whole family at once, and delta 0 returns these exact literals.
   return ['case',
-    ['==', ['%', ['to-number', ['id']], 6], 0], '#d82f87',
-    ['==', ['%', ['to-number', ['id']], 6], 1], '#ff8ac6',
-    ['==', ['%', ['to-number', ['id']], 6], 2], '#e84699',
-    ['==', ['%', ['to-number', ['id']], 6], 3], '#ffc0df',
-    ['==', ['%', ['to-number', ['id']], 6], 4], '#ed61aa',
-    '#f0559e',
+    ['==', ['%', ['to-number', ['id']], 6], 0], takeoverTint('#d82f87'),
+    ['==', ['%', ['to-number', ['id']], 6], 1], takeoverTint('#ff8ac6'),
+    ['==', ['%', ['to-number', ['id']], 6], 2], takeoverTint('#e84699'),
+    ['==', ['%', ['to-number', ['id']], 6], 3], takeoverTint('#ffc0df'),
+    ['==', ['%', ['to-number', ['id']], 6], 4], takeoverTint('#ed61aa'),
+    takeoverTint('#f0559e'),
   ]
+}
+
+/**
+ * "Is this building inside a claim?", as a paint expression.
+ *
+ * Was `['feature-state', 'claimed']`, which meant every claimed building
+ * carried an entry in the source's feature-state map and Mapbox re-read that
+ * map — `getState`, a stringified-id lookup into an object with thousands of
+ * keys — for every rendered building. On the 7 Aug device trace that read path
+ * was the top remaining cost after the recolor storm was fixed (megamorphic
+ * string-keyed property access, `StringImpl::hashSlowCase` and number→string
+ * conversion all in the top ten symbols), and 16% of JS self time headless.
+ *
+ * Geometry answers the same question with no per-feature state at all: the
+ * claim discs are already carried as `within` polygons for the five road and
+ * grass layers, and the compose preview already proves `within` works on this
+ * very fill-extrusion layer. Evaluated when a bucket is built or the paint
+ * property changes — NOT per rendered frame off a mutable side table.
+ *
+ * No claims yet ⇒ a literal false, because `within` over an empty collection
+ * is undefined behaviour rather than a cheap no.
+ */
+function claimedWithin(): unknown {
+  const fc = claimsWithinCollection()
+  return fc.features.length ? ['within', fc] : false
+}
+
+// The 3D building + cap palettes, shared by applyTheme and the colour-circle
+// repaint so the two can never disagree about what a claimed tower wears.
+function building3DColor() {
+  return ['case',
+    claimedWithin(), ['case',
+      ['==', ['%', ['to-number', ['id']], 9], 0], takeoverTint('#e8368f'),
+      ['==', ['%', ['to-number', ['id']], 9], 4], takeoverTint('#f983c1'),
+      takeoverTint('#ee3d98'),
+    ],
+    ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
+    ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
+    '#dbd3c7',
+  ]
+}
+
+function buildingCaps3DColor() {
+  return ['case',
+    claimedWithin(), takeoverTint('#ff9ccd'), '#efe9df']
 }
 
 function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
@@ -245,31 +294,21 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
     claimFeatures.features.length
       ? ['case', ['within', claimFeatures], claimed, normal]
       : normal
-  set('clay-grass-fill', 'fill-color', claimedPaint(theme.park, '#D85D96'))
+  set('clay-grass-fill', 'fill-color', claimedPaint(theme.park, takeoverTint('#D85D96')))
   // Claimed territory keeps its takeover colours through every theme/day
   // re-apply: streets fully inside a claim mold in Poplur plum, and claimed
   // buildings re-mold pink — the theme only styles the UNCLAIMED branch.
-  set('clay-minor-roads', 'line-color', claimedPaint(theme.road, '#9c2a6e'))
-  set('clay-real-road-body', 'line-color', claimedPaint(theme.road, '#8a2260'))
-  set('clay-real-road-rim', 'line-color', claimedPaint(theme.roadRim, '#ff9ccd'))
+  set('clay-minor-roads', 'line-color', claimedPaint(theme.road, takeoverTint('#9c2a6e')))
+  set('clay-real-road-body', 'line-color', claimedPaint(theme.road, takeoverTint('#8a2260')))
+  set('clay-real-road-rim', 'line-color', claimedPaint(theme.roadRim, takeoverTint('#ff9ccd')))
   set('clay-real-road-stitches', 'line-color', theme.accentHot)
   set('clay-trail-stitches', 'line-color', theme.accent)
   set('clay-buildings-2d', 'fill-color',
     claimedPaint(flatBuildingColor(), claimedFlatBuildingColor()))
   // Buildings stay true-to-life neutral cream in every skin — only the map
   // surfaces re-colour with the theme. Claimed footprints go Poplur pink.
-  set('clay-buildings-3d', 'fill-extrusion-color', ['case',
-    ['boolean', ['feature-state', 'claimed'], false], ['case',
-      ['==', ['%', ['to-number', ['id']], 9], 0], '#e8368f',
-      ['==', ['%', ['to-number', ['id']], 9], 4], '#f983c1',
-      '#ee3d98',
-    ],
-    ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
-    ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
-    '#dbd3c7',
-  ])
-  set('clay-building-caps', 'fill-extrusion-color', ['case',
-    ['boolean', ['feature-state', 'claimed'], false], '#ff9ccd', '#efe9df'])
+  set('clay-buildings-3d', 'fill-extrusion-color', building3DColor())
+  set('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor())
 }
 
 function applyComposeSurfacePreview(
@@ -300,18 +339,18 @@ function applyComposeSurfacePreview(
   }
 
   set('clay-grass-fill', 'fill-color',
-    takeover(theme.park, '#D85D96', '#ED78AF'))
+    takeover(theme.park, takeoverTint('#D85D96'), takeoverTint('#ED78AF')))
   set('clay-minor-roads', 'line-color',
-    takeover(theme.road, '#9c2a6e', '#B52572'))
+    takeover(theme.road, takeoverTint('#9c2a6e'), takeoverTint('#B52572')))
   set('clay-real-road-body', 'line-color',
-    takeover(theme.road, '#8a2260', '#A91D67'))
+    takeover(theme.road, takeoverTint('#8a2260'), takeoverTint('#A91D67')))
   set('clay-real-road-rim', 'line-color',
-    takeover(theme.roadRim, '#ff9ccd', '#FFD2E8'))
+    takeover(theme.roadRim, takeoverTint('#ff9ccd'), takeoverTint('#FFD2E8')))
   set('clay-buildings-2d', 'fill-color',
     takeover(flatBuildingColor(), claimedFlatBuildingColor(), claimedFlatBuildingColor()))
 
   const regularBuilding = ['case',
-    ['boolean', ['feature-state', 'claimed'], false], claimedFlatBuildingColor(),
+    claimedWithin(), claimedFlatBuildingColor(),
     ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
     ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
     '#dbd3c7',
@@ -319,8 +358,8 @@ function applyComposeSurfacePreview(
   set('clay-buildings-3d', 'fill-extrusion-color',
     ['case', withinPreview, claimedFlatBuildingColor(), regularBuilding])
   set('clay-building-caps', 'fill-extrusion-color',
-    ['case', withinPreview, '#FFD0E6',
-      ['boolean', ['feature-state', 'claimed'], false], '#ff9ccd', '#efe9df'])
+    ['case', withinPreview, takeoverTint('#FFD0E6'),
+      claimedWithin(), takeoverTint('#ff9ccd'), '#efe9df'])
 }
 
 // Clay-style world monuments drawn as inline SVGs, pink/black like the theme.
@@ -816,6 +855,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // Clay object riding above the zoom slider, and its pop on every notch.
   const [zoomSprites, setZoomSprites] = useState<Record<string, string>>({})
   const [popTick, setPopTick] = useState(0)
+  // The takeover colour the circle wears. Module state owns the colour; this
+  // mirror only exists so React repaints the face when it changes.
+  const [takeoverFace, setTakeoverFace] = useState(() => takeoverBaseColor())
+  useEffect(() => onTakeoverColor(() => setTakeoverFace(takeoverBaseColor())), [])
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
   // Fill percentage aligned to the CENTER of the native thumb: a range thumb
@@ -847,6 +890,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
+  // The words on the pop. Typed here, they make it a WRITTEN pop: it claims the
+  // same ground and runs in The Poplur Times instead of the camera roll.
+  const [composeMessage, setComposeMessage] = useState('')
   // Drop a pop by tapping the map. This used to require ?compose=1 — a
   // prototype flag from when posting lived only in the camera flow — which is
   // why tapping the map did nothing. ?compose=0 opts back out.
@@ -1892,7 +1938,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             'fill-extrusion-color': ['case',
               // Claimed territory: the buildings themselves re-mold in the
               // Poplur pink family (same 8-way batch variation).
-              ['boolean', ['feature-state', 'claimed'], false], ['case',
+              claimedWithin(), ['case',
                 ['==', ['%', ['to-number', ['id']], 8], 0], '#e8368f',
                 ['==', ['%', ['to-number', ['id']], 8], 1], '#f983c1',
                 ['==', ['%', ['to-number', ['id']], 8], 2], '#ef4fa2',
@@ -1943,7 +1989,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         } as never,
         paint: {
           'fill-extrusion-color': ['case',
-            ['boolean', ['feature-state', 'claimed'], false], '#ff9ccd',
+            claimedWithin(), '#ff9ccd',
             '#d8c19a'] as never,
           'fill-extrusion-base': poppedHeight,
           'fill-extrusion-height': ['+', poppedHeight, 4],
@@ -2301,99 +2347,35 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       installClaimsLayer(map)
 
       // ── Takeover colorization: features INSIDE a claim recolor ──────────────
-      // Streets: `within` paint expressions (line features fully inside a
-      // claim turn Poplur-pink asphalt). Buildings: a feature-state pass marks
-      // footprints whose anchor point falls in a claim circle; the extrusion
-      // palette then re-molds them in the pink family.
-      const claimBuildingSource = import.meta.env.DEV ? 'clay-streets' : 'overture-buildings'
-      // Feature-state is written ONCE per building and remembered here.
-      // Re-marking the same ids every pass kept the source's feature-state
-      // permanently dirty, so Mapbox re-read state across every building on
-      // every bucket refresh — measured at 55% of all JS self time (getState)
-      // with the ambient orbit running, and the single largest allocation
-      // source (setFeatureState/updateState, 27% of sampled bytes). Marked
-      // once, both stop.
-      const claimedBuildingIds = new Set<string | number>()
-      // `recheck: false` (tile arrival): only unknown ids are tested and
-      // marked — already-marked ids are skipped, so feature-state stays
-      // untouched and Mapbox has nothing to re-read. `recheck: true` (claims
-      // changed): every visible id is re-tested and only the DELTA is applied.
-      // Never wipe state wholesale — a wipe re-dirties every loaded tile and
-      // re-runs the whole mark pass, which is the allocation storm again.
-      const recolorClaimedBuildings = (recheck: boolean) => {
-        const circles = getClaims()
-        if (!circles.length && !claimedBuildingIds.size) return
-        let feats: mapboxgl.GeoJSONFeature[] = []
-        try {
-          feats = map.querySourceFeatures(claimBuildingSource, { sourceLayer: 'building' }) as mapboxgl.GeoJSONFeature[]
-        } catch { return }
-        for (const f of feats) {
-          if (f.id == null) continue
-          const known = claimedBuildingIds.has(f.id)
-          if (known && !recheck) continue
-          const g = f.geometry
-          let pt: [number, number] | null = null
-          if (g.type === 'Polygon') pt = g.coordinates[0][0] as [number, number]
-          else if (g.type === 'MultiPolygon') pt = g.coordinates[0][0][0] as [number, number]
-          if (!pt) continue
-          const anchor = pt
-          const claimed = circles.some(c => {
-            const dLat = (anchor[1] - c.center[1]) * 110.574
-            const dLng = (anchor[0] - c.center[0]) * 111.320 * Math.cos((c.center[1] * Math.PI) / 180)
-            return dLat * dLat + dLng * dLng <= c.radiusKm * c.radiusKm
-          })
-          try {
-            if (claimed && !known) {
-              claimedBuildingIds.add(f.id)
-              map.setFeatureState({ source: claimBuildingSource, sourceLayer: 'building', id: f.id }, { claimed: true })
-            } else if (!claimed && known) {
-              claimedBuildingIds.delete(f.id)
-              map.removeFeatureState({ source: claimBuildingSource, sourceLayer: 'building', id: f.id })
-            }
-          } catch { /* map torn down */ }
-        }
-      }
-      let recolorTimer = 0
-      let recolorRecheck = false
-      const scheduleRecolor = (delayMs = 700, recheck = false) => {
-        recolorRecheck = recolorRecheck || recheck
-        if (recolorTimer) return
-        recolorTimer = window.setTimeout(() => {
-          recolorTimer = 0
-          const doRecheck = recolorRecheck
-          recolorRecheck = false
-          recolorClaimedBuildings(doRecheck)
-        }, delayMs)
-      }
-      // No moveend trigger: claim membership is geo-fixed, so camera motion
-      // cannot change it — and the ambient orbit means the camera never stops
-      // moving, which made moveend + this debounce a metronome: the full
-      // querySourceFeatures scan (thousands of fresh feature objects) every
-      // 700ms, forever. That was the 0.7s stall beat on device and the GC
-      // storm behind the map's Serious thermal state. Only NEW building tiles
-      // can introduce unmarked features, so tile arrival is the one trigger
-      // that matters, on a lazy debounce — the once-per-id guard above keeps
-      // even those passes cheap.
-      map.on('sourcedata', e => {
-        const ev = e as { sourceId?: string; isSourceLoaded?: boolean }
-        if (ev.sourceId === claimBuildingSource && ev.isSourceLoaded) scheduleRecolor(4000)
-      })
-
-      // ONE layer per frame. Each setPaintProperty with a `within` forces a
-      // style recalculation over that layer's features; five in one call was a
-      // single long task in the idle window. Spread out, each stays under the
-      // long-task threshold and the takeover still lands within ~5 frames.
+      // Streets, grass AND buildings all answer "am I inside a claim?" the same
+      // way now: a `within` paint expression over the claim discs. Buildings
+      // used to be the odd one out — a querySourceFeatures scan marked each
+      // footprint with `feature-state: claimed`, which cost a full scan per
+      // pass AND left Mapbox re-reading the state map (`getState`) for every
+      // rendered building forever after. The scan was the 700ms GC storm; the
+      // reads were what remained after it (top device symbols: stringified-id
+      // lookups, StringImpl hashing, number→string conversion). Geometry needs
+      // neither: see claimedWithin().
       let claimPaintQueue = 0
       const applyClaimRoadPaint = () => {
         const fc = claimsWithinCollection()
         if (!fc.features.length) return
         const w = ['within', fc]
+        // ONE layer per frame. Each setPaintProperty with a `within` forces a
+        // style recalculation over that layer's features; five in one call was
+        // a single long task in the idle window. Spread out, each stays under
+        // the long-task threshold and the takeover still lands within ~7
+        // frames. The two extrusion layers ride the same queue rather than a
+        // separate pass, so a claim change can never cost more than one layer
+        // recalc per frame.
         const sets: Array<[string, string, unknown]> = [
-          ['clay-real-road-body', 'line-color', ['case', w, '#8a2260', PALETTE.road]],
-          ['clay-minor-roads', 'line-color', ['case', w, '#9c2a6e', PALETTE.road]],
-          ['clay-real-road-rim', 'line-color', ['case', w, '#ff9ccd', PALETTE.roadHighlight]],
-          ['clay-grass-fill', 'fill-color', ['case', w, '#D85D96', theme.park]],
+          ['clay-real-road-body', 'line-color', ['case', w, takeoverTint('#8a2260'), PALETTE.road]],
+          ['clay-minor-roads', 'line-color', ['case', w, takeoverTint('#9c2a6e'), PALETTE.road]],
+          ['clay-real-road-rim', 'line-color', ['case', w, takeoverTint('#ff9ccd'), PALETTE.roadHighlight]],
+          ['clay-grass-fill', 'fill-color', ['case', w, takeoverTint('#D85D96'), theme.park]],
           ['clay-buildings-2d', 'fill-color', ['case', w, claimedFlatBuildingColor(), flatBuildingColor()]],
+          ['clay-buildings-3d', 'fill-extrusion-color', building3DColor()],
+          ['clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor()],
         ]
         const generation = ++claimPaintQueue
         const step = (i: number) => {
@@ -2404,19 +2386,85 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         }
         step(0)
       }
-      // Claims changed (they grow with pops and decay over time): re-test the
-      // visible ids and apply the delta. Settles happen per claim event, not
-      // per frame. Ids marked in tiles that are currently unloaded keep their
-      // persisted state until the next settle pass that sees them — a bounded
-      // staleness that costs nothing, versus a wholesale wipe that re-dirties
-      // every loaded tile.
-      onClaimsSettled(() => { applyClaimRoadPaint(); scheduleRecolor(700, true) })
+      // Claims changed (they grow with pops and decay over time): rebuild the
+      // `within` expressions once. No tile-arrival trigger is needed any more —
+      // a newly loaded building tile evaluates the expression itself as its
+      // bucket builds, so late tiles come up already claimed.
+      onClaimsSettled(() => { applyClaimRoadPaint() })
       // Late safety passes: tiles and theme applies can land after the seeds
       // settle, so re-assert the takeover paint a few times after load.
       ;[4000, 9000, 16000].forEach(ms => window.setTimeout(() => {
         applyClaimRoadPaint()
-        scheduleRecolor()
       }, ms))
+
+      // ── The colour circle: takeover recolour ────────────────────────────────
+      // The circle under the zoom slider transposes the takeover family to a
+      // new hue. The world you hold answers in two beats: the claimed buildings
+      // POP — the house gesture, one house sound — and the new colour lands
+      // while the springs are still at full bulge, so the change reads as the
+      // RESULT of the pop rather than a palette swap that happened nearby.
+      let recolorBeat = 0
+      const unsubscribeTakeover = onTakeoverColor(() => {
+        // Beat 1 — pop the claimed buildings on screen. Bounded to the first
+        // 24 rendered: a metropolis-sized claim must not arm hundreds of
+        // springs. Gesture-driven and one-shot — no idle cost.
+        if (map.getLayer('clay-buildings-3d')) {
+          try {
+            const feats = map.queryRenderedFeatures(undefined as never, { layers: ['clay-buildings-3d'] })
+            // Which of the rendered buildings are claimed is now a geometry
+            // question, asked only here (a click, ≤24 answers) rather than
+            // carried in a per-feature state map the renderer re-reads.
+            const circles = getClaims()
+            const insideClaim = (f: mapboxgl.GeoJSONFeature) => {
+              const g = f.geometry
+              const pt = g.type === 'Polygon'
+                ? g.coordinates[0][0] as [number, number]
+                : g.type === 'MultiPolygon'
+                  ? g.coordinates[0][0][0] as [number, number]
+                  : null
+              if (!pt) return false
+              return circles.some(c => {
+                const dLat = (pt[1] - c.center[1]) * 110.574
+                const dLng = (pt[0] - c.center[0]) * 111.320 * Math.cos((c.center[1] * Math.PI) / 180)
+                return dLat * dLat + dLng * dLng <= c.radiusKm * c.radiusKm
+              })
+            }
+            let popped = 0
+            for (const f of feats) {
+              if (f.id == null || !insideClaim(f)) continue
+              popBuilding(f.id)
+              popped += 1
+              if (popped >= 24) break
+            }
+          } catch { /* map torn down */ }
+        }
+        playPop()
+        // Beat 2 — repaint at ~40% of the spring (full bulge). The claim discs
+        // and globe dots are cheap layers and go in one call; the `within`-
+        // bearing road/grass/2d passes stay on the existing one-layer-per-frame
+        // spread; the two extrusion palettes get a frame each after that.
+        const beat = ++recolorBeat
+        window.setTimeout(() => {
+          if (beat !== recolorBeat) return // a faster second click owns the repaint
+          try {
+            applyClaimsPalette(map)
+            applyClaimRoadPaint()
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              if (beat !== recolorBeat) return
+              try {
+                if (map.getLayer('clay-buildings-3d')) map.setPaintProperty('clay-buildings-3d', 'fill-extrusion-color', building3DColor() as never)
+                requestAnimationFrame(() => {
+                  if (beat !== recolorBeat) return
+                  try {
+                    if (map.getLayer('clay-building-caps')) map.setPaintProperty('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor() as never)
+                  } catch { /* torn down */ }
+                })
+              } catch { /* torn down */ }
+            }))
+          } catch { /* torn down */ }
+        }, 260)
+      })
+      map.once('remove', unsubscribeTakeover)
 
       // ── Sample pops (testing the takeover look) ─────────────────────────────
       // Each pop claims its radius: the ground inside recolors clay-pink.
@@ -2989,11 +3037,32 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             className={styles.composeSlider}
             aria-label="Claim radius"
           />
+          {/* Say it in words. A written pop is a pop: it claims the same
+              ground, and it is what the Times sets as a MESSAGE inside this
+              radius. Leave it blank and Post here still takes you to the
+              camera, which is the video half of the same drop. */}
+          <textarea
+            className={styles.composeMessage}
+            value={composeMessage}
+            onChange={(e) => setComposeMessage(e.currentTarget.value.slice(0, MESSAGE_MAX))}
+            placeholder="Say something to this radius…"
+            maxLength={MESSAGE_MAX}
+            rows={2}
+            aria-label="Message"
+          />
+          {composeMessage.trim() && (
+            <div className={styles.composeMessageHint}>
+              <span>Runs in The Poplur Times</span>
+              <span className={styles.composeCount}>
+                {MESSAGE_MAX - composeMessage.length}
+              </span>
+            </div>
+          )}
           <div className={styles.composeActions}>
             <button
               type="button"
               className={styles.composeCancel}
-              onClick={() => setComposeAt(null)}
+              onClick={() => { setComposeMessage(''); setComposeAt(null) }}
             >
               Cancel
             </button>
@@ -3004,13 +3073,37 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
                 brings you back here to watch the territory pop. A pop is a
                 post — there is no contentless drop; the old "Drop pop" claimed
                 ground with nothing on it, which is why posting from the map
-                never reached the camera. */}
+                never reached the camera.
+
+                With words typed, the drop needs no camera: the message IS the
+                content. It claims the ground right here (same disc, same
+                radius) and goes straight to the Times. */}
             <button
               type="button"
               className={styles.composeDrop}
               onClick={() => {
                 const { lat, lng } = composeAt
+                const words = composeMessage.trim()
                 playPop()
+                if (words) {
+                  const dropped = dropNewsMessage({ body: words, lat, lng, radiusKm: composeRadiusKm })
+                  setComposeMessage('')
+                  setComposeAt(null)
+                  if (!dropped) return
+                  // Claim the ground now — there is no camera round trip to
+                  // come back and do it. The message id IS the claim id, so
+                  // the disc and the story are one object.
+                  const map = mapRef.current
+                  if (map) {
+                    try {
+                      setClaim(map, { id: dropped.id, center: [lng, lat], radiusKm: composeRadiusKm })
+                    } catch { /* map torn down mid-drop */ }
+                  }
+                  // The shell keeps the Times' copy (NewsPaper renders in that
+                  // document) and the native host gets the same drop.
+                  window.parent?.postMessage({ type: 'poplur-post-message', message: dropped }, '*')
+                  return
+                }
                 setComposeAt(null)
                 window.parent?.postMessage(
                   { type: 'poplur-post-here', lat, lng, radiusKm: composeRadiusKm },
@@ -3018,7 +3111,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
                 )
               }}
             >
-              ✚ Post here
+              {composeMessage.trim() ? '✚ Post message' : '✚ Post here'}
             </button>
           </div>
           <button
@@ -3153,6 +3246,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         style={{
           '--zoomThumb': zoomSprites[zoomStage.id] ? `url("${zoomSprites[zoomStage.id]}")` : 'none',
           '--zoomProgress': zoomProgress,
+          // The rail's fill follows the takeover colour. `takeoverFace` is in
+          // this component's state and changes with the wheel, so these
+          // re-evaluate on the same render that repaints the world.
+          '--zoomFillA': takeoverTint('#ffe1f1'),
+          '--zoomFillB': takeoverTint('#ff86c4'),
+          '--zoomFillC': takeoverTint('#f53c99'),
         } as React.CSSProperties}
         role="slider"
         aria-label="Zoom"
@@ -3174,6 +3273,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           />
         </div>
       </div>
+
+      {/* The takeover colour, worn as a clay circle under the zoom slider.
+          Pressing it transposes the whole claim family to a random hue: the
+          buildings you hold pop (with the house sound) and re-mold in the new
+          colour. The map-side subscription owns that answer; this button only
+          spins the wheel. */}
+      <button
+        type="button"
+        key={`takeover-${takeoverFace}`}
+        className={styles.colorCircle}
+        style={{ '--takeoverFace': takeoverFace } as React.CSSProperties}
+        aria-label="Change your takeover colour"
+        title="Takeover colour"
+        onClick={() => randomizeTakeoverColor()}
+      />
 
       {/* FOV slider moved into the HOLD MENU (declutter): its entry cycles
           presets via the poplur-map-action 'fov' message. */}
