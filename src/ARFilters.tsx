@@ -23,18 +23,105 @@ export interface ARFilterDef {
   thumbnail: string
 }
 
+// NAMED FOR WHAT LANDS ON YOUR FACE, not for the colour grade underneath.
+//
+// Every one of these also wears a costume drawn by FaceAROverlay — a visor, an
+// ice crown, a pair of round specs — and the rail used to name only the grade.
+// "Sharpen" put a cyan visor across your eyes and then called itself a
+// sharpening filter, so nothing you picked matched what you saw. The `id` is
+// the wire format shared with the native shells and with FaceAROverlay's
+// switch, so ids are UNCHANGED and only the label moves.
+//
+// `smooth` keeps its name: it is the one entry that really is just a grade.
 export const AR_FILTERS: ARFilterDef[] = [
   { id: 'none', label: 'None', css: 'none', thumbnail: 'ar-filters/none.jpg' },
   // The blur is tiny and paired with a contrast lift: skin softens, edges hold.
   { id: 'smooth', label: 'Smooth', css: 'blur(1.1px) contrast(1.06) saturate(1.04)', thumbnail: 'ar-filters/smooth.jpg' },
-  { id: 'beauty', label: 'Beauty', css: 'blur(0.8px) brightness(1.08) saturate(1.12) contrast(1.04)', thumbnail: 'ar-filters/beauty.jpg' },
-  { id: 'brighten', label: 'Brighten', css: 'brightness(1.22) contrast(0.96)', thumbnail: 'ar-filters/brighten.jpg' },
-  { id: 'glow', label: 'Glow', css: 'brightness(1.12) saturate(1.2) contrast(1.05) drop-shadow(0 0 12px rgba(255,190,225,0.55))', thumbnail: 'ar-filters/glow.jpg' },
-  { id: 'sharpen', label: 'Sharpen', css: 'contrast(1.3) saturate(1.1)', thumbnail: 'ar-filters/sharpen.jpg' },
-  { id: 'warm', label: 'Warm', css: 'sepia(0.28) saturate(1.35) hue-rotate(-12deg) brightness(1.05)', thumbnail: 'ar-filters/warm.jpg' },
-  { id: 'cool', label: 'Cool', css: 'saturate(1.15) hue-rotate(14deg) brightness(1.03) contrast(1.06)', thumbnail: 'ar-filters/cool.jpg' },
-  { id: 'vintage', label: 'Vintage', css: 'sepia(0.55) contrast(1.15) saturate(0.85) brightness(0.98)', thumbnail: 'ar-filters/vintage.jpg' },
+  { id: 'beauty', label: 'Blush', css: 'blur(0.8px) brightness(1.08) saturate(1.12) contrast(1.04)', thumbnail: 'ar-filters/beauty.jpg' },
+  { id: 'brighten', label: 'Ring Light', css: 'brightness(1.22) contrast(0.96)', thumbnail: 'ar-filters/brighten.jpg' },
+  { id: 'glow', label: 'Halo', css: 'brightness(1.12) saturate(1.2) contrast(1.05) drop-shadow(0 0 12px rgba(255,190,225,0.55))', thumbnail: 'ar-filters/glow.jpg' },
+  { id: 'sharpen', label: 'Visor', css: 'contrast(1.3) saturate(1.1)', thumbnail: 'ar-filters/sharpen.jpg' },
+  { id: 'warm', label: 'Freckles', css: 'sepia(0.28) saturate(1.35) hue-rotate(-12deg) brightness(1.05)', thumbnail: 'ar-filters/warm.jpg' },
+  { id: 'cool', label: 'Ice Crown', css: 'saturate(1.15) hue-rotate(14deg) brightness(1.03) contrast(1.06)', thumbnail: 'ar-filters/cool.jpg' },
+  { id: 'vintage', label: 'Round Specs', css: 'sepia(0.55) contrast(1.15) saturate(0.85) brightness(0.98)', thumbnail: 'ar-filters/vintage.jpg' },
 ]
+
+/**
+ * The costume, drawn on the swatch.
+ *
+ * The rail's swatch used to be the portrait wearing only the CSS grade, so the
+ * visor and the crown and the specs — the entire reason to pick one of these —
+ * were invisible until you had already picked it. These marks are the SAME
+ * shapes FaceAROverlay draws, at the same proportions, over a face that fills
+ * the thumbnail: eyes at 0.40 of its height, face spanning 0.22–0.78 across.
+ *
+ * Deliberately NOT inside the graded `.swatch`: on the live camera the grade
+ * applies to the video and the effect is drawn over it unfiltered
+ * (`context.filter = 'none'`), and a sepia visor would misrepresent that.
+ */
+function EffectMark({ id }: { id: string }) {
+  const shape = () => {
+    switch (id) {
+      case 'sharpen':
+        return (
+          <>
+            <rect x="5" y="16" width="42" height="10" rx="3.6"
+              fill="rgba(25,212,245,0.42)" stroke="#63f4ff" strokeWidth="1.6" />
+            <line x1="26" y1="16" x2="26" y2="26" stroke="#63f4ff" strokeWidth="1.4" />
+          </>
+        )
+      case 'cool':
+        return (
+          <g fill="rgba(89,205,255,0.9)" stroke="#bdeeff" strokeWidth="0.7">
+            {[0.16, 0.23, 0.31, 0.23, 0.16].map((tall, i) => {
+              const cx = 9 + i * 8.5
+              const top = 14 - tall * 34
+              return <polygon key={i} points={`${cx},${top} ${cx + 3.6},${14 - tall * 12} ${cx + 2.7},14 ${cx - 2.7},14 ${cx - 3.6},${14 - tall * 12}`} />
+            })}
+          </g>
+        )
+      case 'vintage':
+        return (
+          <g fill="none" stroke="#25140d" strokeWidth="2.2">
+            <circle cx="17" cy="22" r="6.4" />
+            <circle cx="35" cy="22" r="6.4" />
+            <line x1="23.4" y1="22" x2="28.6" y2="22" />
+          </g>
+        )
+      case 'glow':
+        return <ellipse cx="26" cy="8" rx="12" ry="3.2" fill="none" stroke="#ffd55d" strokeWidth="2.2" />
+      case 'brighten':
+        return <ellipse cx="26" cy="27" rx="17.5" ry="19.5" fill="none" stroke="rgba(255,244,178,0.92)" strokeWidth="1.8" />
+      case 'beauty':
+        return (
+          <>
+            <ellipse cx="15" cy="30" rx="4.6" ry="2.6" fill="rgba(255,65,145,0.6)" />
+            <ellipse cx="37" cy="30" rx="4.6" ry="2.6" fill="rgba(255,65,145,0.6)" />
+            <path d="M26 6 l1.5 3.4 3.4 1.5 -3.4 1.5 -1.5 3.4 -1.5 -3.4 -3.4 -1.5 3.4 -1.5 Z" fill="rgba(255,240,250,0.95)" />
+          </>
+        )
+      case 'warm':
+        return (
+          <>
+            <ellipse cx="15" cy="30" rx="4.6" ry="2.6" fill="rgba(236,95,42,0.55)" />
+            <ellipse cx="37" cy="30" rx="4.6" ry="2.6" fill="rgba(236,95,42,0.55)" />
+            <g fill="rgba(92,35,18,0.85)">
+              {[-3, -2, -1, 0, 1, 2, 3].map(i => (
+                <circle key={i} cx={26 + i * 2.9} cy={27 + Math.abs(i) * 0.6} r="0.85" />
+              ))}
+            </g>
+          </>
+        )
+      default:
+        return null
+    }
+  }
+  const drawn = shape()
+  if (!drawn) return null
+  return (
+    <svg className={styles.effectMark} viewBox="0 0 52 52" aria-hidden="true">{drawn}</svg>
+  )
+}
 
 // ── scrub physics (CubeMenuWheelController, laid horizontal) ────────────────
 const SLOT_SPACING = 78      // px between filter slots along the line
@@ -217,14 +304,18 @@ export default function ARFilters({
               }}
             >
               {/* the swatch wears the filter it applies, so the rail previews
-                  itself instead of naming nine effects you cannot see */}
-              <span
-                className={styles.swatch}
-                style={{
-                  filter: f.css === 'none' ? undefined : f.css,
-                  backgroundImage: `url(${f.thumbnail})`,
-                }}
-              />
+                  itself instead of naming nine effects you cannot see — grade
+                  on the photo, costume over the top, same order as the camera */}
+              <span className={styles.swatchWrap}>
+                <span
+                  className={styles.swatch}
+                  style={{
+                    filter: f.css === 'none' ? undefined : f.css,
+                    backgroundImage: `url(${f.thumbnail})`,
+                  }}
+                />
+                <EffectMark id={f.id} />
+              </span>
             </button>
           )
         })}

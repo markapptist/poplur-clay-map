@@ -34,14 +34,46 @@ export function pinSprite(mode: '2d' | '3d'): Promise<string> {
 }
 
 /**
- * Where the face goes, as fractions of the pin's OWN alpha bounds rather than
- * of the sprite box. modelSprite fits the model to the frame, but the two
- * camera views do not land on identical pixels, and hard-coding sprite-box
- * fractions put the face off-centre on the angled one. Measuring the pin and
- * working in its local box makes the same numbers correct for both views.
+ * Where the picture goes, as fractions of the pin's OWN alpha bounds.
+ *
+ * THE MODEL HAS NO SOCKET. It is easy to read `poplur_pin.glb` as a pin with a
+ * round hole waiting for a face, but the recess IS the letter P — a P with a
+ * star in its bowl, carved into the head. Nothing in the model frames a
+ * picture, so a disc dropped on top only ever covers PART of a letter, and the
+ * strokes left showing around it are exactly what made the avatar read as a
+ * sticker. `plate` below is the answer: fill the carving back in with the pin's
+ * own clay, then cut a window into the flat head we just made.
+ *
+ * MEASURED, AND DIFFERENT PER VIEW. One shared pair of constants used to serve
+ * both cameras on the theory that the pin's local box normalises them away. It
+ * does not: the carving centres on (0.527, 0.408) dead-on but (0.462, 0.444)
+ * angled. The old single centre of (0.500, 0.335) sat ~13px high on both at
+ * 256px, so the P's descender stayed visible below the face on every pin.
+ *
+ * `tilt` is the angled view's extra rotation — the carving's principal axis
+ * turns 7.5° between the two renders — and `squash` is the narrowing a round
+ * window takes when the ball holding it is yawed away from the camera. Without
+ * them the window sits bolt upright on a pin that is leaning.
  */
-const HEAD_CENTRE_Y = 0.335 // down from the top of the pin
-const HEAD_RADIUS = 0.30    // of the pin's width
+interface PinWindow {
+  /** Centre, of the pin's alpha-box width and height. */
+  cx: number
+  cy: number
+  /** Aperture radius, of the pin's width. */
+  radius: number
+  /** Clay patch that buries the carving, of the pin's width. Must exceed the
+   *  carving's own reach from `cx,cy` — 0.316 dead-on, 0.314 angled. */
+  plate: number
+  /** Horizontal scale of the aperture, for a circle seen off-axis. */
+  squash: number
+  /** Rotation of aperture and bezel, radians. */
+  tilt: number
+}
+
+const WINDOW: Record<'2d' | '3d', PinWindow> = {
+  '2d': { cx: 0.527, cy: 0.408, radius: 0.280, plate: 0.330, squash: 1, tilt: 0 },
+  '3d': { cx: 0.462, cy: 0.444, radius: 0.280, plate: 0.330, squash: 0.95, tilt: -7.5 * Math.PI / 180 },
+}
 
 interface Bounds { x: number; y: number; w: number; h: number }
 
@@ -154,17 +186,31 @@ async function compose(face: PinFace): Promise<string> {
     silhouetteCtx.fillRect(0, 0, size, size)
 
     ctx.clearRect(0, 0, size, size)
-    const rim = Math.max(3, Math.round(box.w * 0.035))
-    ;[
-      [-rim, 0], [rim, 0], [0, -rim], [0, rim],
-      [-rim, -rim], [rim, -rim], [-rim, rim], [rim, rim],
-    ].forEach(([x, y]) => ctx.drawImage(silhouette, x, y))
+    // The sprite is 256px but the marker renders it at 64 (60 flat), so the
+    // outline is quartered on its way to the screen: the old 0.035 rim landed
+    // as barely one pixel and the pin dissolved into pink terrain it happens to
+    // match. 0.075 arrives as ~2.5px, which is what reads as an outline.
+    const rim = Math.max(6, Math.round(box.w * 0.075))
+    // Sixteen offsets around a circle, not eight around a square. At the old
+    // width the difference did not show, but a diagonal offset reaches rim*√2
+    // while an axial one reaches rim, so at this thickness an 8-way spread
+    // gives a visibly lumpy, star-shaped edge.
+    const RING_STEPS = 16
+    for (let i = 0; i < RING_STEPS; i += 1) {
+      const angle = (i / RING_STEPS) * Math.PI * 2
+      ctx.drawImage(silhouette, Math.cos(angle) * rim, Math.sin(angle) * rim)
+    }
     // A thin top-left key light is the clay shader's bright edge; the dark
     // silhouette still remains visible on every other side over pink terrain.
     silhouetteCtx.globalCompositeOperation = 'source-in'
     silhouetteCtx.fillStyle = 'rgba(255, 238, 249, 0.9)'
     silhouetteCtx.fillRect(0, 0, size, size)
-    ctx.drawImage(silhouette, -Math.ceil(rim * 0.45), -Math.ceil(rim * 0.45))
+    // A FRACTION of the old rim, not of the new one. This offset is a key
+    // light catching the top-left edge, so it wants to stay a thin line at any
+    // outline width; carrying the old 0.45 over to the thicker rim turned it
+    // into a white crescent lying across the pin's shoulder.
+    const keyLight = Math.max(2, Math.round(rim * 0.22))
+    ctx.drawImage(silhouette, -keyLight, -keyLight)
     ctx.drawImage(pin, 0, 0, size, size)
 
     // Static directional shader: highlight upper-left, deepen lower-right.
@@ -179,54 +225,104 @@ async function compose(face: PinFace): Promise<string> {
     ctx.fillRect(box.x - rim, box.y - rim, box.w + rim * 2, box.h + rim * 2)
     ctx.globalCompositeOperation = 'source-over'
   }
-  const cx = box.x + box.w / 2
-  const cy = box.y + box.h * HEAD_CENTRE_Y
-  const r = box.w * HEAD_RADIUS
+  const geom = WINDOW[face.mode]
+  const cx = box.x + box.w * geom.cx
+  const cy = box.y + box.h * geom.cy
+  const r = box.w * geom.radius
 
   // No avatar yet (nobody has set a picture): leave the pin as the artist drew
-  // it, embossed P and all. A blank grey disc over the P would look like a
-  // broken image, and inventing a placeholder face is not ours to do.
+  // it, embossed P and all. Burying the carving for a picture that is not
+  // coming would just leave a blank clay head, and inventing a placeholder face
+  // is not ours to do.
   if (!face.avatar) return canvas.toDataURL('image/png')
 
   const avatar = await loadImage(face.avatar)
 
-  // Sink the head: the model's P is a RECESS, so the face has to sit in a
-  // socket or it reads as a sticker on top of the pin. A soft inner shadow
-  // around the disc is what sells the depth on both camera views.
+  // ── 1. Bury the carving ────────────────────────────────────────────────────
+  // Scale the pin down to 8px and back up. That is a blur wide enough to
+  // dissolve a 72px letter while keeping the ball's own light-to-dark falloff,
+  // and unlike ctx.filter it needs no canvas-filter support to do it. Masked
+  // twice: to the plate, so only the head is touched, and to the pin's own
+  // alpha, so clay never bleeds past the silhouette we just outlined.
+  const plateRadius = box.w * geom.plate
+  const patch = document.createElement('canvas')
+  patch.width = size
+  patch.height = size
+  const patchCtx = patch.getContext('2d')
+  const tiny = document.createElement('canvas')
+  tiny.width = 8
+  tiny.height = 8
+  const tinyCtx = tiny.getContext('2d')
+  if (patchCtx && tinyCtx) {
+    tinyCtx.drawImage(pin, 0, 0, 8, 8)
+    patchCtx.drawImage(tiny, 0, 0, size, size)
+    patchCtx.globalCompositeOperation = 'destination-in'
+    patchCtx.beginPath()
+    patchCtx.arc(cx, cy, plateRadius, 0, Math.PI * 2)
+    patchCtx.fill()
+    patchCtx.drawImage(pin, 0, 0, size, size)
+    ctx.drawImage(patch, 0, 0)
+  }
+
+  // ── 2. Cut the window ──────────────────────────────────────────────────────
+  // One transform for the aperture, the picture and the bezel, so all three
+  // share the ball's lean instead of being three shapes that disagree about
+  // which way the pin is facing.
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.rotate(geom.tilt)
+  ctx.scale(geom.squash, 1)
+
   ctx.save()
   ctx.beginPath()
-  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.arc(0, 0, r, 0, Math.PI * 2)
   ctx.closePath()
   ctx.clip()
   // Cover-fit the (usually square) avatar into the circle without distorting.
   const scale = Math.max((r * 2) / avatar.width, (r * 2) / avatar.height)
   const dw = avatar.width * scale
   const dh = avatar.height * scale
-  ctx.drawImage(avatar, cx - dw / 2, cy - dh / 2, dw, dh)
-  const socket = ctx.createRadialGradient(cx, cy, r * 0.62, cx, cy, r)
-  socket.addColorStop(0, 'rgba(0, 0, 0, 0)')
-  socket.addColorStop(1, 'rgba(0, 0, 0, 0.55)')
-  ctx.fillStyle = socket
-  ctx.fillRect(cx - r, cy - r, r * 2, r * 2)
+  ctx.drawImage(avatar, -dw / 2, -dh / 2, dw, dh)
+
+  // An aperture is a HOLE, so its near lip shadows the picture's top-left and
+  // the far wall catches the light — the inverse of the raised-boss gradient on
+  // the pin body. This is the cue that puts the picture inside the pin.
+  const wall = ctx.createLinearGradient(-r, -r, r, r)
+  wall.addColorStop(0, 'rgba(18, 0, 13, 0.5)')
+  wall.addColorStop(0.45, 'rgba(18, 0, 13, 0.05)')
+  wall.addColorStop(1, 'rgba(255, 240, 250, 0.15)')
+  ctx.fillStyle = wall
+  ctx.fillRect(-r, -r, r * 2, r * 2)
+  // Seat the whole rim, or the corners of that square gradient read as a boxy
+  // shadow sitting inside a round hole.
+  const seat = ctx.createRadialGradient(0, 0, r * 0.58, 0, 0, r)
+  seat.addColorStop(0, 'rgba(0, 0, 0, 0)')
+  seat.addColorStop(1, 'rgba(0, 0, 0, 0.5)')
+  ctx.fillStyle = seat
+  ctx.fillRect(-r, -r, r * 2, r * 2)
   ctx.restore()
 
-  // The owner's colour, as the ring around the face. A dark outer keyline and
-  // a short white highlight keep the face readable over either map palette.
-  ctx.save()
+  // ── 3. The bezel ───────────────────────────────────────────────────────────
+  // Dark keyline outermost so the aperture holds against clay AND against a
+  // bright photo; the owner's colour just inside it, which is how overlapping
+  // claims are told apart; a short highlight on the top lip, lit from the same
+  // top-left as the outline.
   ctx.beginPath()
-  ctx.arc(cx, cy, r * 0.97, 0, Math.PI * 2)
-  ctx.lineWidth = Math.max(5, r * 0.2)
+  ctx.arc(0, 0, r * 1.07, 0, Math.PI * 2)
+  ctx.lineWidth = Math.max(4, r * 0.16)
   ctx.strokeStyle = 'rgba(35, 5, 28, 0.95)'
   ctx.stroke()
+
   ctx.beginPath()
-  ctx.arc(cx, cy, r * 0.97, 0, Math.PI * 2)
-  ctx.lineWidth = Math.max(3, r * 0.13)
+  ctx.arc(0, 0, r * 0.985, 0, Math.PI * 2)
+  ctx.lineWidth = Math.max(3, r * 0.15)
   ctx.strokeStyle = face.color
   ctx.stroke()
+
   ctx.beginPath()
-  ctx.arc(cx, cy, r * 0.97, Math.PI * 1.08, Math.PI * 1.72)
-  ctx.lineWidth = Math.max(2, r * 0.045)
-  ctx.strokeStyle = 'rgba(255, 245, 251, 0.9)'
+  ctx.arc(0, 0, r * 1.12, Math.PI * 1.08, Math.PI * 1.72)
+  ctx.lineWidth = Math.max(2, r * 0.05)
+  ctx.strokeStyle = 'rgba(255, 245, 251, 0.92)'
   ctx.stroke()
   ctx.restore()
 

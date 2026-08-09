@@ -100,6 +100,27 @@
 }
 
 /* The swatch is a slice of clay wearing the filter — the preview IS the effect. */
+/* Holds the graded photo and the ungraded costume in one 52px stack. The mark
+   must sit OUTSIDE .swatch: .swatch carries the CSS grade, and a sepia visor
+   or a hue-rotated ice crown would advertise a colour the camera never puts on
+   the effect itself. */
+.swatchWrap {
+  position: relative;
+  display: block;
+  width: 52px;
+  height: 52px;
+}
+
+.effectMark {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  /* Same ground contact the effect has over live video. */
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+}
+
 .swatch {
   display: block;
   width: 52px;
