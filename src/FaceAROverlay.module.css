@@ -155,3 +155,21 @@
 @media (prefers-reduced-motion: reduce) {
   .sparkle { animation: none; }
 }
+
+/* The costume canvas.
+   Extends 45% of the face height ABOVE the box and 15% out each side: most of
+   this set is head-worn and a crown, halo or hood has nowhere to sit inside a
+   face rectangle. `overflow: visible` so a wing or an ear can break the edge.
+   Every costume in FaceAROverlay draws into this same 0-100 space, which puts
+   the face at x 11.5-88.5 and y 30-97. */
+.costume {
+  position: absolute;
+  left: -15%;
+  top: -45%;
+  width: 130%;
+  height: 150%;
+  overflow: visible;
+  pointer-events: none;
+  /* Same ground contact the rest of the overlay has over live video. */
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
+}

@@ -25,25 +25,64 @@ export interface ARFilterDef {
 
 // NAMED FOR WHAT LANDS ON YOUR FACE, not for the colour grade underneath.
 //
-// Every one of these also wears a costume drawn by FaceAROverlay — a visor, an
-// ice crown, a pair of round specs — and the rail used to name only the grade.
-// "Sharpen" put a cyan visor across your eyes and then called itself a
-// sharpening filter, so nothing you picked matched what you saw. The `id` is
-// the wire format shared with the native shells and with FaceAROverlay's
-// switch, so ids are UNCHANGED and only the label moves.
+// The set is the fifteen from the filter sheet, replacing the previous nine.
+// Labels come from that sheet with its typos corrected — it read "Popeom 3D",
+// "Retro VH8", "Coims Pop", "Intemo Eyes" and "Fisheve Fun" — and the last
+// five tiles, which the sheet mis-numbered as a second 6–10, are named here
+// from their artwork: Oil Slick, Starry Night, Dino Hood, Angel, Flower Crown.
 //
-// `smooth` keeps its name: it is the one entry that really is just a grade.
+// `thumbnail` is the sheet's own tile, sliced out of it and padded square on
+// the swatch's background colour (#161116) so the pink border and P badge
+// survive `background-size: cover` instead of being cropped off the sides.
+//
+// `id` is the wire format shared with FaceAROverlay's switch and with
+// ARFilterManager.swift on iOS. Both fall through harmlessly on an id they do
+// not know — the overlay draws nothing, iOS falls back to its default — so a
+// filter whose costume is not written yet shows its colour grade and no
+// costume, never a crash.
+//
+// GRADE vs COSTUME. Eight of these are pure colour/optics and are complete as
+// written. Seven are head-worn and need artwork anchored to the face box:
+// puppy-love, butterfly-dream, inferno-eyes, heart-crown, dino-hood, angel,
+// flower-crown. Those carry their grade here and get their costume in
+// FaceAROverlay. `fisheye-fun` is the one that CSS genuinely cannot express —
+// a real barrel distortion needs a shader pass, not a filter chain — so what
+// is here is a stand-in bulge, marked as such.
 export const AR_FILTERS: ARFilterDef[] = [
   { id: 'none', label: 'None', css: 'none', thumbnail: 'ar-filters/none.jpg' },
-  // The blur is tiny and paired with a contrast lift: skin softens, edges hold.
-  { id: 'smooth', label: 'Smooth', css: 'blur(1.1px) contrast(1.06) saturate(1.04)', thumbnail: 'ar-filters/smooth.jpg' },
-  { id: 'beauty', label: 'Blush', css: 'blur(0.8px) brightness(1.08) saturate(1.12) contrast(1.04)', thumbnail: 'ar-filters/beauty.jpg' },
-  { id: 'brighten', label: 'Ring Light', css: 'brightness(1.22) contrast(0.96)', thumbnail: 'ar-filters/brighten.jpg' },
-  { id: 'glow', label: 'Halo', css: 'brightness(1.12) saturate(1.2) contrast(1.05) drop-shadow(0 0 12px rgba(255,190,225,0.55))', thumbnail: 'ar-filters/glow.jpg' },
-  { id: 'sharpen', label: 'Visor', css: 'contrast(1.3) saturate(1.1)', thumbnail: 'ar-filters/sharpen.jpg' },
-  { id: 'warm', label: 'Freckles', css: 'sepia(0.28) saturate(1.35) hue-rotate(-12deg) brightness(1.05)', thumbnail: 'ar-filters/warm.jpg' },
-  { id: 'cool', label: 'Ice Crown', css: 'saturate(1.15) hue-rotate(14deg) brightness(1.03) contrast(1.06)', thumbnail: 'ar-filters/cool.jpg' },
-  { id: 'vintage', label: 'Round Specs', css: 'sepia(0.55) contrast(1.15) saturate(0.85) brightness(0.98)', thumbnail: 'ar-filters/vintage.jpg' },
+  // 1 — the blur is tiny and paired with a contrast lift: skin softens, edges hold.
+  { id: 'smooth-glow', label: 'Smooth Glow', css: 'blur(1.1px) brightness(1.07) contrast(1.05) saturate(1.06) drop-shadow(0 0 10px rgba(255,214,236,0.45))', thumbnail: 'ar-filters/smooth-glow.jpg' },
+  // 2 — anaglyph by offset shadows: not a true channel split, but it reads as
+  // the red/cyan glasses on the tile and costs one filter chain.
+  { id: 'pop-3d', label: 'Pop 3D', css: 'saturate(1.1) drop-shadow(-3px 0 0 rgba(255,0,64,0.45)) drop-shadow(3px 0 0 rgba(0,224,255,0.45))', thumbnail: 'ar-filters/pop-3d.jpg' },
+  // 3 — warm and soft under the ears/nose/hearts costume.
+  { id: 'puppy-love', label: 'Puppy Love', css: 'brightness(1.08) saturate(1.14) contrast(1.02) sepia(0.1)', thumbnail: 'ar-filters/puppy-love.jpg' },
+  // 4 — tape, not film: oversaturated, slightly crushed, pushed green-blue.
+  { id: 'retro-vhs', label: 'Retro VHS', css: 'saturate(1.45) contrast(1.18) hue-rotate(-6deg) brightness(0.96)', thumbnail: 'ar-filters/retro-vhs.jpg' },
+  // 5 — full desaturation plus a hard contrast curve is what reads as metal.
+  { id: 'chrome-shine', label: 'Chrome Shine', css: 'grayscale(1) contrast(1.55) brightness(1.12) drop-shadow(0 0 8px rgba(210,238,255,0.5))', thumbnail: 'ar-filters/chrome-shine.jpg' },
+  // 6 — pastel lift so the wings sit on something soft.
+  { id: 'butterfly-dream', label: 'Butterfly Dream', css: 'brightness(1.1) saturate(1.22) contrast(0.98) hue-rotate(6deg)', thumbnail: 'ar-filters/butterfly-dream.jpg' },
+  // 7 — posterised: heavy contrast and saturation, the ink-and-flat-colour look.
+  { id: 'comic-pop', label: 'Comic Pop', css: 'contrast(1.85) saturate(1.7) brightness(1.04)', thumbnail: 'ar-filters/comic-pop.jpg' },
+  // 8 — the frame goes dark and warm so the eye glow has somewhere to burn.
+  { id: 'inferno-eyes', label: 'Inferno Eyes', css: 'brightness(0.82) contrast(1.3) saturate(1.35) sepia(0.25) hue-rotate(-18deg)', thumbnail: 'ar-filters/inferno-eyes.jpg' },
+  // 9 — bright and pink; the crown does the rest.
+  { id: 'heart-crown', label: 'Heart Crown', css: 'brightness(1.1) saturate(1.25) contrast(1.02) hue-rotate(-8deg)', thumbnail: 'ar-filters/heart-crown.jpg' },
+  // 10 — STAND-IN. A real fisheye is a barrel warp per pixel; a filter chain
+  // cannot move pixels. This only widens and vignettes so the entry is not
+  // dead, and it wants a shader pass to be honest to its name.
+  { id: 'fisheye-fun', label: 'Fisheye Fun', css: 'contrast(1.12) saturate(1.15) brightness(1.04)', thumbnail: 'ar-filters/fisheye-fun.jpg' },
+  // 11 — iridescence: the hue is animated in CSS, this is the base grade.
+  { id: 'oil-slick', label: 'Oil Slick', css: 'saturate(2.2) contrast(1.25) hue-rotate(150deg) brightness(1.05)', thumbnail: 'ar-filters/oil-slick.jpg' },
+  // 12 — night sky: pushed blue and dimmed, stars drawn over the top.
+  { id: 'starry-night', label: 'Starry Night', css: 'brightness(0.72) contrast(1.2) saturate(1.3) hue-rotate(205deg)', thumbnail: 'ar-filters/starry-night.jpg' },
+  // 13 — green cast under the hood.
+  { id: 'dino-hood', label: 'Dino Hood', css: 'saturate(1.2) hue-rotate(-14deg) brightness(1.04) contrast(1.05)', thumbnail: 'ar-filters/dino-hood.jpg' },
+  // 14 — blown out and soft, the way a halo shot is lit.
+  { id: 'angel', label: 'Angel', css: 'brightness(1.24) contrast(0.94) saturate(1.05) blur(0.6px) drop-shadow(0 0 16px rgba(255,240,190,0.6))', thumbnail: 'ar-filters/angel.jpg' },
+  // 15 — warm garden light beneath the flowers.
+  { id: 'flower-crown', label: 'Flower Crown', css: 'brightness(1.09) saturate(1.28) sepia(0.12) contrast(1.02)', thumbnail: 'ar-filters/flower-crown.jpg' },
 ]
 
 /**
@@ -314,7 +353,11 @@ export default function ARFilters({
                     backgroundImage: `url(${f.thumbnail})`,
                   }}
                 />
-                <EffectMark id={f.id} />
+                {/* No EffectMark here any more. It drew the costume onto a plain
+                    portrait because the old thumbnails showed only the grade; the
+                    sheet's tiles already depict theirs, so drawing on top would
+                    double it up. The function is kept for the native shells that
+                    still reference the shapes. */}
               </span>
             </button>
           )
