@@ -27,7 +27,21 @@ import { playPop, playPopAmbient } from './pop'
 // animate transform/opacity only, one-shot, capped at MAX_LIVE. Nothing here
 // runs a per-frame loop — the whole layer is idle between popups.
 
-export type PopupKind = 'engagement' | 'suggestion'
+export type PopupKind = 'engagement' | 'suggestion' | 'mapContent'
+
+export interface MapPopContent {
+  id: string
+  name: string
+  user: string | null
+  channel?: string
+  radiusKm: number
+  media: {
+    kind: 'image' | 'video'
+    src: string
+    poster?: string
+    alt: string
+  }
+}
 
 export interface PopupItem {
   id: number
@@ -36,6 +50,10 @@ export interface PopupItem {
   text?: string
   icon?: string
   card?: SmartCard
+  /** The actual post standing on a map claim. This is deliberately separate
+   *  from a suggestion: a pop shows its own media, while an AI-highlighted
+   *  place with no pop shows a commerce card. */
+  content?: MapPopContent
   /** Optional app-owned primary action, such as opening a creator profile. */
   action?: SuggestionPrimaryAction
   ttl: number
@@ -67,6 +85,10 @@ const TTL: Record<PopupKind, number> = {
   // come down — if it needs to go lower, the honest move is to stop showing
   // the card on that surface rather than to flash it.
   suggestion: 4_000,
+  // A post is the destination rather than a passing ad. Give a looping video
+  // enough time to read, while retaining the shared guarantee that every
+  // transient window eventually leaves on its own.
+  mapContent: 10_000,
 }
 
 // More than a few at once is a pile nobody reads. Oldest goes first.
@@ -181,17 +203,28 @@ export function clearPopups(kind?: PopupKind): void {
  * Mount ONCE, high in the tree. Being screen-fixed and shared is what puts the
  * same notices on the map and the feed without either one owning them.
  */
-export default function PopupHost() {
+export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBackdrop?: boolean }) {
   const [live, setLive] = useState<PopupItem[]>(items)
   useEffect(() => subscribe(setLive), [])
   if (!live.length) return null
 
   return (
-    <div className={styles.host} aria-live="polite">
+    <div
+      className={dismissOnBackdrop ? `${styles.host} ${styles.hostDismissible}` : styles.host}
+      aria-live="polite"
+      onClick={dismissOnBackdrop ? () => {
+        playPop()
+        clearPopups()
+      } : undefined}
+    >
       {live.map(item => (
         <div
           key={item.id}
-          className={item.kind === 'engagement' ? styles.engage : styles.suggestWrap}
+          className={item.kind === 'engagement'
+            ? styles.engage
+            : item.kind === 'mapContent'
+              ? styles.mapContentWrap
+              : styles.suggestWrap}
           style={item.kind === 'engagement' ? { animationDuration: `${item.ttl}ms` } : undefined}
           onClick={item.kind === 'engagement'
             ? () => {
@@ -216,6 +249,56 @@ export default function PopupHost() {
               <b className={styles.engageIcon}>{item.icon ?? '♥'}</b>
               <span className={styles.engageText}>{item.text}</span>
             </>
+          ) : item.kind === 'mapContent' && item.content ? (
+            <article
+              className={styles.mapContent}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Post at ${item.content.name}`}
+            >
+              <header className={styles.mapContentTitleBar}>
+                <span className={styles.mapContentLights} aria-hidden="true">
+                  <i /><i /><i />
+                </span>
+                <strong>{item.content.user ?? 'YOUR POP'} · {item.content.channel?.toUpperCase() ?? 'POP'}</strong>
+                <span>POP</span>
+              </header>
+              <div className={styles.mapContentMedia}>
+                {item.content.media.kind === 'video' ? (
+                  <video
+                    src={item.content.media.src}
+                    poster={item.content.media.poster}
+                    aria-label={item.content.media.alt}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : (
+                  <img src={item.content.media.src} alt={item.content.media.alt} draggable="false" />
+                )}
+                <div className={styles.mapContentCaption}>
+                  <strong>{item.content.name}</strong>
+                  <span>{item.content.radiusKm.toFixed(1)} km radius</span>
+                </div>
+              </div>
+              {item.action && (
+                <button
+                  type="button"
+                  className={styles.mapContentAction}
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation()
+                    playPop()
+                    item.action?.onActivate()
+                    dismissPopup(item.id)
+                  }}
+                >
+                  {item.action.label}
+                </button>
+              )}
+            </article>
           ) : item.card ? (
             <CommerceSuggestionWindow
               card={item.card}

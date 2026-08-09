@@ -18,7 +18,7 @@ export function modeForCode(code: number): WeatherMode {
 }
 
 /** Modes that carry the drifting clay clouds overhead. */
-const CLOUDY_MODES: WeatherMode[] = ['cloudy', 'thunder', 'storm', 'hail']
+const CLOUDY_MODES: WeatherMode[] = ['cloudy', 'rain', 'thunder', 'storm', 'hail', 'fog']
 /** Modes that darken the scene like a heavy sky. */
 const DIM_MODES: WeatherMode[] = ['thunder', 'storm', 'hail']
 
@@ -72,7 +72,7 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
   // flash and the thunder rumble fire at the same instant.
   const [flashTick, setFlashTick] = useState(0)
   useEffect(() => {
-    if (mode !== 'storm') return
+    if (mode !== 'thunder' && mode !== 'storm') return
     let timer: number
     const strike = () => {
       setFlashTick(t => t + 1)
@@ -128,7 +128,7 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
       {/* Lightning flash only on the full thunder-and-lightning storm.
           Remounted per strike (key) so the one-shot flash replays, whole
           screen, in sync with the thunder fired from the same tick. */}
-      {mode === 'storm' && flashTick > 0 && (
+      {(mode === 'thunder' || mode === 'storm') && flashTick > 0 && (
         <div key={flashTick} className={styles.lightning} />
       )}
 

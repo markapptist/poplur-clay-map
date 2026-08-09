@@ -9,7 +9,8 @@ import { modelSprite } from './modelSprite'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
-import { RADIUS_CHANGE_EVENT, radiusStats } from './radiusLedger'
+import CameraRoll from './CameraRoll'
+import { radiusStats } from './radiusLedger'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -288,8 +289,9 @@ function NotificationIcon({ kind }: { kind: NotificationKind }) {
   )
 }
 
-type Mode = 'media' | 'messages' | 'liked' | 'stats'
+type Mode = 'media' | 'messages' | 'liked'
 type CaptureFacing = 'user' | 'environment'
+type CaptureSource = 'camera' | 'library'
 
 type TorchVideoTrack = MediaStreamTrack & {
   getCapabilities?: () => { torch?: boolean }
@@ -403,6 +405,7 @@ export default function ProfileTwin({
   onBackToOwn,
   bindGoBack,
   highlightPops = null,
+  onPostCountChange,
 }: {
   bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
   /** a handle when you opened someone else's profile from the feed */
@@ -416,16 +419,13 @@ export default function ProfileTwin({
   /** "N pops in this area" tapped on the map: these pop ids light up in the
    *  grid for a few seconds. seq re-fires the same set. */
   highlightPops?: { ids: string[]; seq: number } | null
+  /** Keeps the Home HUD's animated post count tied to this profile's grid. */
+  onPostCountChange?: (count: number) => void
 
 } = {}) {
   const [mode, setMode] = useState<Mode>('media')
-  const [liveRadiusStats, setLiveRadiusStats] = useState(radiusStats)
   const [activeCall, setActiveCall] = useState<{ who: string; video: boolean } | null>(null)
-  useEffect(() => {
-    const sync = () => setLiveRadiusStats(radiusStats())
-    window.addEventListener(RADIUS_CHANGE_EVENT, sync)
-    return () => window.removeEventListener(RADIUS_CHANGE_EVENT, sync)
-  }, [])
+  useEffect(() => { onPostCountChange?.(POSTS.length) }, [onPostCountChange])
   // Grid tiles lit by the map's "N pops in this area" tap. A few seconds of
   // takeover-pink ring, then the grid goes back to normal.
   const [litTiles, setLitTiles] = useState<Set<number> | null>(null)
@@ -476,6 +476,8 @@ export default function ProfileTwin({
   // URI under one key, rehydrated on mount.
   const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
   const [camError, setCamError] = useState(false)
+  const [captureSource, setCaptureSource] = useState<CaptureSource>('camera')
+  const [savingPhoto, setSavingPhoto] = useState(false)
   const [flash, setFlash] = useState(false)
   const [facingMode, setFacingMode] = useState<CaptureFacing>('user')
   const [torchOn, setTorchOn] = useState(false)
@@ -656,9 +658,19 @@ export default function ProfileTwin({
   viewerIdxRef.current = viewerIdx
   const modeRef = useRef(mode)
   modeRef.current = mode
+  const capturingRef = useRef(capturing)
+  capturingRef.current = capturing
+  const captureSourceRef = useRef(captureSource)
+  captureSourceRef.current = captureSource
   useEffect(() => {
     if (!bindArrows) return
     bindArrows(dir => {
+      if (capturingRef.current) {
+        const next: CaptureSource = captureSourceRef.current === 'camera' ? 'library' : 'camera'
+        setCaptureSource(next)
+        playPop()
+        return
+      }
       if (viewerIdxRef.current != null) {
         const posts = modeRef.current === 'liked' ? LIKED : POSTS
         setViewerIdx(i => (i == null ? i : ((i + dir) % posts.length + posts.length) % posts.length))
@@ -799,12 +811,19 @@ export default function ProfileTwin({
     streamRef.current = null
   }
   useEffect(() => {
-    if (!capturing) { stopStream(); return }
+    if (!capturing || captureSource !== 'camera') { stopStream(); return }
     let cancelled = false
     setCamError(false)
     setTorchOn(false)
     setTorchAvailable(false)
-    navigator.mediaDevices?.getUserMedia({ video: { facingMode: { ideal: facingMode } }, audio: false })
+    navigator.mediaDevices?.getUserMedia({
+      video: {
+        facingMode: { ideal: facingMode },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+      },
+      audio: false,
+    })
       .then(stream => {
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
         streamRef.current = stream
@@ -818,25 +837,23 @@ export default function ProfileTwin({
       })
       .catch(() => { if (!cancelled) setCamError(true) })
     return () => { cancelled = true; stopStream() }
-  }, [capturing, facingMode])
+  }, [capturing, captureSource, facingMode])
 
   // Accelerometer sway: the viewfinder leans gently with the device — lerped
   // hard (0.06) and clamped to ±4° so it reads as smooth, never aggressive.
   useEffect(() => {
-    if (!capturing) return
+    if (!capturing || captureSource !== 'camera') return
     const video = videoRef.current
     if (!video) return
     let raf = 0
-    let targetX = 0, targetY = 0, curX = 0, curY = 0
+    let target = 0, current = 0
     const onOrient = (e: DeviceOrientationEvent) => {
-      targetX = Math.max(-4, Math.min(4, (e.gamma ?? 0) * 0.12))
-      targetY = Math.max(-4, Math.min(4, ((e.beta ?? 0) - 45) * 0.08))
+      target = Math.max(-2.5, Math.min(2.5, (e.gamma ?? 0) * 0.08))
     }
     const tick = () => {
-      curX += (targetX - curX) * 0.06
-      curY += (targetY - curY) * 0.06
+      current += (target - current) * 0.08
       const mirror = facingMode === 'user' ? 'scaleX(-1) ' : ''
-      video.style.transform = `${mirror}rotate(${-curX.toFixed(2)}deg) translate(${(-curX * 1.5).toFixed(1)}px, ${(curY * 1.5).toFixed(1)}px) scale(1.06)`
+      video.style.transform = `${mirror}perspective(900px) rotateY(${(-current).toFixed(2)}deg) translateX(${(-current * 1.2).toFixed(1)}px) scale(1.06)`
       raf = requestAnimationFrame(tick)
     }
     window.addEventListener('deviceorientation', onOrient)
@@ -845,7 +862,7 @@ export default function ProfileTwin({
       window.removeEventListener('deviceorientation', onOrient)
       cancelAnimationFrame(raf)
     }
-  }, [capturing, camError, facingMode])
+  }, [capturing, captureSource, camError, facingMode])
 
   // ── The camera object turns with the phone ────────────────────────────────
   // It is a 3D clay object sitting on the profile, so holding it still while
@@ -853,7 +870,7 @@ export default function ProfileTwin({
   // phone turns it, the way the object would if it were really there.
   //
   // NO rAF LOOP, deliberately, and this is not a style preference. The sway on
-  // the viewfinder above runs one because it lerps every frame while the
+  // the viewfinder below runs one because it lerps every frame while the
   // camera is live and short-lived; this button sits on a screen you park on.
   // A permanent rAF here is precisely the continuous idle work that has been
   // overheating this app. So the handler writes the transform straight out and
@@ -876,8 +893,8 @@ export default function ProfileTwin({
       button.style.transform =
         `translateY(-50%) perspective(620px) rotateY(${yaw.toFixed(1)}deg) rotateX(${(-pitch).toFixed(1)}deg)`
     }
-    window.addEventListener("deviceorientation", onOrient)
-    return () => window.removeEventListener("deviceorientation", onOrient)
+    window.addEventListener('deviceorientation', onOrient)
+    return () => window.removeEventListener('deviceorientation', onOrient)
   }, [])
 
   // The face-recognition disclosure, in the app's own alert clay. Shown once,
@@ -912,18 +929,63 @@ export default function ProfileTwin({
     try { void DOE?.requestPermission?.() } catch { /* older platforms */ }
     setLaunchingCamera(true)
     window.setTimeout(() => {
+      setCaptureSource('camera')
       setCapturing(true)
       setLaunchingCamera(false)
     }, 380)
   }
 
+  const commitPhoto = (preview: string, nativePayload?: Record<string, unknown>) => {
+    setPhoto(preview)
+    writeStoredPhoto(preview)
+    if (nativePayload) postNativeEvent(nativePayload)
+    window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: preview } }))
+    try { window.localStorage.setItem('poplur.faceid.reference', '1') } catch { /* embedded */ }
+    window.setTimeout(() => {
+      setSavingPhoto(false)
+      setCapturing(false)
+    }, 220)
+  }
+
+  const previewImage = (src: string): Promise<string> => new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => {
+      const maxEdge = 1024
+      const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+      const context = canvas.getContext('2d')
+      if (!context) { reject(new Error('preview_context')); return }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', 0.92))
+    }
+    image.onerror = () => reject(new Error('preview_load'))
+    image.src = src
+  })
+
+  const pickProfilePhoto = ({ kind, src }: { kind: 'photo' | 'video'; src: string }) => {
+    if (kind !== 'photo' || savingPhoto) return
+    playPop()
+    setSavingPhoto(true)
+    const native = isNativeShell()
+    if (native) postNativeEvent({ type: 'saveProfilePhotoAsset', src })
+    void previewImage(src)
+      .then(preview => commitPhoto(
+        preview,
+        native ? undefined : { type: 'saveProfilePhoto', photo: preview },
+      ))
+      .catch(() => setSavingPhoto(false))
+  }
+
   const shoot = () => {
+    if (savingPhoto) return
     playPop()
     setFlash(true)
     window.setTimeout(() => setFlash(false), 380)
     const video = videoRef.current
     if (video && streamRef.current && video.videoWidth) {
-      const size = 320
+      const size = Math.min(3840, Math.min(video.videoWidth, video.videoHeight))
       const canvas = document.createElement('canvas')
       canvas.width = size
       canvas.height = size
@@ -938,20 +1000,23 @@ export default function ProfileTwin({
       }
       g.drawImage(video, sx, sy, s, s, 0, 0, size, size)
       g.restore()
-      // JPEG, not PNG: this is a camera frame, so PNG buys nothing but ~10x
-      // the bytes — and it has to fit in localStorage to survive the next tab
-      // change. Quality 0.86 is indistinguishable at 320px.
-      const dataUri = canvas.toDataURL('image/jpeg', 0.86)
-      setPhoto(dataUri)
-      writeStoredPhoto(dataUri)
-      postNativeEvent({ type: 'saveProfilePhoto', photo: dataUri })
-      // The map lives in a cross-origin iframe, so it cannot read this out of
-      // localStorage the way the rest of the shell does. Announce it instead;
-      // HomeTwin forwards it over the bridge and your pins wear your face.
-      window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: dataUri } }))
-      // A photo now exists to match against; recognition turns on only if the
-      // disclosure was answered "Use my face".
-      try { window.localStorage.setItem('poplur.faceid.reference', '1') } catch { /* embedded */ }
+      setSavingPhoto(true)
+      const previewCanvas = document.createElement('canvas')
+      previewCanvas.width = 1024
+      previewCanvas.height = 1024
+      previewCanvas.getContext('2d')?.drawImage(canvas, 0, 0, 1024, 1024)
+      const preview = previewCanvas.toDataURL('image/jpeg', 0.92)
+      canvas.toBlob(blob => {
+        if (!blob) { setSavingPhoto(false); return }
+        const reader = new FileReader()
+        reader.onload = () => {
+          if (typeof reader.result !== 'string') { setSavingPhoto(false); return }
+          commitPhoto(preview, { type: 'saveProfilePhoto', photo: reader.result })
+        }
+        reader.onerror = () => setSavingPhoto(false)
+        reader.readAsDataURL(blob)
+      }, 'image/jpeg', 0.95)
+      return
     }
     window.setTimeout(() => setCapturing(false), 260)
   }
@@ -979,7 +1044,18 @@ export default function ProfileTwin({
   const captureSurface = capturing && typeof document !== 'undefined'
     ? createPortal(
       <div className={styles.capture} role="dialog" aria-modal="true" aria-label="Take profile photo">
-        {camError ? (
+        {captureSource === 'library' ? (
+          <div className={styles.profileRoll}>
+            <CameraRoll
+              active
+              photoOnly
+              hideHeader
+              nativeRequestType="requestProfileCameraRoll"
+              onDeny={() => setCaptureSource('camera')}
+              onPick={pickProfilePhoto}
+            />
+          </div>
+        ) : camError ? (
           <div className={styles.camFallback}>
             <span>📷</span>
             <p>Camera unavailable here.<br />This is where you would frame your shot.</p>
@@ -990,22 +1066,18 @@ export default function ProfileTwin({
         <div className={styles.captureTop}>
           {/* 3D clay flash / flip — the same extruded-clay marks as the post
               camera, instead of flat glyph buttons. */}
-          <ClayCornerButton
-            kind="flash"
-            active={torchOn}
-            label={torchOn ? 'Turn flash off' : 'Turn flash on'}
-            onPress={toggleTorch}
-            size={48}
-          />
-          <div className={styles.captureHead}>Profile photo</div>
-          <ClayCornerButton
-            kind="flip"
-            label="Switch camera"
-            onPress={() => { playPop(); setFacingMode(mode => mode === 'user' ? 'environment' : 'user') }}
-            size={48}
-          />
+          {captureSource === 'camera' ? (
+            <ClayCornerButton kind="flash" active={torchOn} label={torchOn ? 'Turn flash off' : 'Turn flash on'} onPress={toggleTorch} size={48} />
+          ) : <span />}
+          <div className={styles.captureHead}>
+            {captureSource === 'camera' ? 'Profile photo' : 'Camera roll'}
+            <small>CHANNEL BUTTONS SWITCH SOURCE</small>
+          </div>
+          {captureSource === 'camera' ? (
+            <ClayCornerButton kind="flip" label="Switch camera" onPress={() => { playPop(); setFacingMode(mode => mode === 'user' ? 'environment' : 'user') }} size={48} />
+          ) : <span />}
         </div>
-        <div className={styles.vfRing} />
+        {captureSource === 'camera' && <div className={styles.vfRing} />}
         <div className={styles.captureBar}>
           <div className={styles.captureAction}>
             <ClayCornerButton
@@ -1017,16 +1089,12 @@ export default function ProfileTwin({
             />
             <span className={styles.captureActionLabel}>Cancel</span>
           </div>
-          <div className={`${styles.captureAction} ${styles.captureActionPrimary}`}>
-            <ClayCornerButton
-              kind="capture"
-              label="Capture photo"
-              onPress={shoot}
-              size={108}
-              activateOnClick
-            />
-            <span className={styles.captureActionLabel}>Capture</span>
-          </div>
+          {captureSource === 'camera' ? (
+            <div className={`${styles.captureAction} ${styles.captureActionPrimary}`}>
+              <ClayCornerButton kind="capture" label="Capture photo" onPress={shoot} size={108} activateOnClick />
+              <span className={styles.captureActionLabel}>{savingPhoto ? 'Saving 4K' : 'Capture'}</span>
+            </div>
+          ) : <div className={styles.captureLibraryHint}>{savingPhoto ? 'SAVING 4K PHOTO' : 'TAP A PHOTO'}</div>}
           <div className={styles.captureSpacer} aria-hidden="true" />
         </div>
       </div>,
@@ -1234,7 +1302,7 @@ export default function ProfileTwin({
 
         <h1 className={styles.username}>{shownName.toUpperCase()}</h1>
         <div className={styles.modeSwitch}>
-          {(['media', 'messages', 'liked', 'stats'] as Mode[]).map(m => (
+          {(['media', 'messages', 'liked'] as Mode[]).map(m => (
             <button
               key={m}
               type="button"
@@ -1294,23 +1362,6 @@ export default function ProfileTwin({
                 </div>
               ))}
             </div>
-          ) : mode === 'stats' ? (
-            <section className={styles.radiusStats} aria-label="Radius analytics">
-              <header>
-                <span>YOUR RADIUS</span>
-                <strong>{liveRadiusStats.radiusKm.toFixed(1)} km</strong>
-                <i style={{ width: `${Math.min(100, (liveRadiusStats.radiusKm / 100) * 100)}%` }} />
-              </header>
-              <div className={styles.statsGrid}>
-                <article><b>+{liveRadiusStats.gains.toFixed(1)}</b><span>km earned</span></article>
-                <article><b>-{liveRadiusStats.losses.toFixed(1)}</b><span>km lost</span></article>
-                <article><b>{liveRadiusStats.views}</b><span>completed views</span></article>
-                <article><b>{liveRadiusStats.likes}</b><span>left likes</span></article>
-                <article><b>{liveRadiusStats.profileVisits}</b><span>profile visits</span></article>
-                <article><b>{liveRadiusStats.inactivePosts}</b><span>inactive posts</span></article>
-              </div>
-              <p>Views, likes and profile visits grow your radius. Right-side dislikes and posts with no view after one hour reduce it.</p>
-            </section>
           ) : (
             <div className={styles.grid}>
               {posts.map((post, i) => (

@@ -78,7 +78,15 @@ const ROLL: RollItem[] = [
   { kind: 'photo', src: 'clay_pin.png' },
 ]
 
-export default function CameraRoll({ onDeny, lite = false, active = true, onPick }: {
+export default function CameraRoll({
+  onDeny,
+  lite = false,
+  active = true,
+  onPick,
+  photoOnly = false,
+  hideHeader = false,
+  nativeRequestType = 'requestCameraRoll',
+}: {
   onDeny?: () => void
   lite?: boolean
   /**
@@ -91,6 +99,12 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
   active?: boolean
   /** picking a capture sends it into the post composer, like the native roll */
   onPick?: (media: { kind: 'photo' | 'video'; src: string; length?: string }) => void
+  /** Profile pictures only accept stills; the normal posting roll keeps videos. */
+  photoOnly?: boolean
+  /** Profile capture supplies its own chrome above the shared grid. */
+  hideHeader?: boolean
+  /** Explicit profile selection may ask iOS for Photos access from this gesture. */
+  nativeRequestType?: 'requestCameraRoll' | 'requestProfileCameraRoll'
 } = {}) {
   // Native shell: the REAL device photo library replaces the mock grid. The
   // list remains thumbnail-only so opening it does not marshal 24 full-size
@@ -163,7 +177,7 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
   const allow = () => {
     try { window.localStorage.setItem('poplur.rollPermission', 'granted') } catch { /* embedded */ }
     setGranted(true)
-    if (isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
+    if (isNativeShell()) postNativeEvent({ type: nativeRequestType })
   }
   const deny = () => { onDeny?.() }
   // Re-request on every open once granted, so the roll stays fresh. "Open" now
@@ -171,9 +185,9 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
   // off-page, and asking the device for its photo library while nobody is
   // looking at the roll is exactly the work this screen should not be doing.
   useEffect(() => {
-    if (!lite && active && granted && isNativeShell()) postNativeEvent({ type: 'requestCameraRoll' })
+    if (!lite && active && granted && isNativeShell()) postNativeEvent({ type: nativeRequestType })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [granted, active, lite])
+  }, [granted, active, lite, nativeRequestType])
 
   useEffect(() => {
     if (active) return
@@ -191,6 +205,7 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   const shot: RollItem[] = captures.map(c => ({ kind: c.kind, src: c.src, length: c.length, id: c.id }))
   const items = [...shot, ...(nativeRoll ?? ROLL)]
+    .filter(item => !photoOnly || item.kind === 'photo')
 
   const pickItem = (item: RollItem) => {
     playPop()
@@ -238,13 +253,15 @@ export default function CameraRoll({ onDeny, lite = false, active = true, onPick
 
   return (
     <section className={styles.cameraRoll} aria-label="Camera roll">
-      <header className={styles.rollHeader}>
-        <img className={styles.rollLogo} src="logo_icon.png" alt="" draggable={false} />
-        <h1 className={styles.rollTitle}>Camera Roll</h1>
-        <span className={styles.rollCount}>
-          {picked ? `${picked} selected` : `${items.length} captures`}
-        </span>
-      </header>
+      {!hideHeader && (
+        <header className={styles.rollHeader}>
+          <img className={styles.rollLogo} src="logo_icon.png" alt="" draggable={false} />
+          <h1 className={styles.rollTitle}>Camera Roll</h1>
+          <span className={styles.rollCount}>
+            {picked ? `${picked} selected` : `${items.length} captures`}
+          </span>
+        </header>
+      )}
 
       <div className={styles.rollGrid}>
         {items.map((item, index) => {

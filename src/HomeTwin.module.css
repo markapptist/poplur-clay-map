@@ -370,7 +370,9 @@
      exact pixel they have always been on. */
   position: relative;
   align-items: center;
-  justify-self: end;
+  /* The two side tracks are equal. Centering both occupants in those tracks
+     makes arrows → cube → radius a genuinely even three-point rhythm. */
+  justify-self: center;
   min-width: 0;
   pointer-events: auto;
   transition: opacity 180ms ease;
@@ -392,7 +394,7 @@
   width: min(100%, 112px);
   min-width: 0;
   height: 96px;
-  justify-self: start;
+  justify-self: center;
   /* The row is pointer-events:none so its empty middle never swallows a tap
      meant for the screen behind it. The arrows opt back in; the radius label
      never did, which quietly cost it its tap-to-change-units. */
@@ -830,8 +832,12 @@
   transform: scale(0.94);
 }
 
+.mapAreaPops:disabled {
+  cursor: default;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .mapTitleText { animation: none; }
+  .mapTitleText, .mapAreaPops { animation: none; }
 }
 
 /* The cube pops INTO the clay phone when the PHONE screen opens: it lifts
@@ -1087,7 +1093,8 @@
    plate, no gradient wash. A later rule here used to reinstate the pale
    gradient and hairline edge, which is what kept looking like a background. */
 .statValue.radiusValueShader,
-.statValue.onlineValueShader {
+.statValue.onlineValueShader,
+.statValue.postValueShader {
   color: #7fe3ff;
   background: none;
   -webkit-text-fill-color: #7fe3ff;
@@ -1099,6 +1106,15 @@
     drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
     drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
     drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
+}
+
+.statValue.postValueShader {
+  color: #ff8ac6;
+  -webkit-text-fill-color: #ff8ac6;
+  filter:
+    drop-shadow(0 3px 0 rgba(70, 4, 38, 0.62))
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 10px rgba(246, 59, 154, 0.58));
 }
 
 .statUnit {
@@ -1194,4 +1210,27 @@
   left: 50%;
   transform: translateX(-50%);
   pointer-events: auto;
+}
+
+/* ── The navigator popping into its replacement ──────────────────────────────
+   A subscreen that hands the cube over to another object (the clay TV, the
+   mixing desk) used to hot-swap the model mid-frame: one thing simply became
+   another, which reads as a glitch rather than a transformation.
+
+   Expand, shrink away to almost nothing, then grow back — the model is swapped
+   at the 55% trough and the pop sound lands there, so the object you get is the
+   one that grows OUT of the pop. Shares the hover loop so the cube keeps
+   breathing throughout instead of freezing for the length of the swap. */
+@keyframes cubeSwapPop {
+  0%   { scale: 1 1; }
+  32%  { scale: 1.2 1.16; }
+  55%  { scale: 0.42 0.42; }
+  74%  { scale: 1.12 1.14; }
+  100% { scale: 1 1; }
+}
+
+.cubeSwapPop {
+  animation:
+    cubeSwapPop 0.62s cubic-bezier(0.34, 1.4, 0.64, 1),
+    cubeHover 3.6s ease-in-out infinite;
 }

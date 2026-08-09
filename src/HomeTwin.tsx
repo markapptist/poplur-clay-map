@@ -60,9 +60,28 @@ const CUBE_INTO_PHONE_MS = 1_600
     in public/, like every other clay model — never a drawn substitute. */
 const CLAY_TV_MODEL = 'clay_tv.glb'
 const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
-// The studio's navigator is the mixing desk — same rule as the clay TV: on a
-// screen built around one object, the thing in your hand IS that object.
-const STUDIO_MIXER_MODEL = 'models/poplur_mixer.glb'
+// ── The navigator's object, per subscreen ────────────────────────────────────
+// Every subscreen gets its own object in your hand: open it and the cube pops
+// into that thing, back out and it pops back into the cube. Add a screen id
+// here and it is wired — nothing else to change.
+//
+// SIZE IS THE CONSTRAINT, not taste. clay_tv.glb is 136KB and works as a live
+// navigator precisely because it is tiny; poplur_mixer.glb is 38MB and would
+// decode on the main thread every time its screen opened. Keep new models near
+// the TV's weight (Draco + decimate) — a heavy one here is a stall, not a
+// detail. A screen with no entry simply keeps the cube, and still pops.
+const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
+  'feed-tvguide': CLAY_TV_MODEL,
+  'map-radio': CLAY_TV_MODEL,
+  // Awaiting models — see the handoff list. Add as they land, e.g.
+  // 'camera-studio': 'models/poplur_mixer_lite.glb',
+  // 'feed-games': 'models/poplur_arcade.glb',
+}
+
+// The studio's navigator wants to be the mixing desk — same rule as the clay
+// TV — but the supplied GLB is 38MB and the TV is 136KB. Kept here so the
+// intent is not lost; wired back in once a decimated mixer exists.
+// const STUDIO_MIXER_MODEL = 'models/poplur_mixer.glb'
 
 const LOADING_MESSAGES = [
   'Warming up the pinetrees',
@@ -111,6 +130,17 @@ const SPOOFED_ONLINE_AUDIENCE = 1_200_000
 // cycle. Presence is a brief status beat, not an equal-priority alternate.
 const RADIUS_STAT_HOLD_MS = 10_000
 const ONLINE_STAT_HOLD_MS = 2_000
+
+type MapHudScope = 'world' | 'current' | 'area' | 'pop'
+interface MapHudContext {
+  scope: MapHudScope
+  ownPostsTotal: number
+  ownPostsArea: number
+  ownPostIds: string[]
+  totalRadiusKm: number
+  popRadiusKm: number | null
+  onlineUsers: number
+}
 
 function AnimatedRadiusMetrics({
   radius,
@@ -230,6 +260,48 @@ function AnimatedOnlineCount({ value, active }: { value: number; active: boolean
   return (
     <span
       className={`${styles.statValue} ${styles.onlineValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
+      data-counter-value={text}
+    >
+      {text}
+    </span>
+  )
+}
+
+function AnimatedPostCount({ value, active }: { value: number; active: boolean }) {
+  const [progress, setProgress] = useState(active ? 0 : 1)
+  const [counting, setCounting] = useState(active)
+
+  useEffect(() => {
+    let raf = 0
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!active || reduced) {
+      setProgress(1)
+      setCounting(false)
+      return
+    }
+    setProgress(0)
+    setCounting(true)
+    const started = performance.now()
+    const frame = (now: number) => {
+      const raw = Math.max(0, Math.min(1, (now - started) / 720))
+      const eased = 1 - Math.pow(1 - raw, 2.35)
+      setProgress(eased)
+      playRadiusCounterTick(eased)
+      if (raw < 1) raf = requestAnimationFrame(frame)
+      else {
+        setProgress(1)
+        setCounting(false)
+        playRadiusCounterDone()
+      }
+    }
+    raf = requestAnimationFrame(frame)
+    return () => cancelAnimationFrame(raf)
+  }, [active, value])
+
+  const text = Math.round(value * progress).toLocaleString()
+  return (
+    <span
+      className={`${styles.statValue} ${styles.postValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
       data-counter-value={text}
     >
       {text}
@@ -555,11 +627,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // TV Guide AND Radio both hand the navigator over to the clay TV — on
     // those screens the thing in your hand IS the set you are tuning. It still
     // turns, still holds to open the wheel, still backs you out.
+    // The subscreen the cube is answering to. Tracked separately from the model
+    // because the POP is owed on every subscreen change, including the many
+    // that share the plain cube — without this, entering News from Home would
+    // swap nothing and so pop nothing.
+    setCubeScreen(open && screen ? screen : null)
     setCubeModel(() => {
-      if (!open) return undefined
-      if (screen === 'feed-tvguide' || screen === 'map-radio') return CLAY_TV_MODEL
-      // STUDIO is a screen about one object, so the navigator becomes it.
-      if (screen === 'camera-studio') return STUDIO_MIXER_MODEL
+      if (!open || !screen) return undefined
+      const wanted = SUBSCREEN_CUBE_MODEL[screen]
+      if (wanted) return wanted
+      // STUDIO wants the mixing desk here for the same reason, and CANNOT have
+      // it yet: poplur_mixer.glb is 38MB against clay_tv.glb's 136KB. The TV
+      // works as a live navigator precisely because it is tiny; handing the
+      // cube a 38MB model would decode it on the main thread every time the
+      // studio opens. The desk is already baked to a 54KB sprite for the
+      // header — the navigator needs a DECIMATED mixer (Draco + simplify, down
+      // near the TV's weight) before this line can come back.
+      // if (screen === 'camera-studio') return STUDIO_MIXER_MODEL
       if (screen === 'feed-games') return STATION_CONSOLE_MODEL
       // GAMES wants the same treatment and has no object yet — see the note in
       // the handoff. Deliberately NOT substituted with a stand-in: inventing
@@ -573,6 +657,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     silenceAllAudio()
   }, [])
   const [popping, setPopping] = useState(false)
+  // ── Cube model swap: the navigator POPS into its replacement ──────────────
+  // A subscreen that hands the cube over to another object (the clay TV on TV
+  // Guide and Radio, the mixing desk in the studio) used to hot-swap the model
+  // mid-frame — one object simply became another with no beat, which read as a
+  // glitch rather than a transformation. It now expands, shrinks away, pops,
+  // and the replacement grows out of the pop.
+  //
+  // `cubeModel` is what the screen ASKS for; `appliedCubeModel` is what the
+  // cube is actually wearing. They differ only for the length of the swap, and
+  // the model changes at the animation's trough so you never see the old one
+  // shrink and the new one shrink with it.
+  const [cubeScreen, setCubeScreen] = useState<string | null>(null)
+  const [appliedCubeScreen, setAppliedCubeScreen] = useState<string | null>(null)
+  const [appliedCubeModel, setAppliedCubeModel] = useState<string | undefined>(undefined)
+  const [cubeSwapping, setCubeSwapping] = useState(false)
+  const cubeSwapTimer = useRef<number | null>(null)
   const [photoPopping, setPhotoPopping] = useState(false)
 
   // Start in the measurement system implied by the device locale. Tapping the
@@ -595,6 +695,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Right slot alternates between local radius and the potential audience it
   // reaches. The spoofed audience stays stable until live presence arrives.
   const [showOnlineAudience, setShowOnlineAudience] = useState(false)
+  const [profileMetric, setProfileMetric] = useState<'online' | 'radius' | 'posts'>('online')
+  const [profilePostCount, setProfilePostCount] = useState(0)
   // Left slot: channel up/down changer — drives the feed's channel directly.
   const [chanIndex, setChanIndex] = useState(0)
   const tuneFeedChannel = useCallback((channelId: string) => {
@@ -711,24 +813,33 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // a touch) already fades this HUD; the swap pauses with it and the first
     // touch brings both back.
     if (chromeIdle) return
-    // On the MAP the card does not rotate. Travelling the map is a sequence of
-    // arrivals at other people's posts, and the number that means anything at
-    // each one is THAT POST'S RADIUS — the ground it holds. Swapping to a
-    // global online count meant you landed on a pop and were shown a number
-    // about everybody instead of a number about where you just arrived.
-    if (activeTab === 'map') { setShowOnlineAudience(false); return }
+    if (activeTab === 'profile') { setShowOnlineAudience(false); return }
     let timer = 0
+    const radiusHold = activeTab === 'map' ? 7_000 : RADIUS_STAT_HOLD_MS
+    const onlineHold = activeTab === 'map' ? 5_000 : ONLINE_STAT_HOLD_MS
     const showRadius = () => {
       setShowOnlineAudience(false)
-      timer = window.setTimeout(showOnline, RADIUS_STAT_HOLD_MS)
+      timer = window.setTimeout(showOnline, radiusHold)
     }
     const showOnline = () => {
       setShowOnlineAudience(true)
-      timer = window.setTimeout(showRadius, ONLINE_STAT_HOLD_MS)
+      timer = window.setTimeout(showRadius, onlineHold)
     }
     showRadius()
     return () => window.clearTimeout(timer)
   }, [chromeIdle, activeTab])
+
+  useEffect(() => {
+    if (activeTab !== 'profile' || chromeIdle) return
+    const metrics: Array<'online' | 'radius' | 'posts'> = ['online', 'radius', 'posts']
+    let index = 0
+    setProfileMetric(metrics[index])
+    const timer = window.setInterval(() => {
+      index = (index + 1) % metrics.length
+      setProfileMetric(metrics[index])
+    }, 3_200)
+    return () => window.clearInterval(timer)
+  }, [activeTab, chromeIdle])
 
   useEffect(() => {
     const onPhoneMessage = (event: MessageEvent) => {
@@ -763,7 +874,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         // that post holds — not the signed-in user's own reach. The map is the
         // only thing that knows which pop you landed on, so it reports the
         // number with the index.
-        if (typeof event.data.radiusKm === 'number') setMapPopRadiusKm(event.data.radiusKm)
+        if (typeof event.data.radiusKm === 'number') {
+          setMapPopRadiusKm(event.data.radiusKm)
+          setMapWorldTotalKm(null)
+          setMapHudContext(previous => previous
+            ? { ...previous, scope: 'pop', popRadiusKm: event.data.radiusKm }
+            : previous)
+        }
         // "N pops in this area", drawn under the place title. The map counts
         // (it owns the pop list); the shell renders and routes the tap to the
         // profile with the ids to light up.
@@ -777,6 +894,42 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               }
             : null,
         )
+      }
+      if (event.data.type === 'poplur-map-context') {
+        const rawScope = event.data.scope
+        const scope: MapHudScope | null = rawScope === 'world' || rawScope === 'current'
+          || rawScope === 'area' || rawScope === 'pop'
+          ? rawScope
+          : null
+        const totalRadiusKm = Number(event.data.totalRadiusKm)
+        const popRadiusKm = Number(event.data.popRadiusKm)
+        const ownPostsTotal = Number(event.data.ownPostsTotal)
+        const ownPostsArea = Number(event.data.ownPostsArea)
+        const onlineUsers = Number(event.data.onlineUsers)
+        if (scope && Number.isFinite(totalRadiusKm) && Number.isFinite(onlineUsers)) {
+          const ownPostIds = Array.isArray(event.data.ownPostIds)
+            ? (event.data.ownPostIds as unknown[]).filter((value): value is string => typeof value === 'string')
+            : []
+          const context: MapHudContext = {
+            scope,
+            ownPostsTotal: Number.isFinite(ownPostsTotal) ? ownPostsTotal : POST_COUNT,
+            ownPostsArea: Number.isFinite(ownPostsArea) ? ownPostsArea : 0,
+            ownPostIds,
+            totalRadiusKm,
+            popRadiusKm: scope === 'pop' && Number.isFinite(popRadiusKm) ? popRadiusKm : null,
+            onlineUsers,
+          }
+          setMapHudContext(context)
+          setMapPopRadiusKm(context.popRadiusKm)
+          // Away from an individual pop the map reports the user's accumulated
+          // radius, including at current location and neighbourhood scale.
+          setMapWorldTotalKm(scope === 'pop' ? null : totalRadiusKm)
+          setMapAreaPops({
+            count: scope === 'world' ? context.ownPostsTotal : context.ownPostsArea,
+            ids: ownPostIds,
+            overall: scope === 'world',
+          })
+        }
       }
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
@@ -1002,10 +1155,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
   const [mapPlace, setMapPlace] = useState<string | null>(null)
+  const [mapHudContext, setMapHudContext] = useState<MapHudContext | null>(null)
   // "N pops in this area" under the title — the map counts on every pop
   // arrival (it owns the pop list); a tap opens the profile with these pops
   // lit up.
-  const [mapAreaPops, setMapAreaPops] = useState<{ count: number; ids: string[] } | null>(null)
+  const [mapAreaPops, setMapAreaPops] = useState<{ count: number; ids: string[]; overall?: boolean } | null>(null)
   // One-shot signals down into the tabs: which profile tiles to light up, and
   // which engagement the feed should open on. seq re-fires an identical target.
   const [profilePopFlash, setProfilePopFlash] = useState<{ ids: string[]; seq: number } | null>(null)
@@ -1253,8 +1407,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   /** Takeover radius of the pop currently centred on the map, in km. */
   const [mapPopRadiusKm, setMapPopRadiusKm] = useState<number | null>(null)
-  /** Sum of every pop's radius — set while the map camera is at planet zoom.
-      Zoomed all the way out no single pop is the subject; your EMPIRE is. */
+  /** Sum of every pop's radius whenever no individual map pop is the subject. */
   const [mapWorldTotalKm, setMapWorldTotalKm] = useState<number | null>(null)
   // What the RADIUS card is actually reporting, in km. Three cases, in order:
   //   a recognised user in the camera — their reach
@@ -1283,10 +1436,30 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             ? feedReachKm
             : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : earnedRadiusKm)
 
+  const mapHasPopSubject = activeTab === 'map' && mapHudContext?.scope === 'pop'
+  const mapHasAccumulatedRadius = activeTab === 'map' && mapHudContext != null && !mapHasPopSubject
+  const onlineAudience = activeTab === 'map'
+    ? (mapHudContext?.onlineUsers ?? SPOOFED_ONLINE_AUDIENCE)
+    : SPOOFED_ONLINE_AUDIENCE
+  const onlineIsGlobal = activeTab !== 'map'
+    || mapHudContext == null
+    || mapHudContext.scope === 'world'
+    || mapHudContext.scope === 'current'
+  const mapRadiusTrend = mapHudContext == null
+    ? `${POST_COUNT} nearby`
+    : mapHudContext.scope === 'world'
+      ? `${mapHudContext.ownPostsTotal} posts overall`
+      : `${mapHudContext.ownPostsArea} nearby`
+
   // Off the map the card reports YOUR radius again — a pop's takeover must not
   // linger on the HUD once you have left the map that showed it.
   useEffect(() => {
-    if (activeTab !== 'map') { setMapPopRadiusKm(null); setMapWorldTotalKm(null) }
+    if (activeTab !== 'map') {
+      setMapPopRadiusKm(null)
+      setMapWorldTotalKm(null)
+      setMapHudContext(null)
+      setMapAreaPops(null)
+    }
   }, [activeTab])
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
@@ -1351,6 +1524,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.clearTimeout(timer)
       for (const type of events) document.removeEventListener(type, wake, opts)
     }
+  }, [])
+
+  useEffect(() => {
+    if (cubeModel === appliedCubeModel && cubeScreen === appliedCubeScreen) return
+    setCubeSwapping(true)
+    if (cubeSwapTimer.current) window.clearTimeout(cubeSwapTimer.current)
+    // 340ms is the trough of cubeSwapPop (55% of 620ms): the cube is at its
+    // smallest, so the pop lands exactly where the object disappears and the
+    // replacement is what grows back out.
+    cubeSwapTimer.current = window.setTimeout(() => {
+      cubeSwapTimer.current = null
+      playPop()
+      setAppliedCubeModel(cubeModel)
+      setAppliedCubeScreen(cubeScreen)
+    }, 340)
+  }, [cubeModel, appliedCubeModel, cubeScreen, appliedCubeScreen])
+  useEffect(() => () => {
+    if (cubeSwapTimer.current) window.clearTimeout(cubeSwapTimer.current)
   }, [])
 
   const popCube = () => {
@@ -1494,6 +1685,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             bindGoBack={fn => { profileBackRef.current = fn }}
             viewUser={viewingUser}
             highlightPops={profilePopFlash}
+            onPostCountChange={setProfilePostCount}
             onBackToOwn={() => {
               setActiveTab(profileOrigin ?? 'feed')
               setViewingUser(null)
@@ -1618,32 +1810,50 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           {/* Radius keeps the user’s local-unit toggle; the audience card takes
               this exact slot on the next beat. */}
           <div
-            className={recordMs != null || showOnlineAudience ? styles.statCardOut : styles.statCard}
+            className={recordMs != null || (activeTab === 'profile' ? profileMetric !== 'radius' : showOnlineAudience) ? styles.statCardOut : styles.statCard}
             onClick={() => { playPop(); setUnitMi(v => { setUseMiles(!v); return !v }) }}
             role="button"
             aria-label={`Radius ${(shownRadiusKm * (unitMi ? KM_TO_MI : 1)).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
           >
-            <span className={styles.statLabel}>{seenUser ? `${seenUser.handle} ◆` : ((mapWorldTotalKm != null && activeTab === 'map') || (profileTotalKm != null && activeTab === 'profile') ? 'TOTAL RADIUS ◆' : 'RADIUS ◆')}</span>
+            <span className={styles.statLabel}>{seenUser
+              ? `${seenUser.handle} ◆`
+              : mapHasPopSubject
+                ? 'POP RADIUS ◆'
+                : mapHasAccumulatedRadius || (profileTotalKm != null && activeTab === 'profile')
+                  ? 'TOTAL RADIUS ◆'
+                  : 'RADIUS ◆'}</span>
             <AnimatedRadiusMetrics
               radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
-              active={recordMs == null && !showOnlineAudience}
-              accumulated={!seenUser && ((activeTab === 'map' && mapWorldTotalKm != null) || (activeTab === 'profile' && profileTotalKm != null))}
+              active={recordMs == null && (activeTab === 'profile' ? profileMetric === 'radius' : !showOnlineAudience)}
+              accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && profileTotalKm != null))}
             />
-            <span className={styles.statTrend}>{POST_COUNT} nearby</span>
+            <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : `${POST_COUNT} nearby`}</span>
           </div>
           <div
-            className={recordMs == null && showOnlineAudience ? styles.statCard : styles.statCardOut}
-            aria-label={`${compactAudience(SPOOFED_ONLINE_AUDIENCE)} users online in your reach`}
+            className={recordMs == null && (activeTab === 'profile' ? profileMetric === 'online' : showOnlineAudience) ? styles.statCard : styles.statCardOut}
+            aria-label={`${compactAudience(onlineAudience)} users online ${onlineIsGlobal ? 'in the app' : 'in this area'}`}
           >
-            <span className={styles.statLabel}>ONLINE NOW</span>
+            <span className={styles.statLabel}>{onlineIsGlobal ? 'ONLINE NOW' : 'ONLINE HERE'}</span>
             <AnimatedOnlineCount
-              value={SPOOFED_ONLINE_AUDIENCE}
-              active={recordMs == null && showOnlineAudience}
+              value={onlineAudience}
+              active={recordMs == null && (activeTab === 'profile' ? profileMetric === 'online' : showOnlineAudience)}
             />
-            <span className={styles.statSub}>users in reach</span>
-            <span className={styles.statTrend}>LIVE PRESENCE</span>
+            <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
+            <span className={styles.statTrend}>{onlineIsGlobal ? 'LIVE APP' : 'LIVE AREA'}</span>
+          </div>
+          <div
+            className={recordMs == null && activeTab === 'profile' && profileMetric === 'posts' ? styles.statCard : styles.statCardOut}
+            aria-label={`${profilePostCount} posts published`}
+          >
+            <span className={styles.statLabel}>YOUR POSTS ◆</span>
+            <AnimatedPostCount
+              value={profilePostCount}
+              active={recordMs == null && activeTab === 'profile' && profileMetric === 'posts'}
+            />
+            <span className={styles.statSub}>posts published</span>
+            <span className={styles.statTrend}>YOUR POPS</span>
           </div>
         </div>
       </div>
@@ -1664,16 +1874,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           {mapAreaPops && (
             <button
               type="button"
-              key={`area-${mapAreaPops.count}-${mapAreaPops.ids[0] ?? ''}`}
+              key={`area-${mapAreaPops.overall ? 'world' : 'local'}-${mapAreaPops.count}-${mapAreaPops.ids[0] ?? ''}`}
               className={styles.mapAreaPops}
+              disabled={mapAreaPops.ids.length === 0}
               onClick={() => {
+                if (!mapAreaPops.ids.length) return
                 playPop()
                 setProfilePopFlash(prev => ({ ids: mapAreaPops.ids, seq: (prev?.seq ?? 0) + 1 }))
                 setViewingUser(null)
                 setActiveTab('profile')
               }}
             >
-              {mapAreaPops.count === 1 ? '1 pop in this area' : `${mapAreaPops.count} pops in this area`}
+              {mapAreaPops.overall
+                ? `${mapAreaPops.count} pops posted overall`
+                : mapAreaPops.count === 1
+                  ? '1 pop posted in this area'
+                  : `${mapAreaPops.count} pops posted in this area`}
             </button>
           )}
         </div>
@@ -1693,16 +1909,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         <div
           className={photoPopping
             ? `${styles.cubePhotoPop} ${styles.cubeFloat}`
+            : cubeSwapping ? `${styles.cubeSwapPop} ${styles.cubeFloat}`
             : popping ? `${styles.cubePop} ${styles.cubeFloat}` : styles.cubeFloat}
           onAnimationEnd={e => {
             if (e.animationName.includes('cubePhotoCapture')) setPhotoPopping(false)
+            // Checked BEFORE the generic Pop test — 'cubeSwapPop' contains
+            // 'Pop', so the tap-pop branch would otherwise swallow it and the
+            // swap class would never clear.
+            else if (e.animationName.includes('cubeSwapPop')) setCubeSwapping(false)
             else if (e.animationName.includes('Pop')) setPopping(false)
           }}
         >
           <CubeTab3D
             key={`cube-${uiRecoveryKey}`}
             size={cubeSize}
-            modelUrl={cubeModel}
+            modelUrl={appliedCubeModel}
             targetTab={activeTab}
             showFoodFace={showFoodCubeFace}
             onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}

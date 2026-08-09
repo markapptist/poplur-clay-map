@@ -191,9 +191,9 @@ export const OTHER_POPS: OtherPop[] = [...WORLD_POPS, ...CITY_POPS]
 export type PopLevel = 'mine' | 'others' | 'all'
 
 export const POP_LEVELS: Array<{ id: PopLevel; label: string; blurb: string }> = [
-  { id: 'mine',   label: 'My pops',    blurb: 'Only the ground you hold' },
-  { id: 'others', label: 'Other pops', blurb: 'Everyone else’s takeovers' },
-  { id: 'all',    label: 'All pops',   blurb: 'The whole board — who leads' },
+  { id: 'mine',   label: 'Level 1 · My pops',    blurb: 'One layer — the ground you hold' },
+  { id: 'others', label: 'Level 2 · Other pops', blurb: 'Two layers — everyone else’s takeovers' },
+  { id: 'all',    label: 'Level 3 · All pops',   blurb: 'Three layers — the whole board' },
 ]
 
 // GeoJSON paths connecting POIs for the clay road overlay

@@ -173,9 +173,22 @@
   right: 16px;
   height: 44px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* mute · slot · share. The two clay marks bookend the bar; the middle column
+     is the only one that flexes, so the bar's centre stays the viewport's
+     centre and the absolutely-centred ticker and brand keep the cube's axis. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+}
+
+/* The share mark's own box, so the clay canvas cannot be stretched by the grid
+   row — a squashed 40px object reads as a rendering fault, not a button. */
+.shareCorner {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 40px;
+  height: 40px;
 }
 
 /* The slot cross-fades between its two faces: ease out, swap, ease back in. */

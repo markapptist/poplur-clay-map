@@ -361,6 +361,11 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   const micCtxRef = useRef<AudioContext | null>(null)
   const levelTimer = useRef(0)
   const [levels, setLevels] = useState<number[]>([])
+  const micEnergy = useMemo(() => {
+    const recent = levels.slice(-5)
+    if (!recent.length) return 0.03
+    return Math.min(1, recent.reduce((sum, value) => sum + value, 0) / recent.length / 100)
+  }, [levels])
   const [takeUrl, setTakeUrl] = useState<string | null>(null)
   const [micDenied, setMicDenied] = useState(false)
   const takeAudio = useRef<HTMLAudioElement | null>(null)
@@ -513,29 +518,21 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     return (
       <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
         <div className={styles.micStage}>
-          {micArt3d ? (
-            /* The 3D Poplur mic the user supplied, rendered to a sprite. It is
-               a clean object on transparency, so unlike the old PNG it needs no
-               screen-blend trick to hide a baked-in background. */
-            <img
-              className={styles.micArt3d}
-              src={micArt3d}
-              alt="Poplur studio microphone"
-              draggable={false}
-            />
-          ) : micArtOk ? (
-            /* studio_mic.png is the bedazzled Poplur microphone the user
-               supplied — still the fallback while the sprite resolves. */
-            <img
-              className={styles.micArt}
-              src="studio_mic.png"
-              alt="Poplur studio microphone"
-              draggable={false}
-              onError={() => setMicArtOk(false)}
-            />
-          ) : (
-            <img className={styles.micArtFallback} src="holdmenu/Mic.svg" alt="Microphone" draggable={false} />
-          )}
+          <div
+            className={recording ? `${styles.micScene} ${styles.micSceneLive}` : styles.micScene}
+            style={{ '--mic-energy': micEnergy } as React.CSSProperties}
+          >
+            <span className={styles.micHalo} aria-hidden="true" />
+            <span className={`${styles.voiceArc} ${styles.voiceArcLeft}`} aria-hidden="true"><i /><i /><i /></span>
+            <span className={`${styles.voiceArc} ${styles.voiceArcRight}`} aria-hidden="true"><i /><i /><i /></span>
+            {micArt3d ? (
+              <img className={styles.micArt3d} src={micArt3d} alt="Poplur studio microphone" draggable={false} />
+            ) : micArtOk ? (
+              <img className={styles.micArt} src="studio_mic.png" alt="Poplur studio microphone" draggable={false} onError={() => setMicArtOk(false)} />
+            ) : (
+              <img className={styles.micArtFallback} src="holdmenu/Mic.svg" alt="Microphone" draggable={false} />
+            )}
+          </div>
           <div className={styles.micWave} aria-hidden="true">
             {levels.slice(-40).map((h, i) => (
               <span key={i} style={{ height: `${Math.min(100, h)}%` }} />

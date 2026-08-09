@@ -802,7 +802,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .micOn, .tBtnRecOn, .buildFill { animation: none; }
+  .micOn, .tBtnRecOn, .buildFill, .micArt3d { animation: none; }
 }
 
 .playTake {
@@ -828,13 +828,70 @@
 .micStage, .styleStage {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 18px;
-  padding: 24px;
+  gap: 10px;
+  padding: 18px 24px 24px;
   text-align: center;
   background:
     radial-gradient(72% 54% at 50% 40%, rgba(246, 59, 154, 0.16), transparent 70%),
     #07040c;
 }
+
+.micScene {
+  --mic-energy: .03;
+  position: relative;
+  z-index: 2;
+  width: min(88vw, 390px);
+  height: clamp(260px, 45vh, 470px);
+  flex: 0 1 auto;
+  display: grid;
+  place-items: center;
+  perspective: 900px;
+  transform-style: preserve-3d;
+}
+
+.micHalo {
+  position: absolute;
+  inset: 14% 14% 8%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(246, 59, 154, .22), rgba(102, 41, 128, .09) 46%, transparent 72%);
+  transform: scale(calc(.9 + var(--mic-energy) * .25));
+  opacity: calc(.35 + var(--mic-energy) * .65);
+  box-shadow: 0 0 calc(28px + var(--mic-energy) * 46px) rgba(246, 59, 154, .36);
+  transition: transform 70ms linear, opacity 70ms linear;
+}
+
+.voiceArc {
+  position: absolute;
+  top: 34%;
+  z-index: 4;
+  width: 24%;
+  height: 34%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  opacity: calc(.12 + var(--mic-energy) * .88);
+  transition: opacity 55ms linear;
+}
+
+.voiceArcLeft { left: 1%; justify-content: flex-end; }
+.voiceArcRight { right: 1%; justify-content: flex-start; }
+
+.voiceArc i {
+  display: block;
+  width: 10px;
+  height: calc(22% + var(--mic-energy) * 68%);
+  border: 3px solid #ff67ad;
+  border-block-color: transparent;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 7px rgba(246, 59, 154, .72));
+  transform: scaleY(calc(.55 + var(--mic-energy) * .65));
+  transition: height 55ms linear, transform 55ms linear;
+}
+
+.voiceArcLeft i { border-left: 0; }
+.voiceArcRight i { border-right: 0; }
+.voiceArc i:nth-child(2) { height: calc(34% + var(--mic-energy) * 62%); opacity: .72; }
+.voiceArc i:nth-child(3) { height: calc(46% + var(--mic-energy) * 54%); opacity: .45; }
 
 /* The bedazzled Poplur microphone (public/studio_mic.png, user-supplied). The
    fallback is the wheel's own Mic icon — never invented art. */
@@ -975,17 +1032,39 @@
      As the first item of this centred flex column it now sits ABOVE the
      transport and the whole group centres as one: mic, then wave, timer,
      RECORD, hint. Nothing overlaps anything. */
-  width: min(80%, 320px);
-  max-height: 42vh;
-  flex: 0 1 auto;
-  min-height: 0;
+  position: relative;
+  z-index: 3;
+  width: min(100%, 390px);
+  height: 100%;
   object-fit: contain;
   /* Pulls the transport up under the mic's stand, so the two read as one
      object standing on the controls rather than two stacked pictures. */
-  margin-bottom: -10px;
   filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.55))
           drop-shadow(0 0 34px rgba(246, 59, 154, 0.35));
   pointer-events: none;
+  transform-origin: 50% 72%;
+  animation: micIdleTurn 6s ease-in-out infinite;
+}
+
+.micSceneLive .micArt3d {
+  animation: micRecordTurn 1.65s ease-in-out infinite;
+}
+
+.micSceneLive .micHalo {
+  background: radial-gradient(circle, rgba(255, 91, 170, .35), rgba(126, 57, 180, .15) 46%, transparent 72%);
+}
+
+@keyframes micIdleTurn {
+  0%, 100% { transform: rotateY(-7deg) rotateX(1deg) scale(1); }
+  50% { transform: rotateY(7deg) rotateX(-1deg) scale(1.02); }
+}
+
+@keyframes micRecordTurn {
+  0% { transform: rotateY(-9deg) scale(.82); }
+  9% { transform: rotateY(-4deg) scale(1.13); }
+  19% { transform: rotateY(2deg) scale(1); }
+  55% { transform: rotateY(10deg) scale(calc(1 + var(--mic-energy) * .035)); }
+  100% { transform: rotateY(-9deg) scale(calc(1 + var(--mic-energy) * .02)); }
 }
 
 /* The mixing desk in the editor header, sized to the chip it replaces. */

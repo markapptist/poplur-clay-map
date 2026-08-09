@@ -59,6 +59,48 @@ const qualityListeners = new Set<(q: Quality) => void>()
 const ambientSleepListeners = new Set<(sleeping: boolean) => void>()
 let ambientSleeping = false
 
+// Decoration asleep and the map renderer parked are NOT the same decision, and
+// conflating them cost us a frozen map. A parked map has its private
+// `_triggerFrame` patched out, so it cannot draw its own pans and zooms either —
+// at a serious thermal ceiling, where every touch re-slept ambient, that left the
+// canvas dead for as long as the phone stayed warm while the HUD kept updating,
+// which reads as a broken map rather than a throttled one.
+//
+// So: decoration still stops the moment the gate closes, but the surface a finger
+// is actually on keeps drawing. The window is the gesture itself plus a short tail
+// for inertia; nothing autonomous can hold it open.
+const rendererParkListeners = new Set<(parked: boolean) => void>()
+let rendererParked = false
+let pointersDown = 0
+let interactionUntil = 0
+let interactionTimer = 0
+const INTERACTION_TAIL_MS = 1200
+
+function interacting(): boolean {
+  if (pointersDown > 0) return true
+  return typeof performance !== 'undefined' && performance.now() < interactionUntil
+}
+
+function syncRendererPark(): void {
+  const next = ambientSleeping && !interacting()
+  if (next === rendererParked) return
+  rendererParked = next
+  rendererParkListeners.forEach(listener => listener(next))
+}
+
+/** Extend the direct-interaction window and re-evaluate the park. */
+function noteInteraction(): void {
+  if (typeof performance === 'undefined' || typeof window === 'undefined') return
+  interactionUntil = performance.now() + INTERACTION_TAIL_MS
+  window.clearTimeout(interactionTimer)
+  // The tail has to re-park itself: once the gesture ends, no other event fires.
+  interactionTimer = window.setTimeout(() => {
+    interactionTimer = 0
+    syncRendererPark()
+  }, INTERACTION_TAIL_MS + 20)
+  syncRendererPark()
+}
+
 function setAmbientSleeping(sleeping: boolean): void {
   if (ambientSleeping === sleeping) return
   ambientSleeping = sleeping
@@ -66,6 +108,7 @@ function setAmbientSleeping(sleeping: boolean): void {
     document.documentElement.classList.toggle('poplur-ambient-sleep', sleeping)
   }
   ambientSleepListeners.forEach(listener => listener(sleeping))
+  syncRendererPark()
 }
 
 // ── rate table ───────────────────────────────────────────────────────────────
@@ -238,9 +281,10 @@ if (typeof document !== 'undefined') {
     // frame boost were the two paths that never consulted it.
     const lease = ambientLeaseMs()
     if (lease <= 0) {
-      // Throttling: stay down. Direct interaction still works — Mapbox drives
-      // its own pans and the UI still responds — we simply stop restarting
-      // decoration on top of a phone the OS is already slowing down.
+      // Throttling: decoration stays down. Direct interaction survives because
+      // the renderer park consults the gesture window separately (see
+      // `syncRendererPark`) — it is NOT enough to rely on Mapbox driving its own
+      // pans, because parking patches out the very entry points it would use.
       sleepAmbient()
       return
     }
@@ -261,9 +305,29 @@ if (typeof document !== 'undefined') {
   // short untouched window; any real input wakes it immediately. This is an
   // energy gate, not a quality downgrade — the objects remain visible.
   const opts: AddEventListenerOptions = { passive: true, capture: true }
-  for (const type of ['pointerdown', 'touchstart', 'wheel', 'keydown'] as const) {
-    document.addEventListener(type, wakeAmbient, opts)
+  const onGestureStart = (event: Event) => {
+    if (event.type === 'pointerdown') pointersDown++
+    noteInteraction()
+    wakeAmbient()
   }
+  // Only pointer events adjust the count: touch fires BOTH touchstart and
+  // pointerdown for one finger, and counting both would never reach zero.
+  const onGestureEnd = () => {
+    if (pointersDown > 0) pointersDown--
+    noteInteraction()
+  }
+  const onGestureMove = () => {
+    if (pointersDown > 0) noteInteraction()
+  }
+  for (const type of ['pointerdown', 'touchstart', 'wheel', 'keydown'] as const) {
+    document.addEventListener(type, onGestureStart, opts)
+  }
+  for (const type of ['pointerup', 'pointercancel'] as const) {
+    document.addEventListener(type, onGestureEnd, opts)
+  }
+  // A long drag emits no further downs; without this the tail expires mid-gesture
+  // and the map parks under the finger.
+  document.addEventListener('pointermove', onGestureMove, opts)
   const applyNativeThermal = (raw: unknown) => {
     const state = typeof raw === 'string'
       ? raw.toLowerCase()
@@ -356,6 +420,10 @@ export function setSurfaceFront(front: boolean): void {
         setAmbientSleeping(true)
       }, AMBIENT_IDLE_MS)
     } else {
+      // A surface going away cannot leave a finger "down": the pointerup landed
+      // somewhere else, and a stuck count would hold the renderer awake forever.
+      pointersDown = 0
+      interactionUntil = 0
       ambientAwakeUntil = 0
       setAmbientSleeping(true)
       window.clearTimeout(ambientSleepTimer)
@@ -383,6 +451,18 @@ export function onAmbientSleepChange(cb: (sleeping: boolean) => void): () => voi
   ambientSleepListeners.add(cb)
   cb(ambientSleeping)
   return () => { ambientSleepListeners.delete(cb) }
+}
+
+/**
+ * Whether the map renderer itself should park — the idle/thermal gate AND no live
+ * gesture. Subscribe to this rather than `onAmbientSleepChange` for anything that
+ * suppresses drawing, so a pan or a zoom drag still paints on a warm phone.
+ * Decoration keeps using the ambient signal and stays down regardless.
+ */
+export function onRendererParkChange(cb: (parked: boolean) => void): () => void {
+  rendererParkListeners.add(cb)
+  cb(rendererParked)
+  return () => { rendererParkListeners.delete(cb) }
 }
 
 /**

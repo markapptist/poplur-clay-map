@@ -74,10 +74,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   feed: [
     { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg', action: 'like' },
     { icon: 'Chat', title: 'COMMENT', screen: 'feed-comments', action: 'comment' },
-    // SHARE sits with its siblings. Sending a post on is the third thing you
-    // do to one, and the feed carries no on-screen engagement chips — so the
-    // hold menu is where LIKE and COMMENT live, and it is where this belongs.
-    { icon: 'Mail', title: 'SHARE', screen: 'feed-share', format: 'svg', action: 'share' },
+    // No SHARE tile: it is the clay mark in the feed's top-right corner now.
+    // Sending a post on is a one-tap thing you do WHILE watching, so it should
+    // not cost a hold plus a wheel. The `share` ACTION is still handled in
+    // FeedTwin, because a native shell can raise it from its own menu.
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
     { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
@@ -89,7 +89,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // PHOTO and VIDEO act on the camera behind the menu. PHOTO is also the
     // tab's default favourite, so the cube shoots without visiting the menu.
     { icon: 'Create', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
-    { icon: 'TVGuide', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
+    // VIDEO has its own cube now. It used to borrow TVGuide's mark, which meant
+    // the two tiles were indistinguishable in the wheel — and it also meant the
+    // VIDEO cube could not be dropped in without silently restyling TV GUIDE.
+    { icon: 'Video', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
     // Camera Roll no longer shares the zoom/channel buttons. This explicit
     // hold-menu destination is its only entry point from the live camera.
     { icon: 'CameraRoll', title: 'CAMERA ROLL', screen: 'camera-roll', action: 'roll' },

@@ -1,5 +1,6 @@
 import { isGateMuted, onGateChange } from './audioGate'
 import { holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 
 /** Where we last looked for a station, so a dead stream can be replaced. */
 let lastTuneCoords: { lat: number; lng: number } | null = null
@@ -807,8 +808,31 @@ export function stopMapRadio() {
 export function announceMapTour(line: string, stations: ReadonlyArray<RadioStationCue> = []): boolean {
   if (!startMapRadio()) return false
   tuneRadioBed(stations)
-  setRadioLevel(RADIO_UNDER_HOST_LEVEL, 0.16)
-  playRadioStinger()
+  // Let the first word arrive alone, then feather the station underneath it.
+  // Starting at zero also prevents startMapRadio's idle level from clipping
+  // the front of native TTS on a physical phone.
+  setRadioLevel(0, 0.04)
+
+  const bringBedUnderVoice = () => {
+    if (!soundWanted) return
+    setRadioLevel(RADIO_UNDER_HOST_LEVEL, 0.24)
+  }
+
+  // Native TTS is the reliable voice on iOS/Android. It lives outside the
+  // WebView, so keep Radio as the web audio owner and use the gain mixer here
+  // instead of asking the exclusive web focus system to stop it.
+  if (isNativeShell() && postNativeEvent({
+    type: 'speak',
+    text: hostLine(line, stations),
+    rate: 0.95,
+    pitch: 0.98,
+  })) {
+    const words = hostLine(line, stations).trim().split(/\s+/).length
+    const voiceMs = Math.max(1_500, Math.min(18_000, words * 390 + 650))
+    window.setTimeout(bringBedUnderVoice, 260)
+    window.setTimeout(blendAfterHost, voiceMs)
+    return true
+  }
 
   if (typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
     blendAfterHost()
@@ -822,7 +846,7 @@ export function announceMapTour(line: string, stations: ReadonlyArray<RadioStati
   utterance.volume = 0.98
   const voice = preferredVoice()
   if (voice) utterance.voice = voice
-  utterance.onstart = () => setRadioLevel(RADIO_UNDER_HOST_LEVEL, 0.1)
+  utterance.onstart = () => window.setTimeout(bringBedUnderVoice, 260)
   utterance.onend = blendAfterHost
   utterance.onerror = blendAfterHost
 

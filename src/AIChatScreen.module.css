@@ -6,7 +6,8 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   color: #24141d;
-  background: #f8edf3;
+  background:
+    linear-gradient(180deg, #fff9fc 0%, #f8edf3 52%, #f4e5ed 100%);
   isolation: isolate;
 }
 
@@ -16,7 +17,7 @@
   inset: 0;
   z-index: 10;
   pointer-events: none;
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   border-image: conic-gradient(
     from 0deg,
     #ff2d96,
@@ -33,12 +34,12 @@
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: .45;
+  opacity: .18;
   background:
     radial-gradient(circle, #ff2d96 0 2px, transparent 2.5px) 18px 24px / 92px 86px,
     radial-gradient(circle, #8f76ff 0 1.5px, transparent 2px) 54px 12px / 126px 118px,
     radial-gradient(circle, #ff9dca 0 1px, transparent 1.5px) 8px 70px / 104px 96px;
-  animation: confettiDrift 14s linear 3;
+  animation: confettiDrift 14s linear 2;
 }
 
 .header {
@@ -47,12 +48,12 @@
   min-height: calc(76px + env(safe-area-inset-top));
   padding: max(8px, env(safe-area-inset-top)) 12px 8px;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) 42px;
   align-items: center;
   gap: 8px;
-  margin: 6px 8px 0;
+  margin: 6px 10px 0;
   border: 1px solid rgba(255, 255, 255, .8);
-  border-radius: 18px;
+  border-radius: 8px;
   background:
     radial-gradient(circle at 26% 10%, rgba(255, 255, 255, .88), transparent 34%),
     linear-gradient(145deg, rgba(255, 255, 255, .96), rgba(255, 239, 247, .94));
@@ -124,6 +125,16 @@
   text-overflow: ellipsis;
 }
 
+.identity small i {
+  width: 7px;
+  height: 7px;
+  display: inline-block;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #26c65c;
+  box-shadow: 0 0 8px rgba(38, 198, 92, .6);
+}
+
 .mark {
   flex: 0 0 auto;
   width: 42px;
@@ -170,13 +181,13 @@
 
 .conversation {
   min-height: 0;
-  margin: 8px;
-  padding: 18px 12px;
+  margin: 8px 10px;
+  padding: 20px 14px;
   overflow: auto;
   overscroll-behavior: contain;
   border: 1px solid rgba(255, 255, 255, .82);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, .82);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .68);
   box-shadow:
     inset 0 0 24px rgba(255, 143, 197, .07),
     0 8px 18px rgba(76, 28, 50, .08);
@@ -190,47 +201,77 @@
 .welcome {
   min-height: 100%;
   display: grid;
-  align-content: center;
+  align-content: start;
   justify-items: center;
   text-align: center;
 }
 
+.eyebrow {
+  margin-top: clamp(12px, 4vh, 34px);
+  color: #b52a6d;
+  font: 950 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .14em;
+}
+
 .sparkle {
-  color: #ff2d96;
-  font-size: 28px;
-  text-shadow: 0 0 12px rgba(255, 45, 150, .42);
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  margin-top: 14px;
+  border-radius: 17px;
+  color: #fff;
+  background: linear-gradient(145deg, #ff8dc3, #f12786 62%, #9b0b4a);
+  font: 950 27px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  box-shadow: inset 0 3px 5px rgba(255,255,255,.48), 0 10px 22px rgba(169, 17, 86, .24);
 }
 
 .welcome h1 {
-  margin: 6px 0 0;
+  margin: 14px 0 0;
   color: #2f1723;
-  font: 950 clamp(25px, 8vw, 34px)/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  font: 950 clamp(25px, 7.6vw, 35px)/.98 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   letter-spacing: 0;
 }
 
 .welcome p {
-  margin: 8px 0 18px;
+  margin: 10px 0 22px;
   color: #8a6476;
   font: 750 13px/1.25 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
 }
 
 .suggestions {
-  width: min(100%, 340px);
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 7px;
+  width: min(100%, 360px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .suggestions button {
-  min-height: 34px;
-  padding: 0 12px;
-  border: 1px solid rgba(255, 45, 150, .24);
-  border-radius: 17px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 7px 10px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 45, 150, .18);
+  border-radius: 7px;
   color: #5e3448;
-  background: #fff0f7;
-  font: 800 11px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-  box-shadow: inset 0 3px 5px rgba(255, 255, 255, .7);
+  background: rgba(255,255,255,.92);
+  font: 850 11px/1.05 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  text-align: left;
+  box-shadow: 0 5px 12px rgba(83, 31, 56, .06);
+}
+
+.suggestions button b {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #fff;
+  background: #2b1420;
+  font: 950 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .userMessage,
@@ -239,8 +280,16 @@
   max-width: 82%;
   margin: 0 0 12px;
   padding: 10px 12px;
-  border-radius: 16px;
+  border-radius: 8px;
   font: 750 13px/1.36 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.messageAuthor {
+  display: block;
+  margin-bottom: 6px;
+  opacity: .68;
+  font: 950 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em;
 }
 
 .userMessage {
@@ -298,10 +347,10 @@
 .inputBar {
   position: relative;
   z-index: 4;
-  margin: 0 8px max(8px, env(safe-area-inset-bottom));
+  margin: 0 10px max(8px, env(safe-area-inset-bottom));
   padding: 9px;
   border: 1px solid rgba(255, 255, 255, .86);
-  border-radius: 18px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, .96);
   box-shadow: 0 -7px 20px rgba(75, 28, 49, .11);
 }
@@ -320,6 +369,11 @@
   height: 38px;
   border-radius: 50%;
   font: 950 22px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.send:disabled {
+  opacity: .35;
+  filter: grayscale(.4);
 }
 
 .prompt {
@@ -386,6 +440,14 @@
   gap: 14px;
   color: #b899a8;
   font: 900 8px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.modes button {
+  border: 0;
+  padding: 4px 8px;
+  color: inherit;
+  background: none;
+  font: inherit;
 }
 
 .modeOn {

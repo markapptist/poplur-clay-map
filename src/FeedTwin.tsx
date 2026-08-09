@@ -1032,31 +1032,43 @@ export default function FeedTwin({
     lastTap.current = 0
   }
 
+  /** Hand the post you are watching on. Reached from the top-bar clay button —
+   *  and still from the `share` action, because a native shell can send it
+   *  through its own menu. One implementation, so the two can never drift.
+   *
+   *  Reads the channel through a ref rather than closing over it: the action
+   *  handler below binds ONCE (deps `[bindActions]`), so a callback keyed on
+   *  `ch` would be frozen to whichever channel was up when the feed mounted and
+   *  would go on sharing that one after you changed channels. */
+  const chRef = useRef(ch)
+  chRef.current = ch
+  const sharePost = useCallback(() => {
+    playPop()
+    const channel = chRef.current
+    const post = postRef.current
+    const title = post?.caption ?? channel.caption
+    const by = post?.user ?? channel.user
+    // Native owns the real share sheet (UIActivityViewController); in the
+    // browser the Web Share API is the same gesture, and where neither
+    // exists the action is simply a no-op rather than a broken dialog.
+    const sent = postNativeEvent({
+      type: 'sharePost',
+      postId: radiusPostId(channel.id, post),
+      channel: channel.id,
+      title,
+      user: by,
+    })
+    if (!sent && typeof navigator !== 'undefined' && navigator.share) {
+      void navigator.share({ title: 'poplur', text: `${title} — ${by}` }).catch(() => {})
+    }
+  }, [])
+
   useEffect(() => {
     if (!bindActions) return
     bindActions(action => {
       if (action === 'like') { playPop(); return }
       if (action === 'comment') { playPop(); setCommentOpen(true); return }
-      if (action === 'share') {
-        playPop()
-        const post = postRef.current
-        const title = post?.caption ?? ch.caption
-        const by = post?.user ?? ch.user
-        // Native owns the real share sheet (UIActivityViewController); in the
-        // browser the Web Share API is the same gesture, and where neither
-        // exists the action is simply a no-op rather than a broken dialog.
-        const sent = postNativeEvent({
-          type: 'sharePost',
-          postId: radiusPostId(ch.id, post),
-          channel: ch.id,
-          title,
-          user: by,
-        })
-        if (!sent && typeof navigator !== 'undefined' && navigator.share) {
-          void navigator.share({ title: 'poplur', text: `${title} — ${by}` }).catch(() => {})
-        }
-        return
-      }
+      if (action === 'share') { sharePost(); return }
       if (action === 'captions') {
         playPop()
         setCaptionsOn(on => !on)
@@ -1333,6 +1345,20 @@ export default function FeedTwin({
               {/* Suggestions render in the shared centred popup layer now. */}
             </div>
           )}
+        </div>
+        {/* SHARE lives in the corner, not in the hold menu. Sending a post on
+            is a one-tap thing you do WHILE watching; two gestures down a wheel
+            is the wrong price for it. Same moulded clay as the mute mark
+            opposite and the profile viewer's share — one object, one language,
+            never a flat glyph pretending to be it. */}
+        {/* `still`: it holds its pose and draws only while a press pulse is
+            decaying. The feed already runs a decoding video next to the cube,
+            the channel arrows and the mute mark, and this is the fifth GL
+            context on that screen — a corner ornament tumbling forever is a
+            renderer running for nothing on the one surface whose thermals we
+            just measured clean. */}
+        <div className={styles.shareCorner}>
+          <ClayCornerButton kind="share" label="Share this post" size={40} still onPress={sharePost} />
         </div>
       </div>
       )}

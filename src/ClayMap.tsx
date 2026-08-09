@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { isNativeShell } from './nativeBridge'
-import { onFrame, ambientAllowed, boostFrames, onAmbientSleepChange, setSurfaceFront } from './frameGovernor'
+import { onFrame, ambientAllowed, boostFrames, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
@@ -1396,8 +1396,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const liveTriggerRepaint = map.triggerRepaint.bind(map)
       const liveTriggerFrame = parkedMap._triggerFrame.bind(map)
       let rendererParked = false
-      stopRendererParking = onAmbientSleepChange(sleeping => {
-        if (!sleeping) {
+      // The renderer park follows the gesture-aware signal, not raw ambient
+      // sleep: a drag on a warm phone must still paint. Decoration below stays
+      // on `onAmbientSleepChange` and stays down.
+      stopRendererParking = onRendererParkChange(parked => {
+        if (!parked) {
           if (rendererParked) {
             rendererParked = false
             parkedMap.triggerRepaint = liveTriggerRepaint

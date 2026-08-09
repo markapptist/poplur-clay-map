@@ -11,15 +11,15 @@ type ChatMessage = {
 }
 
 const SUGGESTIONS = [
-  'Make this cinematic',
-  'Create commercial',
-  'Make funny',
-  'Cartoon style',
-  '90s TV',
-  'Add music',
-  'Translate',
-  'Make viral',
-  'Brainstorm',
+  { label: 'Make this cinematic', icon: 'FILM' },
+  { label: 'Create commercial', icon: 'AD' },
+  { label: 'Make funny', icon: 'LOL' },
+  { label: 'Cartoon style', icon: 'TOON' },
+  { label: '90s TV', icon: 'TV' },
+  { label: 'Add music', icon: 'MIX' },
+  { label: 'Translate', icon: 'A/Z' },
+  { label: 'Make viral', icon: 'UP' },
+  { label: 'Brainstorm', icon: 'IDEA' },
 ]
 
 function assistantReply(prompt: string): string {
@@ -47,6 +47,7 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
   const fileInput = useRef<HTMLInputElement | null>(null)
   const conversation = useRef<HTMLDivElement | null>(null)
   const objectUrls = useRef(new Set<string>())
+  const layoutOrigin = useRef({ x: 0, y: 0 })
 
   useEffect(() => () => {
     if (replyTimer.current) window.clearTimeout(replyTimer.current)
@@ -76,6 +77,13 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
   useEffect(() => {
     conversation.current?.scrollTo({ top: conversation.current.scrollHeight, behavior: 'smooth' })
   }, [messages, thinking])
+
+  useEffect(() => {
+    const viewport = window.visualViewport
+    const holdHomeLayout = () => window.scrollTo(layoutOrigin.current.x, layoutOrigin.current.y)
+    viewport?.addEventListener('resize', holdHomeLayout)
+    return () => viewport?.removeEventListener('resize', holdHomeLayout)
+  }, [])
 
   const send = (value = input) => {
     const text = value.trim()
@@ -115,7 +123,7 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
           <span className={styles.mark} aria-hidden="true">P</span>
           <span>
             <strong>poplur <b>AI</b></strong>
-            <small>✦ stay connected. ✦</small>
+            <small><i /> READY TO CREATE</small>
           </span>
         </div>
         <button
@@ -153,17 +161,19 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
       <div className={styles.conversation} ref={conversation}>
         {messages.length === 0 && (
           <div className={styles.welcome}>
-            <span className={styles.sparkle}>✦</span>
-            <h1>What should we make?</h1>
-            <p>Start with an idea or add media.</p>
+            <span className={styles.eyebrow}>POPLUR CREATIVE AI</span>
+            <span className={styles.sparkle}>P</span>
+            <h1>Make something<br />people stop for.</h1>
+            <p>Start with an idea, or add a photo or video.</p>
             <div className={styles.suggestions}>
               {SUGGESTIONS.map(suggestion => (
                 <button
                   type="button"
-                  key={suggestion}
-                  onClick={() => send(suggestion)}
+                  key={suggestion.label}
+                  onClick={() => send(suggestion.label)}
                 >
-                  {suggestion}
+                  <b aria-hidden="true">{suggestion.icon}</b>
+                  <span>{suggestion.label}</span>
                 </button>
               ))}
             </div>
@@ -175,6 +185,7 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
             className={message.role === 'user' ? styles.userMessage : styles.assistantMessage}
             key={message.id}
           >
+            <span className={styles.messageAuthor}>{message.role === 'assistant' ? 'P  POPLUR AI' : 'YOU'}</span>
             {message.attachment && <img src={message.attachment} alt="" />}
             <p>{message.text}</p>
           </article>
@@ -250,12 +261,16 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
             onChange={event => setInput(event.currentTarget.value)}
             placeholder="Message Poplur AI"
             aria-label="Message Poplur AI"
+            onFocus={() => {
+              layoutOrigin.current = { x: window.scrollX, y: window.scrollY }
+              window.requestAnimationFrame(() => window.scrollTo(layoutOrigin.current.x, layoutOrigin.current.y))
+            }}
           />
-          <button type="submit" className={styles.send} aria-label="Send message">↑</button>
+          <button type="submit" className={styles.send} aria-label="Send message" disabled={!input.trim() && !attachment}>↑</button>
         </div>
         <div className={styles.modes}>
-          <span className={smartMode ? styles.modeOn : undefined}>SMART</span>
-          <span className={searchMode ? styles.modeOn : undefined}>SEARCH</span>
+          <button type="button" className={smartMode ? styles.modeOn : undefined} onClick={() => setSmartMode(value => !value)}>SMART</button>
+          <button type="button" className={searchMode ? styles.modeOn : undefined} onClick={() => setSearchMode(value => !value)}>SEARCH</button>
         </div>
       </form>
     </section>

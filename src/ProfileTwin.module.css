@@ -1170,7 +1170,9 @@
 .capture {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  /* Same layer as a hold-menu subscreen. Home chrome is 260, so the cube,
+     channel controls and rotating metric remain the way out of this camera. */
+  z-index: 240;
   background:
     radial-gradient(circle at 50% 0%, rgba(255, 98, 176, 0.28), transparent 34%),
     #080410;
@@ -1201,6 +1203,15 @@
     0 2px 0 #b8547a,
     0 4px 0 rgba(120, 12, 62, 0.6),
     0 7px 12px rgba(0, 0, 0, 0.72);
+}
+
+.captureHead small {
+  display: block;
+  margin-top: 7px;
+  color: rgba(255, 233, 244, 0.7);
+  font: 800 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-shadow: 0 2px 5px #000;
 }
 
 .captureTool {
@@ -1250,6 +1261,19 @@
 }
 
 .videoBack { transform: scale(1.06); }
+
+.profileRoll {
+  position: absolute;
+  inset: 86px 0 138px;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.profileRoll > section {
+  width: 100%;
+  height: 100%;
+  padding-bottom: 8px;
+}
 
 .vfRing {
   position: absolute;
@@ -1305,6 +1329,18 @@
 .captureActionPrimary {
   width: 112px;
   min-height: 130px;
+}
+
+.captureLibraryHint {
+  width: 112px;
+  min-height: 104px;
+  display: grid;
+  place-items: center;
+  color: #ffe9f4;
+  font: 900 10px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-shadow: 0 2px 5px #000;
 }
 
 .captureActionLabel {
