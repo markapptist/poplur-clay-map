@@ -7,7 +7,13 @@ import styles from './HomeTwin.module.css'
 // The phone model is fetched while Home is idle, then rendered only for the
 // short cube-to-phone handoff. Keeping the renderer out of the DOM until the
 // handoff avoids another permanent WebGL context on budget Android devices.
-const PHONE_MODEL_URL = 'poplur_clay_phone.glb'
+// 152KB, decimated (Draco + simplify 0.0005 + 256px webp) from the 33MB
+// master, which is still in the repo as poplur_clay_phone.glb. The full model
+// was decoding 33MB on the main thread every time the phone screen opened —
+// the exact stall the subscreen-navigator rule exists to prevent, and this
+// one had slipped through because it lives at the bundle root rather than
+// under models/. Every key and the Poplur screen survive at this weight.
+const PHONE_MODEL_URL = 'poplur_clay_phone_lite.glb'
 
 // ONE fetch per session, shared by every mount. The preload used to live
 // entirely inside the effect, where its `cancelled` flag guarded the state

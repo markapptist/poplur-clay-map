@@ -70,18 +70,57 @@ const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // decode on the main thread every time its screen opened. Keep new models near
 // the TV's weight (Draco + decimate) — a heavy one here is a stall, not a
 // detail. A screen with no entry simply keeps the cube, and still pops.
+// NOTE ON PATHS: these live at the bundle ROOT, not under models/, for the
+// same reason clay_tv.glb does — scripts/sync-mobile.sh excludes models/ from
+// every mobile bundle, so a models/ path resolves on a desktop browser and is
+// simply absent on a phone. (That exclusion is also why the sun and moon,
+// which celestial.ts loads from models/, never appear on device.)
 const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   'feed-tvguide': CLAY_TV_MODEL,
   'map-radio': CLAY_TV_MODEL,
-  // Awaiting models — see the handoff list. Add as they land, e.g.
-  // 'camera-studio': 'models/poplur_mixer_lite.glb',
-  // 'feed-games': 'models/poplur_arcade.glb',
+  // The supplied cube set, decimated to the TV's weight (80–132KB each, from
+  // ~20MB Meshy exports) so each one is a navigator rather than a stall.
+  //
+  // ONLY SCREENS YOU CAN ACTUALLY STAND ON appear here. This map is keyed by
+  // the subscreen the cube is answering to, and a hold-menu tile carrying an
+  // `action`, `mapAction` or `event` never sets one — it fires, calls
+  // onClose() and returns before setActiveScreen (HoldMenuTwin). So SEARCH,
+  // DIRECTIONS, TOUR, 2D MAP, LIVE, CAMERA ROLL, COMMENT and HEY POPLUR have
+  // no entry no matter how good their cube is: those tiles act on the live
+  // surface behind the menu, which is the whole point of them.
+  'feed-news': 'poplur_cube_news.glb',
+  'camera-ai-chat': 'poplur_cube_create.glb',
+  'profile-messages': 'poplur_cube_mail.glb',
+  'profile-stats': 'poplur_cube_stats.glb',
+  'profile-store': 'poplur_cube_store.glb',
+  'profile-settings': 'poplur_cube_settings.glb',
+  // STUDIO finally gets its mixing desk. The intent was recorded here months
+  // ago and blocked on one number: the supplied desk was 39.5MB against the
+  // TV's 136KB. Decimated (Draco + simplify 0.0005 + 256px webp) it is 329KB
+  // and keeps every knob — see .codex/prerender-holdmenu-cubes.mjs for the
+  // proofing harness that verified it survived.
+  'camera-studio': 'poplur_mixer_lite.glb',
+  // NOT profile-phone: that screen already turns the navigator into the clay
+  // phone through ClayPhonePop (see setCubeIntoPhone below), so an entry here
+  // would fire the morph AND a model swap for the same screen. What it needed
+  // was not a cube but a smaller phone — ClayPhonePop now loads the 152KB
+  // decimation instead of the 33MB master.
+  // SHOW ME is the map's find-it-for-me surface, so it takes the SEARCH cube.
+  // The nearest fit in the supplied set rather than a bespoke mark — say if it
+  // should be something else.
+  'map-show-me': 'poplur_cube_search.glb',
+  // In the bundle and deliberately unwired, for want of a screen to stand on:
+  // ar, video, search, directions, map, tour, comment, live, cameraroll,
+  // heypoplur. 'camera-capture' in particular is NOT a destination — PHOTO,
+  // VIDEO, AR and DETECT all carry that id for inspectability while acting on
+  // the live camera, so nothing can wear a cube there.
+  // Still awaiting a model: camera-studio, feed-games.
 }
 
-// The studio's navigator wants to be the mixing desk — same rule as the clay
-// TV — but the supplied GLB is 38MB and the TV is 136KB. Kept here so the
-// intent is not lost; wired back in once a decimated mixer exists.
-// const STUDIO_MIXER_MODEL = 'models/poplur_mixer.glb'
+// The studio's mixing desk is wired now — see 'camera-studio' above. The
+// original 39.5MB models/poplur_mixer.glb stays where it is as the master; the
+// navigator loads the 329KB decimation from the bundle root, because models/
+// never reaches a phone.
 
 const LOADING_MESSAGES = [
   'Warming up the pinetrees',
