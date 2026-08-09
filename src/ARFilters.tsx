@@ -59,7 +59,7 @@ export const AR_FILTERS: ARFilterDef[] = [
  * applies to the video and the effect is drawn over it unfiltered
  * (`context.filter = 'none'`), and a sepia visor would misrepresent that.
  */
-function EffectMark({ id }: { id: string }) {
+export function EffectMark({ id }: { id: string }) {
   const shape = () => {
     switch (id) {
       case 'sharpen':
