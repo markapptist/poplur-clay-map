@@ -203,6 +203,13 @@ export default function Camera({
     if (isNativeShell()) postNativeEvent({ type: 'cameraControl', control: 'filter', id: arFilter })
   }, [arFilter])
   const filterCss = AR_FILTERS.find(f => f.id === arFilter)?.css ?? 'none'
+  const faceDetected = detections.some(detection =>
+    detection.id === 'face'
+    || detection.label.toLowerCase() === 'person'
+    || Boolean(detection.user)
+    || detection.isUser === true,
+  )
+  const liveFilterCss = arFilter === 'none' || !faceDetected ? 'none' : filterCss
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
@@ -234,7 +241,9 @@ export default function Camera({
   // an explicit visibility signal: the tab name remains "post" even when the
   // live lens is fully covered by a selected image or edit/preview screen.
   const liveSurfaceVisible = page === 'live' && !composing
-  const liveDetectionActive = detectOn && liveSurfaceVisible
+  // AR filters need a face reading even when object detection is toggled off.
+  // The read remains private to the effect unless DETECT is also enabled.
+  const liveDetectionActive = (detectOn || arOpen || arFilter !== 'none') && liveSurfaceVisible
   useEffect(() => {
     if (isNativeShell()) {
       postNativeEvent({ type: 'cameraLiveVisibilityChanged', visible: liveSurfaceVisible })
@@ -423,6 +432,28 @@ export default function Camera({
     }
   }, [liveDetectionActive, onScanTotal])
 
+  // Android's camera is the WebView video rather than a native layer behind
+  // it. Send a small frame to the shell at 4 fps; ML Kit returns real face
+  // bounds through the same poplur-native-detections event iOS uses.
+  useEffect(() => {
+    if (!ANDROID_SHELL || !liveDetectionActive || page !== 'live') return
+    const canvas = document.createElement('canvas')
+    canvas.width = 320
+    canvas.height = 240
+    const context = canvas.getContext('2d')
+    const timer = window.setInterval(() => {
+      const video = videoRef.current
+      if (!context || !video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) return
+      context.drawImage(video, 0, 0, canvas.width, canvas.height)
+      postNativeEvent({
+        type: 'detectCameraFrame',
+        dataUrl: canvas.toDataURL('image/jpeg', 0.58),
+        mirrored: facing === 'user',
+      })
+    }, 250)
+    return () => window.clearInterval(timer)
+  }, [facing, liveDetectionActive, page, streamOn])
+
   // A purchasable object has to remain stable under the lens before an ad can
   // appear. Native shells receive real ML detections; the browser simulator is
   // intentionally excluded unless the explicit visual-test flag is present.
@@ -600,6 +631,13 @@ export default function Camera({
   })
   const gesturePointsRef = useRef(new Map<number, { x: number; y: number }>())
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const cameraLongPressTimerRef = useRef<number | null>(null)
+  const cancelCameraLongPress = useCallback(() => {
+    if (cameraLongPressTimerRef.current == null) return
+    window.clearTimeout(cameraLongPressTimerRef.current)
+    cameraLongPressTimerRef.current = null
+  }, [])
+  useEffect(() => cancelCameraLongPress, [cancelCameraLongPress])
   const pointerDistance = () => {
     const points = [...gesturePointsRef.current.values()]
     return points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
@@ -613,25 +651,39 @@ export default function Camera({
       gestureRef.current.startX = event.clientX
       gestureRef.current.startY = event.clientY
       gestureRef.current.consumed = false
+      cancelCameraLongPress()
+      cameraLongPressTimerRef.current = window.setTimeout(() => {
+        cameraLongPressTimerRef.current = null
+        if (gesturePointsRef.current.size !== 1) return
+        gestureRef.current.consumed = true
+        gestureRef.current.lastTapAt = 0
+        playPop()
+        setArOpen(open => !open)
+      }, 520)
     } else if (gesturePointsRef.current.size === 2) {
+      cancelCameraLongPress()
       pinchRef.current = { distance: Math.max(1, pointerDistance()), zoom: zoomRef.current }
       gestureRef.current.consumed = true
     }
     event.currentTarget.setPointerCapture?.(event.pointerId)
-  }, [])
+  }, [cancelCameraLongPress])
   const onCameraPointerMove = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (!gesturePointsRef.current.has(event.pointerId)) return
     event.preventDefault()
     gesturePointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (Math.hypot(event.clientX - gestureRef.current.startX, event.clientY - gestureRef.current.startY) > 14) {
+      cancelCameraLongPress()
+    }
     if (gesturePointsRef.current.size === 2 && pinchRef.current) {
       applyZoomValue(pinchRef.current.zoom * (pointerDistance() / pinchRef.current.distance))
       gestureRef.current.consumed = true
     }
-  }, [applyZoomValue])
+  }, [applyZoomValue, cancelCameraLongPress])
   const onCameraPointerUp = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const gesture = gestureRef.current
     if (!gesturePointsRef.current.has(event.pointerId)) return
     event.preventDefault()
+    cancelCameraLongPress()
     const wasSinglePointer = gesturePointsRef.current.size === 1
     gesturePointsRef.current.delete(event.pointerId)
     if (gesturePointsRef.current.size < 2) pinchRef.current = null
@@ -667,11 +719,12 @@ export default function Camera({
     gesture.lastTapAt = now
     gesture.lastTapX = event.clientX
     gesture.lastTapY = event.clientY
-  }, [flipCamera, setFlashEnabled])
+  }, [cancelCameraLongPress, flipCamera, setFlashEnabled])
   const onCameraPointerCancel = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    cancelCameraLongPress()
     gesturePointsRef.current.delete(event.pointerId)
     if (gesturePointsRef.current.size < 2) pinchRef.current = null
-  }, [])
+  }, [cancelCameraLongPress])
 
   // ── take a picture ───────────────────────────────────────────────────────
   const capturePhoto = useCallback(() => {
@@ -1009,7 +1062,7 @@ export default function Camera({
           style={{
             objectFit: 'cover',
             display: streamOn ? '' : 'none',
-            filter: filterCss === 'none' ? undefined : filterCss,
+            filter: liveFilterCss === 'none' ? undefined : liveFilterCss,
             // Device zoom changes the track itself. Unsupported browsers use
             // this crop fallback; disabling the old drift keeps the requested
             // zoom stable beneath the HUD.

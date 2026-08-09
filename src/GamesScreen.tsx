@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import '@google/model-viewer'
 import styles from './GamesScreen.module.css'
 import PoplurgatchiPlayable from './PoplurgatchiPlayable'
 import { playPop } from './pop'
@@ -44,11 +45,35 @@ function Cover({ game, size }: { game: Game; size: 'hero' | 'tile' }) {
   )
 }
 
+function StationModel({ kind, className }: { kind: 'console' | 'controller'; className: string }) {
+  return React.createElement('model-viewer', {
+    class: className,
+    src: `games/poplurstation/${kind}.glb`,
+    alt: `PoplurStation ${kind}`,
+    'camera-orbit': kind === 'console' ? '30deg 72deg 2.8m' : '0deg 72deg 2.4m',
+    'field-of-view': '28deg',
+    exposure: '1.1',
+    shadowIntensity: '1',
+    interactionPrompt: 'none',
+    disableZoom: true,
+  })
+}
+
 export default function GamesScreen({ onClose }: { onClose: () => void }) {
   const [selected, setSelected] = useState(0)
   const [booting, setBooting] = useState<Game | null>(null)
   const [running, setRunning] = useState<Game | null>(null)
+  // The boot screen used to be a blind 2200ms timer: it ended on a stopwatch
+  // whether or not the game had loaded, so a heavy bundle (the FPS one is the
+  // whole raycasting engine plus its sprites) booted straight into a blank
+  // frame. The boot now ends when BOTH the animation has had its 2.2s AND the
+  // game has actually reported load — with a ceiling so a game that never
+  // fires `load` still starts rather than hanging on the boot screen forever.
+  const [bootElapsed, setBootElapsed] = useState(false)
+  const [frameReady, setFrameReady] = useState(false)
   const bootTimer = useRef<number | null>(null)
+  const bootCeiling = useRef<number | null>(null)
+  const gameFrameRef = useRef<HTMLIFrameElement>(null)
   const game = GAMES[selected]
 
   const focus = (index: number) => {
@@ -58,18 +83,70 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
 
   const launch = (g: Game) => {
     playPop()
+    setBootElapsed(false)
+    setFrameReady(false)
     setBooting(g)
     if (bootTimer.current) window.clearTimeout(bootTimer.current)
+    if (bootCeiling.current) window.clearTimeout(bootCeiling.current)
+    // The game mounts NOW, behind the boot screen, so the boot animation is
+    // the load rather than a delay in front of one.
+    setRunning(g)
     bootTimer.current = window.setTimeout(() => {
-      setBooting(null)
-      setRunning(g)
+      setBootElapsed(true)
       bootTimer.current = null
     }, 2200)
+    // Never strand anyone on the boot card.
+    bootCeiling.current = window.setTimeout(() => {
+      setFrameReady(true)
+      bootCeiling.current = null
+    }, 12_000)
   }
 
-  const quit = () => { playPop(); setRunning(null) }
+  // Lift the boot card once the animation has played AND the game is up.
+  useEffect(() => {
+    if (!booting) return
+    if (bootElapsed && frameReady) setBooting(null)
+  }, [booting, bootElapsed, frameReady])
 
-  useEffect(() => () => { if (bootTimer.current) window.clearTimeout(bootTimer.current) }, [])
+  const quit = () => {
+    playPop()
+    setRunning(null)
+    setBooting(null)
+    setBootElapsed(false)
+    setFrameReady(false)
+    if (bootTimer.current) { window.clearTimeout(bootTimer.current); bootTimer.current = null }
+    if (bootCeiling.current) { window.clearTimeout(bootCeiling.current); bootCeiling.current = null }
+  }
+
+  const sendGameKey = (code: string, pressed: boolean) => {
+    const target = gameFrameRef.current?.contentWindow
+    if (!target) return
+    const key = code === 'Space' ? ' ' : code.replace(/^Key/, '').toLowerCase()
+    target.dispatchEvent(new KeyboardEvent(pressed ? 'keydown' : 'keyup', {
+      code,
+      key,
+      bubbles: true,
+      cancelable: true,
+    }))
+  }
+
+  const keyButtonProps = (code: string) => ({
+    onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      sendGameKey(code, true)
+    },
+    onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => {
+      sendGameKey(code, false)
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    },
+    onPointerCancel: () => sendGameKey(code, false),
+  })
+
+  useEffect(() => () => {
+    if (bootTimer.current) window.clearTimeout(bootTimer.current)
+    if (bootCeiling.current) window.clearTimeout(bootCeiling.current)
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -92,13 +169,27 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
           <PoplurgatchiPlayable />
         ) : running.web ? (
           <iframe
+            ref={gameFrameRef}
             className={`${styles.gameFrame} ${running.id === 'fps' ? styles.fpsFrame : ''}`}
             src={running.web}
             title={running.title}
             allow="autoplay; fullscreen; gamepad; accelerometer; gyroscope"
             allowFullScreen
+            onLoad={() => setFrameReady(true)}
           />
         ) : null}
+        {running.id === 'fps' && (
+          <div className={styles.stationController} aria-label="PoplurStation controller">
+            <StationModel kind="controller" className={styles.controllerModel} />
+            <div className={styles.stationDpad}>
+              <button type="button" aria-label="Move forward" {...keyButtonProps('KeyW')}>▲</button>
+              <button type="button" aria-label="Move left" {...keyButtonProps('KeyA')}>◀</button>
+              <button type="button" aria-label="Move back" {...keyButtonProps('KeyS')}>▼</button>
+              <button type="button" aria-label="Move right" {...keyButtonProps('KeyD')}>▶</button>
+            </div>
+            <button type="button" className={styles.stationFire} aria-label="Fire" {...keyButtonProps('Space')}>◎</button>
+          </div>
+        )}
         {/* The app cube remains above this stage and is the one back control. */}
       </div>
     )
@@ -158,7 +249,8 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
                 P pasted crooked over a person with the cube's frame poking out
                 underneath. It read as a rendering glitch, not an assembling
                 logo. */}
-            <img className={styles.bootCube} src="logo_icon.png" alt="" draggable={false} />
+            <StationModel kind="console" className={styles.bootConsole} />
+            <StationModel kind="controller" className={styles.bootController} />
             <span className={styles.bootSweep} aria-hidden="true" />
           </div>
           <span className={styles.bootWord}>POPLUR<b>STATION</b></span>

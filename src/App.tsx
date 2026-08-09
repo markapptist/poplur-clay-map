@@ -636,6 +636,7 @@ export default function App() {
   // ships the default clay skin with the infrastructure in place.
   const [theme] = useState(MAP_THEMES[0])
   const [weather, setWeather] = useState<{ temp: number; code: number } | null>(null)
+  const [weatherForecast, setWeatherForecast] = useState<Array<{ date: string; high: number; low: number; code: number }>>([])
   const [weatherOverride, setWeatherOverride] = useState<WeatherMode | null>(null)
   // TEST ONLY: walk day → night → day so both skies can be checked without
   // waiting twelve hours. ?day-cycle=0 turns it off; dev builds only.
@@ -1126,13 +1127,23 @@ export default function App() {
   // territories, and a short list besides; everywhere else gets Celsius.
   useEffect(() => {
     const unit = usesFahrenheit() ? 'fahrenheit' : 'celsius'
-    fetch(`https://api.open-meteo.com/v1/forecast?latitude=43.65&longitude=-79.38&current=temperature_2m,weather_code,is_day&temperature_unit=${unit}&timezone=auto`)
+    fetch(`https://api.open-meteo.com/v1/forecast?latitude=43.65&longitude=-79.38&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=5&temperature_unit=${unit}&timezone=auto`)
       .then(res => res.json())
       .then(json => {
         setWeather({ temp: Math.round(json.current.temperature_2m), code: json.current.weather_code })
+        const dates = Array.isArray(json.daily?.time) ? json.daily.time : []
+        setWeatherForecast(dates.slice(0, 5).map((date: string, index: number) => ({
+          date,
+          high: Number(json.daily.temperature_2m_max?.[index]) || 0,
+          low: Number(json.daily.temperature_2m_min?.[index]) || 0,
+          code: Number(json.daily.weather_code?.[index]) || 0,
+        })))
         setDayTime(json.current.is_day === 1)
       })
-      .catch(() => setWeather({ temp: usesFahrenheit() ? 72 : 22, code: 1 }))
+      .catch(() => {
+        setWeather({ temp: usesFahrenheit() ? 72 : 22, code: 1 })
+        setWeatherForecast([])
+      })
   }, [])
 
   // DEV: cycle weather / sky from the console to demo every overlay
@@ -2164,6 +2175,12 @@ export default function App() {
             : weatherIconForMode(weatherMode)
         }
         weatherTemp={weather ? `${weather.temp}°${usesFahrenheit() ? 'F' : 'C'}` : null}
+        weatherForecast={weatherForecast.map(day => ({
+          date: day.date,
+          high: day.high,
+          low: day.low,
+          icon: weatherIconForMode(modeForCode(day.code)),
+        }))}
         introDestinations={INTRO_LANDMARKS}
         streetView={streetView}
         onIntroComplete={handleIntroComplete}

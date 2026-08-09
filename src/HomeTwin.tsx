@@ -31,6 +31,12 @@ import { noteNewsMessage } from './newsMessages'
 import { POIS } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
 import { onFoodSuggestionVisibilityChange } from './popups'
+import {
+  RADIUS_CHANGE_EVENT,
+  radiusKm,
+  reconcileRadiusInactivity,
+  registerOwnedPost,
+} from './radiusLedger'
 
 
 /** Home chrome fades out after this long without a touch (see chromeIdle). */
@@ -53,6 +59,9 @@ const CUBE_INTO_PHONE_MS = 1_600
 /** The clay TV the navigator becomes while the TV Guide is open. Supplied art
     in public/, like every other clay model — never a drawn substitute. */
 const CLAY_TV_MODEL = 'clay_tv.glb'
+// The studio's navigator is the mixing desk — same rule as the clay TV: on a
+// screen built around one object, the thing in your hand IS that object.
+const STUDIO_MIXER_MODEL = 'models/poplur_mixer.glb'
 
 const LOADING_MESSAGES = [
   'Warming up the pinetrees',
@@ -94,7 +103,6 @@ function pageIsVisible(): boolean {
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
 const POST_COUNT = 128
-const RADIUS_METERS = 41_800
 const EARTH_RADIUS_KM = 6_371
 // Stable spoofed reach until presence is wired to the live audience service.
 const SPOOFED_ONLINE_AUDIENCE = 1_200_000
@@ -546,9 +554,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // TV Guide AND Radio both hand the navigator over to the clay TV — on
     // those screens the thing in your hand IS the set you are tuning. It still
     // turns, still holds to open the wheel, still backs you out.
-    setCubeModel(
-      open && (screen === 'feed-tvguide' || screen === 'map-radio') ? CLAY_TV_MODEL : undefined,
-    )
+    setCubeModel(() => {
+      if (!open) return undefined
+      if (screen === 'feed-tvguide' || screen === 'map-radio') return CLAY_TV_MODEL
+      // STUDIO is a screen about one object, so the navigator becomes it.
+      if (screen === 'camera-studio') return STUDIO_MIXER_MODEL
+      // GAMES wants the same treatment and has no object yet — see the note in
+      // the handoff. Deliberately NOT substituted with a stand-in: inventing
+      // art for a clay surface is the one thing this project never does.
+      return undefined
+    })
     // A subscreen IS a page change. Radio, TV Guide and Games each bring their
     // own sound, and the tab-change rule below never fires for them because
     // `activeTab` does not move — so opening or closing one used to leave the
@@ -561,6 +576,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Start in the measurement system implied by the device locale. Tapping the
   // Radius card remains a deliberate local override for this session.
   const [unitMi, setUnitMi] = useState(shouldUseMiles)
+  const [earnedRadiusKm, setEarnedRadiusKm] = useState(radiusKm)
+  useEffect(() => {
+    const sync = () => {
+      reconcileRadiusInactivity()
+      setEarnedRadiusKm(radiusKm())
+    }
+    sync()
+    window.addEventListener(RADIUS_CHANGE_EVENT, sync)
+    const timer = window.setInterval(sync, 60_000)
+    return () => {
+      window.removeEventListener(RADIUS_CHANGE_EVENT, sync)
+      window.clearInterval(timer)
+    }
+  }, [])
   // Right slot alternates between local radius and the potential audience it
   // reaches. The spoofed audience stays stable until live presence arrives.
   const [showOnlineAudience, setShowOnlineAudience] = useState(false)
@@ -1211,7 +1240,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // room — the money counter re-tallies on every change, which is the
       // scanner's readout.
       : activeTab === 'post' && scanKm != null && scanKm > 0
-        ? RADIUS_METERS / 1000 + scanKm
+        ? earnedRadiusKm + scanKm
         // Profile is the identity every claim belongs to, so its card reports
         // the ACCUMULATED total — the same number the planet-scope globe shows.
         : activeTab === 'profile' && profileTotalKm != null
@@ -1221,7 +1250,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           // but told by the counter that owns radius numbers.
           : activeTab === 'feed' && feedReachKm != null
             ? feedReachKm
-            : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : RADIUS_METERS / 1000)
+            : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : earnedRadiusKm)
 
   // Off the map the card reports YOUR radius again — a pop's takeover must not
   // linger on the HUD once you have left the map that showed it.
@@ -1408,6 +1437,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}
             onPosted={post => {
+              registerOwnedPost(`owned:${Date.now()}:${post.media.src}`)
               // The other half of the map→camera capture flow (May '26
               // CaptureFlowManager): a post bound to a coordinate ends back on
               // the MAP, watching the new territory pop at that spot. The map

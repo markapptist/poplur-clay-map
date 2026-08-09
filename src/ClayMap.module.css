@@ -1038,9 +1038,55 @@
   width: 92px;
   display: grid;
   place-items: center;
-  pointer-events: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
   filter: drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55)) drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
 }
+
+.zoomWeatherOpen { transform: scale(1.08); }
+
+.weatherForecast {
+  position: absolute;
+  z-index: 90;
+  right: 82px;
+  bottom: calc(50% + min(28vh, 215px) - 24px);
+  width: min(330px, calc(100vw - 112px));
+  padding: 12px;
+  color: #fff2f8;
+  background: rgba(8, 5, 13, 0.94);
+  border: 1px solid rgba(246, 59, 154, 0.58);
+  border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+.weatherForecast header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font: 900 11px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+
+.weatherForecast header button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  padding: 0;
+  color: #fff;
+  background: transparent;
+  font: 700 24px/1 system-ui, sans-serif;
+}
+
+.weatherDays { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.weatherDays article { display: grid; place-items: center; gap: 4px; min-width: 0; }
+.weatherDays strong { font: 800 10px/1 system-ui, sans-serif; text-transform: uppercase; }
+.weatherDays article > span:not(.weatherDayIcon) { font: 900 13px/1 system-ui, sans-serif; color: #7fe3ff; }
+.weatherDays article > i { font: 700 11px/1 system-ui, sans-serif; color: rgba(255, 242, 248, 0.62); font-style: normal; }
+.weatherDayIcon { display: block; width: 34px; height: 34px; }
+.weatherDayIcon svg { width: 34px; height: 34px; }
 
 .zoomWeather > div:first-child {
   width: 38px;
@@ -1141,6 +1187,13 @@
   .zoomTemp {
     font-size: 11px;
     -webkit-text-stroke-width: 1.3px;
+  }
+
+  .weatherForecast {
+    right: 68px;
+    bottom: calc(50% + min(19vh, 150px) - 32px);
+    width: min(292px, calc(100vw - 84px));
+    padding: 10px 8px;
   }
 }
 

@@ -383,7 +383,7 @@
 
 .modeSwitch {
   display: flex;
-  gap: 22px;
+  gap: clamp(8px, 3.2vw, 22px);
   margin-top: 12px;
 }
 
@@ -399,7 +399,7 @@
   padding: 8px 4px 0;
   cursor: pointer;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -426,6 +426,7 @@
 
 .modeSwitch button:nth-child(2) .modeLabel { animation-delay: -1.6s; }
 .modeSwitch button:nth-child(3) .modeLabel { animation-delay: -3.2s; }
+.modeSwitch button:nth-child(4) .modeLabel { animation-delay: -4.1s; }
 
 .mode i,
 .modeOn i {
@@ -705,6 +706,68 @@
 }
 
 .msgRadius i { font-style: normal; font-size: 9px; opacity: 0.85; }
+
+.msgActions {
+  float: right;
+  display: inline-flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.msgActions button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: #f63b9a;
+  box-shadow: 0 4px 10px rgba(145, 20, 83, 0.25);
+}
+
+.msgActions svg { width: 17px; height: 17px; fill: currentColor; }
+
+.radiusStats { display: grid; gap: 12px; }
+.radiusStats header {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border-radius: 8px;
+  color: #fff;
+  background: #1b0b14;
+}
+.radiusStats header span { font-size: 11px; font-weight: 900; letter-spacing: 0.12em; }
+.radiusStats header strong { font-size: 34px; letter-spacing: 0; }
+.radiusStats header i { height: 5px; border-radius: 999px; background: linear-gradient(90deg, #f63b9a, #5fe1ea); transition: width 0.5s ease; }
+.statsGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.statsGrid article { display: grid; gap: 3px; padding: 14px; border-radius: 8px; background: #fff; box-shadow: 0 4px 14px rgba(60, 20, 44, 0.08); }
+.statsGrid b { color: #c92e7d; font-size: 21px; }
+.statsGrid span { color: rgba(20, 10, 4, 0.58); font-size: 11px; font-weight: 700; }
+.radiusStats > p { margin: 0; color: rgba(20, 10, 4, 0.62); font-size: 12px; line-height: 1.45; }
+
+.callOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #fff;
+  background: #080509;
+}
+.callVideo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.78; }
+.callVideoOff { opacity: 0; }
+.callIdentity { position: relative; z-index: 2; display: grid; place-items: center; gap: 8px; text-align: center; }
+.callIdentity img { width: 116px; height: 116px; object-fit: cover; border-radius: 50%; border: 4px solid #f63b9a; box-shadow: 0 0 28px rgba(246, 59, 154, 0.55); }
+.callIdentity h2 { margin: 0; font-size: 28px; }
+.callIdentity p { margin: 0; color: rgba(255,255,255,.72); font: 800 12px/1 ui-monospace, monospace; letter-spacing: .08em; }
+.callControls { position: absolute; z-index: 3; bottom: max(34px, env(safe-area-inset-bottom)); display: flex; gap: 18px; }
+.callControls button { width: 58px; height: 58px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #fff; background: rgba(255,255,255,.18); }
+.callControls svg { width: 25px; height: 25px; fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
+.callControls .callEnd { background: #e63b50; }
 
 /* A notification sent you to this conversation — same pink pulse the grid uses
    when the map hands it a pop, so "the thing I tapped" reads identically on

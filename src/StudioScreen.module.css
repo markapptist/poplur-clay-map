@@ -961,13 +961,21 @@
    real transparency, so it is CONTAINed as an object standing on the stage
    rather than cover-cropped and screen-blended to hide a photo background. */
 .micArt3d {
-  position: absolute;
-  left: 50%;
-  top: 48%;
-  width: min(86%, 340px);
-  height: 62%;
-  transform: translate(-50%, -50%);
+  /* IN FLOW, not floating over the stage. Absolutely positioning it put the
+     timer and the RECORD button across the mic's lower half, which reads as a
+     z-index accident rather than a composition — the object you are meant to
+     look at, peeking out from behind its own controls.
+     As the first item of this centred flex column it now sits ABOVE the
+     transport and the whole group centres as one: mic, then wave, timer,
+     RECORD, hint. Nothing overlaps anything. */
+  width: min(80%, 320px);
+  max-height: 42vh;
+  flex: 0 1 auto;
+  min-height: 0;
   object-fit: contain;
+  /* Pulls the transport up under the mic's stand, so the two read as one
+     object standing on the controls rather than two stacked pictures. */
+  margin-bottom: -10px;
   filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.55))
           drop-shadow(0 0 34px rgba(246, 59, 154, 0.35));
   pointer-events: none;

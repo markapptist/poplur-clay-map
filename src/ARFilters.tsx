@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import styles from './ARFilters.module.css'
 import { playPop } from './pop'
-import { listCaptures } from './cameraStore'
 
 // AR filters — the web twin of ARFilterManager.swift, carrying the same set it
 // ships (none · Smooth · Beauty · Brighten · Glow · Sharpen · Warm · Cool ·
@@ -24,19 +23,21 @@ export interface ARFilterDef {
   label: string
   /** CSS filter chain applied to the live video */
   css: string
+  /** Purpose-made photographic preview; never a cube or generic icon. */
+  thumbnail: string
 }
 
 export const AR_FILTERS: ARFilterDef[] = [
-  { id: 'none', label: 'None', css: 'none' },
+  { id: 'none', label: 'None', css: 'none', thumbnail: 'ar-filters/none.jpg' },
   // The blur is tiny and paired with a contrast lift: skin softens, edges hold.
-  { id: 'smooth', label: 'Smooth', css: 'blur(1.1px) contrast(1.06) saturate(1.04)' },
-  { id: 'beauty', label: 'Beauty', css: 'blur(0.8px) brightness(1.08) saturate(1.12) contrast(1.04)' },
-  { id: 'brighten', label: 'Brighten', css: 'brightness(1.22) contrast(0.96)' },
-  { id: 'glow', label: 'Glow', css: 'brightness(1.12) saturate(1.2) contrast(1.05) drop-shadow(0 0 12px rgba(255,190,225,0.55))' },
-  { id: 'sharpen', label: 'Sharpen', css: 'contrast(1.3) saturate(1.1)' },
-  { id: 'warm', label: 'Warm', css: 'sepia(0.28) saturate(1.35) hue-rotate(-12deg) brightness(1.05)' },
-  { id: 'cool', label: 'Cool', css: 'saturate(1.15) hue-rotate(14deg) brightness(1.03) contrast(1.06)' },
-  { id: 'vintage', label: 'Vintage', css: 'sepia(0.55) contrast(1.15) saturate(0.85) brightness(0.98)' },
+  { id: 'smooth', label: 'Smooth', css: 'blur(1.1px) contrast(1.06) saturate(1.04)', thumbnail: 'ar-filters/smooth.jpg' },
+  { id: 'beauty', label: 'Beauty', css: 'blur(0.8px) brightness(1.08) saturate(1.12) contrast(1.04)', thumbnail: 'ar-filters/beauty.jpg' },
+  { id: 'brighten', label: 'Brighten', css: 'brightness(1.22) contrast(0.96)', thumbnail: 'ar-filters/brighten.jpg' },
+  { id: 'glow', label: 'Glow', css: 'brightness(1.12) saturate(1.2) contrast(1.05) drop-shadow(0 0 12px rgba(255,190,225,0.55))', thumbnail: 'ar-filters/glow.jpg' },
+  { id: 'sharpen', label: 'Sharpen', css: 'contrast(1.3) saturate(1.1)', thumbnail: 'ar-filters/sharpen.jpg' },
+  { id: 'warm', label: 'Warm', css: 'sepia(0.28) saturate(1.35) hue-rotate(-12deg) brightness(1.05)', thumbnail: 'ar-filters/warm.jpg' },
+  { id: 'cool', label: 'Cool', css: 'saturate(1.15) hue-rotate(14deg) brightness(1.03) contrast(1.06)', thumbnail: 'ar-filters/cool.jpg' },
+  { id: 'vintage', label: 'Vintage', css: 'sepia(0.55) contrast(1.15) saturate(0.85) brightness(0.98)', thumbnail: 'ar-filters/vintage.jpg' },
 ]
 
 // ── scrub physics (CubeMenuWheelController, laid horizontal) ────────────────
@@ -57,17 +58,6 @@ export default function ARFilters({
   onPick: (id: string) => void
   onClose: () => void
 }) {
-  // Every swatch used to be the same clay cube wearing a different filter
-  // chain, which is why the rail read as nine identical cubes: a cube under
-  // `sepia(0.28)` looks like a cube. A swatch is only useful if it previews the
-  // effect on the kind of thing you are pointing at, so it uses your most
-  // recent capture when there is one. No capture yet -> the cube, as before.
-  // (The live camera cannot supply this on iOS: the preview is native, so the
-  // page's <video> has no pixels to sample.)
-  const swatchSrc = useMemo(() => {
-    const shot = [...listCaptures()].reverse().find(c => c.kind === 'photo')
-    return shot?.src ?? null
-  }, [])
   const startIndex = Math.max(0, AR_FILTERS.findIndex(f => f.id === active))
   const [offset, setOffset] = useState(startIndex)
   const [selected, setSelected] = useState(startIndex)
@@ -151,6 +141,7 @@ export default function ARFilters({
   }, [])
 
   const onPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation()
     draggingRef.current = true
     dragXRef.current = e.clientX
     downPtRef.current = { x: e.clientX, y: e.clientY }
@@ -235,7 +226,7 @@ export default function ARFilters({
                 className={styles.swatch}
                 style={{
                   filter: f.css === 'none' ? undefined : f.css,
-                  ...(swatchSrc ? { backgroundImage: `url(${swatchSrc})` } : null),
+                  backgroundImage: `url(${f.thumbnail})`,
                 }}
               />
             </button>

@@ -9,6 +9,7 @@ import { modelSprite } from './modelSprite'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
+import { RADIUS_CHANGE_EVENT, radiusStats } from './radiusLedger'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -287,7 +288,7 @@ function NotificationIcon({ kind }: { kind: NotificationKind }) {
   )
 }
 
-type Mode = 'media' | 'messages' | 'liked'
+type Mode = 'media' | 'messages' | 'liked' | 'stats'
 type CaptureFacing = 'user' | 'environment'
 
 type TorchVideoTrack = MediaStreamTrack & {
@@ -297,7 +298,10 @@ type TorchVideoTrack = MediaStreamTrack & {
 // Canned Poplur AI — stands in for the backend until it exists.
 export function aiAnswer(q: string, username: string): string {
   const lower = q.toLowerCase()
-  if (/radius|big|far/.test(lower)) return `${username}, your radius is 41.8 km and growing — Barrie is fully claimed.`
+  if (/radius|big|far|stat|analytic/.test(lower)) {
+    const stats = radiusStats()
+    return `${username}, your radius is ${stats.radiusKm.toFixed(1)} km. ${stats.views} completed views and ${stats.profileVisits} profile visits added ${stats.gains.toFixed(1)} km; dislikes and inactive posts removed ${stats.losses.toFixed(1)} km.`
+  }
   if (/pop|post/.test(lower)) return 'Your last pop claimed 3 km of downtown. Drop one at Union Station — it is live right now.'
   if (/trend/.test(lower)) return 'Skyline shots by the harbourfront are trending inside your radius.'
   return `On it, ${username} — I will keep growing your world and let you know when a venue heats up.`
@@ -319,6 +323,78 @@ const AVATAR_BY_HANDLE: Record<string, string> = {
   '@doodlecast': 'feed/posters/ad-cartoon.jpg',
   '@playtime': 'feed/posters/ad-kids.jpg',
   '@bitmerchant': 'feed/posters/ad-comedy.jpg',
+}
+
+function ProfileCallOverlay({ who, video, onEnd }: { who: string; video: boolean; onEnd: () => void }) {
+  const localVideoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const [connected, setConnected] = useState(false)
+  const [muted, setMuted] = useState(false)
+  const [cameraOn, setCameraOn] = useState(video)
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    let alive = true
+    postNativeEvent({ type: 'startCall', to: who, video })
+    navigator.mediaDevices?.getUserMedia({ audio: true, video })
+      .then(stream => {
+        if (!alive) { stream.getTracks().forEach(track => track.stop()); return }
+        streamRef.current = stream
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream
+      })
+      .catch(() => {})
+    const connect = window.setTimeout(() => setConnected(true), 900)
+    return () => {
+      alive = false
+      window.clearTimeout(connect)
+      streamRef.current?.getTracks().forEach(track => track.stop())
+      postNativeEvent({ type: 'endCall', to: who })
+    }
+  }, [video, who])
+
+  useEffect(() => {
+    if (!connected) return
+    const timer = window.setInterval(() => setElapsed(seconds => seconds + 1), 1_000)
+    return () => window.clearInterval(timer)
+  }, [connected])
+
+  const toggleMute = () => {
+    const next = !muted
+    streamRef.current?.getAudioTracks().forEach(track => { track.enabled = !next })
+    setMuted(next)
+    playPop()
+  }
+  const toggleCamera = () => {
+    const next = !cameraOn
+    streamRef.current?.getVideoTracks().forEach(track => { track.enabled = next })
+    setCameraOn(next)
+    playPop()
+  }
+
+  return createPortal(
+    <section className={styles.callOverlay} role="dialog" aria-modal="true" aria-label={`${video ? 'Video' : 'Voice'} call with ${who}`}>
+      {video && <video ref={localVideoRef} autoPlay muted playsInline className={cameraOn ? styles.callVideo : `${styles.callVideo} ${styles.callVideoOff}`} />}
+      <div className={styles.callIdentity}>
+        <img src={AVATAR_BY_HANDLE[who] ?? 'mark_talk0.png'} alt="" />
+        <h2>{who}</h2>
+        <p>{connected ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}` : 'CONNECTING...'}</p>
+      </div>
+      <div className={styles.callControls}>
+        <button type="button" aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={muted} onClick={toggleMute}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
+        </button>
+        {video && (
+          <button type="button" aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'} aria-pressed={!cameraOn} onClick={toggleCamera}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
+          </button>
+        )}
+        <button type="button" className={styles.callEnd} aria-label="End call" onClick={() => { playPop(); onEnd() }}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14c5-4 11-4 16 0l-3 4-4-2H11l-4 2z" /></svg>
+        </button>
+      </div>
+    </section>,
+    document.body,
+  )
 }
 
 export default function ProfileTwin({
@@ -343,6 +419,13 @@ export default function ProfileTwin({
 
 } = {}) {
   const [mode, setMode] = useState<Mode>('media')
+  const [liveRadiusStats, setLiveRadiusStats] = useState(radiusStats)
+  const [activeCall, setActiveCall] = useState<{ who: string; video: boolean } | null>(null)
+  useEffect(() => {
+    const sync = () => setLiveRadiusStats(radiusStats())
+    window.addEventListener(RADIUS_CHANGE_EVENT, sync)
+    return () => window.removeEventListener(RADIUS_CHANGE_EVENT, sync)
+  }, [])
   // Grid tiles lit by the map's "N pops in this area" tap. A few seconds of
   // takeover-pink ring, then the grid goes back to normal.
   const [litTiles, setLitTiles] = useState<Set<number> | null>(null)
@@ -1099,7 +1182,7 @@ export default function ProfileTwin({
 
         <h1 className={styles.username}>{shownName.toUpperCase()}</h1>
         <div className={styles.modeSwitch}>
-          {(['media', 'messages', 'liked'] as Mode[]).map(m => (
+          {(['media', 'messages', 'liked', 'stats'] as Mode[]).map(m => (
             <button
               key={m}
               type="button"
@@ -1145,10 +1228,37 @@ export default function ProfileTwin({
                     <span className={styles.msgRadius}>
                       <i aria-hidden="true">◆</i>{m.radiusKm.toFixed(1)} km
                     </span>
+                    {m.who !== 'Poplur AI' && (
+                      <span className={styles.msgActions}>
+                        <button type="button" aria-label={`Call ${m.who}`} onClick={() => { playPop(); setActiveCall({ who: m.who, video: false }) }}>
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3l3 5-2 2c1.5 3 3 4.5 6 6l2-2 5 3-1 4c-8 1-16-7-17-15z" /></svg>
+                        </button>
+                        <button type="button" aria-label={`Video call ${m.who}`} onClick={() => { playPop(); setActiveCall({ who: m.who, video: true }) }}>
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
+                        </button>
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
+          ) : mode === 'stats' ? (
+            <section className={styles.radiusStats} aria-label="Radius analytics">
+              <header>
+                <span>YOUR RADIUS</span>
+                <strong>{liveRadiusStats.radiusKm.toFixed(1)} km</strong>
+                <i style={{ width: `${Math.min(100, (liveRadiusStats.radiusKm / 100) * 100)}%` }} />
+              </header>
+              <div className={styles.statsGrid}>
+                <article><b>+{liveRadiusStats.gains.toFixed(1)}</b><span>km earned</span></article>
+                <article><b>-{liveRadiusStats.losses.toFixed(1)}</b><span>km lost</span></article>
+                <article><b>{liveRadiusStats.views}</b><span>completed views</span></article>
+                <article><b>{liveRadiusStats.likes}</b><span>left likes</span></article>
+                <article><b>{liveRadiusStats.profileVisits}</b><span>profile visits</span></article>
+                <article><b>{liveRadiusStats.inactivePosts}</b><span>inactive posts</span></article>
+              </div>
+              <p>Views, likes and profile visits grow your radius. Right-side dislikes and posts with no view after one hour reduce it.</p>
+            </section>
           ) : (
             <div className={styles.grid}>
               {posts.map((post, i) => (
@@ -1190,6 +1300,14 @@ export default function ProfileTwin({
           )}
         </div>
       </div>
+
+      {activeCall && (
+        <ProfileCallOverlay
+          who={activeCall.who}
+          video={activeCall.video}
+          onEnd={() => setActiveCall(null)}
+        />
+      )}
 
       {/* ── Pink notifications banner — springs down from the top. ── */}
       {showNotifs && typeof document !== 'undefined' && createPortal(

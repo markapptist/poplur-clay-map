@@ -18,6 +18,7 @@ import {
   referralLink,
   worldRadiusRemainingMs,
 } from './referral'
+import { readRadioScope, setRadioScope, type RadioScope } from './mapRadio'
 
 // Settings, and the one thing in it that is a feature rather than a switch:
 // REFER A FRIEND. Radius is earned slowly and decays; a referral hands you the
@@ -35,6 +36,7 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
   // where the truth lives.
   const [aiVoice, setAiVoice] = useState(readCameraAiVoice)
   const [detectDefault, setDetectDefault] = useState(readCameraDetectDefault)
+  const [radioScope, setRadioScopeState] = useState<RadioScope>(readRadioScope)
 
   // The native side owns both behaviours — CameraAIAnnouncer does the talking
   // and the capture session decides what runs at start — so a switch here has
@@ -48,6 +50,13 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
     playPop()
     setDetectDefault(writeCameraDetectDefault(on))
     postNativeEvent({ type: 'cameraDetectDefault', enabled: on })
+  }
+  const chooseRadioScope = (scope: RadioScope) => {
+    playPop()
+    setRadioScope(scope)
+    setRadioScopeState(scope)
+    postNativeEvent({ type: 'radioScope', scope })
+    if (window.parent !== window) window.parent.postMessage({ poplurRadioScope: scope }, '*')
   }
 
   // The countdown, and only while this screen is open. Half a minute is fine
@@ -193,6 +202,33 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
               <em />
             </span>
           </button>
+        </article>
+
+        <article className={styles.group} aria-label="Radio playback">
+          <span className={styles.groupKicker}>RADIO PLAYBACK</span>
+          <div className={styles.radioScope} role="radiogroup" aria-label="Where radio keeps playing">
+            {([
+              ['screen', 'Radio screen'],
+              ['app', 'Across Poplur'],
+              ['outside', 'Outside app'],
+            ] as Array<[RadioScope, string]>).map(([scope, label]) => (
+              <button
+                type="button"
+                key={scope}
+                role="radio"
+                aria-checked={radioScope === scope}
+                className={radioScope === scope ? styles.radioScopeOn : undefined}
+                onClick={() => chooseRadioScope(scope)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className={styles.radioScopeNote}>
+            {radioScope === 'screen' && 'Stops when you leave the Radio screen.'}
+            {radioScope === 'app' && 'Keeps playing while you browse Poplur.'}
+            {radioScope === 'outside' && 'Keeps the station playing when Poplur is in the background.'}
+          </p>
         </article>
 
         {note && <p className={styles.note} role="status">{note}</p>}

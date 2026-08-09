@@ -39,6 +39,13 @@ export interface ClayMapProps {
   weatherIcon?: string
   /** already formatted for the locale, e.g. "18°C" or "64°F" */
   weatherTemp?: string | null
+  /** Five real daily readings from the same weather service as current conditions. */
+  weatherForecast?: Array<{
+    date: string
+    high: number
+    low: number
+    icon: string
+  }>
   /** Candidate real-world targets for the first post-globe lock. */
   introDestinations?: { coords: [number, number] }[]
   /** Drops the map to a forward-facing street-level 3D camera. */
@@ -838,7 +845,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherTemp, pins, onPinOpen }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherTemp, weatherForecast = [], pins, onPinOpen }: ClayMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -941,6 +948,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const composeOpenRef = useRef(false)
   composeOpenRef.current = composeAt !== null
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
+  const [weatherOpen, setWeatherOpen] = useState(false)
   // The words on the pop. Typed here, they make it a WRITTEN pop: it claims the
   // same ground and runs in The Poplur Times instead of the camera roll.
   const [composeMessage, setComposeMessage] = useState('')
@@ -3667,10 +3675,35 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       })()}
 
       {weatherIcon && zoomValue > 4.4 && (
-        <div className={styles.zoomWeather} aria-label={`Current weather: ${weatherMode}`}>
+        <button
+          type="button"
+          className={weatherOpen ? `${styles.zoomWeather} ${styles.zoomWeatherOpen}` : styles.zoomWeather}
+          aria-label={`Current weather: ${weatherMode}. Show five day forecast`}
+          aria-expanded={weatherOpen}
+          onClick={() => { playPop(); setWeatherOpen(open => !open) }}
+        >
           <div dangerouslySetInnerHTML={{ __html: weatherIcon }} />
           {weatherTemp != null && <div className={styles.zoomTemp}>{weatherTemp}</div>}
-        </div>
+        </button>
+      )}
+
+      {weatherOpen && weatherForecast.length > 0 && zoomValue > 4.4 && (
+        <section className={styles.weatherForecast} aria-label="Five day weather forecast">
+          <header>
+            <span>5-DAY FORECAST</span>
+            <button type="button" onClick={() => setWeatherOpen(false)} aria-label="Close forecast">×</button>
+          </header>
+          <div className={styles.weatherDays}>
+            {weatherForecast.slice(0, 5).map(day => (
+              <article key={day.date}>
+                <strong>{new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(`${day.date}T12:00:00`))}</strong>
+                <span className={styles.weatherDayIcon} dangerouslySetInnerHTML={{ __html: day.icon }} />
+                <span>{Math.round(day.high)}°</span>
+                <i>{Math.round(day.low)}°</i>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
 
       <div

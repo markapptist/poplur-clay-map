@@ -794,6 +794,35 @@
 .userStepLeft { left: 0; }
 .userStepRight { right: 0; }
 
+.radiusReaction {
+  position: absolute;
+  z-index: 90;
+  top: 42%;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  pointer-events: none;
+  color: #fff;
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.6));
+  animation: radiusReactionPop 0.72s cubic-bezier(0.18, 1.35, 0.35, 1) both;
+}
+
+.radiusReactionUp { left: 17%; }
+.radiusReactionDown { right: 17%; }
+.radiusReaction span { font-size: 46px; }
+.radiusReaction strong {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(7, 4, 10, 0.82);
+  font: 900 13px/1 system-ui, sans-serif;
+}
+
+@keyframes radiusReactionPop {
+  0% { opacity: 0; transform: translateY(24px) scale(0.45); }
+  32% { opacity: 1; transform: translateY(0) scale(1.08); }
+  100% { opacity: 0; transform: translateY(-34px) scale(0.9); }
+}
+
 /* ── live ───────────────────────────────────────────────────────────────────
    A broadcast announces itself. Sits under the top bar, clear of the caption. */
 .liveTag {

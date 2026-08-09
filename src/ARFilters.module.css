@@ -105,7 +105,7 @@
   width: 52px;
   height: 52px;
   border-radius: 14px;
-  background-image: url('/clay_cube.png');
+  background-color: #161116;
   background-size: cover;
   background-position: center;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), inset 0 0 0 2px rgba(255, 255, 255, 0.12);

@@ -66,13 +66,38 @@ let masterVolume = (() => {
 // This governs IN-APP navigation only; minimizing the app still silences
 // everything through audioGate's visibility gate.
 const RADIO_BG_KEY = 'poplur.radio.background'
+const RADIO_SCOPE_KEY = 'poplur.radio.scope'
+export type RadioScope = 'screen' | 'app' | 'outside'
+
+export function readRadioScope(): RadioScope {
+  try {
+    const scope = window.localStorage.getItem(RADIO_SCOPE_KEY)
+    if (scope === 'screen' || scope === 'app' || scope === 'outside') return scope
+    return window.localStorage.getItem(RADIO_BG_KEY) === '1' ? 'app' : 'screen'
+  } catch { return 'screen' }
+}
+
+export function setRadioScope(scope: RadioScope) {
+  try {
+    window.localStorage.setItem(RADIO_SCOPE_KEY, scope)
+    window.localStorage.setItem(RADIO_BG_KEY, scope === 'screen' ? '0' : '1')
+  } catch { /* embedded */ }
+  window.dispatchEvent(new CustomEvent('poplur-radio-scope', { detail: { scope } }))
+}
 
 export function isRadioBackgroundEnabled(): boolean {
-  try { return window.localStorage.getItem(RADIO_BG_KEY) === '1' } catch { return false }
+  return readRadioScope() !== 'screen'
 }
 
 export function setRadioBackgroundEnabled(on: boolean) {
-  try { window.localStorage.setItem(RADIO_BG_KEY, on ? '1' : '0') } catch { /* embedded */ }
+  setRadioScope(on ? 'app' : 'screen')
+}
+
+function isRadioGateMuted(): boolean {
+  const outsideBackground = readRadioScope() === 'outside'
+    && typeof document !== 'undefined'
+    && document.visibilityState === 'hidden'
+  return isGateMuted() && !outsideBackground
 }
 
 // With the setting on and a station actually sounding, the page-change silence
@@ -92,10 +117,13 @@ if (typeof window !== 'undefined') {
     const d = e.data as Record<string, unknown> | null
     if (!d || typeof d !== 'object') return
     if ('poplurRadioBackground' in d) setRadioBackgroundEnabled(!!d.poplurRadioBackground)
+    if (d.poplurRadioScope === 'screen' || d.poplurRadioScope === 'app' || d.poplurRadioScope === 'outside') {
+      setRadioScope(d.poplurRadioScope)
+    }
     if (d.poplurRadioBackgroundQuery) {
       try {
         (e.source as Window | null)?.postMessage(
-          { poplurRadioBackground: isRadioBackgroundEnabled() }, '*')
+          { poplurRadioBackground: isRadioBackgroundEnabled(), poplurRadioScope: readRadioScope() }, '*')
       } catch { /* iframe went away */ }
     }
   })
@@ -176,9 +204,9 @@ function suspendRadioContextSoon(delayMs = 450) {
     suspendTimer = null
     const ctx = audioContext
     if (!ctx || ctx.state !== 'running') return
-    if (soundWanted && !isGateMuted()) return
+    if (soundWanted && !isRadioGateMuted()) return
     void ctx.suspend()
-      .then(() => publishRadioState(isGateMuted() ? 'muted' : 'off'))
+      .then(() => publishRadioState(isRadioGateMuted() ? 'muted' : 'off'))
       .catch(() => {})
   }, delayMs)
 }
@@ -437,7 +465,7 @@ function setRadioLevel(value: number, timeConstant = 0.18) {
   targetRadioLevel = value
   // Every fade is clamped to silence while muted, so a level change can never
   // reopen the sound behind the gate.
-  if (isGateMuted()) {
+  if (isRadioGateMuted()) {
     value = 0
     publishRadioState('muted')
   } else {
@@ -457,7 +485,7 @@ function setRadioLevel(value: number, timeConstant = 0.18) {
   // Only wake the clock for sound we actually intend to make. An unconditional
   // resume here re-started a parked context from any level change at all —
   // including the volume slider being moved with the radio switched off.
-  if (soundWanted && !isGateMuted()) {
+  if (soundWanted && !isRadioGateMuted()) {
     cancelRadioSuspend()
     void ctx.resume().catch(() => {})
   }
@@ -549,7 +577,7 @@ function getLiveAudio(): HTMLAudioElement | null {
     liveAudio = new window.Audio()
     liveAudio.preload = 'none'
     liveAudio.volume = 0
-    liveAudio.muted = isGateMuted()
+    liveAudio.muted = isRadioGateMuted()
     const drop = () => { if (liveStation) dropLiveStation() }
     liveAudio.addEventListener('error', drop)
     liveAudio.addEventListener('playing', () => {
@@ -558,7 +586,7 @@ function getLiveAudio(): HTMLAudioElement | null {
       setRadioLevel(targetRadioLevel, 0.28)
     })
     liveAudio.addEventListener('pause', () => {
-      if (!soundWanted || isGateMuted() || !liveStation) return
+      if (!soundWanted || isRadioGateMuted() || !liveStation) return
       // A stream can pause before the delayed stalled/error signal arrives.
       // Bring the bed back immediately so the map never becomes dead air.
       setRadioLevel(targetRadioLevel, 0.16)
@@ -583,7 +611,7 @@ function isLiveRadioPlaying(): boolean {
 }
 
 function tryPlayLiveRadio(): void {
-  if (!soundWanted || isGateMuted() || !liveStation || !liveAudio) return
+  if (!soundWanted || isRadioGateMuted() || !liveStation || !liveAudio) return
   liveAudio.muted = false
   void liveAudio.play()
     .then(() => {
@@ -593,7 +621,7 @@ function tryPlayLiveRadio(): void {
     .catch((error: unknown) => {
       // Autoplay can still be denied in an embedded WebView. Keep WebAudio
       // (or its HTML fallback) audible and retry on the next user gesture.
-      if (!soundWanted || isGateMuted()) return
+      if (!soundWanted || isRadioGateMuted()) return
       setRadioLevel(targetRadioLevel, 0.12)
       const ctx = getAudioContext()
       if (!ctx || ctx.state === 'suspended') startFallbackRadio()
@@ -671,7 +699,7 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
     fallbackPaused: fallbackAudio?.paused ?? null,
     fallbackVolume: fallbackAudio?.volume ?? null,
     soundWanted,
-    gateMuted: isGateMuted(),
+    gateMuted: isRadioGateMuted(),
   })
 }
 
@@ -804,7 +832,7 @@ export function announceMapTour(line: string, stations: ReadonlyArray<RadioStati
 // sound back while the user has it off.
 if (typeof window !== 'undefined') {
   const applyGate = () => {
-    const muted = isGateMuted()
+    const muted = isRadioGateMuted()
     for (const el of [liveAudio, fallbackAudio]) {
       if (!el) continue
       el.muted = muted
@@ -902,7 +930,7 @@ export function playStation(station: { name: string; url: string }): void {
   liveStation = { name: station.name, url: station.url }
   publishLiveStation()
   audio.src = station.url
-  audio.muted = isGateMuted()
+  audio.muted = isRadioGateMuted()
   if (radioBed) radioBed.master.gain.value = 0   // the synth stand-in steps aside
   void audio.play().catch(() => { /* until the unlock gesture */ })
   setRadioLevel(RADIO_CRUISE_LEVEL, 0.4)

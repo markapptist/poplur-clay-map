@@ -19,6 +19,12 @@ import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } f
 import { readFeedCommentsAtEnd } from './feedPreferences'
 import styles from './FeedTwin.module.css'
 import { interceptingLive, isLive, onLiveStore } from './liveStore'
+import {
+  recordPostDislike,
+  recordPostLike,
+  recordPostView,
+  recordProfileVisitAfterView,
+} from './radiusLedger'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -63,6 +69,10 @@ function reachKmFor(key: string): number {
   let h = 0
   for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0
   return 0.3 + (h % 397) / 10
+}
+
+function radiusPostId(channelId: string, post?: ChannelPost): string {
+  return `${channelId}:${post?.user ?? 'unknown'}:${post?.video ?? 'live'}`
 }
 
 function usesMiles(): boolean {
@@ -272,6 +282,7 @@ export default function FeedTwin({
   suppressedRef.current = suppressed
   const [commentOpen, setCommentOpen] = useState(false)
   const [commentClosing, setCommentClosing] = useState(false)
+  const [radiusReaction, setRadiusReaction] = useState<'up' | 'down' | null>(null)
   // End-of-clip comments: the roll runs when the video finishes, then leaves.
   // Deliberately NOT the comment window — that one autofocuses its input and
   // would throw the keyboard up over a post you are only watching.
@@ -502,6 +513,38 @@ export default function FeedTwin({
     forceContentRender(n => n + 1)
   }, [ch])
 
+  const edgeTapRef = useRef<{ side: 'left' | 'right' | null; at: number; timer: number | null }>({
+    side: null,
+    at: 0,
+    timer: null,
+  })
+  const handleEdgeTap = useCallback((side: 'left' | 'right') => {
+    const now = performance.now()
+    const pending = edgeTapRef.current
+    if (pending.side === side && now - pending.at <= 330) {
+      if (pending.timer != null) window.clearTimeout(pending.timer)
+      edgeTapRef.current = { side: null, at: 0, timer: null }
+      const currentPost = postRef.current
+      const postId = radiusPostId(ch.id, currentPost)
+      if (side === 'left') recordPostLike(postId)
+      else recordPostDislike(postId)
+      setRadiusReaction(side === 'left' ? 'up' : 'down')
+      playPop()
+      window.setTimeout(() => setRadiusReaction(null), 720)
+      return
+    }
+    if (pending.timer != null) window.clearTimeout(pending.timer)
+    const timer = window.setTimeout(() => {
+      edgeTapRef.current = { side: null, at: 0, timer: null }
+      changeContent(side === 'left' ? -1 : 1)
+    }, 335)
+    edgeTapRef.current = { side, at: now, timer }
+  }, [ch.id, changeContent])
+
+  useEffect(() => () => {
+    if (edgeTapRef.current.timer != null) window.clearTimeout(edgeTapRef.current.timer)
+  }, [])
+
   // Keyboard twin of the gestures: up/down = channel, left/right = content.
   // In the fullscreen player the same keys drive the PLAYER instead: space
   // toggles playback, left/right step ±10s — what fingers do on the buttons.
@@ -535,6 +578,7 @@ export default function FeedTwin({
   useSyncExternalStore(onLiveStore, isLive, isLive)
   const posts = postsFor(ch)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
+  const postId = radiusPostId(ch.id, post)
   // Every video change re-reports its reach — channel swipe, content swipe,
   // or a live broadcast replacing the fallback clip. Cleared on unmount so the
   // card falls back to your own radius the moment the feed is gone.
@@ -614,6 +658,9 @@ export default function FeedTwin({
 
   const adReady = Boolean(adSrc) && readyAdSrc === adSrc
   useEffect(() => { if (adReady) setStaticArmed(false) }, [adReady])
+  useEffect(() => {
+    if (adReady || post?.stream) recordPostView(postId)
+  }, [adReady, post?.stream, postId])
 
   // While the player is up, mirror the video's clock into the timeline. Native
   // media events only — no rAF loop, so the layer is idle between events and
@@ -945,6 +992,7 @@ export default function FeedTwin({
       if (action === 'profile') {
         // whoever posted the video you are watching
         playPop()
+        recordProfileVisitAfterView(radiusPostId(ch.id, postRef.current))
         onOpenProfile?.(postRef.current?.user ?? ch.user)
       }
     })
@@ -1058,15 +1106,22 @@ export default function FeedTwin({
         <>
           <button
             className={`${styles.userStep} ${styles.userStepLeft}`}
-            onClick={() => changeContent(-1)}
-            aria-label="Previous user on this channel"
+            onClick={() => handleEdgeTap('left')}
+            aria-label="Previous user. Double tap to add one kilometre of radius"
           />
           <button
             className={`${styles.userStep} ${styles.userStepRight}`}
-            onClick={() => changeContent(1)}
-            aria-label="Next user on this channel"
+            onClick={() => handleEdgeTap('right')}
+            aria-label="Next user. Double tap to remove one kilometre of radius"
           />
         </>
+      )}
+
+      {radiusReaction && (
+        <div className={radiusReaction === 'up' ? `${styles.radiusReaction} ${styles.radiusReactionUp}` : `${styles.radiusReaction} ${styles.radiusReactionDown}`} role="status">
+          <span aria-hidden="true">{radiusReaction === 'up' ? '👍' : '👎'}</span>
+          <strong>{radiusReaction === 'up' ? '+1' : '-1'} {usesMiles() ? 'mi' : 'km'}</strong>
+        </div>
       )}
 
       {/* Behind the creative is black, not a themed wash — a channel change
