@@ -56,7 +56,12 @@ export interface PopupItem {
  *  "shown for too long" verbatim — so it stays at the shorter window. */
 const TTL: Record<PopupKind, number> = {
   engagement: 3_400,
-  suggestion: 12_000,
+  // 6.5s, and please leave it there. This was 9.5s, the user reported the card
+  // "shown for too long" over the video, it was lowered, and a later change put
+  // it back up to 12s — longer than the complaint. A suggestion has to outlast
+  // a glance without becoming a squatter on a screen someone is watching, and
+  // 6.5s is the reviewed answer to that.
+  suggestion: 6_500,
 }
 
 // More than a few at once is a pile nobody reads. Oldest goes first.

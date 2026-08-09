@@ -1500,6 +1500,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             <div className={styles.levelAbove}>
             <MapLevelButton
               level={popLevel}
+              mode={liveMapMode}
               onPick={next => {
                 setPopLevel(next)
                 mapFrameRef.current?.contentWindow?.postMessage(

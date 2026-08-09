@@ -52,6 +52,10 @@
 
 .caption { display: none; }
 
+/* 2D mode: a flat plate. It borrows .slabTop for the shared outline and the
+   lit/unlit fills, and only needs its own (absent) depth. */
+.plate { stroke-width: 1.5; }
+
 /* ── Hold menu ──
    Opens UPWARD: this control sits low in the HUD, so a downward menu would run
    off the bottom of the phone. */

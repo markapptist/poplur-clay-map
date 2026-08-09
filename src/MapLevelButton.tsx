@@ -23,10 +23,16 @@ export default function MapLevelButton({
   // corner of the map. 44 is the settled size: reads as three distinct sheets
   // at arm's length without crowding the channel arrows under it.
   size = 44,
+  // The control is made of the same world the map is: isometric slabs while
+  // the map is a 3D diorama, flat plates the moment it drops to 2D. A 3D
+  // object floating over a flat map reads as a leftover from another screen.
+  mode = '3d',
 }: {
   level: PopLevel
   onPick: (next: PopLevel) => void
   size?: number
+  /** '2d' flattens the slabs to plates, matching the map's own render tier. */
+  mode?: '2d' | '3d'
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const holdTimer = useRef<number | null>(null)
@@ -78,7 +84,7 @@ export default function MapLevelButton({
                 setMenuOpen(false)
               }}
             >
-              <LayerGlyph level={option.id} size={20} />
+              <LayerGlyph level={option.id} size={20} mode={mode} />
               <span className={styles.itemText}>
                 <span className={styles.itemLabel}>{option.label}</span>
                 <span className={styles.itemBlurb}>{option.blurb}</span>
@@ -116,7 +122,7 @@ export default function MapLevelButton({
           cycle()
         }}
       >
-        <LayerGlyph level={level} size={size} />
+        <LayerGlyph level={level} size={size} mode={mode} />
       </button>
     </div>
   )
@@ -137,7 +143,7 @@ export default function MapLevelButton({
  *   others — the far sheets, yours dark (everyone else's board)
  *   all    — the whole stack
  */
-function LayerGlyph({ level, size }: { level: PopLevel; size: number }) {
+function LayerGlyph({ level, size, mode }: { level: PopLevel; size: number; mode: '2d' | '3d' }) {
   const lit = (which: 'top' | 'mid' | 'near') => {
     if (level === 'all') return true
     if (level === 'mine') return which === 'near'
@@ -147,6 +153,20 @@ function LayerGlyph({ level, size }: { level: PopLevel; size: number }) {
   // 3px of thickness. Spacing 6.5 leaves the stack slightly interleaved, which
   // is what makes it read as a stack rather than three floating tiles.
   const W = 12, H = 6, T = 3
+  // 2D mode: the same three sheets seen from straight above — flat plates, no
+  // extruded edge, stacked with a small offset so it still reads as layers.
+  const plate = (cy: number, on: boolean, key: string) => (
+    <g key={key} className={on ? styles.slabOn : styles.slabOff}>
+      <rect
+        className={`${styles.slabTop} ${styles.plate}`}
+        x={17 - W}
+        y={cy - 4}
+        width={W * 2}
+        height={8}
+        rx={2.5}
+      />
+    </g>
+  )
   const slab = (cy: number, on: boolean, key: string) => (
     <g key={key} className={on ? styles.slabOn : styles.slabOff}>
       {/* the edge: the front two faces of the slab, drawn as one silhouette */}
@@ -169,10 +189,10 @@ function LayerGlyph({ level, size }: { level: PopLevel; size: number }) {
       aria-hidden="true"
       className={styles.glyph}
     >
-      {/* back to front, so each slab overlaps the one above it */}
-      {slab(8, lit('top'), 'top')}
-      {slab(15, lit('mid'), 'mid')}
-      {slab(22, lit('near'), 'near')}
+      {/* back to front, so each sheet overlaps the one above it */}
+      {(mode === '2d' ? plate : slab)(8, lit('top'), 'top')}
+      {(mode === '2d' ? plate : slab)(15, lit('mid'), 'mid')}
+      {(mode === '2d' ? plate : slab)(22, lit('near'), 'near')}
     </svg>
   )
 }
