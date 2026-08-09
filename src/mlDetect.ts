@@ -31,6 +31,10 @@ export interface Detection {
    *  native Vision matcher when it ships; the browser twin approximates it via
    *  faceIdEnabled() so the aura's owner state is demonstrable today. */
   isUser?: boolean
+  /** Face pose from the native detector, in radians. Accessory models use it to
+   *  turn with the head instead of remaining parallel to the phone. */
+  roll?: number
+  yaw?: number
 }
 
 // What the native model reports around a city — the COCO-ish classes its

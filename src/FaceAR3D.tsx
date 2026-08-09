@@ -33,7 +33,7 @@ function mesh(geometry: THREE.BufferGeometry, surface: THREE.Material) {
   return result
 }
 
-function roundedVisorPath(inset = 0, shape = new THREE.Shape()) {
+function traceRoundedVisor<T extends THREE.Path>(shape: T, inset = 0): T {
   const left = -0.54 + inset
   const right = 0.54 - inset
   const top = 0.14 - inset * 0.35
@@ -49,6 +49,9 @@ function roundedVisorPath(inset = 0, shape = new THREE.Shape()) {
   shape.quadraticCurveTo(left, top, left + 0.08, top)
   return shape
 }
+
+const roundedVisorShape = (inset = 0) => traceRoundedVisor(new THREE.Shape(), inset)
+const roundedVisorHole = (inset = 0) => traceRoundedVisor(new THREE.Path(), inset)
 
 function heartGeometry() {
   const shape = new THREE.Shape()
@@ -124,7 +127,7 @@ function createAccessory(filter: string) {
       side: THREE.DoubleSide,
     })
     const chrome = material({ color: 0xbffbff, emissive: 0x22cbea, emissiveIntensity: 0.75, metalness: 0.88 })
-    const lens = mesh(new THREE.ExtrudeGeometry(roundedVisorPath(0.025), {
+    const lens = mesh(new THREE.ExtrudeGeometry(roundedVisorShape(0.025), {
       depth: 0.035,
       bevelEnabled: true,
       bevelSegments: 3,
@@ -134,8 +137,8 @@ function createAccessory(filter: string) {
     }), glass)
     lens.position.set(0, 0.08, 0.02)
     root.add(lens)
-    const frameShape = roundedVisorPath()
-    frameShape.holes.push(roundedVisorPath(0.045, new THREE.Path()))
+    const frameShape = roundedVisorShape()
+    frameShape.holes.push(roundedVisorHole(0.045))
     const frame = mesh(new THREE.ExtrudeGeometry(frameShape, {
       depth: 0.055,
       bevelEnabled: true,
@@ -284,7 +287,7 @@ export default function FaceAR3D({ detections, filter }: {
       preserveDrawingBuffer: true,
     })
     renderer.setClearColor(0x000000, 0)
-    renderer.setPixelRatio(qualityPixelRatio(1.5))
+    renderer.setPixelRatio(qualityPixelRatio(1.25))
     renderer.outputColorSpace = THREE.SRGBColorSpace
 
     const scene = new THREE.Scene()
@@ -308,6 +311,7 @@ export default function FaceAR3D({ detections, filter }: {
     let raf = 0
     let previous = 0
     let disposed = false
+    let hadFaces = false
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
@@ -327,7 +331,7 @@ export default function FaceAR3D({ detections, filter }: {
     const frame = (now: number) => {
       if (disposed) return
       raf = requestAnimationFrame(frame)
-      if (now - previous < 33) return
+      if (now - previous < 40) return
       previous = now
       resize()
       const faces = detectionsRef.current.filter(isFace).slice(0, accessories.length)
@@ -359,6 +363,8 @@ export default function FaceAR3D({ detections, filter }: {
           })
         }
       })
+      if (faces.length === 0 && !hadFaces) return
+      hadFaces = faces.length > 0
       renderer.render(scene, camera)
     }
 

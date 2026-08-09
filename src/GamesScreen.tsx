@@ -91,7 +91,11 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   const launch = (g: Game) => {
     playPop()
     setBootElapsed(false)
-    setFrameReady(false)
+    // Embedded games report readiness from iframe.onLoad. Poplurgatchi is a
+    // local React game, so it is ready as soon as this render mounts it; making
+    // it wait for an iframe event it can never emit kept the boot card up until
+    // the 12-second emergency ceiling.
+    setFrameReady(!g.web)
     setBooting(g)
     if (bootTimer.current) window.clearTimeout(bootTimer.current)
     if (bootCeiling.current) window.clearTimeout(bootCeiling.current)

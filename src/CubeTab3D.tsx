@@ -127,7 +127,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
   const [sceneReadyVersion, setSceneReadyVersion] = useState(0)
   const targetTabRef = useRef(targetTab)
   const showFoodFaceRef = useRef(showFoodFace)
-  // Restarts the parked render loop; set by the effect below.
+  // Invalidates the parked renderer and restarts its loop; set by the effect
+  // below. Model swaps need both halves: merely waking a clean loop leaves the
+  // old framebuffer on screen until a tap marks it dirty.
   const wakeLoopRef = useRef<() => void>(() => {})
   const callbacksRef = useRef({ onFaceChange, onSpinChange, onTap, onHold })
   callbacksRef.current = { onFaceChange, onSpinChange, onTap, onHold }
@@ -478,7 +480,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
         raf = requestAnimationFrame(loop)
       }
     }
-    wakeLoopRef.current = wake
+    wakeLoopRef.current = () => {
+      needsRender = true
+      wake()
+    }
     raf = requestAnimationFrame(loop)
 
     return () => {
@@ -503,6 +508,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       groupRef.current = null
       modelNodeRef.current = null
       loadedUrlRef.current = null
+      wakeLoopRef.current = () => {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])

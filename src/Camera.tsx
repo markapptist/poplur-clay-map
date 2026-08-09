@@ -766,6 +766,10 @@ export default function Camera({
       canvas.height,
     )
     drawFaceAREffect(ctx, canvas.width, canvas.height, detections, arFilter)
+    const faceAR = document.querySelector<HTMLCanvasElement>('canvas[data-face-ar-3d]')
+    if (faceAR?.width && faceAR.height) {
+      ctx.drawImage(faceAR, 0, 0, faceAR.width, faceAR.height, 0, 0, canvas.width, canvas.height)
+    }
     const shot = addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
     // A capture that only lands in the roll looks like nothing happened. Open
     // the composer on it, the way the native flow does.
@@ -1074,7 +1078,7 @@ export default function Camera({
           autoPlay
         />
       )}
-      {!NATIVE_CAMERA_PREVIEW && real && (
+      {real && (
         <FaceAROverlay
           detections={detections}
           filter={arFilter}
