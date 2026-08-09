@@ -37,15 +37,12 @@ export default function DetectionOverlay({
           {/* corner brackets, the way a tracker draws a lock */}
           <span className={styles.c1} /><span className={styles.c2} />
           <span className={styles.c3} /><span className={styles.c4} />
-          {/* The label rides above the box and un-mirrors itself, so text on
-              the front camera reads forwards instead of backwards. */}
-          <span
-            className={styles.tag}
-            style={mirrored ? { transform: 'scaleX(-1)' } : undefined}
-          >
-            <span className={d.user ? styles.tagUserText : styles.tagText}>{d.label}</span>
-            <span className={styles.pct}>{Math.round(d.confidence * 100)}%</span>
-          </span>
+          {/* No label pill here. The box used to carry its own class name and
+              confidence, which put a second and third piece of text on screen
+              competing with the shader readout under the wordmark — and with
+              several boxes up at once the pills stacked and covered the very
+              thing they were labelling. The readout names ONE winner; the
+              boxes just show where the model is looking. */}
         </div>
       ))}
     </div>

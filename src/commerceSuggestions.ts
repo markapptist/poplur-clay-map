@@ -120,6 +120,7 @@ export function suggestionForMapPlace(place: MapPlaceSuggestionInput): SmartCard
     ],
     line: `${place.name} is trending with ${place.likes} recent pops.`,
     link: { label: 'SEE WHAT IS ON', url: webSearch(copy.query, copy.shopping) },
+    placeCreativeQuery: `${place.name} ${place.category}`,
     ...creative(place.channel, {
       sponsor: `Local spotlight · ${place.name}`,
       badge: copy.badge,

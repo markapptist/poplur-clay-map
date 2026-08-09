@@ -488,6 +488,18 @@
   scrollbar-width: none;
 }
 
+.soundCloudPlayer {
+  position: relative;
+  z-index: 3;
+  flex: none;
+  width: 100%;
+  height: 92px;
+  margin-top: 8px;
+  border: 1px solid rgba(184, 255, 158, 0.28);
+  border-radius: 6px;
+  background: #111;
+}
+
 .lcdList::-webkit-scrollbar { display: none; }
 
 .lcdListHead {

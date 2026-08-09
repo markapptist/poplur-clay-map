@@ -21,7 +21,7 @@
   position: absolute;
   inset: max(5px, env(safe-area-inset-top)) max(5px, env(safe-area-inset-right)) max(5px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left));
   border-radius: clamp(22px, 6vw, 42px);
-  padding: 4px;
+  padding: 2px;
   background: conic-gradient(from var(--recogAngle),
     #ff2d95, #ff8a3d, #ffe23d, #6cf05a, #35d9cf,
     #3d9dff, #8a6bff, #d762ff, #ff4d9e, #ff2d95);
@@ -31,10 +31,9 @@
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   box-shadow:
-    0 0 30px rgba(246, 59, 154, 0.5),
-    0 0 24px rgba(94, 225, 234, 0.4),
-    0 0 40px rgba(139, 107, 255, 0.32),
-    inset 0 0 18px rgba(255, 240, 250, 0.32);
+    0 0 14px rgba(246, 59, 154, 0.38),
+    0 0 12px rgba(94, 225, 234, 0.32),
+    0 0 18px rgba(139, 107, 255, 0.24);
   /* Present but dark until something is recognised: the ∞ spin/pulse run ONLY
      while .ringOn is applied, so an idle camera carries zero running
      animations from this layer. */
@@ -49,13 +48,12 @@
 
 /* The camera knows its owner: brighter, quicker breath. */
 .ringUser {
-  padding: 6px;
+  padding: 2px;
   animation: recogSpin 2.6s linear infinite, recogPulse 0.9s ease-in-out infinite;
   box-shadow:
-    0 0 44px rgba(246, 59, 154, 0.65),
-    0 0 34px rgba(94, 225, 234, 0.55),
-    0 0 56px rgba(139, 107, 255, 0.45),
-    inset 0 0 26px rgba(255, 240, 250, 0.45);
+    0 0 18px rgba(246, 59, 154, 0.48),
+    0 0 16px rgba(94, 225, 234, 0.42),
+    0 0 22px rgba(139, 107, 255, 0.34);
 }
 
 @keyframes recogSpin {

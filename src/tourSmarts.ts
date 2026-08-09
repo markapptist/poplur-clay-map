@@ -50,6 +50,8 @@ export interface SmartCard {
   channelTag?: string
   accent?: string
   accent2?: string
+  /** A grounded live-search request for place-specific ad imagery and facts. */
+  placeCreativeQuery?: string
   /** Drives contextual chrome while a food offer is actually on screen. */
   foodRelated?: boolean
 }

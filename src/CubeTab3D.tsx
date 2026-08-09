@@ -121,6 +121,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
   // attribute because the swap is otherwise unobservable from outside WebGL —
   // inferring it from network fetches is unreliable once the loader caches.
   const [loadedModel, setLoadedModel] = useState<string | null>(null)
+  // Bumps when the one-time scene load has installed its first model. A screen
+  // can request the clay TV while that load is still decoding; the follow-up
+  // swap effect must run again once there is actually something to replace.
+  const [sceneReadyVersion, setSceneReadyVersion] = useState(0)
   const targetTabRef = useRef(targetTab)
   const showFoodFaceRef = useRef(showFoodFace)
   // Restarts the parked render loop; set by the effect below.
@@ -267,12 +271,17 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
 
     // ---- load model + face plates ----
     const loader = clayLoader()
-    loader.loadAsync(modelUrlRef.current).then(gltf => {
+    // Capture the URL paired with this request. Reading modelUrlRef in the
+    // completion handler can relabel an old cube as a newly requested clay TV
+    // when navigation changes screens during GLB decoding.
+    const initialModelUrl = modelUrlRef.current
+    loader.loadAsync(initialModelUrl).then(gltf => {
       if (disposed) return
-      fitIntoGroup(gltf.scene, group, modelUrlRef.current)
+      fitIntoGroup(gltf.scene, group, initialModelUrl)
       modelNodeRef.current = gltf.scene
-      loadedUrlRef.current = modelUrlRef.current
-      setLoadedModel(modelUrlRef.current)
+      loadedUrlRef.current = initialModelUrl
+      setLoadedModel(initialModelUrl)
+      setSceneReadyVersion(version => version + 1)
 
       // Straight-on camera. The cube normally has no pitch; food suggestions
       // animate the authored top face into this same square frame.
@@ -527,7 +536,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     })
 
     return () => { cancelled = true }
-  }, [modelUrl])
+  }, [modelUrl, sceneReadyVersion])
 
   return (
     <div

@@ -732,17 +732,39 @@ export default function FeedTwin({
     }
   }
 
+  // ── settle ONCE per source, not once per timeupdate ────────────────────────
+  // These are wired to onTimeUpdate, which fires ~5x a second for the entire
+  // life of a clip. Every one of those ticks used to arm a fresh
+  // settleAfterFrame: a closure, a 520ms timeout, a requestVideoFrameCallback
+  // and a requestAnimationFrame — five times a second, for as long as the feed
+  // was on screen, which is most of the time because it is the default tab.
+  //
+  // Nothing leaked, and no single tick was expensive. It was allocation churn,
+  // and churn is what the collector has to keep up with — the same disease as
+  // the map's 700ms recolour metronome, which read as heat rather than as a
+  // bug because nothing on screen looked wrong.
+  //
+  // Readiness is a question that only needs answering once per source. The ref
+  // (not `readyAdSrc`) is what covers the in-flight window between arming the
+  // settle and it finishing; a new source has a different key, so switching
+  // clips still re-arms exactly once.
+  const settledAdRef = useRef<string | null>(null)
   const markAdReady = useCallback((source: string) => {
+    if (settledAdRef.current === source) return
     const video = adVideoRef.current
     if (!video || video.getAttribute('src') !== source || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+    settledAdRef.current = source
     settleAfterFrame(video, () => {
       if (adVideoRef.current === video && video.getAttribute('src') === source) setReadyAdSrc(source)
     })
   }, [])
 
+  const settledStaticRef = useRef<string | null>(null)
   const markStaticReady = useCallback((key: string) => {
+    if (settledStaticRef.current === key) return
     const video = staticVideoRef.current
     if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+    settledStaticRef.current = key
     settleAfterFrame(video, () => {
       if (staticVideoRef.current === video) setReadyStaticKey(key)
     })

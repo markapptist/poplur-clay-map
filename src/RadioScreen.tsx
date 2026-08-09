@@ -49,6 +49,7 @@ const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String
 export default function RadioScreen({ onClose }: { onClose: () => void }) {
   const [stations, setStations] = useState<LocalStation[] | null>(null)
   const [tunedUrl, setTunedUrl] = useState<string | null>(() => nowPlayingStation()?.url ?? null)
+  const [soundCloudUrl, setSoundCloudUrl] = useState<string | null>(null)
   const [band, setBand] = useState<string | null>(null)
   const [favourites, setFavourites] = useState<Set<string>>(() => new Set())
   const [muted, setMuted] = useState(isUserMuted)
@@ -147,7 +148,13 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     // Picking a channel IS the intent to listen — tuning while the board is
     // muted otherwise looks like the button did nothing at all.
     if (isUserMuted()) { setUserMuted(false); setMuted(false) }
-    playStation(s)
+    if (s.source === 'soundcloud') {
+      stopMapRadio()
+      setSoundCloudUrl(s.url)
+    } else {
+      setSoundCloudUrl(null)
+      playStation(s)
+    }
     setTunedUrl(s.url)
   }
 
@@ -229,7 +236,9 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
                 <div className={styles.segGenre}>{tuned ? tuned.genre.toUpperCase() : 'SELECT A CHANNEL'}</div>
                 <div className={styles.segStats}>
                   {tuned
-                    ? `${compact(tuned.listeners)} LISTENERS · ${tuned.distanceKm} KM · ${tuned.bitrate || '--'} KBPS`
+                    ? tuned.source === 'soundcloud'
+                      ? 'SOUNDCLOUD · LIVE PLAYLIST'
+                      : `${compact(tuned.listeners)} LISTENERS · ${tuned.distanceKm} KM · ${tuned.bitrate || '--'} KBPS`
                     : 'ALL CHANNELS BELOW REACH YOU'}
                 </div>
               </div>
@@ -254,6 +263,16 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
               />
             </div>
 
+            {soundCloudUrl && (
+              <iframe
+                key={`${soundCloudUrl}:${muted ? 'muted' : 'playing'}`}
+                className={styles.soundCloudPlayer}
+                title="SoundCloud player"
+                allow="autoplay; encrypted-media"
+                src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(soundCloudUrl)}&auto_play=${muted ? 'false' : 'true'}&color=%23f63b9a&show_artwork=false&show_comments=false&show_playcount=true&show_user=true&sharing=false&download=false&single_active=true`}
+              />
+            )}
+
             {/* the channel list, on the same glass */}
             <div className={styles.lcdList}>
               <div className={styles.lcdListHead}>
@@ -272,7 +291,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
                     <span className={styles.lcdName}>{st.name.toUpperCase()}</span>
                     <span className={styles.lcdGenre}>{st.genre.toUpperCase()}</span>
                   </span>
-                  <span className={styles.lcdReach}>{st.distanceKm}</span>
+                  <span className={styles.lcdReach}>{st.source === 'soundcloud' ? 'SC' : st.distanceKm}</span>
                 </button>
               ))}
             </div>
@@ -301,7 +320,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
         </div>
         <div className={styles.barBody}>
           <div className={styles.barName}>{tuned?.name ?? 'Nothing tuned'}</div>
-          <div className={styles.barTag}>{tuned ? `${tuned.genre} · ${tuned.distanceKm} km away` : 'Pick a station'}</div>
+          <div className={styles.barTag}>{tuned ? (tuned.source === 'soundcloud' ? `${tuned.genre} · SoundCloud` : `${tuned.genre} · ${tuned.distanceKm} km away`) : 'Pick a station'}</div>
         </div>
         <div className={styles.barWave} aria-hidden="true">
           {Array.from({ length: 34 }, (_, i) => (

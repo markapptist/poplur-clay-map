@@ -26,7 +26,11 @@ const GAMES: Game[] = [
     title: 'FPS Shooter',
     subtitle: 'Raycasting first-person shooter',
     color: '#33ccff',
-    preview: 'games/fps/reference/approved-gameplay.webp',
+    // approved-arcade, not approved-gameplay: 59eb531 deleted the gameplay
+    // still and left this path dangling, which is why the FPS tile rendered as
+    // an empty black square next to Poplurgatchi's full art. Arcade is the
+    // reference the catalog tracks for this game.
+    preview: 'games/fps/reference/approved-arcade.webp',
     web: 'games/fps/index.html',
   },
 ]
@@ -45,7 +49,7 @@ function Cover({ game, size }: { game: Game; size: 'hero' | 'tile' }) {
   )
 }
 
-function StationModel({ kind, className }: { kind: 'console' | 'controller'; className: string }) {
+function StationModel({ kind, className, spinning = false }: { kind: 'console' | 'controller'; className: string; spinning?: boolean }) {
   return React.createElement('model-viewer', {
     class: className,
     src: `games/poplurstation/${kind}.glb`,
@@ -54,6 +58,9 @@ function StationModel({ kind, className }: { kind: 'console' | 'controller'; cla
     'field-of-view': '28deg',
     exposure: '1.1',
     shadowIntensity: '1',
+    shadowSoftness: '0.75',
+    'auto-rotate': spinning || undefined,
+    'rotation-per-second': spinning ? '34deg' : undefined,
     interactionPrompt: 'none',
     disableZoom: true,
   })
@@ -130,6 +137,13 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     }))
   }
 
+  const pulseGameKey = (code: string) => {
+    gameFrameRef.current?.focus()
+    gameFrameRef.current?.contentWindow?.focus()
+    sendGameKey(code, true)
+    window.setTimeout(() => sendGameKey(code, false), 100)
+  }
+
   const keyButtonProps = (code: string) => ({
     onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
       event.preventDefault()
@@ -161,6 +175,21 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
+  // The boot card overlays whichever view is up, so it MUST live outside the
+  // two returns below. It used to sit only in the games-list return — but
+  // `launch` sets `running` and `booting` in the same batch, so the very next
+  // render took the `running` early-return and the boot card was unreachable.
+  // The game mounted bare and you saw exactly the blank first frame the boot
+  // screen exists to cover: the fix that added it never actually ran.
+  const bootCard = booting && (
+    <div className={styles.boot} style={{ ['--accent' as string]: booting.color }}>
+      <div className={styles.bootLogo} aria-label="PoplurStation">
+        <StationModel kind="console" className={styles.bootConsole} spinning />
+      </div>
+      <span className={styles.bootWord}>Poplur <b>Station</b></span>
+    </div>
+  )
+
   // ── running a game ────────────────────────────────────────────────────────
   if (running) {
     return (
@@ -187,9 +216,16 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
               <button type="button" aria-label="Move back" {...keyButtonProps('KeyS')}>▼</button>
               <button type="button" aria-label="Move right" {...keyButtonProps('KeyD')}>▶</button>
             </div>
+            <button
+              type="button"
+              className={styles.stationStart}
+              aria-label="Start game or use"
+              onClick={() => pulseGameKey('KeyE')}
+            >START</button>
             <button type="button" className={styles.stationFire} aria-label="Fire" {...keyButtonProps('Space')}>◎</button>
           </div>
         )}
+        {bootCard}
         {/* The app cube remains above this stage and is the one back control. */}
       </div>
     )
@@ -240,24 +276,7 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      {booting && (
-        <div className={styles.boot} style={{ ['--accent' as string]: booting.color }}>
-          <div className={styles.bootLogo} aria-label="PoplurStation">
-            {/* One mark, flat, the way a PS5 boot is: the clay P badge. The old
-                boot layered this same badge over clay_cube.png — whose front
-                face is the PROFILE cube, a person icon — so the screen showed a
-                P pasted crooked over a person with the cube's frame poking out
-                underneath. It read as a rendering glitch, not an assembling
-                logo. */}
-            <StationModel kind="console" className={styles.bootConsole} />
-            <StationModel kind="controller" className={styles.bootController} />
-            <span className={styles.bootSweep} aria-hidden="true" />
-          </div>
-          <span className={styles.bootWord}>POPLUR<b>STATION</b></span>
-          <div className={styles.bootTrack}><div className={styles.bootFill} /></div>
-          <span className={styles.bootGame}>{booting.title}</span>
-        </div>
-      )}
+      {bootCard}
     </div>
   )
 }

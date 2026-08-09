@@ -869,18 +869,63 @@ export interface LocalStation {
   listeners: number
   /** km from you — the station's transmitter, so "intercepting" is literal */
   distanceKm: number
+  source?: 'radio' | 'soundcloud'
+}
+
+const SOUNDCLOUD_PLAYLISTS = [
+  { key: 'electronic', name: 'Buzzing Electronic', genre: 'Electronic', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-electronic' },
+  { key: 'indie', name: 'Buzzing Indie', genre: 'Indie', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-indie' },
+  { key: 'rock', name: 'Buzzing Rock', genre: 'Rock', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-rock' },
+  { key: 'metal', name: 'Buzzing Metal', genre: 'Metal', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-metal' },
+] as const
+
+async function listSoundCloudStations(): Promise<LocalStation[]> {
+  const stations = await Promise.all(SOUNDCLOUD_PLAYLISTS.map(async playlist => {
+    let logo: string | null = null
+    let name: string = playlist.name
+    try {
+      const ctl = new AbortController()
+      const timer = window.setTimeout(() => ctl.abort(), 5000)
+      const response = await fetch(
+        `https://soundcloud.com/oembed?format=json&url=${encodeURIComponent(playlist.url)}`,
+        { signal: ctl.signal, cache: 'force-cache' },
+      )
+      window.clearTimeout(timer)
+      if (response.ok) {
+        const metadata = await response.json() as { title?: string; thumbnail_url?: string }
+        name = metadata.title?.replace(/\s+by\s+New!$/i, '') || name
+        logo = metadata.thumbnail_url?.startsWith('https://') ? metadata.thumbnail_url : null
+      }
+    } catch { /* playlist remains usable without its artwork */ }
+    return {
+      id: `soundcloud-${playlist.key}`,
+      name,
+      genre: playlist.genre,
+      bitrate: 0,
+      url: playlist.url,
+      logo,
+      listeners: 0,
+      distanceKm: 0,
+      source: 'soundcloud' as const,
+    }
+  }))
+  return stations
 }
 
 /** Every station whose signal reaches where you are, nearest first. */
 export async function listLocalStations(lat: number, lng: number, radiusM = 120_000): Promise<LocalStation[]> {
   if (typeof window === 'undefined') return []
   const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
+  const soundCloudPromise = listSoundCloudStations()
+  const radii = [...new Set([radiusM, 300_000, 900_000, 1_500_000])]
+  let radioStations: LocalStation[] = []
+  for (const radius of radii) {
   for (const host of hosts) {
     try {
       const ctl = new AbortController()
       const timer = window.setTimeout(() => ctl.abort(), 6000)
       const res = await fetch(
-        `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=${radiusM}`
+        `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=${radius}`
         + '&hidebroken=true&order=clickcount&reverse=true&limit=60',
         { signal: ctl.signal },
       )
@@ -897,7 +942,7 @@ export async function listLocalStations(lat: number, lng: number, radiusM = 120_
         const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a)) * Math.cos(toRad(c)) * Math.sin(dLng / 2) ** 2
         return 2 * R * Math.asin(Math.sqrt(h))
       }
-      return found
+      radioStations = found
         .filter(st => typeof st.url_resolved === 'string'
           && st.url_resolved.startsWith('https://')   // mixed content is blocked in the WebView
           && /mp3|aac/i.test(st.codec ?? ''))
@@ -912,11 +957,21 @@ export async function listLocalStations(lat: number, lng: number, radiusM = 120_
           distanceKm: st.geo_lat != null && st.geo_long != null
             ? +km(lat, lng, st.geo_lat, st.geo_long).toFixed(1)
             : 0,
+          source: 'radio' as const,
         }))
         .sort((a, b) => a.distanceKm - b.distanceKm)
+      if (radioStations.length) break
     } catch { /* mirror down — try the next */ }
   }
-  return []
+  if (radioStations.length) break
+  }
+  const soundCloud = await soundCloudPromise
+  if (!radioStations.length) return soundCloud
+  // SoundCloud discoveries interrupt the geographic dial instead of living in
+  // a separate app. Local signals remain the majority and the first result.
+  const combined = [...radioStations]
+  soundCloud.forEach((station, index) => combined.splice(Math.min(combined.length, 2 + index * 5), 0, station))
+  return combined
 }
 
 /** Tune a specific station picked from the dial. */

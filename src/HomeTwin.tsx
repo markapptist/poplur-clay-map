@@ -59,6 +59,7 @@ const CUBE_INTO_PHONE_MS = 1_600
 /** The clay TV the navigator becomes while the TV Guide is open. Supplied art
     in public/, like every other clay model — never a drawn substitute. */
 const CLAY_TV_MODEL = 'clay_tv.glb'
+const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // The studio's navigator is the mixing desk — same rule as the clay TV: on a
 // screen built around one object, the thing in your hand IS that object.
 const STUDIO_MIXER_MODEL = 'models/poplur_mixer.glb'
@@ -559,6 +560,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (screen === 'feed-tvguide' || screen === 'map-radio') return CLAY_TV_MODEL
       // STUDIO is a screen about one object, so the navigator becomes it.
       if (screen === 'camera-studio') return STUDIO_MIXER_MODEL
+      if (screen === 'feed-games') return STATION_CONSOLE_MODEL
       // GAMES wants the same treatment and has no object yet — see the note in
       // the handoff. Deliberately NOT substituted with a stand-in: inventing
       // art for a clay surface is the one thing this project never does.
@@ -618,6 +620,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(false)
+  const pendingMapCyclesRef = useRef<Array<1 | -1>>([])
   // The map iframe mounts only while the Map tab is front (the Android trade):
   // it starts mounted only when Home opens directly on the map, and otherwise
   // stays absent so Profile / Feed / Camera keep their full frame budget. It is
@@ -792,6 +795,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
       if (event.data.type === 'poplur-map-ready') {
         setMapReady(true)
+        const pending = pendingMapCyclesRef.current.splice(0)
+        pending.forEach((dir, index) => {
+          window.setTimeout(() => {
+            mapFrameRef.current?.contentWindow?.postMessage(
+              { type: 'poplur-map-action', action: 'cyclePop', dir }, '*',
+            )
+          }, index * 180)
+        })
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
         postNativeEvent({ type: 'homeReady' })
       }
@@ -1286,7 +1297,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // while the map walked its own pop list, so the two drifted apart
       // immediately. Ask the map to move; it answers with the index it landed
       // on (poplur-map-pop above), and that is what the arrows display.
-      mapFrameRef.current?.contentWindow?.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir }, '*')
+      if (!mapReady) {
+        pendingMapCyclesRef.current.push(dir)
+      } else {
+        mapFrameRef.current?.contentWindow?.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir }, '*')
+      }
       return
     }
     setChanIndex(i => (i + dir + CHANNELS.length) % CHANNELS.length)

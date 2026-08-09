@@ -3,6 +3,7 @@ import type { SmartCard } from './tourSmarts'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { productImage } from './productImage'
+import { placeCreative, type PlaceCreative } from './placeCreative'
 import styles from './CommerceSuggestionWindow.module.css'
 
 export interface SuggestionPrimaryAction {
@@ -62,15 +63,27 @@ export default function CommerceSuggestionWindow({
   // Keyed on the product URL: the same offer resolves once per device, ever.
   const productURL = card.link?.url ?? ''
   const [shot, setShot] = useState<string | null>(null)
+  const [livePlace, setLivePlace] = useState<PlaceCreative | null>(null)
   useEffect(() => {
     let live = true
     setShot(null)
+    setLivePlace(null)
+    if (card.placeCreativeQuery) {
+      placeCreative(card.placeCreativeQuery)
+        .then(result => {
+          if (!live || !result) return
+          setLivePlace(result)
+          setShot(result.image)
+        })
+        .catch(() => { /* keep the approved channel creative */ })
+      return () => { live = false }
+    }
     if (!productURL) return
     productImage(productURL)
       .then(src => { if (live) setShot(src) })
       .catch(() => { /* the bundled poster is the fallback */ })
     return () => { live = false }
-  }, [productURL])
+  }, [card.placeCreativeQuery, productURL])
 
   const [browserURL, setBrowserURL] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
@@ -205,11 +218,21 @@ export default function CommerceSuggestionWindow({
             <span className={styles.channelTag}>{card.channelTag ?? 'POPLUR SHOP TV · LIVE'}</span>
             <span className={styles.sponsorTag}>{card.sponsor ?? card.title}</span>
             <span className={styles.burst} aria-label={card.badge ?? 'Hot deal'}>{card.badge ?? 'KAPOW!'}</span>
+            {livePlace && (
+              <a
+                className={styles.liveSource}
+                href={livePlace.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={event => event.stopPropagation()}
+              >{livePlace.sourceLabel}</a>
+            )}
           </div>
 
           <div className={styles.lowerThird}>
             <span className={styles.kicker}>POPLUR AI PICKS · {card.title}</span>
             <strong className={styles.headline}>{card.headline}</strong>
+            {livePlace?.summary && <span className={styles.liveSummary}>{livePlace.summary}</span>}
             {card.rows && card.rows.length > 0 && (
               <span className={styles.rows}>
                 {card.rows.slice(0, 3).map(row => (
