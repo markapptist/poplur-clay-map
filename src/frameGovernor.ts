@@ -215,11 +215,39 @@ if (typeof document !== 'undefined') {
     ambientAwakeUntil = 0
     setAmbientSleeping(true)
   }
+  /**
+   * How long decoration stays awake after a touch, by thermal ceiling.
+   * A warm phone earns a shorter leash; a throttling one gets none.
+   */
+  const ambientLeaseMs = () => {
+    if (nativeThermalCeiling <= 0) return 0       // serious / critical
+    if (nativeThermalCeiling <= 1) return 4_000   // fair
+    return AMBIENT_IDLE_MS
+  }
   const wakeAmbient = () => {
-    ambientAwakeUntil = performance.now() + AMBIENT_IDLE_MS
+    // THE BUG THIS CLOSES. This used to wake unconditionally, and it is bound
+    // to pointerdown/touchstart/wheel/keydown below — on the map, a surface you
+    // touch constantly. So every drag restarted the decorative work the thermal
+    // ceiling had just stopped, and boosted the frame rate on top of it.
+    //
+    // Measured on device 2026-08-09: the map reached SERIOUS in 35 seconds and
+    // did not recover once in the following 14 minutes. The profiler showed
+    // exactly this loop — the map parking at 0fps, then returning to 8-14fps
+    // while still `thermal=serious`, once per touch. `setQuality` was clamped by
+    // the ceiling all along (see the bound in setQuality); ambient sleep and the
+    // frame boost were the two paths that never consulted it.
+    const lease = ambientLeaseMs()
+    if (lease <= 0) {
+      // Throttling: stay down. Direct interaction still works — Mapbox drives
+      // its own pans and the UI still responds — we simply stop restarting
+      // decoration on top of a phone the OS is already slowing down.
+      sleepAmbient()
+      return
+    }
+    ambientAwakeUntil = performance.now() + lease
     setAmbientSleeping(false)
     window.clearTimeout(ambientSleepTimer)
-    ambientSleepTimer = window.setTimeout(sleepAmbient, AMBIENT_IDLE_MS)
+    ambientSleepTimer = window.setTimeout(sleepAmbient, lease)
     boostFrames()
   }
   const onVisibility = () => {
@@ -295,6 +323,11 @@ export function onFrame(cb: (dtMs: number, now: number) => void, rate: Rate = 'a
  * down and during drags — cheap to call repeatedly.
  */
 export function boostFrames(ms = 400): void {
+  // Never promote work on a phone the OS is already throttling. This is the one
+  // call whose entire purpose is to spend more frames, so a serious thermal
+  // state is the last place it should be honoured. Gated here rather than only
+  // at the call sites so a future caller cannot reintroduce the same loop.
+  if (nativeThermalCeiling <= 0) return
   boostUntil = Math.max(boostUntil, performance.now() + ms)
   // A parked ambient/idle timer may be tens or hundreds of milliseconds from
   // its next beat. A touch deserves an immediate frame, then the normal
