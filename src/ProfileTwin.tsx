@@ -847,6 +847,39 @@ export default function ProfileTwin({
     }
   }, [capturing, camError, facingMode])
 
+  // ── The camera object turns with the phone ────────────────────────────────
+  // It is a 3D clay object sitting on the profile, so holding it still while
+  // the device moves is what makes it read as a flat sticker. Tilting the
+  // phone turns it, the way the object would if it were really there.
+  //
+  // NO rAF LOOP, deliberately, and this is not a style preference. The sway on
+  // the viewfinder above runs one because it lerps every frame while the
+  // camera is live and short-lived; this button sits on a screen you park on.
+  // A permanent rAF here is precisely the continuous idle work that has been
+  // overheating this app. So the handler writes the transform straight out and
+  // CSS does the smoothing — composited, and free the moment you stop moving.
+  const camBtnRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    // No `visiting` guard: the button only exists on your OWN profile, so on
+    // someone else's the ref is simply null and the handler returns. Reading
+    // `visiting` here would also mean reading it before it is declared.
+    const onOrient = (e: DeviceOrientationEvent) => {
+      const button = camBtnRef.current
+      if (!button) return
+      // gamma is left/right tilt, beta front/back. Clamped hard: this is an
+      // object catching the light, not a gimbal.
+      const yaw = Math.max(-22, Math.min(22, (e.gamma ?? 0) * 0.55))
+      const pitch = Math.max(-14, Math.min(14, ((e.beta ?? 0) - 45) * 0.28))
+      // translateY(-50%) FIRST and always: the stylesheet uses it to centre the
+      // button on the avatar, so an inline transform that omits it drops the
+      // button half its height down the page.
+      button.style.transform =
+        `translateY(-50%) perspective(620px) rotateY(${yaw.toFixed(1)}deg) rotateX(${(-pitch).toFixed(1)}deg)`
+    }
+    window.addEventListener("deviceorientation", onOrient)
+    return () => window.removeEventListener("deviceorientation", onOrient)
+  }, [])
+
   // The face-recognition disclosure, in the app's own alert clay. Shown once,
   // BEFORE the first profile-photo capture: the picture is the on-device
   // reference the camera matches your face against, so changing it is the
@@ -1165,7 +1198,7 @@ export default function ProfileTwin({
               />
             </div>
           ) : (
-            <button className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Take profile photo">
+            <button ref={camBtnRef} className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Take profile photo">
               <img src="cam_object.png" alt="" draggable="false" />
             </button>
           )}
