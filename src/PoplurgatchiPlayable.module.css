@@ -17,10 +17,10 @@
   grid-template-rows: minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
-  /* The device art sits on the app's own dark stage. A near-white plate
-     behind it read as a browser page bleeding through, and made the egg look
-     pasted on rather than held. */
-  background: #0b0710;
+  /* The product photo is intentionally isolated on white. Extending that same
+     white through the host removes the dark letterbox above and below the
+     portrait artwork without stretching the device. */
+  background: #fff;
   padding: 0;
   /* GamesScreen can be embedded inside a native WebView whose usable stage is
      smaller than the browser's global vh/dvh. Query this exact game box so the
@@ -51,7 +51,7 @@
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   pointer-events: none;
 }
 
@@ -110,6 +110,15 @@
   color: #411443;
   font: 900 clamp(11px, 1.05cqh, 18px)/1.18 ui-monospace, "SF Mono", monospace;
   box-shadow: 3px 3px 0 rgba(75, 22, 77, 0.36);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity .28s ease, transform .28s ease;
+  pointer-events: none;
+}
+
+.dialogHidden {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .dialog strong {
@@ -161,5 +170,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .selection { transition: none; }
+  .dialog { transition: none; }
   .burst { animation-duration: .01ms; }
 }

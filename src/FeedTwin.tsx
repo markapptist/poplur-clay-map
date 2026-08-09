@@ -153,6 +153,8 @@ const CHANNEL_USERS: Record<string, string[]> = {
 export interface ChannelPost {
   user: string
   video: string
+  /** Named venue behind this post, used to ground its live ad lookup. */
+  place?: string
   /** a live broadcast: the camera itself, when the broadcast is your own */
   stream?: MediaStream
   live?: boolean
@@ -169,6 +171,23 @@ export interface ChannelPost {
    * Until then it is spoofed deterministically, like the other radius numbers.
    */
   reachKm?: number
+}
+
+const CHANNEL_PLACES: Record<string, string[]> = {
+  food: ['Nom Nom Nom Poutine Toronto', 'Kensington Market Toronto', 'St. Lawrence Market Toronto'],
+  beauty: ['Sephora Toronto Eaton Centre', 'Yorkville Toronto', 'The Well Toronto'],
+  sports: ['Scotiabank Arena Toronto', 'BMO Field Toronto', 'Rogers Centre Toronto'],
+  modelling: ['Fashion Art Toronto', 'Yorkville Village Toronto', 'The Bentway Toronto'],
+  fashion: ['Queen Street West Toronto', 'Stackt Market Toronto', 'Toronto Eaton Centre'],
+  music: ['History Toronto', 'The Great Hall Toronto', 'Danforth Music Hall Toronto'],
+  tech: ['Canada Computers College Street Toronto', 'Best Buy Toronto Eaton Centre', 'The Well Toronto'],
+  news: ['Harbourfront Centre Toronto', 'Nathan Phillips Square Toronto', 'Queen\'s Park Toronto'],
+  french: ['Cafe de Flore Paris', 'Saint-Germain-des-Pres Paris', 'Rue Montorgueil Paris'],
+  spanish: ['El Vilsito Mexico City', 'Mercado Roma Mexico City', 'Taqueria Orinoco Mexico City'],
+  shopping: ['Toronto Eaton Centre', 'Yorkdale Shopping Centre Toronto', 'Stackt Market Toronto'],
+  cartoon: ['TIFF Lightbox Toronto', 'Ontario Science Centre Toronto', 'The Bentway Toronto'],
+  kids: ['Ripley\'s Aquarium of Canada', 'High Park Toronto', 'Little Canada Toronto'],
+  comedy: ['Comedy Bar Toronto', 'Second City Toronto', 'Yuk Yuk\'s Toronto'],
 }
 
 // Ordered by the post's radius intercepting your location, widest first.
@@ -206,7 +225,13 @@ function postsFor(channel: Channel): ChannelPost[] {
   // neighbouring channels do not mirror each other.
   return users.map((user, i) => {
     const video = own[i] ?? AD_POOL[(channel.number * 3 + i) % AD_POOL.length]
-    return { user, video, reachKm: reachKmFor(`${channel.id}:${user}:${video}`) }
+    const places = CHANNEL_PLACES[channel.id] ?? []
+    return {
+      user,
+      video,
+      place: places[i % places.length],
+      reachKm: reachKmFor(`${channel.id}:${user}:${video}`),
+    }
   })
 }
 
@@ -369,6 +394,8 @@ export default function FeedTwin({
   const recoveringAdSrcRef = useRef<string | null>(null)
   const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   const ch = CHANNELS[index]
+  const contentIdxRef = useRef<Record<string, number>>({})
+  const [contentRevision, forceContentRender] = useState(0)
 
   // The AI's quiet offer for the post you are watching — the feed twin of the
   // tour's smart card. Appears after you have SETTLED on a channel (3.5s: a
@@ -387,10 +414,16 @@ export default function FeedTwin({
     // and it covers the box you are typing into.
     if (suppressed || playerMode || commentOpen) return
     const show = window.setTimeout(() => {
-      showPopup({ kind: 'suggestion', card: feedSuggestionFor(CHANNELS[index]) })
+      const channel = CHANNELS[index]
+      const channelPosts = postsFor(channel)
+      const current = channelPosts[(contentIdxRef.current[channel.id] ?? 0) % channelPosts.length]
+      showPopup({
+        kind: 'suggestion',
+        card: feedSuggestionFor({ ...channel, place: current?.place }),
+      })
     }, 3_500)
     return () => { window.clearTimeout(show); clearPopups('suggestion') }
-  }, [index, suppressed, playerMode, commentOpen])
+  }, [index, contentRevision, suppressed, playerMode, commentOpen])
 
   // Feed intentionally has no engagement chips/heart/share overlays. Keep
   // suggestions and comments available; silence only the shared engagement
@@ -502,8 +535,6 @@ export default function FeedTwin({
   // location, LARGEST first (videos[] ships pre-sorted that way), so entering
   // a channel always starts on the widest-reaching post and swiping left
   // narrows in.
-  const contentIdxRef = useRef<Record<string, number>>({})
-  const [, forceContentRender] = useState(0)
   const changeContent = useCallback((dir: 1 | -1) => {
     const count = postsFor(ch).length
     if (count < 2) return

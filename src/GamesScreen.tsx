@@ -1,8 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react'
-import '@google/model-viewer'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { ModelViewerElement } from '@google/model-viewer'
 import styles from './GamesScreen.module.css'
 import PoplurgatchiPlayable from './PoplurgatchiPlayable'
 import { playPop } from './pop'
+
+// The optimized PoplurStation GLBs use EXT_meshopt_compression. model-viewer
+// owns a separate loader from CubeTab3D, so it needs its own local decoder
+// location before the first console/controller element is created.
+ModelViewerElement.meshoptDecoderLocation = `${import.meta.env.BASE_URL}meshopt_decoder.js`
 
 interface Game {
   id: 'fps' | 'poplurgatchi'
@@ -11,6 +16,78 @@ interface Game {
   color: string
   preview: string
   web?: string
+}
+
+type FpsState = 'loading' | 'menu' | 'zoom' | 'playing' | 'paused' | 'dead' | 'win'
+type FpsControl = 'move' | 'look' | 'fire' | 'interact' | 'pause' | 'weaponNext'
+
+interface AnalogStickProps {
+  className: string
+  label: string
+  onChange: (x: number, y: number) => void
+}
+
+function AnalogStick({ className, label, onChange }: AnalogStickProps) {
+  const pointer = useRef<number | null>(null)
+  const thumb = useRef<HTMLSpanElement>(null)
+
+  const update = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointer.current !== event.pointerId) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const rawX = event.clientX - rect.left - rect.width / 2
+    const rawY = event.clientY - rect.top - rect.height / 2
+    const limit = rect.width * 0.3
+    const magnitude = Math.hypot(rawX, rawY)
+    const scale = magnitude > limit ? limit / magnitude : 1
+    const x = rawX * scale
+    const y = rawY * scale
+    if (thumb.current) thumb.current.style.transform = `translate(${x}px, ${y}px)`
+    const deadZone = 0.1
+    const normalize = (value: number) => {
+      const unit = Math.max(-1, Math.min(1, value / limit))
+      if (Math.abs(unit) < deadZone) return 0
+      return (unit - Math.sign(unit) * deadZone) / (1 - deadZone)
+    }
+    onChange(normalize(x), -normalize(y))
+    event.preventDefault()
+  }
+
+  const release = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointer.current !== event.pointerId) return
+    pointer.current = null
+    if (thumb.current) thumb.current.style.transform = ''
+    onChange(0, 0)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  return (
+    <div
+      className={`${styles.controllerStick} ${className}`}
+      role="slider"
+      aria-label={label}
+      aria-valuemin={-1}
+      aria-valuemax={1}
+      aria-valuenow={0}
+      tabIndex={0}
+      onPointerDown={event => {
+        pointer.current = event.pointerId
+        event.currentTarget.setPointerCapture(event.pointerId)
+        update(event)
+      }}
+      onPointerMove={update}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onLostPointerCapture={event => {
+        if (pointer.current === event.pointerId) {
+          pointer.current = null
+          if (thumb.current) thumb.current.style.transform = ''
+          onChange(0, 0)
+        }
+      }}
+    >
+      <span ref={thumb} className={styles.controllerStickThumb} aria-hidden="true" />
+    </div>
+  )
 }
 
 const GAMES: Game[] = [
@@ -78,6 +155,8 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   // fires `load` still starts rather than hanging on the boot screen forever.
   const [bootElapsed, setBootElapsed] = useState(false)
   const [frameReady, setFrameReady] = useState(false)
+  const [fpsState, setFpsState] = useState<FpsState>('loading')
+  const [controllerReady, setControllerReady] = useState(false)
   const bootTimer = useRef<number | null>(null)
   const bootCeiling = useRef<number | null>(null)
   const gameFrameRef = useRef<HTMLIFrameElement>(null)
@@ -91,6 +170,8 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   const launch = (g: Game) => {
     playPop()
     setBootElapsed(false)
+    setFpsState('loading')
+    setControllerReady(false)
     // Embedded games report readiness from iframe.onLoad. Poplurgatchi is a
     // local React game, so it is ready as soon as this render mounts it; making
     // it wait for an iframe event it can never emit kept the boot card up until
@@ -125,11 +206,13 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     setBooting(null)
     setBootElapsed(false)
     setFrameReady(false)
+    setFpsState('loading')
+    setControllerReady(false)
     if (bootTimer.current) { window.clearTimeout(bootTimer.current); bootTimer.current = null }
     if (bootCeiling.current) { window.clearTimeout(bootCeiling.current); bootCeiling.current = null }
   }
 
-  const sendGameKey = (code: string, pressed: boolean) => {
+  const sendGameKey = useCallback((code: string, pressed: boolean) => {
     const target = gameFrameRef.current?.contentWindow
     if (!target) return
     const key = code === 'Space' ? ' ' : code.replace(/^Key/, '').toLowerCase()
@@ -139,27 +222,47 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
       bubbles: true,
       cancelable: true,
     }))
-  }
+  }, [])
 
-  const pulseGameKey = (code: string) => {
-    gameFrameRef.current?.focus()
-    gameFrameRef.current?.contentWindow?.focus()
-    sendGameKey(code, true)
-    window.setTimeout(() => sendGameKey(code, false), 100)
-  }
+  const sendFpsControl = useCallback((control: FpsControl, values: Record<string, number | boolean> = {}) => {
+    const target = gameFrameRef.current?.contentWindow
+    if (!target) return
+    target.postMessage({ type: 'poplur-fps-control', control, ...values }, '*')
+  }, [])
 
-  const keyButtonProps = (code: string) => ({
+  const holdControlProps = (control: 'fire' | 'interact') => ({
     onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
       event.preventDefault()
       event.currentTarget.setPointerCapture(event.pointerId)
-      sendGameKey(code, true)
+      sendFpsControl(control, { pressed: true })
     },
     onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => {
-      sendGameKey(code, false)
+      sendFpsControl(control, { pressed: false })
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     },
-    onPointerCancel: () => sendGameKey(code, false),
+    onPointerCancel: () => sendFpsControl(control, { pressed: false }),
+    onLostPointerCapture: () => sendFpsControl(control, { pressed: false }),
   })
+
+  const pulseFpsControl = (control: 'pause' | 'weaponNext') => {
+    sendFpsControl(control, { pressed: true })
+    window.setTimeout(() => sendFpsControl(control, { pressed: false }), 100)
+  }
+
+  useEffect(() => {
+    if (running?.id !== 'fps') return
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== gameFrameRef.current?.contentWindow || !event.data || typeof event.data !== 'object') return
+      if (event.data.type === 'poplur-fps-ready') {
+        setControllerReady(true)
+        setFrameReady(true)
+      } else if (event.data.type === 'poplur-fps-state' && typeof event.data.state === 'string') {
+        setFpsState(event.data.state as FpsState)
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [running?.id])
 
   useEffect(() => () => {
     if (bootTimer.current) window.clearTimeout(bootTimer.current)
@@ -204,29 +307,64 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
           <iframe
             ref={gameFrameRef}
             className={`${styles.gameFrame} ${running.id === 'fps' ? styles.fpsFrame : ''}`}
-            src={running.web}
+            src={`${running.web}?externalController=1`}
             title={running.title}
             allow="autoplay; fullscreen; gamepad; accelerometer; gyroscope"
             allowFullScreen
-            onLoad={() => setFrameReady(true)}
+            onLoad={() => {
+              // The FPS reports ready only after its engine and textures are
+              // initialized; iframe load alone is too early. Other web games
+              // can still use the ordinary load event.
+              if (running.id !== 'fps') setFrameReady(true)
+            }}
           />
         ) : null}
         {running.id === 'fps' && (
-          <div className={styles.stationController} aria-label="PoplurStation controller">
+          <div
+            className={styles.stationController}
+            data-controller-ready={controllerReady ? 'true' : 'false'}
+            data-game-state={fpsState}
+            aria-label="Interactive PoplurStation controller"
+          >
             <StationModel kind="controller" className={styles.controllerModel} />
-            <div className={styles.stationDpad}>
-              <button type="button" aria-label="Move forward" {...keyButtonProps('KeyW')}>▲</button>
-              <button type="button" aria-label="Move left" {...keyButtonProps('KeyA')}>◀</button>
-              <button type="button" aria-label="Move back" {...keyButtonProps('KeyS')}>▼</button>
-              <button type="button" aria-label="Move right" {...keyButtonProps('KeyD')}>▶</button>
-            </div>
+            <AnalogStick
+              className={styles.moveStick}
+              label="Move"
+              onChange={(x, y) => sendFpsControl('move', { x, y })}
+            />
+            <AnalogStick
+              className={styles.lookStick}
+              label="Look"
+              onChange={x => sendFpsControl('look', { x })}
+            />
             <button
               type="button"
               className={styles.stationStart}
-              aria-label="Start game or use"
-              onClick={() => pulseGameKey('KeyE')}
-            >START</button>
-            <button type="button" className={styles.stationFire} aria-label="Fire" {...keyButtonProps('Space')}>◎</button>
+              aria-label="Start or use"
+              title="Start / Use"
+              {...holdControlProps('interact')}
+            >◆</button>
+            <button
+              type="button"
+              className={styles.stationFire}
+              aria-label="Fire"
+              title="Fire"
+              {...holdControlProps('fire')}
+            >●</button>
+            <button
+              type="button"
+              className={styles.stationWeapon}
+              aria-label="Next weapon"
+              title="Next weapon"
+              onClick={() => pulseFpsControl('weaponNext')}
+            >↻</button>
+            <button
+              type="button"
+              className={styles.stationPause}
+              aria-label={fpsState === 'paused' ? 'Resume game' : 'Pause game'}
+              title={fpsState === 'paused' ? 'Resume' : 'Pause'}
+              onClick={() => pulseFpsControl('pause')}
+            >{fpsState === 'paused' ? '▶' : 'Ⅱ'}</button>
           </div>
         )}
         {bootCard}

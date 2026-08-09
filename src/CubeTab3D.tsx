@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { playCubeTurnPop, primeMotionAudio } from './motionEffectsAudio'
 
 // Live 3D cube tab navigator — the web twin of CubeTabView.swift.
@@ -52,16 +53,16 @@ export interface CubeTab3DProps {
     a TV — so it is fitted uniformly into the same 2-unit box instead. */
 const CUBE_MODEL = 'poplur_cube_v4.glb'
 
-/** The clay GLBs ship Draco-compressed (see modelSprite.ts), so a bare
-    GLTFLoader downloads them fine and then never resolves the parse. The cube
-    itself is uncompressed, which is why loading it plainly worked and hid this
-    — clay_tv.glb fetched but silently never appeared. Every load here goes
-    through a loader with the bundled decoder wired up. */
+/** The clay GLBs use Draco or Meshopt compression depending on which asset
+    pipeline produced them. A bare GLTFLoader downloads either format and then
+    fails during parse, which looks exactly like a model that never arrived.
+    Every navigator swap uses one loader with both bundled decoders wired up. */
 function clayLoader(): GLTFLoader {
   const loader = new GLTFLoader()
   const draco = new DRACOLoader()
   draco.setDecoderPath('draco/')
   loader.setDRACOLoader(draco)
+  loader.setMeshoptDecoder(MeshoptDecoder)
   return loader
 }
 

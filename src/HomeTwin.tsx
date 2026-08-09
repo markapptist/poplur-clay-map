@@ -676,9 +676,29 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     && typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('map-loading') === '1'
   useEffect(() => {
-    const onResize = () => setCubeSize(cubeSizeFor())
+    // iOS fires `resize` when the software keyboard changes only the visual
+    // viewport. Recomputing from that temporary height shrank and moved the
+    // cube, arrows, and radius card while typing inside a subscreen. Width is
+    // the reliable signal for a real layout/orientation change here.
+    let layoutWidth = window.innerWidth
+    const onResize = () => {
+      const nextWidth = window.innerWidth
+      if (Math.abs(nextWidth - layoutWidth) < 2) return
+      layoutWidth = nextWidth
+      setCubeSize(cubeSizeFor())
+    }
+    const onOrientationChange = () => {
+      window.setTimeout(() => {
+        layoutWidth = window.innerWidth
+        setCubeSize(cubeSizeFor())
+      }, 120)
+    }
     window.addEventListener('resize', onResize)
-    return () => { window.removeEventListener('resize', onResize) }
+    window.addEventListener('orientationchange', onOrientationChange)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('orientationchange', onOrientationChange)
+    }
   }, [])
 
   useEffect(() => {

@@ -74,7 +74,7 @@ const PHOTO_KEY = 'poplur.profile.photo'
 function readStoredPhoto(): string | null {
   try {
     const raw = window.localStorage.getItem(PHOTO_KEY)
-    return raw && raw.startsWith('data:image/') ? raw : null
+    return raw && (raw.startsWith('data:image/') || /^https:\/\//i.test(raw)) ? raw : null
   } catch { return null }
 }
 
@@ -524,14 +524,32 @@ export default function ProfileTwin({
     || (() => { try { return window.localStorage.getItem('poplur.accountType') === 'business' } catch { return false } })())
   useEffect(() => {
     if (!isNativeShell()) return
-    const w = window as unknown as { poplurProfile?: (p: unknown) => void }
-    w.poplurProfile = p => {
-      const prof = p as { username?: string; business?: boolean }
-      if (prof?.username) setUsername(prof.username)
-      if (typeof prof?.business === 'boolean') setIsBusiness(prof.business)
+    type NativeProfile = { username?: string; business?: boolean; photo?: string }
+    const applyProfile = (value: unknown) => {
+      const prof = value as NativeProfile
+      if (prof?.username) {
+        setUsername(prof.username)
+        try { window.localStorage.setItem('poplur.username', prof.username) } catch { /* embedded */ }
+      }
+      if (typeof prof?.business === 'boolean') {
+        setIsBusiness(prof.business)
+        try { window.localStorage.setItem('poplur.accountType', prof.business ? 'business' : 'user') } catch { /* embedded */ }
+      }
+      if (prof?.photo && (prof.photo.startsWith('data:image/') || /^https:\/\//i.test(prof.photo))) {
+        setPhoto(prof.photo)
+        writeStoredPhoto(prof.photo)
+        window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: prof.photo } }))
+      }
     }
+    const receiveProfile = (event: Event) => applyProfile((event as CustomEvent<NativeProfile>).detail)
+    const w = window as unknown as { poplurProfile?: (p: unknown) => void }
+    w.poplurProfile = applyProfile
+    window.addEventListener('poplur-native-profile', receiveProfile)
     postNativeEvent({ type: 'requestProfile' })
-    return () => { delete w.poplurProfile }
+    return () => {
+      delete w.poplurProfile
+      window.removeEventListener('poplur-native-profile', receiveProfile)
+    }
   }, [])
 
   // Business avatars use the 3D Poplur building object.
@@ -893,6 +911,7 @@ export default function ProfileTwin({
       const dataUri = canvas.toDataURL('image/jpeg', 0.86)
       setPhoto(dataUri)
       writeStoredPhoto(dataUri)
+      postNativeEvent({ type: 'saveProfilePhoto', photo: dataUri })
       // The map lives in a cross-origin iframe, so it cannot read this out of
       // localStorage the way the rest of the shell does. Announce it instead;
       // HomeTwin forwards it over the bridge and your pins wear your face.

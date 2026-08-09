@@ -44,6 +44,7 @@ export default function PoplurgatchiPlayable() {
   const [stats, setStats] = useState<Stats>(restoreStats)
   const [message, setMessage] = useState('POPLUR PET\nWhat shall we do today?')
   const [burst, setBurst] = useState(0)
+  const [dialogVisible, setDialogVisible] = useState(true)
   const action = ACTIONS[selected]
   const mood = useMemo(() => {
     const average = Object.values(stats).reduce((sum, value) => sum + value, 0) / Object.values(stats).length
@@ -52,11 +53,13 @@ export default function PoplurgatchiPlayable() {
 
   const move = (delta: number) => {
     playPop()
+    setDialogVisible(true)
     setSelected(value => (value + delta + ACTIONS.length) % ACTIONS.length)
   }
 
   const confirm = () => {
     playPop()
+    setDialogVisible(true)
     setStats(current => {
       const next = { ...current }
       for (const [key, amount] of Object.entries(action.stats)) {
@@ -69,6 +72,12 @@ export default function PoplurgatchiPlayable() {
     setMessage(action.message)
     setBurst(value => value + 1)
   }
+
+  useEffect(() => {
+    setDialogVisible(true)
+    const timer = window.setTimeout(() => setDialogVisible(false), 5000)
+    return () => window.clearTimeout(timer)
+  }, [selected, message, burst])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -99,7 +108,11 @@ export default function PoplurgatchiPlayable() {
           aria-hidden="true"
         />
 
-        <div className={styles.dialog} aria-live="polite">
+        <div
+          className={`${styles.dialog} ${dialogVisible ? '' : styles.dialogHidden}`}
+          aria-live="polite"
+          aria-hidden={!dialogVisible}
+        >
           <strong>{action.name.toUpperCase()} · {mood}</strong>
           <span>{message}</span>
         </div>

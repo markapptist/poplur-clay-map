@@ -281,74 +281,151 @@
   position: absolute;
   z-index: 8;
   left: 50%;
-  width: min(360px, 94vw);
+  width: min(344px, 88vw);
   transform: translateX(-50%);
-  bottom: max(8px, env(safe-area-inset-bottom));
-  height: 142px;
+  /* The app's GameCube navigator owns the bottom 160-ish points. Keeping the
+     controller above that region makes every control genuinely tappable. */
+  bottom: clamp(174px, 22vh, 198px);
+  height: 136px;
   pointer-events: none;
+  opacity: .72;
+  transition: opacity .25s ease, filter .25s ease;
+}
+
+.stationController[data-controller-ready="true"] {
+  opacity: 1;
+  filter: drop-shadow(0 0 14px rgba(51, 204, 255, .22));
 }
 
 .controllerModel {
   position: absolute;
   left: 50%;
-  bottom: -18px;
+  bottom: -10px;
   width: 100%;
-  height: 180px;
+  height: 164px;
   transform: translateX(-50%);
-  opacity: 0.82;
+  opacity: 1;
   filter: drop-shadow(0 14px 24px rgba(0,0,0,.72));
+  pointer-events: none;
 }
 
-.stationDpad {
+.controllerStick {
   position: absolute;
-  left: 14%;
-  bottom: 42px;
-  display: grid;
-  grid-template-columns: repeat(3, 32px);
-  grid-template-rows: repeat(2, 32px);
-  gap: 2px;
+  width: 58px;
+  height: 58px;
+  border: 1px solid rgba(255,255,255,.48);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(12,8,20,.28) 0 34%, rgba(51,204,255,.18) 36% 58%, rgba(7,5,12,.32) 60%);
+  box-shadow: inset 0 0 0 5px rgba(0,0,0,.18), 0 5px 13px rgba(0,0,0,.42);
   pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
 }
-.stationDpad button,
+
+.controllerStick:active { cursor: grabbing; }
+
+.controllerStickThumb {
+  position: absolute;
+  left: calc(50% - 12px);
+  top: calc(50% - 12px);
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #fff, #75dcff 34%, #126487 76%);
+  border: 1px solid rgba(255,255,255,.78);
+  box-shadow: 0 4px 8px rgba(0,0,0,.55), 0 0 10px rgba(51,204,255,.45);
+  transition: transform 40ms linear;
+  pointer-events: none;
+}
+
+.moveStick { left: 14%; bottom: 37px; }
+.lookStick { left: 54%; bottom: 29px; width: 52px; height: 52px; }
+
 .stationFire,
-.stationStart {
+.stationStart,
+.stationWeapon,
+.stationPause {
+  position: absolute;
   border: 1px solid rgba(255,255,255,.35);
   border-radius: 50%;
   color: #fff;
   background: rgba(9,6,14,.66);
-  font: 900 18px/1 system-ui, sans-serif;
+  font: 900 16px/1 system-ui, sans-serif;
   box-shadow: 0 7px 14px rgba(0,0,0,.45);
   touch-action: none;
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
 }
-.stationDpad button:active,
+
 .stationFire:active,
-.stationStart:active { transform: scale(.9); background: #f63b9a; }
-.stationDpad button:nth-child(1) { grid-column: 2; grid-row: 1; }
-.stationDpad button:nth-child(2) { grid-column: 1; grid-row: 2; }
-.stationDpad button:nth-child(3) { grid-column: 2; grid-row: 2; }
-.stationDpad button:nth-child(4) { grid-column: 3; grid-row: 2; }
+.stationStart:active,
+.stationWeapon:active,
+.stationPause:active { transform: scale(.9); background: #f63b9a; }
+
 .stationFire {
-  position: absolute;
-  right: 17%;
-  bottom: 51px;
-  width: 54px;
-  height: 54px;
-  pointer-events: auto;
-  font-size: 30px;
+  right: 10%;
+  bottom: 57px;
+  width: 43px;
+  height: 43px;
+  color: #ff9bd2;
+  font-size: 20px;
+  box-shadow: inset 0 0 0 4px rgba(255,58,151,.22), 0 7px 14px rgba(0,0,0,.45);
 }
+
 .stationStart {
-  position: absolute;
-  left: 50%;
-  bottom: 61px;
-  width: 58px;
-  height: 28px;
-  transform: translateX(-50%);
-  border-radius: 14px;
-  pointer-events: auto;
-  font-size: 9px;
-  letter-spacing: 0;
+  right: 21%;
+  bottom: 30px;
+  width: 34px;
+  height: 34px;
+  color: #8eeaff;
 }
-.stationStart:active { transform: translateX(-50%) scale(.9); }
+
+.stationWeapon {
+  left: calc(50% - 17px);
+  bottom: 71px;
+  width: 34px;
+  height: 25px;
+  border-radius: 13px;
+  color: #ffe276;
+  font-size: 15px;
+}
+
+.stationPause {
+  left: calc(50% - 15px);
+  bottom: 40px;
+  width: 30px;
+  height: 22px;
+  border-radius: 11px;
+  color: #fff;
+  font-size: 10px;
+}
+
+.stationController[data-game-state="paused"] .stationPause {
+  color: #071018;
+  background: #8eeaff;
+  box-shadow: 0 0 14px rgba(142,234,255,.8);
+}
+
+@media (max-height: 620px) and (orientation: landscape) {
+  .stationController {
+    width: min(250px, 42vw);
+    height: 100px;
+    bottom: 186px;
+  }
+  .controllerModel { height: 122px; bottom: -6px; }
+  .controllerStick { transform: scale(.72); }
+  .moveStick { left: 12%; bottom: 20px; }
+  .lookStick { left: 52%; bottom: 13px; }
+  .stationFire { right: 9%; bottom: 36px; transform: scale(.82); }
+  .stationFire:active { transform: scale(.72); }
+  .stationStart { right: 20%; bottom: 17px; transform: scale(.82); }
+  .stationStart:active { transform: scale(.72); }
+  .stationWeapon { bottom: 49px; transform: scale(.8); }
+  .stationWeapon:active { transform: scale(.7); }
+  .stationPause { bottom: 23px; transform: scale(.8); }
+  .stationPause:active { transform: scale(.7); }
+}
 
 @keyframes launchGrow { from { width: 0; } to { width: 100%; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }

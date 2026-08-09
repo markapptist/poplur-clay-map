@@ -40,13 +40,22 @@ function creative(channel: string, overrides: Partial<Creative> = {}): Creative 
   }
 }
 
-export function decorateFeedSuggestion(card: SmartCard, channel: string): SmartCard {
+export function decorateFeedSuggestion(card: SmartCard, channel: string, place?: string): SmartCard {
+  const fallback = channelAsset(channel)
   return {
     ...card,
     ...creative(channel, {
       sponsor: `Sponsored · CH ${CHANNEL_NUMBER[channel] ?? '106'}`,
       channelTag: `POPLUR AD BREAK · CH ${CHANNEL_NUMBER[channel] ?? '106'}`,
     }),
+    // The live place lookup replaces this still as soon as it resolves. Never
+    // replay the same bundled feed video inside the ad sitting over that video.
+    media: {
+      kind: 'image',
+      src: fallback.poster,
+      alt: place ? `${place} preview` : `${fallback.safe} channel preview`,
+    },
+    ...(place ? { placeCreativeQuery: place } : {}),
   }
 }
 

@@ -122,6 +122,26 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   }, [])
   const songAudio = useRef<HTMLAudioElement | null>(null)
 
+  // WebKit may pan the document to reveal a focused field even though Studio
+  // is a full-screen overlay. Keep the app origin pinned while its keyboard is
+  // active so the home HUD underneath cannot be left translated after blur.
+  useEffect(() => {
+    const viewport = window.visualViewport
+    const keepOrigin = () => {
+      const active = document.activeElement
+      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+        window.scrollTo(0, 0)
+      }
+    }
+    viewport?.addEventListener('resize', keepOrigin)
+    viewport?.addEventListener('scroll', keepOrigin)
+    return () => {
+      viewport?.removeEventListener('resize', keepOrigin)
+      viewport?.removeEventListener('scroll', keepOrigin)
+      window.scrollTo(0, 0)
+    }
+  }, [])
+
   // The transport is a voice: starting playback takes the floor from the feed
   // and the radio, the same as any other sound in the app.
   useEffect(() => {
@@ -567,6 +587,8 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             onChange={e => setStyleText(e.target.value)}
             placeholder={`Describe it — moody ${genre.toLowerCase()} with heavy 808s…`}
             aria-label="Describe the song you want"
+            onFocus={() => window.requestAnimationFrame(() => window.scrollTo(0, 0))}
+            onBlur={() => window.requestAnimationFrame(() => window.scrollTo(0, 0))}
           />
           {building > 0 ? (
             <div className={styles.styleBuilding}>

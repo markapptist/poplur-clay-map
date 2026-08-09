@@ -263,6 +263,8 @@ export interface FeedChannelLike {
   name: string
   user?: string
   caption?: string
+  /** Real venue associated with the playing post. */
+  place?: string
 }
 
 const FEED_ANCHOR: [number, number] = [-79.38, 43.65]
@@ -285,12 +287,12 @@ const FEED_KIND: Record<string, { kind: string; place: string }> = {
 export function feedSuggestionFor(channel: FeedChannelLike, when: Date = new Date()): SmartCard {
   const mapped = FEED_KIND[channel.id]
   const stop: SmartStop = {
-    id: `feed-${channel.id}`,
-    name: mapped?.place ?? `this ${channel.name.toLowerCase()} post`,
+    id: `feed-${channel.id}-${channel.place ?? 'nearby'}`,
+    name: channel.place ?? mapped?.place ?? `this ${channel.name.toLowerCase()} post`,
     kind: mapped?.kind ?? 'feed',
     coords: FEED_ANCHOR,
   }
-  if (mapped) return decorateFeedSuggestion(smartCardFor(stop, when), channel.id)
+  if (mapped) return decorateFeedSuggestion(smartCardFor(stop, when), channel.id, channel.place)
   // Genres without a natural score/sale/dish still get a real offer: a
   // grounded next step for the post itself, seeded like everything else.
   const seed = seedFor(stop.id, when)
@@ -303,5 +305,6 @@ export function feedSuggestionFor(channel: FeedChannelLike, when: Date = new Dat
   return decorateFeedSuggestion(
     { icon: 'tip', title: `CH ${channel.name.toUpperCase()}`, headline: idea.headline, line: idea.line },
     channel.id,
+    channel.place,
   )
 }
