@@ -536,10 +536,18 @@
      gestures (back-swipe, Control Center). */
   right: auto;
   left: var(--home-right-center);
-  top: 50%;
-  transform: translate(-50%, -50%);
+  /* The rail's BOTTOM is anchored to the colour wheel, not centred in the
+     viewport. Centred, the rail's lower tip landed at roughly the same height
+     as the wheel's top edge on a 393x852 phone — the two controls touched, and
+     the wheel read as a bead hanging off the end of the slider rather than as
+     its own control. Anchoring both to --home-cube keeps a fixed 30px of air
+     between them at every screen size, the same arithmetic the weather mark
+     and the level button already use. */
+  top: auto;
+  bottom: calc(var(--home-cube) + 96px);
+  transform: translateX(-50%);
   z-index: 26;
-  height: min(58vh, 440px);
+  height: min(52vh, 420px);
   /* Wide invisible catchment: the pad of a thumb is ~45px across and lands
      inboard of where the user thinks they are aiming. */
   width: 148px;
@@ -1105,7 +1113,11 @@
   right: auto;
   left: var(--home-left-center);
   top: auto;
-  bottom: calc(var(--home-cube) + 106px);
+  /* The level button's top edge is cube + 74px. At cube + 106 the weather mark
+     sat 32px above it, which on device read as one crowded stack rather than
+     two controls. cube + 134 gives it 60px of air — clear of the level button,
+     still visibly grouped in the same left-hand column. */
+  bottom: calc(var(--home-cube) + 134px);
   z-index: 27;
   width: 92px;
   display: grid;

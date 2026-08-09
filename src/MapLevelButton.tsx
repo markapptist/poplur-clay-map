@@ -144,6 +144,11 @@ export default function MapLevelButton({
  *   all    — the whole stack
  */
 function LayerGlyph({ level, size, mode }: { level: PopLevel; size: number; mode: '2d' | '3d' }) {
+  // Each level lights the sheet it MEANS, not a running count: yours is the
+  // ground you stand on (near), everyone else's is the ground above it (top
+  // and mid), and all is the whole stack. A count-up version read as a signal
+  // meter and lost that mapping — restored at the user's request; the cycling
+  // and the levels themselves are unchanged.
   const lit = (which: 'top' | 'mid' | 'near') => {
     if (level === 'all') return true
     if (level === 'mine') return which === 'near'

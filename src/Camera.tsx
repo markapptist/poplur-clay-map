@@ -23,6 +23,10 @@ import type { SmartCard } from './tourSmarts'
 // transparent hole so it shows through, while the approved chrome/icons here
 // drive the native camera over the bridge.
 const NATIVE_SHELL = isNativeShell()
+// How long a camera shopping card stays on screen after the object leaves the
+// frame. Long enough to read the offer and reach for it; short enough that a
+// card for something you have walked away from does not linger.
+const COMMERCE_MIN_DWELL_MS = 12_000
 // Only the iOS host currently mounts a camera surface behind the web view.
 // Android's post-login host is a WebView plus the capture intents; there is no
 // behind-WebView preview to reveal. Treating it as an iOS hole makes A03 show a
@@ -178,6 +182,10 @@ export default function Camera({
   const [commerceCard, setCommerceCard] = useState<SmartCard | null>(null)
   const [commercePinned, setCommercePinned] = useState(false)
   const commerceTimerRef = useRef<number | null>(null)
+  // Floor on how long a shopping card stays offered once it appears, and the
+  // timer that retires it when the object has left the frame for good.
+  const commerceHoldUntilRef = useRef(0)
+  const commerceHoldTimerRef = useRef<number | null>(null)
   const commerceKeyRef = useRef<string | null>(null)
   const dismissedCommerceRef = useRef(new Map<string, number>())
   const dismissCommerce = useCallback(() => {
@@ -483,9 +491,34 @@ export default function Camera({
     // must not close the window under their finger.
     if (commercePinned) return
     if (!commerceKey || !commerceMatch?.card) {
+      // An ad gets a minimum time on screen once it has earned one.
+      //
+      // The window was bound frame-for-frame to the detection: glance away,
+      // let a hand cross the lens, or let the classifier drop the object for a
+      // single frame, and the card vanished mid-read. Nobody can act on an ad
+      // that is only present while the camera is held perfectly still. Hold it
+      // for COMMERCE_MIN_DWELL_MS from the moment it appeared, then let it go
+      // as before. A tap still dismisses instantly — this floors how long it
+      // is offered, it does not trap anyone.
+      const holdFor = commerceHoldUntilRef.current - Date.now()
+      if (commerceCard && holdFor > 0) {
+        if (commerceHoldTimerRef.current == null) {
+          commerceHoldTimerRef.current = window.setTimeout(() => {
+            commerceHoldTimerRef.current = null
+            commerceKeyRef.current = null
+            setCommerceCard(null)
+          }, holdFor)
+        }
+        return
+      }
       commerceKeyRef.current = null
       setCommerceCard(null)
       return
+    }
+    // The object is back in frame before the hold expired — cancel the retire.
+    if (commerceHoldTimerRef.current != null) {
+      window.clearTimeout(commerceHoldTimerRef.current)
+      commerceHoldTimerRef.current = null
     }
     if (commerceKeyRef.current === commerceKey && commerceCard) return
     const dismissedAt = dismissedCommerceRef.current.get(commerceKey) ?? 0
@@ -495,6 +528,7 @@ export default function Camera({
     commerceTimerRef.current = window.setTimeout(() => {
       commerceTimerRef.current = null
       commerceKeyRef.current = commerceKey
+      commerceHoldUntilRef.current = Date.now() + COMMERCE_MIN_DWELL_MS
       setCommerceCard(nextCard)
     }, 900)
     return () => {
@@ -507,6 +541,7 @@ export default function Camera({
 
   useEffect(() => () => {
     if (commerceTimerRef.current != null) window.clearTimeout(commerceTimerRef.current)
+    if (commerceHoldTimerRef.current != null) window.clearTimeout(commerceHoldTimerRef.current)
   }, [])
 
   useEffect(() => {

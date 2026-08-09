@@ -4,7 +4,7 @@ import { POIS, MAP_THEMES, OTHER_POPS, PALETTE, type PopLevel } from './data'
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
 import { userUnitsToKm } from './units'
-import ClayMap, { MAP_2D, MAP_LITE, installComposeRadiusPreview, updateComposeRadiusPreview } from './ClayMap'
+import ClayMap, { MAP_2D, MAP_LITE, installComposeRadiusPreview, updateComposeRadiusPreview, type PopPin } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
@@ -13,7 +13,8 @@ import WeatherFX, { modeForCode } from './WeatherFX'
 import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
 import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
-// The map's radio is gone — the AI voice is the map's only spoken audio now.
+// The map host and radio share one mixer so speech can lead while the station
+// remains audible underneath it.
 // The live-station stream, the wav bed and the stingers all lived in mapRadio;
 // the tour host line goes through the shared voice surface instead, which
 // already owns focus correctly (Feed stays muted while it talks, reclaims
@@ -22,7 +23,7 @@ import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 // stationName), which is data, not web playback.
 import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus } from './voiceAudio'
 import { smartCardFor, type SmartCard } from './tourSmarts'
-import { suggestionForMapPin, suggestionForMapPlace } from './commerceSuggestions'
+import { suggestionForMapPlace } from './commerceSuggestions'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange } from './popups'
@@ -43,7 +44,7 @@ import {
   startPoplurTheme, stopPoplurTheme, setVoiceDucked,
 } from './regionAudio'
 import {
-  isRadioBackgroundEnabled, nowPlayingStation, startMapRadio, tuneLiveRadio,
+  announceMapTour, isRadioBackgroundEnabled, nowPlayingStation, tuneLiveRadio,
 } from './mapRadio'
 import { postNativeEvent } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
@@ -481,7 +482,9 @@ const TOUR_FLIGHT_MS = Math.round(30_000 / TOUR_SPEED)
 const TOUR_DWELL_MS = 5 * 60 * 1000
 // How long the map must sit front-most and untouched before the ambient AI
 // radio tour is allowed to take the camera on its own.
-const TOUR_IDLE_MS = 3 * 60 * 1000
+const TOUR_IDLE_MS = 60_000
+const MAP_TOTAL_OWN_POSTS = 128
+const MAP_GLOBAL_ONLINE = 1_200_000
 
 // ── The pop-to-pop trip ─────────────────────────────────────────────────────
 // Climb, cross, descend (see flyToPop). Module-level because the trip is no
@@ -580,6 +583,19 @@ function distanceMeters(a: [number, number], b: [number, number]): number {
   const h = Math.sin(dLat / 2) ** 2
     + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
   return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+function accumulatedRadiusKm(): number {
+  const live = totalClaimedKm()
+  return live > 0 ? live : POIS.reduce((sum, poi) => sum + poi.radiusKm, 0)
+}
+
+/** Stable local presence until the live audience service replaces it. Keeping
+ *  it coordinate-derived avoids a number that flickers every time moveend
+ *  fires while still making different neighbourhoods feel different. */
+function mapAreaOnline(center: [number, number], popCount: number): number {
+  const seed = Math.abs(Math.round(center[0] * 1_000 * 31 + center[1] * 1_000 * 17))
+  return 24 + popCount * 29 + (seed % 83)
 }
 
 function destinationsForTopics(topics: readonly MapTourTopic[]): TourDestination[] {
@@ -689,7 +705,7 @@ export default function App() {
   // The pops-in-this-area readout: set on every pop arrival (channel arrows,
   // engagement trips). The EMBEDDED shell renders it from poplur-map-pop and
   // routes the tap to the profile; standalone draws its own inert line.
-  const [areaPops, setAreaPops] = useState<{ count: number; ids: string[] } | null>(null)
+  const [areaPops, setAreaPops] = useState<{ count: number; ids: string[]; overall?: boolean } | null>(null)
   // Read by the arrival greeting, which fires on a timer after the reverse
   // geocode has usually landed — a captured value would still say "Toronto".
   const currentPlaceRef = useRef(currentPlace)
@@ -697,10 +713,20 @@ export default function App() {
   // Inside the home's map iframe the shell draws the status title; standalone
   // the map draws its own.
   const isEmbedded = typeof window !== 'undefined' && window.parent !== window
+  // The title stays EMPTY until the camera has actually arrived somewhere.
+  //
+  // `currentPlace` seeds to a city name and the reverse geocode re-fires on
+  // every moveend, so the intro flight — which crosses a continent on its way
+  // down from the globe — published a name the moment the map mounted, and
+  // then a stream of places it was merely passing over. The header announced
+  // "Downtown" before the map had gone anywhere. Nothing is published until
+  // the flight has settled at street scale (see arrivedAtPlace below); after
+  // that this behaves exactly as before.
+  const [arrivedAtPlace, setArrivedAtPlace] = useState(false)
   useEffect(() => {
-    if (!isEmbedded) return
+    if (!isEmbedded || !arrivedAtPlace) return
     window.parent.postMessage({ type: 'poplur-map-status', place: currentPlace }, '*')
-  }, [isEmbedded, currentPlace])
+  }, [isEmbedded, arrivedAtPlace, currentPlace])
   // How many px the status line overruns its ticker — 0 means it fits. Drives
   // the back-and-forth glide; measured on every text change and resize.
   const tickerRef = useRef<HTMLDivElement>(null)
@@ -991,10 +1017,22 @@ export default function App() {
         })
         .catch(() => { /* keep the last known place */ })
     }
+    // "Arrived" = the camera has stopped AND is at street scale. The intro
+    // dives from the globe, so zoom alone would unlock the title mid-descent
+    // and a moveend alone would unlock it at every waypoint; both have to
+    // hold. Once true it stays true — the title is only suppressed for the
+    // arrival, not for panning afterwards.
+    const markArrival = () => {
+      const map = attachedMap as unknown as { getZoom?: () => number } | null
+      if (!map?.getZoom) return
+      if (map.getZoom() >= 12) setArrivedAtPlace(true)
+    }
     const attach = () => {
       if (attachedMap || !mapRef.current) return
       attachedMap = mapRef.current
       attachedMap.on('moveend', updatePlace)
+      attachedMap.on('moveend', markArrival)
+      attachedMap.on('idle', markArrival)
       updatePlace()
     }
     attach()
@@ -1012,6 +1050,8 @@ export default function App() {
     return () => {
       window.clearInterval(timer)
       attachedMap?.off('moveend', updatePlace)
+      attachedMap?.off('moveend', markArrival)
+      attachedMap?.off('idle', markArrival)
     }
   }, [])
 
@@ -1019,12 +1059,8 @@ export default function App() {
     soundRequestedRef.current = on
     const audible = on && mapSurfaceRef.current && mapAudioFrontRef.current && !isGateMuted()
     if (audible) {
-      // The Poplur AI host only. The radio (live station stream + wav bed) is
-      // gone — redundant next to the voice — and the procedural ambience bed
-      // and generative theme were already dropped: they ran under everything,
-      // forever, and read as noise rather than atmosphere. Silence between the
-      // host's lines is correct. Nothing starts here; the voice speaks when
-      // the tour arrives somewhere.
+      // Region ambience stays out of the way. The map radio has its own gain
+      // mixer and is allowed to sit quietly under the AI host.
       stopRegionAudio()
       stopPoplurTheme()
     } else {
@@ -1034,6 +1070,12 @@ export default function App() {
     }
     return audible
   }, [])
+
+  const speakMapLine = useCallback((line: string, stations: ReadonlyArray<RadioStationCue> = []): boolean => {
+    if (!applySoundState(true)) return false
+    if (isRadioBackgroundEnabled()) return announceMapTour(line, stations)
+    return speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
+  }, [applySoundState])
 
   // A queued host line must never be stranded. The ONLY drain used to live
   // inside the gcAudio message handler, so a line parked while the map was
@@ -1063,10 +1105,10 @@ export default function App() {
       if (!(mapSurfaceRef.current && mapAudioFrontRef.current && !isGateMuted())) return
       const line = pendingSpeechRef.current.join(' ')
       pendingSpeechRef.current = []
-      if (applySoundState(true)) speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
+      speakMapLine(line)
       stop()
     }, 1000)
-  }, [applySoundState])
+  }, [speakMapLine])
   useEffect(() => () => {
     if (speechDrainRef.current) window.clearInterval(speechDrainRef.current)
   }, [])
@@ -1101,7 +1143,7 @@ export default function App() {
       if (mapAudioFrontRef.current && pendingSpeechRef.current.length && applySoundState(true)) {
         const line = pendingSpeechRef.current.join(' ')
         pendingSpeechRef.current = []
-        speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
+        speakMapLine(line)
       }
       // Arriving on the map starts the idle wait from zero; leaving stops it.
       if (mapAudioFrontRef.current) tourIdleRef.current.schedule()
@@ -1122,7 +1164,7 @@ export default function App() {
       offGate()
       offFocus()
     }
-  }, [applySoundState])
+  }, [applySoundState, speakMapLine])
 
   useEffect(() => {
     return () => { cancelVoiceSpeech(); stopRegionAudio() }
@@ -1240,7 +1282,7 @@ export default function App() {
   // So the altitude is commanded rather than inferred.
   const tripTimer = useRef(0)
 
-  const flyToPop = useCallback((center: [number, number]) => {
+  const flyToPop = useCallback((center: [number, number], onArrive?: () => void) => {
     const map = mapRef.current
     if (!map) return false
     const api = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
@@ -1297,8 +1339,11 @@ export default function App() {
       // — or when the user grabs the map and ends it early. Either way the
       // trip is over; hand the camera back to ClayMap's idle orbit.
       live.once('moveend', () => {
+        const arrived = live.getCenter()
+        const reachedTarget = distanceMeters([arrived.lng, arrived.lat], center) <= 650
         liveApi.__tripping = false
         liveApi.__cinematic = false
+        if (reachedTarget) onArrive?.()
         // ClayMap's own moveend ran before this listener and — correctly —
         // left the orbit alone while __tripping was up, so the trip restarts
         // it here or the camera sits dead until the next user pan.
@@ -1393,13 +1438,7 @@ export default function App() {
       stations,
       dwellMs: TOUR_DWELL_MS,
     })
-    if (applySoundState(true)) {
-      // The AI host speaks the stop; there is no station to tune under it any
-      // more. The voice surface owns focus for the duration, so Feed cannot
-      // talk over the line and a background map cannot leak speech either —
-      // applySoundState is already false when the map is not front.
-      speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
-    }
+    speakMapLine(line, stations)
     flyToCenter(destination.coords, TOUR_FLIGHT_MS)
     // The ARRIVAL beat. The card and its spoken line land when the camera
     // does, not when it lifts off — announcing a score thirty seconds before
@@ -1415,12 +1454,10 @@ export default function App() {
       setSmartCard(smart)
       // Headless drives read these; the UI never does.
       ;(window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard = smart
-      if (applySoundState(true)) {
-        speakWithVoiceAudioFocus(smart.line, { rate: 0.95, pitch: 0.98 })
-      }
+      speakMapLine(smart.line, stations)
     }, TOUR_FLIGHT_MS)
     tourTimers.current.push(arrive)
-  }, [applySoundState, flyToCenter])
+  }, [flyToCenter, speakMapLine])
 
   // ── AI place tour: each stop holds for five minutes after arrival ─────────
   const tourStep = useCallback((preferredDestination?: TourDestination) => {
@@ -1572,10 +1609,9 @@ export default function App() {
   // there is nobody to be winning against. The level switch (shell HUD, above
   // the channel arrows) puts other holders on the board — each in their OWN
   // colour, with their face on the pin standing in their territory.
-  // ALL by default: a map that opens on your own pops says the world is empty
-  // apart from you, and the whole point of a takeover is reading it against
-  // everyone else's. You arrive on a board that is already owned.
-  const [popLevel, setPopLevel] = useState<PopLevel>('all')
+  // The visible control is numbered 1 → 2 → 3, so launch on Level 1 and let
+  // each press advance in the same order the lit sheets communicate.
+  const [popLevel, setPopLevel] = useState<PopLevel>('mine')
   const popLevelRef = useRef(popLevel)
   popLevelRef.current = popLevel
 
@@ -1664,6 +1700,55 @@ export default function App() {
     return [...others, ...mine]
   }, [popLevel, ownAvatar, myColor])
 
+  const openMapPinContent = useCallback((pin: PopPin) => {
+    // Never substitute an ad or cube for a post whose media record is missing.
+    if (!pin.media) return
+    if (placeSuggestionTimerRef.current != null) {
+      window.clearTimeout(placeSuggestionTimerRef.current)
+      placeSuggestionTimerRef.current = null
+    }
+    clearPopups('suggestion')
+    clearPopups('mapContent')
+    setCurrentPlace(displayPlaceName(pin.name))
+
+    const ownNearby = POIS.filter(poi => distanceMeters(poi.coords, pin.coords) <= POPS_NEARBY_M)
+    setAreaPops({ count: ownNearby.length, ids: ownNearby.map(poi => poi.id) })
+    window.parent?.postMessage({
+      type: 'poplur-map-context',
+      scope: 'pop',
+      ownPostsTotal: MAP_TOTAL_OWN_POSTS,
+      ownPostsArea: ownNearby.length,
+      ownPostIds: ownNearby.map(poi => poi.id),
+      totalRadiusKm: accumulatedRadiusKm(),
+      popRadiusKm: pin.radiusKm,
+      onlineUsers: mapAreaOnline(pin.coords, ownNearby.length),
+      popId: pin.id,
+    }, '*')
+
+    showPopup({
+      kind: 'mapContent',
+      content: {
+        id: pin.id,
+        name: pin.name,
+        user: pin.user,
+        channel: pin.channel,
+        radiusKm: pin.radiusKm,
+        media: pin.media,
+      },
+      action: {
+        label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
+        onActivate: () => {
+          window.parent?.postMessage({
+            type: 'poplur-map-open-profile',
+            user: pin.user,
+            popId: pin.id,
+            name: pin.name,
+          }, '*')
+        },
+      },
+    })
+  }, [])
+
   // ── Arriving on a pop plays what is standing there ────────────────────────
   // Zooming into a holder's pin — yours or anyone else's — raises their post.
   // That is the product read: the ground is owned BY a piece of content, so
@@ -1679,13 +1764,10 @@ export default function App() {
     const map = mapRef.current
     if (!map || !mapLive) return
     // Close enough that the pop is the subject of the shot, not scenery.
-    const ARRIVE_ZOOM = 9
-    const ARRIVE_M = 1_800
+    const ARRIVE_ZOOM = 11
+    const ARRIVE_M = 420
     const onSettle = () => {
       if (!mapFrontRef.current || document.visibilityState !== 'visible') return
-      // A hot device has already told us to stop decorating; a video window is
-      // the most expensive thing this surface can raise, so it goes first.
-      if (!ambientAllowed()) return
       const api = map as unknown as { __tripping?: boolean; __streetView?: boolean }
       if (api.__streetView) return
       // An arrival the AUTO-TOUR flew to is not one you asked for. Same rule as
@@ -1704,64 +1786,87 @@ export default function App() {
       if (!best || bestM > ARRIVE_M) { arrivedPinRef.current = null; return }
       if (arrivedPinRef.current === best.id) return
       arrivedPinRef.current = best.id
-      clearPopups('suggestion')
-      showPopup({
-        kind: 'suggestion',
-        card: suggestionForMapPin(best),
-        action: {
-          label: best.user ? `VIEW ${best.user}` : 'VIEW YOUR PROFILE',
-          onActivate: () => {
-            window.parent?.postMessage({
-              type: 'poplur-map-open-profile',
-              user: best.user,
-              popId: best.id,
-              name: best.name,
-            }, '*')
-          },
-        },
-      })
+      openMapPinContent(best)
     }
     map.on('moveend', onSettle)
     return () => { map.off('moveend', onSettle) }
-  }, [mapLive])
+  }, [mapLive, openMapPinContent])
 
-  // ── Planet scope: zoomed all the way out, the HUD shows your EMPIRE ──────
-  // At globe zoom the individual pop is not the subject — the sum of them is.
-  // Tell the shell when the camera crosses into planet range so the RADIUS
-  // card can switch from one pop's takeover to the accumulated total, and
-  // hand it that total (the map owns the claims; the shell owns the card).
+  // ── One map context drives every line in the shell HUD ───────────────────
+  // Report only on settled camera states. This keeps the title/counters stable
+  // while the zoom rail is moving and gives Home one coherent answer for the
+  // post count, radius scope and live audience.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLive) return
-    let world: boolean | null = null
+    let previous = ''
     const GLOBE_SCOPE_ZOOM = 3.4
-    const send = (isWorld: boolean) => window.parent?.postMessage(
-      isWorld
-        ? { type: 'poplur-map-scope', scope: 'world', totalRadiusKm: totalClaimedKm() }
-        : { type: 'poplur-map-scope', scope: 'local' },
-      '*',
-    )
-    const report = () => {
-      const isWorld = map.getZoom() <= GLOBE_SCOPE_ZOOM
-      if (isWorld === world) return
-      world = isWorld
-      send(isWorld)
+    const CURRENT_LOCATION_M = 900
+    const POP_CONTEXT_ZOOM = 11
+    const POP_CONTEXT_M = 420
+
+    const report = (force = false) => {
+      const zoom = map.getZoom()
+      const c = map.getCenter()
+      const center: [number, number] = [c.lng, c.lat]
+      const areaRadiusM = zoom >= 14 ? 2_000 : zoom >= 9 ? 8_000 : 30_000
+      const ownArea = POIS.filter(poi => distanceMeters(poi.coords, center) <= areaRadiusM)
+
+      let nearestPin: PopPin | null = null
+      let nearestMeters = Infinity
+      if (zoom >= POP_CONTEXT_ZOOM) {
+        for (const pin of mapPinsRef.current) {
+          const meters = distanceMeters(pin.coords, center)
+          if (meters < nearestMeters) {
+            nearestPin = pin
+            nearestMeters = meters
+          }
+        }
+      }
+
+      const atWorld = zoom <= GLOBE_SCOPE_ZOOM
+      const atPop = !atWorld && nearestPin != null && nearestMeters <= POP_CONTEXT_M
+      const atCurrent = !atWorld && !atPop
+        && distanceMeters(center, navigationOriginRef.current) <= CURRENT_LOCATION_M
+      const scope = atWorld ? 'world' : atPop ? 'pop' : atCurrent ? 'current' : 'area'
+      const count = atWorld ? MAP_TOTAL_OWN_POSTS : ownArea.length
+      const ids = atWorld ? POIS.map(poi => poi.id) : ownArea.map(poi => poi.id)
+      const onlineUsers = scope === 'world' || scope === 'current'
+        ? MAP_GLOBAL_ONLINE
+        : mapAreaOnline(center, ownArea.length)
+      const totalRadius = accumulatedRadiusKm()
+      const popRadius = atPop ? nearestPin?.radiusKm : undefined
+      const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2), onlineUsers].join('|')
+      if (!force && signature === previous) return
+      previous = signature
+
+      setAreaPops({ count, ids, overall: atWorld })
+      window.parent?.postMessage({
+        type: 'poplur-map-context',
+        scope,
+        ownPostsTotal: MAP_TOTAL_OWN_POSTS,
+        ownPostsArea: ownArea.length,
+        ownPostIds: ids,
+        totalRadiusKm: totalRadius,
+        popRadiusKm: popRadius,
+        popId: atPop ? nearestPin?.id : undefined,
+        onlineUsers,
+      }, '*')
     }
-    // The crossing alone is not enough: booting at globe zoom reported the
-    // total BEFORE any claim had seeded or synced, and the boundary check then
-    // suppressed every later update — so the planet said "0.0 km" to a user
-    // whose posts plainly hold ground. Re-send the total whenever a claim
-    // settles while the world is in view.
+
     const offSettle = onClaimsSettled(() => {
-      if (world) send(true)
-      // The profile lives in another document, and this iframe unmounts when
-      // its tab is not front — a message would find nobody listening. Cache
-      // the total where any surface can read it at its own mount time.
-      try { window.localStorage.setItem('poplur.totalRadiusKm', String(totalClaimedKm())) } catch { /* private */ }
+      report(true)
+      try { window.localStorage.setItem('poplur.totalRadiusKm', String(accumulatedRadiusKm())) } catch { /* private */ }
     })
-    map.on('zoom', report)
-    report()
-    return () => { map.off('zoom', report); offSettle() }
+    const onCameraSettle = () => report()
+    map.on('moveend', onCameraSettle)
+    map.on('zoomend', onCameraSettle)
+    report(true)
+    return () => {
+      map.off('moveend', onCameraSettle)
+      map.off('zoomend', onCameraSettle)
+      offSettle()
+    }
   }, [mapLive])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
@@ -1770,27 +1875,12 @@ export default function App() {
     postNativeEvent({ type: 'mapReady' })
     if (landingCenter) setNavigationOrigin(landingCenter)
 
-    // ── The radio comes on with the map ──────────────────────────────────────
-    // A station starts here rather than waiting for someone to open the radio
-    // deck: arriving somewhere should sound like arriving somewhere, and the
-    // background scope now defaults to 'app' so it keeps playing as you move
-    // through the app.
-    //
-    // Three guards, and they matter:
-    //   · a station already on the air is never interrupted — reopening the map
-    //     must not restart, retune or double up on what you chose yourself;
-    //   · an explicit Settings OFF is honoured through isRadioBackgroundEnabled;
-    //   · this only ever runs in the MAP document (handleIntroComplete is
-    //     ClayMap's callback), so a harness view cannot start a radio.
-    //
-    // startMapRadio installs the gesture unlock itself, so on a browser that
-    // blocks autoplay this arms the station and it sounds on the first touch
-    // rather than failing silently. Muting still wins — the radio's own gate
-    // reads the shared audio gate on every tick.
+    // Begin looking up the local station now, but do not sound it yet. The
+    // greeting below gets the first beat; its mixer feathers Radio underneath
+    // after the first word, then raises it when the host finishes.
     if (isRadioBackgroundEnabled() && !nowPlayingStation()) {
-      startMapRadio()
       const [lng, lat] = landingCenter ?? DEFAULT_NAV_ORIGIN
-      void tuneLiveRadio(lat, lng).catch(() => { /* no signal here; the bed still plays */ })
+      void tuneLiveRadio(lat, lng).catch(() => { /* the instant bed still works */ })
     }
 
     if (tourStartedRef.current) return
@@ -1822,9 +1912,7 @@ export default function App() {
       const greeting = here && here !== 'Current location'
         ? `You're at your current location — ${here}.`
         : `You're at your current location.`
-      if (applySoundState(true)) {
-        speakWithVoiceAudioFocus(greeting, { rate: 0.95, pitch: 0.98 })
-      } else {
+      if (!speakMapLine(greeting)) {
         pendingSpeechRef.current.push(greeting)
         drainPendingSpeech()
       }
@@ -1854,10 +1942,10 @@ export default function App() {
       }
       const recommend = window.setTimeout(() => {
         if (tourStartedRef.current) return
-        if (applySoundState(true)) {
+        if (mapAudioFrontRef.current && !isGateMuted()) {
           showPopup({ kind: 'suggestion', card: stillOnly(card) })
           setSmartCard(card)
-          speakWithVoiceAudioFocus(tip, { rate: 0.95, pitch: 0.98 })
+          speakMapLine(tip)
         } else {
           pendingSpeechRef.current.push(tip)
           drainPendingSpeech()
@@ -1865,7 +1953,7 @@ export default function App() {
       }, estimatedVoiceDurationMs(greeting) + 1200)
       tourTimers.current.push(recommend)
     }, 900)
-  }, [applySoundState, scheduleTourIdle, drainPendingSpeech])
+  }, [scheduleTourIdle, drainPendingSpeech, speakMapLine])
 
   // The home shell mirrors the tour state onto the hold-menu tile.
   useEffect(() => {
@@ -1894,13 +1982,13 @@ export default function App() {
    * that happened to be current at mount.
    */
   const traversalPops = useCallback((): Array<{
-    id: string; name: string; coords: [number, number]; radiusKm: number
+    id: string; name: string; coords: [number, number]; radiusKm: number; mine: boolean
   }> => {
     const mine = POIS.map(p => ({
-      id: p.id, name: p.name, coords: p.coords as [number, number], radiusKm: p.radiusKm,
+      id: p.id, name: p.name, coords: p.coords as [number, number], radiusKm: p.radiusKm, mine: true,
     }))
     const theirs = OTHER_POPS.map(p => ({
-      id: p.id, name: p.name, coords: p.coords, radiusKm: p.radiusKm,
+      id: p.id, name: p.name, coords: p.coords, radiusKm: p.radiusKm, mine: false,
     }))
     if (popLevelRef.current === 'mine') return mine
     if (popLevelRef.current === 'others') return theirs
@@ -2102,7 +2190,62 @@ export default function App() {
             setTourLine(`Pop ${next + 1} of ${route.length}: ${poi.name}`)
             const nearby = popsNearby(poi, route)
             setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
-            flyToPop(poi.coords as [number, number])
+            const renderedPin = mapPinsRef.current.find(pin =>
+              pin.id === poi.id || pin.id === `pop-${poi.id}`,
+            )
+            const ownSource = poi.mine ? POIS.find(candidate => candidate.id === poi.id) : undefined
+            const otherSource = !poi.mine ? OTHER_POPS.find(candidate => candidate.id === poi.id) : undefined
+            const contentPin: PopPin | undefined = renderedPin ?? (ownSource ? {
+              id: `pop-${ownSource.id}`,
+              user: null,
+              name: ownSource.name,
+              coords: ownSource.coords,
+              radiusKm: ownSource.radiusKm,
+              color: myColor,
+              avatar: ownAvatar,
+              channel: ownSource.channel,
+              media: {
+                kind: 'video',
+                src: `feed/ad-${ownSource.channel}.mp4`,
+                poster: `feed/posters/ad-${ownSource.channel}.jpg`,
+                alt: `Your post at ${ownSource.name}`,
+              },
+              mine: true,
+            } : otherSource ? {
+              id: otherSource.id,
+              user: otherSource.user,
+              name: otherSource.name,
+              coords: otherSource.coords,
+              radiusKm: otherSource.radiusKm,
+              color: otherSource.color,
+              avatar: otherSource.avatar,
+              channel: otherSource.channel,
+              media: otherSource.video
+                ? { kind: 'video', src: otherSource.video, poster: otherSource.avatar, alt: `${otherSource.user} post at ${otherSource.name}` }
+                : { kind: 'image', src: otherSource.avatar, alt: `${otherSource.user} post at ${otherSource.name}` },
+              world: otherSource.world === true,
+              mine: false,
+            } : undefined)
+            let revealed = false
+            const revealContent = () => {
+              if (revealed || !contentPin) return
+              revealed = true
+              if (placeSuggestionTimerRef.current != null) {
+                window.clearTimeout(placeSuggestionTimerRef.current)
+                placeSuggestionTimerRef.current = null
+              }
+              arrivedPinRef.current = contentPin.id
+              openMapPinContent(contentPin)
+            }
+            if (placeSuggestionTimerRef.current != null) {
+              window.clearTimeout(placeSuggestionTimerRef.current)
+            }
+            flyToPop(poi.coords as [number, number], revealContent)
+            // The native WebView can park Mapbox's renderer between frames;
+            // in that case the destination changes but the SDK never emits
+            // the final moveend. The trip has a fixed duration, so reveal once
+            // on that clock if the preferred completion callback did not run.
+            placeSuggestionTimerRef.current = window.setTimeout(revealContent, TRIP_TOTAL_MS + 320)
             // Tell the shell WHICH pop this is. The channel arrows used to count
             // POST_COUNT (128) locally while the map flew through POIS, so the
             // number between the arrows described a different list from the one
@@ -2147,7 +2290,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startTourLoop, stopTour, flyToCenter, flyToPop, theme, traverseToEngagement])
+  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startTourLoop, stopTour, flyToCenter, flyToPop, myColor, openMapPinContent, ownAvatar, theme, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -2171,14 +2314,33 @@ export default function App() {
     setCurrentPlace(displayPlaceName(poi.name))
     if (placeSuggestionTimerRef.current != null) window.clearTimeout(placeSuggestionTimerRef.current)
     clearPopups('suggestion')
+    clearPopups('mapContent')
     flyToCenter(poi.coords, 4600)
-    // Let the flight complete before the place window lands. Selecting another
-    // pin cancels this timer, so an interrupted trip never shows a stale deal.
+    // Every POI in this list is one of the user's standing pops. Build its
+    // content pin independently of the current map level so Level 2 cannot
+    // accidentally turn a hidden real post into a generated place ad.
     placeSuggestionTimerRef.current = window.setTimeout(() => {
       placeSuggestionTimerRef.current = null
-      showPopup({ kind: 'suggestion', card: suggestionForMapPlace(poi) })
+      openMapPinContent({
+        id: `pop-${poi.id}`,
+        user: null,
+        name: poi.name,
+        coords: poi.coords,
+        radiusKm: poi.radiusKm,
+        color: myColor,
+        avatar: ownAvatar,
+        channel: poi.channel,
+        media: {
+          kind: 'video',
+          src: `feed/ad-${poi.channel}.mp4`,
+          poster: `feed/posters/ad-${poi.channel}.jpg`,
+          alt: `Your post at ${poi.name}`,
+        },
+        world: false,
+        mine: true,
+      })
     }, 4_700)
-  }, [flyToCenter])
+  }, [flyToCenter, myColor, openMapPinContent, ownAvatar])
 
   if (harnessView) {
     return (
@@ -2208,7 +2370,7 @@ export default function App() {
       {/* Engagement + suggestions, centred and transient. Mounted here so the
           map gets them; the harness render below mounts it too, which is what
           puts the same notices on the feed. */}
-      <PopupHost />
+      <PopupHost dismissOnBackdrop />
       {/* ── Full-screen clay map — the signature world. ──
           Premium once swapped in a Cesium/Google-3D-tiles photoreal surface
           here. It was parked deliberately: matching the clay world meant
@@ -2220,36 +2382,14 @@ export default function App() {
         token={TOKEN}
         pois={POIS}
         pins={mapPins}
-        onPinOpen={pin => {
-          if (placeSuggestionTimerRef.current != null) {
-            window.clearTimeout(placeSuggestionTimerRef.current)
-            placeSuggestionTimerRef.current = null
-          }
-          clearPopups('suggestion')
-          showPopup({
-            kind: 'suggestion',
-            card: suggestionForMapPin(pin),
-            action: {
-              label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
-              onActivate: () => {
-                // The shell owns tabs and profiles; the ad retains the proven
-                // route and identifies the exact pop to light up in the grid.
-                window.parent?.postMessage({
-                  type: 'poplur-map-open-profile',
-                  user: pin.user,
-                  popId: pin.id,
-                  name: pin.name,
-                }, '*')
-              },
-            },
-          })
-        }}
+        onPinOpen={openMapPinContent}
         selectedId={selectedId}
         onSelectPoi={handleSelectPoi}
         mapRef={mapRef}
         theme={theme}
         dayTime={dayTime}
         weatherMode={weatherMode}
+        weatherCloud={cloudBadge}
         weatherIcon={
           cloudBadge && (weatherMode === 'cloudy' || weatherMode === 'fog')
             ? `<img src="${cloudBadge}" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain" />`
@@ -2261,6 +2401,7 @@ export default function App() {
           high: day.high,
           low: day.low,
           icon: weatherIconForMode(modeForCode(day.code)),
+          mode: modeForCode(day.code),
         }))}
         introDestinations={INTRO_LANDMARKS}
         streetView={streetView}
@@ -2417,7 +2558,11 @@ export default function App() {
               clickable version (see HomeTwin). */}
           {areaPops && (
             <div className={styles.areaPops} key={`area-${areaPops.count}-${areaPops.ids[0] ?? ''}`}>
-              {areaPops.count === 1 ? '1 pop in this area' : `${areaPops.count} pops in this area`}
+              {areaPops.overall
+                ? `${areaPops.count} pops posted overall`
+                : areaPops.count === 1
+                  ? '1 pop posted in this area'
+                  : `${areaPops.count} pops posted in this area`}
             </div>
           )}
         </div>
