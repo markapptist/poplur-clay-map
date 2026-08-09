@@ -153,16 +153,29 @@ function LayerGlyph({ level, size, mode }: { level: PopLevel; size: number; mode
   // 3px of thickness. Spacing 6.5 leaves the stack slightly interleaved, which
   // is what makes it read as a stack rather than three floating tiles.
   const W = 12, H = 6, T = 3
-  // 2D mode: the same three sheets seen from straight above — flat plates, no
-  // extruded edge, stacked with a small offset so it still reads as layers.
-  const plate = (cy: number, on: boolean, key: string) => (
+  // 2D mode: the same three sheets seen from straight above. Two things this
+  // has to get right that the first cut did not.
+  //
+  // The plates must not TOUCH. Reusing the isometric 7px pitch for 8px plates
+  // left one pixel of clearance, and with no extruded edge to separate them the
+  // stack read as a single rounded block with two scratches across it — you
+  // counted two sheets, not three. 6px plates on a 10px pitch leave real
+  // background between them.
+  //
+  // And they must not read as a HAMBURGER, which three centred equal bars
+  // unavoidably do — a three-bar glyph in the corner of a map is the universal
+  // "open the menu" icon, and this control is not that. So each sheet steps
+  // down-and-right off the one behind it, the way a stack of paper does. The
+  // diagonal is what says "layers" once the depth is gone.
+  const PW = 10.5, PH = 6, PITCH = 10, DX = 3
+  const plate = (i: number, on: boolean, key: string) => (
     <g key={key} className={on ? styles.slabOn : styles.slabOff}>
       <rect
         className={`${styles.slabTop} ${styles.plate}`}
-        x={17 - W}
-        y={cy - 4}
-        width={W * 2}
-        height={8}
+        x={17 + (i - 1) * DX - PW}
+        y={7 + i * PITCH - PH / 2}
+        width={PW * 2}
+        height={PH}
         rx={2.5}
       />
     </g>
@@ -190,9 +203,19 @@ function LayerGlyph({ level, size, mode }: { level: PopLevel; size: number; mode
       className={styles.glyph}
     >
       {/* back to front, so each sheet overlaps the one above it */}
-      {(mode === '2d' ? plate : slab)(8, lit('top'), 'top')}
-      {(mode === '2d' ? plate : slab)(15, lit('mid'), 'mid')}
-      {(mode === '2d' ? plate : slab)(22, lit('near'), 'near')}
+      {mode === '2d' ? (
+        <>
+          {plate(0, lit('top'), 'top')}
+          {plate(1, lit('mid'), 'mid')}
+          {plate(2, lit('near'), 'near')}
+        </>
+      ) : (
+        <>
+          {slab(8, lit('top'), 'top')}
+          {slab(15, lit('mid'), 'mid')}
+          {slab(22, lit('near'), 'near')}
+        </>
+      )}
     </svg>
   )
 }

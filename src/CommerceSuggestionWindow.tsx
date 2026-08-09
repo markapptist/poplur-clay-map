@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import type { SmartCard } from './tourSmarts'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
+import { productImage } from './productImage'
 import styles from './CommerceSuggestionWindow.module.css'
 
 export interface SuggestionPrimaryAction {
@@ -56,6 +57,21 @@ export default function CommerceSuggestionWindow({
   onClose,
   onInteract,
 }: CommerceSuggestionWindowProps) {
+  // The ADVERTISER'S own picture, when the shell can fetch it. Until then the
+  // bundled poster stands in, so the card never renders empty and never waits.
+  // Keyed on the product URL: the same offer resolves once per device, ever.
+  const productURL = card.link?.url ?? ''
+  const [shot, setShot] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    setShot(null)
+    if (!productURL) return
+    productImage(productURL)
+      .then(src => { if (live) setShot(src) })
+      .catch(() => { /* the bundled poster is the fallback */ })
+    return () => { live = false }
+  }, [productURL])
+
   const [browserURL, setBrowserURL] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [minimized, setMinimized] = useState(false)
@@ -163,7 +179,13 @@ export default function CommerceSuggestionWindow({
       ) : (
         <>
           <div className={styles.media}>
-            {card.media?.kind === 'video' ? (
+            {shot ? (
+              /* Real product artwork wins over the bundled clip. A STILL, not a
+                 video: this card sits over a live camera preview on a surface
+                 already running ML, and a second decoder there is the exact
+                 shape of regression the thermal gate exists to catch. */
+              <img src={shot} alt={card.media?.alt ?? 'Product'} draggable={false} />
+            ) : card.media?.kind === 'video' ? (
               <video
                 src={card.media.src}
                 poster={card.media.poster}

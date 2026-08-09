@@ -294,13 +294,13 @@
   background: #050407;
 }
 
-/* Spoofed live feed — a supplied clay-world scene, slowly drifting so it
-   reads as a camera. Never touches getUserMedia: no prompt, no crash. */
+/* Live getUserMedia feed. Keep its geometry identical to the AR overlay so
+   normalized ML face bounds land on the face instead of a legacy 6% crop. */
 .camSpoofFeed {
   position: absolute;
-  inset: -6%;
-  width: 112%;
-  height: 112%;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   display: block;
   z-index: 0;

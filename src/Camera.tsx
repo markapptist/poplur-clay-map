@@ -11,6 +11,7 @@ import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
 import ARFilters, { AR_FILTERS } from './ARFilters'
+import FaceAROverlay, { drawFaceAREffect } from './FaceAROverlay'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
 import PermissionAlert from './PermissionAlert'
 import CommerceSuggestionWindow from './CommerceSuggestionWindow'
@@ -448,7 +449,9 @@ export default function Camera({
       postNativeEvent({
         type: 'detectCameraFrame',
         dataUrl: canvas.toDataURL('image/jpeg', 0.58),
-        mirrored: facing === 'user',
+        // Keep native detections in source coordinates. The same mirror
+        // transform that presents the selfie preview also mirrors its AR.
+        mirrored: false,
       })
     }, 250)
     return () => window.clearInterval(timer)
@@ -769,6 +772,7 @@ export default function Camera({
       canvas.width,
       canvas.height,
     )
+    drawFaceAREffect(ctx, canvas.width, canvas.height, detections, arFilter)
     const shot = addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
     // A capture that only lands in the roll looks like nothing happened. Open
     // the composer on it, the way the native flow does.
@@ -778,7 +782,7 @@ export default function Camera({
     // on through the composer while you reviewed the photo (and kept burning
     // on the device, since the native side had last been told `on: true`).
     setFlashEnabled(false)
-  }, [facing, flash, filterCss, onPhotoCapture, page, setFlashEnabled])
+  }, [arFilter, detections, facing, flash, filterCss, onPhotoCapture, page, setFlashEnabled])
 
   // ── record ───────────────────────────────────────────────────────────────
   const stopVideo = useCallback(() => {
@@ -1076,6 +1080,13 @@ export default function Camera({
           playsInline
           muted
           autoPlay
+        />
+      )}
+      {!NATIVE_CAMERA_PREVIEW && real && (
+        <FaceAROverlay
+          detections={detections}
+          filter={arFilter}
+          mirrored={facing === 'user'}
         />
       )}
       {/* Keep failures honest and recoverable: never substitute a clay still

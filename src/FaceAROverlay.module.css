@@ -1,0 +1,149 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+  transform-origin: center;
+}
+
+.face {
+  position: absolute;
+  transition: left 100ms linear, top 100ms linear, width 100ms linear, height 100ms linear;
+  will-change: left, top, width, height;
+}
+
+.skinMask {
+  position: absolute;
+  left: 6%;
+  top: 2%;
+  width: 88%;
+  height: 102%;
+  border-radius: 48% 48% 45% 45%;
+  opacity: 0.62;
+  backdrop-filter: blur(1.4px) saturate(1.08);
+  -webkit-backdrop-filter: blur(1.4px) saturate(1.08);
+  box-shadow: inset 0 0 22px rgba(255, 215, 225, 0.24);
+}
+
+.skin_smooth { opacity: 0.75; backdrop-filter: blur(2px) contrast(1.04); -webkit-backdrop-filter: blur(2px) contrast(1.04); }
+.skin_beauty { background: rgba(255, 185, 208, 0.08); }
+.skin_brighten { background: rgba(255, 247, 218, 0.12); }
+.skin_glow { background: rgba(255, 166, 221, 0.08); box-shadow: 0 0 26px rgba(255, 126, 210, 0.5); }
+.skin_sharpen { opacity: 0.25; backdrop-filter: contrast(1.2); -webkit-backdrop-filter: contrast(1.2); }
+.skin_warm { background: rgba(255, 143, 61, 0.08); }
+.skin_cool { background: rgba(83, 202, 255, 0.08); }
+.skin_vintage { background: rgba(169, 106, 54, 0.08); }
+
+.blush {
+  position: absolute;
+  top: 57%;
+  width: 22%;
+  height: 11%;
+  border-radius: 50%;
+  background: rgba(255, 73, 151, 0.34);
+  filter: blur(4px);
+}
+.blushLeft { left: 12%; }
+.blushRight { right: 12%; }
+
+.sparkle {
+  position: absolute;
+  width: 9%;
+  aspect-ratio: 1;
+  background: white;
+  clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%);
+  filter: drop-shadow(0 0 6px #ff8fd5);
+  animation: faceARSparkle 1.5s ease-in-out infinite alternate;
+}
+.sparkleOne { left: -5%; top: 12%; }
+.sparkleTwo { right: -3%; top: 39%; animation-delay: -0.6s; }
+.sparkleThree { left: 3%; bottom: 8%; animation-delay: -1s; }
+
+.lightRing {
+  position: absolute;
+  inset: -8% -5% -6%;
+  border: max(2px, 1.8cqw) solid rgba(255, 250, 214, 0.86);
+  border-radius: 50%;
+  box-shadow: 0 0 22px rgba(255, 237, 151, 0.92), inset 0 0 18px rgba(255, 255, 255, 0.42);
+}
+
+.halo {
+  position: absolute;
+  left: 12%;
+  top: -24%;
+  width: 76%;
+  height: 17%;
+  border: max(3px, 2.2cqw) solid rgba(255, 217, 95, 0.96);
+  border-radius: 50%;
+  transform: rotate(-4deg);
+  box-shadow: 0 0 14px rgba(255, 210, 82, 0.95), inset 0 0 8px white;
+}
+
+.visor {
+  position: absolute;
+  left: 4%;
+  top: 31%;
+  width: 92%;
+  height: 25%;
+  border: max(2px, 1.5cqw) solid #55f4ff;
+  border-radius: 24% 24% 35% 35%;
+  background: linear-gradient(180deg, rgba(47, 247, 255, 0.38), rgba(21, 34, 92, 0.5));
+  box-shadow: 0 0 14px #17dff2, inset 0 0 10px rgba(255,255,255,0.55);
+}
+.visorBridge { position: absolute; left: 48%; top: -6%; width: 4%; height: 112%; background: rgba(225, 255, 255, 0.8); }
+
+.freckles {
+  position: absolute;
+  left: 25%;
+  top: 51%;
+  width: 50%;
+  height: 8%;
+  background: radial-gradient(circle, rgba(130, 58, 25, 0.85) 0 15%, transparent 18%) 0 0 / 13% 100%;
+  transform: rotate(-2deg);
+}
+
+.crystalCrown {
+  position: absolute;
+  left: 8%;
+  top: -24%;
+  width: 84%;
+  height: 37%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2%;
+  filter: drop-shadow(0 0 9px #87dcff);
+}
+.crystalCrown span {
+  width: 17%;
+  height: 72%;
+  background: linear-gradient(135deg, #fff 0 18%, #75d7ff 35%, #407cff 75%, #d9f8ff);
+  clip-path: polygon(50% 0, 100% 55%, 76% 100%, 24% 100%, 0 55%);
+}
+.crystalCrown span:nth-child(2), .crystalCrown span:nth-child(4) { height: 92%; }
+.crystalCrown span:nth-child(3) { height: 118%; }
+
+.glasses { position: absolute; inset: 27% -3% auto; height: 34%; }
+.lensLeft, .lensRight {
+  position: absolute;
+  top: 0;
+  width: 43%;
+  height: 100%;
+  border: max(4px, 2.5cqw) solid #2b1710;
+  border-radius: 50%;
+  background: rgba(116, 67, 39, 0.2);
+  box-shadow: 0 2px 0 rgba(255,255,255,0.24) inset;
+}
+.lensLeft { left: 0; }
+.lensRight { right: 0; }
+.glassesBridge { position: absolute; left: 42%; top: 44%; width: 16%; height: max(4px, 3cqw); border-radius: 999px; background: #2b1710; }
+
+@keyframes faceARSparkle {
+  from { transform: scale(0.62) rotate(0deg); opacity: 0.58; }
+  to { transform: scale(1.18) rotate(30deg); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sparkle { animation: none; }
+}
