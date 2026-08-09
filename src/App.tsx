@@ -26,7 +26,7 @@ import { smartCardFor, type SmartCard } from './tourSmarts'
 import { suggestionForMapPlace } from './commerceSuggestions'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed } from './frameGovernor'
-import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange } from './popups'
+import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
 
 interface RadioStationCue {
   name: string
@@ -1573,6 +1573,61 @@ export default function App() {
   }, [])
 
   const [mapLive, setMapLive] = useState(0)
+
+  // ── An ad is never allowed to be why the map stutters ─────────────────────
+  //
+  // Reported as a freeze on launch, right as the camera dives into your
+  // location — and it is the ad, not the flight. A suggestion card mounts a
+  // window, then fetches and decodes a product or place image, on the main
+  // thread, in the same frames the camera is interpolating a long flyTo and
+  // Mapbox is loading tiles for a whole new region. The flight is the one
+  // moment the map can least afford company, and it was exactly when the card
+  // arrived.
+  //
+  // So commerce is gated on the camera being still. Not throttled, not
+  // deferred by a guessed delay: suppressed outright while the camera moves,
+  // released once the map goes idle and has held still for a beat. Suppressing
+  // also clears anything already up, so a card cannot ride through a flight it
+  // was showing before the camera left.
+  //
+  // 'idle' rather than 'moveend': moveend fires when the CAMERA stops, while
+  // idle waits for tiles and labels to finish too, and it is that tail —
+  // decoding a new region — that the image work would land on top of.
+  //
+  // Engagement is deliberately NOT gated. A like arriving mid-flight is one
+  // line of text with no fetch behind it, and silencing news about the user to
+  // protect a frame budget would be fixing the wrong thing.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLive) return
+    let settle: number | null = null
+    const hold = () => {
+      if (settle != null) { window.clearTimeout(settle); settle = null }
+      setPopupKindSuppressed('suggestion', true)
+    }
+    const release = () => {
+      if (settle != null) window.clearTimeout(settle)
+      // A short beat after idle, so a card does not appear on the very frame
+      // the camera lands — that reads as the arrival stuttering.
+      settle = window.setTimeout(() => {
+        settle = null
+        setPopupKindSuppressed('suggestion', false)
+      }, 650)
+    }
+    map.on('movestart', hold)
+    map.on('zoomstart', hold)
+    map.on('idle', release)
+    // The camera may already be flying when this binds (the launch dive starts
+    // before the style settles), so assume moving until idle says otherwise.
+    hold()
+    return () => {
+      if (settle != null) window.clearTimeout(settle)
+      map.off('movestart', hold)
+      map.off('zoomstart', hold)
+      map.off('idle', release)
+      setPopupKindSuppressed('suggestion', false)
+    }
+  }, [mapLive])
 
   // ── The pops EXIST on the map, always ────────────────────────────────────
   // Your posts are territory, and territory does not appear only when a camera
