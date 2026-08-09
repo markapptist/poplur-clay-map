@@ -15,7 +15,16 @@
 .host {
   position: fixed;
   inset: 0;
-  z-index: 520;
+  /* Ads draw over EVERYTHING, by instruction. This layer used to sit at 520,
+     which put it under the profile viewer (2147483000), the games screen and
+     the permission alert (1000/1001) — an ad could open behind a screen and
+     then sit there un-tappable. One above the tallest thing the app draws.
+
+     Caveat kept deliberately visible: this also puts a notice above the
+     permission alert. Ads now close on any tap, so a covered alert is one tap
+     from reachable, but if consent UI ever needs to win, give PermissionAlert
+     its own band above this one rather than lowering the ads. */
+  z-index: 2147483001;
   display: flex;
   flex-direction: column;
   align-items: center;

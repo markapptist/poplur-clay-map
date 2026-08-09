@@ -14,6 +14,20 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* The deck fills the subscreen stage, but the stage is NOT the whole screen
+     you can see: the home chrome (level button, channel arrows, cube, radius
+     card) is drawn over the bottom of it at a higher z-index. Filling the
+     stage edge to edge therefore put the now-playing bar and the lower half of
+     the transport row underneath the cube, where they could be neither read
+     nor tapped.
+
+     So the deck ends where the chrome begins. The band it gives up is the
+     chrome's own geometry — .bottomRow sits 18px off the bottom and is one
+     cube tall, with the level button riding above it — rather than a guessed
+     constant, so the two stay aligned when --cube-size changes with the
+     viewport. Everything inside keeps its existing scroll behaviour; this only
+     stops the deck from claiming space it never actually owned. */
+  padding-bottom: calc(var(--cube-size, 96px) + 72px);
   color: #f4eef5;
   background:
     radial-gradient(120% 46% at 50% 0%, rgba(246, 59, 154, 0.16), transparent 60%),
@@ -144,6 +158,82 @@
 .dashSignal i:nth-child(3) { height: 66%; }
 .dashSignal i:nth-child(4) { height: 84%; }
 .dashSignal i:nth-child(5) { height: 100%; }
+
+/* ── the dial: band chips, then genre chips ─────────────────────────────────
+   One compact strip between the chassis top and the LCD. It is deliberately
+   NOT on the glass: the LCD is the signal (what is on air, the list you can
+   tune), and the dial is the thing you turn to change it, so it belongs on the
+   chassis with the other controls.
+
+   The genre row scrolls sideways rather than wrapping. Wrapping made the strip
+   grow a second and third line as more genres came into range, which pushed
+   the channel list down by an unpredictable amount on the exact screen that
+   was already too tall for its stage. A rail has one height, always. */
+.tuneRail {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 0 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.waveGroup {
+  display: flex;
+  gap: 6px;
+}
+
+.genreGroup {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* the rail runs to the chassis edge, so a half-visible chip says "more" */
+  margin: 0 -2px;
+  padding: 0 2px 1px;
+}
+
+.genreGroup::-webkit-scrollbar { display: none; }
+
+.waveChip,
+.genreChip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 226, 242, 0.66);
+  font: 900 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.2px;
+  white-space: nowrap;
+  cursor: pointer;
+  /* a dial you can actually hit with a thumb on a phone */
+  min-height: 30px;
+}
+
+.waveChip { min-width: 46px; justify-content: center; }
+
+.genreChip i {
+  font-style: normal;
+  font-size: 8.5px;
+  color: rgba(255, 226, 242, 0.42);
+}
+
+/* Lit: the chip wears its own genre tint, the same colour the split uses, so
+   the control and the readout agree about what ROCK looks like. */
+.chipOn {
+  border-color: var(--chipTint, #f63b9a);
+  background: color-mix(in srgb, var(--chipTint, #f63b9a) 26%, transparent);
+  color: #fff;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--chipTint, #f63b9a) 40%, transparent);
+}
+
+.chipOn i { color: rgba(255, 255, 255, 0.78); }
+
+.waveChip:active, .genreChip:active { transform: scale(0.96); }
 
 /* the screen inside the bezel */
 /* The LCD itself: a backlit panel sunk behind glass, with a pixel matrix and

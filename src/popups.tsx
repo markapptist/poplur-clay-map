@@ -56,12 +56,17 @@ export interface PopupItem {
  *  "shown for too long" verbatim — so it stays at the shorter window. */
 const TTL: Record<PopupKind, number> = {
   engagement: 3_400,
-  // 6.5s, and please leave it there. This was 9.5s, the user reported the card
-  // "shown for too long" over the video, it was lowered, and a later change put
-  // it back up to 12s — longer than the complaint. A suggestion has to outlast
-  // a glance without becoming a squatter on a screen someone is watching, and
-  // 6.5s is the reviewed answer to that.
-  suggestion: 6_500,
+  // The standing instruction on this number is "shorter". History: 12s → the
+  // card read as a squatter over the video → 9.5s → still "shown for too long"
+  // → 6.5s, which held until 2026-08-09, when the ask was again that ads
+  // "disappear faster". So 4s.
+  //
+  // The floor is engagement's 3.4s: a suggestion is something you might act on
+  // and must outlast a glance, so it cannot become briefer than a notice you
+  // only read. 4s is just above that floor, and it is the third time this has
+  // come down — if it needs to go lower, the honest move is to stop showing
+  // the card on that surface rather than to flash it.
+  suggestion: 4_000,
 }
 
 // More than a few at once is a pile nobody reads. Oldest goes first.

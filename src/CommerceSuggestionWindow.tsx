@@ -112,12 +112,22 @@ export default function CommerceSuggestionWindow({
   } as React.CSSProperties
 
   const closeFromSurface = (event: React.MouseEvent<HTMLElement>) => {
-    // The creative itself is dismissible, not just the tiny red light. Keep
-    // actual controls/CTAs interactive; everything else is one large, easy
-    // close target on a phone.
+    // House rule for every ad: the ONLY press that does not dismiss is the
+    // ad's own call to action. Everything else — the artwork, the headline,
+    // the window chrome, the minimize and zoom lights — is a close target.
+    //
+    // This used to exempt `button, a, iframe` wholesale, which meant the
+    // window controls quietly ate taps that were meant to get rid of the ad.
+    // Actions now opt IN by carrying data-ad-action, so a control added later
+    // dismisses by default rather than becoming another way to be stuck.
+    //
+    // Browser mode is the exception, and stays one: reaching it takes a
+    // deliberate press on SEE DEAL, and a destination that closed itself on
+    // the first tap inside it would be unusable.
     event.stopPropagation()
     const target = event.target
-    if (target instanceof Element && target.closest('button, a, iframe')) return
+    if (browserMode && target instanceof Element && target.closest('button, a, iframe')) return
+    if (target instanceof Element && target.closest('[data-ad-action]')) return
     playPop()
     onClose()
   }
@@ -141,22 +151,36 @@ export default function CommerceSuggestionWindow({
       <header className={styles.titleBar}>
         <div className={styles.traffic} aria-label="Window controls">
           <button type="button" className={`${styles.light} ${styles.close}`} aria-label="Close ad" onClick={() => { playPop(); onClose() }} />
+          {/* Outside browser mode these two are no longer window controls —
+              they are close targets, like everything else that is not the CTA.
+              Minimize/expand on a card that lives four seconds was ceremony;
+              being able to get rid of it with whatever your thumb lands on is
+              the point. They keep their real jobs inside the browser, which is
+              the one place the window genuinely persists. */}
           <button
             type="button"
             className={`${styles.light} ${styles.minimize}`}
-            aria-label={browserMode ? 'Back to ad' : minimized ? 'Restore ad' : 'Minimize ad'}
+            aria-label={browserMode ? 'Back to ad' : 'Close ad'}
+            {...(browserMode ? { 'data-ad-action': '' } : {})}
             onClick={() => {
               playPop()
+              if (!browserMode) { onClose(); return }
               onInteract?.()
-              if (browserMode) setBrowserURL(null)
-              else setMinimized(value => !value)
+              setBrowserURL(null)
             }}
           />
           <button
             type="button"
             className={`${styles.light} ${styles.zoom}`}
-            aria-label={expanded ? 'Restore window size' : 'Expand window'}
-            onClick={() => { playPop(); onInteract?.(); setMinimized(false); setExpanded(value => !value) }}
+            aria-label={browserMode ? (expanded ? 'Restore window size' : 'Expand window') : 'Close ad'}
+            {...(browserMode ? { 'data-ad-action': '' } : {})}
+            onClick={() => {
+              playPop()
+              if (!browserMode) { onClose(); return }
+              onInteract?.()
+              setMinimized(false)
+              setExpanded(value => !value)
+            }}
           />
         </div>
         <span className={styles.windowTitle}>
@@ -218,12 +242,16 @@ export default function CommerceSuggestionWindow({
             <span className={styles.channelTag}>{card.channelTag ?? 'POPLUR SHOP TV · LIVE'}</span>
             <span className={styles.sponsorTag}>{card.sponsor ?? card.title}</span>
             <span className={styles.burst} aria-label={card.badge ?? 'Hot deal'}>{card.badge ?? 'KAPOW!'}</span>
+            {/* Attribution for the place creative — kept live under the
+                close-on-any-press rule because it is the source credit the
+                data is used under, not ad furniture. */}
             {livePlace && (
               <a
                 className={styles.liveSource}
                 href={livePlace.sourceUrl}
                 target="_blank"
                 rel="noreferrer"
+                data-ad-action=""
                 onClick={event => event.stopPropagation()}
               >{livePlace.sourceLabel}</a>
             )}
@@ -250,6 +278,7 @@ export default function CommerceSuggestionWindow({
                 <button
                   type="button"
                   className={styles.primary}
+                  data-ad-action=""
                   onClick={() => {
                     playPop()
                     onInteract?.()
@@ -261,7 +290,7 @@ export default function CommerceSuggestionWindow({
                 </button>
               )}
               {safeLink && (
-                <button type="button" className={styles.shop} onClick={openBrowser}>
+                <button type="button" className={styles.shop} data-ad-action="" onClick={openBrowser}>
                   {card.link?.label ?? 'SEE DEAL'}
                 </button>
               )}

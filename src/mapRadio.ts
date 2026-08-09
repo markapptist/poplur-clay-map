@@ -73,8 +73,13 @@ export function readRadioScope(): RadioScope {
   try {
     const scope = window.localStorage.getItem(RADIO_SCOPE_KEY)
     if (scope === 'screen' || scope === 'app' || scope === 'outside') return scope
-    return window.localStorage.getItem(RADIO_BG_KEY) === '1' ? 'app' : 'screen'
-  } catch { return 'screen' }
+    // Default is now 'app': the map starts a station and it keeps playing as
+    // you move around the app (see the boot tune in App). An explicit '0' is
+    // still an explicit OFF — someone who turned background radio off in
+    // Settings before this change must not have it turned back on for them —
+    // so only the absence of any stored answer takes the new default.
+    return window.localStorage.getItem(RADIO_BG_KEY) === '0' ? 'screen' : 'app'
+  } catch { return 'app' }
 }
 
 export function setRadioScope(scope: RadioScope) {

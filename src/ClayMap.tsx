@@ -3689,9 +3689,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       {weatherOpen && weatherForecast.length > 0 && zoomValue > 4.4 && (
         <section className={styles.weatherForecast} aria-label="Five day weather forecast">
-          <header>
-            <span>5-DAY FORECAST</span>
-            <button type="button" onClick={() => setWeatherOpen(false)} aria-label="Close forecast">×</button>
+          <header className={styles.weatherTitleBar}>
+            <div className={styles.weatherTraffic} aria-label="Window controls">
+              <button
+                type="button"
+                className={`${styles.weatherLight} ${styles.weatherClose}`}
+                aria-label="Close forecast"
+                onClick={() => { playPop(); setWeatherOpen(false) }}
+              />
+              <span className={`${styles.weatherLight} ${styles.weatherMinimize}`} aria-hidden="true" />
+              <span className={`${styles.weatherLight} ${styles.weatherZoom}`} aria-hidden="true" />
+            </div>
+            <span className={styles.weatherTitle}>5-DAY FORECAST</span>
+            <span className={styles.weatherTag}>WX</span>
           </header>
           <div className={styles.weatherDays}>
             {weatherForecast.slice(0, 5).map(day => (

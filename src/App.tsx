@@ -42,6 +42,9 @@ import {
   stopRegionAudio,
   startPoplurTheme, stopPoplurTheme, setVoiceDucked,
 } from './regionAudio'
+import {
+  isRadioBackgroundEnabled, nowPlayingStation, startMapRadio, tuneLiveRadio,
+} from './mapRadio'
 import { postNativeEvent } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { onAudioFocusChange } from './audioFocus'
@@ -557,8 +560,14 @@ function stillOnly(card: SmartCard): SmartCard {
 }
 
 const POPS_NEARBY_M = 2_000
-function popsNearby(poi: { coords: number[] }): typeof POIS {
-  return POIS.filter(p =>
+/** How many pops stand around this one — counted from the pool the caller is
+ *  travelling, so the "N pops in this area" line agrees with the level on
+ *  screen instead of always reporting your own. */
+function popsNearby<T extends { id: string; coords: number[] }>(
+  poi: { coords: number[] },
+  pool: readonly T[],
+): T[] {
+  return pool.filter(p =>
     distanceMeters(p.coords as [number, number], poi.coords as [number, number]) <= POPS_NEARBY_M)
 }
 
@@ -1760,6 +1769,30 @@ export default function App() {
     if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-ready' }, '*')
     postNativeEvent({ type: 'mapReady' })
     if (landingCenter) setNavigationOrigin(landingCenter)
+
+    // ── The radio comes on with the map ──────────────────────────────────────
+    // A station starts here rather than waiting for someone to open the radio
+    // deck: arriving somewhere should sound like arriving somewhere, and the
+    // background scope now defaults to 'app' so it keeps playing as you move
+    // through the app.
+    //
+    // Three guards, and they matter:
+    //   · a station already on the air is never interrupted — reopening the map
+    //     must not restart, retune or double up on what you chose yourself;
+    //   · an explicit Settings OFF is honoured through isRadioBackgroundEnabled;
+    //   · this only ever runs in the MAP document (handleIntroComplete is
+    //     ClayMap's callback), so a harness view cannot start a radio.
+    //
+    // startMapRadio installs the gesture unlock itself, so on a browser that
+    // blocks autoplay this arms the station and it sounds on the first touch
+    // rather than failing silently. Muting still wins — the radio's own gate
+    // reads the shared audio gate on every tick.
+    if (isRadioBackgroundEnabled() && !nowPlayingStation()) {
+      startMapRadio()
+      const [lng, lat] = landingCenter ?? DEFAULT_NAV_ORIGIN
+      void tuneLiveRadio(lat, lng).catch(() => { /* no signal here; the bed still plays */ })
+    }
+
     if (tourStartedRef.current) return
     // The tour used to launch 1.2s after the intro — it took the camera away
     // before you had even looked at your own street. It now waits for the map
@@ -1846,6 +1879,39 @@ export default function App() {
   const [directionsSignal, setDirectionsSignal] = useState(0)
   const popCycleRef = useRef(-1)
 
+  /**
+   * The pops the channel arrows walk, for the level currently on screen.
+   *
+   * POIS and OTHER_POPS are different record types (yours carry a category and
+   * a distance string, theirs a poster, colour and avatar), but travelling to
+   * one only ever needs where it is, how much ground it holds and what to call
+   * it — so the route is narrowed to that and the two lists concatenate
+   * cleanly. On ALL yours come first, which keeps the arrows' starting position
+   * meaningful for the common case.
+   *
+   * Read through the ref, not the state: this is called from the message
+   * listener, which is installed once and would otherwise capture the level
+   * that happened to be current at mount.
+   */
+  const traversalPops = useCallback((): Array<{
+    id: string; name: string; coords: [number, number]; radiusKm: number
+  }> => {
+    const mine = POIS.map(p => ({
+      id: p.id, name: p.name, coords: p.coords as [number, number], radiusKm: p.radiusKm,
+    }))
+    const theirs = OTHER_POPS.map(p => ({
+      id: p.id, name: p.name, coords: p.coords, radiusKm: p.radiusKm,
+    }))
+    if (popLevelRef.current === 'mine') return mine
+    if (popLevelRef.current === 'others') return theirs
+    return [...mine, ...theirs]
+  }, [])
+
+  // Changing the level changes the list the arrows index into, so a position
+  // held over from the old list points at a different pop (or past the end of
+  // a shorter one). Start the new layer from its beginning.
+  useEffect(() => { popCycleRef.current = -1 }, [popLevel])
+
   // ── Engagement travels the camera ─────────────────────────────────────────
   //
   // Someone just touched a post. The notice (popups.tsx) tells you WHO; this
@@ -1900,8 +1966,14 @@ export default function App() {
       // The channel arrows count from wherever the camera IS. Without this the
       // next arrow press would resume from the pop before the engagement and
       // fly you backwards.
-      popCycleRef.current = POIS.indexOf(poi)
-      const nearby = popsNearby(poi)
+      //
+      // Located in the LEVEL'S route, not in POIS: on "All pops" the same pop
+      // sits at a different index, and on "Other pops" it is not in POIS at
+      // all — indexOf would return -1 and send the next press to the end of
+      // the list.
+      const route = traversalPops()
+      popCycleRef.current = route.findIndex(p => p.id === poi.id)
+      const nearby = popsNearby(poi, route)
       setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
       try {
         window.parent?.postMessage(
@@ -2012,14 +2084,23 @@ export default function App() {
         case 'cyclePop': {
           // Channel arrows on the map: fly pop-to-pop with the tour camera
           // (curved zoom-out-then-in), pausing the ambient tour.
+          //
+          // WHICH pops the arrows walk is the LEVEL currently on screen. This
+          // used to be POIS unconditionally — your own pops — so on "Other
+          // pops" the map drew everyone else's ground while the arrows flew you
+          // to claims that were not even rendered, and on ALL two thirds of the
+          // board was unreachable. The route now matches the layer, which is
+          // the whole point of having a level control.
           stopTour()
           const dir = event.data.dir === -1 ? -1 : 1
-          const next = ((popCycleRef.current + dir) % POIS.length + POIS.length) % POIS.length
+          const route = traversalPops()
+          if (!route.length) break
+          const next = ((popCycleRef.current + dir) % route.length + route.length) % route.length
           popCycleRef.current = next
-          const poi = POIS[next]
+          const poi = route[next]
           if (poi) {
-            setTourLine(`Pop ${next + 1} of ${POIS.length}: ${poi.name}`)
-            const nearby = popsNearby(poi)
+            setTourLine(`Pop ${next + 1} of ${route.length}: ${poi.name}`)
+            const nearby = popsNearby(poi, route)
             setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
             flyToPop(poi.coords as [number, number])
             // Tell the shell WHICH pop this is. The channel arrows used to count
@@ -2045,7 +2126,7 @@ export default function App() {
                 {
                   type: 'poplur-map-pop',
                   index: next,
-                  total: POIS.length,
+                  total: route.length,
                   name: poi.name,
                   // The HUD's RADIUS card shows THIS pop's takeover while you
                   // travel, not the signed-in user's own reach.

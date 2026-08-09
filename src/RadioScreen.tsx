@@ -28,6 +28,36 @@ const BANDS = [
 
 const HOME: [number, number] = [-79.3832, 43.6532]
 
+/** Which dial a station sits on. */
+type Wave = 'all' | 'fm' | 'am' | 'net'
+
+/**
+ * AM/FM is not a field the directory publishes — it lives in the station's
+ * NAME, exactly the way it does on a dial: "CHOP FM 102.7", "CFRB 1010".
+ *
+ * So read it from there, words first (an explicit "FM"/"AM" is the station's
+ * own answer), then the dial position, because a bare frequency still says
+ * which band it is: 87.5–108 is MHz and therefore FM, 530–1710 is kHz and
+ * therefore AM. Anything with no dial position at all is a stream, not a
+ * broadcast, and lands under NET rather than being guessed onto a band.
+ */
+function waveOf(station: LocalStation): Exclude<Wave, 'all'> {
+  if (station.source === 'soundcloud') return 'net'
+  const text = `${station.name} ${station.genre}`
+  if (/\bFM\b/i.test(text)) return 'fm'
+  if (/\bAM\b/i.test(text)) return 'am'
+  if (/\b(?:8[7-9]|9\d|10[0-8])[.,]\d\b/.test(text)) return 'fm'
+  if (/\b(?:5[3-9]\d|[6-9]\d\d|1[0-6]\d\d|170\d)\b/.test(text)) return 'am'
+  return 'net'
+}
+
+const WAVES: Array<{ key: Wave; label: string }> = [
+  { key: 'all', label: 'ALL' },
+  { key: 'fm', label: 'FM' },
+  { key: 'am', label: 'AM' },
+  { key: 'net', label: 'NET' },
+]
+
 // A station's logo is whatever the directory has on file: often nothing, and
 // often a URL that no longer resolves. Either way the deck must still show a
 // picture — a blank square reads as a broken screen. The Poplur TV stands in.
@@ -51,6 +81,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
   const [tunedUrl, setTunedUrl] = useState<string | null>(() => nowPlayingStation()?.url ?? null)
   const [soundCloudUrl, setSoundCloudUrl] = useState<string | null>(null)
   const [band, setBand] = useState<string | null>(null)
+  const [wave, setWave] = useState<Wave>('all')
   const [favourites, setFavourites] = useState<Set<string>>(() => new Set())
   const [muted, setMuted] = useState(isUserMuted)
   // The set warms up before it plays. 'off' is the collapsing picture.
@@ -127,13 +158,17 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
         pct: Math.round((n / stations.length) * 100),
       }))
       .sort((a, b) => b.pct - a.pct)
-      .slice(0, 5)
   }, [stations])
 
-  const inBand = useMemo(
-    () => (band ? (stations ?? []).filter(s => bandOf(s) === band) : (stations ?? [])),
-    [stations, band],
-  )
+  // Genre and dial are independent filters over the same list: pick ROCK on FM
+  // and you get rock stations you can actually receive on FM. Both default to
+  // everything, so the deck still opens on the full band as it always did.
+  const inBand = useMemo(() => {
+    let list = stations ?? []
+    if (band) list = list.filter(s => bandOf(s) === band)
+    if (wave !== 'all') list = list.filter(s => waveOf(s) === wave)
+    return list
+  }, [stations, band, wave])
 
   // "Trending Now" = the most-listened stations in range.
   const trending = useMemo(
@@ -207,6 +242,52 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
               CH {tuned ? String(Math.max(1, inBand.indexOf(tuned) + 1)).padStart(3, '0') : '---'}
             </span>
             <span className={styles.dashSignal} aria-hidden="true"><i /><i /><i /><i /><i /></span>
+          </div>
+
+          {/* ── the dial ──────────────────────────────────────────────────────
+              Band first, then genre, because that is the order you tune a real
+              set in: pick the dial, then find the music on it. Both were
+              already modelled — BANDS, the genre split and the inBand filter
+              all existed and were computed on every render — but nothing on
+              screen could reach them, so the deck always showed the whole list.
+              This is the missing control, not a new feature.
+
+              The genre chips are built from the stations ACTUALLY in range and
+              carry their real share of the band, so an empty genre never
+              appears as a chip that tunes to nothing. */}
+          <div className={styles.tuneRail}>
+            <div className={styles.waveGroup} role="group" aria-label="Broadcast band">
+              {WAVES.map(w => (
+                <button
+                  key={w.key}
+                  type="button"
+                  aria-pressed={wave === w.key}
+                  className={wave === w.key ? `${styles.waveChip} ${styles.chipOn}` : styles.waveChip}
+                  onClick={() => { playPop(); setWave(w.key) }}
+                >{w.label}</button>
+              ))}
+            </div>
+            <div className={styles.genreGroup} role="group" aria-label="Genre">
+              <button
+                type="button"
+                aria-pressed={band === null}
+                className={band === null ? `${styles.genreChip} ${styles.chipOn}` : styles.genreChip}
+                onClick={() => { playPop(); setBand(null) }}
+              >ALL GENRES</button>
+              {genreSplit.map(g => (
+                <button
+                  key={g.key}
+                  type="button"
+                  aria-pressed={band === g.key}
+                  className={band === g.key ? `${styles.genreChip} ${styles.chipOn}` : styles.genreChip}
+                  style={{ '--chipTint': g.tint } as React.CSSProperties}
+                  /* Tapping the lit genre clears it — the chip is the filter
+                     and its own off switch, so there is no way to get stuck in
+                     a genre with no obvious way back to the whole band. */
+                  onClick={() => { playPop(); setBand(band === g.key ? null : g.key) }}
+                >{g.label}<i>{g.pct}%</i></button>
+              ))}
+            </div>
           </div>
 
           <div className={styles.dashScreen}>
