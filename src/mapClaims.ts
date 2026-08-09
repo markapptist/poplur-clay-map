@@ -31,6 +31,9 @@ const CLAIMS_RINGS = 'poplur-claims-rings'
 const CLAIMS_RINGS_SOURCE = 'poplur-claims-rings-src'
 const CLAIMS_CORE = 'poplur-claims-core'
 
+/** One-time flags parked on the map instance (it outlives every push). */
+type ClaimsMap = mapboxgl.Map & { __poplurClaimZoomBound?: boolean }
+
 /** 72-point circle polygon around a center, `radiusKm` on the ground. */
 function circlePolygon(
   center: [number, number],
@@ -51,6 +54,53 @@ function circlePolygon(
   }
   return { type: 'Feature', properties, geometry: { type: 'Polygon', coordinates: [ring] } }
 }
+
+// ── Held ground stays GROUND, all the way out to the planet ─────────────────
+//
+// A claim is real territory with a real radius, and at street zoom that is
+// exactly what is drawn. From space the same 28km disc is half a pixel, so the
+// territory vanished and a glowing DOT was drawn in its place. That dot is a
+// symbol, not land: a planet covered in discs says "here are some markers",
+// while the thing being described is "this much of the world is held". Twenty
+// pops in one city looked the same as one.
+//
+// So the ground itself is what scales. Every claim is drawn at no less than
+// FLOOR_PX of screen, which means at planet zoom it paints as a patch of
+// terrain rather than a point, overlapping claims merge into continents, and
+// somebody holding the world sees a world in their colour. Zoom in and the
+// floor falls below the true radius, so the shape returns to the honest
+// territory with no seam — the same polygon, just no longer padded up to a
+// minimum.
+//
+// The floor is in PIXELS, not km, because "too small to read" is a property of
+// the screen, not of the ground.
+const FLOOR_PX = 13
+/** Mapbox: the world is 512px across at zoom 0. */
+const WORLD_PX_AT_Z0 = 512
+const EARTH_CIRCUMFERENCE_KM = 40_075
+
+/**
+ * The radius to DRAW this claim at, given where the camera is.
+ *
+ * Latitude matters: Web Mercator stretches ground away from the equator, so a
+ * fixed pixel floor is fewer km up north. Using the equatorial figure
+ * everywhere would over-inflate high-latitude claims into the Arctic.
+ */
+function drawnRadiusKm(trueKm: number, zoom: number, lat: number): number {
+  const kmPerPixel =
+    (EARTH_CIRCUMFERENCE_KM * Math.cos((Math.min(85, Math.abs(lat)) * Math.PI) / 180))
+    / (WORLD_PX_AT_Z0 * Math.pow(2, zoom))
+  return Math.max(trueKm, FLOOR_PX * kmPerPixel)
+}
+
+// Rebuilding ~130 claims × 72 points on every zoom frame is exactly the kind of
+// continuous work that cooks the map, so the geometry is only rebuilt when the
+// zoom crosses a HALF-STEP. Between those the existing polygons simply scale
+// with the camera like any other geometry, which is invisible to the eye — the
+// floor moves by ~40% across a half-step, and the claim is a soft-edged wash of
+// terrain, not a shape anyone is measuring.
+let lastZoomBand: number | null = null
+function zoomBandOf(zoom: number): number { return Math.round(zoom * 2) }
 
 /** Paint a claim in its OWN colour, falling back to the app's takeover pink for
  *  your own pops. One helper so fill/rim/dots can never disagree about whose
@@ -162,6 +212,22 @@ if (!liteTier())   map.addLayer({
   // not see individual posts, you see how much ground you hold — and it is what
   // makes the globe answer "how much of this is mine". Clustering also kills
   // the same-pixel overdraw instead of paying for it.
+  // Re-cut the claim geometry when the camera crosses a zoom half-step, so the
+  // pixel floor keeps up as you fly in and out. `moveend`, deliberately, not
+  // `zoom`: the latter fires every frame of a flight and would rebuild ~130
+  // polygons per frame — continuous idle work on the exact surface that has
+  // been overheating. The band check makes even moveend a no-op for panning.
+  if (!(map as ClaimsMap).__poplurClaimZoomBound) {
+    (map as ClaimsMap).__poplurClaimZoomBound = true
+    map.on('moveend', () => {
+      if (zoomBandOf(map.getZoom()) === lastZoomBand) return
+      // points:false — the globe dot source is clustered and rebuilding its
+      // index here would be pure waste; the dots are not what carries the
+      // planet view any more.
+      pushClaims(map, { points: false })
+    })
+  }
+
   if (!map.getSource(CLAIMS_POINTS_SOURCE)) {
     map.addSource(CLAIMS_POINTS_SOURCE, {
       type: 'geojson',
@@ -184,50 +250,23 @@ if (!liteTier())   map.addLayer({
   const grow = (base: number, k: number, cap: number): unknown =>
     ['min', cap, ['+', base, ['*', k, ['sqrt', claimedKm]]]]
 
-  if (!map.getLayer(CLAIMS_GLOBE_BLOOM)) {
-    map.addLayer({
-      id: CLAIMS_GLOBE_BLOOM,
-      slot: 'top',
-      type: 'circle',
-      source: CLAIMS_POINTS_SOURCE,
-      paint: {
-        'circle-color': claimColor('#FF4BA1') as never,
-        // The soft halo around the claim — this is what actually reads as
-        // "glowing" from space and what survives being partly covered by the
-        // clay landmark pins, which are DOM markers and always paint on top.
-        'circle-radius': ['interpolate', ['linear'], ['zoom'],
-          0, grow(5, 3.4, 40),
-          6, grow(8, 5.8, 70),
-        ] as never,
-        'circle-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.32, 6, 0.28, 7.5, 0],
-        'circle-blur': 1,
-      },
-    })
-  }
-  if (!map.getLayer(CLAIMS_GLOBE)) {
-    map.addLayer({
-      id: CLAIMS_GLOBE,
-      slot: 'top',
-      type: 'circle',
-      source: CLAIMS_POINTS_SOURCE,
-      paint: {
-        'circle-color': claimColor('#FF5FA8') as never,
-        // Bigger claims read bigger from space, but even the smallest stays a
-        // visible mark — presence first, proportion second.
-        'circle-radius': ['interpolate', ['linear'], ['zoom'],
-          0, grow(2.4, 1.5, 18),
-          6, grow(3.5, 2.6, 30),
-        ] as never,
-        'circle-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.97, 6.5, 0.92, 8, 0],
-        'circle-stroke-color': takeoverTint('#FFD7EC'),
-        'circle-stroke-width': 1.6,
-        'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.95, 8, 0],
-        // Nearly crisp: the bloom layer above owns the soft edge, so blurring
-        // the core too just made the mark mushy at planet scale.
-        'circle-blur': 0.15,
-      },
-    })
-  }
+  // The two globe DOT layers that used to live here are gone.
+  //
+  // They existed to answer "a 28km claim is sub-pixel from space", and they
+  // answered it with a symbol: a glowing disc standing in for the territory.
+  // That is a different statement from the one the product makes. A planet
+  // covered in discs reads as "markers have been placed"; held ground reads as
+  // "this much of the world is taken", and only the second one can ever show
+  // somebody holding all of it.
+  //
+  // drawnRadiusKm now keeps the real polygon at a legible size instead, so the
+  // planet view is the SAME terrain wash as the street view, just further away
+  // — overlapping claims merge into continents, and a worldwide account paints
+  // a worldwide globe. Nothing about the claim is faked to get there; only the
+  // minimum size it is allowed to shrink to.
+  //
+  // applyClaimsPalette still names these ids and is safe: it guards on
+  // getLayer, so the setters for them simply no-op now.
 
   // ── The claim comes OUT OF the pin ────────────────────────────────────────
   // A flat disc with an edge says "here is a boundary". It does not say where
@@ -364,9 +403,14 @@ function pushClaims(map: mapboxgl.Map, options?: { points?: boolean }) {
   // that is what "who is in the lead here" looks like, and without the sort it
   // was just whichever pop happened to be inserted last.
   const byReach = [...claims.values()].sort((a, b) => a.radiusKm - b.radiusKm)
+  // Where the camera is decides how much ground a claim must cover to still
+  // BE ground rather than a speck. Read once per push, not per claim.
+  const zoom = map.getZoom()
+  lastZoomBand = zoomBandOf(zoom)
+  const drawn = (c: Claim) => drawnRadiusKm(c.radiusKm, zoom, c.center[1])
   src.setData({
     type: 'FeatureCollection',
-    features: byReach.map(c => circlePolygon(c.center, c.radiusKm, 72, claimProps(c))),
+    features: byReach.map(c => circlePolygon(c.center, drawn(c), 72, claimProps(c))),
   })
   // Three rings per claim at 34/67/100% of its reach, weighted so the inner one
   // dominates. Four was one too many: with a dozen claims overlapping, the
@@ -377,7 +421,10 @@ function pushClaims(map: mapboxgl.Map, options?: { points?: boolean }) {
     const features: GeoJSON.Feature[] = []
     for (const c of byReach) {
       for (const [fraction, weight] of [[0.34, 1], [0.67, 0.5], [1, 0.24]] as const) {
-        features.push(circlePolygon(c.center, c.radiusKm * fraction, 48, {
+        // Off the DRAWN radius, not the true one — the comment above is the
+        // rule ("the same centre and radius as the fill"), and a wave sized to
+        // the true radius would collapse to a point inside an inflated claim.
+        features.push(circlePolygon(c.center, drawn(c) * fraction, 48, {
           ...claimProps(c), weight,
         }))
       }

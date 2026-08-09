@@ -342,6 +342,24 @@
 }
 
 /* Airplanes, satellites and clouds circling the clay globe */
+/* Sun and moon, parked over their sub-points. Non-interactive: they are sky,
+   not furniture, and a tap on the sun should still reach the ground under it. */
+.celestialBody {
+  pointer-events: none;
+}
+
+/* The rotation for the crescent's bright limb lives here rather than on the
+   marker element, whose transform Mapbox owns for positioning. */
+.celestialArt {
+  width: 100%;
+  height: 100%;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  transform-origin: 50% 50%;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.5));
+}
+
 .flyer {
   pointer-events: none;
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
@@ -452,7 +470,8 @@
   /* Centres the disc on the rail's centre line: bezel + half the thumb's
      overhang, less half its own overhang. Keep the 28px in step with the
      width below or the wheel drifts off the slider. */
-  right: calc(8px + (72px - 16px) / 2 - (28px - 16px) / 2);
+  right: auto;
+  left: var(--home-right-center);
   /* Level with the level icon: its centre line is --home-cube + 52px off the
      bottom (see .zoomWeather above), and this disc is 28px, so its bottom edge
      sits 14px under that centre. It keeps its own column under the zoom rail —
@@ -495,12 +514,12 @@
 }
 
 .colorCircle:active {
-  transform: scale(0.9);
+  transform: translateX(-50%) scale(0.9);
 }
 
 @keyframes colorCirclePop {
-  from { transform: scale(0.6); }
-  to   { transform: scale(1); }
+  from { transform: translateX(-50%) scale(0.6); }
+  to   { transform: translateX(-50%) scale(1); }
 }
 
 .zoomWrap {
@@ -515,9 +534,10 @@
      it and the catchment grows leftwards, over map the thumb was covering
      anyway. `right` keeps clear of the strip iOS reserves for its own edge
      gestures (back-swipe, Control Center). */
-  right: 8px;
+  right: auto;
+  left: var(--home-right-center);
   top: 50%;
-  transform: translateY(-50%);
+  transform: translate(-50%, -50%);
   z-index: 26;
   height: min(58vh, 440px);
   /* Wide invisible catchment: the pad of a thumb is ~45px across and lands
@@ -527,10 +547,10 @@
   /* Keep the full clay thumb inside the viewport. The rail used to sit on the
      wrapper's far edge, so half of the oversized thumb extended beyond the
      screen and the visible target did not match the draggable target. */
-  padding-right: calc((var(--zoom-thumb-size) - var(--zoom-track-size)) / 2);
+  padding: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   cursor: ns-resize;
   -webkit-tap-highlight-color: transparent;
 }
@@ -732,6 +752,17 @@
 }
 
 /* ── Tap-to-post composer: clay bubble anchored to the tapped ground ── */
+.composeDismissLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 39;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.18);
+}
+
 .composeBubble {
   position: absolute;
   z-index: 40;
@@ -1048,7 +1079,13 @@
 
    Keep this in sync with HomeTwin.module.css .bottomRow/.levelAbove — an
    iframe cannot read the parent's layout, so the agreement is by arithmetic. */
-.mapRoot, .zoomWeather, .colorCircle { --home-cube: clamp(124px, 37vw, 176px); }
+:global(#root) {
+  --home-cube: clamp(124px, 37vw, 176px);
+  --home-gap: clamp(8px, calc((100vw - 480px) / 2.5), 440px);
+  --home-side-track: calc((100vw - 32px - var(--home-cube) - var(--home-gap) - var(--home-gap)) / 2);
+  --home-left-center: calc(16px + var(--home-side-track) / 2);
+  --home-right-center: calc(100vw - 16px - var(--home-side-track) / 2);
+}
 
 .zoomWeather {
   position: absolute;
@@ -1066,9 +1103,9 @@
      and this drifts; phones are the case that matters, and the map is not a
      desktop surface. */
   right: auto;
-  left: calc(16px + (100vw - 48px - var(--home-cube)) / 2 - var(--home-cube) / 4 - 46px);
+  left: var(--home-left-center);
   top: auto;
-  bottom: calc(var(--home-cube) + 86px);
+  bottom: calc(var(--home-cube) + 106px);
   z-index: 27;
   width: 92px;
   display: grid;
@@ -1078,10 +1115,24 @@
   background: transparent;
   cursor: pointer;
   pointer-events: auto;
+  transform: translateX(-50%);
   filter: drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55)) drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
 }
 
-.zoomWeatherOpen { transform: scale(1.08); }
+.zoomWeatherOpen { transform: translateX(-50%) scale(1.08); }
+
+.weatherDismissLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 89;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
 
 .weatherForecast {
   position: absolute;
@@ -1103,9 +1154,11 @@
   overflow: hidden;
   transform: translateX(-50%);
   color: #171419;
-  background: #ece8e4;
-  border: 1px solid rgba(0, 0, 0, 0.48);
+  background: rgba(238, 235, 233, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 14px;
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
   box-shadow:
     0 28px 74px rgba(0, 0, 0, 0.68),
     inset 0 1px 0 rgba(255, 255, 255, 0.85);
@@ -1119,7 +1172,7 @@
   grid-template-columns: 64px minmax(0, 1fr) 34px;
   align-items: center;
   gap: 5px;
-  background: linear-gradient(180deg, #f8f7f5 0%, #dedbd8 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(216, 211, 215, 0.62));
   border-bottom: 1px solid rgba(0, 0, 0, 0.25);
   box-shadow: inset 0 1px 0 #fff;
   user-select: none;
@@ -1148,12 +1201,17 @@
 
 .weatherTitle {
   overflow: hidden;
-  color: #3a373a;
-  font: 700 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: transparent;
+  background: linear-gradient(180deg, #ff73bd, #7fe3ff 58%, #7856ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  font: 900 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-shadow: 0 1px 0 #fff;
+  -webkit-text-stroke: 1.2px rgba(20, 8, 24, 0.82);
+  paint-order: stroke fill;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.72));
 }
 
 .weatherTag {
@@ -1169,26 +1227,130 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 5px;
   padding: 13px 12px 14px;
-  background: #100b12;
+  background: rgba(16, 11, 18, 0.76);
   color: #fff2f8;
 }
 .weatherDays article { display: grid; place-items: center; gap: 4px; min-width: 0; }
-.weatherDays strong { font: 800 10px/1 system-ui, sans-serif; text-transform: uppercase; }
-.weatherDays article > span:not(.weatherDayIcon) { font: 900 13px/1 system-ui, sans-serif; color: #7fe3ff; }
-.weatherDays article > i { font: 700 11px/1 system-ui, sans-serif; color: rgba(255, 242, 248, 0.62); font-style: normal; }
-.weatherDayIcon { display: block; width: 34px; height: 34px; }
-.weatherDayIcon svg { width: 34px; height: 34px; }
+.weatherDays strong {
+  color: transparent;
+  background: linear-gradient(180deg, #fff, #ff8ac6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-stroke: 1px rgba(5, 2, 9, 0.94);
+  paint-order: stroke fill;
+  font: 900 10px/1 system-ui, sans-serif;
+  text-transform: uppercase;
+}
+.weatherDays article > span:not(.weatherDayIcon) {
+  color: transparent;
+  background: linear-gradient(180deg, #c8f6ff, #4ac4ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-stroke: 1px rgba(5, 2, 9, 0.95);
+  paint-order: stroke fill;
+  font: 900 13px/1 system-ui, sans-serif;
+}
+.weatherDays article > i {
+  color: #f3ddec;
+  -webkit-text-stroke: 0.8px rgba(5, 2, 9, 0.88);
+  paint-order: stroke fill;
+  font: 800 11px/1 system-ui, sans-serif;
+  font-style: normal;
+}
+.weatherDayIcon { display: block; width: 42px; height: 42px; }
+.weatherDayIcon svg { width: 42px; height: 42px; }
 
-.zoomWeather > div:first-child {
-  width: 38px;
-  height: 38px;
+.weatherVisual {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  filter:
+    drop-shadow(0 0 1px rgba(255, 255, 255, 0.95))
+    drop-shadow(0 3px 0 rgba(20, 4, 18, 0.78))
+    drop-shadow(0 7px 10px rgba(0, 0, 0, 0.48));
+}
+
+.weatherVisualCompact { width: 42px; height: 42px; }
+.weatherVector, .weatherVector svg, .weatherCloudModel { width: 100%; height: 100%; display: block; }
+.weatherCloudModel {
+  object-fit: contain;
+  animation: weatherCloudFloat 3.4s ease-in-out infinite;
+}
+
+.weatherMiniRain,
+.weatherMiniHail {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 18px;
+  display: flex;
+  justify-content: space-around;
+}
+
+.weatherMiniRain i {
+  width: 3px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(#baf4ff, #2a9fe7);
+  box-shadow: 0 0 0 1px rgba(7, 28, 50, 0.6);
+  animation: weatherDrop 0.72s linear infinite;
+}
+.weatherMiniRain i:nth-child(2) { animation-delay: -0.24s; }
+.weatherMiniRain i:nth-child(3) { animation-delay: -0.48s; }
+
+.weatherMiniHail i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e9f8ff;
+  box-shadow: 0 0 0 1px #718da0;
+  animation: weatherDrop 0.9s linear infinite;
+}
+.weatherMiniHail i:nth-child(2) { animation-delay: -0.3s; }
+.weatherMiniHail i:nth-child(3) { animation-delay: -0.6s; }
+
+.weatherMiniLightning {
+  position: absolute;
+  right: 5px;
+  bottom: -2px;
+  width: 8px;
+  height: 17px;
+  background: linear-gradient(180deg, #fff8a6, #ffb800);
+  clip-path: polygon(48% 0, 100% 0, 64% 38%, 100% 38%, 18% 100%, 40% 54%, 0 54%);
+  filter: drop-shadow(0 0 5px #fff36b);
+  animation: weatherLightning 2.6s steps(1, end) infinite;
+}
+
+@keyframes weatherCloudFloat {
+  0%, 100% { transform: translateY(1px) rotate(-1deg); }
+  50% { transform: translateY(-3px) rotate(1deg); }
+}
+
+@keyframes weatherDrop {
+  from { opacity: 0; transform: translateY(-5px); }
+  28% { opacity: 1; }
+  to { opacity: 0; transform: translateY(9px); }
+}
+
+@keyframes weatherLightning {
+  0%, 84%, 89%, 100% { opacity: 0; }
+  85%, 87% { opacity: 1; }
+}
+
+.zoomWeather > span:first-child {
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   line-height: 0;
 }
 
 .zoomWeather svg,
-.zoomWeather img { width: 38px; height: 38px; }
+.zoomWeather img { width: 44px; height: 44px; }
 
 /* the reading, under the mark */
 .zoomTemp {
@@ -1252,27 +1414,29 @@
     /* NOT right: 0 — that put the rail back inside the strip iOS reserves for
        its own edge gestures, so drags were stolen by the OS on exactly the
        small phones this branch is for. Narrower column, same clearance. */
-    right: 8px;
+    right: auto;
+    left: var(--home-right-center);
     width: 132px;
     height: min(52vh, 380px);
   }
 
   .zoomWeather {
-    right: 0;
+    right: auto;
+    left: var(--home-left-center);
     top: auto;
-    bottom: calc(50% + min(19vh, 150px) + 14px);
+    bottom: calc(var(--home-cube) + 98px);
     width: 68px;
   }
 
-  .zoomWeather > div:first-child {
-    width: 30px;
-    height: 30px;
+  .zoomWeather > span:first-child {
+    width: 36px;
+    height: 36px;
   }
 
   .zoomWeather svg,
   .zoomWeather img {
-    width: 30px;
-    height: 30px;
+    width: 36px;
+    height: 36px;
   }
 
   .zoomTemp {
@@ -1286,7 +1450,7 @@
     top: max(118px, calc(env(safe-area-inset-top) + 86px));
     bottom: auto;
     width: min(360px, calc(100vw - 24px));
-    padding: 10px 8px;
+    padding: 0;
     transform: translateX(-50%);
   }
 }

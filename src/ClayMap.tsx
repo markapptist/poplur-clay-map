@@ -6,6 +6,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
+import { subsolarPoint, sublunarPoint, moonPhase, CELESTIAL_MODELS } from './celestial'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette } from './mapClaims'
 import { takeoverTint, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
@@ -37,6 +38,8 @@ export interface ClayMapProps {
   weatherMode?: WeatherMode
   /** inline SVG for the current conditions, shown above the zoom rail */
   weatherIcon?: string
+  /** Transparent sprite rendered from the real Poplur cloud.glb. */
+  weatherCloud?: string | null
   /** already formatted for the locale, e.g. "18°C" or "64°F" */
   weatherTemp?: string | null
   /** Five real daily readings from the same weather service as current conditions. */
@@ -45,6 +48,7 @@ export interface ClayMapProps {
     high: number
     low: number
     icon: string
+    mode: WeatherMode
   }>
   /** Candidate real-world targets for the first post-globe lock. */
   introDestinations?: { coords: [number, number] }[]
@@ -88,6 +92,40 @@ export interface PopPin {
   mine: boolean
 }
 
+const CLOUD_WEATHER = new Set<WeatherMode>(['cloudy', 'rain', 'thunder', 'storm', 'hail', 'fog'])
+
+function WeatherMark({
+  mode,
+  icon,
+  cloud,
+  compact = false,
+}: {
+  mode: WeatherMode
+  icon: string
+  cloud?: string | null
+  compact?: boolean
+}) {
+  const clouded = Boolean(cloud && CLOUD_WEATHER.has(mode))
+  const raining = mode === 'rain' || mode === 'thunder' || mode === 'storm'
+  const lightning = mode === 'thunder' || mode === 'storm'
+  const hailing = mode === 'hail'
+  return (
+    <span className={`${styles.weatherVisual}${compact ? ` ${styles.weatherVisualCompact}` : ''}`}>
+      {clouded ? (
+        <img className={styles.weatherCloudModel} src={cloud ?? ''} alt="" draggable="false" />
+      ) : (
+        <span className={styles.weatherVector} dangerouslySetInnerHTML={{ __html: icon }} />
+      )}
+      {(raining || hailing) && (
+        <span className={hailing ? styles.weatherMiniHail : styles.weatherMiniRain} aria-hidden="true">
+          <i /><i /><i />
+        </span>
+      )}
+      {lightning && <span className={styles.weatherMiniLightning} aria-hidden="true" />}
+    </span>
+  )
+}
+
 export const MAP_2D = initialMapMode() === '2d'
 const MAP_LITE_REQUESTED =
   typeof window !== 'undefined' &&
@@ -123,6 +161,13 @@ const CLAY_LABEL_HALO_WIDTH = 1.35
 const CLAY_LABEL_HALO_BLUR = 0.6
 const CLAY_LABEL_EMISSIVE = 0.8
 
+// On-screen size of the two bodies. Not to scale with each other and
+// deliberately so: the real sun and moon subtend the same half a degree from
+// here, which at globe zoom is a couple of pixels and reads as dirt on the
+// screen. These are the sizes at which a clay sun looks like a sun.
+const CELESTIAL_SUN_PX = 104
+const CELESTIAL_MOON_PX = 78
+
 // Sky follows the real time of day: clear blue by day, pitch-black space with
 // stars by night (like the lock-screen reference).
 function applySky(map: mapboxgl.Map, day: boolean) {
@@ -157,6 +202,15 @@ function applySky(map: mapboxgl.Map, day: boolean) {
 // Re-colours every themable layer in place — called on theme switch without
 // rebuilding the map. Colour slots mirror the app's cube skins.
 function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
+  // Native WebViews and Vite refreshes can preserve the Map instance while
+  // Mapbox is between style teardown and installation. Even read APIs such as
+  // getStyle/getLayer throw in that interval, so let the normal style boot
+  // path apply the palette once readiness returns instead of blanking the map.
+  try {
+    if (!map.isStyleLoaded()) return
+  } catch {
+    return
+  }
   const cfg = (key: string, value: unknown) => {
     try { map.setConfigProperty('basemap', key, value as never) } catch { /* property absent */ }
   }
@@ -845,7 +899,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherTemp, weatherForecast = [], pins, onPinOpen }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherTemp, weatherForecast = [], pins, onPinOpen }: ClayMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -902,6 +956,94 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }, 1000)
     return () => window.clearInterval(id)
   }, [])
+
+  // ── Sun and moon: the real ones, over the real Earth ──────────────────────
+  //
+  // Each marker sits at its SUB-POINT — the spot on Earth that body is directly
+  // overhead — which is what makes them orbit for free. The globe turns
+  // underneath, so the sun walks a full circle of longitude a day while the
+  // moon slips a lunar month out of step with it, and the day/night terminator
+  // `applySky` already draws is by definition the great circle 90 degrees from
+  // the sun's point. The two agree without being told about each other.
+  //
+  // GLOBE ONLY. On the flat tier "directly overhead at this coordinate" is a
+  // claim Mercator cannot render honestly — the body would sit over the wrong
+  // ground and swell towards the poles.
+  const celestialRef = useRef<{
+    sun: mapboxgl.Marker
+    moon: mapboxgl.Marker
+    moonArt: HTMLDivElement
+  } | null>(null)
+  const celestialSpritesRef = useRef<{ sun: string; full: string; crescent: string } | null>(null)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || MAP_2D) return
+    let dropped = false
+
+    void (async () => {
+      // Prerender-backed, like every other GLB on this surface: these models
+      // are 62MB between them and decoding one per minute on the sky tick is
+      // exactly the cost modelSprite exists to avoid. Cached in a ref so the
+      // tick only moves markers.
+      if (!celestialSpritesRef.current) {
+        const [sun, full, crescent] = await Promise.all([
+          modelSprite(CELESTIAL_MODELS.sun, { yaw: 0, pitch: 0, size: 256 }),
+          modelSprite(CELESTIAL_MODELS.moonFull, { yaw: 0, pitch: 0, size: 256 }),
+          modelSprite(CELESTIAL_MODELS.moonCrescent, { yaw: 0, pitch: 0, size: 256 }),
+        ])
+        celestialSpritesRef.current = { sun, full, crescent }
+      }
+      const art = celestialSpritesRef.current
+      if (dropped || mapRef.current !== map || !art) return
+
+      if (!celestialRef.current) {
+        // The rotation lives on an INNER element: Mapbox owns the marker
+        // element's own transform for positioning and would overwrite ours.
+        const body = (src: string, px: number) => {
+          const el = document.createElement('div')
+          el.className = styles.celestialBody
+          el.style.width = `${px}px`
+          el.style.height = `${px}px`
+          const inner = document.createElement('div')
+          inner.className = styles.celestialArt
+          inner.style.backgroundImage = `url(${src})`
+          el.appendChild(inner)
+          const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+            .setLngLat([0, 0])
+            .addTo(map)
+          return { marker, inner }
+        }
+        const sun = body(art.sun, CELESTIAL_SUN_PX)
+        const moon = body(art.full, CELESTIAL_MOON_PX)
+        celestialRef.current = { sun: sun.marker, moon: moon.marker, moonArt: moon.inner }
+      }
+
+      const live = celestialRef.current
+      const sunAt = subsolarPoint(skyClock)
+      const moonAt = sublunarPoint(skyClock)
+      const phase = moonPhase(skyClock)
+
+      live.sun.setLngLat([sunAt.lon, sunAt.lat])
+      live.moon.setLngLat([moonAt.lon, moonAt.lat])
+      live.moonArt.style.backgroundImage =
+        `url(${phase.model === 'full' ? art.full : art.crescent})`
+      // Turn the crescent so its horns point away from the sun. A crescent lit
+      // from the wrong side is the one thing about a moon everybody notices.
+      live.moonArt.style.transform = phase.model === 'crescent'
+        ? `rotate(${phase.brightLimbAngle.toFixed(1)}deg)`
+        : ''
+    })()
+
+    return () => { dropped = true }
+  }, [skyClock])
+
+  // Markers outlive the tick effect, so they are torn down on unmount only.
+  useEffect(() => () => {
+    celestialRef.current?.sun.remove()
+    celestialRef.current?.moon.remove()
+    celestialRef.current = null
+  }, [])
+
   const [fovValue, setFovValue] = useState(FOV_DEFAULT)
   // The clay cloud GLB, rendered once to a sprite for the zoom-in cloud band.
   const [cloudSprite, setCloudSprite] = useState<string | null>(null)
@@ -2601,7 +2743,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         const step = (i: number) => {
           if (generation !== claimPaintQueue || i >= sets.length) return
           const [layer, prop, value] = sets[i]
-          try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* layer not ready */ }
+          try {
+            if (map.isStyleLoaded() && map.getLayer(layer)) {
+              map.setPaintProperty(layer, prop as never, value as never)
+            }
+          } catch { /* style/layer changed between readiness and the write */ }
           nextFrame(() => step(i + 1))
         }
         step(0)
@@ -2706,6 +2852,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       installComposeRadiusPreview(map)
       if (prototypeComposer) {
         map.on('click', (e) => {
+          // Mapbox synthesizes its map click from the pointer sequence before
+          // every marker's DOM click has fully settled. Without this guard,
+          // tapping a real pop could both open its post and open the empty-
+          // ground composer underneath it. Marker taps belong to the marker.
+          const target = e.originalEvent?.target
+          if (target instanceof Element && target.closest('.mapboxgl-marker')) return
           // With the composer ALREADY open, a tap on the map is "put this
           // away", not "start again over there". It used to re-drop on every
           // tap, so the window could never be dismissed by tapping out — it
@@ -3454,6 +3606,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           Choose the claim radius, then Drop → the territory disc pops out and
           grows to that many km. */}
       {composeAt && (
+        <button
+          type="button"
+          className={styles.composeDismissLayer}
+          aria-label="Close post composer"
+          onClick={() => { playPop(); setComposeMessage(''); setComposeAt(null) }}
+        />
+      )}
+      {composeAt && (
         <div
           className={styles.composeBubble}
           style={{ left: composeAt.x, top: composeAt.y }}
@@ -3682,20 +3842,33 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           aria-expanded={weatherOpen}
           onClick={() => { playPop(); setWeatherOpen(open => !open) }}
         >
-          <div dangerouslySetInnerHTML={{ __html: weatherIcon }} />
+          <WeatherMark mode={weatherMode} icon={weatherIcon} cloud={weatherCloud} />
           {weatherTemp != null && <div className={styles.zoomTemp}>{weatherTemp}</div>}
         </button>
       )}
 
       {weatherOpen && weatherForecast.length > 0 && zoomValue > 4.4 && (
-        <section className={styles.weatherForecast} aria-label="Five day weather forecast">
+        <button
+          type="button"
+          className={styles.weatherDismissLayer}
+          aria-label="Close weather forecast"
+          onClick={() => { playPop(); setWeatherOpen(false) }}
+        />
+      )}
+
+      {weatherOpen && weatherForecast.length > 0 && zoomValue > 4.4 && (
+        <section
+          className={styles.weatherForecast}
+          aria-label="Five day weather forecast"
+          onClick={() => { playPop(); setWeatherOpen(false) }}
+        >
           <header className={styles.weatherTitleBar}>
             <div className={styles.weatherTraffic} aria-label="Window controls">
               <button
                 type="button"
                 className={`${styles.weatherLight} ${styles.weatherClose}`}
                 aria-label="Close forecast"
-                onClick={() => { playPop(); setWeatherOpen(false) }}
+                onClick={event => { event.stopPropagation(); playPop(); setWeatherOpen(false) }}
               />
               <span className={`${styles.weatherLight} ${styles.weatherMinimize}`} aria-hidden="true" />
               <span className={`${styles.weatherLight} ${styles.weatherZoom}`} aria-hidden="true" />
@@ -3707,7 +3880,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             {weatherForecast.slice(0, 5).map(day => (
               <article key={day.date}>
                 <strong>{new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(`${day.date}T12:00:00`))}</strong>
-                <span className={styles.weatherDayIcon} dangerouslySetInnerHTML={{ __html: day.icon }} />
+                <span className={styles.weatherDayIcon}>
+                  <WeatherMark mode={day.mode} icon={day.icon} cloud={weatherCloud} compact />
+                </span>
                 <span>{Math.round(day.high)}°</span>
                 <i>{Math.round(day.low)}°</i>
               </article>
