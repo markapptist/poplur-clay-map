@@ -730,9 +730,13 @@ export default function ProfileTwin({
     let burstFired = false
     let burstTimer = 0
     const CONFETTI = ['#f63b9a', '#ff8ac6', '#67dcff', '#ffd166', '#b06cff', '#48e6a0']
+    // A cap, not a lockout. This used to bail whenever ANY piece was still in
+    // flight, which meant the commit burst below never actually fired: the pull
+    // burst's pieces live 1.5s and you always let go inside that window.
+    const MAX_PIECES = 40
     const burst = () => {
       const host = confettiRef.current
-      if (!host || host.childElementCount) return
+      if (!host || host.childElementCount >= MAX_PIECES) return
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
       const frag = document.createDocumentFragment()
       for (let i = 0; i < 16; i += 1) {
