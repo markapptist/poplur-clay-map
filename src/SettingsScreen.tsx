@@ -31,6 +31,9 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
   const [active, setActive] = useState(isWorldRadiusActive)
   const [remaining, setRemaining] = useState(worldRadiusRemainingMs)
   const [note, setNote] = useState<string | null>(null)
+  // Latched so a second tap cannot fire a second signOut while the shell is
+  // already tearing the session down and swapping surfaces.
+  const [signingOut, setSigningOut] = useState(false)
   // Camera switches. Read once on open — nothing else writes them while this
   // screen is up, and re-reading storage on every render would be a lie about
   // where the truth lives.
@@ -232,6 +235,34 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
         </article>
 
         {note && <p className={styles.note} role="status">{note}</p>}
+
+        {/* SIGN OUT — the app had no way out of a session at all.
+            Phase 3 replaced native Home with this web surface, which left
+            AppSettingsView (and the only sign-out button in the product)
+            mounted under a ProfileView that no longer appears. The practical
+            effect was that a signed-in build could never reach pre-login
+            again without deleting the app, so nothing before login could be
+            tested on a real device.
+            Native shells only: in the plain browser preview there is no
+            session to end, and a dead button is worse than no button. */}
+        {isNativeShell() && (
+          <article className={styles.card}>
+            <button
+              type="button"
+              className={styles.invite}
+              onClick={() => {
+                if (signingOut) return
+                setSigningOut(true)
+                // The shell owns the session; it signs out of Firebase and
+                // swaps back to the pre-login surface itself.
+                const sent = postNativeEvent({ type: 'signOut' })
+                if (!sent) setSigningOut(false)
+              }}
+            >
+              {signingOut ? 'SIGNING OUT…' : 'SIGN OUT'}
+            </button>
+          </article>
+        )}
 
         {/* DONE, the same way SHOW ME ends — the cube is still the universal
             back, this is the one that is on the screen you are reading. */}
