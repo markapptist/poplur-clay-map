@@ -204,13 +204,6 @@ export default function Camera({
     if (isNativeShell()) postNativeEvent({ type: 'cameraControl', control: 'filter', id: arFilter })
   }, [arFilter])
   const filterCss = AR_FILTERS.find(f => f.id === arFilter)?.css ?? 'none'
-  const faceDetected = detections.some(detection =>
-    detection.id === 'face'
-    || detection.label.toLowerCase() === 'person'
-    || Boolean(detection.user)
-    || detection.isUser === true,
-  )
-  const liveFilterCss = arFilter === 'none' || !faceDetected ? 'none' : filterCss
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
@@ -1066,7 +1059,6 @@ export default function Camera({
           style={{
             objectFit: 'cover',
             display: streamOn ? '' : 'none',
-            filter: liveFilterCss === 'none' ? undefined : liveFilterCss,
             // Device zoom changes the track itself. Unsupported browsers use
             // this crop fallback; disabling the old drift keeps the requested
             // zoom stable beneath the HUD.

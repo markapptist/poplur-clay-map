@@ -3,11 +3,9 @@ import type { Detection } from './mlDetect'
 import styles from './FaceAROverlay.module.css'
 
 const isFace = (detection: Detection) => {
-  const label = detection.label.toLowerCase()
   return !detection.whole && (
     detection.id === 'face'
-    || label === 'person'
-    || label.includes('face')
+    || detection.id.startsWith('face-')
     || Boolean(detection.user)
     || detection.isUser === true
   )

@@ -4,14 +4,10 @@ import { playPop } from './pop'
 
 // AR filters — the web twin of ARFilterManager.swift, carrying the same set it
 // ships (none · Smooth · Beauty · Brighten · Glow · Sharpen · Warm · Cool ·
-// Vintage). Two renderers, one list: in a browser (and the Android shell) the
-// `css` chain below is applied to the live <video>. On iOS it is NOT — the
-// preview there is a native layer behind a transparent WebView, so that <video>
-// is never rendered and styling it changed nothing on screen for as long as
-// this rail has existed. There, picking a filter posts a `cameraControl`
-// /`filter` event and ARFilterManager runs the matching CIFilter over the frame
-// buffer. The ids here match ARFilter's rawValues case-insensitively, which is
-// what lets one selection drive both.
+// Vintage). Browser and Android render face-anchored artwork in
+// FaceAROverlay; iOS sends the same id to ARFilterManager, which uses Vision
+// landmarks and composites the matching effect into the native frame buffer.
+// `css` remains the post-capture color recipe, not a whole-viewfinder effect.
 //
 // The rail is the hold menu laid flat: the same scrub physics from
 // CubeMenuWheelController (drag with momentum, friction, snap-to-nearest, the
