@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
 import ClayCornerButton from './ClayCornerButton'
+import ClayMuteButton from './ClayMuteButton'
+import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
@@ -140,6 +142,21 @@ export default function Camera({
   onPhotoCapture?: () => void
 }) {
   const [flash, setFlash] = useState(false)
+  // The ML announcer's switch, on the viewfinder itself. It already existed in
+  // Settings → CAMERA → "AI voice", which is the wrong distance away from a
+  // phone that is talking about the room RIGHT NOW — especially now that a
+  // frame names several things instead of one. Same storage key, so the
+  // settings toggle and this control can never disagree.
+  const [aiVoice, setAiVoice] = useState(readCameraAiVoice)
+  useEffect(() => onCameraPreferenceChange(() => setAiVoice(readCameraAiVoice())), [])
+  const toggleAiVoice = useCallback(() => {
+    const next = !readCameraAiVoice()
+    writeCameraAiVoice(next)
+    setAiVoice(next)
+    // Native owns CameraAIAnnouncer, so the choice has to cross the bridge too.
+    postNativeEvent({ type: 'cameraAiVoice', enabled: next })
+    if (!next) cancelVoiceSpeech()
+  }, [])
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
   const page: 'live' | 'roll' = ((step % 2) + 2) % 2 === 0 ? 'live' : 'roll'
   const [cameraPermission, setCameraPermission] = useState<'ask' | 'granted' | 'denied'>(() => {
@@ -1168,6 +1185,10 @@ export default function Camera({
           label={flash ? 'Flash on' : 'Flash off'}
           onPress={() => setFlashEnabled(!flashRef.current)}
         />
+        {/* Mute for the thing that TALKS. Same clay speaker the feed and the
+            map wear, so one mark means one thing everywhere in the app — but
+            here it silences the ML announcer, not a soundtrack. */}
+        <ClayMuteButton muted={!aiVoice} onToggle={toggleAiVoice} size={36} />
       </div>
       {/* Hands the spot to the ML readout while something is detected, then
           takes it back — the wordmark and the scan result never print over each

@@ -13,7 +13,7 @@ const deferToOwner = (owner: AudioOwner | null): boolean =>
   owner === 'voice' || owner === 'radio'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
-import { isNativeShell } from './nativeBridge'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
 import { readFeedCommentsAtEnd } from './feedPreferences'
@@ -122,7 +122,7 @@ export const CHANNELS: Channel[] = [
 // RADIUS⇄TRENDING label live in the home HUD (HomeTwin), which controls the
 // channel index from its clay arrows. Standalone (?view=feed) it manages its
 // own index.
-export type FeedAction = 'like' | 'comment' | 'captions' | 'profile'
+export type FeedAction = 'like' | 'comment' | 'share' | 'captions' | 'profile'
 
 // A channel is a stack of POSTS by different users. Channels that don't ship
 // their own creative borrow a stock clip, chosen by channel number, so a
@@ -1037,6 +1037,26 @@ export default function FeedTwin({
     bindActions(action => {
       if (action === 'like') { playPop(); return }
       if (action === 'comment') { playPop(); setCommentOpen(true); return }
+      if (action === 'share') {
+        playPop()
+        const post = postRef.current
+        const title = post?.caption ?? ch.caption
+        const by = post?.user ?? ch.user
+        // Native owns the real share sheet (UIActivityViewController); in the
+        // browser the Web Share API is the same gesture, and where neither
+        // exists the action is simply a no-op rather than a broken dialog.
+        const sent = postNativeEvent({
+          type: 'sharePost',
+          postId: radiusPostId(ch.id, post),
+          channel: ch.id,
+          title,
+          user: by,
+        })
+        if (!sent && typeof navigator !== 'undefined' && navigator.share) {
+          void navigator.share({ title: 'poplur', text: `${title} — ${by}` }).catch(() => {})
+        }
+        return
+      }
       if (action === 'captions') {
         playPop()
         setCaptionsOn(on => !on)

@@ -35,7 +35,7 @@ interface Item {
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'captions' | 'profile' | 'photo' | 'video' | 'roll' | 'detect' | 'ar' | 'live'
+  action?: 'like' | 'comment' | 'share' | 'captions' | 'profile' | 'photo' | 'video' | 'roll' | 'detect' | 'ar' | 'live'
   /** drawn as letters instead of an icon file */
   glyph?: string
   /**
@@ -74,6 +74,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   feed: [
     { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg', action: 'like' },
     { icon: 'Chat', title: 'COMMENT', screen: 'feed-comments', action: 'comment' },
+    // SHARE sits with its siblings. Sending a post on is the third thing you
+    // do to one, and the feed carries no on-screen engagement chips — so the
+    // hold menu is where LIKE and COMMENT live, and it is where this belongs.
+    { icon: 'Mail', title: 'SHARE', screen: 'feed-share', format: 'svg', action: 'share' },
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
     { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },

@@ -330,11 +330,16 @@
   z-index: 1;
 }
 
-/* Corner controls — bare clay 3D marks (flash left, flip right), no backing. */
+/* Corner controls — bare clay 3D marks (flash + ML mute left, flip right), no
+   backing. A row, because the left corner carries two marks now: the flash and
+   the switch for the voice that narrates the frame. */
 .camCornerSlot {
   position: absolute;
   top: max(14px, env(safe-area-inset-top));
   z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .camSlotLeft { left: max(12px, env(safe-area-inset-left)); }
 .camSlotRight { right: max(12px, env(safe-area-inset-right)); }
@@ -426,28 +431,31 @@
   text-overflow: ellipsis;
   font: 950 clamp(14px, 4.2vw, 19px)/1 ui-monospace, 'SF Mono', Menlo, monospace;
   letter-spacing: 0;
-  color: transparent;
-  background: linear-gradient(105deg, #fff 0%, #d8fff0 30%, #65ff98 52%, #8ce9ff 76%, #fff 100%);
-  background-size: 240% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-stroke: 1px rgba(0, 38, 14, 0.9);
+  /* Solid cyan with a dark rim and a glow — the SAME recipe as the radius
+     readout (.radiusValueShader / .statMax), which abandoned a clipped
+     gradient for exactly the reason this one had to: a background-clip fill
+     cannot carry a stroke convincingly, so over a bright frame the outline
+     ate the letters and over a dark one the fill washed out. This label sits
+     on live video, the most unpredictable backdrop in the app. */
+  color: #7fe3ff;
+  -webkit-text-fill-color: #7fe3ff;
+  background: none;
+  animation: none;
+  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.9);
   paint-order: stroke fill;
   filter:
-    drop-shadow(0 2px 0 rgba(0, 28, 12, 0.72))
-    drop-shadow(0 0 9px rgba(77, 255, 105, 0.65));
-  animation: cameraDetectionShader 4.8s linear 3;
+    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
 }
 
 .camDetectionTitle small {
   flex: none;
   font: 850 10px/1 ui-monospace, 'SF Mono', Menlo, monospace;
-  color: #d8ffe3;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
-}
-
-@keyframes cameraDetectionShader {
-  to { background-position: -240% 0; }
+  color: #bfeaff;
+  -webkit-text-stroke: .7px rgba(2, 15, 52, 0.95);
+  paint-order: stroke fill;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 7px rgba(54, 166, 255, .62);
 }
 
 .camCameraUnavailable {
