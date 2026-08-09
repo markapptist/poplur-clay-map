@@ -387,10 +387,6 @@
    straight through the poplur logo.
    Same 0.34s ease as .flipSlot in FeedTwin.module.css, so the two surfaces
    feel like one behaviour. */
-.camLogoOut {
-  opacity: 0;
-}
-
 .camLogo {
   transition: opacity 0.34s ease;
   position: absolute;
@@ -408,12 +404,12 @@
 
 .camDetectionTitle {
   position: absolute;
-  /* The readout takes the WORDMARK'S OWN LINE. It sat 46px below the title's
-     spot, so during the crossfade both were on screen in the same region and
-     the scan text read as printing into the logo. A swap has to be a swap:
-     same line as .camLogo (12px / safe-area in .cameraFull below), and the
-     fading logo leaves before the text lands. */
-  top: 14px;
+  /* UNDER the wordmark, which no longer leaves. The swap-in-place experiment
+     is reverted: losing the poplur title the instant the model saw anything
+     cost the screen its identity, and the two elements sharing one line meant
+     any overlap read as text printing through the logo. Clear of the
+     wordmark's box (top 12px + ~30px tall), so they stack. */
+  top: 52px;
   left: 50%;
   z-index: 27;
   display: inline-flex;
@@ -1089,7 +1085,9 @@
 }
 
 .cameraFull .camDetectionTitle {
-  top: max(20px, calc(env(safe-area-inset-top) + 2px));
+  /* Fullscreen lifts the wordmark to the safe-area top; the readout follows it
+     down by the same wordmark height. */
+  top: max(58px, calc(env(safe-area-inset-top) + 40px));
 }
 
 .cameraCommerceOverlay {

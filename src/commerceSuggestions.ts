@@ -71,7 +71,8 @@ export function suggestionForMapPin(pin: MapPinSuggestionInput): SmartCard {
     channelTag: `POPLUR LIVE · CH ${CHANNEL_NUMBER[channel] ?? '106'}`,
   })
   return {
-    icon: channel === 'sports' ? 'score' : channel === 'shopping' ? 'sale' : 'tip',
+    icon: channel === 'sports' ? 'score' : channel === 'shopping' ? 'sale' : channel === 'food' ? 'dish' : 'tip',
+    foodRelated: channel === 'food',
     title: pin.name,
     headline: pin.user ? `${pin.user} is trending here` : `${pin.name} is heating up`,
     rows: [
@@ -110,6 +111,7 @@ export function suggestionForMapPlace(place: MapPlaceSuggestionInput): SmartCard
   const copy = category[place.category]
   return {
     icon: place.category === 'shop' ? 'sale' : place.category === 'food' ? 'dish' : 'tip',
+    foodRelated: place.category === 'food',
     title: place.name,
     headline: copy.headline,
     rows: [

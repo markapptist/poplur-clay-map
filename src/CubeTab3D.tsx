@@ -42,6 +42,8 @@ export interface CubeTab3DProps {
       the model is a prop rather than being baked in. Gestures are unchanged:
       this is still the same navigator, just wearing a different shape. */
   modelUrl?: string
+  /** Reveals the cube's authored fork/knife top face while a food ad is open. */
+  showFoodFace?: boolean
 }
 
 /** The designed cube is authored as a true box, so it is normalised per-axis to
@@ -112,7 +114,7 @@ function disposeModel(node: THREE.Object3D) {
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -120,6 +122,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
   // inferring it from network fetches is unreliable once the loader caches.
   const [loadedModel, setLoadedModel] = useState<string | null>(null)
   const targetTabRef = useRef(targetTab)
+  const showFoodFaceRef = useRef(showFoodFace)
   // Restarts the parked render loop; set by the effect below.
   const wakeLoopRef = useRef<() => void>(() => {})
   const callbacksRef = useRef({ onFaceChange, onSpinChange, onTap, onHold })
@@ -137,12 +140,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
 
   // imperative bridge: prop change → spring to that face
   const springToRef = useRef<(tab: CubeTab) => void>(() => {})
+  const showFoodFaceOnCubeRef = useRef<(visible: boolean) => void>(() => {})
   useEffect(() => {
     if (targetTab !== targetTabRef.current) {
       targetTabRef.current = targetTab
       springToRef.current(targetTab)
     }
   }, [targetTab])
+  useEffect(() => {
+    if (showFoodFace === showFoodFaceRef.current) return
+    showFoodFaceRef.current = showFoodFace
+    showFoodFaceOnCubeRef.current(showFoodFace)
+  }, [showFoodFace])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -177,8 +186,16 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     // so even its 45°-rotated silhouette (half-width √2 ≈ 1.414) never clips.
     const halfH = 1.46
     const camera = new THREE.OrthographicCamera(-halfH, halfH, halfH, -halfH, 0.01, 100)
+    // Yaw lives inside pitch. Rotating the cube around its own Y axis cannot
+    // disturb the +Y food face, while the outer X rotation brings that face to
+    // camera. The outer roll counter-rotates the top artwork so fork/knife stays
+    // upright whether Map or Feed was the side parked underneath it.
+    const rollGroup = new THREE.Group()
+    const pitchGroup = new THREE.Group()
     const group = new THREE.Group()
-    scene.add(group)
+    scene.add(rollGroup)
+    rollGroup.add(pitchGroup)
+    pitchGroup.add(group)
     groupRef.current = group
 
     // ---- rotation state ----
@@ -191,6 +208,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     let lastTab = targetTabRef.current
     let prevYaw = yaw
     let spinReported = false
+    let pitch = showFoodFaceRef.current ? HALF_PI : 0
+    let pitchVelocity = 0
+    let pitchTarget: number | null = null
 
     const reportSpin = (spinning: boolean) => {
       if (spinReported === spinning) return
@@ -239,6 +259,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       wakeLoopRef.current()
     }
     springToRef.current = springTo
+    showFoodFaceOnCubeRef.current = visible => {
+      pitchTarget = visible ? HALF_PI : 0
+      needsRender = true
+      wakeLoopRef.current()
+    }
 
     // ---- load model + face plates ----
     const loader = clayLoader()
@@ -249,9 +274,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       loadedUrlRef.current = modelUrlRef.current
       setLoadedModel(modelUrlRef.current)
 
-      // Straight-on (no pitch): the top face is never visible, and with the
-      // ortho camera the front face is a perfect square that stays identical as
-      // the cube turns.
+      // Straight-on camera. The cube normally has no pitch; food suggestions
+      // animate the authored top face into this same square frame.
       camera.position.set(0, 0, 10)
       camera.lookAt(0, 0, 0)
       needsRender = true
@@ -274,6 +298,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
 
     const onPointerDown = (e: PointerEvent) => {
       try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
+      // WebKit grants Web Audio on pointer-down reliably; pointer-move is too
+      // late on some iPhones and made the first POP/PAP of a session disappear.
+      primeMotionAudio()
       wakeLoopRef.current()
       dragging = true
       moved = false
@@ -379,6 +406,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
         }
       }
 
+      if (pitchTarget !== null) {
+        const pitchAccel = -155 * (pitch - pitchTarget) - 21 * pitchVelocity
+        pitchVelocity += pitchAccel * dt
+        pitch += pitchVelocity * dt
+        needsRender = true
+        if (Math.abs(pitch - pitchTarget) < 0.002 && Math.abs(pitchVelocity) < 0.02) {
+          pitch = pitchTarget
+          pitchVelocity = 0
+          pitchTarget = null
+        }
+      }
+
       // Mid-drag crossings still commit here: a slow deliberate turn never
       // reaches onPointerUp's momentum branch, and past 45° the new face IS the
       // one you are looking at. Release commits earlier (see onPointerUp); this
@@ -399,6 +438,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
 
       if (needsRender) {
         group.rotation.y = yaw
+        pitchGroup.rotation.x = pitch
+        const foodFaceProgress = Math.max(0, Math.min(1, pitch / HALF_PI))
+        rollGroup.rotation.z = -yaw * foodFaceProgress
         renderer.render(scene, camera)
         needsRender = false
       }
@@ -408,7 +450,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       // display-rate loop (120Hz on ProMotion) turning a cube that was not
       // moving, plus an audio call per frame, forever. Idle now costs nothing;
       // wake() restarts the loop from a gesture or a tab change.
-      const active = dragging || springTarget !== null || Math.abs(vel) > 0.02 || needsRender
+      const active = dragging
+        || springTarget !== null
+        || pitchTarget !== null
+        || Math.abs(vel) > 0.02
+        || Math.abs(pitchVelocity) > 0.02
+        || needsRender
       if (active) {
         raf = requestAnimationFrame(loop)
       } else {

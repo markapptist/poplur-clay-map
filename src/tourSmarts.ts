@@ -50,6 +50,8 @@ export interface SmartCard {
   channelTag?: string
   accent?: string
   accent2?: string
+  /** Drives contextual chrome while a food offer is actually on screen. */
+  foodRelated?: boolean
 }
 
 // Deterministic per (stop, hour-slot, weekday): stable while you dwell,
@@ -203,6 +205,7 @@ function dishCard(stop: SmartStop, when: Date, seed: number): SmartCard {
     : 'the stalls sell through it by mid-afternoon'
   return {
     icon: 'dish',
+    foodRelated: true,
     title: stop.name,
     headline: `Order ${dish}`,
     rows: [{ label: day, value: special ? 'special today' : `best at ${slot === 'morning' ? 'breakfast' : slot}` }],

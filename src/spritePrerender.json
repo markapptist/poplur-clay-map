@@ -14,5 +14,7 @@
   "zoom_buildings.glb|25|14|256": "sprites/zoom_buildings_y25_p14_s256.png",
   "zoom_globe.glb|20|12|256": "sprites/zoom_globe_y20_p12_s256.png",
   "models/poplur_pin.glb|0|0|256": "sprites/poplur_pin_y0_p0_s256.png",
-  "models/poplur_pin.glb|20|14|256": "sprites/poplur_pin_y20_p14_s256.png"
+  "models/poplur_pin.glb|20|14|256": "sprites/poplur_pin_y20_p14_s256.png",
+  "models/poplur_mic.glb|0|0|512": "sprites/poplur_mic_y0_p0_s512.png",
+  "models/poplur_mixer.glb|22|26|256": "sprites/poplur_mixer_y22_p26_s256.png"
 }

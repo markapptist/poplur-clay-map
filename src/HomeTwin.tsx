@@ -30,6 +30,7 @@ import {
 import { noteNewsMessage } from './newsMessages'
 import { POIS } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
+import { onFoodSuggestionVisibilityChange } from './popups'
 
 
 /** Home chrome fades out after this long without a touch (see chromeIdle). */
@@ -449,6 +450,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // map layer reads it — see the map lifetime effect. CubeTab3D only reports on
   // CHANGE, and reports false on teardown, so this cannot latch on.
   const [cubeSpinning, setCubeSpinning] = useState(false)
+  const [feedFoodAdVisible, setFeedFoodAdVisible] = useState(false)
+  const [mapFoodAdVisible, setMapFoodAdVisible] = useState(false)
+  useEffect(() => onFoodSuggestionVisibilityChange(setFeedFoodAdVisible), [])
 
   // ONE PAGE, ONE VOICE.
   //
@@ -505,6 +509,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [activeTab, cubeSpinning, committedTab])
   // undefined = the designed cube. Set while a screen takes the navigator over.
   const [cubeModel, setCubeModel] = useState<string | undefined>(undefined)
+  const showFoodCubeFace = cubeModel === undefined && (
+    (activeTab === 'feed' && feedFoodAdVisible)
+    || (activeTab === 'map' && mapFoodAdVisible)
+  )
   // The post composer is a full-screen modal, but it lives inside .contentLayer
   // (z-index 4) so it can never stack above the home chrome at 260 — the radius
   // readout, channel arrows and cube drew straight over it, with the cube
@@ -535,7 +543,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // On TV Guide the navigator stops being a cube and becomes the clay TV —
     // the screen you are on IS the object in your hand. It still turns, still
     // holds to open the wheel, and is still the way back out.
-    setCubeModel(open && screen === 'feed-tvguide' ? CLAY_TV_MODEL : undefined)
+    // TV Guide AND Radio both hand the navigator over to the clay TV — on
+    // those screens the thing in your hand IS the set you are tuning. It still
+    // turns, still holds to open the wheel, still backs you out.
+    setCubeModel(
+      open && (screen === 'feed-tvguide' || screen === 'map-radio') ? CLAY_TV_MODEL : undefined,
+    )
     // A subscreen IS a page change. Radio, TV Guide and Games each bring their
     // own sound, and the tab-change rule below never fires for them because
     // `activeTab` does not move — so opening or closing one used to leave the
@@ -581,6 +594,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stays absent so Profile / Feed / Camera keep their full frame budget. It is
   // torn down once the user leaves the map (after MAP_GRACE_MS, default 0).
   const [mapMounted, setMapMounted] = useState(initialTab === 'map')
+  useEffect(() => {
+    if (!mapMounted || activeTab !== 'map') setMapFoodAdVisible(false)
+  }, [activeTab, mapMounted])
   // iOS sends its real ProcessInfo thermal state to the main document. The map
   // lives in a child document with its own frame governor, so forward every
   // transition and replay the latest state after each low-memory remount.
@@ -683,6 +699,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // boot is exactly what this app decided not to do.
       setMapPainted(true)
       if (event.data.type === 'poplur-map-loading') setMapReady(false)
+      if (event.data.type === 'poplur-food-ad-visibility') {
+        setMapFoodAdVisible(Boolean(event.data.visible))
+      }
       // The map flew to a pop and is telling us which one. This is the only
       // source of truth for the number shown between the channel arrows —
       // counting locally meant the readout and the destination disagreed.
@@ -1619,6 +1638,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             size={cubeSize}
             modelUrl={cubeModel}
             targetTab={activeTab}
+            showFoodFace={showFoodCubeFace}
             onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}
             onSpinChange={setCubeSpinning}
             onTap={popCube}

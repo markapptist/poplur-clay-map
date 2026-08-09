@@ -395,41 +395,10 @@ export default function Camera({
   // is explicitly a simulation (see mlDetect.ts) and must never be what draws
   // boxes over a live lens; it also cannot run here, because the iOS camera is
   // native behind a transparent WebView so this page's <video> has no frames.
-  // ── The AI's voice on the lens ───────────────────────────────────────────
-  // Speaks what the model is seeing — in the LIVE camera only. Detections
-  // arrive ~8×/s; the voice announces when the SET of things changes (a person
-  // walks in, a barcode appears), never per frame, and not more than once
-  // every few seconds. Leaving the live page or switching detection off cuts
-  // the sentence mid-word: the voice belongs to the lens, not the app.
-  const lastSpokenLabelsRef = useRef('')
-  const lastSpokenAtRef = useRef(0)
-  useEffect(() => {
-    if (!liveDetectionActive) {
-      lastSpokenLabelsRef.current = ''
-      return
-    }
-    if (detections.length === 0) return
-    const labels = [...new Set(detections.map(item => item.user?.handle ?? item.label))].sort()
-    const key = labels.join('|')
-    const now = performance.now()
-    if (key === lastSpokenLabelsRef.current || now - lastSpokenAtRef.current < 3500) return
-    lastSpokenLabelsRef.current = key
-    lastSpokenAtRef.current = now
-    const known = detections.find(item => item.user)
-    const spoken = labels.map(label => label.startsWith('@') ? label.slice(1) : `a ${label.toLowerCase()}`)
-    const list = spoken.length === 1
-      ? spoken[0]
-      : `${spoken.slice(0, -1).join(', ')} and ${spoken[spoken.length - 1]}`
-    speakWithVoiceAudioFocus(
-      known ? `That's ${known.user!.handle.replace('@', '')}. I can see ${list}.` : `I can see ${list}.`,
-      { rate: 1.0, pitch: 1.05 },
-    )
-  }, [detections, liveDetectionActive])
-  // Cut the voice the moment the live lens is no longer the page.
-  useEffect(() => {
-    if (liveDetectionActive) return
-    cancelVoiceSpeech()
-  }, [liveDetectionActive])
+  // NO web-side detection voice here. The native CameraAIAnnouncer already
+  // announces ML objects from the same frames (WebHomeCameraLayer wires it in
+  // enableClassificationBridge), so speaking from here too said everything
+  // twice, half a beat apart. The setting that silences it is native-side.
 
   useEffect(() => {
     if (!isNativeShell()) return
@@ -1108,19 +1077,27 @@ export default function Camera({
       {/* Hands the spot to the ML readout while something is detected, then
           takes it back — the wordmark and the scan result never print over each
           other. Mirrors the feed's brand/channel-info flip. */}
-      <img
-        className={real && detectOn && detections.length > 0
-          ? `${styles.camLogo} ${styles.camLogoOut}`
-          : styles.camLogo}
-        src="logo_text.png"
-        alt="poplur"
-        draggable={false}
-      />
+      {/* The wordmark STAYS. Swapping it out for the scan result meant the
+          screen lost its identity the moment the model saw anything; the
+          answer belongs underneath the title, not in place of it. */}
+      <img className={styles.camLogo} src="logo_text.png" alt="poplur" draggable={false} />
+      {/* ONE answer. The camera was showing three at once: this shader line,
+          plus a label pill for every whole-frame classification drawn as a
+          full-screen box. The boxes are located objects now (DetectionOverlay
+          filters `whole`), and this picks a single winner:
+            a recognised PERSON first — a face is someone, not something,
+            then the most confident whole-frame classification (what the
+            picture IS), and only then the best located object. */}
       {real && detectOn && detections.length > 0 && (() => {
-        const detected = detections.find(item => item.user) ?? detections[0]
+        const byConfidence = (a: Detection, b: Detection) => b.confidence - a.confidence
+        const detected =
+          detections.find(item => item.user)
+          ?? [...detections].filter(d => d.whole).sort(byConfidence)[0]
+          ?? [...detections].sort(byConfidence)[0]
+        if (!detected) return null
         return (
           <div className={styles.camDetectionTitle} role="status">
-            <span>{detected.user?.handle ?? detected.label.toUpperCase()}</span>
+            <span>{detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase()}</span>
             <small>{Math.round(detected.confidence * 100)}%</small>
           </div>
         )

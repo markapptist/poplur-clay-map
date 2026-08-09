@@ -935,6 +935,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
+  // Mirrors composeAt for the map's click handler, which is bound once inside
+  // the style-load effect and would otherwise close over the very first value
+  // forever. A ref is the whole reason the dismiss below can see the window.
+  const composeOpenRef = useRef(false)
+  composeOpenRef.current = composeAt !== null
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
   // The words on the pop. Typed here, they make it a WRITTEN pop: it claims the
   // same ground and runs in The Poplur Times instead of the camera roll.
@@ -2693,6 +2698,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       installComposeRadiusPreview(map)
       if (prototypeComposer) {
         map.on('click', (e) => {
+          // With the composer ALREADY open, a tap on the map is "put this
+          // away", not "start again over there". It used to re-drop on every
+          // tap, so the window could never be dismissed by tapping out — it
+          // just teleported, and the only way to close it was the cancel
+          // button. Taps inside the bubble are DOM events on an overlay and
+          // never reach the canvas, so this cannot fire while you are typing.
+          if (composeOpenRef.current) {
+            composeOpenRef.current = false
+            setComposeMessage('')
+            setComposeAt(null)
+            return
+          }
           // A tap on open ground starts a pop there: pick a radius, drop it.
           // Taps that land on a POI/venue marker are handled by those layers.
           setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: e.point.x, y: e.point.y })

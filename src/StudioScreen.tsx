@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './StudioScreen.module.css'
 import { playPop } from './pop'
+import { modelSprite } from './modelSprite'
 import { requestAudioFocus, releaseAudioFocus, registerAudioOwner } from './audioFocus'
 
 // Poplur Studio — record a take, let the AI turn it into a song.
@@ -101,6 +102,24 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   const [aiError, setAiError] = useState<string | null>(null)
   const [styleText, setStyleText] = useState('')
   const [micArtOk, setMicArtOk] = useState(true)
+  // The supplied Poplur objects, baked to flat sprites by modelSprite (the
+  // GLBs are 44MB and 40MB — decoding either on a phone is exactly what the
+  // prerender pass exists to prevent, so these resolve straight out of the
+  // manifest and the models are never fetched on a device).
+  const [micArt3d, setMicArt3d] = useState<string | null>(null)
+  const [mixerArt, setMixerArt] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    // Straight on: the mic is the whole screen here, so any yaw reads as the
+    // object having been knocked over rather than presented.
+    modelSprite('models/poplur_mic.glb', { yaw: 0, pitch: 0, size: 512 })
+      .then(src => { if (live) setMicArt3d(src) })
+      .catch(() => { /* falls back to the supplied PNG */ })
+    modelSprite('models/poplur_mixer.glb', { yaw: 22, pitch: 26, size: 256 })
+      .then(src => { if (live) setMixerArt(src) })
+      .catch(() => { /* falls back to the clay chip */ })
+    return () => { live = false }
+  }, [])
   const songAudio = useRef<HTMLAudioElement | null>(null)
 
   // The transport is a voice: starting playback takes the floor from the feed
@@ -474,10 +493,19 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     return (
       <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
         <div className={styles.micStage}>
-          {micArtOk ? (
+          {micArt3d ? (
+            /* The 3D Poplur mic the user supplied, rendered to a sprite. It is
+               a clean object on transparency, so unlike the old PNG it needs no
+               screen-blend trick to hide a baked-in background. */
+            <img
+              className={styles.micArt3d}
+              src={micArt3d}
+              alt="Poplur studio microphone"
+              draggable={false}
+            />
+          ) : micArtOk ? (
             /* studio_mic.png is the bedazzled Poplur microphone the user
-               supplied. Until the file lands in public/, fall back to the
-               supplied wheel icon rather than inventing art. */
+               supplied — still the fallback while the sprite resolves. */
             <img
               className={styles.micArt}
               src="studio_mic.png"
@@ -565,7 +593,11 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
           <button className={styles.back} type="button" onClick={() => { playPop(); onClose() }}>
             ‹
           </button>
-          <span className={styles.brandCube} aria-hidden="true" />
+          {/* The mixing desk stands where the clay cube chip used to: this is
+              the EDIT stage, and the object should say what the screen does. */}
+          {mixerArt
+            ? <img className={styles.brandMixer} src={mixerArt} alt="" aria-hidden="true" draggable={false} />
+            : <span className={styles.brandCube} aria-hidden="true" />}
           <span className={styles.brand}>Poplur</span>
           <span className={styles.brandStudio}>STUDIO</span>
           <span className={styles.headerSpacer} />

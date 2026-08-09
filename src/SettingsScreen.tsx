@@ -3,6 +3,12 @@ import styles from './SettingsScreen.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import {
+  readCameraAiVoice,
+  readCameraDetectDefault,
+  writeCameraAiVoice,
+  writeCameraDetectDefault,
+} from './cameraPreferences'
+import {
   WORLD_RADIUS_HOURS,
   formatRemaining,
   grantWorldRadius,
@@ -24,6 +30,25 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
   const [active, setActive] = useState(isWorldRadiusActive)
   const [remaining, setRemaining] = useState(worldRadiusRemainingMs)
   const [note, setNote] = useState<string | null>(null)
+  // Camera switches. Read once on open — nothing else writes them while this
+  // screen is up, and re-reading storage on every render would be a lie about
+  // where the truth lives.
+  const [aiVoice, setAiVoice] = useState(readCameraAiVoice)
+  const [detectDefault, setDetectDefault] = useState(readCameraDetectDefault)
+
+  // The native side owns both behaviours — CameraAIAnnouncer does the talking
+  // and the capture session decides what runs at start — so a switch here has
+  // to reach across the bridge, not just into localStorage.
+  const setVoice = (on: boolean) => {
+    playPop()
+    setAiVoice(writeCameraAiVoice(on))
+    postNativeEvent({ type: 'cameraAiVoice', enabled: on })
+  }
+  const setDetect = (on: boolean) => {
+    playPop()
+    setDetectDefault(writeCameraDetectDefault(on))
+    postNativeEvent({ type: 'cameraDetectDefault', enabled: on })
+  }
 
   // The countdown, and only while this screen is open. Half a minute is fine
   // for a readout in hours and minutes — a per-second tick would be a timer
@@ -132,6 +157,42 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
           >
             <i style={{ width: active ? `${Math.max(2, Math.min(100, (remaining / (WORLD_RADIUS_HOURS * 3_600_000)) * 100))}%` : '0%' }} />
           </div>
+        </article>
+
+        <article className={styles.group} aria-label="Camera">
+          <span className={styles.groupKicker}>CAMERA</span>
+
+          <button
+            type="button"
+            className={styles.switchRow}
+            role="switch"
+            aria-checked={aiVoice}
+            onClick={() => setVoice(!aiVoice)}
+          >
+            <span className={styles.switchText}>
+              <b>AI voice</b>
+              <i>Poplur says what it sees through the lens.</i>
+            </span>
+            <span className={aiVoice ? `${styles.switchTrack} ${styles.switchOn}` : styles.switchTrack}>
+              <em />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className={styles.switchRow}
+            role="switch"
+            aria-checked={detectDefault}
+            onClick={() => setDetect(!detectDefault)}
+          >
+            <span className={styles.switchText}>
+              <b>Detect on open</b>
+              <i>Start scanning as soon as the camera opens.</i>
+            </span>
+            <span className={detectDefault ? `${styles.switchTrack} ${styles.switchOn}` : styles.switchTrack}>
+              <em />
+            </span>
+          </button>
         </article>
 
         {note && <p className={styles.note} role="status">{note}</p>}

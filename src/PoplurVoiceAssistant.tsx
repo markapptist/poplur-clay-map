@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './PoplurVoiceAssistant.module.css'
+import RecognitionAura from './RecognitionAura'
 import { aiAnswer } from './ProfileTwin'
 import { playPop } from './pop'
 import type { CubeTab } from './CubeTab3D'
@@ -360,7 +361,25 @@ export default function PoplurVoiceAssistant({
 
   return (
     <div className={`${styles.assistant} ${styles[phase]}`} aria-live="polite" role="status">
-      <div className={styles.edge} aria-hidden="true" />
+      {/* The SAME edge the camera lights up when the model recognises
+          something — the component itself, not a copy of its numbers. The two
+          were byte-identical conic recipes maintained in two files and had
+          already drifted apart in timing (reply span its rainbow over 7s,
+          which read as idle rather than as Poplur answering you). Sharing it
+          means they cannot drift again.
+
+          Intense on the two beats that are about you: the mic hearing you
+          (listening) and Poplur talking back (reply). `thinking` keeps the
+          calmer ring — nothing is being said in either direction. */}
+      {phase === 'unavailable'
+        ? <div className={styles.edge} aria-hidden="true" />
+        : (
+          <RecognitionAura
+            active
+            userSeen={phase === 'listening' || phase === 'reply'}
+            tag={false}
+          />
+        )}
       <div className={styles.status}>
         <span className={styles.bars} aria-hidden="true"><i /><i /><i /><i /><i /></span>
         <span>{message}</span>

@@ -23,6 +23,10 @@ export interface Detection {
   confidence: number
   /** a Poplur user rather than an object — carries their handle and reach */
   user?: { handle: string; radiusKm: number }
+  /** A WHOLE-FRAME classification ("what is this a picture of"), not a located
+   *  object. It has no position, so it must never be drawn as a box — it is
+   *  the readout's answer. Set by the native bridge. */
+  whole?: boolean
   /** THIS user: the face matched their profile picture (on-device). Set by the
    *  native Vision matcher when it ships; the browser twin approximates it via
    *  faceIdEnabled() so the aura's owner state is demonstrable today. */

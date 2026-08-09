@@ -256,7 +256,17 @@ export default function HoldMenuTwin({
 
   const [offset, setOffset] = useState(0)      // continuous wheel position, item units
   const [selected, setSelected] = useState(0)  // item at center = round(offset)
-  const [activeScreen, setActiveScreen] = useState<Item | null>(null)
+  // ?holdScreen=camera-studio opens a subscreen directly. This exists for the
+  // sprite bake and for screenshotting a single screen: several hold-menu
+  // screens are several wheel turns deep, and driving that wheel from a script
+  // is far more brittle than naming the screen you want.
+  const [activeScreen, setActiveScreen] = useState<Item | null>(() => {
+    if (typeof window === 'undefined') return null
+    const want = new URLSearchParams(window.location.search).get('holdScreen')
+    if (!want) return null
+    const all = Object.values(TAB_MENUS).flat() as Item[]
+    return all.find(item => item.screen === want) ?? null
+  })
   // The feed keeps playing behind these screens otherwise — you would hear it
   // over the paper. Tell the home so it can silence what it is covering.
   useEffect(() => {

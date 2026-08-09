@@ -187,3 +187,78 @@
   letter-spacing: 0.16em;
   cursor: pointer;
 }
+
+/* ── grouped switches ─────────────────────────────────────────────────────── */
+/* Same clay card as the referral block above, without the prize framing —
+   these are switches, not a feature. */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px 8px;
+  border-radius: 18px;
+  background: rgba(14, 5, 20, 0.72);
+  border: 1px solid rgba(255, 138, 198, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.groupKicker {
+  font-size: 9.5px;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+  color: #ff8ac6;
+  margin-bottom: 6px;
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.switchRow + .switchRow { border-top: 1px solid rgba(255, 138, 198, 0.14); }
+
+.switchText { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.switchText b {
+  font: 800 14px/1.2 system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+  color: #fff2f8;
+}
+.switchText i {
+  font: 500 11.5px/1.3 system-ui, -apple-system, sans-serif;
+  font-style: normal;
+  color: rgba(255, 226, 242, 0.62);
+}
+
+.switchTrack {
+  flex: none;
+  position: relative;
+  width: 46px;
+  height: 27px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: background 0.18s ease;
+}
+.switchTrack em {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #fff, #e9dfe6);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.55);
+  transition: transform 0.18s ease;
+}
+.switchOn { background: linear-gradient(180deg, #ff2d91, #c40f66); }
+.switchOn em { transform: translateX(19px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .switchTrack, .switchTrack em { transition: none; }
+}

@@ -1,3 +1,4 @@
+import { readCameraDetectDefault } from './cameraPreferences'
 // What the camera has actually captured this session, and what the roll has
 // selected. The viewfinder writes it, the roll reads and selects from it, and
 // the home's channel buttons show the selection count — so it lives here
@@ -17,7 +18,11 @@ export interface Capture {
 // because the hold-menu tile has to name its state too — with the flag in
 // component state, leaving the camera tab and coming back reset the model
 // while the menu went on claiming the opposite.
-let detectOn = true
+// The camera opens in whatever state SETTINGS says. It used to hard-start
+// true, so the model ran on every launch whether or not you wanted it —
+// the most expensive thing the camera does, spent by default. Read once at
+// module load: the value is a preference, not live state.
+let detectOn = readCameraDetectDefault()
 
 const captures: Capture[] = []
 const selected = new Set<string>()

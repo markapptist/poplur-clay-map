@@ -18,11 +18,18 @@ import styles from './RecognitionAura.module.css'
 export default function RecognitionAura({
   active,
   userSeen,
+  tag = true,
 }: {
   /** something is recognised in the frame right now */
   active: boolean
-  /** one of the recognised faces is the signed-in user's own */
+  /** the INTENSE treatment — brighter, faster, thicker. In the camera that
+   *  means the recognised face is the signed-in user's own; the voice
+   *  assistant reuses it for the two beats that are actually about you: the
+   *  mic hearing you, and Poplur answering. */
   userSeen: boolean
+  /** the "it's you" caption. Camera-only — the voice screen wears the ring
+   *  without claiming to have recognised a face. */
+  tag?: boolean
 }) {
   return (
     <div className={styles.aura} aria-hidden="true">
@@ -33,7 +40,7 @@ export default function RecognitionAura({
           active && userSeen ? styles.ringUser : '',
         ].filter(Boolean).join(' ')}
       />
-      {active && userSeen && (
+      {active && userSeen && tag && (
         <span className={styles.youTag}>it&rsquo;s you</span>
       )}
     </div>

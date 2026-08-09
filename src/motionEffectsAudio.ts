@@ -239,12 +239,24 @@ export function setCubeTurnSound(speed01: number, turning: boolean) {
  *
  * iOS only unlocks WebAudio from within a user gesture, and the cube's first
  * pop fires from the rAF loop a frame or two later — too late to count. This
- * gets called on the pointer move that starts a drag so the context is already
- * running by the time the face actually turns.
+ * gets called on pointer-down (and again when a drag is recognized) so the
+ * context is already running by the time the face actually turns.
  */
 export function primeMotionAudio() {
   if (isGateMuted()) return
-  wakeContext(ONE_SHOT_IDLE_MS)
+  const c = audioContext()
+  if (!c) return
+  cancelIdle()
+
+  // A one-frame silent source, started inside pointer-down, completes Safari's
+  // media unlock even when resume() resolves on a later microtask.
+  const source = c.createBufferSource()
+  source.buffer = c.createBuffer(1, 1, c.sampleRate)
+  source.connect(c.destination)
+  source.start()
+  source.addEventListener('ended', () => source.disconnect(), { once: true })
+  if (c.state === 'running') armIdle(ONE_SHOT_IDLE_MS)
+  else void c.resume().then(() => armIdle(ONE_SHOT_IDLE_MS)).catch(() => {})
 }
 
 /**
@@ -268,51 +280,62 @@ export function primeMotionAudio() {
  */
 export function playCubeTurnPop(direction: 'left' | 'right', speed01: number) {
   if (isGateMuted()) return
-  const c = wakeContext(ONE_SHOT_IDLE_MS)
+  const c = audioContext()
   if (!c) return
-  const speed = Math.max(0, Math.min(1, speed01))
-  const now = c.currentTime
-  const right = direction === 'right'
+  cancelIdle()
 
-  // A faster flick is a firmer sound, but never a silent one at rest: a
-  // deliberate slow turn still has to announce its direction.
-  const level = 0.055 + speed * 0.05
+  const schedule = () => {
+    if (isGateMuted()) { armIdle(ONE_SHOT_IDLE_MS); return }
+    const speed = Math.max(0, Math.min(1, speed01))
+    const now = c.currentTime
+    const right = direction === 'right'
 
-  const body = c.createOscillator()
-  const gain = c.createGain()
-  const tone = c.createBiquadFilter()
+    // A faster flick is a firmer sound, but never a silent one at rest: a
+    // deliberate slow turn still has to announce its direction.
+    const level = 0.09 + speed * 0.07
 
-  if (right) {
-    // "PAP" — bright, clipped, consonant at both ends.
-    body.type = 'triangle'
-    body.frequency.setValueAtTime(620, now)
-    body.frequency.exponentialRampToValueAtTime(880, now + 0.03)
-    body.frequency.exponentialRampToValueAtTime(700, now + 0.055)
-    tone.type = 'highpass'
-    tone.frequency.value = 380
-    gain.gain.setValueAtTime(0.0001, now)
-    gain.gain.exponentialRampToValueAtTime(level, now + 0.004)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055)
-    // Tight high transient: the closing 'p'.
-    shortNoiseBurst(c, now, 0.02 + speed * 0.02, 0.018)
-  } else {
-    // "POP" — round, hollow, falling away.
-    body.type = 'sine'
-    body.frequency.setValueAtTime(430, now)
-    body.frequency.exponentialRampToValueAtTime(190, now + 0.095)
-    tone.type = 'lowpass'
-    tone.frequency.value = 1400
-    gain.gain.setValueAtTime(0.0001, now)
-    gain.gain.exponentialRampToValueAtTime(level * 1.15, now + 0.007)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.095)
-    shortNoiseBurst(c, now, 0.012 + speed * 0.012, 0.03)
+    const body = c.createOscillator()
+    const gain = c.createGain()
+    const tone = c.createBiquadFilter()
+
+    if (right) {
+      // "PAP" — bright, clipped, consonant at both ends.
+      body.type = 'triangle'
+      body.frequency.setValueAtTime(620, now)
+      body.frequency.exponentialRampToValueAtTime(880, now + 0.03)
+      body.frequency.exponentialRampToValueAtTime(700, now + 0.055)
+      tone.type = 'highpass'
+      tone.frequency.value = 380
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(level, now + 0.004)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055)
+      // Tight high transient: the closing 'p'.
+      shortNoiseBurst(c, now, 0.02 + speed * 0.02, 0.018)
+    } else {
+      // "POP" — round, hollow, falling away.
+      body.type = 'sine'
+      body.frequency.setValueAtTime(430, now)
+      body.frequency.exponentialRampToValueAtTime(190, now + 0.095)
+      tone.type = 'lowpass'
+      tone.frequency.value = 1400
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(level * 1.15, now + 0.007)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.095)
+      shortNoiseBurst(c, now, 0.012 + speed * 0.012, 0.03)
+    }
+
+    body.connect(tone).connect(gain).connect(c.destination)
+    body.start(now)
+    const stopAt = now + (right ? 0.06 : 0.1)
+    body.stop(stopAt)
+    body.addEventListener('ended', () => { body.disconnect(); tone.disconnect(); gain.disconnect() }, { once: true })
+    armIdle(ONE_SHOT_IDLE_MS)
   }
 
-  body.connect(tone).connect(gain).connect(c.destination)
-  body.start(now)
-  const stopAt = now + (right ? 0.06 : 0.1)
-  body.stop(stopAt)
-  body.addEventListener('ended', () => { body.disconnect(); tone.disconnect(); gain.disconnect() }, { once: true })
+  // Scheduling against a suspended Safari context is not consistently queued.
+  // Wait for the resume promise, then stamp oscillator times onto its live clock.
+  if (c.state === 'running') schedule()
+  else void c.resume().then(schedule).catch(() => armIdle(ONE_SHOT_IDLE_MS))
 }
 
 /** Short exhaust release as a new face crosses the detent. */

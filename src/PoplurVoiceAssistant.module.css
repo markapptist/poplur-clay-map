@@ -38,8 +38,9 @@
     inset 0 0 18px rgba(255, 240, 250, 0.32);
 }
 
-.thinking .edge { animation-duration: 1.6s, 0.68s; }
-.reply .edge { animation-duration: 7s, 2s; }
+/* Only `unavailable` still draws this edge — every other phase wears the
+   shared RecognitionAura. The per-phase timing overrides that used to live
+   here are gone with it: the aura owns its own beats now. */
 .unavailable .edge { opacity: 0.62; animation: none; }
 
 @keyframes voiceRingSpin { to { --voiceAngle: 360deg; } }

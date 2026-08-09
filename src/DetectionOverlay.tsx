@@ -19,7 +19,11 @@ export default function DetectionOverlay({
       style={mirrored ? { transform: 'scaleX(-1)' } : undefined}
       aria-hidden="true"
     >
-      {detections.map(d => (
+      {/* Located objects only. A whole-frame classification has no position,
+          so drawing it produced a full-screen rectangle whose label pill sat
+          across the top of the viewfinder — two of the three simultaneous
+          answers the camera was showing. Those belong to the readout. */}
+      {detections.filter(d => !d.whole).map(d => (
         <div
           key={d.id}
           className={d.user ? `${styles.box} ${styles.boxUser}` : styles.box}

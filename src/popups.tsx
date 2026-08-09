@@ -97,6 +97,19 @@ function subscribe(fn: (items: PopupItem[]) => void): () => void {
   return () => { listeners.delete(fn) }
 }
 
+/** Reports whether a food suggestion is presently visible in this document.
+ *  Home subscribes directly for Feed; the Map iframe forwards the same signal
+ *  to Home, so both surfaces obey one popup lifecycle. */
+export function onFoodSuggestionVisibilityChange(fn: (visible: boolean) => void): () => void {
+  let previous: boolean | undefined
+  return subscribe(current => {
+    const visible = current.some(item => item.kind === 'suggestion' && item.card?.foodRelated === true)
+    if (visible === previous) return
+    previous = visible
+    fn(visible)
+  })
+}
+
 export function dismissPopup(id: number): void {
   const timer = expiryTimers.get(id)
   if (timer != null) window.clearTimeout(timer)

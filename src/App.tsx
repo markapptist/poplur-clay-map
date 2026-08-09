@@ -25,7 +25,7 @@ import { smartCardFor, type SmartCard } from './tourSmarts'
 import { suggestionForMapPin, suggestionForMapPlace } from './commerceSuggestions'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed } from './frameGovernor'
-import PopupHost, { showPopup, clearPopups } from './popups'
+import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange } from './popups'
 
 interface RadioStationCue {
   name: string
@@ -615,6 +615,10 @@ export default function App() {
   const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const placeSuggestionTimerRef = useRef<number | null>(null)
+  useEffect(() => onFoodSuggestionVisibilityChange(visible => {
+    if (window.parent === window) return
+    window.parent.postMessage({ type: 'poplur-food-ad-visibility', visible }, '*')
+  }), [])
   useEffect(() => () => {
     if (placeSuggestionTimerRef.current != null) window.clearTimeout(placeSuggestionTimerRef.current)
   }, [])
