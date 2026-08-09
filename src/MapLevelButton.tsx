@@ -23,15 +23,14 @@ export default function MapLevelButton({
   // corner of the map. 44 is the settled size: reads as three distinct sheets
   // at arm's length without crowding the channel arrows under it.
   size = 44,
-  // The control is made of the same world the map is: isometric slabs while
-  // the map is a 3D diorama, flat plates the moment it drops to 2D. A 3D
-  // object floating over a flat map reads as a leftover from another screen.
+  // Kept because callers pass the map's render tier, but the glyph is isometric
+  // in BOTH modes now — see LayerGlyph. The flat variant read as a hamburger.
   mode = '3d',
 }: {
   level: PopLevel
   onPick: (next: PopLevel) => void
   size?: number
-  /** '2d' flattens the slabs to plates, matching the map's own render tier. */
+  /** The map's render tier. No longer changes the glyph; see LayerGlyph. */
   mode?: '2d' | '3d'
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -158,33 +157,6 @@ function LayerGlyph({ level, size, mode }: { level: PopLevel; size: number; mode
   // 3px of thickness. Spacing 6.5 leaves the stack slightly interleaved, which
   // is what makes it read as a stack rather than three floating tiles.
   const W = 12, H = 6, T = 3
-  // 2D mode: the same three sheets seen from straight above. Two things this
-  // has to get right that the first cut did not.
-  //
-  // The plates must not TOUCH. Reusing the isometric 7px pitch for 8px plates
-  // left one pixel of clearance, and with no extruded edge to separate them the
-  // stack read as a single rounded block with two scratches across it — you
-  // counted two sheets, not three. 6px plates on a 10px pitch leave real
-  // background between them.
-  //
-  // And they must not read as a HAMBURGER, which three centred equal bars
-  // unavoidably do — a three-bar glyph in the corner of a map is the universal
-  // "open the menu" icon, and this control is not that. So each sheet steps
-  // down-and-right off the one behind it, the way a stack of paper does. The
-  // diagonal is what says "layers" once the depth is gone.
-  const PW = 10.5, PH = 6, PITCH = 10, DX = 3
-  const plate = (i: number, on: boolean, key: string) => (
-    <g key={key} className={on ? styles.slabOn : styles.slabOff}>
-      <rect
-        className={`${styles.slabTop} ${styles.plate}`}
-        x={17 + (i - 1) * DX - PW}
-        y={7 + i * PITCH - PH / 2}
-        width={PW * 2}
-        height={PH}
-        rx={2.5}
-      />
-    </g>
-  )
   const slab = (cy: number, on: boolean, key: string) => (
     <g key={key} className={on ? styles.slabOn : styles.slabOff}>
       {/* the edge: the front two faces of the slab, drawn as one silhouette */}
@@ -207,20 +179,22 @@ function LayerGlyph({ level, size, mode }: { level: PopLevel; size: number; mode
       aria-hidden="true"
       className={styles.glyph}
     >
-      {/* back to front, so each sheet overlaps the one above it */}
-      {mode === '2d' ? (
-        <>
-          {plate(0, lit('top'), 'top')}
-          {plate(1, lit('mid'), 'mid')}
-          {plate(2, lit('near'), 'near')}
-        </>
-      ) : (
-        <>
-          {slab(8, lit('top'), 'top')}
-          {slab(15, lit('mid'), 'mid')}
-          {slab(22, lit('near'), 'near')}
-        </>
-      )}
+      {/* back to front, so each sheet overlaps the one above it.
+
+          ALWAYS the isometric slabs, in both map modes. There used to be a
+          flat-plate variant for the 2D map, on the reasoning that a 3D object
+          over a flat map reads as a leftover from another screen. In practice
+          the flat version is three stacked bars, and three stacked bars are a
+          hamburger menu no matter how they are spaced or stepped — the control
+          stopped saying "layers of world" and started saying "open a menu".
+          Restored to slabs at the user's request: the depth IS the meaning
+          here, and it is worth more than matching the map's render tier.
+
+          `mode` is kept on the props because callers pass it and it still
+          drives nothing else; it simply no longer picks a different glyph. */}
+      {slab(8, lit('top'), 'top')}
+      {slab(15, lit('mid'), 'mid')}
+      {slab(22, lit('near'), 'near')}
     </svg>
   )
 }
