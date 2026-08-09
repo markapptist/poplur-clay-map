@@ -9,6 +9,21 @@ import styles from './HomeTwin.module.css'
 // handoff avoids another permanent WebGL context on budget Android devices.
 const PHONE_MODEL_URL = 'poplur_clay_phone.glb'
 
+// ONE fetch per session, shared by every mount. The preload used to live
+// entirely inside the effect, where its `cancelled` flag guarded the state
+// write but not the request — so React's double-invoke (and every later return
+// to Home) started ANOTHER 33MB fetch + arrayBuffer(). Two of those landed in
+// the first frames of home and feed and were the single long task the thermal
+// gate was failing on: 1420ms on home, 2074ms on feed against a 250ms budget.
+let phoneModel: Promise<ArrayBuffer> | null = null
+function phoneModelData(): Promise<ArrayBuffer> {
+  phoneModel ??= fetch(PHONE_MODEL_URL).then(response => {
+    if (!response.ok) throw new Error(`phone model HTTP ${response.status}`)
+    return response.arrayBuffer()
+  })
+  return phoneModel
+}
+
 function disposeScene(scene: THREE.Scene): void {
   scene.traverse(object => {
     const mesh = object as THREE.Mesh
@@ -33,26 +48,42 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
   const modelDataRef = useRef<ArrayBuffer | null>(null)
   const [modelLoaded, setModelLoaded] = useState(false)
 
-  // Start the 32 MB local asset fetch before the user opens PHONE. There is no
-  // renderer or animation in this effect, so preloading does not add a frame
-  // loop or a second WebGL context to the normal home screen.
+  // Start the 32 MB local asset fetch before the user opens PHONE, so the
+  // handoff is instant. There is no renderer or animation in this effect, so
+  // preloading adds no frame loop and no second WebGL context.
+  //
+  // But it must not land in the OPENING frames of home/feed: arrayBuffer() on
+  // 33MB is a synchronous main-thread allocation, and doing it while the screen
+  // is still assembling is what put a multi-second task on both surfaces. Wait
+  // for the browser to be genuinely idle (with a timeout, so a busy tab still
+  // preloads rather than never preloading).
   useEffect(() => {
     let cancelled = false
-    fetch(PHONE_MODEL_URL)
-      .then(response => {
-        if (!response.ok) throw new Error(`phone model HTTP ${response.status}`)
-        return response.arrayBuffer()
-      })
-      .then(data => {
-        if (cancelled) return
-        modelDataRef.current = data
-        setModelLoaded(true)
-      })
-      .catch(() => {
-        // The existing approved phone screen remains the fallback if a native
-        // bundle is still serving an older asset set or the model cannot load.
-      })
-    return () => { cancelled = true }
+    const start = () => {
+      phoneModelData()
+        .then(data => {
+          if (cancelled) return
+          modelDataRef.current = data
+          setModelLoaded(true)
+        })
+        .catch(() => {
+          // The existing approved phone screen remains the fallback if a native
+          // bundle is still serving an older asset set or the model cannot load.
+        })
+    }
+    const idle = window as typeof window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+      cancelIdleCallback?: (handle: number) => void
+    }
+    const canIdle = typeof idle.requestIdleCallback === 'function'
+    const handle = canIdle
+      ? idle.requestIdleCallback!(start, { timeout: 5000 })
+      : window.setTimeout(start, 1500)
+    return () => {
+      cancelled = true
+      if (canIdle) idle.cancelIdleCallback?.(handle)
+      else window.clearTimeout(handle)
+    }
   }, [])
 
   useEffect(() => {
