@@ -93,3 +93,37 @@ export function takePendingMapPost(): PendingMapPost | null {
   pendingMapPost = null
   return draft
 }
+
+// composer→AI chat. Same shape of hand-off, different destination.
+//
+// "Generate in Poplur AI" used to navigate to the chat and nothing else: it
+// carried neither the capture nor the prompt, so the chat opened empty and the
+// thing you had just shot — the entire subject of the request — was left
+// behind in a composer that had already closed. The capture travels with the
+// intent now.
+export interface PendingAICompose {
+  media: { kind: 'photo' | 'video'; src: string; length?: string }
+  /** What the user typed under "TELL POPLUR AI WHAT TO MAKE". May be empty —
+   *  arriving with the picture and no words is a legitimate start. */
+  prompt: string
+  /** Everything the composer had chosen, so finishing in the chat can hand a
+   *  complete post back rather than restarting the flow. */
+  caption: string
+  channelId: string
+  filterId: string
+}
+
+let pendingAICompose: PendingAICompose | null = null
+
+export function setPendingAICompose(job: PendingAICompose): void { pendingAICompose = job }
+
+/** One-shot, for the same reason as the map draft above. */
+export function takePendingAICompose(): PendingAICompose | null {
+  const job = pendingAICompose
+  pendingAICompose = null
+  return job
+}
+
+/** Peek without consuming — for a screen that wants to know whether a capture
+ *  is waiting before it decides what to render. */
+export function hasPendingAICompose(): boolean { return pendingAICompose !== null }

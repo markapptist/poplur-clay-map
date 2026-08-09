@@ -4,7 +4,8 @@ import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
 import { playPop } from './pop'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
-import { setPendingMapPost, type PendingMapPost } from './cameraStore'
+import { setPendingAICompose, setPendingMapPost, type PendingMapPost } from './cameraStore'
+import VideoEditor from './VideoEditor'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -89,7 +90,7 @@ function awaitNativeUpload(requestId: string): Promise<void> {
 }
 
 export default function PostComposer({
-  media,
+  media: incomingMedia,
   target,
   draft,
   onClose,
@@ -115,6 +116,13 @@ export default function PostComposer({
   const [step, setStep] = useState<Step>(draft ? 'channel' : 'edit')
   const [filterId, setFilterId] = useState(draft?.filterId ?? 'none')
   const [caption, setCaption] = useState(draft?.caption ?? '')
+  // The editor hands back a NEW clip (trimmed, scored), which then stands in
+  // for the capture everywhere below — preview, bake-for-upload, the draft
+  // stashed for the map trip. Held separately from the prop so backing out of
+  // the editor leaves the original untouched.
+  const [editedMedia, setEditedMedia] = useState<ComposerMedia | null>(null)
+  const media = editedMedia ?? incomingMedia
+  const [editorOpen, setEditorOpen] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
   const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
   const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
@@ -327,8 +335,42 @@ export default function PostComposer({
       {/* ── 1. edit: full-bleed capture, Snapchat-style. The clay channel
              arrows flip through the filters; the name of the current one
              floats at the base in shader text. ─────────────────────────── */}
+      {editorOpen && media.kind === 'video' && (
+        <VideoEditor
+          src={media.src}
+          onCancel={() => { playPop(); setEditorOpen(false) }}
+          onDone={edit => {
+            // Keep the run time honest: the strip, the roll and the composer
+            // all read `length`, and leaving the original there would label a
+            // 4s trim as the 30s take it came from.
+            const seconds = Math.max(0, Math.round(edit.trimEnd - edit.trimStart))
+            setEditedMedia({
+              kind: 'video',
+              src: edit.src,
+              length: `0:${String(seconds).padStart(2, '0')}`,
+            })
+            setEditorOpen(false)
+            if (edit.unbaked) {
+              setUploadNote('This device could not render the edit, so the original clip was kept.')
+            }
+          }}
+        />
+      )}
+
       {step === 'edit' && (
         <>
+          {/* Trimming and scoring is a WORKBENCH, not another rail on top of
+              the viewfinder — it needs the whole screen for a filmstrip you can
+              actually hit with a thumb. Video only: there is nothing to trim on
+              a still, and a button that opened an empty timeline would be a
+              worse answer than no button. */}
+          {media.kind === 'video' && (
+            <button
+              className={styles.editFab}
+              onClick={() => { playPop(); setEditorOpen(true) }}
+              aria-label="Trim and add music"
+            >✂ TRIM &amp; MUSIC</button>
+          )}
           <button
             className={styles.nextFab}
             onClick={() => { playPop(); setStep('choice') }}
@@ -377,6 +419,17 @@ export default function PostComposer({
                 playPop()
                 // The real generator is PoplurAIChatView → poplurAiApi (Google AI
                 // Studio) behind the signed-in account; hand it the prompt.
+                //
+                // And hand it the CAPTURE. This used to navigate and nothing
+                // more, so the chat opened empty and the shot you were asking
+                // it to work on stayed behind in a composer that had just
+                // closed — you arrived at "what shall I make?" with nothing to
+                // make it from. The media is stashed module-side (it outlives
+                // this unmount) and the chat picks it up on open.
+                setPendingAICompose({ media, prompt: aiPrompt, caption, channelId, filterId })
+                // Same-document listeners hear this; the native shell gets the
+                // navigate below. Both paths land on the same chat.
+                window.dispatchEvent(new CustomEvent('poplur-ai-compose'))
                 postNativeEvent({ type: 'holdMenuNavigate', action: 'create' })
                 onClose()
               }}
@@ -450,9 +503,28 @@ export default function PostComposer({
               📍 Pick a spot on the map
             </button>
           )}
-          <button className={styles.primary} onClick={() => { void publish() }} disabled={publishing}>
-            {publishing ? 'Uploading…' : target ? 'Post to this spot' : 'Post to Channel'}
+          {/* A pop IS ground. Posting without a spot was the one path that let
+              a post exist with no place attached — it uploaded to "wherever you
+              happen to be", which is not a decision the user made and is not
+              something they can see before committing. The spot is now a
+              precondition, so the only way to post is to have chosen where.
+
+              Disabled rather than hidden: a button that vanishes reads as a
+              bug, while a disabled one with the reason under it teaches the
+              step. `📍 Pick a spot on the map` directly above is the way out,
+              so this is never a dead end. */}
+          <button
+            className={styles.primary}
+            onClick={() => { void publish() }}
+            disabled={publishing || !target}
+          >
+            {publishing ? 'Uploading…' : target ? 'Post to this spot' : 'Pick a spot to post'}
           </button>
+          {!target && !publishing && (
+            <p className={styles.needSpot}>
+              Every pop holds ground. Choose where this one lands before posting it.
+            </p>
+          )}
         </div>
       )}
     </div>

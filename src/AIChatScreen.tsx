@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './AIChatScreen.module.css'
 import { playPop } from './pop'
+import { takePendingAICompose } from './cameraStore'
 
 type ChatMessage = {
   id: number
@@ -51,6 +52,25 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
     if (replyTimer.current) window.clearTimeout(replyTimer.current)
     objectUrls.current.forEach(url => URL.revokeObjectURL(url))
     objectUrls.current.clear()
+  }, [])
+
+  // A capture handed over from the composer's "Generate in Poplur AI".
+  //
+  // The composer stashes it module-side and closes, so by the time this screen
+  // mounts the only trace is that store — read it once, on open. Reading also
+  // clears it, so reopening the chat later does not re-attach a shot the user
+  // already dealt with.
+  //
+  // The URL is NOT registered in objectUrls: this blob belongs to the camera
+  // roll, which still holds the capture, and revoking it on unmount would kill
+  // the roll's own thumbnail too. Only URLs minted in here are ours to revoke.
+  useEffect(() => {
+    const job = takePendingAICompose()
+    if (!job) return
+    setAttachment({ name: job.media.kind === 'video' ? 'Your recording' : 'Your capture', url: job.media.src })
+    // Their words survive the trip. An empty prompt is fine — arriving with the
+    // picture and nothing typed is a legitimate way to start.
+    if (job.prompt.trim()) setInput(job.prompt)
   }, [])
 
   useEffect(() => {
