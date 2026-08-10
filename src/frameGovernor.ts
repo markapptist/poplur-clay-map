@@ -34,6 +34,22 @@ type Sub = {
   cb: (dtMs: number, now: number) => void
   rate: Rate
   last: number
+  /**
+   * Fixed period for `onTick` subscribers, in ms. `onFrame` subscribers leave
+   * this undefined and take their period from the rate table instead.
+   *
+   * A tick names a real deadline ("poll this every second"), not a smoothness
+   * preference, so the ladder does NOT stretch it and a boost does NOT promote
+   * it — a 1s watchdog has no business running at 60Hz because a finger came
+   * down. What a tick gives up instead is the right to run while nothing is
+   * happening: see `ticksPaused`.
+   */
+  everyMs?: number
+}
+
+/** An `onTick` subscriber, as opposed to an `onFrame` one. */
+function isTick(sub: Sub): boolean {
+  return sub.everyMs !== undefined
 }
 
 const subs = new Set<Sub>()
@@ -109,6 +125,10 @@ function setAmbientSleeping(sleeping: boolean): void {
   }
   ambientSleepListeners.forEach(listener => listener(sleeping))
   syncRendererPark()
+  // Ticks pause and resume with this gate, so the loop's own need to exist
+  // changes with it — a document whose only subscribers are ticks stops here
+  // and restarts on the next touch.
+  sync()
 }
 
 // ── rate table ───────────────────────────────────────────────────────────────
@@ -127,15 +147,31 @@ const HZ: Record<Rate, [number, number, number, number]> = {
   idle:        [1,   2,  3,  4],
 }
 
-/** Frame interval the current quality asks of a rate class, in ms. */
-function intervalFor(rate: Rate): number {
-  const hz = HZ[rate][quality]
+/** Interval this subscriber should be called at under the current quality, in ms. */
+function intervalFor(sub: Sub): number {
+  if (sub.everyMs !== undefined) return sub.everyMs
+  const hz = HZ[sub.rate][quality]
   // A boost promotes ambient work to interactive rate: while a finger is down,
   // parallax and drift should track the gesture, not stutter behind it.
-  if (rate === 'ambient' && performance.now() < boostUntil) {
+  if (sub.rate === 'ambient' && performance.now() < boostUntil) {
     return 1000 / HZ.interactive[quality]
   }
   return 1000 / hz
+}
+
+/**
+ * Whether `onTick` work is currently gated off.
+ *
+ * `rendererParked` is a strict subset of ambient sleep — it additionally
+ * requires that no finger is down — so gating on the sleep flag alone honours
+ * both signals with one test.
+ *
+ * This is the whole bargain of `onTick` over `setInterval`: a raw interval
+ * keeps firing on a phone nobody is touching, and a phone nobody is touching is
+ * exactly where sustained work is pure heat.
+ */
+function ticksPaused(): boolean {
+  return ambientSleeping
 }
 
 // ── the thermal ladder ───────────────────────────────────────────────────────
@@ -151,7 +187,13 @@ let comfortStreak = 0
 /** Deadline we expect to hit: the fastest rate any live subscriber asked for. */
 function currentDeadlineMs(): number {
   let fastest = Infinity
-  for (const s of subs) fastest = Math.min(fastest, intervalFor(s.rate))
+  const paused = ticksPaused()
+  for (const s of subs) {
+    // A gated tick is not asking for anything, and letting it set the deadline
+    // would keep the loop waking at its period to skip it every time.
+    if (paused && isTick(s)) continue
+    fastest = Math.min(fastest, intervalFor(s))
+  }
   return fastest === Infinity ? 1000 / 30 : fastest
 }
 
@@ -214,8 +256,16 @@ function tick(now: number) {
   lastFrame = now
   if (dt) sampleThermals(dt)
 
+  const paused = ticksPaused()
   for (const s of subs) {
-    const interval = intervalFor(s.rate)
+    if (paused && isTick(s)) {
+      // Resume with a beat rather than a backlog: zeroing `last` makes the
+      // first frame after the gate reopens fire once, immediately, instead of
+      // either replaying the whole sleep or waiting out another full period.
+      s.last = 0
+      continue
+    }
+    const interval = intervalFor(s)
     const since = now - s.last
     // `- 1`: rAF timestamps jitter by a fraction of a ms, and an exact
     // comparison drops every other frame at rates that divide the display rate.
@@ -232,7 +282,13 @@ function tick(now: number) {
 }
 
 function shouldRun(): boolean {
-  return subs.size > 0 && surfaceFront && !document.hidden
+  if (!surfaceFront || document.hidden || subs.size === 0) return false
+  if (!ticksPaused()) return true
+  // Everything left is a gated tick: stop the clock outright rather than wake
+  // at its period forever to skip every subscriber. This is the case that
+  // matters — an idle screen whose only remaining work was polling.
+  for (const s of subs) if (!isTick(s)) return true
+  return false
 }
 
 function sync() {
@@ -374,6 +430,48 @@ if (typeof document !== 'undefined') {
  */
 export function onFrame(cb: (dtMs: number, now: number) => void, rate: Rate = 'ambient'): () => void {
   const sub: Sub = { cb, rate, last: 0 }
+  subs.add(sub)
+  sync()
+  return () => {
+    subs.delete(sub)
+    sync()
+  }
+}
+
+/**
+ * Subscribe periodic (non-animation) work to the shared clock, at a fixed
+ * period. Returns an unsubscribe function. The drop-in shape of
+ * `setInterval(cb, ms)` / `clearInterval`, with the governor's lifecycle.
+ *
+ * WHY THIS EXISTS. `onFrame` fixed the ~30 rAF loops, and the polling timers
+ * then became the largest thing still running on an untouched screen. An
+ * interval is worse than a rAF loop here, not better: it keeps its own
+ * independent wake schedule, it does not stop when the page is hidden or the
+ * surface goes behind another tab, and several of them at different periods
+ * beat the main thread out of any alignment the OS could coalesce. Sub-second
+ * ones are the ones that count — a handful at 120-1000ms wake the phone more
+ * often, over a long idle, than any decoration does.
+ *
+ * WHAT YOU GET. One clock, so ticks land on frames already being scheduled.
+ * Sleep when the page is hidden or the surface is not front. Pause on the
+ * ambient/thermal gate, and — when the surviving subscribers are all ticks —
+ * the loop stops rather than spinning on guards, which was the exact failure
+ * `onFrame` was written to end.
+ *
+ * WHAT YOU GIVE UP. The tick does not fire while the gate is closed, and it
+ * resumes with a single immediate call rather than a replay of what it missed.
+ * The test for whether work belongs here is therefore not "could this matter
+ * while idle" but "would acting on it at the next touch be too late". Polling
+ * and watchdogs generally pass — nobody is harmed by a stall that is fixed
+ * before their finger lifts. Deadlines the user never has to be present for —
+ * an upload retry, a session refresh, anything with a server on the other end —
+ * do not, and belong on a plain timer at a period chosen to be cheap.
+ *
+ * `dtMs` is the time since THIS subscriber's previous call, so accumulating
+ * work stays correct across a pause instead of assuming a fixed step.
+ */
+export function onTick(cb: (dtMs: number, now: number) => void, ms: number): () => void {
+  const sub: Sub = { cb, rate: 'ambient', last: 0, everyMs: Math.max(0, ms) }
   subs.add(sub)
   sync()
   return () => {

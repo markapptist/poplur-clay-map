@@ -1219,7 +1219,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       { type: 'poplur-map-action', action: 'setOwnPhoto', photo: ownPhoto }, '*',
     )
   }, [ownPhoto, mapReady])
+  // A subscreen asking for the whole screen (the radio's long press). Kept as
+  // shell state for the same reason feedFullscreen is: the chrome layer sits
+  // ABOVE the subscreen stage, so a subscreen can neither cover it nor hide it
+  // on its own — it can only ask. The sender restores it on unmount, and this
+  // ALSO clears whenever no subscreen is up, so a screen that dies without
+  // saying so can never strand home with no cube.
+  const [subscreenFullscreen, setSubscreenFullscreen] = useState(false)
+  useEffect(() => {
+    const onFullscreen = (event: Event) => {
+      setSubscreenFullscreen(Boolean((event as CustomEvent<{ on?: boolean }>).detail?.on))
+    }
+    window.addEventListener('poplur-subscreen-fullscreen', onFullscreen)
+    return () => window.removeEventListener('poplur-subscreen-fullscreen', onFullscreen)
+  }, [])
+  useEffect(() => { if (!overlayOpen) setSubscreenFullscreen(false) }, [overlayOpen])
   const feedChromeGone = feedFullscreen && committedTab === 'feed'
+  /** Chrome fully away — the feed's player mode OR a subscreen that asked. */
+  const chromeGone = feedChromeGone || subscreenFullscreen
   const [mapTourOn, setMapTourOn] = useState(false)
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
@@ -1242,8 +1259,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // silently vanished. Report channel changes to the shell; IT owns the
   // probability gate (FeedAdProbability) and the presentation, exactly as the
   // native feed did.
+  // ARRIVING at the feed is not a channel change. This used to fire on mount,
+  // and the shell's gate is a DETERMINISTIC hash of channel+index rather than a
+  // random roll — so `web_food#0` scored 73.81, landed above the 70% Poplur
+  // band, and put a full-screen Google interstitial over the app on EVERY
+  // launch, on both platforms. The home view opens on the feed tab (see
+  // VIEW_TO_TAB), so "every launch" was literal.
+  const lastAdChannelRef = useRef<number | null>(null)
   useEffect(() => {
     if (activeTab !== 'feed' || !isNativeShell()) return
+    // First sight of the feed only records where we started.
+    if (lastAdChannelRef.current === null) {
+      lastAdChannelRef.current = chanIndex
+      return
+    }
+    // Leaving the feed and coming back is not a change either.
+    if (lastAdChannelRef.current === chanIndex) return
+    lastAdChannelRef.current = chanIndex
     postNativeEvent({ type: 'feedChannelChanged', channelId: CHANNELS[chanIndex].id, index: chanIndex })
   }, [activeTab, chanIndex])
   const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>(() => initialMapMode())
@@ -1823,14 +1855,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           floated and the arrows and radius label it sits between vanished
           underneath. The whole HUD is one piece of home chrome. */}
       <div
-        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${feedChromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
           {/* Whose pops the map is drawing. Map tab only: on the feed or the
               camera there is no board to filter, and a dead control there
-              would read as broken. */}
-          {activeTab === 'map' && (
+              would read as broken.
+              Gone while a subscreen is up, for the same reason: over the radio
+              there is no board to filter either. The chrome layer sits ABOVE
+              the subscreen stage (.overSubscreen is 260, the stage is 240), so
+              being covered is not something a subscreen can do for itself —
+              the control has to take itself away. */}
+          {activeTab === 'map' && !overlayOpen && (
             <div className={styles.levelAbove}>
             <MapLevelButton
               level={popLevel}
@@ -1869,7 +1906,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             there was no way to stop turn-by-turn at all. The unit toggle still
             works on feed, profile and camera; drop 'map' from this test to put
             it back on the map too. */}
-        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}${feedChromeGone ? ` ${styles.chromeHidden}` : ''}`}>
+        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}>
           {recordMs != null && (
             <div className={styles.statCard} aria-label="Recording">
               <span className={styles.statLabel}>RECORDING ◆</span>
@@ -1938,8 +1975,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* The map's status title, owned by the shell. It lives in the same
           chrome layer as the cube and the bottom row, so it idles and hides
           with them instead of floating out of the map iframe over a screen
-          that is animating in. Map tab only. */}
-      {activeTab === 'map' && mapPlace && (
+          that is animating in. Map tab only — and not while a subscreen is up:
+          living in the chrome layer means it is ABOVE the subscreen stage, so
+          it was narrating the map's camera across the top of the radio. */}
+      {activeTab === 'map' && mapPlace && !overlayOpen && (
         <div
           className={`${styles.mapTitle} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
           aria-live="polite"
@@ -1976,11 +2015,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           over whatever content is active. Its face tracks the current tab. */}
       {/* The HUD used to duck out while the composer was up. It stays now: the
           capture preview is a home surface — cube back, arrows flip filters. */}
-      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${feedChromeGone ? ` ${styles.chromeHidden}` : ''}`} />
+      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`} />
       <ClayPhonePop visible={cubeIntoPhone} />
       <div
         data-poplur-cube
-        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}${feedChromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div

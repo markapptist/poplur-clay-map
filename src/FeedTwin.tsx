@@ -4,6 +4,7 @@ import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
 import { feedSuggestionFor } from './tourSmarts'
+import { onTick } from './frameGovernor'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
 // hands back on its own; background radio is a standing choice the user made
@@ -819,7 +820,12 @@ export default function FeedTwin({
     if (!video || !adSrc || suppressed) return
     let lastTime = video.currentTime
     let stalledTicks = 0
-    const watchdog = window.setInterval(() => {
+    // On the governor rather than its own interval: a stall the user is not
+    // there to see does not need catching on the second it happens, and this
+    // ran once a second for the life of every mounted channel — including the
+    // feed sitting behind the map. It resumes with a check the instant the
+    // screen is touched again, which is the first moment a stall matters.
+    const stopWatchdog = onTick(() => {
       if (
         adVideoRef.current !== video
         || suppressedRef.current
@@ -839,7 +845,7 @@ export default function FeedTwin({
       }
       if (stalledTicks >= 3) advanceAdSource(adSrc)
     }, 1000)
-    return () => window.clearInterval(watchdog)
+    return () => stopWatchdog()
   }, [adSrc, suppressed, markAdReady, advanceAdSource, retryAdPlayback])
 
   // Channel audio. The ad creative is the channel's soundtrack, so it plays

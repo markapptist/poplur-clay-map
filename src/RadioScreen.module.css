@@ -14,20 +14,18 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* The deck fills the subscreen stage, but the stage is NOT the whole screen
-     you can see: the home chrome (level button, channel arrows, cube, radius
-     card) is drawn over the bottom of it at a higher z-index. Filling the
-     stage edge to edge therefore put the now-playing bar and the lower half of
-     the transport row underneath the cube, where they could be neither read
-     nor tapped.
+  /* The deck runs the FULL height of the stage — it is a radio, and a radio
+     wants length for its station list.
 
-     So the deck ends where the chrome begins. The band it gives up is the
-     chrome's own geometry — .bottomRow sits 18px off the bottom and is one
-     cube tall, with the level button riding above it — rather than a guessed
-     constant, so the two stay aligned when --cube-size changes with the
-     viewport. Everything inside keeps its existing scroll behaviour; this only
-     stops the deck from claiming space it never actually owned. */
-  padding-bottom: calc(var(--cube-size, 96px) + 72px);
+     It used to give up a band the height of the home chrome (one cube plus the
+     level button riding above it), because that chrome draws over the bottom
+     of the stage at a higher z-index and was landing on the now-playing bar.
+     That reservation is gone: the map's own controls now take themselves away
+     while a subscreen is up (see HomeTwin), and a long press on the deck drops
+     the rest of the chrome for a genuinely full-screen radio — the same
+     gesture, and the same 550ms, as the feed's player mode. The way to see
+     what the cube covers is to move the cube, not to shorten the screen. */
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
   color: #f4eef5;
   background:
     radial-gradient(120% 46% at 50% 0%, rgba(246, 59, 154, 0.16), transparent 60%),

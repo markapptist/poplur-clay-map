@@ -142,6 +142,49 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // ── Long press = full screen ──────────────────────────────────────────────
+  // The deck runs the full height of the stage, so the cube and the bottom row
+  // sit over its lower edge. Rather than shorten the radio to dodge them, the
+  // same gesture the feed uses for player mode (550ms hold) takes the chrome
+  // away, and a second hold brings it back. HomeTwin owns the chrome, so this
+  // asks for it by event; the cleanup ALWAYS restores it, or closing the radio
+  // mid-fullscreen would leave home with no cube and no way out of anything.
+  const [chromeGone, setChromeGone] = useState(false)
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('poplur-subscreen-fullscreen', { detail: { on: chromeGone } }))
+  }, [chromeGone])
+  useEffect(() => () => {
+    window.dispatchEvent(new CustomEvent('poplur-subscreen-fullscreen', { detail: { on: false } }))
+  }, [])
+
+  const holdTimer = useRef<number | null>(null)
+  const holdAnchor = useRef<{ x: number; y: number } | null>(null)
+  const cancelHold = () => {
+    if (holdTimer.current != null) window.clearTimeout(holdTimer.current)
+    holdTimer.current = null
+    holdAnchor.current = null
+  }
+  const onDeckPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Only a press on the deck's own background arms it. Starting the timer on
+    // every press would fire mid-scroll of the station rail and while holding
+    // a tune button, which reads as the screen flinching at being used.
+    if (e.target !== e.currentTarget) return
+    cancelHold()
+    holdAnchor.current = { x: e.clientX, y: e.clientY }
+    holdTimer.current = window.setTimeout(() => {
+      holdTimer.current = null
+      holdAnchor.current = null
+      playPop()
+      setChromeGone(on => !on)
+    }, 550)
+  }
+  const onDeckPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const a = holdAnchor.current
+    // A press that travels is a scroll being born, not a hold.
+    if (a && Math.hypot(e.clientX - a.x, e.clientY - a.y) > 12) cancelHold()
+  }
+  useEffect(() => cancelHold, [])
+
   const bandOf = (s: LocalStation) =>
     BANDS.find(b => b.match.test(s.genre) || b.match.test(s.name))?.key ?? 'pop'
 
@@ -215,7 +258,15 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className={styles.deck} role="dialog" aria-label="Poplur Radio">
+    <div
+      className={styles.deck}
+      role="dialog"
+      aria-label="Poplur Radio"
+      onPointerDown={onDeckPointerDown}
+      onPointerMove={onDeckPointerMove}
+      onPointerUp={cancelHold}
+      onPointerCancel={cancelHold}
+    >
       <header className={styles.head}>
         <div className={styles.brand}>
           <img className={styles.brandIcon} src="logo_icon.png" alt="" draggable="false" />

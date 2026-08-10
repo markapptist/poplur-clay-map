@@ -25,7 +25,7 @@ import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus }
 import { smartCardFor, type SmartCard } from './tourSmarts'
 import { suggestionForMapPlace } from './commerceSuggestions'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
-import { ambientAllowed } from './frameGovernor'
+import { ambientAllowed, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
 
 interface RadioStationCue {
@@ -806,11 +806,20 @@ export default function App() {
     let stopChips: (() => void) | null = null
     let releaseGestures: (() => void) | null = null
     let tries = 0
-    const arm = window.setInterval(() => {
+    // On the governor, because this is the largest thing left running on an
+    // idle screen: measured at ~1.5 wakes/sec across a 60s idle window on every
+    // surface, since a document with no ClayMap in it never satisfies the
+    // condition and spends the whole 120-try budget discovering that.
+    //
+    // The budget survives the change and gets stricter about what it counts:
+    // `tries` only advances when the tick actually runs, so this now gets 120
+    // ATTEMPTS rather than 120 wall-clock ticks. A map that takes longer than
+    // the idle gate to boot no longer silently eats the allowance.
+    const arm = onTick(() => {
       const map = mapRef.current
       tries += 1
       if (map) {
-        window.clearInterval(arm)
+        arm()
         // Every way a person can grab this map, in one place. `pointerdown`
         // and `wheel` catch the START of a gesture; the Mapbox events (which
         // only count when they carry an originalEvent, i.e. a real input and
@@ -847,10 +856,10 @@ export default function App() {
           },
         })
       } else if (tries > 120) {
-        window.clearInterval(arm)
+        arm()
       }
     }, 500)
-    return () => { window.clearInterval(arm); releaseGestures?.(); stopChips?.() }
+    return () => { arm(); releaseGestures?.(); stopChips?.() }
   }, [])
   // THERE IS NO MAP ON A HARNESS VIEW, SO THERE IS NO MAP AUDIO.
   //
@@ -1058,14 +1067,17 @@ export default function App() {
     // ClayMap in this document at all, so `mapRef` is never set and a poll with
     // no stop condition is a timer ticking four times a second for the life of
     // the tab. Stop the moment it succeeds, and give up after ~15s.
+    // Same reasoning as the engagement arm above: on the governor, so the
+    // no-ClayMap case costs a few attempts inside the boot window instead of
+    // fifteen seconds of polling, and the attempt budget counts real attempts.
     let attempts = 0
-    const timer = window.setInterval(() => {
+    const timer = onTick(() => {
       attach()
       attempts += 1
-      if (attachedMap || attempts >= 60) window.clearInterval(timer)
+      if (attachedMap || attempts >= 60) timer()
     }, 250)
     return () => {
-      window.clearInterval(timer)
+      timer()
       attachedMap?.off('moveend', updatePlace)
       attachedMap?.off('moveend', markArrival)
       attachedMap?.off('idle', markArrival)
