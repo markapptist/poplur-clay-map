@@ -84,7 +84,12 @@ const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
 // which celestial.ts loads from models/, never appear on device.)
 const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   'feed-tvguide': CLAY_TV_MODEL,
-  'map-radio': CLAY_TV_MODEL,
+  // The radio screen has its own radio now. The TV stood in here for want of
+  // one; the supplied Meshy export is 24MB, decimated to 147KB by the same
+  // recipe as the rest of this set (Draco + simplify 0.0005 + 256px webp),
+  // which is the TV's weight and therefore the bar for anything that has to
+  // decode every time its screen opens.
+  'map-radio': 'poplur_radio.glb',
   // The supplied cube set, decimated to the TV's weight (80–132KB each, from
   // ~20MB Meshy exports) so each one is a navigator rather than a stall.
   //
