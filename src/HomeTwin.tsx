@@ -100,7 +100,12 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // DIRECTIONS, TOUR, 2D MAP, LIVE, CAMERA ROLL, COMMENT and HEY POPLUR have
   // no entry no matter how good their cube is: those tiles act on the live
   // surface behind the menu, which is the whole point of them.
-  'feed-news': 'poplur_cube_news.glb',
+  // The news screen gets an actual newspaper rather than a cube with a news
+  // face. 39MB supplied, decimated to 385KB — heavier than the radio's 147KB
+  // because a folded paper is more geometry than a faceplate, but in line with
+  // the mixer's 329KB, which this map already carries. poplur_cube_news.glb is
+  // gone: it had exactly one reference, this line.
+  'feed-news': 'poplur_newspaper.glb',
   'camera-ai-chat': 'poplur_cube_create.glb',
   'profile-messages': 'poplur_cube_mail.glb',
   'profile-stats': 'poplur_cube_stats.glb',
