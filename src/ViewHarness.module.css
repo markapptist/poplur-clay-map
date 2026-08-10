@@ -1131,6 +1131,69 @@
   animation: camBloomOut 0.22s ease-out forwards;
 }
 
+/* The kodak camera on the photo screens. It sits ABOVE the cube rather than
+   over it — the cube is still the button, this is the camera it works. Never
+   interactive: pointer-events stays off so it cannot eat a tap meant for the
+   cube underneath. */
+.camKodak {
+  position: absolute;
+  left: 50%;
+  bottom: 116px;
+  transform: translateX(-50%);
+  width: 84px;
+  height: 84px;
+  pointer-events: none;
+  z-index: 22;
+  filter: drop-shadow(2px 5px 0 rgba(0, 0, 0, 0.42)) drop-shadow(3px 7px 6px rgba(0, 0, 0, 0.28));
+}
+
+.camKodak img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* The bulb: nothing at all until the shutter, then one hard white pop that
+   falls off fast. A flash is over before you see it settle. */
+.camKodakBulb {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  width: 54%;
+  height: 54%;
+  transform: translate(-50%, 0) scale(0.4);
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, rgba(255, 255, 255, 0.85) 38%, rgba(255, 240, 214, 0) 72%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.camKodakFiring .camKodakBulb { animation: camKodakPop 0.26s ease-out forwards; }
+
+/* The body kicks as it fires, so the whole object reacts and not just the
+   bulb — that is what sells it as the thing taking the picture. */
+.camKodakFiring img { animation: camKodakKick 0.26s cubic-bezier(0.2, 1.3, 0.35, 1) both; }
+
+@keyframes camKodakPop {
+  0%   { opacity: 0; transform: translate(-50%, 0) scale(0.4); }
+  18%  { opacity: 1; transform: translate(-50%, 0) scale(1.15); }
+  100% { opacity: 0; transform: translate(-50%, 0) scale(1.5); }
+}
+
+@keyframes camKodakKick {
+  0%   { transform: scale(1); }
+  22%  { transform: scale(1.11); }
+  100% { transform: scale(1); }
+}
+
+/* A flash is a light going off in your face. Anyone who has asked the OS for
+   less motion gets the bulb without the lurch. */
+@media (prefers-reduced-motion: reduce) {
+  .camKodakFiring .camKodakBulb { animation-duration: 0.18s; }
+  .camKodakFiring img { animation: none; }
+}
+
 @keyframes camBloomOut {
   from { opacity: 0.92; }
   to { opacity: 0; }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
 import ClayCornerButton from './ClayCornerButton'
+import ClaySwayObject from './ClaySwayObject'
 import ClayMuteButton from './ClayMuteButton'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
 import styles from './ViewHarness.module.css'
@@ -184,6 +185,11 @@ export default function Camera({
   // the white bloom of a shutter — and the front camera's flash, which IS the
   // screen going bright
   const [bloom, setBloom] = useState(false)
+  // The kodak camera's own bulb firing. Separate from `bloom`: that is the
+  // FRONT camera using the screen as a lamp, and only happens with flash on
+  // and facing user. This fires on every photo, either facing — it is the
+  // object on screen taking the picture, not a light source for the subject.
+  const [shotFlash, setShotFlash] = useState(false)
 
   useEffect(() => { onZoomChange?.(zoom) }, [onZoomChange, zoom])
 
@@ -781,6 +787,12 @@ export default function Camera({
     if (page !== 'live' || composingRef.current) return
     playPop()
     onPhotoCapture?.()
+    // The camera object fires on every shot, regardless of flash setting or
+    // which way the lens is pointing — it is the picture being taken, not the
+    // lighting. A timeout rather than an animation end event so a second shot
+    // during the first re-arms cleanly.
+    setShotFlash(true)
+    window.setTimeout(() => setShotFlash(false), 260)
     if (flash && facing === 'user') {
       setBloom(true)
       window.setTimeout(() => setBloom(false), 220)
@@ -1177,6 +1189,20 @@ export default function Camera({
       {flash && facing === 'user' && <div className={styles.camFlashEdge} aria-hidden="true" />}
       {/* …and the bloom at the instant of capture — the front camera's flash */}
       {bloom && <div className={styles.camBloom} aria-hidden="true" />}
+
+      {/* The kodak camera sits on the photo screens as the object doing the
+          taking, and its bulb goes off at the shutter. Only on the live photo
+          screen — not over the roll or the composer, where nothing is being
+          shot. */}
+      {page === 'live' && !composing && (
+        <div
+          className={shotFlash ? `${styles.camKodak} ${styles.camKodakFiring}` : styles.camKodak}
+          aria-hidden="true"
+        >
+          <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
+          <i className={styles.camKodakBulb} />
+        </div>
+      )}
 
       <div className={`${styles.camCornerSlot} ${styles.camSlotLeft}`}>
         <ClayCornerButton

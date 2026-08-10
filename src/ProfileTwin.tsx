@@ -9,6 +9,7 @@ import { modelSprite } from './modelSprite'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
+import ClaySwayObject, { primeMotionPermission } from './ClaySwayObject'
 import CameraRoll from './CameraRoll'
 import { radiusStats } from './radiusLedger'
 
@@ -884,18 +885,26 @@ export default function ProfileTwin({
     // No `visiting` guard: the button only exists on your OWN profile, so on
     // someone else's the ref is simply null and the handler returns. Reading
     // `visiting` here would also mean reading it before it is declared.
+    // Without this the handler below never runs on iOS: no deviceorientation
+    // event is delivered until motion permission is granted, and permission is
+    // only offered when asked from a user gesture. That ask used to live solely
+    // in beginCapture(), so the camera stayed dead still unless you had already
+    // opened the capture flow — which is why the sway was never visible on a
+    // normal visit to the profile.
+    primeMotionPermission()
     const onOrient = (e: DeviceOrientationEvent) => {
       const button = camBtnRef.current
       if (!button) return
-      // gamma is left/right tilt, beta front/back. Clamped hard: this is an
-      // object catching the light, not a gimbal.
-      const yaw = Math.max(-22, Math.min(22, (e.gamma ?? 0) * 0.55))
+      // Side-to-side yaw is no longer faked here. ClaySwayObject swaps between
+      // real renders of the model at baked angles, which turns the object
+      // properly instead of skewing one flat picture of it. What is left for
+      // CSS is the front/back lean, where a skew still reads honestly.
       const pitch = Math.max(-14, Math.min(14, ((e.beta ?? 0) - 45) * 0.28))
       // translateY(-50%) FIRST and always: the stylesheet uses it to centre the
       // button on the avatar, so an inline transform that omits it drops the
       // button half its height down the page.
       button.style.transform =
-        `translateY(-50%) perspective(620px) rotateY(${yaw.toFixed(1)}deg) rotateX(${(-pitch).toFixed(1)}deg)`
+        `translateY(-50%) perspective(620px) rotateX(${(-pitch).toFixed(1)}deg)`
     }
     window.addEventListener('deviceorientation', onOrient)
     return () => window.removeEventListener('deviceorientation', onOrient)
@@ -1191,6 +1200,18 @@ export default function ProfileTwin({
   const shownName = viewUser ? viewUser.replace(/^@/, '') : username
   const visitingAvatar = viewUser ? (AVATAR_BY_HANDLE[viewUser] ?? 'mark_talk0.png') : null
 
+  // Tell the shell the taking screen is up, so the cube navigator can wear the
+  // kodak camera while it lasts. A window event because ProfileTwin has no prop
+  // channel to the cube — the same route the notifications opener already uses.
+  // Someone else's profile has no capture button, so it never announces.
+  useEffect(() => {
+    const live = capturing && !visiting
+    window.dispatchEvent(new CustomEvent('poplur-profile-capture', { detail: live }))
+    return () => {
+      if (live) window.dispatchEvent(new CustomEvent('poplur-profile-capture', { detail: false }))
+    }
+  }, [capturing, visiting])
+
   const identity = isBusiness
     ? (buildingSprite
       ? <img className={styles.headFrame} src={buildingSprite} alt="" draggable="false" />
@@ -1223,7 +1244,8 @@ export default function ProfileTwin({
             aria-label="Notifications"
             aria-expanded={showNotifs && !notifsClosing}
           >
-            🔔<span className={styles.bellDot} />
+            <ClaySwayObject url="poplur_bell.glb" pitch={12} size={256} alt="" />
+            <span className={styles.bellDot} />
           </button>}
 
           <div className={styles.avatarFrame} />
@@ -1271,13 +1293,13 @@ export default function ProfileTwin({
             </div>
           ) : (
             <button ref={camBtnRef} className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Take profile photo">
-              <img src="cam_object.png" alt="" draggable="false" />
+              <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
             </button>
           )}
           {!visiting && launchingCamera && (
             <div className={styles.camEject} aria-hidden="true">
               <i />
-              <img src="cam_object.png" alt="" draggable="false" />
+              <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} alt="" />
             </div>
           )}
         </div>

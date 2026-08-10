@@ -59,6 +59,10 @@ const CUBE_INTO_PHONE_MS = 1_600
 /** The clay TV the navigator becomes while the TV Guide is open. Supplied art
     in public/, like every other clay model — never a drawn substitute. */
 const CLAY_TV_MODEL = 'clay_tv.glb'
+// The kodak camera the profile wears while you are taking your picture. Bundle
+// root, 131KB decimated from a 23MB supplied master — the weight rule in the
+// SUBSCREEN_CUBE_MODEL note below applies here too.
+const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
 const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // The cube's recording face. Bundle ROOT, not models/ — same reason as every
 // other navigator here (sync-mobile strips models/ from the phone bundles).
@@ -632,6 +636,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [activeTab, cubeSpinning, committedTab])
   // undefined = the designed cube. Set while a screen takes the navigator over.
   const [cubeModel, setCubeModel] = useState<string | undefined>(undefined)
+
+  // Taking your profile picture is NOT a subscreen — it is overlay state inside
+  // ProfileTwin, so it has no id and cannot be keyed in SUBSCREEN_CUBE_MODEL
+  // above (the same reason 'camera-capture' has no entry there). It announces
+  // itself instead, and the navigator wears the kodak camera for as long as the
+  // taking screen is up. Cleared back to undefined rather than to a remembered
+  // value because the profile itself carries no subscreen model.
+  const [profileCapture, setProfileCapture] = useState(false)
+  useEffect(() => {
+    const onCapture = (e: Event) => setProfileCapture(Boolean((e as CustomEvent<boolean>).detail))
+    window.addEventListener('poplur-profile-capture', onCapture)
+    return () => window.removeEventListener('poplur-profile-capture', onCapture)
+  }, [])
+  useEffect(() => {
+    if (!profileCapture) return
+    setCubeModel(PROFILE_CAMERA_MODEL)
+    return () => setCubeModel(undefined)
+  }, [profileCapture])
   const showFoodCubeFace = cubeModel === undefined && (
     (activeTab === 'feed' && feedFoodAdVisible)
     || (activeTab === 'map' && mapFoodAdVisible)
