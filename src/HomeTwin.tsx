@@ -60,6 +60,9 @@ const CUBE_INTO_PHONE_MS = 1_600
     in public/, like every other clay model — never a drawn substitute. */
 const CLAY_TV_MODEL = 'clay_tv.glb'
 const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
+// The cube's recording face. Bundle ROOT, not models/ — same reason as every
+// other navigator here (sync-mobile strips models/ from the phone bundles).
+const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
 // ── The navigator's object, per subscreen ────────────────────────────────────
 // Every subscreen gets its own object in your hand: open it and the cube pops
 // into that thing, back out and it pops back into the cube. Add a screen id
@@ -1565,8 +1568,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [])
 
+  // VIDEO cannot be keyed by subscreen: PHOTO, VIDEO, AR and DETECT all carry
+  // 'camera-capture' and act on the live camera instead of navigating anywhere,
+  // so none of them can wear a cube via SUBSCREEN_CUBE_MODEL. Recording is the
+  // state that actually distinguishes video, so the cube becomes the camcorder
+  // for exactly as long as the recording runs and pops back to whatever the
+  // screen asks for when it stops — through the same swap as every other
+  // navigator, so it transforms rather than hot-swapping mid-frame.
+  const requestedCubeModel = recordMs != null ? CAMCORDER_MODEL : cubeModel
   useEffect(() => {
-    if (cubeModel === appliedCubeModel && cubeScreen === appliedCubeScreen) return
+    if (requestedCubeModel === appliedCubeModel && cubeScreen === appliedCubeScreen) return
     setCubeSwapping(true)
     if (cubeSwapTimer.current) window.clearTimeout(cubeSwapTimer.current)
     // 340ms is the trough of cubeSwapPop (55% of 620ms): the cube is at its
@@ -1575,10 +1586,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     cubeSwapTimer.current = window.setTimeout(() => {
       cubeSwapTimer.current = null
       playPop()
-      setAppliedCubeModel(cubeModel)
+      setAppliedCubeModel(requestedCubeModel)
       setAppliedCubeScreen(cubeScreen)
     }, 340)
-  }, [cubeModel, appliedCubeModel, cubeScreen, appliedCubeScreen])
+  }, [requestedCubeModel, appliedCubeModel, cubeScreen, appliedCubeScreen])
   useEffect(() => () => {
     if (cubeSwapTimer.current) window.clearTimeout(cubeSwapTimer.current)
   }, [])
@@ -1964,7 +1975,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             size={cubeSize}
             modelUrl={appliedCubeModel}
             targetTab={activeTab}
-            showFoodFace={showFoodCubeFace}
+            showFoodFace={showFoodCubeFace && appliedCubeModel === undefined}
             onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}
             onSpinChange={setCubeSpinning}
             onTap={popCube}
