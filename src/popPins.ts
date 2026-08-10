@@ -29,8 +29,8 @@ export const PIN_SPRITE_SIZE = 256
 /** The pin model, framed for a map tier. Prerendered — see the note above. */
 export function pinSprite(mode: '2d' | '3d'): Promise<string> {
   return mode === '3d'
-    ? modelSprite('models/poplur_pin.glb', { yaw: 20, pitch: 14, size: PIN_SPRITE_SIZE })
-    : modelSprite('models/poplur_pin.glb', { yaw: 0, pitch: 0, size: PIN_SPRITE_SIZE })
+    ? modelSprite('poplur_pin_lite.glb', { yaw: 20, pitch: 14, size: PIN_SPRITE_SIZE })
+    : modelSprite('poplur_pin_lite.glb', { yaw: 0, pitch: 0, size: PIN_SPRITE_SIZE })
 }
 
 /**

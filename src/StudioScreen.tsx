@@ -112,10 +112,10 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     let live = true
     // Straight on: the mic is the whole screen here, so any yaw reads as the
     // object having been knocked over rather than presented.
-    modelSprite('models/poplur_mic.glb', { yaw: 0, pitch: 0, size: 512 })
+    modelSprite('poplur_mic_lite.glb', { yaw: 0, pitch: 0, size: 512 })
       .then(src => { if (live) setMicArt3d(src) })
       .catch(() => { /* falls back to the supplied PNG */ })
-    modelSprite('models/poplur_mixer.glb', { yaw: 22, pitch: 26, size: 256 })
+    modelSprite('poplur_mixer_lite.glb', { yaw: 22, pitch: 26, size: 256 })
       .then(src => { if (live) setMixerArt(src) })
       .catch(() => { /* falls back to the clay chip */ })
     return () => { live = false }

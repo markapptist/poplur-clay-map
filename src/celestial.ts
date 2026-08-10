@@ -193,9 +193,23 @@ export function moonPhase(when: Date): MoonPhase {
   }
 }
 
-/** The three supplied models, by the name they are stored under. */
+/**
+ * The three supplied models, by the name they are stored under.
+ *
+ * BUNDLE ROOT, and decimated. These pointed at models/ until now, which is why
+ * the sky worked in a desktop browser and was empty on every phone ever
+ * shipped: scripts/sync-mobile.sh excludes and deletes models/ from all three
+ * native bundles (it carries ~140MB of sprite GLBs we do not send), so the
+ * fetch simply found nothing on device. Anything the app needs on a phone
+ * lives at the root — the same reason clay_tv.glb does.
+ *
+ * They were also far too heavy to send even if the path had been right: 13MB,
+ * 28MB and 24MB. Decimated (Draco + simplify 0.0005 + 256px webp) they are
+ * 59KB, 136KB and 89KB, craters and all — 65MB of sky reduced to 283KB. The
+ * originals stay in models/ as the masters.
+ */
 export const CELESTIAL_MODELS = {
-  sun: 'models/poplur_sun.glb',
-  moonFull: 'models/poplur_moon_full.glb',
-  moonCrescent: 'models/poplur_moon_crescent.glb',
+  sun: 'poplur_sun_lite.glb',
+  moonFull: 'poplur_moon_full_lite.glb',
+  moonCrescent: 'poplur_moon_crescent_lite.glb',
 } as const
