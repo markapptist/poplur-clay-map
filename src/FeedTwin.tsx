@@ -425,13 +425,19 @@ export default function FeedTwin({
     return () => { window.clearTimeout(show); clearPopups('suggestion') }
   }, [index, contentRevision, suppressed, playerMode, commentOpen])
 
-  // Feed intentionally has no engagement chips/heart/share overlays. Keep
-  // suggestions and comments available; silence only the shared engagement
-  // kind for exactly as long as this (front-most) Feed instance is mounted.
+  // The feed used to silence the shared engagement kind outright for as long as
+  // it was mounted, which is why likes, views and comments only ever appeared on
+  // the map. They belong here too: the feed is where your content is watched, so
+  // it is where being watched should be visible.
+  //
+  // One case is worth keeping from the old rule — not over the comment box. A
+  // notice landing on the box you are typing into interrupts the one thing on
+  // this screen that takes real attention, the same reason suggestions are held
+  // back there. Player mode is handled separately: it suppresses every kind.
   useEffect(() => {
-    setPopupKindSuppressed('engagement', true)
+    setPopupKindSuppressed('engagement', commentOpen)
     return () => setPopupKindSuppressed('engagement', false)
-  }, [])
+  }, [commentOpen])
 
   // Player mode is the whole screen going quiet: the ref mirrors for the
   // pointer handlers, the popup layer stops popping (suggestions AND

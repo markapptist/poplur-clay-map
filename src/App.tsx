@@ -785,6 +785,19 @@ export default function App() {
   // instead of restarting every time a dependency of that callback changes.
   const engagementTraverseRef = useRef<((event: EngagementEvent) => void) | null>(null)
 
+  // The SHELL side of engagement: relay only, no generator.
+  //
+  // Engagement used to be visible on the map and nowhere else, because the only
+  // thing that started it was the Mapbox-arming effect below — which never runs
+  // in this document. The embed now forwards each event up here, and this is
+  // what draws it, over whichever surface is in front. That is what puts likes,
+  // views and comments on the Feed and Profile as well as the map, and it is
+  // also where the notifications history gets written.
+  useEffect(() => {
+    if (isMapEmbed) return
+    return startEngagementChips({ demo: false })
+  }, [isMapEmbed])
+
   // Live engagement chips: named likes/views popping at your claim. Starts
   // once the map exists (ClayMap fills mapRef during boot — poll briefly
   // rather than thread another callback through its props) and stops with the
@@ -821,6 +834,10 @@ export default function App() {
           gestureEvents.forEach(name => map.off(name, onGesture))
         }
         stopChips = startEngagementChips({
+          // The embed generates but does not draw: its PopupHost is inside the
+          // map iframe, and the shell renders one above it. Drawing in both
+          // would double every notice on the map surface.
+          forwardToParent: true,
           onEngagement: event => {
             // The reward is NOT behind the traversal's guards. Whether the
             // camera is allowed to fly right now has nothing to do with

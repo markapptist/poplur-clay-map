@@ -9,6 +9,7 @@ import { modelSprite } from './modelSprite'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
+import { listEngagement, onEngagementLogged, engagementAge, type LoggedEngagement } from './engagementLog'
 import ClaySwayObject, { primeMotionPermission } from './ClaySwayObject'
 import CameraRoll from './CameraRoll'
 import { radiusStats } from './radiusLedger'
@@ -110,7 +111,12 @@ const VISITING_TILE_BY_POP_ID: Record<string, number> = Object.fromEntries(
 // fullscreen viewer only.
 const posterFor = (video: string) => video.replace('feed/', 'feed/posters/').replace('.mp4', '.jpg')
 
-type NotificationKind = 'growth' | 'decrease' | 'pop' | 'trend' | 'message'
+// like / view / comment are the engagement kinds. Notifications is where the
+// history of your content's engagement lives: the map and feed pop a notice for
+// 3.4 seconds, and this is the same events kept.
+type NotificationKind =
+  | 'growth' | 'decrease' | 'pop' | 'trend' | 'message'
+  | 'like' | 'view' | 'comment'
 
 /** Where a notification LEADS. A notice you cannot follow is just a label, so
  *  every one of these names the thing it is about: the tile that took the
@@ -123,7 +129,13 @@ interface Notification {
   text: string
   when: string
   kind: NotificationKind
-  target: NotifTarget
+  /** Where it leads. Optional: an engagement row has no tile to point at yet —
+   *  the live wire will carry the post id, and until it does these open your
+   *  media rather than lighting up the wrong tile. */
+  target?: NotifTarget
+  /** Stable identity. Falls back to `text` for the seeded rows, which is what
+   *  identified them before engagement history made text non-unique. */
+  key?: string
 }
 
 const NOTIFICATIONS: Notification[] = [
@@ -278,6 +290,30 @@ const NOTIF_ICON_LABEL: Record<NotificationKind, string> = {
   pop: 'New pop',
   trend: 'Trending',
   message: 'Message',
+  like: 'Liked your post',
+  view: 'Viewed your post',
+  comment: 'Commented on your post',
+}
+
+// Engagement history → notification rows. The verb matches the sentence the
+// pop-up showed on the map or the feed, so the permanent record reads as the
+// same event the person watched go past.
+const ENGAGEMENT_TEXT: Record<'like' | 'view' | 'comment', string> = {
+  like: 'liked your post',
+  view: 'viewed your post',
+  comment: 'commented on your post',
+}
+
+function engagementRow(entry: LoggedEngagement): Notification {
+  return {
+    who: entry.user,
+    text: entry.place ? `${ENGAGEMENT_TEXT[entry.kind]} · ${entry.place}` : ENGAGEMENT_TEXT[entry.kind],
+    when: engagementAge(entry.at),
+    kind: entry.kind,
+    // user + kind + timestamp: two people can like the same post in the same
+    // minute and each still deserves its own row.
+    key: `${entry.user}|${entry.kind}|${entry.at}`,
+  }
 }
 
 // Real 3D clay icon per notification kind (extruded clay meshes), floating in
@@ -433,7 +469,22 @@ export default function ProfileTwin({
   // Notifications you have cleared, and the one currently swiped open. Local
   // state: a cleared notice must stay cleared for the session, and the module
   // list is the incoming feed, not your copy of it.
-  const [notifs, setNotifs] = useState<Notification[]>(NOTIFICATIONS)
+  // Engagement first, newest at the top, then the seeded notices beneath it.
+  const [notifs, setNotifs] = useState<Notification[]>(
+    () => [...listEngagement().map(engagementRow), ...NOTIFICATIONS],
+  )
+  // Rows the person cleared. Engagement arrives continuously, and without this
+  // a cleared row would reappear the moment the next like landed.
+  const dismissedNotifsRef = useRef(new Set<string>())
+  useEffect(() => onEngagementLogged(entries => {
+    setNotifs(list => {
+      const seen = new Set(list.map(n => n.key ?? n.text))
+      const fresh = entries
+        .map(engagementRow)
+        .filter(n => !seen.has(n.key!) && !dismissedNotifsRef.current.has(n.key!))
+      return fresh.length ? [...fresh, ...list] : list
+    })
+  }), [])
   const [swipedNotif, setSwipedNotif] = useState<string | null>(null)
   const notifSwipeRef = useRef<{ key: string; x0: number; moved: boolean } | null>(null)
   /** The message row a notification just sent you to, lit like a grid tile. */
@@ -619,14 +670,23 @@ export default function ProfileTwin({
     playPop()
     setSwipedNotif(null)
     closeNotifs()
-    setMode(n.target.mode)
+    const target = n.target
+    // An engagement row is about your content but does not yet know WHICH post
+    // — the live wire will carry the id. Open your media and light nothing,
+    // rather than lighting a tile it only guessed at.
+    setMode(target ? target.mode : 'media')
     window.clearTimeout(litTimer.current)
-    if (n.target.mode === 'media') {
+    if (!target) {
+      setLitTiles(null)
       setLitMessage(null)
-      setLitTiles(new Set([n.target.tile]))
+      return
+    }
+    if (target.mode === 'media') {
+      setLitMessage(null)
+      setLitTiles(new Set([target.tile]))
     } else {
       setLitTiles(null)
-      setLitMessage(n.target.who)
+      setLitMessage(target.who)
     }
     // Same dwell the map's pop highlight uses — long enough to find, short
     // enough that the screen is not left permanently marked.
@@ -637,7 +697,8 @@ export default function ProfileTwin({
   const dismissNotification = (key: string) => {
     playPop()
     setSwipedNotif(null)
-    setNotifs(list => list.filter(n => n.text !== key))
+    dismissedNotifsRef.current.add(key)
+    setNotifs(list => list.filter(n => (n.key ?? n.text) !== key))
   }
 
   useEffect(() => () => {
@@ -1457,9 +1518,16 @@ export default function ProfileTwin({
                   tap. Anything that is NOT a notification closes it (and the
                   cube still does, like every other layer here) — the rows stop
                   the event so reading one never dismisses the sheet. */}
-              {notifs.map((n, i) => (
+              {notifs.map((n, i) => {
+                // Rows used to be identified by their text, which was fine for
+                // five seeded notices and wrong the moment engagement history
+                // arrived: two people liking the same post produce the same
+                // sentence, so they would have shared a React key and a swipe
+                // state, and clearing one would have cleared the other.
+                const rowKey = n.key ?? n.text
+                return (
                 <div
-                  key={n.text}
+                  key={rowKey}
                   className={styles.notifSwipe}
                   style={{ '--i': i } as React.CSSProperties}
                   onClick={e => e.stopPropagation()}
@@ -1468,26 +1536,26 @@ export default function ProfileTwin({
                   <button
                     type="button"
                     className={styles.notifClear}
-                    tabIndex={swipedNotif === n.text ? 0 : -1}
-                    aria-hidden={swipedNotif !== n.text}
-                    onClick={() => dismissNotification(n.text)}
+                    tabIndex={swipedNotif === rowKey ? 0 : -1}
+                    aria-hidden={swipedNotif !== rowKey}
+                    onClick={() => dismissNotification(rowKey)}
                   >
                     Clear
                   </button>
                   <div
-                    className={swipedNotif === n.text ? `${styles.notifRow} ${styles.notifRowSwiped}` : styles.notifRow}
+                    className={swipedNotif === rowKey ? `${styles.notifRow} ${styles.notifRowSwiped}` : styles.notifRow}
                     role="button"
                     tabIndex={0}
-                    onPointerDown={e => { notifSwipeRef.current = { key: n.text, x0: e.clientX, moved: false } }}
+                    onPointerDown={e => { notifSwipeRef.current = { key: rowKey, x0: e.clientX, moved: false } }}
                     onPointerMove={e => {
                       const s = notifSwipeRef.current
-                      if (!s || s.key !== n.text) return
+                      if (!s || s.key !== rowKey) return
                       const dx = e.clientX - s.x0
                       if (Math.abs(dx) > 8) s.moved = true
                       // Left opens the clear action, right puts it away —
                       // committed on the drag itself, so a flick works without
                       // having to land the finger anywhere in particular.
-                      if (dx < -34) { setSwipedNotif(n.text); notifSwipeRef.current = null }
+                      if (dx < -34) { setSwipedNotif(rowKey); notifSwipeRef.current = null }
                       else if (dx > 34) { setSwipedNotif(null); notifSwipeRef.current = null }
                     }}
                     onPointerUp={() => {
@@ -1496,7 +1564,7 @@ export default function ProfileTwin({
                       // A drag is never a tap. An open row closes instead of
                       // navigating, so the clear action cannot be tapped past.
                       if (!s || s.moved) return
-                      if (swipedNotif === n.text) { setSwipedNotif(null); return }
+                      if (swipedNotif === rowKey) { setSwipedNotif(null); return }
                       openNotification(n)
                     }}
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNotification(n) } }}
@@ -1510,7 +1578,8 @@ export default function ProfileTwin({
                     </div>
                   </div>
                 </div>
-              ))}
+                )
+              })}
               {notifs.length === 0 && (
                 <div className={styles.notifEmpty}>You are all caught up.</div>
               )}

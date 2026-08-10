@@ -32,6 +32,7 @@
 import { POIS } from './data'
 import { ambientAllowed } from './frameGovernor'
 import { showPopup, clearPopups } from './popups'
+import { recordEngagement } from './engagementLog'
 
 export interface EngagementEvent {
   user: string
@@ -57,6 +58,18 @@ export interface EngagementOptions {
    * document that owns it, not to whoever happens to be listening.
    */
   onEngagement?: (event: EngagementEvent) => void
+  /**
+   * Emit the demo trickle. Exactly ONE document may: the map embed owns it,
+   * because it has the POIs an engagement lands on and the camera that answers.
+   * The shell passes false and runs relay-only, or the two generators would
+   * double the cadence.
+   */
+  demo?: boolean
+  /**
+   * Post engagement up to the parent instead of drawing it here. Set by the map
+   * embed — see the note in `show`. Ignored when there is no parent.
+   */
+  forwardToParent?: boolean
 }
 
 // The feed's sample cast (FeedTwin comments + profile) — reused, not invented.
@@ -91,6 +104,26 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
     // belongs to the screen. Going through the shared layer also means the
     // feed gets engagement for free: there is no Mapbox instance there to hang
     // a marker on, which is the only reason it was map-only.
+    // WHERE the notice is drawn depends on which document this is.
+    //
+    // The map runs in an always-mounted iframe behind Feed and Profile, and each
+    // document renders its own PopupHost. If the embed drew its own notices as
+    // well as the shell, every engagement would appear twice on the map surface:
+    // once inside the iframe and once in the shell's layer above it. So the
+    // embed FORWARDS and the shell DRAWS — which is also what finally puts
+    // engagement on the feed, where there is no Mapbox instance at all.
+    //
+    // Standalone (the shell-less map route on :5199) there is no parent, so this
+    // falls through and draws locally exactly as before.
+    if (options.forwardToParent && window.parent !== window) {
+      window.parent.postMessage({ type: 'poplur-engagement', ...event }, '*')
+      // The camera still belongs to THIS document, so it is answered here.
+      options.onEngagement?.(event)
+      return
+    }
+    // This document is the one being looked at, so the history is written from
+    // here too — the notifications screen reads it out of the same log.
+    recordEngagement(event)
     const icon = event.kind === 'like' ? '♥' : event.kind === 'view' ? '◉' : '✎'
     showPopup({
       kind: 'engagement',
@@ -152,7 +185,10 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
         const poi = POIS[Math.floor(Math.random() * POIS.length)]
         show({
           user: CAST[Math.floor(Math.random() * CAST.length)],
-          kind: roll < 0.55 ? 'like' : roll < 0.9 ? 'view' : 'comment',
+          // 45 / 35 / 20. Likes still lead, as they would in life, but comments
+          // at the old 10% were rare enough that the surface read as likes-only
+          // — which is exactly how it was reported.
+          kind: roll < 0.45 ? 'like' : roll < 0.8 ? 'view' : 'comment',
           coords: poi.coords,
           radiusKm: poi.radiusKm,
           place: poi.name,
@@ -161,7 +197,8 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
       scheduleDemo()
     }, 6_000 + Math.random() * 8_000)
   }
-  scheduleDemo()
+  // Only one document generates; the shell passes demo: false and relays.
+  if (options.demo !== false) scheduleDemo()
 
   return () => {
     stopped = true

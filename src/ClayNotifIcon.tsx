@@ -11,7 +11,12 @@ const CLAY = 0xef62a6
 const GOLD = 0xffc93d
 const DEEP = 0xc21f6e
 
-export type NotifKind = 'growth' | 'decrease' | 'pop' | 'trend' | 'message'
+// 'like' | 'view' | 'comment' are the engagement kinds: the notifications
+// screen is now the history of every notice the map and feed popped, so it
+// needs an icon for each of them.
+export type NotifKind =
+  | 'growth' | 'decrease' | 'pop' | 'trend' | 'message'
+  | 'like' | 'view' | 'comment'
 
 /** Solid arrowhead triangle pointing +x before rotation. */
 function arrowShape(size: number): THREE.Shape {
@@ -57,6 +62,18 @@ function heartShape(): THREE.Shape {
 /** Rounded chat bubble body (the tail is a small separate triangle mesh). */
 function bubbleShape(): THREE.Shape {
   return barShape(2.0, 1.32, 0.44)
+}
+
+/** A lens for VIEW — two mirrored arcs meeting at the corners, with a raised
+ *  pupil moulded on top. Built the same way heartShape is: beziers in code, no
+ *  imported artwork. */
+function eyeShape(): THREE.Shape {
+  const s = new THREE.Shape()
+  s.moveTo(-1.16, 0)
+  s.bezierCurveTo(-0.62, 0.78, 0.62, 0.78, 1.16, 0)
+  s.bezierCurveTo(0.62, -0.78, -0.62, -0.78, -1.16, 0)
+  s.closePath()
+  return s
 }
 
 function tailShape(): THREE.Shape {
@@ -145,10 +162,17 @@ export default function ClayNotifIcon({ kind, size = 40 }: { kind: NotifKind; si
       const a = mesh(barShape(1.7, 0.42))
       const b = mesh(barShape(0.42, 1.7))
       root.add(a, b)
-    } else if (kind === 'trend') {
+    } else if (kind === 'trend' || kind === 'like') {
       root.add(mesh(heartShape()))
+    } else if (kind === 'view') {
+      // Lens plus a raised pupil. Both in the same clay — there is one material
+      // here — so the pupil reads as moulded into the eye, not painted on it.
+      const lens = mesh(eyeShape())
+      const pupil = mesh(barShape(0.62, 0.62))
+      pupil.position.set(0, 0, 0.14)
+      root.add(lens, pupil)
     } else {
-      // message — chat bubble with a little tail.
+      // message / comment — chat bubble with a little tail.
       const body = mesh(bubbleShape())
       body.position.set(0, 0.16, 0)
       const tail = mesh(tailShape())
@@ -156,7 +180,9 @@ export default function ClayNotifIcon({ kind, size = 40 }: { kind: NotifKind; si
       root.add(body, tail)
     }
 
-    const restScale = kind === 'message' ? 0.94 : kind === 'trend' ? 1.02 : kind === 'pop' ? 1.06 : 1.0
+    const restScale = kind === 'message' || kind === 'comment' ? 0.94
+      : kind === 'trend' || kind === 'like' ? 1.02
+      : kind === 'pop' ? 1.06 : 1.0
     const decreaseFlip = kind === 'decrease' ? Math.PI : 0
 
     // Draw ONCE, not every frame. These are static clay icons — a fixed 3/4
