@@ -1235,8 +1235,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
   useEffect(() => { if (!overlayOpen) setSubscreenFullscreen(false) }, [overlayOpen])
   const feedChromeGone = feedFullscreen && committedTab === 'feed'
-  /** Chrome fully away — the feed's player mode OR a subscreen that asked. */
-  const chromeGone = feedChromeGone || subscreenFullscreen
+  // A Google feed slot is a NATIVE card the shell lays over the web feed — it
+  // cannot be drawn in here. The chrome has to take itself away while it is up,
+  // or the cube and HUD would sit on top of an ad, which is exactly the
+  // interruption this placement exists to avoid.
+  const [feedAdSlotOpen, setFeedAdSlotOpen] = useState(false)
+  useEffect(() => {
+    const onFeedAd = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { open?: unknown } | undefined
+      setFeedAdSlotOpen(Boolean(detail?.open))
+    }
+    window.addEventListener('poplur-native-feed-ad', onFeedAd)
+    return () => window.removeEventListener('poplur-native-feed-ad', onFeedAd)
+  }, [])
+  /** Chrome fully away — the feed's player mode, a subscreen, or an ad slot. */
+  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen
   const [mapTourOn, setMapTourOn] = useState(false)
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
