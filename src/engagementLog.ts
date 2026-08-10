@@ -16,6 +16,7 @@
 // an unbounded array behind a notifications list is a leak with a UI on it.
 
 import type { EngagementEvent } from './engagement'
+import { playPop } from './pop'
 
 export interface LoggedEngagement {
   user: string
@@ -59,10 +60,25 @@ export function listEngagement(): LoggedEngagement[] {
   return entries.slice().reverse()
 }
 
+/** Engagement arrives continuously and can land in bursts, so the pop has a
+ *  floor between plays. One pop is the app noticing you; five stacked on top of
+ *  each other is a noise. Restoring the log on load does not come through here,
+ *  so a returning session stays silent. */
+const POP_FLOOR_MS = 300
+let lastPopAt = 0
+
 export function recordEngagement(event: EngagementEvent, at = Date.now()): void {
   entries = [...entries, { user: event.user, kind: event.kind, at, place: event.place }]
   if (entries.length > MAX) entries = entries.slice(entries.length - MAX)
   persist()
+  // Every engagement funnels through here, so the sound follows the event
+  // rather than the screen — it plays whether you are on the profile, the feed
+  // or the map.
+  const now = Date.now()
+  if (now - lastPopAt >= POP_FLOOR_MS) {
+    lastPopAt = now
+    playPop()
+  }
   const snapshot = listEngagement()
   listeners.forEach(fn => fn(snapshot))
 }
