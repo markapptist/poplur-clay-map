@@ -36,7 +36,22 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  background: #000;
+  /* TRANSPARENT until it has frames, which is what the markup above always
+     claimed ("the gradient shows through while the video buffers") and what
+     an opaque black background quietly prevented.
+     A <video> with nothing decoded yet is not blank — the WebView draws its
+     own missing-media placeholder, the grey play button. Static covers the
+     channel-CHANGE window, but stepping between posts inside a channel
+     deliberately raises no static, so that load window had nothing over it.
+     On a fast phone it passes too quickly to see; on the A03 it is the UI. */
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.18s linear;
+}
+
+/* Real frames have arrived — fade the clip in over the channel gradient. */
+.adVideoReady {
+  opacity: 1;
 }
 
 /* ── TV static buffering cover — twin of the app's TVStaticLoopingView +

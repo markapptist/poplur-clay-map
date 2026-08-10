@@ -876,12 +876,32 @@ export default function ProfileTwin({
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
   }
+  // The runtime prompt is asynchronous, so the getUserMedia that triggered it
+  // has already been refused by the time you tap Allow. The Android shell
+  // dispatches this the moment the grant lands; bumping the nonce re-runs the
+  // effect below and opens the camera for real, instead of leaving the user
+  // looking at a failure they just dismissed.
+  const [cameraGrantNonce, setCameraGrantNonce] = useState(0)
+  useEffect(() => {
+    const onGranted = () => setCameraGrantNonce(n => n + 1)
+    window.addEventListener('poplur-camera-permission-granted', onGranted)
+    return () => window.removeEventListener('poplur-camera-permission-granted', onGranted)
+  }, [])
+
   useEffect(() => {
     if (!capturing || captureSource !== 'camera') { stopStream(); return }
     let cancelled = false
     setCamError(false)
     setTorchOn(false)
     setTorchAvailable(false)
+    // ASK BEFORE OPENING. Android's WebView grants getUserMedia only when the
+    // app already holds the runtime CAMERA permission and silently denies
+    // otherwise — it never prompts by itself. The prompt is fired by this
+    // event, and until now only the camera tab sent it, so taking a profile
+    // photo worked if you had visited the camera first and failed with
+    // "Camera unavailable here" if you had not. Harmless on iOS, where the
+    // shell ignores an event for a permission it already handles.
+    if (isNativeShell()) postNativeEvent({ type: 'requestCameraPermission' })
     navigator.mediaDevices?.getUserMedia({
       video: {
         facingMode: { ideal: facingMode },
@@ -903,7 +923,7 @@ export default function ProfileTwin({
       })
       .catch(() => { if (!cancelled) setCamError(true) })
     return () => { cancelled = true; stopStream() }
-  }, [capturing, captureSource, facingMode])
+  }, [capturing, captureSource, facingMode, cameraGrantNonce])
 
   // Accelerometer sway: the viewfinder leans gently with the device — lerped
   // hard (0.06) and clamped to ±4° so it reads as smooth, never aggressive.
@@ -911,6 +931,13 @@ export default function ProfileTwin({
     if (!capturing || captureSource !== 'camera') return
     const video = videoRef.current
     if (!video) return
+    // Prime here too, not only from the profile's clay camera. On iOS no
+    // deviceorientation event is delivered until permission is granted, and it
+    // is only offered from a user gesture — so opening capture without having
+    // first touched the profile left this listener attached to a signal that
+    // never arrived, and the viewfinder sat perfectly still. Priming is
+    // once-per-session and a no-op on Android and desktop.
+    primeMotionPermission()
     let raf = 0
     let target = 0, current = 0
     const onOrient = (e: DeviceOrientationEvent) => {

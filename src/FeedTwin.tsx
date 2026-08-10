@@ -1227,7 +1227,11 @@ export default function FeedTwin({
       {post?.stream && (
         <video
           key="own-live"
-          className={styles.adVideo}
+          // Always visible: a MediaStream attaches directly with no file to
+          // fetch, so it has none of the load window the ad clips fade in to
+          // cover. Without adVideoReady it would inherit opacity 0 and your
+          // own broadcast would render blank.
+          className={`${styles.adVideo} ${styles.adVideoReady}`}
           ref={el => { if (el && el.srcObject !== post.stream) el.srcObject = post.stream ?? null }}
           autoPlay
           muted
@@ -1239,7 +1243,7 @@ export default function FeedTwin({
         <video
           key={adSrc}
           ref={adVideoRef}
-          className={styles.adVideo}
+          className={adReady ? `${styles.adVideo} ${styles.adVideoReady}` : styles.adVideo}
           src={adSrc}
           autoPlay
           // Starts muted because iOS/Safari refuse unmuted autoplay before a

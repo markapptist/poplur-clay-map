@@ -158,11 +158,16 @@
 .bell {
   position: absolute;
   top: 50%;
-  left: calc(-58px - var(--control-outset) - var(--flank));
+  /* 46px, was 30. These are real clay objects rendered at 256px and then shown
+     in a 30px box — most of the modelling was being thrown away, and the bell
+     read as a speck beside the avatar. The left offset grows by the same 16px
+     the box did, so the mark keeps its old clearance from the avatar instead
+     of drifting inwards as it gets bigger. */
+  left: calc(-74px - var(--control-outset) - var(--flank));
   transform: translateY(-50%);
   z-index: 6;
-  width: 30px;
-  height: 30px;
+  width: 46px;
+  height: 46px;
   border: 0;
   background: transparent;
   font-size: 30px;
@@ -194,11 +199,16 @@
 .camBtn {
   position: absolute;
   top: 50%;
-  right: calc(-60px - var(--control-outset) - var(--flank));
+  /* 84×76, was 58×52 — same reasoning as the bell: the kodak is a 320px sprite
+     that was being shown at a third of its detail. It is also the control you
+     press to take your profile photo, so it earns the larger target. The right
+     offset grows by the added width so the camera keeps its clearance rather
+     than leaning into the avatar. */
+  right: calc(-86px - var(--control-outset) - var(--flank));
   transform: translateY(-50%);
   z-index: 6;
-  width: 58px;
-  height: 52px;
+  width: 84px;
+  height: 76px;
   border: 0;
   padding: 0;
   background: transparent;
