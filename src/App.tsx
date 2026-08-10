@@ -1,6 +1,48 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES, OTHER_POPS, PALETTE, type PopLevel } from './data'
+
+/** Takeover test mode — `?takeover=1`.
+ *
+ *  Level 3 (`all`) is meant to show the whole board, but POIS and OTHER_POPS
+ *  are demo fixtures: a handful of discs on an otherwise empty globe. That is
+ *  enough to prove the level switches and useless for judging what a WORLD
+ *  takeover actually looks like — whether the terrain wrap reads at range,
+ *  whether the floor holds when claimed ground covers everything.
+ *
+ *  This seeds a synthetic full-world claim set so that can be looked at. It is
+ *  a LOOK, not data: nothing is persisted, no pins are stood up (hundreds of
+ *  pinned faces would be a frame problem, not a picture), and it only applies
+ *  on `all`.
+ *
+ *  Follows the existing dev-flag convention — kebab query param compared to
+ *  '1', same as sample-claims, mapLite, day-cycle and sky-cycle. */
+const TAKEOVER_TEST = new URLSearchParams(window.location.search).get('takeover') === '1'
+
+/** A claim set that covers the globe.
+ *
+ *  Deterministic, so two runs render the same board and a change in the look is
+ *  a change in the RENDERER rather than in the seed. Longitude lines converge
+ *  toward the poles, so the longitude step widens by 1/cos(lat) to keep the
+ *  discs overlapping the whole way up instead of leaving gaps that would read
+ *  as unclaimed ground. Stops at ±72°: past that a disc projects into a band
+ *  and the wrap stops telling you anything true. */
+function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; radiusKm: number }> {
+  const claims: Array<{ id: string; center: [number, number]; radiusKm: number }> = []
+  for (let lat = -72; lat <= 72; lat += 9) {
+    const spread = Math.min(4, 1 / Math.max(0.3, Math.cos((lat * Math.PI) / 180)))
+    for (let lon = -180; lon < 180; lon += 10 * spread) {
+      claims.push({
+        id: `takeover-${lat}-${Math.round(lon)}`,
+        center: [Math.round(lon * 100) / 100, lat],
+        // Overlaps its neighbours on purpose: held ground is continuous, and
+        // touching-but-not-overlapping discs draw a seam that is not there.
+        radiusKm: 780,
+      })
+    }
+  }
+  return claims
+}
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
 import { userUnitsToKm } from './units'
@@ -1716,11 +1758,17 @@ export default function App() {
         })))
         // 'others' means ONLY theirs: your ground comes off the board so the
         // level reads as a filter rather than an addition.
-        setClaimGroup(map, 'mine', popLevel === 'others' ? [] : POIS.map(poi => ({
-          id: `pop-${poi.id}`,
-          center: poi.coords as [number, number],
-          radiusKm: poi.radiusKm,
-        })))
+        // Takeover test: on `all`, YOUR ground becomes the whole world, so the
+        // terrain wrap can be judged at range. Only on `all` — the flag must
+        // not quietly change what levels 1 and 2 mean.
+        setClaimGroup(map, 'mine',
+          TAKEOVER_TEST && popLevel === 'all'
+            ? worldTakeoverClaims()
+            : popLevel === 'others' ? [] : POIS.map(poi => ({
+              id: `pop-${poi.id}`,
+              center: poi.coords as [number, number],
+              radiusKm: poi.radiusKm,
+            })))
       } catch { /* map torn down */ }
     }
     // Let the first seed land before the level starts rearranging the board.
