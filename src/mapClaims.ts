@@ -338,7 +338,108 @@ if (!liteTier())   map.addLayer({
   })
 }
 
+/**
+ * Hard ceiling for the live board held by this map document.
+ *
+ * Each claim becomes one 72-point fill polygon, three 48-point rings and one
+ * clustered point in separate GeoJSON sources. Ninety-six therefore already
+ * gives the world board several screens of detail while keeping source data,
+ * worker indexes and every subsequent setData rebuild strictly bounded on a
+ * phone. The production fixtures are well below this ceiling.
+ */
+export const CLAIMS_MAX_RETAINED = 96
+const CLAIMS_RECENT_RESERVE = 24
 const claims = new Map<string, Claim>()
+
+interface RankedClaim {
+  claim: Claim
+  index: number
+  visible: boolean
+  recent: boolean
+}
+
+/** Approximate intersection with the current camera footprint, including a
+ * claim whose centre is just off-screen but whose claimed ground reaches in. */
+function claimTouchesViewport(map: mapboxgl.Map, claim: Claim): boolean {
+  try {
+    const bounds = map.getBounds()
+    if (!bounds) return true
+    const center = map.getCenter()
+    const viewportRadiusKm = Math.max(
+      center.distanceTo(bounds.getNorthEast()),
+      center.distanceTo(bounds.getSouthWest()),
+    ) / 1000
+    const claimCenter = new mapboxgl.LngLat(claim.center[0], claim.center[1])
+    return center.distanceTo(claimCenter) / 1000 <= viewportRadiusKm + Math.max(0, claim.radiusKm)
+  } catch {
+    // A map being torn down has no useful viewport. Recency/reach still provide
+    // a deterministic fallback ordering until the document disappears.
+    return false
+  }
+}
+
+/**
+ * Replace the retained board without ever letting the module-global map grow
+ * beyond its hard ceiling. Priority is deterministic:
+ *   1. claims intersecting the current viewport;
+ *   2. the 24 most recently inserted/updated claims;
+ *   3. greatest reach;
+ *   4. newest, then stable id as the final tie-break.
+ *
+ * This keeps what the user is looking at, guarantees room for new activity,
+ * and preserves the world-scale holders that make the globe readable.
+ */
+function replaceClaimsBounded(map: mapboxgl.Map, candidates: Map<string, Claim>): void {
+  const ordered = [...candidates.values()]
+  if (ordered.length <= CLAIMS_MAX_RETAINED) {
+    claims.clear()
+    for (const claim of ordered) claims.set(claim.id, claim)
+    return
+  }
+
+  const recentFrom = Math.max(0, ordered.length - CLAIMS_RECENT_RESERVE)
+  const ranked: RankedClaim[] = ordered.map((claim, index) => ({
+    claim,
+    index,
+    visible: claimTouchesViewport(map, claim),
+    recent: index >= recentFrom,
+  }))
+  ranked.sort((a, b) =>
+    Number(b.visible) - Number(a.visible)
+    || Number(b.recent) - Number(a.recent)
+    || b.claim.radiusKm - a.claim.radiusKm
+    || b.index - a.index
+    || a.claim.id.localeCompare(b.claim.id))
+
+  const retained = new Set(
+    ranked.slice(0, CLAIMS_MAX_RETAINED).map(entry => entry.claim.id),
+  )
+  claims.clear()
+  // Restore insertion order after ranking so future "recent" decisions still
+  // describe chronology rather than this implementation's priority sort.
+  for (const claim of ordered) if (retained.has(claim.id)) claims.set(claim.id, claim)
+}
+
+function upsertClaimsBounded(map: mapboxgl.Map, list: Claim[]): void {
+  if (list.length === 1) {
+    const claim = list[0]
+    // The grow animation updates one existing claim every frame. Keep that hot
+    // path O(1); copying/re-ranking the whole board per frame would replace one
+    // retention problem with avoidable CPU work.
+    if (claims.has(claim.id) || claims.size < CLAIMS_MAX_RETAINED) {
+      claims.delete(claim.id)
+      claims.set(claim.id, claim)
+      return
+    }
+  }
+  const candidates = new Map(claims)
+  for (const claim of list) {
+    // Map insertion order is our recency clock. An update is recent too.
+    candidates.delete(claim.id)
+    candidates.set(claim.id, claim)
+  }
+  replaceClaimsBounded(map, candidates)
+}
 
 /** Everything currently claimed, for per-feature colorization passes. */
 export function getClaims(): Claim[] { return [...claims.values()] }
@@ -475,11 +576,16 @@ export function totalClaimedKm(): number {
  */
 export function setClaimGroup(map: mapboxgl.Map, owner: 'mine' | 'others', list: Claim[]): void {
   installClaimsLayer(map)
-  for (const [id, claim] of [...claims.entries()]) {
+  const candidates = new Map(claims)
+  for (const [id, claim] of [...candidates.entries()]) {
     const belongs = owner === 'mine' ? !claim.color : Boolean(claim.color)
-    if (belongs) claims.delete(id)
+    if (belongs) candidates.delete(id)
   }
-  for (const claim of list) claims.set(claim.id, claim)
+  for (const claim of list) {
+    candidates.delete(claim.id)
+    candidates.set(claim.id, claim)
+  }
+  replaceClaimsBounded(map, candidates)
   pushClaims(map)
   claimsListeners.forEach(fn => fn())
 }
@@ -492,7 +598,7 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
   const from = existing ? existing.radiusKm : 0
   const to = claim.radiusKm
   if (!animate) {
-    claims.set(claim.id, claim)
+    upsertClaimsBounded(map, [claim])
     pushClaims(map)
     claimsListeners.forEach(fn => fn())
     return
@@ -504,10 +610,10 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
     // Overshoot spring so the territory "pops" like everything else.
     const eased = 1 + Math.sin(t * Math.PI) * 0.14 - Math.pow(1 - t, 3)
     const r = from + (to - from) * Math.min(1, eased)
-    claims.set(claim.id, { ...claim, radiusKm: Math.max(0, r) })
+    upsertClaimsBounded(map, [{ ...claim, radiusKm: Math.max(0, r) }])
     pushClaims(map, { points: false })
     if (t < 1) requestAnimationFrame(step)
-    else { claims.set(claim.id, claim); pushClaims(map); claimsListeners.forEach(fn => fn()) }
+    else { upsertClaimsBounded(map, [claim]); pushClaims(map); claimsListeners.forEach(fn => fn()) }
   }
   requestAnimationFrame(step)
 }
@@ -519,7 +625,7 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
  *  A03: the map does this work behind whichever tab is actually front. */
 export function seedClaims(map: mapboxgl.Map, list: Claim[]) {
   installClaimsLayer(map)
-  for (const claim of list) claims.set(claim.id, claim)
+  upsertClaimsBounded(map, list)
   pushClaims(map)
   claimsListeners.forEach(fn => fn())
 }

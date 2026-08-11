@@ -102,6 +102,15 @@
   animation: tabFade 260ms ease both;
 }
 
+/* A tab can finish committing after native's finite interaction lease. The
+   performance runtime pauses CSS animation while idle; without this fallback,
+   `both` held a newly mounted screen at tabFade's opacity:0 until another tap
+   woke the document. An idle screen is static, but it must still be visible. */
+:global(html.poplur-performance-idle) .contentLayer > * {
+  animation: none !important;
+  opacity: 1;
+}
+
 @keyframes tabFade {
   from { opacity: 0; }
   to { opacity: 1; }

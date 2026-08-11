@@ -1,4 +1,5 @@
 import { onFrame } from './frameGovernor'
+import { cancelManagedRenderingWake, wakeManagedRendering } from './nativeBridge'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type mapboxgl from 'mapbox-gl'
 import { modelSprite } from './modelSprite'
@@ -37,6 +38,8 @@ interface Destination { center: LngLat; name: string }
 const SRC = 'clay-nav-route'
 const ANNOUNCE_M = 140   // speak the upcoming turn this far out
 const DRIVE_MPS = 20     // demo ground speed (~72 km/h) along the route
+const MANAGED_CAMERA_SETTLE_MS = 400
+const DRIVE_LEASE_CHUNK_MS = 44_000
 
 // ---- geo helpers ----
 function haversine(a: LngLat, b: LngLat): number {
@@ -154,6 +157,7 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
   const destMarkRef = useRef<mapboxgl.Marker | null>(null)
   // Unsubscribe from the shared frame clock (frameGovernor) while driving.
   const stopTickRef = useRef<(() => void) | null>(null)
+  const driveLeaseTimerRef = useRef(0)
   const carSpriteRef = useRef<string | null>(null)
   const spokenRef = useRef<Set<number>>(new Set())
 
@@ -187,7 +191,12 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
   }, [mapRef])
 
   const teardown = useCallback(() => {
-    stopTickRef.current?.()
+    const activeDrive = stopTickRef.current
+    activeDrive?.()
+    stopTickRef.current = null
+    window.clearTimeout(driveLeaseTimerRef.current)
+    driveLeaseTimerRef.current = 0
+    if (activeDrive) cancelManagedRenderingWake()
     window.speechSynthesis?.cancel()
     carRef.current?.remove(); carRef.current = null
     destMarkRef.current?.remove(); destMarkRef.current = null
@@ -277,6 +286,7 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
 
       // frame the whole route for the preview
       const b = coords.reduce((acc2, p) => acc2.extend(p), new mapboxgl.LngLatBounds(coords[0], coords[0]))
+      wakeManagedRendering(1400 + MANAGED_CAMERA_SETTLE_MS)
       map.fitBounds(b, { padding: 90, pitch: 40, duration: 1400 })
       setMode('preview')
     } catch (cause) {
@@ -344,10 +354,31 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
           speak(`You have arrived at ${destName}.`)
           stopTickRef.current?.()
           stopTickRef.current = null
+          window.clearTimeout(driveLeaseTimerRef.current)
+          driveLeaseTimerRef.current = 0
+          cancelManagedRenderingWake()
         }
       }
       stopTickRef.current?.()
+      window.clearTimeout(driveLeaseTimerRef.current)
       stopTickRef.current = onFrame(tick, 'interactive')
+      // Route driving is finite and attended, but a real route can exceed one
+      // 45-second lease. Renew in bounded chunks only while this exact drive
+      // still owns its frame subscription; arrival, Stop and unmount all clear
+      // the renewal. The planned route duration remains the absolute deadline.
+      const driveDeadline = performance.now()
+        + (route.distance / DRIVE_MPS) * 1000
+        + MANAGED_CAMERA_SETTLE_MS
+      const renewDriveLease = () => {
+        if (!stopTickRef.current) return
+        const remaining = driveDeadline - performance.now()
+        if (remaining <= 0) return
+        wakeManagedRendering(Math.min(45_000, remaining))
+        if (remaining > DRIVE_LEASE_CHUNK_MS) {
+          driveLeaseTimerRef.current = window.setTimeout(renewDriveLease, DRIVE_LEASE_CHUNK_MS)
+        }
+      }
+      renewDriveLease()
     })
   }, [mapRef, route, destName, onRouteIntent, setStreetView, speak])
 

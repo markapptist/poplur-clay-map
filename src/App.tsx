@@ -86,9 +86,9 @@ import {
   startPoplurTheme, stopPoplurTheme, setVoiceDucked,
 } from './regionAudio'
 import {
-  announceMapTour, isRadioBackgroundEnabled, nowPlayingStation, tuneLiveRadio,
+  announceMapTour, isMapRadioActive, isRadioBackgroundEnabled, nowPlayingStation, tuneLiveRadio,
 } from './mapRadio'
-import { postNativeEvent } from './nativeBridge'
+import { postNativeEvent, wakeManagedRendering } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
@@ -505,6 +505,10 @@ const RECOMMENDATIONS: ((destination: TourDestination) => string)[] = [
 // Keep every app-driven street flight close enough that 3D buildings are visible.
 const BUILDING_REVEAL_ZOOM = 16.2 // matches ClayMap ZOOM_MAX cap
 const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
+// Mapbox resolves its final camera frame just after the advertised duration.
+// Keep that small settle tail inside the finite lease instead of reopening the
+// map's ambient renderer for an arbitrary window.
+const MANAGED_CAMERA_SETTLE_MS = 400
 // Tour pacing. The tour flight is not a short hop: it rises all the way out to
 // the globe and dives back into the next city (minZoom 0.9, curve 1.7 in
 // flyToCenter), so it needs real time to read as a camera move rather than a
@@ -1042,7 +1046,9 @@ export default function App() {
     } | null
     map?.__stopOrbit?.()
     map?.stop?.()
-    map?.easeTo?.({
+    if (!map?.easeTo) return
+    wakeManagedRendering(3400 + MANAGED_CAMERA_SETTLE_MS)
+    map.easeTo({
       center,
       zoom: 15.4,
       pitch: 52,
@@ -1144,7 +1150,9 @@ export default function App() {
 
   const speakMapLine = useCallback((line: string, stations: ReadonlyArray<RadioStationCue> = []): boolean => {
     if (!applySoundState(true)) return false
-    if (isRadioBackgroundEnabled()) return announceMapTour(line, stations)
+    // Narration may duck/mix with a station the listener deliberately started,
+    // but it must never allocate a radio bed merely because a tour line fired.
+    if (isRadioBackgroundEnabled() && isMapRadioActive()) return announceMapTour(line, stations)
     return speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
   }, [applySoundState])
 
@@ -1297,13 +1305,20 @@ export default function App() {
         setNavigationOrigin([location.longitude, location.latitude])
         window.dispatchEvent(new CustomEvent('poplur-location', { detail: location }))
       },
-      setCenter: (lng: number, lat: number, zoom?: number) =>
-        mapRef.current?.easeTo({ center: [lng, lat], zoom: zoom ?? mapRef.current.getZoom(), duration: 800 }),
+      setCenter: (lng: number, lat: number, zoom?: number) => {
+        const map = mapRef.current
+        if (!map) return
+        const duration = 800
+        wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
+        map.easeTo({ center: [lng, lat], zoom: zoom ?? map.getZoom(), duration })
+      },
       flyTo: (lng: number, lat: number, zoom: number) => {
         const map = mapRef.current
         if (!map) return
         ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
-        map.flyTo({ center: [lng, lat], zoom, pitch: streetView ? 82 : 64, duration: 4600, curve: 1.7, essential: true })
+        const duration = 4600
+        wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
+        map.flyTo({ center: [lng, lat], zoom, pitch: streetView ? 82 : 64, duration, curve: 1.7, essential: true })
       },
       setSky: (day: boolean) => setDayTime(day),
       setWeather: (m: WeatherMode | null) => setWeatherOverride(m),
@@ -1318,6 +1333,7 @@ export default function App() {
     const map = mapRef.current
     if (!map) return false
     ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
+    wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
     map.flyTo({
       center,
       zoom: streetView ? 18.9 : BUILDING_REVEAL_ZOOM,
@@ -1378,6 +1394,7 @@ export default function App() {
 
     // Beat 1 — climb straight up off the current pop. Centre is untouched, so
     // the ground you are leaving stays under you while the camera rises.
+    wakeManagedRendering(CLIMB_MS + MANAGED_CAMERA_SETTLE_MS)
     map.easeTo({
       zoom: Math.min(map.getZoom(), TRAVEL_ZOOM),
       pitch: 26,
@@ -1396,6 +1413,7 @@ export default function App() {
       const liveApi = live as unknown as { __cinematic?: boolean; __tripping?: boolean }
       liveApi.__cinematic = true
       liveApi.__tripping = true
+      wakeManagedRendering(CROSS_MS + MANAGED_CAMERA_SETTLE_MS)
       live.flyTo({
         center,
         zoom: BUILDING_REVEAL_ZOOM,
@@ -1437,10 +1455,20 @@ export default function App() {
   // is no longer running.
   const stopTour = useCallback(() => {
     clearTourTimers()
+    tourStartedRef.current = false
     tourOnRef.current = false
     setTourOn(false)
     setSmartCard(null)
     ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = false
+    const map = mapRef.current as (mapboxgl.Map & {
+      __cinematic?: boolean
+      __tripping?: boolean
+    }) | null
+    if (map) {
+      map.__cinematic = false
+      map.__tripping = false
+      map.stop()
+    }
   }, [clearTourTimers])
   searchInterruptRef.current = stopTour
   useEffect(() => clearTourTimers, [clearTourTimers])
@@ -1616,9 +1644,10 @@ export default function App() {
   // on their own handlers, so a bubble-phase listener would miss most touches.
   useEffect(() => {
     const bump = () => {
-      // Once the tour is running it is stopped by the controls that own it
-      // (cyclePop, route intent, the TOUR tile) — not by touching the map.
-      if (tourStartedRef.current) return
+      // Ambient camera work always yields to a real person. Previously an
+      // active tour ignored touch, so a pan or slider move could visibly land
+      // and then be pulled away by the next tour camera beat.
+      if (tourOnRef.current) stopTour()
       scheduleTourIdle()
     }
     const opts: AddEventListenerOptions = { passive: true, capture: true }
@@ -1629,7 +1658,7 @@ export default function App() {
     return () => {
       for (const type of events) document.removeEventListener(type, bump, opts)
     }
-  }, [scheduleTourIdle])
+  }, [scheduleTourIdle, stopTour])
 
   useEffect(() => cancelTourIdle, [cancelTourIdle])
   tourIdleRef.current = { schedule: scheduleTourIdle, cancel: cancelTourIdle }
@@ -2010,7 +2039,7 @@ export default function App() {
     // Begin looking up the local station now, but do not sound it yet. The
     // greeting below gets the first beat; its mixer feathers Radio underneath
     // after the first word, then raises it when the host finishes.
-    if (isRadioBackgroundEnabled() && !nowPlayingStation()) {
+    if (isRadioBackgroundEnabled() && isMapRadioActive() && !nowPlayingStation()) {
       const [lng, lat] = landingCenter ?? DEFAULT_NAV_ORIGIN
       void tuneLiveRadio(lat, lng).catch(() => { /* the instant bed still works */ })
     }

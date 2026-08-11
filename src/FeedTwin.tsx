@@ -144,9 +144,10 @@ function posterForFeedClip(source: string): string {
   return 'feed/posters/ad-food.jpg'
 }
 
-function shouldAutoplayFeedOnMount(explicitNavigation: boolean): boolean {
-  // An untouched cold launch remains decoder-free. Home supplies this token
-  // only for the one mount caused by an explicit transition back into Feed.
+function shouldUnlockFeedAudioOnMount(explicitNavigation: boolean): boolean {
+  // A cold Feed starts moving immediately, but iOS still requires a user
+  // gesture before sound can be enabled. Home supplies this token when the
+  // mount itself was caused by an explicit cube navigation gesture.
   return isNativeShell() && explicitNavigation
 }
 
@@ -334,7 +335,6 @@ export default function FeedTwin({
   // would throw the keyboard up over a post you are only watching.
   const [endComments, setEndComments] = useState(false)
   const endCommentsTimerRef = useRef<number | null>(null)
-  const adTimeRef = useRef(0)
 
   // ── Long-press fullscreen player ──────────────────────────────────────────
   // Hold the video and every overlay leaves — the feed becomes a plain player:
@@ -381,7 +381,6 @@ export default function FeedTwin({
   // over the clip that just started — and the engagement comment with it, or
   // the NEXT post's roll would open led by a comment about the previous one.
   useEffect(() => {
-    adTimeRef.current = 0
     clearCommentRoll()
   }, [index, clearCommentRoll])
 
@@ -414,14 +413,17 @@ export default function FeedTwin({
   const wheelLock = useRef(false)
   const adVideoRef = useRef<HTMLVideoElement>(null)
   const settledAdRef = useRef<string | null>(null)
-  // Feed is the native app's default screen. Starting a looping 720p decoder
-  // and audio media session before any touch kept an otherwise-idle phone warm.
-  // Start on the bundled poster instead; a deliberate touch grants one native
-  // play-through, while browser previews retain their normal looping behavior.
-  const [mediaUnlocked, setMediaUnlocked] = useState(
-    () => shouldAutoplayFeedOnMount(autoPlayOnMount),
-  )
+  const completedAdRef = useRef<string | null>(null)
+  const [completedAdSrc, setCompletedAdSrc] = useState<string | null>(null)
+  // Video is never tap-gated: Feed should already be moving when it appears.
+  // Audio has its own gesture gate so cold-launch muted autoplay remains legal
+  // in WKWebView without turning the poster into a "tap to start" screen.
+  const [mediaUnlocked] = useState(true)
   const mediaUnlockedRef = useRef(mediaUnlocked)
+  const [audioUnlocked, setAudioUnlocked] = useState(
+    () => shouldUnlockFeedAudioOnMount(autoPlayOnMount),
+  )
+  const audioUnlockedRef = useRef(audioUnlocked)
   const recoveringAdSrcRef = useRef<string | null>(null)
   const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   const ch = CHANNELS[index]
@@ -680,6 +682,8 @@ export default function FeedTwin({
     setRecoveryAttempt(0)
     setReadyAdSrc(null)
     settledAdRef.current = null
+    completedAdRef.current = null
+    setCompletedAdSrc(null)
   }, [sourceKey])
   useEffect(() => {
     recoveringAdSrcRef.current = null
@@ -699,6 +703,7 @@ export default function FeedTwin({
   }, [])
   const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
     if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
+    if (completedAdRef.current === source) return
     if (!mediaUnlockedRef.current) {
       video.muted = true
       video.pause()
@@ -912,6 +917,12 @@ export default function FeedTwin({
     const apply = () => {
       const video = adVideoRef.current
       if (!video) return
+      if (completedAdRef.current === adSrc) {
+        video.muted = true
+        video.pause()
+        releaseAudioFocus('feed')
+        return
+      }
       // Covered by News / TV Guide / the hold menu: stay silent and stopped,
       // whatever the gate says — this effect used to resume playback the moment
       // it ran, which is why the feed kept going behind the paper.
@@ -921,14 +932,6 @@ export default function FeedTwin({
       // before the first post-login gesture. requestAudioFocus deliberately
       // re-broadcasts repeat claims so a remounted iframe hears this too.
       if (!deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
-      // Do not "warm up" the native decoder behind its poster. Starting it
-      // muted still creates WebKit media/GPU work and was the dominant idle
-      // cost measured on the physical phone.
-      if (!mediaUnlockedRef.current) {
-        video.muted = true
-        video.pause()
-        return
-      }
       // The radio or the map holding the floor keeps the picture running and
       // takes the sound: a feed you can see but not hear beats a feed that
       // stops dead behind another voice.
@@ -936,7 +939,9 @@ export default function FeedTwin({
       // shared floor before unmuting so a map/radio source cannot leak into the
       // first frame while its own stop callback is still running.
       if (!deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
-      const audible = !isGateMuted() && currentAudioOwner() === 'feed'
+      const audible = audioUnlockedRef.current
+        && !isGateMuted()
+        && currentAudioOwner() === 'feed'
       video.muted = !audible
       video.volume = 0.85
       if (audible) requestAudioFocus('feed')
@@ -977,7 +982,7 @@ export default function FeedTwin({
       // the hidden Map frame tries to reclaim sound, immediately reassert the
       // visible screen instead of leaving Feed muted until the next gesture.
       if (currentAudioOwner() !== 'feed') requestAudioFocus('feed')
-      video.muted = !mediaUnlockedRef.current
+      video.muted = !audioUnlockedRef.current
         || isGateMuted()
         || currentAudioOwner() !== 'feed'
     })
@@ -993,7 +998,7 @@ export default function FeedTwin({
       unregister()
       releaseAudioFocus('feed')
     }
-  }, [adSrc, mediaUnlocked])
+  }, [adSrc, audioUnlocked])
 
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
@@ -1096,11 +1101,17 @@ export default function FeedTwin({
     // A plain tap has no engagement overlay. Comments and ad windows are the
     // only transient layers on Feed; navigation gestures still work above.
     // Pointer capture retargets the eventual click to this root, so remember
-    // where the gesture began and unlock only a completed tap on the poster.
-    if (start.mediaTap && !mediaUnlockedRef.current) {
+    // where the gesture began and unlock sound only after a completed media
+    // tap. The picture itself has already been playing muted.
+    if (start.mediaTap && !audioUnlockedRef.current) {
       clearCommentRoll()
-      mediaUnlockedRef.current = true
-      setMediaUnlocked(true)
+      audioUnlockedRef.current = true
+      setAudioUnlocked(true)
+    }
+    if (start.mediaTap && adSrc && completedAdRef.current === adSrc) {
+      completedAdRef.current = null
+      setCompletedAdSrc(null)
+      setStaticArmed(true)
     }
     lastTap.current = 0
   }
@@ -1232,13 +1243,13 @@ export default function FeedTwin({
       video.pause()
       releaseAudioFocus('feed')
     } else {
-      if (mediaUnlockedRef.current && !deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
-      video.muted = !mediaUnlockedRef.current
+      if (audioUnlockedRef.current && !deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
+      video.muted = !audioUnlockedRef.current
         || isGateMuted()
         || currentAudioOwner() !== 'feed'
-      void video.play().catch(() => {})
+      if (completedAdRef.current !== adSrc) void video.play().catch(() => {})
     }
-  }, [suppressed, adSrc, mediaUnlocked])
+  }, [suppressed, adSrc, audioUnlocked])
 
   const [c0, c1, c2] = ch.theme
 
@@ -1309,27 +1320,17 @@ export default function FeedTwin({
       {adSrc && !post?.stream && posterSrc && posterKey && (!mediaUnlocked || !adReady) && (
         <img
           key={`${posterKey}:poster`}
-          data-feed-media={!mediaUnlocked ? 'true' : undefined}
+          data-feed-media="true"
           className={`${styles.adVideo} ${styles.adVideoReady}`}
           src={posterSrc}
           alt=""
           draggable={false}
-          role={!mediaUnlocked ? 'button' : undefined}
-          aria-label={!mediaUnlocked ? 'Play feed video' : undefined}
-          tabIndex={!mediaUnlocked ? 0 : -1}
+          tabIndex={-1}
           onLoad={() => setReadyPosterKey(posterKey)}
-          onKeyDown={event => {
-            if (mediaUnlockedRef.current) return
-            if (event.key !== 'Enter' && event.key !== ' ') return
-            event.preventDefault()
-            clearCommentRoll()
-            mediaUnlockedRef.current = true
-            setMediaUnlocked(true)
-          }}
         />
       )}
 
-      {adSrc && !post?.stream && mediaUnlocked && (
+      {adSrc && !post?.stream && mediaUnlocked && completedAdSrc !== adSrc && (
         <video
           key={`${adSrc}:playing`}
           data-feed-media="true"
@@ -1340,7 +1341,6 @@ export default function FeedTwin({
           preload="auto"
           autoPlay
           muted
-          loop={!isNativeShell()}
           playsInline
           controls={false}
           disablePictureInPicture
@@ -1351,25 +1351,13 @@ export default function FeedTwin({
           onCanPlay={() => markAdReady(adSrc)}
           onLoadedData={() => markAdReady(adSrc)}
           onPlaying={() => markAdReady(adSrc)}
-          onTimeUpdate={event => {
-            markAdReady(adSrc)
-            // The clip is `loop`ed, so `ended` never fires. A wrap — playhead
-            // jumping back toward zero — IS the end of a play-through, and is
-            // where the comments roll. Never in player mode: a scrub backwards
-            // is indistinguishable from a wrap, and fullscreen means NO UI.
-            const t = event.currentTarget.currentTime
-            const previous = adTimeRef.current
-            adTimeRef.current = t
-            if (previous - t > 0.4 && !playerModeRef.current) showCommentRoll()
-          }}
+          onTimeUpdate={() => markAdReady(adSrc)}
           onEnded={() => {
             if (!playerModeRef.current) showCommentRoll()
-            if (!isNativeShell()) return
-            mediaUnlockedRef.current = false
-            setMediaUnlocked(false)
+            completedAdRef.current = adSrc
+            setCompletedAdSrc(adSrc)
             setReadyAdSrc(null)
             settledAdRef.current = null
-            setStaticArmed(true)
             releaseAudioFocus('feed')
           }}
           onError={event => retryAdPlayback(adSrc, event.currentTarget)}

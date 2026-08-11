@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
-import { isNativeShell } from './nativeBridge'
-import { onFrame, ambientAllowed, boostFrames, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
+import { cancelManagedRenderingWake, isNativeShell, wakeManagedRendering } from './nativeBridge'
+import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
@@ -773,6 +773,7 @@ export function updateComposeRadiusPreview(
   // Keep the entire selected distance visible as the slider moves. Asymmetric
   // phone padding leaves room above the anchor for the composer bubble.
   const compact = map.getContainer().clientWidth <= 480
+  wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
   map.fitBounds(
     [
       [center.lng - lngRadius, center.lat - latRadius],
@@ -867,6 +868,8 @@ const FOV_MAX = 60
 const FOV_DEFAULT = 45
 /** Fallback centre when geolocation is denied or times out: Toronto's Financial District. */
 const HOME_CENTER: [number, number] = [-79.3811, 43.6487]
+const MANAGED_CAMERA_SETTLE_MS = 400
+const MANAGED_CAMERA_JUMP_MS = 350
 
 // Map lite tier: 3GB-class devices in the native shell (deviceMemory quantizes
 // the A03s to 2; iOS never reports it). Measured on Mali-G52: the map at full
@@ -925,6 +928,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     typeof window === 'undefined'
       || new URLSearchParams(window.location.search).get('front') !== '0',
   )
+  // Tile/style readiness can postpone the globe-to-city intro for several
+  // seconds on a phone. Once the user takes the camera, that delayed intro
+  // must never take it back and make a successful gesture look ignored.
+  const initialCameraInteractionRef = useRef(false)
   const explicitMapFrontRef = useRef(false)
   const performanceRendererRef = useRef<PoplurRendererHandle | null>(null)
   // Bumped when a new map instance finishes loading, so the marker effect
@@ -1049,9 +1056,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [fovValue, setFovValue] = useState(FOV_DEFAULT)
   // The clay cloud GLB, rendered once to a sprite for the zoom-in cloud band.
   const [cloudSprite, setCloudSprite] = useState<string | null>(null)
-  // Clay object riding above the zoom slider, and its pop on every notch.
+  // Clay objects riding above the zoom slider.
   const [zoomSprites, setZoomSprites] = useState<Record<string, string>>({})
-  const [popTick, setPopTick] = useState(0)
   // The takeover colour the circle wears. Module state owns the colour; this
   // mirror only exists so React repaints the face when it changes.
   const [takeoverFace, setTakeoverFace] = useState(() => takeoverBaseColor())
@@ -1063,7 +1069,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // knob by up to half the thumb width — the barber fill visibly ran PAST the
   // knob. The rail is now viewport-sized, so measure it rather than assuming.
   const zoomRailRef = useRef<HTMLDivElement>(null)
-  const [zoomRailMetrics, setZoomRailMetrics] = useState({ length: 380, thumb: 64 })
+  const [zoomRailMetrics, setZoomRailMetrics] = useState({ length: 380, thumb: 72 })
   useEffect(() => () => {
     if (zoomAnimationRef.current) cancelAnimationFrame(zoomAnimationRef.current)
   }, [])
@@ -1073,14 +1079,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const measure = () => {
       const styles = window.getComputedStyle(el)
       const length = el.getBoundingClientRect().height || 380
-      const thumb = Number.parseFloat(styles.getPropertyValue('--zoom-thumb-size')) || 64
+      const thumb = Number.parseFloat(styles.getPropertyValue('--zoom-thumb-size')) || 72
       setZoomRailMetrics({ length, thumb })
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [zoomStage.id, popTick])
+  }, [])
   const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
   const zoomProgress = `${((zoomRatio * (zoomRailMetrics.length - zoomRailMetrics.thumb) + zoomRailMetrics.thumb / 2) / zoomRailMetrics.length) * 100}%`
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
@@ -1192,13 +1198,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     if (!r) { setNavBanner('No route found'); window.setTimeout(() => setNavBanner(null), 2200); return }
     setRoute(r)
     setRouteData(map, r.coords)
+    wakeManagedRendering(1400 + MANAGED_CAMERA_SETTLE_MS)
     frameRoute(map, r)
     playPop()
   }, [mapRef, token])
 
   const stopNav = React.useCallback(() => {
-    navCtlRef.current?.stop()
+    const activeNavigation = navCtlRef.current
+    activeNavigation?.stop()
     navCtlRef.current = null
+    // Navigation is the only operation here long enough to need renewed native
+    // leases. Its explicit stop owns the matching renewal cancellation too.
+    if (activeNavigation) cancelManagedRenderingWake()
     setNavigating(false)
     setNavBanner(null)
     const map = mapRef.current as unknown as { __cinematic?: boolean } | null
@@ -1218,7 +1229,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     if (!map || !route) return
     setNavigating(true)
     playPop()
+    const durationS = Math.min(45, Math.max(10, (route.distanceM / 1000) * 3))
+    wakeManagedRendering(durationS * 1000 + MANAGED_CAMERA_SETTLE_MS)
     navCtlRef.current = playNavigation(map, route, {
+      durationS,
       onStep: (instruction) => setNavBanner(instruction || 'Continue'),
       onDone: () => { setNavBanner('You have arrived'); window.setTimeout(stopNav, 2600) },
     })
@@ -1230,19 +1244,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     mapApi?.__setStreetView?.(streetView)
   }, [mapRef, streetView])
 
-  // Render the active stage's model once (modelSprite caches by url + view).
+  // These are pre-rendered PNGs in production, so warm all four at once. The
+  // former active-stage-only load left the globe thumb blank for the first
+  // frame after a fast drag all the way out.
   useEffect(() => {
-    if (zoomSprites[zoomStage.id]) return
     let alive = true
-    modelSprite(zoomStage.url, { yaw: zoomStage.yaw, pitch: zoomStage.pitch, size: 256 })
-      .then(url => {
-        if (!alive) return
-        setZoomSprites(prev => (prev[zoomStage.id] ? prev : { ...prev, [zoomStage.id]: url }))
-      })
-      .catch(() => { /* stage stays blank rather than breaking the map */ })
+    ZOOM_STAGES.forEach(stage => {
+      modelSprite(stage.url, { yaw: stage.yaw, pitch: stage.pitch, size: 256 })
+        .then(url => {
+          if (!alive) return
+          setZoomSprites(prev => (prev[stage.id] ? prev : { ...prev, [stage.id]: url }))
+        })
+        .catch(() => { /* the fixed clay tray remains visible */ })
+    })
     return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoomStage.id])
+  }, [])
 
   // Pop (sound + haptic) each time the zoom crosses a whole notch. Skipped while
   // the camera is flying itself (launch + AI tour), which would machine-gun it.
@@ -1253,7 +1269,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     lastNotchRef.current = notch
     if (mapRef.current?.isEasing()) return
     playPop()
-    setPopTick(t => t + 1)
   }, [zoomValue, mapRef])
 
   useEffect(() => {
@@ -1332,13 +1347,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }
 
     let map: mapboxgl.Map
+    // Mapbox needs a bounded startup window long enough to fetch and compile
+    // its style before its own `load` callback can request the shorter camera
+    // leases below. Without this, native may park rAF after the document's
+    // three-second burst and strand the map at its initial zoom on a cold load.
+    wakeManagedRendering(15_000)
     try {
       map = new mapboxgl.Map({
         container: containerRef.current,
-        // Tile-cache culling: bound how much off-screen world is retained.
-        // Without a cap mapbox keeps every visited tile — after one long tour
-        // the whole planet sits in memory. Visible tiles are never evicted.
-        maxTileCacheSize: MAP_2D ? 12 : MAP_LITE ? 16 : 48,
+        // Deterministic per-source LRU for off-screen tiles. Mapbox otherwise
+        // sizes this cache from the viewport; this ceiling makes the phone's
+        // retained history explicit. Current visible/cover/fade tiles are active
+        // render data and intentionally sit outside the cache ceiling.
+        maxTileCacheSize: MAP_2D ? 12 : MAP_LITE ? 16 : isNativeShell() ? 24 : 48,
         style: 'mapbox://styles/mapbox/dark-v11',
         center: HOME_CENTER,
         // Constructed at street zoom deliberately: the Standard style never
@@ -1361,6 +1382,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         projection: MAP_2D ? 'mercator' : 'globe',
       })
     } catch (error) {
+      cancelManagedRenderingWake()
       fallBackAfterWebGLFailure(error)
       return
     }
@@ -1370,7 +1392,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       event.preventDefault()
       fallBackAfterWebGLFailure(new Error('WebGL context lost'))
     }
+    const handleGestureSettle = () => {
+      // Pointer/touch movement wakes native rendering while the finger is
+      // down. Mapbox inertia and globe tile uploads continue after release,
+      // so give that finite tail enough time to complete without requiring a
+      // second touch to reveal the final camera frame.
+      wakeManagedRendering(2_400)
+      map.triggerRepaint()
+    }
     mapCanvas.addEventListener('webglcontextlost', handleContextLost)
+    mapCanvas.addEventListener('pointerup', handleGestureSettle, { passive: true })
+    mapCanvas.addEventListener('touchend', handleGestureSettle, { passive: true })
     if (MAP_2D) {
       map.dragRotate.disable()
       map.touchZoomRotate.disableRotation()
@@ -1607,10 +1639,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     ;(map as unknown as { __startOrbit?: () => void }).__startOrbit = startOrbit
     const interactionEvents = ['dragstart', 'zoomstart', 'rotatestart', 'pitchstart'] as const
     interactionEvents.forEach(ev =>
-      map.on(ev, e => { if ((e as { originalEvent?: Event }).originalEvent) stopOrbit() }))
+      map.on(ev, e => {
+        if (!(e as { originalEvent?: Event }).originalEvent) return
+        initialCameraInteractionRef.current = true
+        ;(map as unknown as { __cinematic?: boolean }).__cinematic = false
+        stopOrbit()
+      }))
     // A finger on the map promotes ambient work (cars, boats) to interactive
     // rate for the duration of the gesture, so the world tracks the drag.
-    const boostOnTouch = () => boostFrames(600)
+    const boostOnTouch = () => {
+      initialCameraInteractionRef.current = true
+      ;(map as unknown as { __cinematic?: boolean }).__cinematic = false
+      boostFrames(600)
+    }
     map.getContainer().addEventListener('pointerdown', boostOnTouch, { passive: true })
     map.getContainer().addEventListener('pointermove', boostOnTouch, { passive: true })
     map.once('remove', () => {
@@ -1642,6 +1683,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (MAP_2D) {
         streetViewRef.current = false
         ;(map as unknown as { __streetView?: boolean }).__streetView = false
+        wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
         map.jumpTo({ pitch: 0, bearing: 0 })
         return
       }
@@ -1653,6 +1695,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         map.setMaxZoom(STREET_VIEW_MAX_ZOOM)
         map.setMaxPitch(85)
         map.setMinPitch(72)
+        wakeManagedRendering(1200 + MANAGED_CAMERA_SETTLE_MS)
         map.easeTo({
           zoom: Math.max(map.getZoom(), 18.9),
           pitch: 82,
@@ -1666,6 +1709,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         map.once('moveend', () => {
           if (!streetViewRef.current) map.setMaxZoom(ZOOM_MAX)
         })
+        wakeManagedRendering(950 + MANAGED_CAMERA_SETTLE_MS)
         map.easeTo({
           zoom: Math.min(Math.max(map.getZoom(), 17.4), ZOOM_MAX),
           pitch: 62,
@@ -1833,6 +1877,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // Mapbox to stream, layout and upload every intermediate zoom level and
       // was enough to push an already-warm iPhone into OS throttling on launch.
       const launchZoom = MAP_2D ? INTRO_LANDING_ZOOM : 0.85
+      wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
       map.jumpTo({ center: HOME_CENTER, zoom: launchZoom, pitch: 0, bearing: 0 })
       zoomValueRef.current = launchZoom
       zoomTargetRef.current = launchZoom
@@ -1856,11 +1901,23 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       later(revealAtGlobe, 1200)
 
       let introDone = false
+      const finishInterruptedIntro = () => {
+        if (introDone) return
+        introDone = true
+        const center = map.getCenter()
+        ;(map as unknown as { __cinematic?: boolean }).__cinematic = false
+        onIntroComplete?.([center.lng, center.lat])
+      }
       const landOn = (center: [number, number]) => {
+        if (initialCameraInteractionRef.current) {
+          finishInterruptedIntro()
+          return
+        }
         // 2D is an event-driven map, not a cinematic. One camera jump loads
         // only the tiles the user will actually see and leaves the renderer
         // parked as soon as that frame is complete.
         if (MAP_2D) {
+          wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
           map.jumpTo({ center, zoom: INTRO_LANDING_ZOOM, pitch: 0, bearing: 0 })
           if (!introDone) {
             introDone = true
@@ -1873,6 +1930,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // Profile is trying to hold 60fps. Land immediately instead; the map is
         // then already composed when its tab comes front.
         if (!mapIsFrontRef.current) {
+          wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
           map.jumpTo({
             center,
             zoom: INTRO_LANDING_ZOOM,
@@ -1889,20 +1947,28 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // easeTo, not flyTo: flyTo's zoom curve accelerates hard through the
         // middle, which reads as a lurch while tiles are still arriving. A
         // smoothstep ease holds one steady rate from globe to street.
-        const start = () => map.easeTo({
-          center,
-          zoom: INTRO_LANDING_ZOOM,
-          pitch: MAP_2D ? 0 : 52,
-          bearing: MAP_2D ? 0 : -18,
-          duration: 6200,
-          easing: t => t * t * (3 - 2 * t),
-          essential: true,
-        })
+        const start = () => {
+          const duration = 6200
+          wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
+          map.easeTo({
+            center,
+            zoom: INTRO_LANDING_ZOOM,
+            pitch: MAP_2D ? 0 : 52,
+            bearing: MAP_2D ? 0 : -18,
+            duration,
+            easing: t => t * t * (3 - 2 * t),
+            essential: true,
+          })
+        }
         // Wait for the globe to finish loading before moving at all: descending
         // through a half-loaded style is what made the old intro judder.
         let started = false
         const startOnce = () => {
           if (started) return
+          if (initialCameraInteractionRef.current) {
+            finishInterruptedIntro()
+            return
+          }
           started = true
           start()
         }
@@ -2565,7 +2631,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           const scale = 1 + Math.exp(-4.5 * t) * Math.sin(Math.PI * 3 * t) * 0.85
           try { map.setFeatureState(target, { popScale: Math.max(0.6, scale) }) } catch { /* map gone */ }
           if (t >= 1) {
-            try { map.setFeatureState(target, { popScale: 1 }) } catch { /* map gone */ }
+            // Returning to the default expression is not enough: keeping
+            // `{popScale: 1}` leaves one SourceFeatureState entry behind for
+            // every building ever touched. Remove the transient key so a long
+            // pan cannot turn past interactions into an unbounded id registry.
+            try { map.removeFeatureState(target, 'popScale') } catch { /* map gone */ }
             popFrameStops.get(id)?.()
             popFrameStops.delete(id)
             poppingIds.delete(id)
@@ -2699,7 +2769,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // or a source transition can leave Mapbox emitting render frames long
       // after every DOM animation and governor subscriber has gone quiet.
       const stopAmbientParking = onAmbientSleepChange(sleeping => {
-        if (!sleeping) return
+        // A finite camera/navigation lease keeps only operation-owned rendering
+        // alive. Decoration still sleeps; the expiry park performs the stop.
+        if (!sleeping || managedRenderingOperationActive()) return
         map.stop()
         stopOrbit()
         if (carFeaturesLive) {
@@ -3089,6 +3161,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
           // TRAVEL: come in high and wide, always arriving off-axis so the
           // subject is never dead centre on the approach.
+          wakeManagedRendering(4200 + MANAGED_CAMERA_SETTLE_MS)
           map.easeTo({
             center: target,
             zoom: 3.4,
@@ -3105,12 +3178,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
           if (grammar === 'dolly') {
             // push in, flattening the tilt as the subject fills the frame
+            wakeManagedRendering(3600 + MANAGED_CAMERA_SETTLE_MS)
             map.easeTo({ zoom: 5.6, pitch: 46, duration: 3600, easing: smooth, essential: true })
           } else if (grammar === 'pan') {
             // a held height, the camera arcing slowly around the subject
+            wakeManagedRendering(4200 + MANAGED_CAMERA_SETTLE_MS)
             map.easeTo({ bearing: map.getBearing() + 55, zoom: 4.3, duration: 4200, easing: smooth, essential: true })
           } else {
             // crane up and tilt back — the reveal
+            wakeManagedRendering(4000 + MANAGED_CAMERA_SETTLE_MS)
             map.easeTo({ zoom: 4.9, pitch: 58, bearing: map.getBearing() - 28, duration: 4000, easing: smooth, essential: true })
           }
           await settle()
@@ -3202,10 +3278,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const disposeMap = () => {
       if (disposed) return
       disposed = true
+      cancelManagedRenderingWake()
       performanceRenderer.dispose()
       if (performanceRendererRef.current === performanceRenderer) performanceRendererRef.current = null
       setSurfaceFront(false)
       mapCanvas.removeEventListener('webglcontextlost', handleContextLost)
+      mapCanvas.removeEventListener('pointerup', handleGestureSettle)
+      mapCanvas.removeEventListener('touchend', handleGestureSettle)
       window.clearInterval(bootPoll)
       ownedTimeouts.forEach(id => window.clearTimeout(id))
       ownedTimeouts.clear()
@@ -3476,6 +3555,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
   const runZoomSpring = () => {
     if (zoomAnimationRef.current) return
+    // The slider spring is finite but can be started by a bridge action as well
+    // as a pointer. Give its short camera settle the same operation-owned lease.
+    wakeManagedRendering(1200 + MANAGED_CAMERA_SETTLE_MS)
     zoomLastFrameRef.current = performance.now()
     const frame = (now: number) => {
       let remaining = Math.min(0.1, Math.max(1 / 240, (now - zoomLastFrameRef.current) / 1000))
@@ -3534,49 +3616,66 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // A relative push/pull once the thumb is grabbed. A 1.24× gain means a short
   // phone swipe can traverse the full world-to-street range without the user's
   // finger having to start exactly at an end-stop.
-  const zoomDragRef = useRef<{ startY: number; startZoom: number } | null>(null)
+  const zoomDragRef = useRef<{ pointerId: number; startY: number; startZoom: number } | null>(null)
 
   const handleZoomDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const rail = zoomRailRef.current
     if (!rail) return
     e.preventDefault()
+    initialCameraInteractionRef.current = true
     stopOrbitRef.current()
-    mapRef.current?.stop()
-    e.currentTarget.setPointerCapture(e.pointerId)
+    const map = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
+    if (map) {
+      map.__cinematic = false
+      map.stop()
+    }
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* older WKWebView */ }
     const box = rail.getBoundingClientRect()
     const thumb = zoomRailMetrics.thumb
     const travel = Math.max(1, box.height - thumb)
     const knobCentreY = box.bottom - thumb / 2 - zoomRatio * travel
     if (Math.abs(e.clientY - knobCentreY) <= thumb / 2) {
-      zoomDragRef.current = { startY: e.clientY, startZoom: zoomValueRef.current }
+      zoomDragRef.current = { pointerId: e.pointerId, startY: e.clientY, startZoom: zoomValueRef.current }
     } else {
       const v = zoomForClientY(e.clientY)
       if (v != null) {
         applyZoom(v)
-        zoomDragRef.current = { startY: e.clientY, startZoom: v }
+        zoomDragRef.current = { pointerId: e.pointerId, startY: e.clientY, startZoom: v }
       }
     }
   }
 
   const handleZoomMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-    e.preventDefault()
     const drag = zoomDragRef.current
-    if (!drag) return
+    if (!drag || drag.pointerId !== e.pointerId) return
+    e.preventDefault()
     const travel = Math.max(1, zoomRailMetrics.length - zoomRailMetrics.thumb)
     const delta = ((drag.startY - e.clientY) / travel) * (ZOOM_MAX - ZOOM_MIN) * 1.24
     applyZoom(drag.startZoom + delta)
   }
 
   const handleZoomUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (zoomDragRef.current?.pointerId !== e.pointerId) return
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
     zoomDragRef.current = null
+    // Let inertial camera work and low-zoom globe tiles finish after the
+    // finger leaves. This is finite and does not reopen ambient rendering.
+    wakeManagedRendering(2_400)
+    mapRef.current?.triggerRepaint()
   }
 
   const handleZoomKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const step = e.shiftKey ? 1 : 0.25
+    if (!['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+    initialCameraInteractionRef.current = true
+    stopOrbitRef.current()
+    const map = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
+    if (map) {
+      map.__cinematic = false
+      map.stop()
+    }
     if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { e.preventDefault(); applyZoom(zoomTargetRef.current + step) }
     else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { e.preventDefault(); applyZoom(zoomTargetRef.current - step) }
     else if (e.key === 'Home') { e.preventDefault(); applyZoom(ZOOM_MAX) }
@@ -3960,7 +4059,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       >
         <div className={styles.zoomRail} ref={zoomRailRef}>
           <div
-            key={`thumb-${zoomStage.id}-${popTick}`}
             className={styles.zoomThumb}
             style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
           />

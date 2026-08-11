@@ -18,7 +18,7 @@ import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, popHaptic } from './pop'
 import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { isNativeShell, postNativeEvent, wakeManagedRendering } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
 import { initialMapMode, type PoplurMapMode } from './mapMode'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
@@ -556,6 +556,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     finishPermission()
   }, [activePermission, finishPermission])
   useEffect(() => {
+    // A cube turn may take longer than the native runtime's ordinary input
+    // tail. Keep the final semantic screen paint inside one finite lease so a
+    // late-mounted Profile cannot sit on the first transparent fade frame
+    // until the next tap.
+    wakeManagedRendering(SCREEN_COMMIT_MAX_MS + 600)
     onTabChange?.(activeTab)
   }, [activeTab, onTabChange])
   // The cube long-press hold menu floats as a translucent overlay over the

@@ -1,3 +1,5 @@
+import { MANAGED_RENDERING_OPERATION_EVENT } from './nativeBridge'
+
 // One clock for every animation in the app, and a thermal ladder on top of it.
 //
 // WHY: the app used to run ~30 independent requestAnimationFrame loops, each
@@ -88,6 +90,9 @@ let pointersDown = 0
 let interactionUntil = 0
 let interactionTimer = 0
 const INTERACTION_TAIL_MS = 1200
+const MAX_MANAGED_OPERATION_MS = 45_000
+let managedOperationUntil = 0
+let managedOperationTimer = 0
 
 function effectiveQualityCeiling(): Quality {
   return Math.min(nativeThermalCeiling, powerSavingCeiling, memoryPressureCeiling) as Quality
@@ -98,8 +103,38 @@ function interacting(): boolean {
   return typeof performance !== 'undefined' && performance.now() < interactionUntil
 }
 
+export function managedRenderingOperationActive(): boolean {
+  return typeof performance !== 'undefined' && performance.now() < managedOperationUntil
+}
+
+function setManagedOperation(durationMs: number): void {
+  if (typeof window === 'undefined' || typeof performance === 'undefined') return
+  window.clearTimeout(managedOperationTimer)
+  managedOperationTimer = 0
+  const bounded = Number.isFinite(durationMs)
+    ? Math.min(MAX_MANAGED_OPERATION_MS, Math.max(0, Math.ceil(durationMs)))
+    : 0
+  managedOperationUntil = bounded > 0 ? performance.now() + bounded : 0
+  if (bounded > 0) {
+    const expire = () => {
+      const remaining = managedOperationUntil - performance.now()
+      if (remaining > 0) {
+        managedOperationTimer = window.setTimeout(expire, remaining + 5)
+        return
+      }
+      managedOperationTimer = 0
+      managedOperationUntil = 0
+      syncRendererPark()
+      sync()
+    }
+    managedOperationTimer = window.setTimeout(expire, bounded + 5)
+  }
+  syncRendererPark()
+  sync()
+}
+
 function syncRendererPark(): void {
-  const next = ambientSleeping && !interacting()
+  const next = ambientSleeping && !interacting() && !managedRenderingOperationActive()
   if (next === rendererParked) return
   rendererParked = next
   rendererParkListeners.forEach(listener => listener(next))
@@ -161,7 +196,7 @@ function intervalFor(sub: Sub): number {
 }
 
 /**
- * Whether all shared-clock subscriber work is currently gated off.
+ * Whether this shared-clock subscriber is currently gated off.
  *
  * `rendererParked` is a strict subset of ambient sleep — it additionally
  * requires that no finger is down — so gating on the sleep flag alone honours
@@ -176,8 +211,11 @@ function intervalFor(sub: Sub): number {
  * firing on a phone nobody is touching, which is exactly where sustained work
  * is pure heat.
  */
-function subscriberWorkPaused(): boolean {
-  return ambientSleeping
+function subscriberWorkPaused(sub: Sub): boolean {
+  if (!ambientSleeping) return false
+  // A finite camera/navigation operation may keep attended work alive, but it
+  // never re-enables ambient or idle decoration while the thermal gate is shut.
+  return !managedRenderingOperationActive() || sub.rate !== 'interactive'
 }
 
 // ── the thermal ladder ───────────────────────────────────────────────────────
@@ -193,12 +231,11 @@ let comfortStreak = 0
 /** Deadline we expect to hit: the fastest rate any live subscriber asked for. */
 function currentDeadlineMs(): number {
   let fastest = Infinity
-  const paused = subscriberWorkPaused()
   for (const s of subs) {
     // Gated work is not asking for any deadline. In normal operation shouldRun
     // stops the clock outright; this guard also covers a sleep transition that
     // lands during an already-scheduled frame.
-    if (paused) continue
+    if (subscriberWorkPaused(s)) continue
     fastest = Math.min(fastest, intervalFor(s))
   }
   return fastest === Infinity ? 1000 / 30 : fastest
@@ -263,9 +300,8 @@ function tick(now: number) {
   lastFrame = now
   if (dt) sampleThermals(dt)
 
-  const paused = subscriberWorkPaused()
   for (const s of subs) {
-    if (paused) {
+    if (subscriberWorkPaused(s)) {
       // Resume with a beat rather than a backlog: zeroing `last` makes the
       // first frame after the gate reopens fire once, immediately, instead of
       // either replaying the whole sleep or waiting out another full period.
@@ -293,7 +329,10 @@ function shouldRun(): boolean {
   // Ambient sleep is a hard clock gate. A low-frequency `onFrame` subscriber
   // is still a recurring main-thread/display wakeup, even when its callback has
   // nothing visible to do. Input wakes the ambient gate before work resumes.
-  return !subscriberWorkPaused()
+  for (const sub of subs) {
+    if (!subscriberWorkPaused(sub)) return true
+  }
+  return false
 }
 
 function sync() {
@@ -418,6 +457,10 @@ if (typeof document !== 'undefined') {
   }
   window.addEventListener('poplur-native-thermal', event => {
     applyNativeThermal((event as CustomEvent).detail)
+  })
+  window.addEventListener(MANAGED_RENDERING_OPERATION_EVENT, event => {
+    const detail = (event as CustomEvent<{ durationMs?: unknown }>).detail
+    setManagedOperation(Number(detail?.durationMs ?? 0))
   })
   window.addEventListener('message', event => {
     if (event.data?.type === 'poplur-native-thermal') applyNativeThermal(event.data)
