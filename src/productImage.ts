@@ -1,4 +1,5 @@
 import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { poplurAssetCache } from './PoplurAssetCache'
 
 // Real product artwork for a commerce card, taken from the ADVERTISER'S OWN
 // page rather than from the app's bundled clips.
@@ -27,7 +28,6 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 /** Resolved artwork, or null once we know there is none to be had. */
 type Resolved = string | null
 
-const memory = new Map<string, Resolved>()
 const waiting = new Map<string, Array<(value: Resolved) => void>>()
 const DISK_PREFIX = 'poplur.productImage:'
 
@@ -53,7 +53,10 @@ function toDisk(url: string, value: Resolved): void {
 }
 
 function settle(url: string, value: Resolved): void {
-  memory.set(url, value)
+  poplurAssetCache.set(`product-image:${url}`, value, {
+    kind: 'decoded-image',
+    estimatedBytes: value ? Math.ceil(value.length * 1.5) : 1,
+  })
   toDisk(url, value)
   const pending = waiting.get(url)
   waiting.delete(url)
@@ -92,19 +95,23 @@ function installReceiver(): void {
 export function productImage(url: string): Promise<Resolved> {
   if (!url) return Promise.resolve(null)
 
-  const remembered = memory.get(url)
+  const cacheKey = `product-image:${url}`
+  const remembered = poplurAssetCache.get<Resolved>(cacheKey)
   if (remembered !== undefined) return Promise.resolve(remembered)
 
   const stored = fromDisk(url)
   if (stored !== undefined) {
-    memory.set(url, stored)
+    poplurAssetCache.set(cacheKey, stored, {
+      kind: 'decoded-image',
+      estimatedBytes: stored ? Math.ceil(stored.length * 1.5) : 1,
+    })
     return Promise.resolve(stored)
   }
 
   // Browser twin: no shell to do the fetch, so the bundled poster stays. Cached
   // in memory only — a later run inside the app should still try.
   if (!isNativeShell()) {
-    memory.set(url, null)
+    poplurAssetCache.set(cacheKey, null, { kind: 'decoded-image', estimatedBytes: 1 })
     return Promise.resolve(null)
   }
 

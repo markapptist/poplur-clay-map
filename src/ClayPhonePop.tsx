@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import styles from './HomeTwin.module.css'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // The phone model is fetched while Home is idle, then rendered only for the
 // short cube-to-phone handoff. Keeping the renderer out of the DOM until the
@@ -30,7 +32,7 @@ function phoneModelData(): Promise<ArrayBuffer> {
   return phoneModel
 }
 
-function disposeScene(scene: THREE.Scene): void {
+function disposeScene(scene: THREE.Object3D): void {
   scene.traverse(object => {
     const mesh = object as THREE.Mesh
     mesh.geometry?.dispose()
@@ -111,7 +113,10 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
     } catch {
       return
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, androidShell ? 1.25 : 2))
+    renderer.setPixelRatio(Math.min(
+      window.devicePixelRatio,
+      androidShell ? 1.25 : PoplurPerformanceManager.policy.maximumPixelRatio,
+    ))
     renderer.setClearColor(0x000000, 0)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -130,48 +135,83 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
     camera.position.set(0, 0, 5.1)
     camera.lookAt(0, 0, 0)
 
+    let disposed = false
+    let modelReady = false
+    let rendererActive = false
+    const renderOnce = () => {
+      if (!disposed && modelReady && rendererActive) renderer.render(scene, camera)
+    }
     const resize = () => {
       const rect = stage.getBoundingClientRect()
       if (!rect.width || !rect.height) return
       renderer.setSize(rect.width, rect.height, false)
       camera.aspect = rect.width / rect.height
       camera.updateProjectionMatrix()
+      renderOnce()
     }
     resize()
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null
     observer?.observe(stage)
 
-    let disposed = false
-    let raf = 0
-    const loader = new GLTFLoader()
-    loader.parse(data.slice(0), '', gltf => {
-      if (disposed) return
-      const model = gltf.scene
-      const bounds = new THREE.Box3().setFromObject(model)
-      const center = bounds.getCenter(new THREE.Vector3())
-      const size = bounds.getSize(new THREE.Vector3())
-      model.position.sub(center)
-      model.scale.setScalar(2.35 / Math.max(size.y, 0.001))
-      // The supplied model is authored upright with its face toward the
-      // viewer. Keep it square-on: this handoff is a shrink-and-pop, never a
-      // flip or spin.
-      scene.add(model)
-
-      const render = () => {
-        if (disposed) return
-        raf = requestAnimationFrame(render)
-        renderer.render(scene, camera)
-      }
-      render()
-    }, () => {
-      // Leave the approved static phone screen visible if parsing fails.
+    const performanceRenderer = PoplurPerformanceManager.registerRenderer({
+      id: 'ClayPhonePop',
+      heavy: false,
+      priority: 80,
+      onActiveChange: (active, policy) => {
+        rendererActive = active
+        renderer.setPixelRatio(Math.min(
+          window.devicePixelRatio,
+          androidShell ? 1.25 : policy.maximumPixelRatio,
+        ))
+        resize()
+      },
+      releaseInactiveResources: () => renderer.clear(true, true, true),
     })
+    const draco = new DRACOLoader()
+    draco.setDecoderPath('draco/')
+    const loader = new GLTFLoader()
+    loader.setDRACOLoader(draco)
+    try {
+      loader.parse(data.slice(0), '', gltf => {
+        const model = gltf.scene
+        // Draco/GLTF parsing can finish after the handoff closed. The decoded
+        // scene is not attached in that case, so the normal effect cleanup
+        // cannot see it; dispose it here instead of leaking its GPU resources.
+        if (disposed) { disposeScene(model); return }
+        const bounds = new THREE.Box3().setFromObject(model)
+        const center = bounds.getCenter(new THREE.Vector3())
+        const size = bounds.getSize(new THREE.Vector3())
+        model.position.sub(center)
+        model.scale.setScalar(2.35 / Math.max(size.y, 0.001))
+        // The supplied model is authored upright with its face toward the
+        // viewer. Keep it square-on: this handoff is a shrink-and-pop, never a
+        // flip or spin.
+        scene.add(model)
+        modelReady = true
+        // This handoff model is visually static. One draw is the complete
+        // result; continuously repainting the identical frame was pure heat.
+        renderOnce()
+      }, () => {
+        // The PHONE iframe remains usable even if a future model is corrupt.
+      })
+    } catch {
+      // GLTFLoader can throw before its error callback (for example when a
+      // compressed model has no decoder). Never let decorative 3D take down
+      // the entire Home React tree.
+      performanceRenderer.dispose()
+      observer?.disconnect()
+      disposeScene(scene)
+      draco.dispose()
+      releaseWebGL(renderer)
+      return
+    }
 
     return () => {
       disposed = true
-      cancelAnimationFrame(raf)
+      performanceRenderer.dispose()
       observer?.disconnect()
       disposeScene(scene)
+      draco.dispose()
       releaseWebGL(renderer)
     }
   }, [modelLoaded, visible])

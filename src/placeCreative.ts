@@ -1,3 +1,5 @@
+import { poplurAssetCache } from './PoplurAssetCache'
+
 export interface PlaceCreative {
   image: string
   summary: string | null
@@ -5,7 +7,6 @@ export interface PlaceCreative {
   sourceLabel: string
 }
 
-const memory = new Map<string, PlaceCreative | null>()
 const STORAGE_PREFIX = 'poplur.placeCreative:'
 
 function readStored(query: string): PlaceCreative | null | undefined {
@@ -95,15 +96,26 @@ async function commonsCreative(query: string): Promise<PlaceCreative | null> {
 export async function placeCreative(query: string): Promise<PlaceCreative | null> {
   const key = query.trim().toLowerCase()
   if (!key || typeof window === 'undefined') return null
-  if (memory.has(key)) return memory.get(key) ?? null
+  const cacheKey = `place-creative:${key}`
+  const cached = poplurAssetCache.get<PlaceCreative | null>(cacheKey)
+  if (cached !== undefined) return cached
   const stored = readStored(key)
-  if (stored !== undefined) { memory.set(key, stored); return stored }
+  if (stored !== undefined) {
+    poplurAssetCache.set(cacheKey, stored, {
+      kind: 'temporary',
+      estimatedBytes: stored ? JSON.stringify(stored).length * 2 : 1,
+    })
+    return stored
+  }
   let result: PlaceCreative | null = null
   try { result = await wikipediaCreative(query) } catch { /* try Commons */ }
   if (!result) {
     try { result = await commonsCreative(query) } catch { /* keep channel fallback */ }
   }
-  memory.set(key, result)
+  poplurAssetCache.set(cacheKey, result, {
+    kind: 'temporary',
+    estimatedBytes: result ? JSON.stringify(result).length * 2 : 1,
+  })
   store(key, result)
   return result
 }

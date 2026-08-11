@@ -232,14 +232,30 @@ html.camera-live,
    frame but otherwise keep WebKit/GPU work alive forever: the home cube, map
    boats, weather particles/clouds/fog and the globe sun/moon. The scene stays
    visually complete at its current frame and resumes on the next gesture. */
-.tier-ios.poplur-ambient-sleep [class*="cubeFloat"],
-.tier-ios.poplur-ambient-sleep [class*="boatInner"],
-.tier-ios.poplur-ambient-sleep [class*="cloud"],
-.tier-ios.poplur-ambient-sleep [class*="celestial"],
-.tier-ios.poplur-ambient-sleep [class*="drop_"],
-.tier-ios.poplur-ambient-sleep [class*="flake_"],
-.tier-ios.poplur-ambient-sleep [class*="stone_"],
-.tier-ios.poplur-ambient-sleep [class*="fog_"] {
+.poplur-ambient-sleep [class*="cubeFloat"],
+.poplur-ambient-sleep [class*="boatInner"],
+.poplur-ambient-sleep [class*="cloud"],
+.poplur-ambient-sleep [class*="celestial"],
+.poplur-ambient-sleep [class*="drop_"],
+.poplur-ambient-sleep [class*="flake_"],
+.poplur-ambient-sleep [class*="stone_"],
+.poplur-ambient-sleep [class*="fog_"],
+[data-poplur-performance-mode="low_power"] [class*="cubeFloat"],
+[data-poplur-performance-mode="low_power"] [class*="boatInner"],
+[data-poplur-performance-mode="low_power"] [class*="cloud"],
+[data-poplur-performance-mode="low_power"] [class*="celestial"],
+[data-poplur-performance-mode="low_power"] [class*="drop_"],
+[data-poplur-performance-mode="low_power"] [class*="flake_"],
+[data-poplur-performance-mode="low_power"] [class*="stone_"],
+[data-poplur-performance-mode="low_power"] [class*="fog_"],
+[data-poplur-performance-mode="emergency"] [class*="cubeFloat"],
+[data-poplur-performance-mode="emergency"] [class*="boatInner"],
+[data-poplur-performance-mode="emergency"] [class*="cloud"],
+[data-poplur-performance-mode="emergency"] [class*="celestial"],
+[data-poplur-performance-mode="emergency"] [class*="drop_"],
+[data-poplur-performance-mode="emergency"] [class*="flake_"],
+[data-poplur-performance-mode="emergency"] [class*="stone_"],
+[data-poplur-performance-mode="emergency"] [class*="fog_"] {
   animation-play-state: paused !important;
 }
 

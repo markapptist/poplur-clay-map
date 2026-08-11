@@ -34,6 +34,22 @@ type Sub = {
   cb: (dtMs: number, now: number) => void
   rate: Rate
   last: number
+  /**
+   * Fixed period for `onTick` subscribers, in ms. `onFrame` subscribers leave
+   * this undefined and take their period from the rate table instead.
+   *
+   * A tick names a real deadline ("poll this every second"), not a smoothness
+   * preference, so the ladder does NOT stretch it and a boost does NOT promote
+   * it — a 1s watchdog has no business running at 60Hz because a finger came
+   * down. What a tick gives up instead is the right to run while nothing is
+   * happening: see `ticksPaused`.
+   */
+  everyMs?: number
+}
+
+/** An `onTick` subscriber, as opposed to an `onFrame` one. */
+function isTick(sub: Sub): boolean {
+  return sub.everyMs !== undefined
 }
 
 const subs = new Set<Sub>()
@@ -48,6 +64,8 @@ let quality: Quality = 3
 // slow enough for inference to notice. `fair` already means the phone is warm;
 // decorative motion should be gone by then, not after serious throttling.
 let nativeThermalCeiling: Quality = 3
+let powerSavingCeiling: Quality = 3
+let memoryPressureCeiling: Quality = 3
 let boostUntil = 0
 const AMBIENT_IDLE_MS = 15_000
 let ambientAwakeUntil = typeof performance !== 'undefined'
@@ -75,6 +93,10 @@ let pointersDown = 0
 let interactionUntil = 0
 let interactionTimer = 0
 const INTERACTION_TAIL_MS = 1200
+
+function effectiveQualityCeiling(): Quality {
+  return Math.min(nativeThermalCeiling, powerSavingCeiling, memoryPressureCeiling) as Quality
+}
 
 function interacting(): boolean {
   if (pointersDown > 0) return true
@@ -109,6 +131,10 @@ function setAmbientSleeping(sleeping: boolean): void {
   }
   ambientSleepListeners.forEach(listener => listener(sleeping))
   syncRendererPark()
+  // Ticks pause and resume with this gate, so the loop's own need to exist
+  // changes with it — a document whose only subscribers are ticks stops here
+  // and restarts on the next touch.
+  sync()
 }
 
 // ── rate table ───────────────────────────────────────────────────────────────
@@ -127,15 +153,31 @@ const HZ: Record<Rate, [number, number, number, number]> = {
   idle:        [1,   2,  3,  4],
 }
 
-/** Frame interval the current quality asks of a rate class, in ms. */
-function intervalFor(rate: Rate): number {
-  const hz = HZ[rate][quality]
+/** Interval this subscriber should be called at under the current quality, in ms. */
+function intervalFor(sub: Sub): number {
+  if (sub.everyMs !== undefined) return sub.everyMs
+  const hz = HZ[sub.rate][quality]
   // A boost promotes ambient work to interactive rate: while a finger is down,
   // parallax and drift should track the gesture, not stutter behind it.
-  if (rate === 'ambient' && performance.now() < boostUntil) {
+  if (sub.rate === 'ambient' && performance.now() < boostUntil) {
     return 1000 / HZ.interactive[quality]
   }
   return 1000 / hz
+}
+
+/**
+ * Whether `onTick` work is currently gated off.
+ *
+ * `rendererParked` is a strict subset of ambient sleep — it additionally
+ * requires that no finger is down — so gating on the sleep flag alone honours
+ * both signals with one test.
+ *
+ * This is the whole bargain of `onTick` over `setInterval`: a raw interval
+ * keeps firing on a phone nobody is touching, and a phone nobody is touching is
+ * exactly where sustained work is pure heat.
+ */
+function ticksPaused(): boolean {
+  return ambientSleeping
 }
 
 // ── the thermal ladder ───────────────────────────────────────────────────────
@@ -151,7 +193,13 @@ let comfortStreak = 0
 /** Deadline we expect to hit: the fastest rate any live subscriber asked for. */
 function currentDeadlineMs(): number {
   let fastest = Infinity
-  for (const s of subs) fastest = Math.min(fastest, intervalFor(s.rate))
+  const paused = ticksPaused()
+  for (const s of subs) {
+    // A gated tick is not asking for anything, and letting it set the deadline
+    // would keep the loop waking at its period to skip it every time.
+    if (paused && isTick(s)) continue
+    fastest = Math.min(fastest, intervalFor(s))
+  }
   return fastest === Infinity ? 1000 / 30 : fastest
 }
 
@@ -162,7 +210,7 @@ function median(xs: number[]): number {
 }
 
 function setQuality(next: Quality) {
-  const bounded = Math.min(next, nativeThermalCeiling) as Quality
+  const bounded = Math.min(next, effectiveQualityCeiling()) as Quality
   if (bounded === quality) return
   quality = bounded
   intervals.length = 0
@@ -214,8 +262,16 @@ function tick(now: number) {
   lastFrame = now
   if (dt) sampleThermals(dt)
 
+  const paused = ticksPaused()
   for (const s of subs) {
-    const interval = intervalFor(s.rate)
+    if (paused && isTick(s)) {
+      // Resume with a beat rather than a backlog: zeroing `last` makes the
+      // first frame after the gate reopens fire once, immediately, instead of
+      // either replaying the whole sleep or waiting out another full period.
+      s.last = 0
+      continue
+    }
+    const interval = intervalFor(s)
     const since = now - s.last
     // `- 1`: rAF timestamps jitter by a fraction of a ms, and an exact
     // comparison drops every other frame at rates that divide the display rate.
@@ -232,7 +288,13 @@ function tick(now: number) {
 }
 
 function shouldRun(): boolean {
-  return subs.size > 0 && surfaceFront && !document.hidden
+  if (!surfaceFront || document.hidden || subs.size === 0) return false
+  if (!ticksPaused()) return true
+  // Everything left is a gated tick: stop the clock outright rather than wake
+  // at its period forever to skip every subscriber. This is the case that
+  // matters — an idle screen whose only remaining work was polling.
+  for (const s of subs) if (!isTick(s)) return true
+  return false
 }
 
 function sync() {
@@ -263,8 +325,9 @@ if (typeof document !== 'undefined') {
    * A warm phone earns a shorter leash; a throttling one gets none.
    */
   const ambientLeaseMs = () => {
-    if (nativeThermalCeiling <= 0) return 0       // serious / critical
-    if (nativeThermalCeiling <= 1) return 4_000   // fair
+    const ceiling = effectiveQualityCeiling()
+    if (ceiling <= 0) return 0       // critical thermal / memory pressure
+    if (ceiling <= 1) return 4_000   // fair/serious thermal or power saving
     return AMBIENT_IDLE_MS
   }
   const wakeAmbient = () => {
@@ -336,15 +399,16 @@ if (typeof document !== 'undefined') {
         : ''
     if (!state) return
 
-    const previousCeiling = nativeThermalCeiling
+    const previousCeiling = effectiveQualityCeiling()
     nativeThermalCeiling = state === 'critical' || state === 'serious'
       ? 0
       : state === 'fair'
         ? 1
         : 3
     document.documentElement.dataset.poplurThermal = state
-    if (quality > nativeThermalCeiling) setQuality(nativeThermalCeiling)
-    if (nativeThermalCeiling < 2) {
+    const nextCeiling = effectiveQualityCeiling()
+    if (quality > nextCeiling) setQuality(nextCeiling)
+    if (nextCeiling < 2) {
       sleepAmbient()
     } else if (previousCeiling < 2) {
       // Recover conservatively: native has returned to nominal, but jumping
@@ -383,6 +447,48 @@ export function onFrame(cb: (dtMs: number, now: number) => void, rate: Rate = 'a
 }
 
 /**
+ * Subscribe periodic (non-animation) work to the shared clock, at a fixed
+ * period. Returns an unsubscribe function. The drop-in shape of
+ * `setInterval(cb, ms)` / `clearInterval`, with the governor's lifecycle.
+ *
+ * WHY THIS EXISTS. `onFrame` fixed the ~30 rAF loops, and the polling timers
+ * then became the largest thing still running on an untouched screen. An
+ * interval is worse than a rAF loop here, not better: it keeps its own
+ * independent wake schedule, it does not stop when the page is hidden or the
+ * surface goes behind another tab, and several of them at different periods
+ * beat the main thread out of any alignment the OS could coalesce. Sub-second
+ * ones are the ones that count — a handful at 120-1000ms wake the phone more
+ * often, over a long idle, than any decoration does.
+ *
+ * WHAT YOU GET. One clock, so ticks land on frames already being scheduled.
+ * Sleep when the page is hidden or the surface is not front. Pause on the
+ * ambient/thermal gate, and — when the surviving subscribers are all ticks —
+ * the loop stops rather than spinning on guards, which was the exact failure
+ * `onFrame` was written to end.
+ *
+ * WHAT YOU GIVE UP. The tick does not fire while the gate is closed, and it
+ * resumes with a single immediate call rather than a replay of what it missed.
+ * The test for whether work belongs here is therefore not "could this matter
+ * while idle" but "would acting on it at the next touch be too late". Polling
+ * and watchdogs generally pass — nobody is harmed by a stall that is fixed
+ * before their finger lifts. Deadlines the user never has to be present for —
+ * an upload retry, a session refresh, anything with a server on the other end —
+ * do not, and belong on a plain timer at a period chosen to be cheap.
+ *
+ * `dtMs` is the time since THIS subscriber's previous call, so accumulating
+ * work stays correct across a pause instead of assuming a fixed step.
+ */
+export function onTick(cb: (dtMs: number, now: number) => void, ms: number): () => void {
+  const sub: Sub = { cb, rate: 'ambient', last: 0, everyMs: Math.max(0, ms) }
+  subs.add(sub)
+  sync()
+  return () => {
+    subs.delete(sub)
+    sync()
+  }
+}
+
+/**
  * Promote ambient work to interactive rate for a moment. Call on touch/pointer
  * down and during drags — cheap to call repeatedly.
  */
@@ -391,7 +497,7 @@ export function boostFrames(ms = 400): void {
   // call whose entire purpose is to spend more frames, so a serious thermal
   // state is the last place it should be honoured. Gated here rather than only
   // at the call sites so a future caller cannot reintroduce the same loop.
-  if (nativeThermalCeiling <= 0) return
+  if (effectiveQualityCeiling() <= 0) return
   boostUntil = Math.max(boostUntil, performance.now() + ms)
   // A parked ambient/idle timer may be tens or hundreds of milliseconds from
   // its next beat. A touch deserves an immediate frame, then the normal
@@ -435,6 +541,39 @@ export function setSurfaceFront(front: boolean): void {
 
 export function currentQuality(): Quality {
   return quality
+}
+
+/** Impose or release the OS power-saver ceiling. A power-saving device keeps
+ * interactive UI usable but never spends above LOW_POWER on decoration. */
+export function setPowerSavingMode(enabled: boolean): void {
+  const previous = effectiveQualityCeiling()
+  powerSavingCeiling = enabled ? 1 : 3
+  const next = effectiveQualityCeiling()
+  if (quality > next) setQuality(next)
+  if (next < 2) {
+    setAmbientSleeping(true)
+  } else if (previous < 2 && surfaceFront && !document.hidden) {
+    setQuality(2)
+    setAmbientSleeping(false)
+  }
+  sync()
+}
+
+/** Memory pressure is a rendering ceiling, not a pretend process RAM cap.
+ * Cache/resource owners purge separately; this stops them immediately
+ * rebuilding expensive decoration while the device is asking for relief. */
+export function setMemoryPressure(level: 'normal' | 'warning' | 'critical'): void {
+  const previous = effectiveQualityCeiling()
+  memoryPressureCeiling = level === 'critical' ? 0 : level === 'warning' ? 1 : 3
+  const next = effectiveQualityCeiling()
+  if (quality > next) setQuality(next)
+  if (next < 2) {
+    setAmbientSleeping(true)
+  } else if (previous < 2 && surfaceFront && !document.hidden) {
+    setQuality(2)
+    setAmbientSleeping(false)
+  }
+  sync()
 }
 
 export function onQualityChange(cb: (q: Quality) => void): () => void {

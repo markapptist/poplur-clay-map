@@ -1,3 +1,5 @@
+import { isNativeShell, postNativeEvent } from './nativeBridge'
+
 // Central audio gate.
 //
 // The app's sound lives in several independent AudioContexts (region ambience,
@@ -126,6 +128,16 @@ function apply() {
   if (muted && typeof window !== 'undefined' && window.speechSynthesis) {
     try { window.speechSynthesis.cancel() } catch { /* ignore */ }
   }
+  // …AND the native voice, which is the only one a phone ever uses.
+  //
+  // speakWithVoiceAudioFocus routes through native TTS inside the app shell,
+  // because WKWebView's own speechSynthesis silently drops lines on device.
+  // So cancelling web speech above silences nothing on a real phone: the AI
+  // kept talking through a minimised app, out of AVSpeechSynthesizer, where
+  // this gate could not reach it. Every other source is an AudioContext or a
+  // media element that suspend/muted above already covers; the spoken voice
+  // is the one that lives outside this process and has to be ASKED to stop.
+  if (muted && isNativeShell()) postNativeEvent({ type: 'cancelSpeak' })
   listeners.forEach(cb => cb(muted))
 }
 

@@ -13,6 +13,8 @@ import { listEngagement, onEngagementLogged, engagementAge, type LoggedEngagemen
 import ClaySwayObject, { primeMotionPermission } from './ClaySwayObject'
 import CameraRoll from './CameraRoll'
 import { radiusStats } from './radiusLedger'
+import { onFrame } from './frameGovernor'
+import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -221,7 +223,8 @@ function NotificationDotMap() {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
     let width = 0
     let height = 0
-    let frame = 0
+    let stopFrames: (() => void) | null = null
+    let particleDensity = PoplurPerformanceManager.policy.particleDensityMultiplier
     let dots: Array<{ x: number; y: number; radius: number; phase: number }> = []
 
     const circle = (x: number, y: number, radius: number, fill: string) => {
@@ -243,7 +246,6 @@ function NotificationDotMap() {
           circle(dot.x, dot.y, radius * 2.4, `rgba(255, 255, 255, ${(pulse - 0.9) * 1.6})`)
         }
       }
-      if (!reduceMotion.matches) frame = window.requestAnimationFrame(draw)
     }
 
     const rebuild = () => {
@@ -265,18 +267,37 @@ function NotificationDotMap() {
           const ny = 0.04 + (y / height) * 0.88
           if (!NOTIFICATION_DOT_MAP_LAND.some(polygon => insideDotMapLand(nx, ny, polygon))) continue
           const hash = Math.abs(row * 73 + column * 151 + row * column * 19) % 41
-          if (hash < 9) dots.push({ x, y, radius: Math.max(1.55, spacing * 0.21), phase: (hash * 0.77 + row * 0.19 + column * 0.31) % (Math.PI * 2) })
+          if (hash < Math.max(1, Math.round(9 * particleDensity))) {
+            dots.push({ x, y, radius: Math.max(1.55, spacing * 0.21), phase: (hash * 0.77 + row * 0.19 + column * 0.31) % (Math.PI * 2) })
+          }
         }
       }
-      window.cancelAnimationFrame(frame)
       draw(performance.now())
     }
 
     const observer = new ResizeObserver(rebuild)
     observer.observe(canvas)
     rebuild()
+    const syncPolicy = (snapshot: PoplurPerformanceSnapshot) => {
+      particleDensity = snapshot.particleDensityMultiplier
+      rebuild()
+      const shouldAnimate = snapshot.decorativeRenderingAllowed
+        && snapshot.particlesAllowed
+        && !reduceMotion.matches
+      if (shouldAnimate && !stopFrames) {
+        stopFrames = onFrame((_elapsedMs, now) => draw(now), 'ambient')
+      } else if (!shouldAnimate && stopFrames) {
+        stopFrames()
+        stopFrames = null
+      }
+    }
+    const stopPolicy = PoplurPerformanceManager.subscribe(syncPolicy)
+    const onMotionPreference = () => syncPolicy(PoplurPerformanceManager.snapshot)
+    reduceMotion.addEventListener?.('change', onMotionPreference)
     return () => {
-      window.cancelAnimationFrame(frame)
+      stopPolicy()
+      stopFrames?.()
+      reduceMotion.removeEventListener?.('change', onMotionPreference)
       observer.disconnect()
     }
   }, [])
@@ -609,7 +630,9 @@ export default function ProfileTwin({
   // Business avatars use the 3D Poplur building object.
   useEffect(() => {
     if (!isBusiness || buildingSprite) return
-    modelSprite('zoom_buildings.glb', { yaw: 25, pitch: 14, size: 512 })
+    // Reuse the pre-rendered 256px sprite. The old 512 request missed the
+    // manifest and decoded an 8.6 MB authoring GLB at runtime for one icon.
+    modelSprite('zoom_buildings.glb', { yaw: 25, pitch: 14, size: 256 })
       .then(setBuildingSprite)
       .catch(() => {})
   }, [isBusiness, buildingSprite])

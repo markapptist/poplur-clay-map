@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { onTick } from './frameGovernor'
 
 // Low-memory WebViews (especially A03) can lose a WebGL context or drop a
 // mounted child without taking down React. Keep this tiny watchdog independent
@@ -64,7 +65,19 @@ export function useUIRecoveryWatchdog(): number {
       window.dispatchEvent(new CustomEvent('poplur-ui-recovered'))
     }
 
-    const interval = window.setInterval(check, 1000)
+    // `check` reads computed style and a bounding box on several nodes, so it
+    // is a forced layout — once a second, forever, on a screen nobody is
+    // touching. On the governor it pauses with the idle gate instead.
+    //
+    // Losing the poll while idle is safe, and it is worth being explicit about
+    // why. The two failure modes this exists for both mutate the DOM (a dropped
+    // child, or a renderer flipping its data attribute to `failed`), and the
+    // observer below catches those whether the tick is paused or not. What the
+    // poll adds is a check for a break that leaves no DOM trace at all — and
+    // such a break, on an untouched screen, is by definition one nobody is
+    // looking at. `onTick` fires immediately when the gate reopens, so the
+    // recovery still lands on the first touch, before the user can act on it.
+    const stopPolling = onTick(check, 1000)
     const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(check)
     observer?.observe(document.body, {
       subtree: true,
@@ -80,7 +93,7 @@ export function useUIRecoveryWatchdog(): number {
     })
     check()
     return () => {
-      window.clearInterval(interval)
+      stopPolling()
       observer?.disconnect()
     }
   }, [])

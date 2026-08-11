@@ -8,6 +8,8 @@
 // the same access token the map is already using — no extra key.
 
 import type mapboxgl from 'mapbox-gl'
+import { onFrame } from './frameGovernor'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 export type DirProfile = 'driving' | 'walking' | 'cycling'
 
@@ -238,9 +240,10 @@ export function playNavigation(map: mapboxgl.Map, route: Route, opts: NavOptions
   // ones aren't tedious.
   const duration = (opts.durationS ?? Math.min(45, Math.max(10, (total / 1000) * 3))) * 1000
   const start = performance.now()
-  let raf = 0
+  let stopFrames: (() => void) | null = null
   let stopped = false
   let lastStepIdx = -1
+  let lastFrameAt = 0
 
   // Precompute cumulative distance of each maneuver so we can announce turns.
   const stepDist = route.steps.map(s => {
@@ -256,6 +259,9 @@ export function playNavigation(map: mapboxgl.Map, route: Route, opts: NavOptions
 
   const frame = (now: number) => {
     if (stopped) return
+    const targetPeriod = 1000 / PoplurPerformanceManager.policy.targetFPS
+    if (lastFrameAt && now - lastFrameAt < targetPeriod - 1) return
+    lastFrameAt = now
     const t = Math.min(1, (now - start) / duration)
     const d = t * total
     const { pos, heading } = sampleAt(pts, d)
@@ -271,17 +277,22 @@ export function playNavigation(map: mapboxgl.Map, route: Route, opts: NavOptions
     }
 
     if (t >= 1) {
+      const stop = stopFrames
+      stopFrames = null
+      stop?.()
       opts.onDone?.()
       return
     }
-    raf = requestAnimationFrame(frame)
   }
-  raf = requestAnimationFrame(frame)
+  // Navigation is interactive, but it still must not inherit a 120 Hz display
+  // rate or keep advancing in a hidden WebView. The shared clock handles both.
+  stopFrames = onFrame((_elapsedMs, now) => frame(now), 'interactive')
 
   return {
     stop: () => {
       stopped = true
-      if (raf) cancelAnimationFrame(raf)
+      stopFrames?.()
+      stopFrames = null
     },
   }
 }

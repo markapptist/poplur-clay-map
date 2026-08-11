@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './ARFilters.module.css'
 import { playPop } from './pop'
+import { onFrame } from './frameGovernor'
 
 // AR filters — the web twin of ARFilterManager.swift, carrying the same set it
 // ships (none · Smooth · Beauty · Brighten · Glow · Sharpen · Warm · Cool ·
@@ -229,13 +230,11 @@ export default function ARFilters({
     applyOffsetDelta(slotDelta)
   }
 
-  // Momentum + snap-to-nearest, on the same 60fps interval the hold menu uses.
+  // Momentum + snap-to-nearest shares Poplur's lifecycle-aware capped clock.
+  // The old 60 Hz interval woke even while the embedding WebView was hidden.
   useEffect(() => {
-    let last = performance.now()
-    const id = window.setInterval(() => {
-      const t = performance.now()
-      const dt = Math.min((t - last) / 1000, 1 / 30)
-      last = t
+    const stop = onFrame((elapsedMs, t) => {
+      const dt = Math.min(elapsedMs / 1000, 1 / 30)
       if (draggingRef.current) return
 
       if (snapIndexRef.current !== null) {
@@ -245,7 +244,7 @@ export default function ARFilters({
         return
       }
 
-      if (performance.now() / 1000 - lastScrubRef.current < 0.032) return
+      if (t / 1000 - lastScrubRef.current < 0.032) return
       const v = velocityRef.current
       if (Math.abs(v) > SNAP_VELOCITY) {
         applyOffsetDelta(v * dt)
@@ -258,8 +257,8 @@ export default function ARFilters({
           applyOffsetDelta(Math.abs(remaining) < 0.001 ? remaining : remaining * 0.22)
         }
       }
-    }, 1000 / 60)
-    return () => window.clearInterval(id)
+    }, 'ambient')
+    return stop
   }, [])
 
   const onPointerDown = (e: React.PointerEvent) => {
