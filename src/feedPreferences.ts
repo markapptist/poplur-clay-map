@@ -2,7 +2,23 @@
 // the hold menu and the feed read one contract rather than each keeping their
 // own copy of the answer.
 
+import { isNativeShell } from './nativeBridge'
+
 const COMMENTS_KEY = 'poplur.feedCommentsAtEnd'
+const NATIVE_COMMENTS_DEFAULT_MIGRATION = 'poplur.feedCommentsAtEnd.nativeDefault.v2'
+
+function migrateNativeCommentsDefault(): void {
+  if (!isNativeShell()) return
+  try {
+    if (window.localStorage.getItem(NATIVE_COMMENTS_DEFAULT_MIGRATION) === '1') return
+    // This release restores the documented native default after earlier test
+    // builds persisted the setting off. The separate marker makes this a
+    // one-time correction: a viewer can turn comments off again afterwards
+    // and that choice will remain respected on every subsequent launch.
+    window.localStorage.setItem(COMMENTS_KEY, '1')
+    window.localStorage.setItem(NATIVE_COMMENTS_DEFAULT_MIGRATION, '1')
+  } catch { /* embedded/private mode: readFeedCommentsAtEnd still defaults on */ }
+}
 
 /**
  * Show a post's comments when its clip finishes.
@@ -13,6 +29,7 @@ const COMMENTS_KEY = 'poplur.feedCommentsAtEnd'
  */
 export function readFeedCommentsAtEnd(): boolean {
   if (typeof window === 'undefined') return true
+  migrateNativeCommentsDefault()
   try {
     return window.localStorage.getItem(COMMENTS_KEY) !== '0'
   } catch {

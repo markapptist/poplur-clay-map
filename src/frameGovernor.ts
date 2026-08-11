@@ -42,14 +42,9 @@ type Sub = {
    * preference, so the ladder does NOT stretch it and a boost does NOT promote
    * it — a 1s watchdog has no business running at 60Hz because a finger came
    * down. What a tick gives up instead is the right to run while nothing is
-   * happening: see `ticksPaused`.
+   * happening: see `subscriberWorkPaused`.
    */
   everyMs?: number
-}
-
-/** An `onTick` subscriber, as opposed to an `onFrame` one. */
-function isTick(sub: Sub): boolean {
-  return sub.everyMs !== undefined
 }
 
 const subs = new Set<Sub>()
@@ -131,9 +126,9 @@ function setAmbientSleeping(sleeping: boolean): void {
   }
   ambientSleepListeners.forEach(listener => listener(sleeping))
   syncRendererPark()
-  // Ticks pause and resume with this gate, so the loop's own need to exist
-  // changes with it — a document whose only subscribers are ticks stops here
-  // and restarts on the next touch.
+  // Every subscriber pauses and resumes with this gate, so an untouched
+  // document has no shared-clock wakeups at all. The next real input reopens
+  // the gate and restarts the clock.
   sync()
 }
 
@@ -166,17 +161,22 @@ function intervalFor(sub: Sub): number {
 }
 
 /**
- * Whether `onTick` work is currently gated off.
+ * Whether all shared-clock subscriber work is currently gated off.
  *
  * `rendererParked` is a strict subset of ambient sleep — it additionally
  * requires that no finger is down — so gating on the sleep flag alone honours
  * both signals with one test.
  *
- * This is the whole bargain of `onTick` over `setInterval`: a raw interval
- * keeps firing on a phone nobody is touching, and a phone nobody is touching is
- * exactly where sustained work is pure heat.
+ * `onFrame` must obey this too. Leaving non-tick subscribers eligible kept the
+ * governor's timer/rAF pair alive after ambient sleep just to invoke callbacks
+ * such as `animateFlyers`, whose own guards immediately returned. A static
+ * screen should have zero shared-clock wakeups, not a low-frequency no-op loop.
+ *
+ * This is also the bargain of `onTick` over `setInterval`: a raw interval keeps
+ * firing on a phone nobody is touching, which is exactly where sustained work
+ * is pure heat.
  */
-function ticksPaused(): boolean {
+function subscriberWorkPaused(): boolean {
   return ambientSleeping
 }
 
@@ -193,11 +193,12 @@ let comfortStreak = 0
 /** Deadline we expect to hit: the fastest rate any live subscriber asked for. */
 function currentDeadlineMs(): number {
   let fastest = Infinity
-  const paused = ticksPaused()
+  const paused = subscriberWorkPaused()
   for (const s of subs) {
-    // A gated tick is not asking for anything, and letting it set the deadline
-    // would keep the loop waking at its period to skip it every time.
-    if (paused && isTick(s)) continue
+    // Gated work is not asking for any deadline. In normal operation shouldRun
+    // stops the clock outright; this guard also covers a sleep transition that
+    // lands during an already-scheduled frame.
+    if (paused) continue
     fastest = Math.min(fastest, intervalFor(s))
   }
   return fastest === Infinity ? 1000 / 30 : fastest
@@ -262,9 +263,9 @@ function tick(now: number) {
   lastFrame = now
   if (dt) sampleThermals(dt)
 
-  const paused = ticksPaused()
+  const paused = subscriberWorkPaused()
   for (const s of subs) {
-    if (paused && isTick(s)) {
+    if (paused) {
       // Resume with a beat rather than a backlog: zeroing `last` makes the
       // first frame after the gate reopens fire once, immediately, instead of
       // either replaying the whole sleep or waiting out another full period.
@@ -289,12 +290,10 @@ function tick(now: number) {
 
 function shouldRun(): boolean {
   if (!surfaceFront || document.hidden || subs.size === 0) return false
-  if (!ticksPaused()) return true
-  // Everything left is a gated tick: stop the clock outright rather than wake
-  // at its period forever to skip every subscriber. This is the case that
-  // matters — an idle screen whose only remaining work was polling.
-  for (const s of subs) if (!isTick(s)) return true
-  return false
+  // Ambient sleep is a hard clock gate. A low-frequency `onFrame` subscriber
+  // is still a recurring main-thread/display wakeup, even when its callback has
+  // nothing visible to do. Input wakes the ambient gate before work resumes.
+  return !subscriberWorkPaused()
 }
 
 function sync() {
@@ -462,9 +461,8 @@ export function onFrame(cb: (dtMs: number, now: number) => void, rate: Rate = 'a
  *
  * WHAT YOU GET. One clock, so ticks land on frames already being scheduled.
  * Sleep when the page is hidden or the surface is not front. Pause on the
- * ambient/thermal gate, and — when the surviving subscribers are all ticks —
- * the loop stops rather than spinning on guards, which was the exact failure
- * `onFrame` was written to end.
+ * ambient/thermal gate, where the shared loop stops outright along with every
+ * `onFrame` subscriber.
  *
  * WHAT YOU GIVE UP. The tick does not fire while the gate is closed, and it
  * resumes with a single immediate call rather than a replay of what it missed.

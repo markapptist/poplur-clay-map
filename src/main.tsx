@@ -80,11 +80,12 @@ if (params.get('iosTier') === '1'
   document.documentElement.classList.add('tier-ios')
 }
 
-// On-device heat probe, native shell only (or ?profile=1 in a browser). Passive:
-// a longtask observer plus one 5s interval, no rAF — see deviceProfile.ts for why
-// that distinction matters. Read it back with:
+// On-device heat probe, explicit opt-in only. Profiling scans the document and
+// reports to the native bridge on a timer, so merely running inside the app must
+// never enable it. Add ?profile=1 to either a browser or native-shell URL when a
+// diagnostic run actually needs it. Read the native report back with:
 //   xcrun devicectl device process launch --console --device <id> com.apptist.Poplur2025
-if (isNativeShell() || params.get('profile') === '1') {
+if (params.get('profile') === '1') {
   void import('./deviceProfile').then(m => m.startDeviceProfile()).catch(() => { /* probe is never load-bearing */ })
 }
 

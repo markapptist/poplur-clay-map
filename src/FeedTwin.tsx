@@ -134,6 +134,16 @@ const STOCK_CLIPS = [
   'feed/ad-spanish-1.mp4', 'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4',
 ]
 
+function posterForFeedClip(source: string): string {
+  const localSource = source.split(/[?#]/, 1)[0].replace(/^\/+/, '')
+  if (localSource.startsWith('feed/') && localSource.endsWith('.mp4')) {
+    return localSource.replace(/^feed\//, 'feed/posters/').replace(/\.mp4$/, '.jpg')
+  }
+  // Live/dynamic post URLs do not always ship separate poster metadata. Keep
+  // the Feed visually populated without asking WebKit to open a decoder.
+  return 'feed/posters/ad-food.jpg'
+}
+
 const CHANNEL_USERS: Record<string, string[]> = {
   food: ['@sauceboss', '@nightmarket', '@poutine.patrol'],
   beauty: ['@glowgetter', '@softglam', '@lash.lab'],
@@ -338,7 +348,7 @@ export default function FeedTwin({
     }
   }, [])
 
-  const showCommentRoll = useCallback((opts?: { silent?: boolean }) => {
+  const showCommentRoll = useCallback((opts?: { silent?: boolean; persist?: boolean }) => {
     if (!readFeedCommentsAtEnd()) return
     if (playerModeRef.current) return // fullscreen: the video owns the screen
     if (endCommentsTimerRef.current != null) return // already rolling
@@ -347,6 +357,10 @@ export default function FeedTwin({
     // rolls silently — the channel detent just popped, an echo teaches nothing.
     if (!opts?.silent) playPopAmbient()
     setEndComments(true)
+    // A decoder-free poster can remain on screen indefinitely. Keep its
+    // comments present until the viewer plays or changes the post; there is no
+    // animation/timer work required to leave this static layer mounted.
+    if (opts?.persist) return
     endCommentsTimerRef.current = window.setTimeout(() => {
       setEndComments(false)
       endCommentsTimerRef.current = null
@@ -381,17 +395,21 @@ export default function FeedTwin({
   // The caption line follows the video's clock: whichever cue's start time has
   // passed most recently is the one on screen, and it clears between cues.
   const [captionLine, setCaptionLine] = useState('')
-  const gestureStart = useRef<{ pointerId: number; x: number; y: number } | null>(null)
+  const gestureStart = useRef<{
+    pointerId: number
+    x: number
+    y: number
+    mediaTap: boolean
+  } | null>(null)
   const wheelLock = useRef(false)
   const adVideoRef = useRef<HTMLVideoElement>(null)
-  // The gesture gate is a BROWSER defense: Chrome/Safari block unmuted
-  // autoplay until the user touches the page, so on the web the feed must warm
-  // up muted and unlock on the first tap. The app shell explicitly allows
-  // sound-on autoplay (mediaTypesRequiringUserActionForPlayback = []), so
-  // starting locked there meant the feed always LAUNCHED silent and stayed
-  // silent until the first incidental touch — reported on device as "the feed
-  // is still not starting with any sound".
-  const mediaUnlockedRef = useRef(isNativeShell())
+  const settledAdRef = useRef<string | null>(null)
+  // Feed is the native app's default screen. Starting a looping 720p decoder
+  // and audio media session before any touch kept an otherwise-idle phone warm.
+  // Start on the bundled poster instead; a deliberate touch grants one native
+  // play-through, while browser previews retain their normal looping behavior.
+  const [mediaUnlocked, setMediaUnlocked] = useState(false)
+  const mediaUnlockedRef = useRef(false)
   const recoveringAdSrcRef = useRef<string | null>(null)
   const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   const ch = CHANNELS[index]
@@ -410,6 +428,7 @@ export default function FeedTwin({
   // app appeared in different places and obeyed different lifetime rules.
   useEffect(() => {
     clearPopups('suggestion')
+    if (!mediaUnlocked) return
     // Not while you are writing. An ad landing on top of the comment box is
     // interrupting the one thing on this screen that takes real attention —
     // and it covers the box you are typing into.
@@ -424,7 +443,7 @@ export default function FeedTwin({
       })
     }, 3_500)
     return () => { window.clearTimeout(show); clearPopups('suggestion') }
-  }, [index, contentRevision, suppressed, playerMode, commentOpen])
+  }, [index, contentRevision, suppressed, playerMode, commentOpen, mediaUnlocked])
 
   // The feed used to silence the shared engagement kind outright for as long as
   // it was mounted, which is why likes, views and comments only ever appeared on
@@ -514,6 +533,7 @@ export default function FeedTwin({
   // Top slot: fade out, swap face (brand ⇄ channel info), fade back in — an
   // unhurried beat, not a channel zap.
   useEffect(() => {
+    if (!mediaUnlocked) return
     let swap = 0
     const iv = window.setInterval(() => {
       setFlipOut(true)
@@ -523,13 +543,14 @@ export default function FeedTwin({
       }, 340)
     }, 6500)
     return () => { window.clearInterval(iv); window.clearTimeout(swap) }
-  }, [])
+  }, [mediaUnlocked])
 
   // Centered info line: title → username → coordinates, slow cross-fade.
   useEffect(() => {
+    if (!mediaUnlocked) return
     const iv = window.setInterval(() => setCenterIdx(i => (i + 1) % 3), 3400)
     return () => window.clearInterval(iv)
-  }, [])
+  }, [mediaUnlocked])
 
   const toggleMute = () => {
     const next = !muted
@@ -640,9 +661,13 @@ export default function FeedTwin({
   const adSrc = sourceCandidates.length
     ? sourceCandidates[recoveryAttempt % sourceCandidates.length]
     : undefined
+  const posterSrc = adSrc ? posterForFeedClip(adSrc) : undefined
+  const posterKey = posterSrc ? `${sourceKey}:${adSrc}:${posterSrc}` : null
+  const [readyPosterKey, setReadyPosterKey] = useState<string | null>(null)
   useEffect(() => {
     setRecoveryAttempt(0)
     setReadyAdSrc(null)
+    settledAdRef.current = null
   }, [sourceKey])
   useEffect(() => {
     recoveringAdSrcRef.current = null
@@ -657,13 +682,16 @@ export default function FeedTwin({
     if (failedSource && recoveringAdSrcRef.current === failedSource) return
     recoveringAdSrcRef.current = failedSource
     setReadyAdSrc(null)
+    settledAdRef.current = null
     setRecoveryAttempt(attempt => attempt + 1)
   }, [])
   const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
     if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
-    // Retrying playback must not accidentally turn a muted warm-up into an
-    // audible media session before the person has interacted with Feed.
-    if (!mediaUnlockedRef.current) video.muted = true
+    if (!mediaUnlockedRef.current) {
+      video.muted = true
+      video.pause()
+      return
+    }
     void video.play().catch(() => {
       if (adVideoRef.current === video && video.getAttribute('src') === source) {
         advanceAdSource(source)
@@ -721,19 +749,22 @@ export default function FeedTwin({
     return () => events.forEach(name => video.removeEventListener(name, sync))
   }, [playerMode, adSrc])
 
-  // Every clip OPENS with its comments already rolling — the roll is part of
-  // watching a post (feedPreferences' words), so it fronts the clip instead of
-  // waiting for the wrap. Slightly delayed so the roll enters over the picture,
-  // not over the static cover that is still fading. The wrap roll stays: a
-  // full watch-through gets the roll twice, start and end, which is the shape
-  // the user asked for ("every video starts with comments").
+  // Every post OPENS with its comments visible. A locked native Feed is a real
+  // decoder-free poster, so poster load is visual readiness; once playback is
+  // unlocked, decoded-frame readiness takes over. This keeps comments working
+  // without turning idle video/audio resources back on.
+  const openingVisualReady = mediaUnlocked
+    ? adReady
+    : Boolean(posterKey) && readyPosterKey === posterKey
   useEffect(() => {
-    if (!adReady) return
+    if (!openingVisualReady) return
     if (suppressedRef.current || playerModeRef.current) return
-    const settle = window.setTimeout(() => showCommentRoll({ silent: true }), 650)
+    const settle = window.setTimeout(() => {
+      showCommentRoll({ silent: true, persist: !mediaUnlocked })
+    }, 650)
     return () => window.clearTimeout(settle)
-  }, [adReady, index, showCommentRoll])
-  const showStatic = (staticArmed && !adReady) || forceStatic || forceTransition
+  }, [openingVisualReady, mediaUnlocked, index, showCommentRoll])
+  const showStatic = forceStatic || forceTransition || (mediaUnlocked && staticArmed && !adReady)
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
   const staticReady = readyStaticKey === staticKey
@@ -749,6 +780,19 @@ export default function FeedTwin({
       if (settled) return
       settled = true
       callback()
+    }
+    if (isNativeShell()) {
+      // The explicit poster tap already authorized playback. A late decoded
+      // frame must not depend on governed rAF after that short input lease has
+      // expired, or the video can play invisibly behind its static card.
+      const fallback = window.setTimeout(finish, 520)
+      if (frameAware.requestVideoFrameCallback) {
+        frameAware.requestVideoFrameCallback(() => {
+          window.clearTimeout(fallback)
+          finish()
+        })
+      }
+      return
     }
     // WKWebView can defer rVFC while this video is occluded by the static
     // transition. Loaded data plus a bounded two-paint fallback breaks that
@@ -786,7 +830,6 @@ export default function FeedTwin({
   // (not `readyAdSrc`) is what covers the in-flight window between arming the
   // settle and it finishing; a new source has a different key, so switching
   // clips still re-arms exactly once.
-  const settledAdRef = useRef<string | null>(null)
   const markAdReady = useCallback((source: string) => {
     if (settledAdRef.current === source) return
     const video = adVideoRef.current
@@ -817,7 +860,7 @@ export default function FeedTwin({
   // advances. Loop wrap counts as progress.
   useEffect(() => {
     const video = adVideoRef.current
-    if (!video || !adSrc || suppressed) return
+    if (!video || !adSrc || suppressed || !mediaUnlocked) return
     let lastTime = video.currentTime
     let stalledTicks = 0
     // On the governor rather than its own interval: a stall the user is not
@@ -846,7 +889,7 @@ export default function FeedTwin({
       if (stalledTicks >= 3) advanceAdSource(adSrc)
     }, 1000)
     return () => stopWatchdog()
-  }, [adSrc, suppressed, markAdReady, advanceAdSource, retryAdPlayback])
+  }, [adSrc, suppressed, mediaUnlocked, markAdReady, advanceAdSource, retryAdPlayback])
 
   // Channel audio. The ad creative is the channel's soundtrack, so it plays
   // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
@@ -866,13 +909,12 @@ export default function FeedTwin({
       // before the first post-login gesture. requestAudioFocus deliberately
       // re-broadcasts repeat claims so a remounted iframe hears this too.
       if (!deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
-      // Home warms underneath the signed-in splash. Until the first post-login
-      // gesture, keep its soundtrack out of the system media session so remote
-      // rewind/play/forward controls can never leak through the splash cover.
+      // Do not "warm up" the native decoder behind its poster. Starting it
+      // muted still creates WebKit media/GPU work and was the dominant idle
+      // cost measured on the physical phone.
       if (!mediaUnlockedRef.current) {
         video.muted = true
-        video.volume = 0.85
-        if (video.paused) void video.play().catch(() => {})
+        video.pause()
         return
       }
       // The radio or the map holding the floor keeps the picture running and
@@ -890,13 +932,6 @@ export default function FeedTwin({
       if (video.paused) void video.play().catch(() => {})
     }
     apply()
-    const unlock = () => {
-      mediaUnlockedRef.current = true
-      apply()
-    }
-    window.addEventListener('pointerdown', unlock, { passive: true })
-    window.addEventListener('touchstart', unlock, { passive: true })
-    window.addEventListener('keydown', unlock)
     const offGate = onGateChange(apply)
     const offFocus = onAudioFocusChange(owner => {
       const video = adVideoRef.current
@@ -941,15 +976,12 @@ export default function FeedTwin({
       if (video) video.muted = true
     })
     return () => {
-      window.removeEventListener('pointerdown', unlock)
-      window.removeEventListener('touchstart', unlock)
-      window.removeEventListener('keydown', unlock)
       offGate()
       offFocus()
       unregister()
       releaseAudioFocus('feed')
     }
-  }, [adSrc])
+  }, [adSrc, mediaUnlocked])
 
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
@@ -967,12 +999,22 @@ export default function FeedTwin({
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return
     const target = e.target
+    const mediaSurface = target instanceof Element
+      ? target.closest('[data-feed-media="true"]')
+      : null
     if (
+      !mediaSurface
+      &&
       target instanceof Element
       && target.closest('button, a, input, textarea, select, [role="button"], [role="slider"]')
     ) return
 
-    gestureStart.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY }
+    gestureStart.current = {
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      mediaTap: Boolean(mediaSurface),
+    }
     e.currentTarget.setPointerCapture(e.pointerId)
 
     // Arm the long press. Firing consumes the gesture: gestureStart is nulled
@@ -1041,6 +1083,13 @@ export default function FeedTwin({
 
     // A plain tap has no engagement overlay. Comments and ad windows are the
     // only transient layers on Feed; navigation gestures still work above.
+    // Pointer capture retargets the eventual click to this root, so remember
+    // where the gesture began and unlock only a completed tap on the poster.
+    if (start.mediaTap && !mediaUnlockedRef.current) {
+      clearCommentRoll()
+      mediaUnlockedRef.current = true
+      setMediaUnlocked(true)
+    }
     lastTap.current = 0
   }
 
@@ -1177,7 +1226,7 @@ export default function FeedTwin({
         || currentAudioOwner() !== 'feed'
       void video.play().catch(() => {})
     }
-  }, [suppressed, adSrc])
+  }, [suppressed, adSrc, mediaUnlocked])
 
   const [c0, c1, c2] = ch.theme
 
@@ -1245,22 +1294,47 @@ export default function FeedTwin({
         />
       )}
 
-      {adSrc && !post?.stream && (
+      {adSrc && !post?.stream && !mediaUnlocked && posterSrc && posterKey && (
+        <img
+          key={`${posterKey}:locked`}
+          data-feed-media="true"
+          className={`${styles.adVideo} ${styles.adVideoReady}`}
+          src={posterSrc}
+          alt=""
+          draggable={false}
+          role="button"
+          aria-label="Play feed video"
+          tabIndex={0}
+          onLoad={() => setReadyPosterKey(posterKey)}
+          onKeyDown={event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            clearCommentRoll()
+            mediaUnlockedRef.current = true
+            setMediaUnlocked(true)
+          }}
+        />
+      )}
+
+      {adSrc && !post?.stream && mediaUnlocked && (
         <video
-          key={adSrc}
+          key={`${adSrc}:playing`}
+          data-feed-media="true"
           ref={adVideoRef}
           className={adReady ? `${styles.adVideo} ${styles.adVideoReady}` : styles.adVideo}
           src={adSrc}
+          poster={posterSrc}
+          preload="auto"
           autoPlay
-          // Starts muted because iOS/Safari refuse unmuted autoplay before a
-          // gesture; the effect below unmutes as soon as one arrives.
           muted
-          loop
+          loop={!isNativeShell()}
           playsInline
           controls={false}
           disablePictureInPicture
           disableRemotePlayback
           controlsList="nodownload noplaybackrate nofullscreen noremoteplayback"
+          aria-label="Playing feed video"
+          tabIndex={0}
           onCanPlay={() => markAdReady(adSrc)}
           onLoadedData={() => markAdReady(adSrc)}
           onPlaying={() => markAdReady(adSrc)}
@@ -1274,6 +1348,16 @@ export default function FeedTwin({
             const previous = adTimeRef.current
             adTimeRef.current = t
             if (previous - t > 0.4 && !playerModeRef.current) showCommentRoll()
+          }}
+          onEnded={() => {
+            if (!playerModeRef.current) showCommentRoll()
+            if (!isNativeShell()) return
+            mediaUnlockedRef.current = false
+            setMediaUnlocked(false)
+            setReadyAdSrc(null)
+            settledAdRef.current = null
+            setStaticArmed(true)
+            releaseAudioFocus('feed')
           }}
           onError={event => retryAdPlayback(adSrc, event.currentTarget)}
           onStalled={event => retryAdPlayback(adSrc, event.currentTarget)}
@@ -1298,7 +1382,7 @@ export default function FeedTwin({
             decoder behind the ad for no visible gain. Unmount it when the ad is
             ready (the identity card stays as the "no signal" state for channels
             with no creative, where adReady never flips). */}
-        {showStatic && (
+        {showStatic && !isNativeShell() && (
           <video
             ref={staticVideoRef}
             className={staticReady ? `${styles.staticVideo} ${styles.staticVideoReady}` : styles.staticVideo}

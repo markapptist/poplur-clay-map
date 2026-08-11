@@ -15,7 +15,7 @@ import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import ClayPhonePop from './ClayPhonePop'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
-import { playPop, popHaptic, preloadPop } from './pop'
+import { playPop, popHaptic } from './pop'
 import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -163,18 +163,23 @@ function cubeSizeFor(): number {
 // locked phone or another app cannot leave Mapbox/camera/media burning power.
 function subscribePageVisibility(onChange: () => void): () => void {
   if (typeof document === 'undefined') return () => undefined
+  const onPerformancePolicy = () => onChange()
   document.addEventListener('visibilitychange', onChange)
   window.addEventListener('pagehide', onChange)
   window.addEventListener('pageshow', onChange)
+  window.addEventListener('poplur-performance-policy', onPerformancePolicy)
   return () => {
     document.removeEventListener('visibilitychange', onChange)
     window.removeEventListener('pagehide', onChange)
     window.removeEventListener('pageshow', onChange)
+    window.removeEventListener('poplur-performance-policy', onPerformancePolicy)
   }
 }
 
 function pageIsVisible(): boolean {
-  return typeof document === 'undefined' || document.visibilityState === 'visible'
+  if (typeof document === 'undefined') return true
+  return document.visibilityState === 'visible'
+    && document.documentElement.dataset.poplurPerformanceActive !== 'false'
 }
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
@@ -549,7 +554,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     finishPermission()
   }, [activePermission, finishPermission])
-  useEffect(() => { preloadPop() }, [])
   useEffect(() => {
     onTabChange?.(activeTab)
     // Native shell: tell the app which tab is front so it can mount real
@@ -1177,11 +1181,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The home is ready without the map, so hand off on first paint here; the map
   // still emits its own ready for its internal loading globe.
   useEffect(() => {
-    const raf = requestAnimationFrame(() => {
+    let sent = false
+    const signalReady = () => {
+      if (sent) return
+      sent = true
       if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
       if (isNativeShell()) postNativeEvent({ type: 'homeReady' })
-    })
-    return () => cancelAnimationFrame(raf)
+    }
+    const raf = requestAnimationFrame(signalReady)
+    // The native scheduler will not let self-scheduled rAF manufacture a new
+    // interaction lease. This bounded backstop still releases an embedding
+    // cover if React finishes mounting after that startup lease has expired.
+    const backstop = window.setTimeout(signalReady, 750)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.clearTimeout(backstop)
+    }
   }, [])
 
   // A hold-menu screen (Radio, News, TV Guide) is covering the app: the feed
