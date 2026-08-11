@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import styles from './HomeTwin.module.css'
 
@@ -143,35 +144,50 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
 
     let disposed = false
     let raf = 0
+    const draco = new DRACOLoader()
+    draco.setDecoderPath('draco/')
     const loader = new GLTFLoader()
-    loader.parse(data.slice(0), '', gltf => {
-      if (disposed) return
-      const model = gltf.scene
-      const bounds = new THREE.Box3().setFromObject(model)
-      const center = bounds.getCenter(new THREE.Vector3())
-      const size = bounds.getSize(new THREE.Vector3())
-      model.position.sub(center)
-      model.scale.setScalar(2.35 / Math.max(size.y, 0.001))
-      // The supplied model is authored upright with its face toward the
-      // viewer. Keep it square-on: this handoff is a shrink-and-pop, never a
-      // flip or spin.
-      scene.add(model)
-
-      const render = () => {
+    loader.setDRACOLoader(draco)
+    try {
+      loader.parse(data.slice(0), '', gltf => {
         if (disposed) return
-        raf = requestAnimationFrame(render)
-        renderer.render(scene, camera)
-      }
-      render()
-    }, () => {
-      // Leave the approved static phone screen visible if parsing fails.
-    })
+        const model = gltf.scene
+        const bounds = new THREE.Box3().setFromObject(model)
+        const center = bounds.getCenter(new THREE.Vector3())
+        const size = bounds.getSize(new THREE.Vector3())
+        model.position.sub(center)
+        model.scale.setScalar(2.35 / Math.max(size.y, 0.001))
+        // The supplied model is authored upright with its face toward the
+        // viewer. Keep it square-on: this handoff is a shrink-and-pop, never a
+        // flip or spin.
+        scene.add(model)
+
+        const render = () => {
+          if (disposed) return
+          raf = requestAnimationFrame(render)
+          renderer.render(scene, camera)
+        }
+        render()
+      }, () => {
+        // The PHONE iframe remains usable even if a future model is corrupt.
+      })
+    } catch {
+      // GLTFLoader can throw before its error callback (for example when a
+      // compressed model has no decoder). Never let decorative 3D take down
+      // the entire Home React tree.
+      observer?.disconnect()
+      disposeScene(scene)
+      draco.dispose()
+      releaseWebGL(renderer)
+      return
+    }
 
     return () => {
       disposed = true
       cancelAnimationFrame(raf)
       observer?.disconnect()
       disposeScene(scene)
+      draco.dispose()
       releaseWebGL(renderer)
     }
   }, [modelLoaded, visible])
