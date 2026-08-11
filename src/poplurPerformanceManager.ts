@@ -6,6 +6,7 @@ import {
   type Quality,
 } from './frameGovernor'
 import { poplurAssetCache } from './PoplurAssetCache'
+import { isIOSNativeShell, isNativeShell } from './nativeBridge'
 
 export type PoplurPerformanceMode = 'FULL' | 'REDUCED' | 'LOW_POWER' | 'EMERGENCY'
 export type PoplurMemoryPressure = 'normal' | 'warning' | 'critical'
@@ -64,6 +65,18 @@ export interface PoplurRendererHandle {
 }
 
 const MB = 1024 * 1024
+function isNativeIOSAssetHost(): boolean {
+  if (isIOSNativeShell()) return true
+  try {
+    if (window.location.protocol === 'poplur-clay:') return true
+    if (!isNativeShell()) return false
+    if (/iPad|iPhone|iPod/.test(navigator.userAgent || '')) return true
+    return navigator.platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1
+  } catch {
+    return false
+  }
+}
+
 const MODE_FOR_QUALITY: Record<Quality, PoplurPerformanceMode> = {
   3: 'FULL', 2: 'REDUCED', 1: 'LOW_POWER', 0: 'EMERGENCY',
 }
@@ -78,6 +91,11 @@ function deviceTier(): 'low' | 'mid' | 'high' {
 }
 
 function baseBudget() {
+  // WebKit exposes no deviceMemory, so every iPhone previously fell through to
+  // the 300MiB desktop/mid-tier cache. This budget is per document (shell and
+  // map iframe each own one), so cap iOS explicitly and leave process headroom
+  // for Mapbox tiles, decoded images and WebGL driver allocations.
+  if (isNativeIOSAssetHost()) return 64 * MB
   const tier = deviceTier()
   return tier === 'low' ? 150 * MB : tier === 'high' ? 450 * MB : 300 * MB
 }
@@ -271,9 +289,12 @@ class PoplurPerformanceManagerImpl {
 
   private applyPolicy() {
     const policy = this.policy
+    const maxEntries = isNativeIOSAssetHost()
+      ? policy.mode === 'FULL' ? 32 : policy.mode === 'REDUCED' ? 24 : policy.mode === 'LOW_POWER' ? 16 : 8
+      : policy.mode === 'FULL' ? 96 : policy.mode === 'REDUCED' ? 72 : policy.mode === 'LOW_POWER' ? 40 : 16
     poplurAssetCache.configure({
       maxBytes: policy.modelTextureCacheBudgetBytes,
-      maxEntries: policy.mode === 'FULL' ? 96 : policy.mode === 'REDUCED' ? 72 : policy.mode === 'LOW_POWER' ? 40 : 16,
+      maxEntries,
     })
     document.documentElement.dataset.poplurPerformanceMode = policy.mode.toLowerCase()
   }
@@ -302,4 +323,3 @@ class PoplurPerformanceManagerImpl {
 }
 
 export const PoplurPerformanceManager = new PoplurPerformanceManagerImpl()
-

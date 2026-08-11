@@ -1,5 +1,6 @@
 import { postNativeEvent } from './nativeBridge'
 import { isGateMuted } from './audioGate'
+import { ambientAllowed, onAmbientSleepChange } from './frameGovernor'
 
 // The "Poplur pop": the exact pop.mp3 the iOS feed plays, decoded once for
 // overlap-safe low-latency playback, plus a haptic tick. Shared by the building
@@ -17,15 +18,51 @@ let popBufferLoading = false
 // zaps, cube turns); resume() on the next pop is tens of milliseconds, and the
 // haptic fires immediately regardless, so the feel survives the nap.
 const POP_IDLE_MS = 8_000
+const AMBIENT_POP_IDLE_MS = 1_500
 let popIdleTimer: number | null = null
+let popIdleDeadline = 0
+let popIdleSerial = 0
 
-function armPopIdle() {
-  if (typeof window === 'undefined') return
+function parkPopNow() {
+  if (typeof window !== 'undefined' && popIdleTimer !== null) window.clearTimeout(popIdleTimer)
+  popIdleTimer = null
+  popIdleDeadline = 0
+  // Invalidate a resume promise that was queued before the sleep edge. Its
+  // completion checks ambientAllowed() below and parks again if WebKit wakes
+  // the context after this synchronous stop.
+  popIdleSerial++
+  if (audioCtx && audioCtx.state === 'running') void audioCtx.suspend().catch(() => { /* parked is best-effort */ })
+}
+
+function parkPopIfCurrent(serial: number) {
+  if (serial !== popIdleSerial) return
+  if (popIdleDeadline > 0 && performance.now() < popIdleDeadline) return
+  popIdleTimer = null
+  popIdleDeadline = 0
+  if (audioCtx && audioCtx.state === 'running') void audioCtx.suspend().catch(() => { /* parked is best-effort */ })
+}
+
+function armPopIdle(delayMs = POP_IDLE_MS): number {
+  if (typeof window === 'undefined') return popIdleSerial
   if (popIdleTimer !== null) window.clearTimeout(popIdleTimer)
+  const serial = ++popIdleSerial
+  popIdleDeadline = performance.now() + delayMs
   popIdleTimer = window.setTimeout(() => {
-    popIdleTimer = null
-    if (audioCtx && audioCtx.state === 'running') void audioCtx.suspend().catch(() => { /* parked is best-effort */ })
-  }, POP_IDLE_MS)
+    parkPopIfCurrent(serial)
+  }, delayMs)
+  return serial
+}
+
+// The Map can finish its autonomous launch zoom after the 15-second idle edge.
+// That zoom used to call playPop(), construct a fresh running AudioContext and
+// leave its audio render thread alive through the parked-map census. Park on
+// the edge as well as on the local sample lease; a real pointer/key gesture
+// wakes the governor in capture phase before its click invokes playPop().
+if (typeof document !== 'undefined') {
+  const stopAmbientParking = onAmbientSleepChange(sleeping => {
+    if (sleeping) parkPopNow()
+  })
+  import.meta.hot?.dispose(stopAmbientParking)
 }
 
 /** Fetch and decode the shared pop without playing it. */
@@ -60,15 +97,27 @@ export function popHaptic() {
 export function playPop(volume = 0.6) {
   // Backgrounded map callbacks can still finish after a tab transition. Do
   // not let a pop resume the shared AudioContext while another view owns sound.
-  if (isGateMuted()) return
+  // Autonomous camera/state completions can also arrive after the foreground
+  // surface has parked. They must not create an audio render thread for a sound
+  // nobody requested; direct input has already renewed the ambient lease.
+  if (isGateMuted() || !ambientAllowed()) return
   try {
     audioCtx ??= new AudioContext()
-    if (audioCtx.state === 'suspended') void audioCtx.resume()
+    let resumeSerial: number | null = null
+    if (audioCtx.state === 'suspended') {
+      // Arm before resuming: a delayed resume must not occur after the idle
+      // deadline and leave the audio renderer mixing silence indefinitely.
+      resumeSerial = armPopIdle()
+      void audioCtx.resume().then(() => {
+        if (!ambientAllowed()) parkPopNow()
+        else if (resumeSerial !== null) parkPopIfCurrent(resumeSerial)
+      }).catch(() => {})
+    }
     if (!popBuffer) {
       preloadPop()
       // The resume above already woke the context even though nothing will
       // sound this time — arm the nap or this path leaves it running forever.
-      armPopIdle()
+      if (resumeSerial === null) armPopIdle()
       popHaptic()
       return
     }
@@ -78,6 +127,10 @@ export function playPop(volume = 0.6) {
     gain.gain.value = volume
     src.connect(gain)
     gain.connect(audioCtx.destination)
+    src.onended = () => {
+      try { src.disconnect() } catch { /* already disconnected */ }
+      try { gain.disconnect() } catch { /* already disconnected */ }
+    }
     src.start()
     // Claim the serial: an ambient pop that ends AFTER this user-driven one
     // must not park the context out from under it — the nap owns it now.
@@ -121,7 +174,7 @@ if (typeof document !== 'undefined') {
  * notification, not a pop.
  */
 export function playPopAmbient(volume = 0.5) {
-  if (isGateMuted()) return
+  if (isGateMuted() || !ambientAllowed()) return
   // Nobody has touched the screen in a while: show, don't chirp.
   if (performance.now() - lastUserInputAt > AMBIENT_SILENCE_AFTER_MS) return
   try {
@@ -133,8 +186,15 @@ export function playPopAmbient(volume = 0.5) {
       preloadPop()
       return
     }
-    if (audioCtx.state === 'suspended') void audioCtx.resume()
     const serial = ++playSerial
+    let resumeSerial: number | null = null
+    if (audioCtx.state === 'suspended') {
+      resumeSerial = armPopIdle(AMBIENT_POP_IDLE_MS)
+      void audioCtx.resume().then(() => {
+        if (!ambientAllowed()) parkPopNow()
+        else if (resumeSerial !== null) parkPopIfCurrent(resumeSerial)
+      }).catch(() => {})
+    }
     const src = audioCtx.createBufferSource()
     src.buffer = popBuffer
     const gain = audioCtx.createGain()
@@ -142,10 +202,16 @@ export function playPopAmbient(volume = 0.5) {
     src.connect(gain)
     gain.connect(audioCtx.destination)
     src.onended = () => {
+      try { src.disconnect() } catch { /* already disconnected */ }
+      try { gain.disconnect() } catch { /* already disconnected */ }
       if (serial !== playSerial || !audioCtx) return
       if (popIdleTimer !== null) { window.clearTimeout(popIdleTimer); popIdleTimer = null }
       if (audioCtx.state === 'running') void audioCtx.suspend().catch(() => { /* best-effort */ })
     }
     src.start()
+    // WebKit occasionally omits `ended` across a lifecycle edge. The sample is
+    // far shorter than this deadline, so keep an independent hard park as the
+    // ownership backstop; a newer user sound replaces the lease.
+    if (resumeSerial === null) armPopIdle(AMBIENT_POP_IDLE_MS)
   } catch { /* audio blocked until user gesture */ }
 }

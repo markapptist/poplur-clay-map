@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react'
 import styles from './WeatherFX.module.css'
 import { modelSprite } from './modelSprite'
 import { startWeatherAudio, stopWeatherAudio, playThunder } from './weatherAudio'
+import { isGateMuted, onGateChange } from './audioGate'
+import { ambientAllowed, onAmbientSleepChange } from './frameGovernor'
 
 export type WeatherMode =
   | 'clear' | 'cloudy' | 'rain' | 'thunder' | 'storm' | 'snow' | 'hail' | 'fog'
@@ -62,25 +64,50 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
     return () => { alive = false; window.clearTimeout(id) }
   }, [])
 
-  // Ambient sound follows the weather layer (rain wash / thunder / hail ticks).
-  useEffect(() => {
-    startWeatherAudio(mode)
-    return stopWeatherAudio
-  }, [mode])
-
-  // Storm lightning is driven from JS (not a CSS loop) so the whole-screen
-  // flash and the thunder rumble fire at the same instant.
+  // Weather keeps its last visual frame at idle, but its JS/audio lifecycle is
+  // stopped synchronously at the ambient, audio-gate or visibility edge.
   const [flashTick, setFlashTick] = useState(0)
   useEffect(() => {
-    if (mode !== 'thunder' && mode !== 'storm') return
-    let timer: number
+    let sleeping = !ambientAllowed()
+    let muted = isGateMuted()
+    let hidden = document.visibilityState !== 'visible'
+    let active = false
+    let timer = 0
     const strike = () => {
+      timer = 0
+      if (!active) return
       setFlashTick(t => t + 1)
       playThunder(0.55)
       timer = window.setTimeout(strike, 4500 + Math.random() * 5500)
     }
-    timer = window.setTimeout(strike, 1800 + Math.random() * 1500)
-    return () => window.clearTimeout(timer)
+    const sync = () => {
+      const next = !sleeping && !muted && !hidden
+      if (next === active) return
+      active = next
+      if (!active) {
+        window.clearTimeout(timer)
+        timer = 0
+        stopWeatherAudio()
+        return
+      }
+      startWeatherAudio(mode)
+      if (mode === 'thunder' || mode === 'storm') {
+        timer = window.setTimeout(strike, 1800 + Math.random() * 1500)
+      }
+    }
+    const stopAmbient = onAmbientSleepChange(next => { sleeping = next; sync() })
+    const stopGate = onGateChange(next => { muted = next; sync() })
+    const onVisibility = () => { hidden = document.visibilityState !== 'visible'; sync() }
+    document.addEventListener('visibilitychange', onVisibility)
+    sync()
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+      stopWeatherAudio()
+      stopAmbient()
+      stopGate()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [mode])
 
   if (mode === 'clear') return null

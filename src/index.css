@@ -233,6 +233,11 @@ html.camera-live,
    boats, weather particles/clouds/fog and the globe sun/moon. The scene stays
    visually complete at its current frame and resumes on the next gesture. */
 .poplur-ambient-sleep [class*="cubeFloat"],
+.poplur-ambient-sleep [class*="drift"],
+.poplur-ambient-sleep [class*="grain"],
+.poplur-ambient-sleep [class*="commentRollTrack"],
+.poplur-ambient-sleep [class*="liveDot"],
+.poplur-ambient-sleep [class*="staticLayer"]::before,
 .poplur-ambient-sleep [class*="boatInner"],
 .poplur-ambient-sleep [class*="cloud"],
 .poplur-ambient-sleep [class*="celestial"],
@@ -241,6 +246,11 @@ html.camera-live,
 .poplur-ambient-sleep [class*="stone_"],
 .poplur-ambient-sleep [class*="fog_"],
 [data-poplur-performance-mode="low_power"] [class*="cubeFloat"],
+[data-poplur-performance-mode="low_power"] [class*="drift"],
+[data-poplur-performance-mode="low_power"] [class*="grain"],
+[data-poplur-performance-mode="low_power"] [class*="commentRollTrack"],
+[data-poplur-performance-mode="low_power"] [class*="liveDot"],
+[data-poplur-performance-mode="low_power"] [class*="staticLayer"]::before,
 [data-poplur-performance-mode="low_power"] [class*="boatInner"],
 [data-poplur-performance-mode="low_power"] [class*="cloud"],
 [data-poplur-performance-mode="low_power"] [class*="celestial"],
@@ -249,6 +259,11 @@ html.camera-live,
 [data-poplur-performance-mode="low_power"] [class*="stone_"],
 [data-poplur-performance-mode="low_power"] [class*="fog_"],
 [data-poplur-performance-mode="emergency"] [class*="cubeFloat"],
+[data-poplur-performance-mode="emergency"] [class*="drift"],
+[data-poplur-performance-mode="emergency"] [class*="grain"],
+[data-poplur-performance-mode="emergency"] [class*="commentRollTrack"],
+[data-poplur-performance-mode="emergency"] [class*="liveDot"],
+[data-poplur-performance-mode="emergency"] [class*="staticLayer"]::before,
 [data-poplur-performance-mode="emergency"] [class*="boatInner"],
 [data-poplur-performance-mode="emergency"] [class*="cloud"],
 [data-poplur-performance-mode="emergency"] [class*="celestial"],
@@ -256,6 +271,23 @@ html.camera-live,
 [data-poplur-performance-mode="emergency"] [class*="flake_"],
 [data-poplur-performance-mode="emergency"] [class*="stone_"],
 [data-poplur-performance-mode="emergency"] [class*="fog_"] {
+  animation-play-state: paused !important;
+}
+
+/* ClayMap's compact weather marks use generated child <i>s rather than the
+   WeatherFX drop_/flake_ class names above, and a selected pin has its own
+   bounce. Park those last map-only infinite animations on the same idle edge;
+   otherwise Mapbox can be at 0 fps while WebKit's CSS animator still wakes the
+   compositor for rain, hail, lightning or a bouncing pin. */
+.poplur-ambient-sleep [class*="weatherMini"],
+.poplur-ambient-sleep [class*="weatherMini"] *,
+.poplur-ambient-sleep [class*="pinSelected"] img,
+[data-poplur-performance-mode="low_power"] [class*="weatherMini"],
+[data-poplur-performance-mode="low_power"] [class*="weatherMini"] *,
+[data-poplur-performance-mode="low_power"] [class*="pinSelected"] img,
+[data-poplur-performance-mode="emergency"] [class*="weatherMini"],
+[data-poplur-performance-mode="emergency"] [class*="weatherMini"] *,
+[data-poplur-performance-mode="emergency"] [class*="pinSelected"] img {
   animation-play-state: paused !important;
 }
 

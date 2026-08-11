@@ -18,6 +18,7 @@ interface OwnedPost {
 const BASE_RADIUS_KM = 41.8
 const EVENT_KEY = 'poplur.radius.events.v1'
 const OWNED_POST_KEY = 'poplur.radius.owned-posts.v1'
+const INACTIVITY_MS = 3_600_000
 export const RADIUS_CHANGE_EVENT = 'poplur-radius-change'
 
 function readJson<T>(key: string, fallback: T): T {
@@ -88,19 +89,36 @@ export function registerOwnedPost(postId: string, createdAt = Date.now()) {
   const owned = readJson<OwnedPost[]>(OWNED_POST_KEY, [])
   if (owned.some(post => post.id === postId)) return
   writeJson(OWNED_POST_KEY, [...owned, { id: postId, createdAt }].slice(-500))
+  // Home schedules the exact inactivity deadline from this event; without it a
+  // newly registered post would have no clock after removing the minute poll.
+  publish()
 }
 
 /** Apply the one-hour no-view penalty exactly once per owned post. */
 export function reconcileRadiusInactivity(now = Date.now()) {
   const owned = readJson<OwnedPost[]>(OWNED_POST_KEY, [])
-  let changed = false
+  const due: string[] = []
   const next = owned.map(post => {
-    if (post.viewedAt || post.inactivityApplied || now - post.createdAt < 3_600_000) return post
-    append('inactive', -1, post.id)
-    changed = true
+    if (post.viewedAt || post.inactivityApplied || now - post.createdAt < INACTIVITY_MS) return post
+    due.push(post.id)
     return { ...post, inactivityApplied: true }
   })
-  if (changed) writeJson(OWNED_POST_KEY, next)
+  if (!due.length) return
+  // Persist the applied bit before append() publishes. Home listens to that
+  // event and reconciles synchronously; publishing first recursively applied
+  // the same penalty while storage still said it was pending.
+  writeJson(OWNED_POST_KEY, next)
+  due.forEach(postId => append('inactive', -1, postId))
+}
+
+/** Earliest exact one-hour deadline still awaiting a view or penalty. */
+export function nextRadiusInactivityAt(): number | null {
+  let next = Number.POSITIVE_INFINITY
+  for (const post of readJson<OwnedPost[]>(OWNED_POST_KEY, [])) {
+    if (post.viewedAt || post.inactivityApplied || !Number.isFinite(post.createdAt)) continue
+    next = Math.min(next, post.createdAt + INACTIVITY_MS)
+  }
+  return Number.isFinite(next) ? next : null
 }
 
 export function radiusKm(): number {

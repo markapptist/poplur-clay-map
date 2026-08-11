@@ -67,7 +67,7 @@ import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus }
 import { smartCardFor, type SmartCard } from './tourSmarts'
 import { suggestionForMapPlace } from './commerceSuggestions'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
-import { ambientAllowed, onTick } from './frameGovernor'
+import { ambientAllowed, onAmbientSleepChange, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
 
 interface RadioStationCue {
@@ -526,9 +526,6 @@ const TOUR_SPEED = (() => {
 })()
 const TOUR_FLIGHT_MS = Math.round(30_000 / TOUR_SPEED)
 const TOUR_DWELL_MS = 5 * 60 * 1000
-// How long the map must sit front-most and untouched before the ambient AI
-// radio tour is allowed to take the camera on its own.
-const TOUR_IDLE_MS = 60_000
 const MAP_TOTAL_OWN_POSTS = 128
 const MAP_GLOBAL_ONLINE = 1_200_000
 
@@ -647,18 +644,6 @@ function mapAreaOnline(center: [number, number], popCount: number): number {
 function destinationsForTopics(topics: readonly MapTourTopic[]): TourDestination[] {
   const selected = new Set(topics)
   return TOUR_DESTINATIONS.filter(destination => selected.has(TOUR_TOPIC_FOR_KIND[destination.kind]))
-}
-
-function nearestTourDestination(
-  center: [number, number],
-  topics: readonly MapTourTopic[],
-): TourDestination {
-  const destinations = destinationsForTopics(topics)
-  return destinations.reduce((nearest, destination) =>
-    distanceMeters(center, destination.coords) < distanceMeters(center, nearest.coords)
-      ? destination
-      : nearest,
-  destinations[0] ?? TOUR_DESTINATIONS[0])
 }
 
 function displayPlaceName(name: string): string {
@@ -1443,18 +1428,56 @@ export default function App() {
     return true
   }, [])
 
-  const tourTimers = useRef<number[]>([])
+  // Only live timer IDs are retained. The former append-only array kept every
+  // expired stop/arrival ID for an hours-long tour.
+  const tourTimers = useRef(new Set<number>())
+  const tourNextTimerRef = useRef(0)
+  const tourFlightInProgressRef = useRef(false)
+  const tourPauseAfterStopRef = useRef(false)
+  const cancelTourTimer = useCallback((timer: number) => {
+    if (!timer) return
+    window.clearTimeout(timer)
+    tourTimers.current.delete(timer)
+    if (tourNextTimerRef.current === timer) tourNextTimerRef.current = 0
+  }, [])
+  const scheduleTourTimer = useCallback((run: () => void, delayMs: number) => {
+    const timer = window.setTimeout(() => {
+      tourTimers.current.delete(timer)
+      if (tourNextTimerRef.current === timer) tourNextTimerRef.current = 0
+      run()
+    }, delayMs)
+    tourTimers.current.add(timer)
+    return timer
+  }, [])
   const tourStartedRef = useRef(false)
   const clearTourTimers = useCallback(() => {
-    tourTimers.current.forEach(t => window.clearTimeout(t))
-    tourTimers.current = []
+    tourTimers.current.forEach(timer => window.clearTimeout(timer))
+    tourTimers.current.clear()
+    tourNextTimerRef.current = 0
   }, [])
+
+  const pauseTourAtCurrentStop = useCallback(() => {
+    clearTourTimers()
+    tourPauseAfterStopRef.current = false
+    tourFlightInProgressRef.current = false
+    tourStartedRef.current = false
+    tourOnRef.current = false
+    setTourOn(false)
+    ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = false
+    const map = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean; __tripping?: boolean }) | null
+    if (map) {
+      map.__cinematic = false
+      map.__tripping = false
+    }
+  }, [clearTourTimers])
 
   // Anything that interrupts the tour — a route, walking the pops, stopping it
   // outright — has to say so, or the menu keeps offering STOP for a tour that
   // is no longer running.
   const stopTour = useCallback(() => {
     clearTourTimers()
+    tourPauseAfterStopRef.current = false
+    tourFlightInProgressRef.current = false
     tourStartedRef.current = false
     tourOnRef.current = false
     setTourOn(false)
@@ -1543,7 +1566,8 @@ export default function App() {
     // does, not when it lifts off — announcing a score thirty seconds before
     // you can see the arena reads as noise. Tracked in tourTimers so stopping
     // the tour mid-flight cancels the landing too.
-    const arrive = window.setTimeout(() => {
+    scheduleTourTimer(() => {
+      tourFlightInProgressRef.current = false
       if (!tourOnRef.current) return
       // Through the shared popup layer: centred, and it LEAVES on its own.
       // setSmartCard alone had no timer — the card was only ever cleared when
@@ -1554,9 +1578,9 @@ export default function App() {
       // Headless drives read these; the UI never does.
       ;(window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard = smart
       speakMapLine(smart.line, stations)
+      if (tourPauseAfterStopRef.current) pauseTourAtCurrentStop()
     }, TOUR_FLIGHT_MS)
-    tourTimers.current.push(arrive)
-  }, [flyToCenter, speakMapLine])
+  }, [flyToCenter, pauseTourAtCurrentStop, scheduleTourTimer, speakMapLine])
 
   // ── AI place tour: each stop holds for five minutes after arrival ─────────
   const tourStep = useCallback((preferredDestination?: TourDestination) => {
@@ -1583,65 +1607,93 @@ export default function App() {
 
   const [tourOn, setTourOn] = useState(false)
   const tourOnRef = useRef(false)
+  // Untouched means static. This diagnostic is intentionally readable from a
+  // device/WebView test so a long-idle run can assert the policy directly
+  // instead of inferring it from a warm phone after the fact. The looping 3D
+  // tour still exists, but only the Hold-menu TOUR action below may start it.
+  const mapIdleDiagnosticsRef = useRef({
+    policy: 'static' as const,
+    autonomousCameraStarts: 0,
+    explicitTourStarts: 0,
+    idleTimerArmed: false,
+  })
+  useEffect(() => {
+    const debugWindow = window as typeof window & {
+      __poplurMapIdleDiagnostics?: typeof mapIdleDiagnosticsRef.current
+      __assertPoplurMapStaticIdle?: () => boolean
+    }
+    const diagnostics = mapIdleDiagnosticsRef.current
+    const assertStaticIdle = () => {
+      const pass = diagnostics.policy === 'static'
+        && diagnostics.autonomousCameraStarts === 0
+        && diagnostics.idleTimerArmed === false
+      console.assert(pass, '[Poplur] untouched map started autonomous camera work')
+      return pass
+    }
+    debugWindow.__poplurMapIdleDiagnostics = diagnostics
+    debugWindow.__assertPoplurMapStaticIdle = assertStaticIdle
+    return () => {
+      if (debugWindow.__poplurMapIdleDiagnostics === diagnostics) {
+        delete debugWindow.__poplurMapIdleDiagnostics
+      }
+      if (debugWindow.__assertPoplurMapStaticIdle === assertStaticIdle) {
+        delete debugWindow.__assertPoplurMapStaticIdle
+      }
+    }
+  }, [])
 
-  const startTourLoop = useCallback((initialDelayMs = 0, firstDestination?: TourDestination) => {
+  const startExplicitTourLoop = useCallback((initialDelayMs = 0, firstDestination?: TourDestination) => {
     clearTourTimers()
+    tourPauseAfterStopRef.current = false
+    tourFlightInProgressRef.current = false
+    mapIdleDiagnosticsRef.current.explicitTourStarts += 1
     tourStartedRef.current = true
     tourOnRef.current = true
     setTourOn(true)
     ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = true
     let pendingFirst = firstDestination
     const runStop = () => {
+      if (!tourOnRef.current) return
+      tourFlightInProgressRef.current = true
       tourStep(pendingFirst)
       pendingFirst = undefined
-      const next = window.setTimeout(runStop, TOUR_FLIGHT_MS + TOUR_DWELL_MS)
-      // push, not replace: the stop's own ARRIVAL timer (activateTourDestination)
-      // is already in this list, and replacing the array orphaned it — a
-      // stopped tour would still land its card and speak into the silence.
-      tourTimers.current.push(next)
+      // The next-stop timer is separate from the current arrival timer so an
+      // idle/thermal edge can let this flight land, then pause without waking
+      // the renderer again five minutes later.
+      tourNextTimerRef.current = scheduleTourTimer(runStop, TOUR_FLIGHT_MS + TOUR_DWELL_MS)
     }
     if (initialDelayMs > 0) {
-      const first = window.setTimeout(runStop, initialDelayMs)
-      tourTimers.current = [first]
+      tourNextTimerRef.current = scheduleTourTimer(runStop, initialDelayMs)
     } else {
       runStop()
     }
-  }, [clearTourTimers, tourStep])
+  }, [clearTourTimers, scheduleTourTimer, tourStep])
 
-  // ── Auto-tour: only from a genuinely idle map ────────────────────────────
-  // The AI radio tour is ambient, so it must never take the camera while the
-  // map is being used. It arms after the intro and fires only once the map has
-  // been front-most and untouched for this long. ANY input restarts the wait,
-  // and leaving the map cancels it outright.
-  const tourArmedRef = useRef(false)
-  const tourIdleTimerRef = useRef<number | null>(null)
-  const pendingTourDestRef = useRef<TourDestination | undefined>(undefined)
+  useEffect(() => onAmbientSleepChange(sleeping => {
+    if (!sleeping || !tourOnRef.current) return
+    tourPauseAfterStopRef.current = true
+    cancelTourTimer(tourNextTimerRef.current)
+    // During a flight, its bounded render lease and arrival beat finish first.
+    // During the dwell, the current stop is already complete, so pause now.
+    if (!tourFlightInProgressRef.current) pauseTourAtCurrentStop()
+  }), [cancelTourTimer, pauseTourAtCurrentStop])
 
+  // ── Static long idle ──────────────────────────────────────────────────────
+  // An untouched map used to arm a raw one-minute timer, then start a 30-second
+  // globe flight every five minutes forever. That made a 20-minute "idle" test
+  // three full 3D tours, which explains the slow temperature climb even though
+  // ClayMap's own orbit and renderer were correctly parked. No timer is armed
+  // now: the last rendered 3D frame remains visible until a person acts.
   const cancelTourIdle = useCallback(() => {
-    if (tourIdleTimerRef.current != null) {
-      window.clearTimeout(tourIdleTimerRef.current)
-      tourIdleTimerRef.current = null
-    }
+    mapIdleDiagnosticsRef.current.idleTimerArmed = false
+  }, [])
+  const scheduleTourIdle = useCallback(() => {
+    mapIdleDiagnosticsRef.current.idleTimerArmed = false
   }, [])
 
-  const scheduleTourIdle = useCallback(() => {
-    cancelTourIdle()
-    // Armed, not already touring, and the map is the surface you are looking at.
-    if (!tourArmedRef.current || tourStartedRef.current || !mapAudioFrontRef.current) return
-    tourIdleTimerRef.current = window.setTimeout(() => {
-      tourIdleTimerRef.current = null
-      if (!tourArmedRef.current || tourStartedRef.current || !mapAudioFrontRef.current) return
-      const nearest = pendingTourDestRef.current
-      setTourLine(nearest
-        ? `Poplur AI is finding the nearest ${TOUR_KIND_LABEL[nearest.kind]} radio stop.`
-        : 'Poplur AI is finding the next landmark radio stop.')
-      startTourLoop(0, nearest)
-    }, TOUR_IDLE_MS)
-  }, [cancelTourIdle, startTourLoop])
-
-  // Every real input restarts the countdown. Capture phase on the document:
-  // the map canvas, the clay controls and the zoom rail all stop propagation
-  // on their own handlers, so a bubble-phase listener would miss most touches.
+  // Every real input still stops an explicitly running tour. Capture phase on
+  // the document: the map canvas, clay controls and zoom rail all stop
+  // propagation on their own handlers, so a bubble listener would miss taps.
   useEffect(() => {
     const bump = () => {
       // Ambient camera work always yields to a real person. Previously an
@@ -1660,7 +1712,6 @@ export default function App() {
     }
   }, [scheduleTourIdle, stopTour])
 
-  useEffect(() => cancelTourIdle, [cancelTourIdle])
   tourIdleRef.current = { schedule: scheduleTourIdle, cancel: cancelTourIdle }
 
   // The globe has painted: lift the Loading screen so the launch is revealed at
@@ -2045,14 +2096,9 @@ export default function App() {
     }
 
     if (tourStartedRef.current) return
-    // The tour used to launch 1.2s after the intro — it took the camera away
-    // before you had even looked at your own street. It now waits for the map
-    // to be genuinely idle: front-most and untouched for TOUR_IDLE_MS. The
-    // hold-menu TOUR tile still starts it at once, because that is a request.
-    pendingTourDestRef.current = landingCenter
-      ? nearestTourDestination(landingCenter, tourTopicsRef.current)
-      : undefined
-    tourArmedRef.current = true
+    // Do not turn an untouched screen into a recurring GPU workload. The full
+    // looping globe tour remains available from the Hold-menu TOUR tile; idle
+    // itself leaves this destination rendered as a static 3D scene.
     scheduleTourIdle()
 
     // The landing is YOUR CURRENT LOCATION before it is a neighbourhood. The
@@ -2067,7 +2113,7 @@ export default function App() {
     // BEHIND another tab (the normal case on device), the words are parked in
     // pendingSpeechRef and said when you actually arrive on the map; dropping
     // them on the floor here is why the map never spoke on the phone.
-    window.setTimeout(() => {
+    scheduleTourTimer(() => {
       if (tourStartedRef.current) return
       const here = currentPlaceRef.current
       const greeting = here && here !== 'Current location'
@@ -2080,8 +2126,8 @@ export default function App() {
 
       // What is HAPPENING around you, before any tour: the claims growing
       // fastest and where people are posting. The tour stays idle-gated
-      // (TOUR_IDLE_MS, or the hold-menu tile) — this is a tip, not a takeover
-      // of the camera.
+      // (the hold-menu tile starts it) — this is a tip, not a takeover of the
+      // camera.
       const growing = [...POIS].sort((a, b) => b.radiusKm - a.radiusKm)[0]
       const posting = [...POIS].sort((a, b) => b.likes - a.likes)
         .find(poi => poi.id !== growing?.id)
@@ -2101,7 +2147,7 @@ export default function App() {
         ],
         line: tip,
       }
-      const recommend = window.setTimeout(() => {
+      scheduleTourTimer(() => {
         if (tourStartedRef.current) return
         if (mapAudioFrontRef.current && !isGateMuted()) {
           showPopup({ kind: 'suggestion', card: stillOnly(card) })
@@ -2112,9 +2158,8 @@ export default function App() {
           drainPendingSpeech()
         }
       }, estimatedVoiceDurationMs(greeting) + 1200)
-      tourTimers.current.push(recommend)
     }, 900)
-  }, [scheduleTourIdle, drainPendingSpeech, speakMapLine])
+  }, [scheduleTourIdle, drainPendingSpeech, scheduleTourTimer, speakMapLine])
 
   // The home shell mirrors the tour state onto the hold-menu tile.
   useEffect(() => {
@@ -2293,7 +2338,7 @@ export default function App() {
         // those, and this one has to fire timers.
         case 'tour': {
           if (tourOnRef.current) stopTour()
-          else startTourLoop(0)
+          else startExplicitTourLoop(0)
           break
         }
         // A post just published to a coordinate (map→camera capture flow).
@@ -2451,7 +2496,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startTourLoop, stopTour, flyToCenter, flyToPop, myColor, openMapPinContent, ownAvatar, theme, traverseToEngagement])
+  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startExplicitTourLoop, stopTour, flyToCenter, flyToPop, myColor, openMapPinContent, ownAvatar, theme, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()

@@ -30,6 +30,14 @@ const NATIVE_SHELL = isNativeShell()
 // frame. Long enough to read the offer and reach for it; short enough that a
 // card for something you have walked away from does not linger.
 const COMMERCE_MIN_DWELL_MS = 12_000
+
+function strongestCameraRead(items: Detection[]): Detection | null {
+  const byConfidence = (a: Detection, b: Detection) => b.confidence - a.confidence
+  return items.find(item => item.user)
+    ?? [...items].filter(item => item.whole).sort(byConfidence)[0]
+    ?? [...items].sort(byConfidence)[0]
+    ?? null
+}
 // Only the iOS host currently mounts a camera surface behind the web view.
 // Android's post-login host is a WebView plus the capture intents; there is no
 // behind-WebView preview to reveal. Treating it as an iOS hole makes A03 show a
@@ -216,6 +224,8 @@ export default function Camera({
   const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
   const onAir = useSyncExternalStore(onLiveStore, isLive, isLive)
   const [detections, setDetections] = useState<Detection[]>([])
+  const currentCameraRead = strongestCameraRead(detections)
+  const [lastCameraRead, setLastCameraRead] = useState<Detection | null>(null)
   const detectorRef = useRef<FrameDetector | null>(null)
   const [commerceCard, setCommerceCard] = useState<SmartCard | null>(null)
   const [commercePinned, setCommercePinned] = useState(false)
@@ -282,8 +292,15 @@ export default function Camera({
   // live lens is fully covered by the hold menu, a selected image, or an
   // edit/preview screen. A web/Android broadcast may keep ownership of its
   // explicit MediaStream, but the native sensor always follows real surface
-  // visibility and enforces its own absolute ten-second deadline.
+  // visibility and the OS thermal tripwire.
   const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing
+  useEffect(() => {
+    if (!detectOn || !liveSurfaceVisible) {
+      setLastCameraRead(null)
+      return
+    }
+    if (currentCameraRead) setLastCameraRead(currentCameraRead)
+  }, [currentCameraRead, detectOn, liveSurfaceVisible])
   const webCaptureRequired = liveSurfaceVisible || onAir
   const [nativeCameraBudget, setNativeCameraBudget] = useState<NativeCameraBudget | null>(null)
   useEffect(() => {
@@ -964,7 +981,10 @@ export default function Camera({
     if (NATIVE_SHELL && !streamRef.current) {
       const nextRecording = !nativeRecordingRef.current
       nativeRecordingRef.current = nextRecording
-      postNativeEvent({ type: 'cameraControl', control: 'record' })
+      postNativeEvent({
+        type: 'cameraControl',
+        control: nextRecording ? 'recordStart' : 'recordStop',
+      })
       setRecStart(nextRecording ? performance.now() : null)
       playPop()
       return
@@ -1021,7 +1041,7 @@ export default function Camera({
     if (recorder && recorder.state !== 'inactive') recorder.stop()
     if (nativeRecordingRef.current) {
       nativeRecordingRef.current = false
-      postNativeEvent({ type: 'cameraControl', control: 'record' })
+      postNativeEvent({ type: 'cameraControl', control: 'recordStop' })
       setRecStart(null)
     }
     flashOffRef.current()
@@ -1042,7 +1062,7 @@ export default function Camera({
         onRecordingChange?.(MAX_RECORD_MS)
         if (nativeRecordingRef.current) {
           nativeRecordingRef.current = false
-          postNativeEvent({ type: 'cameraControl', control: 'record' })
+          postNativeEvent({ type: 'cameraControl', control: 'recordStop' })
           setRecStart(null)
         } else {
           stopVideo()
@@ -1066,7 +1086,7 @@ export default function Camera({
     recorderRef.current?.stop()
     if (nativeRecordingRef.current) {
       nativeRecordingRef.current = false
-      postNativeEvent({ type: 'cameraControl', control: 'record' })
+      postNativeEvent({ type: 'cameraControl', control: 'recordStop' })
     }
     // Do NOT end the broadcast here. Camera renders only while
     // `committedTab === 'post'`, so simply turning the cube unmounts this
@@ -1326,30 +1346,9 @@ export default function Camera({
           )}
         </div>
       )}
-      {NATIVE_CAMERA_PREVIEW && real && liveSurfaceVisible && nativeCameraBudget?.state === 'parked' && (
-        <div
-          className={styles.camCameraUnavailable}
-          style={{ background: 'rgba(5, 4, 7, 0.34)', zIndex: 6 }}
-        >
-          {nativeCameraBudget.canResume ? (
-            <button
-              type="button"
-              className={styles.camRetry}
-              onClick={resumeNativePreview}
-            >
-              TAP TO RESUME PREVIEW
-            </button>
-          ) : (
-            <span
-              className={styles.camRetry}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              aria-live="polite"
-            >
-              CAMERA PAUSED
-            </span>
-          )}
-        </div>
-      )}
+      {/* A genuine thermal park keeps the last frame visible. A normal tap on
+          the viewfinder already resumes when policy allows; never cover the
+          camera with a synthetic pink button. */}
       {real && onAir && (
         <div className={styles.camLiveTag} aria-label="You are live">
           <span className={styles.camLiveDot} aria-hidden="true" />ON AIR
@@ -1405,24 +1404,25 @@ export default function Camera({
           screen lost its identity the moment the model saw anything; the
           answer belongs underneath the title, not in place of it. */}
       <img className={styles.camLogo} src="logo_text.png" alt="poplur" draggable={false} />
-      {/* ONE answer. The camera was showing three at once: this shader line,
-          plus a label pill for every whole-frame classification drawn as a
-          full-screen box. The boxes are located objects now (DetectionOverlay
-          filters `whole`), and this picks a single winner:
-            a recognised PERSON first — a face is someone, not something,
-            then the most confident whole-frame classification (what the
-            picture IS), and only then the best located object. */}
-      {real && detectOn && detections.length > 0 && (() => {
-        const byConfidence = (a: Detection, b: Detection) => b.confidence - a.confidence
-        const detected =
-          detections.find(item => item.user)
-          ?? [...detections].filter(d => d.whole).sort(byConfidence)[0]
-          ?? [...detections].sort(byConfidence)[0]
-        if (!detected) return null
+      {/* ONE persistent AI line. Keep the latest real reading between the
+          deliberately sparse native analysis samples; before the first one,
+          say that AI is scanning instead of leaving a mysterious blank. */}
+      {real && (() => {
+        const detected = currentCameraRead ?? lastCameraRead
+        const cameraParked = nativeCameraBudget?.state === 'parked'
+        const label = !detectOn
+          ? 'AI OFF'
+          : cameraParked
+            ? 'CAMERA COOLING'
+            : detected
+              ? (detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase())
+              : 'AI SCANNING'
         return (
-          <div className={styles.camDetectionTitle} role="status">
-            <span>{detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase()}</span>
-            <small>{Math.round(detected.confidence * 100)}%</small>
+          <div className={styles.camDetectionTitle} role="status" aria-live="polite">
+            <span>{label}</span>
+            {detectOn && detected && !cameraParked && (
+              <small>{Math.round(detected.confidence * 100)}%</small>
+            )}
           </div>
         )
       })()}

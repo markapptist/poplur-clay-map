@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { cancelManagedRenderingWake, isNativeShell, wakeManagedRendering } from './nativeBridge'
-import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
+import { onFrame, onTick, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
+import { installMapIdleSnapshot, type MapIdleSnapshotController } from './mapIdleSnapshot'
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
@@ -934,6 +935,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const initialCameraInteractionRef = useRef(false)
   const explicitMapFrontRef = useRef(false)
   const performanceRendererRef = useRef<PoplurRendererHandle | null>(null)
+  const idleSnapshotRef = useRef<MapIdleSnapshotController | null>(null)
   // Bumped when a new map instance finishes loading, so the marker effect
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
@@ -953,8 +955,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const fast = import.meta.env.DEV
       && new URLSearchParams(window.location.search).get('sky-cycle') === '1'
     if (!fast) {
-      const id = window.setInterval(() => setSkyClock(new Date()), 60_000)
-      return () => window.clearInterval(id)
+      // A one-minute raw interval kept waking the parked map just to move the
+      // sun/moon by a visually imperceptible fraction of a degree. On the shared
+      // clock it pauses completely at long idle and refreshes on the next touch.
+      return onTick(() => setSkyClock(new Date()), 60_000)
     }
     // TEST ONLY: a full day every ~48s, so night, day, moonrise and sunrise can
     // all be checked without waiting for the sky.
@@ -1044,7 +1048,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     })()
 
     return () => { dropped = true }
-  }, [skyClock])
+  // `mapEpoch` is essential here: on first render mapRef is still empty. The
+  // minute clock used to be the only retry, leaving both models absent for up
+  // to sixty seconds (and easy to conclude they were not in the app at all).
+  }, [skyClock, mapEpoch])
 
   // Markers outlive the tick effect, so they are torn down on unmount only.
   useEffect(() => () => {
@@ -1126,25 +1133,30 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (center) nativeLocationRef.current = center
     }
     const onLocation = (event: Event) => apply((event as CustomEvent).detail)
+    // Host state messages may be resent when unrelated shell state changes.
+    // Publishing the same `front:true` value used to restart the governor's
+    // 15-second lease every time, so a chatty host could keep Mapbox awake even
+    // though nobody touched the map. Only real visibility edges wake/park it.
+    let publishedFrameSurface: boolean | null = null
+    const syncFrameSurface = () => {
+      const front = mapIsFrontRef.current && !document.hidden
+      performanceRendererRef.current?.setVisible(front)
+      if (publishedFrameSurface === front) return
+      publishedFrameSurface = front
+      setSurfaceFront(front)
+      if (!front) stopCarAudio()
+    }
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === 'poplur-location') apply(event.data)
       if (event.data?.type === 'poplur-map-front') {
         explicitMapFrontRef.current = true
         mapIsFrontRef.current = event.data.front === true
-        performanceRendererRef.current?.setVisible(mapIsFrontRef.current)
-        setSurfaceFront(mapIsFrontRef.current && !document.hidden)
-        if (!mapIsFrontRef.current) stopCarAudio()
+        syncFrameSurface()
       } else if (!explicitMapFrontRef.current && typeof event.data?.gcAudio === 'string') {
         // Compatibility with shells that predate poplur-map-front. Audio mute
         // is not visibility once the explicit signal has been observed.
         mapIsFrontRef.current = event.data.gcAudio === 'on'
-        performanceRendererRef.current?.setVisible(mapIsFrontRef.current)
-        setSurfaceFront(mapIsFrontRef.current && !document.hidden)
-        if (!mapIsFrontRef.current) {
-          // The animated car loop otherwise retains the most recent engine
-          // gain while Feed covers the map.
-          stopCarAudio()
-        }
+        syncFrameSurface()
       }
       // Hold-menu FOV entry: cycle lens presets with a pop per step.
       if (event.data?.type === 'poplur-map-action' && event.data.action === 'fov') {
@@ -1161,10 +1173,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     window.addEventListener('poplur-location', onLocation)
     window.addEventListener('poplur-native-location', onLocation)
     window.addEventListener('message', onMessage)
-    const syncFrameSurface = () => {
-      performanceRendererRef.current?.setVisible(mapIsFrontRef.current && !document.hidden)
-      setSurfaceFront(mapIsFrontRef.current && !document.hidden)
-    }
     document.addEventListener('visibilitychange', syncFrameSurface)
     syncFrameSurface()
     apply((window as typeof window & { __poplurNativeLocation?: unknown }).__poplurNativeLocation)
@@ -1316,6 +1324,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // Flyer animation unsubscribe (shared frameGovernor clock)
     let stopFlyerFrames: (() => void) | null = null
     let stopRendererParking: (() => void) | null = null
+    let stopClaimRoadPaint: (() => void) | null = null
     let disposed = false
 
     const fallBackAfterWebGLFailure = (error: unknown) => {
@@ -1387,6 +1396,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       return
     }
     const mapCanvas = map.getCanvas()
+    const idleSnapshot = installMapIdleSnapshot(map, mapCanvas)
+    idleSnapshotRef.current = idleSnapshot
     const handleContextLost = (event: Event) => {
       if (disposed) return
       event.preventDefault()
@@ -1455,6 +1466,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // introduced by the measurement itself.
     const profiledWindow = window as typeof window & { __poplurMapRenderCount?: number }
     profiledWindow.__poplurMapRenderCount = 0
+    let rendererParked = false
     map.on('render', () => {
       profiledWindow.__poplurMapRenderCount = (profiledWindow.__poplurMapRenderCount ?? 0) + 1
     })
@@ -1475,7 +1487,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       }
       const liveTriggerRepaint = map.triggerRepaint.bind(map)
       const liveTriggerFrame = parkedMap._triggerFrame.bind(map)
-      let rendererParked = false
       // The renderer park follows the gesture-aware signal, not raw ambient
       // sleep: a drag on a warm phone must still paint. Decoration below stays
       // on `onAmbientSleepChange` and stays down.
@@ -1485,6 +1496,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             rendererParked = false
             parkedMap.triggerRepaint = liveTriggerRepaint
             parkedMap._triggerFrame = liveTriggerFrame
+            // Keep the retained 2D frame over the canvas until Mapbox confirms
+            // that WebGL has actually painted its first wake frame.
+            idleSnapshot.wake()
             delete document.documentElement.dataset.poplurMapPark
             liveTriggerRepaint()
           }
@@ -1492,6 +1506,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         }
 
         map.stop()
+        stopOrbitRef.current()
+        // A sleep edge can coincide with the tail of a finite startup/camera
+        // lease. The ambient callback deliberately lets that operation finish,
+        // so the renderer's definitive park is also the definitive audio stop.
+        // This prevents the last car-proximity value retaining two oscillators
+        // and a running AudioContext through the entire static hold.
+        stopCarAudio()
+        // WKWebView may discard a non-preserved WebGL backing store once the
+        // scheduler is stopped. Show the last settled frame before parking so
+        // an untouched 3D map stays visible without drawing another GL frame.
+        idleSnapshot.park()
         parkedMap.repaint = false
         if (!rendererParked) {
           rendererParked = true
@@ -1504,6 +1529,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         document.documentElement.dataset.poplurMapPark = '1'
       })
     }
+    // Long-idle assertion: a programmatic camera start that bypasses a managed
+    // operation while parked is autonomous by definition. Count it for the
+    // device test, stop it immediately, and leave direct gestures/explicit
+    // bridge actions alone (both unpark before Mapbox emits movestart).
+    map.on('movestart', event => {
+      if (!rendererParked
+        || (event as { originalEvent?: Event }).originalEvent
+        || managedRenderingOperationActive()) return
+      const diagnostics = (window as typeof window & {
+        __poplurMapIdleDiagnostics?: { autonomousCameraStarts: number }
+      }).__poplurMapIdleDiagnostics
+      if (diagnostics) diagnostics.autonomousCameraStarts += 1
+      console.assert(false, '[Poplur] autonomous Mapbox camera start while parked')
+      map.stop()
+    })
     // QA hook, same spirit as __poplurDisposeMap: the camera cannot be verified
     // from outside the frame otherwise, and "does the flight actually fly?"
     // has to be measurable rather than argued about.
@@ -1819,14 +1859,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     map.on('zoomend', updateLabelCull)
     map.on('pitchend', updateLabelCull)
 
-    // Boot is belt-and-braces: Mapbox's 'load' event is unreliable here (the
-    // style can report loaded without the event ever firing — seen on both
-    // Standard and classic styles). A short poll boots the clay world the
-    // moment the style is ready if the event never arrives; the guard keeps
-    // double-boot impossible when both paths race.
+    // Boot from Mapbox's own style lifecycle. A raw 400ms poll used to run for
+    // the lifetime of any map whose style never became ready; load/styledata
+    // plus one bounded initial attempt cover the same races without a heartbeat.
     let clayWorldBooted = false
+    let clayWorldBooting = false
+    let bootDeadline = 0
+    const stopBootWatch = () => {
+      window.clearTimeout(bootDeadline)
+      bootDeadline = 0
+      map.off('load', bootClayWorld)
+      map.off('styledata', bootClayWorld)
+    }
     const bootClayWorld = () => {
-      if (clayWorldBooted) return
+      if (clayWorldBooted || clayWorldBooting || disposed) return
       // A WebView can expose the style JSON (and its layer list) for one or
       // two frames before Mapbox has finished installing it. Calling
       // addSource/addLayer in that window throws "Style is not done loading"
@@ -1837,15 +1883,25 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         if (!map.isStyleLoaded()) return
         const style = map.getStyle()
         if (!style || !(style.layers || []).length) return
+        clayWorldBooting = true
         buildClayWorld()
         clayWorldBooted = true
-        window.clearInterval(bootPoll)
+        stopBootWatch()
       } catch (error) {
-        console.warn('[ClayMap] style became unavailable during boot; retrying', error)
+        console.warn('[ClayMap] style became unavailable during boot; waiting for styledata', error)
+      } finally {
+        clayWorldBooting = false
       }
     }
-    const bootPoll = window.setInterval(bootClayWorld, 400)
     map.on('load', bootClayWorld)
+    map.on('styledata', bootClayWorld)
+    bootDeadline = window.setTimeout(() => {
+      if (clayWorldBooted || disposed) return
+      stopBootWatch()
+      fallBackAfterWebGLFailure(new Error('Map style did not finish loading within 15 seconds'))
+    }, 15_000)
+    // Covers a cached style whose load event fired before this listener attached.
+    later(bootClayWorld, 0)
 
     const buildClayWorld = () => {
       // Clay palette + landmark/tree toggles on the Standard basemap import.
@@ -2869,7 +2925,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // `within` expressions once. No tile-arrival trigger is needed any more —
       // a newly loaded building tile evaluates the expression itself as its
       // bucket builds, so late tiles come up already claimed.
-      onClaimsSettled(() => { applyClaimRoadPaint() })
+      stopClaimRoadPaint = onClaimsSettled(() => { applyClaimRoadPaint() })
 
       // ── The colour circle: takeover recolour ────────────────────────────────
       // The circle under the zoom slider transposes the takeover family to a
@@ -3285,7 +3341,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       mapCanvas.removeEventListener('webglcontextlost', handleContextLost)
       mapCanvas.removeEventListener('pointerup', handleGestureSettle)
       mapCanvas.removeEventListener('touchend', handleGestureSettle)
-      window.clearInterval(bootPoll)
+      stopBootWatch()
       ownedTimeouts.forEach(id => window.clearTimeout(id))
       ownedTimeouts.clear()
       ownedRafs.forEach(id => window.cancelAnimationFrame(id))
@@ -3294,6 +3350,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       stopFlyerFrames?.()
       stopRendererParking?.()
       stopRendererParking = null
+      stopClaimRoadPaint?.()
+      stopClaimRoadPaint = null
+      idleSnapshot.dispose()
+      if (idleSnapshotRef.current === idleSnapshot) idleSnapshotRef.current = null
       stopCarAudio()
       popFrameStops.forEach(stop => stop())
       popFrameStops.clear()
@@ -3528,6 +3588,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
     applyTheme(map, theme)
+    idleSnapshotRef.current?.requestCapture()
   }, [theme, mapEpoch])
 
   // Day / night sky
@@ -3535,6 +3596,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
     applySky(map, dayTime)
+    idleSnapshotRef.current?.requestCapture()
   }, [dayTime, mapEpoch])
 
   function addMarkers(map: mapboxgl.Map) {

@@ -121,8 +121,16 @@ export function speakWithVoiceAudioFocus(text: string, options: VoiceSpeechOptio
     rate: options.rate ?? 0.98,
     pitch: options.pitch ?? 1.03,
   })) {
-    holdVoiceAudioFocus(text)
-    if (options.onDone) window.setTimeout(options.onDone, estimatedVoiceDurationMs(text))
+    // Keep the completion callback on the same cancellable lease as focus.
+    // The old detached timeout could restart SpeechRecognition after its
+    // assistant had unmounted or after another surface cancelled the speech.
+    ensureRegistered()
+    const token = ++sequence
+    clearTimers()
+    activeDone = options.onDone ?? null
+    requestAudioFocus('voice')
+    startFocusHeartbeat(token)
+    fallbackTimer = window.setTimeout(() => finish(token), estimatedVoiceDurationMs(text))
     return true
   }
 

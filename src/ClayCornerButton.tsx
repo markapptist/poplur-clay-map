@@ -5,7 +5,7 @@ import { qualityPixelRatio } from './frameGovernor'
 
 // Clay 3D corner controls for the camera (flash + switch-camera): the same
 // extruded-clay recipe as ClayChannelArrows / ClayMuteButton — matte pink
-// clay, soft lighting, idle tumble, press pulse — floating with NO backing
+// clay, soft lighting, finite press pulse — floating with NO backing
 // circle. Flash ON re-molds the bolt in warm gold clay.
 
 const CLAY = 0xef62a6
@@ -92,7 +92,7 @@ export default function ClayCornerButton({
   size = 44,
   activateOnClick = false,
   tone = 'clay',
-  still = false,
+  still = true,
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
     | 'heart' | 'play' | 'seekBack' | 'seekFwd'
@@ -104,8 +104,8 @@ export default function ClayCornerButton({
   activateOnClick?: boolean
   /** 'cream' moulds the object in white clay, for light grounds. */
   tone?: 'clay' | 'cream'
-  /** Render once and stop, waking only for a press. Use on heavy screens (the
-   *  map) where a permanent idle tumble is a renderer running for nothing. */
+  /** Render once and stop, waking only for state changes and presses. Pass
+   *  false only when a screen deliberately budgets for an idle tumble. */
   still?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -343,6 +343,10 @@ export default function ClayCornerButton({
       releaseWebGL(renderer)
     }
   }, [size, kind, tone, still])
+
+  // A parked renderer still has to repaint when flash/heart state changes.
+  // This is one finite frame, not a permanent animation loop.
+  useEffect(() => { wakeRef.current?.() }, [active])
 
   // Flat stand-ins for when the GPU can't give us a context. Not as pretty as
   // the clay, but visible, which is the whole job of a control.

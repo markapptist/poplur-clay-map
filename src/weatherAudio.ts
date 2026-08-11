@@ -3,12 +3,19 @@
 // lands in sync with the lightning flash), hail is a scatter of tiny clicks.
 
 import type { WeatherMode } from './WeatherFX'
+import { isGateMuted } from './audioGate'
 
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
 let noiseBuffer: AudioBuffer | null = null
 
-let rainNodes: { src: AudioBufferSourceNode; gain: GainNode } | null = null
+interface WeatherSource {
+  src: AudioBufferSourceNode
+  nodes: AudioNode[]
+}
+
+let rainNodes: WeatherSource | null = null
+const activeBursts = new Set<WeatherSource>()
 let hailTimer: number | null = null
 let thunderTimer: number | null = null
 
@@ -24,6 +31,10 @@ export function setWeatherMasterVolume(value: number) {
 }
 
 function ensureCtx(): AudioContext | null {
+  // Never let an irregular thunder timer undo the central mute/background gate.
+  // WeatherFX also stops its clocks at idle, but this module-level guard keeps
+  // direct callers safe during a gate transition.
+  if (isGateMuted() || document.visibilityState !== 'visible') return null
   try {
     ctx ??= new AudioContext()
     if (ctx.state === 'suspended') void ctx.resume()
@@ -36,6 +47,25 @@ function ensureCtx(): AudioContext | null {
   } catch {
     return null
   }
+}
+
+function disconnectSource(source: WeatherSource, stop = true) {
+  if (stop) {
+    try { source.src.stop() } catch { /* already ended */ }
+  }
+  try { source.src.disconnect() } catch { /* already disconnected */ }
+  source.nodes.forEach(node => {
+    try { node.disconnect() } catch { /* already disconnected */ }
+  })
+}
+
+function trackBurst(src: AudioBufferSourceNode, nodes: AudioNode[]) {
+  const source = { src, nodes }
+  activeBursts.add(source)
+  src.addEventListener('ended', () => {
+    if (!activeBursts.delete(source)) return
+    disconnectSource(source, false)
+  }, { once: true })
 }
 
 /** 2 s of reusable white noise. */
@@ -67,7 +97,7 @@ function startRain(c: AudioContext, heavy: boolean) {
 
   src.connect(hp); hp.connect(lp); lp.connect(gain); gain.connect(master!)
   src.start()
-  rainNodes = { src, gain }
+  rainNodes = { src, nodes: [hp, lp, gain] }
 }
 
 /** One thunder rumble. Exported so the lightning flash can trigger it in sync. */
@@ -92,6 +122,7 @@ export function playThunder(volume = 0.5) {
   gain.gain.exponentialRampToValueAtTime(0.001, t + 3.2)     // long roll-off
 
   src.connect(lp); lp.connect(gain); gain.connect(master!)
+  trackBurst(src, [lp, gain])
   src.start()
   src.stop(t + 3.4)
 }
@@ -108,11 +139,12 @@ function hailTick(c: AudioContext) {
   gain.gain.setValueAtTime(v, t)
   gain.gain.exponentialRampToValueAtTime(0.001, t + 0.035)
   src.connect(hp); hp.connect(gain); gain.connect(master!)
+  trackBurst(src, [hp, gain])
   src.start(t, Math.random() * 1.5, 0.05)
 }
 
 export function startWeatherAudio(mode: WeatherMode) {
-  stopWeatherAudio()
+  clearWeatherAudio(false)
   const rains = mode === 'rain' || mode === 'thunder' || mode === 'storm'
   const thunders = mode === 'thunder' || mode === 'hail'
   if (!rains && mode !== 'hail') return
@@ -139,16 +171,20 @@ export function startWeatherAudio(mode: WeatherMode) {
   }
 }
 
-export function stopWeatherAudio() {
-  if (rainNodes) {
-    const { src, gain } = rainNodes
-    try {
-      const c = ctx!
-      gain.gain.linearRampToValueAtTime(0.001, c.currentTime + 0.4)
-      src.stop(c.currentTime + 0.5)
-    } catch { /* already stopped */ }
-    rainNodes = null
-  }
+function clearWeatherAudio(suspendContext: boolean) {
   if (hailTimer != null) { window.clearTimeout(hailTimer); hailTimer = null }
   if (thunderTimer != null) { window.clearTimeout(thunderTimer); thunderTimer = null }
+  if (rainNodes) {
+    disconnectSource(rainNodes)
+    rainNodes = null
+  }
+  activeBursts.forEach(source => disconnectSource(source))
+  activeBursts.clear()
+  // An empty running AudioContext still owns an audio thread. Weather resumes
+  // this context itself on the next visible, unmuted interaction.
+  if (suspendContext && ctx?.state === 'running') void ctx.suspend().catch(() => {})
+}
+
+export function stopWeatherAudio() {
+  clearWeatherAudio(true)
 }

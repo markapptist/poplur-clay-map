@@ -467,11 +467,10 @@
    The key remount on colour change replays the one-shot pop-in. */
 .colorCircle {
   position: absolute;
-  /* Centres the disc on the rail's centre line: bezel + half the thumb's
-     overhang, less half its own overhang. Keep the 28px in step with the
-     width below or the wheel drifts off the slider. */
+  /* Share the Search icon's centre line. The map header owns that icon, so
+     --map-search-center mirrors its right inset and rendered size below. */
   right: auto;
-  left: var(--home-right-center);
+  left: var(--map-search-center);
   /* Level with the level icon: its centre line is --home-cube + 52px off the
      bottom (see .zoomWeather above), and this disc is 28px, so its bottom edge
      sits 14px under that centre. It keeps its own column under the zoom rail —
@@ -535,7 +534,7 @@
      anyway. `right` keeps clear of the strip iOS reserves for its own edge
      gestures (back-swipe, Control Center). */
   right: auto;
-  left: var(--home-right-center);
+  left: var(--map-search-center);
   /* The rail's BOTTOM is anchored to the colour wheel, not centred in the
      viewport. Centred, the rail's lower tip landed at roughly the same height
      as the wheel's top edge on a 393x852 phone — the two controls touched, and
@@ -1082,6 +1081,18 @@
   --home-side-track: calc((100vw - 32px - var(--home-cube) - var(--home-gap) - var(--home-gap)) / 2);
   --home-left-center: calc(16px + var(--home-side-track) / 2);
   --home-right-center: calc(100vw - 16px - var(--home-side-track) / 2);
+  --map-mute-center: 36px;
+  /* App.module.css positions the unscaled 56px Search icon against this same
+     responsive right inset. Its centre is therefore one 28px radius inboard. */
+  --map-search-center: calc(100vw - clamp(10px, 2.6vw, 18px) - 28px);
+}
+
+@media (max-width: 430px) {
+  :global(#root) {
+    /* The phone header renders its 56px Search icon at App.module.css's 0.8
+       scale, making the visual radius 22.4px while its right edge stays put. */
+    --map-search-center: calc(100vw - clamp(10px, 2.6vw, 18px) - 22.4px);
+  }
 }
 
 .zoomWeather {
@@ -1100,7 +1111,7 @@
      and this drifts; phones are the case that matters, and the map is not a
      desktop surface. */
   right: auto;
-  left: var(--home-left-center);
+  left: var(--map-mute-center);
   top: auto;
   /* The level button's top edge is cube + 74px. At cube + 106 the weather mark
      sat 32px above it, which on device read as one crowded stack rather than
@@ -1118,6 +1129,10 @@
   pointer-events: auto;
   transform: translateX(-50%);
   filter: drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55)) drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
+}
+
+@media (max-width: 430px) and (max-height: 850px) {
+  :global(#root) { --map-mute-center: 31.2px; }
 }
 
 .zoomWeatherOpen { transform: translateX(-50%) scale(1.08); }
@@ -1416,7 +1431,7 @@
        its own edge gestures, so drags were stolen by the OS on exactly the
        small phones this branch is for. Narrower column, same clearance. */
     right: auto;
-    left: var(--home-right-center);
+    left: var(--map-search-center);
     width: 132px;
     height: min(52vh, 380px);
   }

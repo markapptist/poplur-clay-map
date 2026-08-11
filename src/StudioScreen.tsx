@@ -121,6 +121,15 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     return () => { live = false }
   }, [])
   const songAudio = useRef<HTMLAudioElement | null>(null)
+  const mountedRef = useRef(true)
+  const songUrlRef = useRef<string | null>(null)
+  const takeUrlRef = useRef<string | null>(null)
+  const captureGenerationRef = useRef(0)
+  const captureWantedRef = useRef(false)
+  const discardedRecordersRef = useRef(new WeakSet<MediaRecorder>())
+  const aiGenerationRef = useRef(0)
+  const aiAbortRef = useRef<AbortController | null>(null)
+  const stopCaptureRef = useRef<(discard?: boolean) => void>(() => {})
 
   // WebKit may pan the document to reveal a focused field even though Studio
   // is a full-screen overlay. Keep the app origin pinned while its keyboard is
@@ -148,6 +157,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     const unregister = registerAudioOwner('studio', () => {
       setPlaying(false)
       setRecording(false)
+      stopCaptureRef.current(true)
     })
     return () => { unregister(); releaseAudioFocus('studio') }
   }, [])
@@ -185,6 +195,20 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     const { ctx, master } = engine()
     const out = ctx.createGain()
     out.connect(master)
+    let liveSources = 0
+    const retireSource = (source: AudioScheduledSourceNode & AudioNode, nodes: AudioNode[] = []) => {
+      liveSources += 1
+      source.addEventListener('ended', () => {
+        try { source.disconnect() } catch { /* context already closed */ }
+        nodes.forEach(node => {
+          try { node.disconnect() } catch { /* already disconnected */ }
+        })
+        liveSources -= 1
+        if (liveSources === 0) {
+          try { out.disconnect() } catch { /* already disconnected */ }
+        }
+      }, { once: true })
+    }
     const env = (peak: number, decay: number) => {
       out.gain.setValueAtTime(0.0001, at)
       out.gain.exponentialRampToValueAtTime(peak, at + 0.006)
@@ -201,6 +225,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       f.type = kind
       f.frequency.value = filterHz
       src.connect(f); f.connect(out)
+      retireSource(src, [f])
       src.start(at); src.stop(at + decay)
     }
     const tone = (type: OscillatorType, from: number, to: number, decay: number) => {
@@ -209,6 +234,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       o.frequency.setValueAtTime(from, at)
       if (to !== from) o.frequency.exponentialRampToValueAtTime(Math.max(1, to), at + decay * 0.8)
       o.connect(out)
+      retireSource(o)
       o.start(at); o.stop(at + decay)
     }
     switch (name) {
@@ -370,24 +396,59 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   const [micDenied, setMicDenied] = useState(false)
   const takeAudio = useRef<HTMLAudioElement | null>(null)
 
-  const stopCapture = () => {
+  const stopCapture = (discard = false) => {
+    captureWantedRef.current = false
+    captureGenerationRef.current += 1
     window.clearInterval(levelTimer.current)
-    recorderRef.current?.state === 'recording' && recorderRef.current.stop()
+    levelTimer.current = 0
+    const recorder = recorderRef.current
+    recorderRef.current = null
+    if (recorder && discard) discardedRecordersRef.current.add(recorder)
+    if (recorder?.state === 'recording') recorder.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
     analyserRef.current = null
     micCtxRef.current?.close().catch(() => { /* already closed */ })
     micCtxRef.current = null
+    if (discard) chunksRef.current = []
   }
+  stopCaptureRef.current = stopCapture
 
-  useEffect(() => () => { stopCapture(); if (takeUrl) URL.revokeObjectURL(takeUrl) }, [takeUrl])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      aiGenerationRef.current += 1
+      aiAbortRef.current?.abort()
+      aiAbortRef.current = null
+      stopCaptureRef.current(true)
+      for (const audio of [takeAudio.current, songAudio.current]) {
+        if (!audio) continue
+        audio.pause()
+        audio.removeAttribute('src')
+        audio.load()
+      }
+      if (takeUrlRef.current) URL.revokeObjectURL(takeUrlRef.current)
+      if (songUrlRef.current) URL.revokeObjectURL(songUrlRef.current)
+      takeUrlRef.current = null
+      songUrlRef.current = null
+    }
+  }, [])
 
   const startCapture = async () => {
+    stopCapture(true)
+    const generation = ++captureGenerationRef.current
+    captureWantedRef.current = true
+    let stream: MediaStream | null = null
+    let ctx: AudioContext | null = null
+    const current = () => mountedRef.current
+      && captureWantedRef.current
+      && captureGenerationRef.current === generation
     try {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
         throw new Error('Audio recording is unavailable')
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -395,14 +456,28 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
           channelCount: 1,
         },
       })
+      // Permission sheets outlive React surfaces. If Studio was closed (or the
+      // user stopped) while the sheet was up, retire the late stream before it
+      // can start a hidden recorder and AudioContext.
+      if (!current()) {
+        stream.getTracks().forEach(track => track.stop())
+        return false
+      }
       streamRef.current = stream
       setMicDenied(false)
 
       // Starting the mic twice without stopping would strand the first context.
       micCtxRef.current?.close().catch(() => { /* already closed */ })
-      const ctx = new AudioContext()
+      ctx = new AudioContext()
       micCtxRef.current = ctx
       if (ctx.state === 'suspended') await ctx.resume()
+      if (!current()) {
+        stream.getTracks().forEach(track => track.stop())
+        void ctx.close().catch(() => {})
+        if (streamRef.current === stream) streamRef.current = null
+        if (micCtxRef.current === ctx) micCtxRef.current = null
+        return false
+      }
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
       ctx.createMediaStreamSource(stream).connect(analyser)
@@ -418,25 +493,33 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
         setLevels(prev => [...prev.slice(-63), Math.max(4, peak * 140)])
       }, 55)
 
-      chunksRef.current = []
+      const chunks: BlobPart[] = []
+      chunksRef.current = chunks
       const preferredMime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
         .find(type => MediaRecorder.isTypeSupported(type))
       const rec = preferredMime
         ? new MediaRecorder(stream, { mimeType: preferredMime })
         : new MediaRecorder(stream)
-      rec.ondataavailable = e => { if (e.data.size) chunksRef.current.push(e.data) }
+      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
       rec.onstop = () => {
-        if (!chunksRef.current.length) return
-        const url = URL.createObjectURL(new Blob(chunksRef.current, { type: rec.mimeType }))
-        setTakeUrl(old => { if (old) URL.revokeObjectURL(old); return url })
+        if (!mountedRef.current || discardedRecordersRef.current.has(rec) || !chunks.length) return
+        const url = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType }))
+        setTakeUrl(old => {
+          if (old) URL.revokeObjectURL(old)
+          takeUrlRef.current = url
+          return url
+        })
       }
       rec.start()
       recorderRef.current = rec
       return true
     } catch (error) {
-      console.warn('[Poplur Studio] microphone could not start', error)
-      stopCapture()
-      setMicDenied(true)      // refused or no mic — say so rather than pretend
+      const report = mountedRef.current && captureGenerationRef.current === generation
+      if (report) console.warn('[Poplur Studio] microphone could not start', error)
+      stream?.getTracks().forEach(track => track.stop())
+      if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {})
+      if (report) stopCapture(true)
+      if (report) setMicDenied(true)      // refused or no mic — say so rather than pretend
       return false
     }
   }
@@ -447,7 +530,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     requestAudioFocus('studio')
     setRecMs(0)
     setRecording(true)
-    void startCapture().then(ok => { if (!ok) setRecording(false) })
+    void startCapture().then(ok => { if (!ok && mountedRef.current) setRecording(false) })
   }
 
   const playTake = () => {
@@ -469,7 +552,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     requestAudioFocus('studio')
     setRecMs(0)
     setRecording(true)
-    void startCapture().then(ok => { if (!ok) setRecording(false) })
+    void startCapture().then(ok => { if (!ok && mountedRef.current) setRecording(false) })
   }
 
   // The AI music stack. ElevenLabs Music — the same provider whose key slot the
@@ -478,18 +561,25 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   // opens and says the clay band is backing you, instead of a spinner that lies.
   const generateSong = async (style: string) => {
     playPop()
+    aiAbortRef.current?.abort()
+    const controller = new AbortController()
+    aiAbortRef.current = controller
+    const generation = ++aiGenerationRef.current
     setAiError(null)
     setBuilding(0.04)
     const key = import.meta.env.VITE_ELEVENLABS_KEY as string | undefined
     if (!key) {
+      if (aiAbortRef.current === controller) aiAbortRef.current = null
       setAiError('No AI music key configured (VITE_ELEVENLABS_KEY) — the clay band will back you instead.')
       setBuilding(0)
       setStage('studio')
       return
     }
+    const timeout = window.setTimeout(() => controller.abort(), 45_000)
     try {
       const res = await fetch('https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: `${style || genre} instrumental, ${bpm} BPM, 30 seconds, radio-ready, space left for a lead vocal.`,
@@ -497,11 +587,23 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
         }),
       })
       if (!res.ok) throw new Error(`music API ${res.status}`)
-      const url = URL.createObjectURL(await res.blob())
-      setSongUrl(old => { if (old) URL.revokeObjectURL(old); return url })
+      const blob = await res.blob()
+      if (!mountedRef.current || generation !== aiGenerationRef.current) return
+      const url = URL.createObjectURL(blob)
+      setSongUrl(old => {
+        if (old) URL.revokeObjectURL(old)
+        songUrlRef.current = url
+        return url
+      })
     } catch (e) {
-      setAiError(`The AI track failed (${e instanceof Error ? e.message : 'network'}) — the clay band will back you instead.`)
+      if (!mountedRef.current || generation !== aiGenerationRef.current) return
+      const aborted = e instanceof DOMException && e.name === 'AbortError'
+      setAiError(`The AI track failed (${aborted ? 'timed out' : e instanceof Error ? e.message : 'network'}) — the clay band will back you instead.`)
+    } finally {
+      window.clearTimeout(timeout)
+      if (aiAbortRef.current === controller) aiAbortRef.current = null
     }
+    if (!mountedRef.current || generation !== aiGenerationRef.current) return
     setBuilding(0)
     setStage('studio')
   }
@@ -549,7 +651,12 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
               ? 'Microphone refused — allow access, or skip and let the AI carry it.'
               : recording ? 'Thirty seconds max. Make it count.' : 'Tap record and give it a hook.'}
           </span>
-          <button className={styles.micSkip} type="button" onClick={() => { playPop(); setStage('style') }}>
+          <button className={styles.micSkip} type="button" onClick={() => {
+            playPop()
+            stopCapture(true)
+            setRecording(false)
+            setStage('style')
+          }}>
             SKIP — NO VOCAL
           </button>
         </div>

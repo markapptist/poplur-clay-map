@@ -102,6 +102,7 @@ export default function PoplurVoiceAssistant({
   const voiceSpeakingRef = useRef(false)
   const restartTimerRef = useRef<number | null>(null)
   const dismissTimerRef = useRef<number | null>(null)
+  const commandTimerRef = useRef<number | null>(null)
   const tabRequestRef = useRef(onTabRequest)
   tabRequestRef.current = onTabRequest
   const channelRequestRef = useRef(onChannelRequest)
@@ -127,7 +128,9 @@ export default function PoplurVoiceAssistant({
       ? `Opening ${tab === 'post' ? 'camera' : tab}.`
       : aiAnswer(trimmed, currentUsername())
 
-    window.setTimeout(() => {
+    if (commandTimerRef.current != null) window.clearTimeout(commandTimerRef.current)
+    commandTimerRef.current = window.setTimeout(() => {
+      commandTimerRef.current = null
       if (tab) tabRequestRef.current(tab)
       playPop()
       setPhase('reply')
@@ -351,8 +354,23 @@ export default function PoplurVoiceAssistant({
       listeningEnabledRef.current = false
       awaitingCommandRef.current = false
       if (restartTimerRef.current != null) window.clearTimeout(restartTimerRef.current)
+      restartTimerRef.current = null
+      if (commandTimerRef.current != null) window.clearTimeout(commandTimerRef.current)
+      commandTimerRef.current = null
       clearDismissTimer()
-      try { recognitionRef.current?.stop() } catch { /* already stopped */ }
+      const recognition = recognitionRef.current
+      recognitionRef.current = null
+      if (recognition) {
+        recognition.onstart = null
+        recognition.onend = null
+        recognition.onerror = null
+        recognition.onresult = null
+        try { recognition.stop() } catch { /* already stopped */ }
+      }
+      recognitionRunningRef.current = false
+      recognitionStartingRef.current = false
+      handlingCommandRef.current = false
+      voiceSpeakingRef.current = false
       cancelVoiceSpeech()
     }
   }, [startVoice, startWakeListening])

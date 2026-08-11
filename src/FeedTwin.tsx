@@ -144,6 +144,20 @@ function posterForFeedClip(source: string): string {
   return 'feed/posters/ad-food.jpg'
 }
 
+/**
+ * Ended media must release its decoder, not merely leave the DOM. The stall
+ * watchdog closes over the element until React commits the completed state, so
+ * an ended element with its source still attached can otherwise retain WebKit's
+ * media pipeline behind the static poster/comments screen.
+ */
+function retireFeedVideo(video: HTMLVideoElement): void {
+  video.muted = true
+  video.pause()
+  video.srcObject = null
+  video.removeAttribute('src')
+  video.load()
+}
+
 function shouldUnlockFeedAudioOnMount(explicitNavigation: boolean): boolean {
   // A cold Feed starts moving immediately, but iOS still requires a user
   // gesture before sound can be enabled. Home supplies this token when the
@@ -877,7 +891,7 @@ export default function FeedTwin({
   // advances. Loop wrap counts as progress.
   useEffect(() => {
     const video = adVideoRef.current
-    if (!video || !adSrc || suppressed || !mediaUnlocked) return
+    if (!video || !adSrc || suppressed || !mediaUnlocked || completedAdSrc === adSrc) return
     let lastTime = video.currentTime
     let stalledTicks = 0
     // On the governor rather than its own interval: a stall the user is not
@@ -906,7 +920,7 @@ export default function FeedTwin({
       if (stalledTicks >= 3) advanceAdSource(adSrc)
     }, 1000)
     return () => stopWatchdog()
-  }, [adSrc, suppressed, mediaUnlocked, markAdReady, advanceAdSource, retryAdPlayback])
+  }, [adSrc, completedAdSrc, suppressed, mediaUnlocked, markAdReady, advanceAdSource, retryAdPlayback])
 
   // Channel audio. The ad creative is the channel's soundtrack, so it plays
   // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
@@ -1352,9 +1366,13 @@ export default function FeedTwin({
           onLoadedData={() => markAdReady(adSrc)}
           onPlaying={() => markAdReady(adSrc)}
           onTimeUpdate={() => markAdReady(adSrc)}
-          onEnded={() => {
+          onEnded={event => {
             if (!playerModeRef.current) showCommentRoll()
             completedAdRef.current = adSrc
+            // Retire synchronously before the state update unmounts this node.
+            // That both releases the decoder immediately and makes any late
+            // stalled/error callback harmless via completedAdRef above.
+            retireFeedVideo(event.currentTarget)
             setCompletedAdSrc(adSrc)
             setReadyAdSrc(null)
             settledAdRef.current = null

@@ -1,5 +1,6 @@
 import mapboxgl from 'mapbox-gl'
 import { takeoverTint, takeoverTintRGB } from './takeoverColor'
+import { onFrame } from './frameGovernor'
 
 // ── Land-claim clay territory ───────────────────────────────────────────────
 // A Poplur post claims land: its radius (km) becomes a clay disc on the map, so
@@ -565,6 +566,81 @@ export function totalClaimedKm(): number {
   return total
 }
 
+// Claim growth is a short visual beat, not permission to create one compositor
+// loop per event. Keep a small keyed set on the shared governor and cancel it
+// with the map. A burst settles the oldest claim before admitting the newest, so
+// the feature remains truthful while work stays strictly bounded.
+const CLAIM_ANIMATION_MAX_ACTIVE = 4
+interface ActiveClaimAnimation {
+  claim: Claim
+  stop: () => void
+}
+const claimAnimations = new WeakMap<mapboxgl.Map, Map<string, ActiveClaimAnimation>>()
+const claimAnimationRemovalBound = new WeakSet<mapboxgl.Map>()
+
+function animationsFor(map: mapboxgl.Map): Map<string, ActiveClaimAnimation> {
+  let animations = claimAnimations.get(map)
+  if (!animations) {
+    animations = new Map()
+    claimAnimations.set(map, animations)
+  }
+  if (!claimAnimationRemovalBound.has(map)) {
+    claimAnimationRemovalBound.add(map)
+    map.once('remove', () => cancelAllClaimAnimations(map))
+  }
+  return animations
+}
+
+function cancelClaimAnimation(map: mapboxgl.Map, id: string, settle = false): void {
+  const animations = claimAnimations.get(map)
+  const active = animations?.get(id)
+  if (!active) return
+  animations!.delete(id)
+  active.stop()
+  if (settle) {
+    upsertClaimsBounded(map, [active.claim])
+    pushClaims(map)
+    claimsListeners.forEach(fn => fn())
+  }
+}
+
+function cancelAllClaimAnimations(map: mapboxgl.Map): void {
+  const animations = claimAnimations.get(map)
+  if (!animations) return
+  animations.forEach(active => active.stop())
+  animations.clear()
+  claimAnimations.delete(map)
+}
+
+function animateClaim(map: mapboxgl.Map, claim: Claim, from: number): void {
+  const animations = animationsFor(map)
+  cancelClaimAnimation(map, claim.id)
+  if (animations.size >= CLAIM_ANIMATION_MAX_ACTIVE) {
+    const oldest = animations.keys().next().value as string | undefined
+    if (oldest) cancelClaimAnimation(map, oldest, true)
+  }
+
+  const active: ActiveClaimAnimation = { claim, stop: () => {} }
+  animations.set(claim.id, active)
+  const started = performance.now()
+  const duration = 620
+  active.stop = onFrame((_elapsedMs, now) => {
+    if (animations.get(claim.id) !== active) return
+    const t = Math.min(1, (now - started) / duration)
+    // Overshoot spring so the territory "pops" like everything else.
+    const eased = 1 + Math.sin(t * Math.PI) * 0.14 - Math.pow(1 - t, 3)
+    const radiusKm = from + (claim.radiusKm - from) * Math.min(1, eased)
+    upsertClaimsBounded(map, [{ ...claim, radiusKm: Math.max(0, radiusKm) }])
+    pushClaims(map, { points: false })
+    if (t < 1) return
+    animations.delete(claim.id)
+    active.stop()
+    upsertClaimsBounded(map, [claim])
+    pushClaims(map)
+    claimsListeners.forEach(fn => fn())
+  }, 'ambient')
+}
+
 /**
  * Replace every claim owned by `owner` with `list`, in one push.
  *
@@ -576,6 +652,7 @@ export function totalClaimedKm(): number {
  */
 export function setClaimGroup(map: mapboxgl.Map, owner: 'mine' | 'others', list: Claim[]): void {
   installClaimsLayer(map)
+  cancelAllClaimAnimations(map)
   const candidates = new Map(claims)
   for (const [id, claim] of [...candidates.entries()]) {
     const belongs = owner === 'mine' ? !claim.color : Boolean(claim.color)
@@ -596,26 +673,14 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
   installClaimsLayer(map)
   const existing = claims.get(claim.id)
   const from = existing ? existing.radiusKm : 0
-  const to = claim.radiusKm
   if (!animate) {
+    cancelClaimAnimation(map, claim.id)
     upsertClaimsBounded(map, [claim])
     pushClaims(map)
     claimsListeners.forEach(fn => fn())
     return
   }
-  const started = performance.now()
-  const duration = 620
-  const step = () => {
-    const t = Math.min(1, (performance.now() - started) / duration)
-    // Overshoot spring so the territory "pops" like everything else.
-    const eased = 1 + Math.sin(t * Math.PI) * 0.14 - Math.pow(1 - t, 3)
-    const r = from + (to - from) * Math.min(1, eased)
-    upsertClaimsBounded(map, [{ ...claim, radiusKm: Math.max(0, r) }])
-    pushClaims(map, { points: false })
-    if (t < 1) requestAnimationFrame(step)
-    else { upsertClaimsBounded(map, [claim]); pushClaims(map); claimsListeners.forEach(fn => fn()) }
-  }
-  requestAnimationFrame(step)
+  animateClaim(map, claim, from)
 }
 
 /** Seed many claims at once — ONE source push and ONE settle notification.
@@ -625,12 +690,14 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
  *  A03: the map does this work behind whichever tab is actually front. */
 export function seedClaims(map: mapboxgl.Map, list: Claim[]) {
   installClaimsLayer(map)
+  cancelAllClaimAnimations(map)
   upsertClaimsBounded(map, list)
   pushClaims(map)
   claimsListeners.forEach(fn => fn())
 }
 
 export function clearClaims(map: mapboxgl.Map) {
+  cancelAllClaimAnimations(map)
   claims.clear()
   pushClaims(map)
 }

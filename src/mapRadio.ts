@@ -156,6 +156,8 @@ let liveAudio: HTMLAudioElement | null = null
 let liveStation: { name: string; url: string } | null = null
 let liveFadeTimer: number | null = null
 let liveTuneGeneration = 0
+let liveTuneAbort: AbortController | null = null
+let liveStalledTimer: number | null = null
 const RADIO_STATION_EVENT = 'poplur-radio-station'
 
 function publishLiveStation() {
@@ -181,6 +183,25 @@ const RADIO_BROWSER_HOSTS = [
   'https://fi1.api.radio-browser.info',
   'https://nl1.api.radio-browser.info',
 ]
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+  outerSignal?: AbortSignal,
+): Promise<Response> {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  if (outerSignal?.aborted) abort()
+  else outerSignal?.addEventListener('abort', abort, { once: true })
+  const timer = window.setTimeout(abort, timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    window.clearTimeout(timer)
+    outerSignal?.removeEventListener('abort', abort)
+  }
+}
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null
@@ -566,6 +587,7 @@ function hostLine(line: string, stations: ReadonlyArray<RadioStationCue>): strin
 }
 
 function blendAfterHost() {
+  if (!soundWanted) return
   setRadioLevel(RADIO_AFTER_HOST_LEVEL, 0.46)
   playRadioStinger()
   if (typeof window !== 'undefined') {
@@ -590,6 +612,7 @@ function getLiveAudio(): HTMLAudioElement | null {
     const drop = () => { if (liveStation) dropLiveStation() }
     liveAudio.addEventListener('error', drop)
     liveAudio.addEventListener('playing', () => {
+      if (liveStalledTimer !== null) { window.clearTimeout(liveStalledTimer); liveStalledTimer = null }
       if (!soundWanted || !liveStation) return
       stopFallbackRadio()
       setRadioLevel(targetRadioLevel, 0.28)
@@ -602,7 +625,9 @@ function getLiveAudio(): HTMLAudioElement | null {
     })
     // 'stalled' fires on transient buffering too — only drop if still stalled
     liveAudio.addEventListener('stalled', () => {
-      window.setTimeout(() => {
+      if (liveStalledTimer !== null) window.clearTimeout(liveStalledTimer)
+      liveStalledTimer = window.setTimeout(() => {
+        liveStalledTimer = null
         if (liveStation && liveAudio && liveAudio.readyState < 3 && !liveAudio.paused) drop()
       }, 8000)
     })
@@ -621,6 +646,7 @@ function isLiveRadioPlaying(): boolean {
 
 function tryPlayLiveRadio(): void {
   if (!soundWanted || isRadioGateMuted() || !liveStation || !liveAudio) return
+  if (!liveAudio.getAttribute('src')) liveAudio.src = liveStation.url
   liveAudio.muted = false
   void liveAudio.play()
     .then(() => {
@@ -665,7 +691,8 @@ function dropLiveStation() {
   liveStation = null
   publishLiveStation()
   if (liveFadeTimer !== null) { window.clearInterval(liveFadeTimer); liveFadeTimer = null }
-  if (liveAudio) { liveAudio.pause(); liveAudio.removeAttribute('src') }
+  if (liveStalledTimer !== null) { window.clearTimeout(liveStalledTimer); liveStalledTimer = null }
+  if (liveAudio) { liveAudio.pause(); liveAudio.removeAttribute('src'); liveAudio.load() }
   // The synth bed swells back so the radio never goes dead.
   if (soundWanted) setRadioLevel(targetRadioLevel, 0.4)
   scheduleRetune()
@@ -718,21 +745,24 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
   // for the map to move.
   lastTuneCoords = { lat, lng }
   const generation = ++liveTuneGeneration
+  liveTuneAbort?.abort()
+  const tuneAbort = new AbortController()
+  liveTuneAbort = tuneAbort
   const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
   // Keep widening until something real is on air: your own town first, then the
   // next city out, then the region. A single fixed radius left listeners in
   // silence wherever no station happened to sit inside 90 km.
   const RINGS_M = [30_000, 90_000, 250_000, 600_000, 1_500_000]
+  try {
   for (const radius of RINGS_M) {
   for (const host of hosts) {
     try {
-      const ctl = new AbortController()
-      const timer = window.setTimeout(() => ctl.abort(), 5000)
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=${radius}&hidebroken=true&order=clickcount&reverse=true&limit=24`,
-        { signal: ctl.signal },
+        {},
+        5000,
+        tuneAbort.signal,
       )
-      window.clearTimeout(timer)
       if (!res.ok) continue
       const found = (await res.json()) as Array<{
         name?: string; url_resolved?: string; codec?: string; bitrate?: number
@@ -756,10 +786,16 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
         tryPlayLiveRadio()
       }
       return liveStation.name
-    } catch { /* aborted or network error — try the next mirror */ }
+    } catch {
+      if (tuneAbort.signal.aborted) return null
+      // Network error — try the next mirror.
+    }
   }
   }
   return null
+  } finally {
+    if (liveTuneAbort === tuneAbort) liveTuneAbort = null
+  }
 }
 
 export function startMapRadio(): boolean {
@@ -786,12 +822,27 @@ export function startMapRadio(): boolean {
 
 export function stopMapRadio() {
   soundWanted = false
+  liveTuneGeneration += 1
+  liveTuneAbort?.abort()
+  liveTuneAbort = null
+  if (retuneTimer !== null) { window.clearTimeout(retuneTimer); retuneTimer = null }
+  retuneDelayMs = 6000
   publishRadioState('off')
   releaseAudioFocus('radio')
   targetRadioLevel = RADIO_IDLE_LEVEL
   stopFallbackRadio()
+  if (fallbackAudio) {
+    fallbackAudio.removeAttribute('src')
+    fallbackAudio.load()
+    fallbackAudio = null
+  }
   if (liveFadeTimer !== null) { window.clearInterval(liveFadeTimer); liveFadeTimer = null }
-  if (liveAudio) liveAudio.pause()
+  if (liveStalledTimer !== null) { window.clearTimeout(liveStalledTimer); liveStalledTimer = null }
+  if (liveAudio) {
+    liveAudio.pause()
+    liveAudio.removeAttribute('src')
+    liveAudio.load()
+  }
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.cancel()
   }
@@ -911,18 +962,17 @@ const SOUNDCLOUD_PLAYLISTS = [
   { key: 'metal', name: 'Buzzing Metal', genre: 'Metal', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-metal' },
 ] as const
 
-async function listSoundCloudStations(): Promise<LocalStation[]> {
+async function listSoundCloudStations(signal?: AbortSignal): Promise<LocalStation[]> {
   const stations = await Promise.all(SOUNDCLOUD_PLAYLISTS.map(async playlist => {
     let logo: string | null = null
     let name: string = playlist.name
     try {
-      const ctl = new AbortController()
-      const timer = window.setTimeout(() => ctl.abort(), 5000)
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `https://soundcloud.com/oembed?format=json&url=${encodeURIComponent(playlist.url)}`,
-        { signal: ctl.signal, cache: 'force-cache' },
+        { cache: 'force-cache' },
+        5000,
+        signal,
       )
-      window.clearTimeout(timer)
       if (response.ok) {
         const metadata = await response.json() as { title?: string; thumbnail_url?: string }
         name = metadata.title?.replace(/\s+by\s+New!$/i, '') || name
@@ -945,23 +995,29 @@ async function listSoundCloudStations(): Promise<LocalStation[]> {
 }
 
 /** Every station whose signal reaches where you are, nearest first. */
-export async function listLocalStations(lat: number, lng: number, radiusM = 120_000): Promise<LocalStation[]> {
+export async function listLocalStations(
+  lat: number,
+  lng: number,
+  radiusM = 120_000,
+  signal?: AbortSignal,
+): Promise<LocalStation[]> {
   if (typeof window === 'undefined') return []
+  if (signal?.aborted) return []
   const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
-  const soundCloudPromise = listSoundCloudStations()
+  const soundCloudPromise = listSoundCloudStations(signal)
   const radii = [...new Set([radiusM, 300_000, 900_000, 1_500_000])]
   let radioStations: LocalStation[] = []
   for (const radius of radii) {
   for (const host of hosts) {
+    if (signal?.aborted) return []
     try {
-      const ctl = new AbortController()
-      const timer = window.setTimeout(() => ctl.abort(), 6000)
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=${radius}`
         + '&hidebroken=true&order=clickcount&reverse=true&limit=60',
-        { signal: ctl.signal },
+        {},
+        6000,
+        signal,
       )
-      window.clearTimeout(timer)
       if (!res.ok) continue
       const found = (await res.json()) as Array<{
         stationuuid?: string; name?: string; url_resolved?: string; codec?: string
@@ -993,11 +1049,15 @@ export async function listLocalStations(lat: number, lng: number, radiusM = 120_
         }))
         .sort((a, b) => a.distanceKm - b.distanceKm)
       if (radioStations.length) break
-    } catch { /* mirror down — try the next */ }
+    } catch {
+      if (signal?.aborted) return []
+      // Mirror down — try the next.
+    }
   }
   if (radioStations.length) break
   }
   const soundCloud = await soundCloudPromise
+  if (signal?.aborted) return []
   if (!radioStations.length) return soundCloud
   // SoundCloud discoveries interrupt the geographic dial instead of living in
   // a separate app. Local signals remain the majority and the first result.

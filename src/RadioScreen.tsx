@@ -156,8 +156,9 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     let alive = true
+    const controller = new AbortController()
     const load = (lat: number, lng: number) => {
-      listLocalStations(lat, lng)
+      listLocalStations(lat, lng, 120_000, controller.signal)
         .then(found => {
           if (!alive) return
           setStations(found)
@@ -172,7 +173,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
         { timeout: 4000, maximumAge: 600_000 },
       )
     } else load(HOME[1], HOME[0])
-    return () => { alive = false }
+    return () => { alive = false; controller.abort() }
   }, [])
 
   // The deck owns the airwaves. The map runs its own station inside an iframe
@@ -181,14 +182,31 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
   // own tour callback resuming mid-song, can never leave two radios playing.
   // The deck's own station lives in THIS document and is untouched by this.
   useEffect(() => {
-    const hush = () => {
-      document.querySelectorAll('iframe').forEach(f => {
-        try { (f as HTMLIFrameElement).contentWindow?.postMessage({ gcAudio: 'off' }, '*') } catch { /* cross-origin */ }
-      })
+    const hushFrame = (frame: HTMLIFrameElement) => {
+      try { frame.contentWindow?.postMessage({ gcAudio: 'off' }, '*') } catch { /* cross-origin */ }
     }
+    const hush = () => document.querySelectorAll('iframe').forEach(frame => hushFrame(frame as HTMLIFrameElement))
     hush()
-    const t = window.setInterval(hush, 1500)
-    return () => window.clearInterval(t)
+    // New/reloaded frames are the only moments that need another handoff.
+    // Polling every 1.5s kept waking an otherwise idle radio screen forever.
+    const observer = new MutationObserver(records => {
+      for (const record of records) {
+        if (record.type === 'attributes' && record.target instanceof HTMLIFrameElement) {
+          hushFrame(record.target)
+        }
+        record.addedNodes.forEach(node => {
+          if (!(node instanceof Element)) return
+          if (node instanceof HTMLIFrameElement) hushFrame(node)
+          node.querySelectorAll('iframe').forEach(frame => hushFrame(frame as HTMLIFrameElement))
+        })
+      }
+    })
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] })
+    window.addEventListener('pageshow', hush)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('pageshow', hush)
+    }
   }, [])
 
   // Closing the deck takes it off the air — unless Settings says the radio may
@@ -520,7 +538,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
           <div className={styles.barName}>{tuned?.name ?? 'Nothing tuned'}</div>
           <div className={styles.barTag}>{tuned ? (tuned.source === 'soundcloud' ? `${tuned.genre} · SoundCloud` : `${tuned.genre} · ${tuned.distanceKm} km away`) : 'Pick a station'}</div>
         </div>
-        <div className={styles.barWave} aria-hidden="true">
+        <div className={tuned ? `${styles.barWave} ${styles.barWaveOn}` : styles.barWave} aria-hidden="true">
           {Array.from({ length: 34 }, (_, i) => (
             <i key={i} style={{ animationDelay: `${(i % 9) * 0.09}s`, opacity: tuned ? 1 : 0.22 }} />
           ))}

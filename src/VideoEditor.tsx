@@ -177,6 +177,7 @@ export default function VideoEditor({
   const metadataReady = useRef(false)
   const mounted = useRef(true)
   const bakeRunRef = useRef<BakeRun | null>(null)
+  const dragCleanupRef = useRef<(() => void) | null>(null)
 
   const track: Track | null = trackId ? TRACKS.find(t => t.id === trackId) ?? null : null
 
@@ -509,6 +510,7 @@ export default function VideoEditor({
     }, MAX_INITIAL_METADATA_MS)
     return () => {
       mounted.current = false
+      dragCleanupRef.current?.()
       metadataReady.current = false
       clearInitialMetadataLease()
       if (playbackLease.current != null) window.clearTimeout(playbackLease.current)
@@ -536,6 +538,7 @@ export default function VideoEditor({
   const dragHandle = (which: 'start' | 'end' | 'playhead') => (event: React.PointerEvent) => {
     event.preventDefault()
     event.stopPropagation()
+    dragCleanupRef.current?.()
     const target = event.currentTarget as HTMLElement
     target.setPointerCapture(event.pointerId)
     const move = (e: PointerEvent) => {
@@ -554,18 +557,28 @@ export default function VideoEditor({
         seekPreview(clamped)
       }
     }
-    const up = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      window.removeEventListener('blur', up)
+      if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null
+    }
+    const up = () => {
+      cleanup()
       playPop()
     }
+    dragCleanupRef.current = cleanup
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    window.addEventListener('blur', up)
   }
 
   const dragSelection = (event: React.PointerEvent) => {
     event.preventDefault()
     event.stopPropagation()
+    dragCleanupRef.current?.()
     if (!duration) return
     const rail = stripRef.current
     if (!rail) return
@@ -585,14 +598,23 @@ export default function VideoEditor({
       setTrimEnd(selectedStart + span)
       setPlayhead(selectedStart)
     }
-    const up = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      window.removeEventListener('blur', up)
+      if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null
+    }
+    const up = () => {
+      cleanup()
       seekPreview(selectedStart)
       playPop()
     }
+    dragCleanupRef.current = cleanup
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    window.addEventListener('blur', up)
   }
 
   // ── the bake ──────────────────────────────────────────────────────────────

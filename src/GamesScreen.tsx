@@ -3,6 +3,7 @@ import { ModelViewerElement } from '@google/model-viewer'
 import styles from './GamesScreen.module.css'
 import PoplurgatchiPlayable from './PoplurgatchiPlayable'
 import { playPop } from './pop'
+import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 
 // The optimized PoplurStation GLBs use EXT_meshopt_compression. model-viewer
 // owns a separate loader from CubeTab3D, so it needs its own local decoder
@@ -157,6 +158,8 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   const [frameReady, setFrameReady] = useState(false)
   const [fpsState, setFpsState] = useState<FpsState>('loading')
   const [controllerReady, setControllerReady] = useState(false)
+  const [fpsFrameRequested, setFpsFrameRequested] = useState(false)
+  const [fpsFrameLive, setFpsFrameLive] = useState(false)
   const bootTimer = useRef<number | null>(null)
   const bootCeiling = useRef<number | null>(null)
   const gameFrameRef = useRef<HTMLIFrameElement>(null)
@@ -172,6 +175,11 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     setBootElapsed(false)
     setFpsState('loading')
     setControllerReady(false)
+    const allowFpsFrame = g.id === 'fps'
+      && PoplurPerformanceManager.snapshot.isForeground
+      && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed
+    setFpsFrameRequested(g.id === 'fps')
+    setFpsFrameLive(allowFpsFrame)
     // Embedded games report readiness from iframe.onLoad. Poplurgatchi is a
     // local React game, so it is ready as soon as this render mounts it; making
     // it wait for an iframe event it can never emit kept the boot card up until
@@ -208,6 +216,8 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     setFrameReady(false)
     setFpsState('loading')
     setControllerReady(false)
+    setFpsFrameRequested(false)
+    setFpsFrameLive(false)
     if (bootTimer.current) { window.clearTimeout(bootTimer.current); bootTimer.current = null }
     if (bootCeiling.current) { window.clearTimeout(bootCeiling.current); bootCeiling.current = null }
   }
@@ -264,6 +274,36 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('message', onMessage)
   }, [running?.id])
 
+  // The bundled FPS owns an unconditional rAF plus a deliberate 10fps hidden
+  // interval. Its code runs inside the iframe, so pausing the parent visually
+  // cannot stop it; the only reliable ownership boundary is retiring the
+  // iframe. Recreate it only while the user is still on this running game and
+  // the shared performance policy says video-backed work may run.
+  useEffect(() => {
+    if (running?.id !== 'fps' || !fpsFrameRequested) {
+      setFpsFrameLive(false)
+      return
+    }
+    const sync = (snapshot: PoplurPerformanceSnapshot) => {
+      const live = snapshot.isForeground && snapshot.expensiveVideoBackedTexturesAllowed
+      setFpsFrameLive(live)
+      if (!live) {
+        setControllerReady(false)
+        setFpsState('loading')
+      }
+    }
+    const stopPolicy = PoplurPerformanceManager.subscribe(sync)
+    const retire = () => setFpsFrameLive(false)
+    const onVisibility = () => { if (document.hidden) retire() }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', retire)
+    return () => {
+      stopPolicy()
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', retire)
+    }
+  }, [fpsFrameRequested, running?.id])
+
   useEffect(() => () => {
     if (bootTimer.current) window.clearTimeout(bootTimer.current)
     if (bootCeiling.current) window.clearTimeout(bootCeiling.current)
@@ -303,7 +343,7 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
       <div className={`${styles.stage} ${running.id === 'fps' ? styles.fpsStage : ''}`} style={{ ['--accent' as string]: running.color }}>
         {running.id === 'poplurgatchi' ? (
           <PoplurgatchiPlayable />
-        ) : running.web ? (
+        ) : running.web && fpsFrameLive ? (
           <iframe
             ref={gameFrameRef}
             className={`${styles.gameFrame} ${running.id === 'fps' ? styles.fpsFrame : ''}`}

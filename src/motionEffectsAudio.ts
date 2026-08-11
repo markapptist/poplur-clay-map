@@ -38,6 +38,8 @@ type MotionEngine = {
 let ctx: AudioContext | null = null
 let engine: MotionEngine | null = null
 let idleTimer: number | null = null
+let idleDeadline = 0
+let idleSerial = 0
 let lastCounterTick = 0
 let lastMotionUpdate = 0
 
@@ -50,6 +52,8 @@ const ONE_SHOT_IDLE_MS = 900
 function cancelIdle() {
   if (idleTimer !== null && typeof window !== 'undefined') window.clearTimeout(idleTimer)
   idleTimer = null
+  idleDeadline = 0
+  idleSerial += 1
 }
 
 /** Stop and release the turn bed. Safe to call when there is no bed. */
@@ -67,16 +71,22 @@ function stopEngine() {
 }
 
 /** Nothing is meant to be sounding: drop the bed and park the audio clock. */
-function goIdle() {
+function goIdle(serial = idleSerial) {
+  if (serial !== idleSerial) return
+  if (idleDeadline > 0 && performance.now() < idleDeadline) return
   idleTimer = null
+  idleDeadline = 0
   stopEngine()
   if (ctx && ctx.state === 'running') void ctx.suspend().catch(() => {})
 }
 
-function armIdle(delayMs: number) {
-  if (typeof window === 'undefined') return
+function armIdle(delayMs: number): number {
+  if (typeof window === 'undefined') return idleSerial
   cancelIdle()
-  idleTimer = window.setTimeout(goIdle, delayMs)
+  const serial = idleSerial
+  idleDeadline = performance.now() + delayMs
+  idleTimer = window.setTimeout(() => goIdle(serial), delayMs)
+  return serial
 }
 
 /** The one context these effects share. Created on demand, never closed. */
@@ -98,8 +108,13 @@ function wakeContext(idleMs: number): AudioContext | null {
   const c = audioContext()
   if (!c) return null
   cancelIdle()
-  if (c.state === 'suspended') void c.resume().catch(() => {})
-  armIdle(idleMs)
+  const serial = armIdle(idleMs)
+  if (c.state === 'suspended') {
+    // Under CPU contention WebKit/Chrome can resolve resume() after the idle
+    // timeout has already fired. Re-check the same lease when it resolves so
+    // a late resume cannot resurrect an otherwise parked audio thread.
+    void c.resume().then(() => goIdle(serial)).catch(() => {})
+  }
   return c
 }
 

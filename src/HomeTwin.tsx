@@ -33,6 +33,7 @@ import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
 import { onFoodSuggestionVisibilityChange } from './popups'
 import {
   RADIUS_CHANGE_EVENT,
+  nextRadiusInactivityAt,
   radiusKm,
   reconcileRadiusInactivity,
   registerOwnedPost,
@@ -778,16 +779,32 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [unitMi, setUnitMi] = useState(shouldUseMiles)
   const [earnedRadiusKm, setEarnedRadiusKm] = useState(radiusKm)
   useEffect(() => {
+    let timer = 0
+    let syncing = false
+    let syncAgain = false
+    const scheduleDeadline = () => {
+      window.clearTimeout(timer)
+      timer = 0
+      const deadline = nextRadiusInactivityAt()
+      if (deadline == null) return
+      timer = window.setTimeout(sync, Math.max(25, deadline - Date.now() + 25))
+    }
     const sync = () => {
+      if (syncing) { syncAgain = true; return }
+      syncing = true
       reconcileRadiusInactivity()
       setEarnedRadiusKm(radiusKm())
+      syncing = false
+      scheduleDeadline()
+      // reconcile publishes after applying a due penalty. Consume that one
+      // synchronous event after storage is stable rather than recursing into it.
+      if (syncAgain) { syncAgain = false; sync() }
     }
     sync()
     window.addEventListener(RADIUS_CHANGE_EVENT, sync)
-    const timer = window.setInterval(sync, 60_000)
     return () => {
       window.removeEventListener(RADIUS_CHANGE_EVENT, sync)
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
     }
   }, [])
   // Right slot alternates between local radius and the potential audience it

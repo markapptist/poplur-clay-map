@@ -30,7 +30,7 @@
 // quality ladder has dropped ambient decoration.
 
 import { POIS } from './data'
-import { ambientAllowed } from './frameGovernor'
+import { ambientAllowed, onTick } from './frameGovernor'
 import { showPopup, clearPopups } from './popups'
 import { recordEngagement } from './engagementLog'
 
@@ -176,33 +176,34 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
   // behind it has nowhere for the camera to go, and "somewhere plausible" is
   // the whole point of the demo. No invented coordinates: the live wire will
   // carry the real post's own.
-  let demoTimer = 0
-  const scheduleDemo = () => {
-    if (stopped) return
-    demoTimer = window.setTimeout(() => {
-      if (document.visibilityState === 'visible' && ambientAllowed()) {
-        const roll = Math.random()
-        const poi = POIS[Math.floor(Math.random() * POIS.length)]
-        show({
-          user: CAST[Math.floor(Math.random() * CAST.length)],
-          // 45 / 35 / 20. Likes still lead, as they would in life, but comments
-          // at the old 10% were rare enough that the surface read as likes-only
-          // — which is exactly how it was reported.
-          kind: roll < 0.45 ? 'like' : roll < 0.8 ? 'view' : 'comment',
-          coords: poi.coords,
-          radiusKm: poi.radiusKm,
-          place: poi.name,
-        })
-      }
-      scheduleDemo()
-    }, 6_000 + Math.random() * 8_000)
-  }
-  // Only one document generates; the shell passes demo: false and relays.
-  if (options.demo !== false) scheduleDemo()
+  // Use the governed clock rather than a self-rescheduling timeout. Once the
+  // map's 15-second activity lease closes this subscriber creates no timer/rAF
+  // wakeups at all; a real touch resumes the believable 6–14s cadence. The real
+  // engagement wire above remains event-driven and available while parked.
+  let nextDemoAt = performance.now() + 6_000 + Math.random() * 8_000
+  const stopDemoTick = options.demo === false
+    ? null
+    : onTick((_dtMs, now) => {
+      if (now < nextDemoAt) return
+      nextDemoAt = now + 6_000 + Math.random() * 8_000
+      if (document.visibilityState !== 'visible' || !ambientAllowed()) return
+      const roll = Math.random()
+      const poi = POIS[Math.floor(Math.random() * POIS.length)]
+      show({
+        user: CAST[Math.floor(Math.random() * CAST.length)],
+        // 45 / 35 / 20. Likes still lead, as they would in life, but comments
+        // at the old 10% were rare enough that the surface read as likes-only
+        // — which is exactly how it was reported.
+        kind: roll < 0.45 ? 'like' : roll < 0.8 ? 'view' : 'comment',
+        coords: poi.coords,
+        radiusKm: poi.radiusKm,
+        place: poi.name,
+      })
+    }, 1_000)
 
   return () => {
     stopped = true
-    window.clearTimeout(demoTimer)
+    stopDemoTick?.()
     window.removeEventListener('poplur-engagement', onEvent)
     window.removeEventListener('message', onMessage)
     clearPopups('engagement')
