@@ -32,7 +32,7 @@ function phoneModelData(): Promise<ArrayBuffer> {
   return phoneModel
 }
 
-function disposeScene(scene: THREE.Scene): void {
+function disposeScene(scene: THREE.Object3D): void {
   scene.traverse(object => {
     const mesh = object as THREE.Mesh
     mesh.geometry?.dispose()
@@ -135,23 +135,24 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
     camera.position.set(0, 0, 5.1)
     camera.lookAt(0, 0, 0)
 
-    const resize = () => {
-      const rect = stage.getBoundingClientRect()
-      if (!rect.width || !rect.height) return
-      renderer.setSize(rect.width, rect.height, false)
-      camera.aspect = rect.width / rect.height
-      camera.updateProjectionMatrix()
-    }
-    resize()
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null
-    observer?.observe(stage)
-
     let disposed = false
     let modelReady = false
     let rendererActive = false
     const renderOnce = () => {
       if (!disposed && modelReady && rendererActive) renderer.render(scene, camera)
     }
+    const resize = () => {
+      const rect = stage.getBoundingClientRect()
+      if (!rect.width || !rect.height) return
+      renderer.setSize(rect.width, rect.height, false)
+      camera.aspect = rect.width / rect.height
+      camera.updateProjectionMatrix()
+      renderOnce()
+    }
+    resize()
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null
+    observer?.observe(stage)
+
     const performanceRenderer = PoplurPerformanceManager.registerRenderer({
       id: 'ClayPhonePop',
       heavy: false,
@@ -163,7 +164,6 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
           androidShell ? 1.25 : policy.maximumPixelRatio,
         ))
         resize()
-        renderOnce()
       },
       releaseInactiveResources: () => renderer.clear(true, true, true),
     })
@@ -173,8 +173,11 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
     loader.setDRACOLoader(draco)
     try {
       loader.parse(data.slice(0), '', gltf => {
-        if (disposed) return
         const model = gltf.scene
+        // Draco/GLTF parsing can finish after the handoff closed. The decoded
+        // scene is not attached in that case, so the normal effect cleanup
+        // cannot see it; dispose it here instead of leaking its GPU resources.
+        if (disposed) { disposeScene(model); return }
         const bounds = new THREE.Box3().setFromObject(model)
         const center = bounds.getCenter(new THREE.Vector3())
         const size = bounds.getSize(new THREE.Vector3())

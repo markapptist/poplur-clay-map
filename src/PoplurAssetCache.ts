@@ -29,6 +29,31 @@ const DEFAULT_LIMITS: PoplurAssetCacheLimits = {
   },
 }
 
+function boundedInteger(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
+}
+
+function mergeLimits(
+  base: PoplurAssetCacheLimits,
+  updates: Partial<PoplurAssetCacheLimits>,
+): PoplurAssetCacheLimits {
+  const maxEntriesByKind = { ...base.maxEntriesByKind }
+  if (updates.maxEntriesByKind) {
+    for (const kind of Object.keys(maxEntriesByKind) as PoplurAssetKind[]) {
+      maxEntriesByKind[kind] = boundedInteger(
+        updates.maxEntriesByKind[kind],
+        maxEntriesByKind[kind],
+      )
+    }
+  }
+  return {
+    maxBytes: boundedInteger(updates.maxBytes, base.maxBytes),
+    maxEntries: boundedInteger(updates.maxEntries, base.maxEntries),
+    maxEntriesByKind,
+  }
+}
+
 /** Strict byte + item bounded LRU for inactive application-owned resources.
  * This deliberately does not claim to cap total process RAM, which also
  * includes WebKit, Mapbox, JS, video decoders, and driver allocations. */
@@ -39,19 +64,11 @@ export class PoplurAssetCache {
   private clock = 0
 
   constructor(limits: Partial<PoplurAssetCacheLimits> = {}) {
-    this.limits = {
-      ...DEFAULT_LIMITS,
-      ...limits,
-      maxEntriesByKind: { ...DEFAULT_LIMITS.maxEntriesByKind, ...limits.maxEntriesByKind },
-    }
+    this.limits = mergeLimits(DEFAULT_LIMITS, limits)
   }
 
   configure(limits: Partial<PoplurAssetCacheLimits>) {
-    this.limits = {
-      ...this.limits,
-      ...limits,
-      maxEntriesByKind: { ...this.limits.maxEntriesByKind, ...limits.maxEntriesByKind },
-    }
+    this.limits = mergeLimits(this.limits, limits)
     this.enforce()
   }
 
@@ -67,8 +84,12 @@ export class PoplurAssetCache {
     estimatedBytes: number
     dispose?: (value: T) => void
   }): boolean {
-    const estimatedBytes = Math.max(0, Math.floor(options.estimatedBytes))
     this.delete(key)
+    if (!Number.isFinite(options.estimatedBytes) || options.estimatedBytes < 0) {
+      options.dispose?.(value)
+      return false
+    }
+    const estimatedBytes = Math.floor(options.estimatedBytes)
     if (
       estimatedBytes > this.limits.maxBytes
       || this.limits.maxEntries <= 0
@@ -109,7 +130,10 @@ export class PoplurAssetCache {
   }
 
   trimToFraction(fraction: number, reason = 'pressure'): number {
-    const target = Math.max(0, Math.floor(this.limits.maxBytes * Math.min(1, fraction)))
+    const boundedFraction = Number.isFinite(fraction)
+      ? Math.max(0, Math.min(1, fraction))
+      : 0
+    const target = Math.floor(this.limits.maxBytes * boundedFraction)
     const before = this.bytes
     while (this.bytes > target && this.entries.size > 0) {
       const candidate = this.oldest()
@@ -167,4 +191,3 @@ export class PoplurAssetCache {
 }
 
 export const poplurAssetCache = new PoplurAssetCache()
-

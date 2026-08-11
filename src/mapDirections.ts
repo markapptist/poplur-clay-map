@@ -9,6 +9,7 @@
 
 import type mapboxgl from 'mapbox-gl'
 import { onFrame } from './frameGovernor'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 export type DirProfile = 'driving' | 'walking' | 'cycling'
 
@@ -242,6 +243,7 @@ export function playNavigation(map: mapboxgl.Map, route: Route, opts: NavOptions
   let stopFrames: (() => void) | null = null
   let stopped = false
   let lastStepIdx = -1
+  let lastFrameAt = 0
 
   // Precompute cumulative distance of each maneuver so we can announce turns.
   const stepDist = route.steps.map(s => {
@@ -257,6 +259,9 @@ export function playNavigation(map: mapboxgl.Map, route: Route, opts: NavOptions
 
   const frame = (now: number) => {
     if (stopped) return
+    const targetPeriod = 1000 / PoplurPerformanceManager.policy.targetFPS
+    if (lastFrameAt && now - lastFrameAt < targetPeriod - 1) return
+    lastFrameAt = now
     const t = Math.min(1, (now - start) / duration)
     const d = t * total
     const { pos, heading } = sampleAt(pts, d)

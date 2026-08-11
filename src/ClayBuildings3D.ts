@@ -94,16 +94,53 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
   let lastPopFrameAt = 0
   let stopPopFrames: (() => void) | null = null
 
+  function applyMaterialPolicy(material: THREE.MeshPhysicalMaterial) {
+    material.clearcoat = policy.postProcessingAllowed ? 0.3 : 0.12
+    material.sheen = policy.postProcessingAllowed ? 0.35 : 0
+    material.needsUpdate = true
+  }
+
+  function applyEnvironmentPolicy() {
+    if (!renderer) return
+    if (!policy.postProcessingAllowed) {
+      scene.environment = null
+      environmentTexture?.dispose()
+      environmentTexture = null
+      return
+    }
+    if (!environmentTexture) {
+      const pmrem = new THREE.PMREMGenerator(renderer)
+      const room = new RoomEnvironment()
+      environmentTexture = pmrem.fromScene(room, 0.04).texture
+      room.dispose()
+      pmrem.dispose()
+    }
+    scene.environment = environmentTexture
+  }
+
+  function releaseShadowTarget() {
+    const target = sun?.shadow.map
+    if (!target) return
+    target.dispose()
+    sun!.shadow.map = null
+  }
+
   const stopPolicy = PoplurPerformanceManager.subscribe(snapshot => {
     policy = snapshot
-    if (renderer) renderer.shadowMap.enabled = policy.dynamicShadowsAllowed
-    if (sun) sun.castShadow = policy.dynamicShadowsAllowed
-    for (const material of materials) {
-      material.clearcoat = policy.postProcessingAllowed ? 0.3 : 0.12
-      material.sheen = policy.postProcessingAllowed ? 0.35 : 0
-      material.needsUpdate = true
+    if (renderer) {
+      renderer.shadowMap.enabled = policy.dynamicShadowsAllowed
+      if (!policy.dynamicShadowsAllowed) releaseShadowTarget()
     }
-    scene.environment = policy.postProcessingAllowed ? environmentTexture : null
+    if (sun) {
+      sun.castShadow = policy.dynamicShadowsAllowed
+      if (policy.dynamicShadowsAllowed) {
+        const shadowSize = Math.min(2048, policy.maximumPreferredTextureResolution)
+        sun.shadow.mapSize.set(shadowSize, shadowSize)
+      }
+    }
+    materials.forEach(applyMaterialPolicy)
+    if (photoMaterial) applyMaterialPolicy(photoMaterial)
+    applyEnvironmentPolicy()
     if (!policy.decorativeRenderingAllowed) finishAllPops()
     if (renderer && !disposed) map.triggerRepaint()
   })
@@ -124,10 +161,7 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
 
     // Studio-style environment gives the clearcoat something real to reflect —
     // this is most of what makes the clay read as glossy-photographed.
-    const pmrem = new THREE.PMREMGenerator(renderer)
-    environmentTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
-    pmrem.dispose()
-    scene.environment = policy.postProcessingAllowed ? environmentTexture : null
+    applyEnvironmentPolicy()
 
     // Match the map's sun: warm key from the south-west, high enough for
     // crisp short shadows.
@@ -164,9 +198,9 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
       // Blotchy micro-variation in the gloss — real clay is polished unevenly.
       roughnessMap: bump,
       metalness: 0,
-      clearcoat: 0.3,           // the waxy top-gloss of polymer clay
+      clearcoat: policy.postProcessingAllowed ? 0.3 : 0.12, // the waxy top-gloss of polymer clay
       clearcoatRoughness: 0.34, // slightly tighter highlight so it glints
-      sheen: 0.35,              // soft velvet edge response
+      sheen: policy.postProcessingAllowed ? 0.35 : 0, // soft velvet edge response
       sheenColor: new THREE.Color('#ffe9c9'),
       bumpMap: bump,
       bumpScale: 0.7,
@@ -334,9 +368,9 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
         roughness: 0.6,
         roughnessMap: bumpTex ?? undefined,
         metalness: 0,
-        clearcoat: 0.3,
+        clearcoat: policy.postProcessingAllowed ? 0.3 : 0.12,
         clearcoatRoughness: 0.34,
-        sheen: 0.35,
+        sheen: policy.postProcessingAllowed ? 0.35 : 0,
         sheenColor: new THREE.Color('#ffe9c9'),
         bumpMap: bumpTex ?? undefined,
         bumpScale: 0.7,
@@ -472,6 +506,7 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
       bumpTex = null
       environmentTexture?.dispose()
       environmentTexture = null
+      releaseShadowTarget()
       scene.environment = null
       renderer?.dispose()
       renderer = null

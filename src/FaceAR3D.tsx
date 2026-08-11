@@ -320,11 +320,11 @@ export default function FaceAR3D({ detections, filter }: {
     let targetPeriod = 1000 / initialPolicy.targetFPS
     let stopFrames: (() => void) | null = null
 
-    const resize = () => {
+    const resize = (force = false) => {
       const rect = canvas.getBoundingClientRect()
       const nextWidth = Math.max(1, Math.round(rect.width))
       const nextHeight = Math.max(1, Math.round(rect.height))
-      if (nextWidth === width && nextHeight === height) return
+      if (!force && nextWidth === width && nextHeight === height) return
       width = nextWidth
       height = nextHeight
       renderer.setSize(width, height, false)
@@ -374,7 +374,7 @@ export default function FaceAR3D({ detections, filter }: {
       renderer.render(scene, camera)
     }
 
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => resize()) : null
     observer?.observe(canvas)
     resize()
     const performanceRenderer = PoplurPerformanceManager.registerRenderer({
@@ -386,7 +386,10 @@ export default function FaceAR3D({ detections, filter }: {
         rendererActive = active
         targetPeriod = 1000 / policy.targetFPS
         renderer.setPixelRatio(Math.min(1.25, policy.maximumPixelRatio))
-        resize()
+        // setPixelRatio does not resize Three's drawing buffer by itself. Force
+        // setSize even when the CSS bounds are unchanged so pressure modes
+        // actually release the old high-DPI framebuffer.
+        resize(true)
         if (active && !stopFrames) stopFrames = onFrame(frame, 'ambient')
         else if (!active && stopFrames) { stopFrames(); stopFrames = null }
       },

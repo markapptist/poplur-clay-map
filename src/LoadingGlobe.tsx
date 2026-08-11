@@ -46,9 +46,10 @@ export default function LoadingGlobe(){
     const canvas=document.createElement('canvas')
     canvas.className=styles.mapLoadingGlobeCanvas
     host.appendChild(canvas)
+    const initialPolicy=PoplurPerformanceManager.policy
     let renderer:THREE.WebGLRenderer
-    try{ renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true}) }catch{ canvas.remove(); return }
-    renderer.setPixelRatio(Math.min(devicePixelRatio,2))
+    try{ renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:initialPolicy.mode==='FULL'}) }catch{ canvas.remove(); return }
+    renderer.setPixelRatio(Math.min(devicePixelRatio,initialPolicy.maximumPixelRatio))
     renderer.outputColorSpace=THREE.SRGBColorSpace
     const scene=new THREE.Scene()
     const camera=new THREE.PerspectiveCamera(32,232/478,.01,50)
