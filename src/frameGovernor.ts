@@ -64,6 +64,8 @@ let quality: Quality = 3
 // slow enough for inference to notice. `fair` already means the phone is warm;
 // decorative motion should be gone by then, not after serious throttling.
 let nativeThermalCeiling: Quality = 3
+let powerSavingCeiling: Quality = 3
+let memoryPressureCeiling: Quality = 3
 let boostUntil = 0
 const AMBIENT_IDLE_MS = 15_000
 let ambientAwakeUntil = typeof performance !== 'undefined'
@@ -91,6 +93,10 @@ let pointersDown = 0
 let interactionUntil = 0
 let interactionTimer = 0
 const INTERACTION_TAIL_MS = 1200
+
+function effectiveQualityCeiling(): Quality {
+  return Math.min(nativeThermalCeiling, powerSavingCeiling, memoryPressureCeiling) as Quality
+}
 
 function interacting(): boolean {
   if (pointersDown > 0) return true
@@ -204,7 +210,7 @@ function median(xs: number[]): number {
 }
 
 function setQuality(next: Quality) {
-  const bounded = Math.min(next, nativeThermalCeiling) as Quality
+  const bounded = Math.min(next, effectiveQualityCeiling()) as Quality
   if (bounded === quality) return
   quality = bounded
   intervals.length = 0
@@ -319,8 +325,9 @@ if (typeof document !== 'undefined') {
    * A warm phone earns a shorter leash; a throttling one gets none.
    */
   const ambientLeaseMs = () => {
-    if (nativeThermalCeiling <= 0) return 0       // serious / critical
-    if (nativeThermalCeiling <= 1) return 4_000   // fair
+    const ceiling = effectiveQualityCeiling()
+    if (ceiling <= 0) return 0       // critical thermal / memory pressure
+    if (ceiling <= 1) return 4_000   // fair/serious thermal or power saving
     return AMBIENT_IDLE_MS
   }
   const wakeAmbient = () => {
@@ -392,15 +399,16 @@ if (typeof document !== 'undefined') {
         : ''
     if (!state) return
 
-    const previousCeiling = nativeThermalCeiling
+    const previousCeiling = effectiveQualityCeiling()
     nativeThermalCeiling = state === 'critical' || state === 'serious'
       ? 0
       : state === 'fair'
         ? 1
         : 3
     document.documentElement.dataset.poplurThermal = state
-    if (quality > nativeThermalCeiling) setQuality(nativeThermalCeiling)
-    if (nativeThermalCeiling < 2) {
+    const nextCeiling = effectiveQualityCeiling()
+    if (quality > nextCeiling) setQuality(nextCeiling)
+    if (nextCeiling < 2) {
       sleepAmbient()
     } else if (previousCeiling < 2) {
       // Recover conservatively: native has returned to nominal, but jumping
@@ -489,7 +497,7 @@ export function boostFrames(ms = 400): void {
   // call whose entire purpose is to spend more frames, so a serious thermal
   // state is the last place it should be honoured. Gated here rather than only
   // at the call sites so a future caller cannot reintroduce the same loop.
-  if (nativeThermalCeiling <= 0) return
+  if (effectiveQualityCeiling() <= 0) return
   boostUntil = Math.max(boostUntil, performance.now() + ms)
   // A parked ambient/idle timer may be tens or hundreds of milliseconds from
   // its next beat. A touch deserves an immediate frame, then the normal
@@ -533,6 +541,39 @@ export function setSurfaceFront(front: boolean): void {
 
 export function currentQuality(): Quality {
   return quality
+}
+
+/** Impose or release the OS power-saver ceiling. A power-saving device keeps
+ * interactive UI usable but never spends above LOW_POWER on decoration. */
+export function setPowerSavingMode(enabled: boolean): void {
+  const previous = effectiveQualityCeiling()
+  powerSavingCeiling = enabled ? 1 : 3
+  const next = effectiveQualityCeiling()
+  if (quality > next) setQuality(next)
+  if (next < 2) {
+    setAmbientSleeping(true)
+  } else if (previous < 2 && surfaceFront && !document.hidden) {
+    setQuality(2)
+    setAmbientSleeping(false)
+  }
+  sync()
+}
+
+/** Memory pressure is a rendering ceiling, not a pretend process RAM cap.
+ * Cache/resource owners purge separately; this stops them immediately
+ * rebuilding expensive decoration while the device is asking for relief. */
+export function setMemoryPressure(level: 'normal' | 'warning' | 'critical'): void {
+  const previous = effectiveQualityCeiling()
+  memoryPressureCeiling = level === 'critical' ? 0 : level === 'warning' ? 1 : 3
+  const next = effectiveQualityCeiling()
+  if (quality > next) setQuality(next)
+  if (next < 2) {
+    setAmbientSleeping(true)
+  } else if (previous < 2 && surfaceFront && !document.hidden) {
+    setQuality(2)
+    setAmbientSleeping(false)
+  }
+  sync()
 }
 
 export function onQualityChange(cb: (q: Quality) => void): () => void {

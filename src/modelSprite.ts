@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import PRERENDERED from './spritePrerender.json'
+import { poplurAssetCache } from './PoplurAssetCache'
+import { releaseWebGL } from './threeCleanup'
 
 // Renders a provided clay GLB once to a transparent PNG data-URL so Mapbox
 // markers can wear the real 3D model (globe projection has no custom-layer
@@ -23,20 +25,32 @@ import PRERENDERED from './spritePrerender.json'
 // missing entry warns in dev rather than silently costing 32MB.
 
 let renderer: THREE.WebGLRenderer | null = null
+let rendererReleaseTimer = 0
 const loader = new GLTFLoader()
 // Clay prop GLBs ship Draco-compressed (28-30MB raw → ~530KB); the decoder is
 // bundled at public/draco/ so sprites decode offline in the app shell too.
 const dracoLoader = new DRACOLoader()
 dracoLoader.setDecoderPath('draco/')
 loader.setDRACOLoader(dracoLoader)
-const cache = new Map<string, Promise<string>>()
+const inflightSprites = new Map<string, Promise<string>>()
 // Parsed models, keyed by URL alone. The sprite cache above is keyed by
 // url+view, so four camera angles on one GLB used to mean four downloads and
 // four Draco decodes of the same bytes — cloud.glb was being fetched three
 // times per launch. Parse once, re-use for every view.
-const parsed = new Map<string, Promise<THREE.Object3D>>()
+const parsedInflight = new Map<string, Promise<THREE.Object3D>>()
 
 const manifest = PRERENDERED as Record<string, string>
+const PRODUCTION_SPRITE_SOURCES = new Set([
+  'models/boat.glb',
+  'models/car.glb',
+  'models/plane.glb',
+  'models/poplur_mic.glb',
+  'models/poplur_mixer.glb',
+  'models/poplur_pin.glb',
+  'zoom_airplane.glb',
+  'zoom_buildings.glb',
+  'zoom_globe.glb',
+])
 
 export interface SpriteView {
   /** camera yaw around the model, degrees */
@@ -58,7 +72,19 @@ export function modelSprite(url: string, view: SpriteView = {}): Promise<string>
   const ready = manifest[key]
   if (ready) return Promise.resolve(ready)
 
-  let promise = cache.get(key)
+  // These multi-megabyte GLBs are authoring inputs for the sprite pass, not
+  // runtime assets. Production builds deliberately omit them. Fail closed if
+  // a new view was not baked, rather than silently downloading/decoding up to
+  // 44 MB and opening another WebGL context on a phone. Development keeps the
+  // fallback below so the missing view can be captured and added to manifest.
+  if (import.meta.env.PROD && PRODUCTION_SPRITE_SOURCES.has(url)) {
+    return Promise.reject(new Error(`Missing pre-rendered production sprite: ${key}`))
+  }
+
+  const cached = poplurAssetCache.get<string>(`sprite:${key}`)
+  if (cached) return Promise.resolve(cached)
+
+  let promise = inflightSprites.get(key)
   if (!promise) {
     if (import.meta.env?.DEV) {
       console.warn(
@@ -67,7 +93,17 @@ export function modelSprite(url: string, view: SpriteView = {}): Promise<string>
       )
     }
     promise = render(url, view)
-    cache.set(key, promise)
+      .then(sprite => {
+        // A base64 character represents six bits; this is a conservative
+        // decoded-string estimate, not a claim about process memory.
+        poplurAssetCache.set(`sprite:${key}`, sprite, {
+          kind: 'decoded-image',
+          estimatedBytes: Math.ceil(sprite.length * 1.5),
+        })
+        return sprite
+      })
+      .finally(() => inflightSprites.delete(key))
+    inflightSprites.set(key, promise)
   }
   return promise
 }
@@ -79,14 +115,79 @@ export function recordedSpriteKeys(): string[] {
 const requested = new Set<string>()
 
 function loadModel(url: string): Promise<THREE.Object3D> {
-  let p = parsed.get(url)
+  const key = `model:${url}`
+  const cached = poplurAssetCache.get<THREE.Object3D>(key)
+  if (cached) return Promise.resolve(cached.clone(true))
+
+  let p = parsedInflight.get(url)
   if (!p) {
-    p = loader.loadAsync(url).then(gltf => gltf.scene)
-    parsed.set(url, p)
+    p = loader.loadAsync(url).then(gltf => {
+      const scene = gltf.scene
+      const accepted = poplurAssetCache.set(key, scene, {
+        kind: 'model',
+        estimatedBytes: estimateModelBytes(scene),
+        dispose: disposeModel,
+      })
+      if (!accepted) throw new Error(`Decoded model exceeds Poplur asset budget: ${url}`)
+      return scene
+    }).finally(() => parsedInflight.delete(url))
+    parsedInflight.set(url, p)
   }
   // Each view mutates position/scale while fitting the camera, so hand out a
   // clone — sharing one instance across views produced drifting framing.
   return p.then(scene => scene.clone(true))
+}
+
+function estimateModelBytes(model: THREE.Object3D): number {
+  let bytes = 0
+  const textures = new Set<THREE.Texture>()
+  model.traverse(obj => {
+    const mesh = obj as THREE.Mesh
+    if (mesh.geometry) {
+      for (const attribute of Object.values(mesh.geometry.attributes)) {
+        bytes += attribute.array?.byteLength ?? 0
+      }
+      if (mesh.geometry.index) bytes += mesh.geometry.index.array.byteLength
+    }
+    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []
+    for (const material of materials) {
+      for (const value of Object.values(material)) {
+        if (value && (value as THREE.Texture).isTexture) textures.add(value as THREE.Texture)
+      }
+    }
+  })
+  for (const texture of textures) {
+    const image = texture.image as { width?: number; height?: number } | undefined
+    bytes += Math.max(1, image?.width ?? 1) * Math.max(1, image?.height ?? 1) * 4
+  }
+  return Math.max(1, bytes)
+}
+
+function disposeModel(model: THREE.Object3D) {
+  const textures = new Set<THREE.Texture>()
+  const materials = new Set<THREE.Material>()
+  model.traverse(obj => {
+    const mesh = obj as THREE.Mesh
+    mesh.geometry?.dispose()
+    const owned = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []
+    for (const material of owned) {
+      materials.add(material)
+      for (const value of Object.values(material)) {
+        if (value && (value as THREE.Texture).isTexture) textures.add(value as THREE.Texture)
+      }
+    }
+  })
+  textures.forEach(texture => texture.dispose())
+  materials.forEach(material => material.dispose())
+}
+
+function scheduleRendererRelease() {
+  window.clearTimeout(rendererReleaseTimer)
+  rendererReleaseTimer = window.setTimeout(() => {
+    if (renderer) releaseWebGL(renderer)
+    renderer = null
+    rendererReleaseTimer = 0
+  }, 1_000)
 }
 
 async function render(url: string, view: SpriteView): Promise<string> {
@@ -129,13 +230,9 @@ async function render(url: string, view: SpriteView): Promise<string> {
 
   renderer.render(scene, camera)
   const dataUrl = renderer.domElement.toDataURL('image/png')
-
-  // Free GPU memory from this CLONE's textures/geometry. The cached parse in
-  // `parsed` keeps the original alive for the next view, which is the point.
-  model.traverse(obj => {
-    const mesh = obj as THREE.Mesh
-    if (mesh.geometry) mesh.geometry.dispose()
-  })
+  // Keep one renderer only long enough for sibling angles requested by the
+  // same mount. A runtime fallback must not retain a WebGL context forever.
+  scheduleRendererRelease()
 
   // The pre-render pass collects these; harmless (and tiny) in normal runs.
   const w = window as unknown as { __poplurSpriteCaptures?: Record<string, string> }

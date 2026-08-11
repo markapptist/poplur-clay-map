@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import styles from './HomeTwin.module.css'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // The phone model is fetched while Home is idle, then rendered only for the
 // short cube-to-phone handoff. Keeping the renderer out of the DOM until the
@@ -112,7 +113,10 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
     } catch {
       return
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, androidShell ? 1.25 : 2))
+    renderer.setPixelRatio(Math.min(
+      window.devicePixelRatio,
+      androidShell ? 1.25 : PoplurPerformanceManager.policy.maximumPixelRatio,
+    ))
     renderer.setClearColor(0x000000, 0)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -143,7 +147,26 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
     observer?.observe(stage)
 
     let disposed = false
-    let raf = 0
+    let modelReady = false
+    let rendererActive = false
+    const renderOnce = () => {
+      if (!disposed && modelReady && rendererActive) renderer.render(scene, camera)
+    }
+    const performanceRenderer = PoplurPerformanceManager.registerRenderer({
+      id: 'ClayPhonePop',
+      heavy: false,
+      priority: 80,
+      onActiveChange: (active, policy) => {
+        rendererActive = active
+        renderer.setPixelRatio(Math.min(
+          window.devicePixelRatio,
+          androidShell ? 1.25 : policy.maximumPixelRatio,
+        ))
+        resize()
+        renderOnce()
+      },
+      releaseInactiveResources: () => renderer.clear(true, true, true),
+    })
     const draco = new DRACOLoader()
     draco.setDecoderPath('draco/')
     const loader = new GLTFLoader()
@@ -161,13 +184,10 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
         // viewer. Keep it square-on: this handoff is a shrink-and-pop, never a
         // flip or spin.
         scene.add(model)
-
-        const render = () => {
-          if (disposed) return
-          raf = requestAnimationFrame(render)
-          renderer.render(scene, camera)
-        }
-        render()
+        modelReady = true
+        // This handoff model is visually static. One draw is the complete
+        // result; continuously repainting the identical frame was pure heat.
+        renderOnce()
       }, () => {
         // The PHONE iframe remains usable even if a future model is corrupt.
       })
@@ -175,6 +195,7 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
       // GLTFLoader can throw before its error callback (for example when a
       // compressed model has no decoder). Never let decorative 3D take down
       // the entire Home React tree.
+      performanceRenderer.dispose()
       observer?.disconnect()
       disposeScene(scene)
       draco.dispose()
@@ -184,7 +205,7 @@ export default function ClayPhonePop({ visible }: { visible: boolean }) {
 
     return () => {
       disposed = true
-      cancelAnimationFrame(raf)
+      performanceRenderer.dispose()
       observer?.disconnect()
       disposeScene(scene)
       draco.dispose()

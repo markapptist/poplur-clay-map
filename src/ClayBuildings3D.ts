@@ -10,6 +10,8 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { playPop } from './pop'
+import { onFrame } from './frameGovernor'
+import { PoplurPerformanceManager, type PoplurPerformancePolicy } from './poplurPerformanceManager'
 
 // Warm modelling-clay family — the same batch-variation idea as before, but
 // now as physical materials.
@@ -78,22 +80,42 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
   let materials: THREE.MeshPhysicalMaterial[] = []
   let bumpTex: THREE.Texture | null = null
   let photoMaterial: THREE.MeshPhysicalMaterial | null = null
+  let sun: THREE.DirectionalLight | null = null
+  let environmentTexture: THREE.Texture | null = null
+  let policy: PoplurPerformancePolicy = PoplurPerformanceManager.policy
+  let disposed = false
 
   // Per-building extrude recipes so a single building can be re-built as its
   // own mesh for the pop animation ("Poplur pop" — bulge + sound in sync).
   interface BuildingRecipe { shapes: THREE.Shape[]; depth: number; bevel: number; minHeight: number; bucket: number }
   const recipes = new Map<string | number, BuildingRecipe>()
-  const activePops = new Set<string | number>()
+  const activePops = new Map<string | number, { mesh: THREE.Mesh; started: number }>()
   let lastPopAt = 0
+  let lastPopFrameAt = 0
+  let stopPopFrames: (() => void) | null = null
+
+  const stopPolicy = PoplurPerformanceManager.subscribe(snapshot => {
+    policy = snapshot
+    if (renderer) renderer.shadowMap.enabled = policy.dynamicShadowsAllowed
+    if (sun) sun.castShadow = policy.dynamicShadowsAllowed
+    for (const material of materials) {
+      material.clearcoat = policy.postProcessingAllowed ? 0.3 : 0.12
+      material.sheen = policy.postProcessingAllowed ? 0.35 : 0
+      material.needsUpdate = true
+    }
+    scene.environment = policy.postProcessingAllowed ? environmentTexture : null
+    if (!policy.decorativeRenderingAllowed) finishAllPops()
+    if (renderer && !disposed) map.triggerRepaint()
+  })
 
   function setupSceneOnce(gl: WebGLRenderingContext) {
     renderer = new THREE.WebGLRenderer({
       canvas: map.getCanvas(),
       context: gl,
-      antialias: true,
+      antialias: policy.mode === 'FULL',
     })
     renderer.autoClear = false
-    renderer.shadowMap.enabled = true
+    renderer.shadowMap.enabled = policy.dynamicShadowsAllowed
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
     // Filmic tone-mapping is the "photographed" in photoreal — it rolls the
     // highlights off gently instead of clipping the clay to white.
@@ -103,14 +125,20 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
     // Studio-style environment gives the clearcoat something real to reflect —
     // this is most of what makes the clay read as glossy-photographed.
     const pmrem = new THREE.PMREMGenerator(renderer)
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    environmentTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    pmrem.dispose()
+    scene.environment = policy.postProcessingAllowed ? environmentTexture : null
 
     // Match the map's sun: warm key from the south-west, high enough for
     // crisp short shadows.
-    const sun = new THREE.DirectionalLight(0xffdfa8, 4.2)
+    sun = new THREE.DirectionalLight(0xffdfa8, 4.2)
     sun.position.set(-900, -700, 1100)
-    sun.castShadow = true
-    sun.shadow.mapSize.set(4096, 4096)
+    sun.castShadow = policy.dynamicShadowsAllowed
+    // This decorative city layer previously allocated a 4096² live shadow
+    // target. A 2048² ceiling retains the photographed-clay read at one quarter
+    // of the GPU memory; pressure modes turn the pass off entirely.
+    const shadowSize = Math.min(2048, policy.maximumPreferredTextureResolution)
+    sun.shadow.mapSize.set(shadowSize, shadowSize)
     const cam = sun.shadow.camera as THREE.OrthographicCamera
     cam.left = cam.bottom = -1800
     cam.right = cam.top = 1800
@@ -164,7 +192,7 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
     if (!feats.length) return
     lastBuildCenter = center
     recipes.clear() // recipes hold anchor-relative coords — stale after re-anchor
-    activePops.clear()
+    finishAllPops()
 
     anchorLngLat = center
     anchor = mapboxgl.MercatorCoordinate.fromLngLat(center, 0)
@@ -185,9 +213,10 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
     const buckets: THREE.BufferGeometry[][] = materials.map(() => [])
     const seen = new Set<string | number>()
     let count = 0
+    const buildingLimit = policy.mode === 'FULL' ? 2500 : policy.mode === 'REDUCED' ? 1400 : policy.mode === 'LOW_POWER' ? 700 : 350
 
     for (const f of feats) {
-      if (count >= 2500) break
+      if (count >= buildingLimit) break
       const id = f.id ?? JSON.stringify((f.geometry as GeoJSON.Polygon).coordinates[0]?.[0])
       if (id == null || seen.has(id)) continue
       seen.add(id)
@@ -219,11 +248,11 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
         featureShapes.push(shape)
         const g = new THREE.ExtrudeGeometry(shape, {
           depth,
-          bevelEnabled: true,
+          bevelEnabled: policy.mode !== 'EMERGENCY',
           bevelThickness: bevel,
           bevelSize: bevel * 0.9,
-          bevelSegments: 2,
-          curveSegments: 4,
+          bevelSegments: policy.mode === 'FULL' ? 2 : 1,
+          curveSegments: policy.mode === 'FULL' ? 4 : 2,
         })
         if (minHeight > 0) g.translate(0, 0, minHeight)
         buckets[bucket].push(g)
@@ -285,14 +314,15 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
       anchorLngLat.lng + maxX * degPerMetreLng,
       anchorLngLat.lat + maxY * degPerMetreLat,
     ]
-    const url = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/[${bbox.join(',')}]/1024x1024?access_token=${token}&attribution=false&logo=false`
+    const textureSize = Math.min(1024, policy.maximumPreferredTextureResolution)
+    const url = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/[${bbox.join(',')}]/${textureSize}x${textureSize}?access_token=${token}&attribution=false&logo=false`
 
     const group = buildingsGroup
     new THREE.TextureLoader().load(url, texture => {
       // A newer rebuild may have replaced the group while the image streamed.
       if (group !== buildingsGroup || !renderer) { texture.dispose(); return }
       texture.colorSpace = THREE.SRGBColorSpace
-      texture.anisotropy = 4
+      texture.anisotropy = policy.mode === 'FULL' ? 4 : policy.mode === 'REDUCED' ? 2 : 1
 
       photoMaterial?.map?.dispose()
       photoMaterial?.dispose()
@@ -336,20 +366,21 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
    *  (≥1) so the base never pokes through. Sound fires on the same frame. */
   function popBuilding(id: string | number) {
     const recipe = recipes.get(id)
-    if (!recipe || !buildingsGroup || activePops.has(id)) return
+    const maxActivePops = policy.mode === 'FULL' ? 4 : policy.mode === 'REDUCED' ? 2 : 0
+    if (!policy.decorativeRenderingAllowed || maxActivePops === 0) return
+    if (!recipe || !buildingsGroup || activePops.has(id) || activePops.size >= maxActivePops) return
     const now = performance.now()
     if (now - lastPopAt < 120) return // dragging across town ≠ machine-gun pops
     lastPopAt = now
-    activePops.add(id)
 
     const geoms = recipe.shapes.map(shape => {
       const g = new THREE.ExtrudeGeometry(shape, {
         depth: recipe.depth,
-        bevelEnabled: true,
+        bevelEnabled: policy.mode !== 'EMERGENCY',
         bevelThickness: recipe.bevel,
         bevelSize: recipe.bevel * 0.9,
-        bevelSegments: 2,
-        curveSegments: 4,
+        bevelSegments: policy.mode === 'FULL' ? 2 : 1,
+        curveSegments: policy.mode === 'FULL' ? 4 : 2,
       })
       if (recipe.minHeight > 0) g.translate(0, 0, recipe.minHeight)
       return g
@@ -362,25 +393,33 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
     mesh.receiveShadow = false
     buildingsGroup.add(mesh)
     playPop() // in sync: sound + haptic on the frame the bulge starts
+    activePops.set(id, { mesh, started: performance.now() })
+    if (!stopPopFrames) stopPopFrames = onFrame(updatePops, 'interactive')
+  }
 
-    const started = performance.now()
-    const duration = 750
-    const step = () => {
-      const t = Math.min(1, (performance.now() - started) / duration)
-      // Damped bounce that never dips below 1 — bulge, jiggle, settle.
+  function updatePops(_dtMs: number, now: number) {
+    if (now - lastPopFrameAt < 1000 / policy.targetFPS - 1) return
+    lastPopFrameAt = now
+    for (const [id, animation] of activePops) {
+      const t = Math.min(1, (now - animation.started) / 750)
       const s = 1 + Math.exp(-3.6 * t) * Math.abs(Math.sin(Math.PI * 3 * t)) * 0.45
-      mesh.scale.set(1 + (s - 1) * 0.25, 1 + (s - 1) * 0.25, s)
-      map.triggerRepaint()
-      if (t < 1 && mesh.parent) {
-        requestAnimationFrame(step)
-      } else {
-        mesh.parent?.remove(mesh)
-        mesh.geometry.dispose()
-        activePops.delete(id)
-        map.triggerRepaint()
-      }
+      animation.mesh.scale.set(1 + (s - 1) * 0.25, 1 + (s - 1) * 0.25, s)
+      if (t >= 1 || !animation.mesh.parent) finishPop(id, animation.mesh)
     }
-    requestAnimationFrame(step)
+    map.triggerRepaint()
+    if (activePops.size === 0 && stopPopFrames) { stopPopFrames(); stopPopFrames = null }
+  }
+
+  function finishPop(id: string | number, mesh: THREE.Mesh) {
+    mesh.parent?.remove(mesh)
+    mesh.geometry.dispose()
+    activePops.delete(id)
+  }
+
+  function finishAllPops() {
+    for (const [id, animation] of activePops) finishPop(id, animation.mesh)
+    stopPopFrames?.()
+    stopPopFrames = null
   }
 
   /** Pop whatever building the pointer/finger is over. */
@@ -399,18 +438,44 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
     renderingMode: '3d',
 
     onAdd(m: mapboxgl.Map, gl: WebGLRenderingContext) {
+      disposed = false
       setupSceneOnce(gl)
-      m.on('idle', rebuild)
-      m.on('sourcedata', e => {
-        if ((e as { sourceId?: string }).sourceId === 'clay-streets' && m.isSourceLoaded('clay-streets')) rebuild()
-      })
+      m.on('idle', handleIdle)
+      m.on('sourcedata', handleSourceData)
       // Buildings pop as the pointer (or a dragging finger) passes over them.
-      m.on('mousemove', e => popAtPoint(e.point))
-      m.on('touchmove', e => popAtPoint((e as mapboxgl.MapTouchEvent).point))
+      m.on('mousemove', handleMouseMove)
+      m.on('touchmove', handleTouchMove)
     },
 
     onRemove() {
+      disposed = true
+      map.off('idle', handleIdle)
+      map.off('sourcedata', handleSourceData)
+      map.off('mousemove', handleMouseMove)
+      map.off('touchmove', handleTouchMove)
+      finishAllPops()
+      if (buildingsGroup) {
+        buildingsGroup.traverse(object => {
+          const mesh = object as THREE.Mesh
+          mesh.geometry?.dispose()
+          if (mesh.material instanceof THREE.ShadowMaterial) mesh.material.dispose()
+        })
+        scene.remove(buildingsGroup)
+        buildingsGroup = null
+      }
+      photoMaterial?.map?.dispose()
+      photoMaterial?.dispose()
+      photoMaterial = null
+      materials.forEach(material => material.dispose())
+      materials = []
+      bumpTex?.dispose()
+      bumpTex = null
+      environmentTexture?.dispose()
+      environmentTexture = null
+      scene.environment = null
       renderer?.dispose()
+      renderer = null
+      stopPolicy()
     },
 
     render(_gl: WebGLRenderingContext, matrix: number[]) {
@@ -424,4 +489,11 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
       renderer.render(scene, camera)
     },
   }
+
+  function handleIdle() { rebuild() }
+  function handleSourceData(event: mapboxgl.MapSourceDataEvent) {
+    if ((event as { sourceId?: string }).sourceId === 'clay-streets' && map.isSourceLoaded('clay-streets')) rebuild()
+  }
+  function handleMouseMove(event: mapboxgl.MapMouseEvent) { popAtPoint(event.point) }
+  function handleTouchMove(event: mapboxgl.MapTouchEvent) { popAtPoint(event.point) }
 }

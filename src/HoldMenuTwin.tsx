@@ -14,6 +14,7 @@ import StudioScreen from './StudioScreen'
 import SettingsScreen from './SettingsScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
+import { onFrame } from './frameGovernor'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -496,15 +497,12 @@ export default function HoldMenuTwin({
     applyOffsetDelta(slotDelta)
   }
 
-  // Momentum loop — wheel-of-fortune inertia + snap-to-nearest. Driven by a
-  // 60 fps setInterval (matching the app's Timer, and unlike requestAnimationFrame
-  // it keeps ticking when the embedding WebView is backgrounded).
+  // Momentum loop — wheel-of-fortune inertia + snap-to-nearest. It shares the
+  // capped frame governor and therefore stops with the hidden/background
+  // surface instead of keeping an independent 60 Hz timer alive.
   useEffect(() => {
-    let last = performance.now()
-    const id = window.setInterval(() => {
-      const t = performance.now()
-      const dt = Math.min((t - last) / 1000, 1 / 30)
-      last = t
+    const stop = onFrame((elapsedMs, t) => {
+      const dt = Math.min(elapsedMs / 1000, 1 / 30)
       const count = countRef.current
       if (count <= 1) return
       if (draggingRef.current) return
@@ -536,8 +534,8 @@ export default function HoldMenuTwin({
           applyOffsetDelta(Math.abs(remaining) < 0.001 ? remaining : remaining * 0.22)
         }
       }
-    }, 1000 / 60)
-    return () => window.clearInterval(id)
+    }, 'ambient')
+    return stop
   }, [])
 
   // Pointer drag (finger scrub). Dragging up advances toward the next item.

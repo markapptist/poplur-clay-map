@@ -20,6 +20,8 @@
 // Nothing else in the editor has to change — it only ever asks for an
 // AudioBuffer.
 
+import { poplurAssetCache } from './PoplurAssetCache'
+
 export interface Track {
   id: string
   title: string
@@ -44,8 +46,6 @@ export const TRACKS: Track[] = [
   { id: 'static-pop',  title: 'Static Pop',    artist: 'Poplur Placeholder', bpm: 140, root: -4, mood: 'PUNCHY', duration: 30 },
 ]
 
-const cache = new Map<string, AudioBuffer>()
-
 /**
  * An AudioBuffer for a track. Real tracks will fetch and decode; stand-ins are
  * built here from a bass pulse, a chord pad and a hat on the track's own BPM —
@@ -53,7 +53,8 @@ const cache = new Map<string, AudioBuffer>()
  * offset, which is everything the editor's controls need to be testable.
  */
 export async function loadTrackBuffer(ctx: BaseAudioContext, track: Track): Promise<AudioBuffer> {
-  const hit = cache.get(track.id)
+  const cacheKey = `audio-track:${track.id}:${ctx.sampleRate}`
+  const hit = poplurAssetCache.get<AudioBuffer>(cacheKey)
   if (hit) return hit
 
   const rate = ctx.sampleRate
@@ -96,6 +97,9 @@ export async function loadTrackBuffer(ctx: BaseAudioContext, track: Track): Prom
     }
   }
 
-  cache.set(track.id, buffer)
+  poplurAssetCache.set(cacheKey, buffer, {
+    kind: 'temporary',
+    estimatedBytes: buffer.length * buffer.numberOfChannels * 4,
+  })
   return buffer
 }

@@ -8,6 +8,7 @@
 // the same access token the map is already using — no extra key.
 
 import type mapboxgl from 'mapbox-gl'
+import { onFrame } from './frameGovernor'
 
 export type DirProfile = 'driving' | 'walking' | 'cycling'
 
@@ -238,7 +239,7 @@ export function playNavigation(map: mapboxgl.Map, route: Route, opts: NavOptions
   // ones aren't tedious.
   const duration = (opts.durationS ?? Math.min(45, Math.max(10, (total / 1000) * 3))) * 1000
   const start = performance.now()
-  let raf = 0
+  let stopFrames: (() => void) | null = null
   let stopped = false
   let lastStepIdx = -1
 
@@ -271,17 +272,22 @@ export function playNavigation(map: mapboxgl.Map, route: Route, opts: NavOptions
     }
 
     if (t >= 1) {
+      const stop = stopFrames
+      stopFrames = null
+      stop?.()
       opts.onDone?.()
       return
     }
-    raf = requestAnimationFrame(frame)
   }
-  raf = requestAnimationFrame(frame)
+  // Navigation is interactive, but it still must not inherit a 120 Hz display
+  // rate or keep advancing in a hidden WebView. The shared clock handles both.
+  stopFrames = onFrame((_elapsedMs, now) => frame(now), 'interactive')
 
   return {
     stop: () => {
       stopped = true
-      if (raf) cancelAnimationFrame(raf)
+      stopFrames?.()
+      stopFrames = null
     },
   }
 }

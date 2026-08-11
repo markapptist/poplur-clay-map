@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { Detection } from './mlDetect'
-import { qualityPixelRatio } from './frameGovernor'
+import { onFrame } from './frameGovernor'
+import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { releaseWebGL } from './threeCleanup'
 import styles from './FaceAROverlay.module.css'
 
@@ -274,20 +275,24 @@ export default function FaceAR3D({ detections, filter }: {
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const detectionsRef = useRef(detections)
+  const performanceHandleRef = useRef<PoplurRendererHandle | null>(null)
   detectionsRef.current = detections
+  useEffect(() => {
+    performanceHandleRef.current?.setDemand(detections.some(isFace))
+  }, [detections])
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !hasFaceAR3D(filter)) return
+    const initialPolicy = PoplurPerformanceManager.policy
     const renderer = new THREE.WebGLRenderer({
       canvas,
       alpha: true,
-      antialias: true,
+      antialias: initialPolicy.mode === 'FULL',
       premultipliedAlpha: true,
-      preserveDrawingBuffer: true,
     })
     renderer.setClearColor(0x000000, 0)
-    renderer.setPixelRatio(qualityPixelRatio(1.25))
+    renderer.setPixelRatio(Math.min(1.25, initialPolicy.maximumPixelRatio))
     renderer.outputColorSpace = THREE.SRGBColorSpace
 
     const scene = new THREE.Scene()
@@ -308,10 +313,12 @@ export default function FaceAR3D({ detections, filter }: {
 
     let width = 0
     let height = 0
-    let raf = 0
     let previous = 0
     let disposed = false
     let hadFaces = false
+    let rendererActive = false
+    let targetPeriod = 1000 / initialPolicy.targetFPS
+    let stopFrames: (() => void) | null = null
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
@@ -328,10 +335,9 @@ export default function FaceAR3D({ detections, filter }: {
       camera.updateProjectionMatrix()
     }
 
-    const frame = (now: number) => {
-      if (disposed) return
-      raf = requestAnimationFrame(frame)
-      if (now - previous < 40) return
+    const frame = (_dtMs: number, now: number) => {
+      if (disposed || !rendererActive) return
+      if (now - previous < targetPeriod - 1) return
       previous = now
       resize()
       const faces = detectionsRef.current.filter(isFace).slice(0, accessories.length)
@@ -371,11 +377,34 @@ export default function FaceAR3D({ detections, filter }: {
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null
     observer?.observe(canvas)
     resize()
-    raf = requestAnimationFrame(frame)
+    const performanceRenderer = PoplurPerformanceManager.registerRenderer({
+      id: 'FaceAR3D',
+      heavy: true,
+      priority: 80,
+      demanded: detectionsRef.current.some(isFace),
+      onActiveChange: (active, policy) => {
+        rendererActive = active
+        targetPeriod = 1000 / policy.targetFPS
+        renderer.setPixelRatio(Math.min(1.25, policy.maximumPixelRatio))
+        resize()
+        if (active && !stopFrames) stopFrames = onFrame(frame, 'ambient')
+        else if (!active && stopFrames) { stopFrames(); stopFrames = null }
+      },
+      releaseInactiveResources: () => {
+        accessories.forEach(accessory => { accessory.visible = false })
+        hadFaces = false
+        // Do not leave the last camera accessory frame resident on a hidden
+        // overlay while another heavy renderer owns the GPU lease.
+        renderer.clear(true, true, true)
+      },
+    })
+    performanceHandleRef.current = performanceRenderer
 
     return () => {
       disposed = true
-      cancelAnimationFrame(raf)
+      performanceRenderer.dispose()
+      if (performanceHandleRef.current === performanceRenderer) performanceHandleRef.current = null
+      stopFrames?.()
       observer?.disconnect()
       disposeScene(scene)
       releaseWebGL(renderer)

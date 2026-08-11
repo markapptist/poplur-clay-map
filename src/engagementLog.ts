@@ -16,7 +16,7 @@
 // an unbounded array behind a notifications list is a leak with a UI on it.
 
 import type { EngagementEvent } from './engagement'
-import { playPop } from './pop'
+import { playPopAmbient } from './pop'
 
 export interface LoggedEngagement {
   user: string
@@ -63,7 +63,14 @@ export function listEngagement(): LoggedEngagement[] {
 /** Engagement arrives continuously and can land in bursts, so the pop has a
  *  floor between plays. One pop is the app noticing you; five stacked on top of
  *  each other is a noise. Restoring the log on load does not come through here,
- *  so a returning session stays silent. */
+ *  so a returning session stays silent.
+ *
+ *  AMBIENT, not playPop. Engagement is unprompted — a trickle every 6-14s that
+ *  nobody asked for — and playPop resumes the AudioContext to sound it. Held
+ *  running by a trickle, that context never naps: the thermal gate caught the
+ *  map at `ctx=2[rr]`, two RUNNING contexts against a budget of 1, and refused
+ *  the bundle. playPopAmbient sounds the same and declines to wake anything
+ *  when nobody has touched the screen recently, which is exactly this case. */
 const POP_FLOOR_MS = 300
 let lastPopAt = 0
 
@@ -77,7 +84,7 @@ export function recordEngagement(event: EngagementEvent, at = Date.now()): void 
   const now = Date.now()
   if (now - lastPopAt >= POP_FLOOR_MS) {
     lastPopAt = now
-    playPop()
+    playPopAmbient()
   }
   const snapshot = listEngagement()
   listeners.forEach(fn => fn(snapshot))

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { isNativeShell } from './nativeBridge'
 import { onFrame, ambientAllowed, boostFrames, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
+import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
@@ -925,6 +926,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       || new URLSearchParams(window.location.search).get('front') !== '0',
   )
   const explicitMapFrontRef = useRef(false)
+  const performanceRendererRef = useRef<PoplurRendererHandle | null>(null)
   // Bumped when a new map instance finishes loading, so the marker effect
   // re-runs after StrictMode/HMR tears down and recreates the map.
   const [mapEpoch, setMapEpoch] = useState(0)
@@ -1123,12 +1125,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (event.data?.type === 'poplur-map-front') {
         explicitMapFrontRef.current = true
         mapIsFrontRef.current = event.data.front === true
+        performanceRendererRef.current?.setVisible(mapIsFrontRef.current)
         setSurfaceFront(mapIsFrontRef.current && !document.hidden)
         if (!mapIsFrontRef.current) stopCarAudio()
       } else if (!explicitMapFrontRef.current && typeof event.data?.gcAudio === 'string') {
         // Compatibility with shells that predate poplur-map-front. Audio mute
         // is not visibility once the explicit signal has been observed.
         mapIsFrontRef.current = event.data.gcAudio === 'on'
+        performanceRendererRef.current?.setVisible(mapIsFrontRef.current)
         setSurfaceFront(mapIsFrontRef.current && !document.hidden)
         if (!mapIsFrontRef.current) {
           // The animated car loop otherwise retains the most recent engine
@@ -1151,7 +1155,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     window.addEventListener('poplur-location', onLocation)
     window.addEventListener('poplur-native-location', onLocation)
     window.addEventListener('message', onMessage)
-    const syncFrameSurface = () => setSurfaceFront(mapIsFrontRef.current && !document.hidden)
+    const syncFrameSurface = () => {
+      performanceRendererRef.current?.setVisible(mapIsFrontRef.current && !document.hidden)
+      setSurfaceFront(mapIsFrontRef.current && !document.hidden)
+    }
     document.addEventListener('visibilitychange', syncFrameSurface)
     syncFrameSurface()
     apply((window as typeof window & { __poplurNativeLocation?: unknown }).__poplurNativeLocation)
@@ -1267,8 +1274,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     mapboxgl.accessToken = token
     setMapFailure(null)
 
-    // Live pop animations (building id → rAF handle) so unmount can cancel them
-    const popRafs = new Map<string | number, number>()
+    // Live pop animations (building id → shared-clock unsubscribe) so unmount
+    // cancels them without creating one display-rate rAF loop per building.
+    const popFrameStops = new Map<string | number, () => void>()
     // Every delayed map job is owned by this map instance. A removed iframe
     // must not remain strongly retained for sixteen seconds by late boot,
     // sample-claim, or repaint closures.
@@ -1369,6 +1377,46 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       map.setMaxPitch(0)
     }
     mapRef.current = map
+    const applyMapLightingPolicy = (dynamicShadowsAllowed: boolean, postProcessingAllowed: boolean) => {
+      if (!map.isStyleLoaded()) return
+      try {
+        map.setLights(REALISTIC_MAP ? [
+          { id: 'ambient', type: 'ambient', properties: { color: '#ffffff', intensity: 0.48 } },
+          { id: 'sun', type: 'directional', properties: {
+            color: '#ffffff', intensity: 0.72, direction: [222, 44],
+            'cast-shadows': dynamicShadowsAllowed, 'shadow-intensity': dynamicShadowsAllowed ? 0.45 : 0,
+          } },
+        ] as never : [
+          { id: 'ambient', type: 'ambient', properties: { color: '#d8d2ff', intensity: 0.6 } },
+          { id: 'sun', type: 'directional', properties: {
+            color: '#fff0dd', intensity: 0.8, direction: [215, 38],
+            'cast-shadows': dynamicShadowsAllowed, 'shadow-intensity': dynamicShadowsAllowed ? 0.6 : 0,
+          } },
+        ] as never)
+        if (map.getLayer('clay-buildings-3d')) {
+          map.setPaintProperty(
+            'clay-buildings-3d',
+            'fill-extrusion-ambient-occlusion-intensity',
+            postProcessingAllowed ? (REALISTIC_MAP ? 0.95 : 0.6) : 0,
+          )
+        }
+      } catch { /* style or lighting API not ready */ }
+    }
+    const performanceRenderer = PoplurPerformanceManager.registerRenderer({
+      id: 'ClayMap3D',
+      heavy: true,
+      priority: 50,
+      visible: mapIsFrontRef.current && !document.hidden,
+      onActiveChange: (active, policy) => {
+        setSurfaceFront(active && mapIsFrontRef.current && !document.hidden)
+        if (!active) map.stop()
+        else {
+          applyMapLightingPolicy(policy.dynamicShadowsAllowed, policy.postProcessingAllowed)
+          map.triggerRepaint()
+        }
+      },
+    })
+    performanceRendererRef.current = performanceRenderer
     // Passive device profiler counter: Mapbox only emits this when it actually
     // draws, so the 5s health report can distinguish a parked event-driven map
     // from a canvas that is silently repainting at display rate. No rAF/timer is
@@ -2480,21 +2528,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       // Neutral daylight for the Standard basemap in realistic mode; warmer
       // sculptural light only belongs to the classic clay renderer.
-      try {
-        map.setLights(REALISTIC_MAP ? [
-          { id: 'ambient', type: 'ambient', properties: { color: '#ffffff', intensity: 0.48 } },
-          { id: 'sun', type: 'directional', properties: {
-            color: '#ffffff', intensity: 0.72, direction: [222, 44],
-            'cast-shadows': true, 'shadow-intensity': 0.45,
-          } },
-        ] as never : [
-          { id: 'ambient', type: 'ambient', properties: { color: '#d8d2ff', intensity: 0.6 } },
-          { id: 'sun', type: 'directional', properties: {
-            color: '#fff0dd', intensity: 0.8, direction: [215, 38],
-            'cast-shadows': true, 'shadow-intensity': 0.6,
-          } },
-        ] as never)
-      } catch { /* lights API unsupported */ }
+      applyMapLightingPolicy(
+        PoplurPerformanceManager.policy.dynamicShadowsAllowed,
+        PoplurPerformanceManager.policy.postProcessingAllowed,
+      )
 
       // ── Custom tour path (hand-drawn clay trail between the POIs) ──────────
       map.addSource('clay-routes', { type: 'geojson', data: CLAY_ROUTES })
@@ -2527,15 +2564,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // Damped spring: overshoots to ~1.5×, jiggles, settles back to 1
           const scale = 1 + Math.exp(-4.5 * t) * Math.sin(Math.PI * 3 * t) * 0.85
           try { map.setFeatureState(target, { popScale: Math.max(0.6, scale) }) } catch { /* map gone */ }
-          if (t < 1) {
-            popRafs.set(id, requestAnimationFrame(step))
-          } else {
+          if (t >= 1) {
             try { map.setFeatureState(target, { popScale: 1 }) } catch { /* map gone */ }
-            popRafs.delete(id)
+            popFrameStops.get(id)?.()
+            popFrameStops.delete(id)
             poppingIds.delete(id)
           }
         }
-        popRafs.set(id, requestAnimationFrame(step))
+        popFrameStops.set(id, onFrame((_elapsedMs, now) => step(now), 'ambient'))
       }
 
       const BUILDING_POP_VISUAL_COOLDOWN_MS = 620
@@ -2543,6 +2579,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       let lastBuildingPopAt = 0
       let lastBuildingPopSoundAt = 0
       const triggerPops = () => {
+        const policy = PoplurPerformanceManager.policy
+        if (!policy.decorativeRenderingAllowed || !policy.particlesAllowed) return
         const now = performance.now()
         if (now - lastBuildingPopAt < BUILDING_POP_VISUAL_COOLDOWN_MS) return
         if (Math.random() > 0.45) return
@@ -3164,6 +3202,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const disposeMap = () => {
       if (disposed) return
       disposed = true
+      performanceRenderer.dispose()
+      if (performanceRendererRef.current === performanceRenderer) performanceRendererRef.current = null
       setSurfaceFront(false)
       mapCanvas.removeEventListener('webglcontextlost', handleContextLost)
       window.clearInterval(bootPoll)
@@ -3176,8 +3216,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       stopRendererParking?.()
       stopRendererParking = null
       stopCarAudio()
-      popRafs.forEach(raf => cancelAnimationFrame(raf))
-      popRafs.clear()
+      popFrameStops.forEach(stop => stop())
+      popFrameStops.clear()
       ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef].forEach(ref => {
         ref.current.forEach(mk => mk.remove())
         ref.current = []
