@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './TVGuide.module.css'
 import { CHANNELS } from './FeedTwin'
 import { playPop } from './pop'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // Web twin of FeedTVGuideView.swift — the TV guide as it worked before the clay
 // pass, ported 1:1 rather than reinvented:
@@ -56,6 +57,15 @@ const STOCK_CLIPS = [
   'feed/ad-shopping.mp4', 'feed/ad-cartoon.mp4', 'feed/ad-kids.mp4', 'feed/ad-comedy.mp4',
   'feed/ad-spanish-1.mp4', 'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4',
 ]
+const MAX_PIP_PLAY_MS = 12_000
+
+function releasePipMedia(video: HTMLVideoElement): void {
+  video.pause()
+  video.removeAttribute('src')
+  video.load()
+}
+
+const posterFor = (video: string) => video.replace('feed/', 'feed/posters/').replace('.mp4', '.jpg')
 
 function clipFor(channel: TVGuideChannel): string {
   return channel.videos?.[0] ?? STOCK_CLIPS[channel.number % STOCK_CLIPS.length]
@@ -112,9 +122,49 @@ export default function TVGuide({
     .sort((a, b) => scoreFor(b) - scoreFor(a))
   const [previewId, setPreviewId] = useState(currentChannelId ?? channels[0]?.id)
   const pipVideoRef = useRef<HTMLVideoElement>(null)
+  const pipLeaseRef = useRef<number | null>(null)
+  const [pipPlaying, setPipPlaying] = useState(() =>
+    !document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
   const [muted, setMuted] = useState(isUserMuted)
 
   const preview = channels.find(c => c.id === previewId) ?? channels[0]
+
+  const retirePip = useCallback(() => {
+    if (pipLeaseRef.current != null) window.clearTimeout(pipLeaseRef.current)
+    pipLeaseRef.current = null
+    if (pipVideoRef.current) releasePipMedia(pipVideoRef.current)
+    setPipPlaying(false)
+  }, [])
+
+  useEffect(() => {
+    setPipPlaying(!document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
+  }, [previewId])
+
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
+    if (!snapshot.isForeground || !snapshot.expensiveVideoBackedTexturesAllowed) retirePip()
+  }), [retirePip])
+
+  useEffect(() => {
+    const video = pipVideoRef.current
+    if (!video || !pipPlaying) return
+    if (!video.getAttribute('src')) {
+      video.src = clipFor(preview)
+      video.load()
+    }
+    video.muted = isGateMuted()
+    void video.play().catch(() => retirePip())
+    pipLeaseRef.current = window.setTimeout(retirePip, MAX_PIP_PLAY_MS)
+    const onVisibility = () => { if (document.hidden) retirePip() }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', retirePip)
+    return () => {
+      if (pipLeaseRef.current != null) window.clearTimeout(pipLeaseRef.current)
+      pipLeaseRef.current = null
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', retirePip)
+      releasePipMedia(video)
+    }
+  }, [pipPlaying, previewId, retirePip])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }
@@ -170,27 +220,58 @@ export default function TVGuide({
         } as React.CSSProperties}
       >
         <div className={styles.pipSet}>
-          <button
-            type="button"
+          <div
             className={styles.pipPane}
+            role="button"
+            tabIndex={0}
             aria-label={`Watch ${preview.name} in the feed`}
             onClick={() => {
               playPop()
               onTune?.(preview.id)
               onClose()
             }}
+            onKeyDown={event => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              playPop()
+              onTune?.(preview.id)
+              onClose()
+            }}
           >
-            {preview && (
+            {preview && pipPlaying ? (
               <video
                 key={clipFor(preview)}
                 ref={pipVideoRef}
                 className={styles.pipVideo}
                 src={clipFor(preview)}
                 autoPlay
-                loop
                 muted
                 playsInline
+                preload="metadata"
+                poster={posterFor(clipFor(preview))}
+                onEnded={retirePip}
               />
+            ) : preview ? (
+              <img
+                className={styles.pipVideo}
+                src={posterFor(clipFor(preview))}
+                alt=""
+                draggable={false}
+              />
+            ) : null}
+            {preview && !pipPlaying && (
+              <button
+                type="button"
+                className={styles.pipReplay}
+                aria-label={`Replay ${preview.name} preview`}
+                onKeyDown={event => event.stopPropagation()}
+                onClick={event => {
+                  event.stopPropagation()
+                  if (!document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed) {
+                    setPipPlaying(true)
+                  }
+                }}
+              >▶</button>
             )}
             <span className={styles.pipScan} aria-hidden="true" />
             {/* channel plate rides inside the screen, like an on-air bug */}
@@ -209,7 +290,7 @@ export default function TVGuide({
                 </p>
               )}
             </div>
-          </button>
+          </div>
         </div>
       </div>
 

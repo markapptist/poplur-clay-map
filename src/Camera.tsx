@@ -9,7 +9,7 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
 import { addCapture, isDetectOn, setDetectOn, onCameraStore, takePendingMapPost, type PendingMapPost } from './cameraStore'
-import { startBroadcast, stopBroadcast, isLive, onLiveStore } from './liveStore'
+import { startBroadcast, stopBroadcast, isLive, onLiveStore, ownBroadcast } from './liveStore'
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
@@ -40,8 +40,18 @@ const ANDROID_SHELL = typeof window !== 'undefined' && Boolean(
 )
 const NATIVE_CAMERA_PREVIEW = NATIVE_SHELL && !ANDROID_SHELL
 
-/** A recording can run for a minute. */
-export const MAX_RECORD_MS = 60_000
+/** Capture shares the native camera's cold budget: recordings stop at 10s. */
+export const MAX_RECORD_MS = 10_000
+
+type NativeCameraBudget = {
+  state: 'running' | 'parked' | 'recording'
+  reason: 'entry' | 'explicitResume' | 'windowExpired' | 'recordingStarted'
+    | 'recordingFinished' | 'thermal' | 'leftCamera' | 'unavailable'
+  canResume: boolean
+  windowMs: number
+}
+
+type DeferredCameraAction = 'photo' | 'video' | 'live'
 
 /** The lens preset row above the cube. 0.5× only means glass on iOS (the
  *  dual-wide device); elsewhere it clamps to the range floor. */
@@ -103,6 +113,7 @@ function clampZoom(value: number, range: CameraZoomRange): number {
 // plainly unavailable and offers a retry instead of pretending a still is live.
 export default function Camera({
   step = 0,
+  surfaceVisible = true,
   onCloseRoll,
   onOpenRoll,
   bindActions,
@@ -117,6 +128,8 @@ export default function Camera({
   onPhotoCapture,
 }: {
   step?: number
+  /** False while Home keeps this pager mounted behind its hold menu. */
+  surfaceVisible?: boolean
   onCloseRoll?: () => void
   /** Camera Roll is entered only from the camera hold menu. */
   onOpenRoll?: () => void
@@ -171,9 +184,11 @@ export default function Camera({
   const streamRef = useRef<MediaStream | null>(null)
   // The stream effect deliberately hands ownership of the camera to a live
   // broadcast rather than killing the picture mid-air, and clears streamRef
-  // when it does. This ref keeps hold of the tracks anyway, so unmount can
-  // always release the hardware no matter who thinks they own it.
+  // when it does. This ref keeps hold of the tracks so every non-broadcast
+  // hide/unmount path can still release the hardware.
   const heldStreamRef = useRef<MediaStream | null>(null)
+  const deferredCameraActionRef = useRef<DeferredCameraAction | null>(null)
+  const [deferredCameraActionToken, setDeferredCameraActionToken] = useState(0)
   const [streamOn, setStreamOn] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
   const [streamRequest, setStreamRequest] = useState(0)
@@ -264,8 +279,29 @@ export default function Camera({
 
   // Camera, roll and composer share one mounted pager. Native therefore needs
   // an explicit visibility signal: the tab name remains "post" even when the
-  // live lens is fully covered by a selected image or edit/preview screen.
-  const liveSurfaceVisible = page === 'live' && !composing
+  // live lens is fully covered by the hold menu, a selected image, or an
+  // edit/preview screen. A web/Android broadcast may keep ownership of its
+  // explicit MediaStream, but the native sensor always follows real surface
+  // visibility and enforces its own absolute ten-second deadline.
+  const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing
+  const webCaptureRequired = liveSurfaceVisible || onAir
+  const [nativeCameraBudget, setNativeCameraBudget] = useState<NativeCameraBudget | null>(null)
+  useEffect(() => {
+    if (!NATIVE_CAMERA_PREVIEW) return
+    const receiveBudget = (event: Event) => {
+      const detail = (event as CustomEvent<NativeCameraBudget>).detail
+      if (!detail || !['running', 'parked', 'recording'].includes(detail.state)) return
+      setNativeCameraBudget(detail)
+    }
+    window.addEventListener('poplur-camera-budget', receiveBudget)
+    return () => window.removeEventListener('poplur-camera-budget', receiveBudget)
+  }, [])
+  const resumeNativePreview = useCallback(() => {
+    // This bridge event is intentionally reachable only from pointer/click
+    // handlers below. Never renew the ten-second window from a timer or effect.
+    if (!NATIVE_CAMERA_PREVIEW || !liveSurfaceVisible || !nativeCameraBudget?.canResume) return
+    postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
+  }, [liveSurfaceVisible, nativeCameraBudget?.canResume])
   // AR filters need a face reading even when object detection is toggled off.
   // The read remains private to the effect unless DETECT is also enabled.
   const liveDetectionActive = (detectOn || arOpen || arFilter !== 'none') && liveSurfaceVisible
@@ -325,12 +361,25 @@ export default function Camera({
   // Android use getUserMedia so the camera tab is a real live viewfinder,
   // rather than the old clay-world placeholder.
   useEffect(() => {
-    if (NATIVE_CAMERA_PREVIEW || page !== 'live') return
+    if (NATIVE_CAMERA_PREVIEW || !webCaptureRequired) return
     if (ANDROID_SHELL && cameraPermission !== 'granted') return
     let cancelled = false
     const start = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        // ON AIR owns its capture stream across Camera remounts. Reuse that
+        // exact stream for the local preview instead of opening a second
+        // sensor/ISP pipeline while the first broadcast is still live.
+        const broadcastStream = isLive() ? ownBroadcast()?.stream : undefined
+        const reusableBroadcastStream = broadcastStream?.getVideoTracks().some(
+          track => track.readyState === 'live',
+        ) ? broadcastStream : undefined
+        if (broadcastStream && !reusableBroadcastStream) {
+          // A broadcast whose physical track has ended is no longer live.
+          // Clear its ownership before opening a replacement local preview so
+          // the effect cleanup can release that replacement normally.
+          stopBroadcast()
+        }
+        const stream = reusableBroadcastStream ?? await navigator.mediaDevices.getUserMedia({
           video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 1280 } },
           // Requesting microphone access here made a denied microphone hide an
           // otherwise-authorized camera. Video recording can still proceed
@@ -401,10 +450,12 @@ export default function Camera({
       // flipping the camera must not kill it out from under the broadcast —
       // you would appear on the LIVE channel as a black rectangle. Ending the
       // broadcast is what releases it. This is a re-run of the effect, NOT the
-      // end of the screen: leaving the camera entirely is handled on unmount
-      // below, where the hardware is stopped unconditionally.
+      // end of the screen: unmount below releases every stream that is not
+      // explicitly owned by ON AIR.
       if (!isLive()) {
+        const held = heldStreamRef.current
         streamRef.current?.getTracks().forEach(t => t.stop())
+        if (held && held !== streamRef.current) held.getTracks().forEach(t => t.stop())
         heldStreamRef.current = null
       }
       streamRef.current = null
@@ -412,7 +463,25 @@ export default function Camera({
       setHardwareZoom(false)
       setStreamOn(false)
     }
-  }, [facing, page, cameraPermission, streamRequest])
+  }, [facing, webCaptureRequired, cameraPermission, streamRequest])
+
+  // ON AIR may keep the capture track alive while another camera layer is in
+  // front, but the hidden local <video> must not decode that same stream behind
+  // the composer or hold menu. Reattach only when the viewfinder is front-most.
+  useEffect(() => {
+    if (NATIVE_CAMERA_PREVIEW) return
+    const video = videoRef.current
+    if (!video) return
+    if (!liveSurfaceVisible) {
+      video.pause()
+      video.srcObject = null
+      return
+    }
+    const stream = streamRef.current ?? (isLive() ? heldStreamRef.current : null)
+    if (!stream) return
+    video.srcObject = stream
+    void video.play().catch(() => {})
+  }, [liveSurfaceVisible, streamOn])
 
   useEffect(() => {
     const retry = () => setStreamRequest(value => value + 1)
@@ -493,8 +562,7 @@ export default function Camera({
   const cameraCommerceDemo = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('cameraCommerceDemo') === '1'
   const commerceAllowed = detectOn
-    && page === 'live'
-    && !composing
+    && liveSurfaceVisible
     && recStart === null
     && !onAir
     && (NATIVE_SHELL || cameraCommerceDemo)
@@ -759,6 +827,12 @@ export default function Camera({
       return
     }
 
+    if (nativeCameraBudget?.state === 'parked' && nativeCameraBudget.canResume) {
+      gesture.lastTapAt = 0
+      resumeNativePreview()
+      return
+    }
+
     const now = performance.now()
     const nearLastTap = Math.hypot(
       event.clientX - gesture.lastTapX,
@@ -773,7 +847,7 @@ export default function Camera({
     gesture.lastTapAt = now
     gesture.lastTapX = event.clientX
     gesture.lastTapY = event.clientY
-  }, [cancelCameraLongPress, flipCamera, setFlashEnabled])
+  }, [cancelCameraLongPress, flipCamera, nativeCameraBudget, resumeNativePreview, setFlashEnabled])
   const onCameraPointerCancel = useCallback((event: React.PointerEvent<HTMLElement>) => {
     cancelCameraLongPress()
     gesturePointsRef.current.delete(event.pointerId)
@@ -784,7 +858,7 @@ export default function Camera({
   const capturePhoto = useCallback(() => {
     // Camera Roll is browse/select only. Both the cube and a pinned PHOTO
     // favourite terminate here while the roll or composer is visible.
-    if (page !== 'live' || composingRef.current) return
+    if (!liveSurfaceVisible || composingRef.current) return
     playPop()
     onPhotoCapture?.()
     // The camera object fires on every shot, regardless of flash setting or
@@ -843,7 +917,7 @@ export default function Camera({
     // on through the composer while you reviewed the photo (and kept burning
     // on the device, since the native side had last been told `on: true`).
     setFlashEnabled(false)
-  }, [arFilter, detections, facing, flash, filterCss, onPhotoCapture, page, setFlashEnabled])
+  }, [arFilter, detections, facing, flash, filterCss, liveSurfaceVisible, onPhotoCapture, setFlashEnabled])
 
   // ── record ───────────────────────────────────────────────────────────────
   const stopVideo = useCallback(() => {
@@ -899,14 +973,68 @@ export default function Camera({
     else startVideo()
   }, [page, startVideo, stopVideo])
 
-  // The counter, and the one-minute ceiling. Reported upward every tick so the
+  const deferCameraAction = useCallback((action: DeferredCameraAction) => {
+    deferredCameraActionRef.current = action
+    setDeferredCameraActionToken(token => token + 1)
+  }, [])
+
+  // Camera actions selected from the hold menu arrive just before that menu's
+  // close state commits. The lens is correctly parked at that instant, so keep
+  // the deliberate action and run it once the visible surface (and, on web,
+  // its fresh getUserMedia stream) is actually ready. The retry is bounded and
+  // never resumes native preview by itself.
+  useEffect(() => {
+    const action = deferredCameraActionRef.current
+    if (!action || !liveSurfaceVisible) return
+    // Keep the selected action pending while the native budget is parked. A
+    // real tap on the retained preview posts resumePreview; the resulting
+    // `running` event is what permits the action to continue.
+    if (NATIVE_CAMERA_PREVIEW && nativeCameraBudget?.state === 'parked') return
+    let timer = 0
+    let attempts = 0
+    const run = () => {
+      if (deferredCameraActionRef.current !== action || !liveSurfaceVisible) return
+      const streamReady = NATIVE_CAMERA_PREVIEW || Boolean(
+        streamRef.current?.getVideoTracks().some(track => track.readyState === 'live'),
+      )
+      const photoReady = action !== 'photo' || NATIVE_CAMERA_PREVIEW || Boolean(videoRef.current?.videoWidth)
+      if ((!streamReady || !photoReady) && attempts < 40) {
+        attempts += 1
+        timer = window.setTimeout(run, 50)
+        return
+      }
+      deferredCameraActionRef.current = null
+      if (!streamReady || !photoReady) return
+      if (action === 'photo') capturePhoto()
+      else if (action === 'video') toggleVideo()
+      else startBroadcast(streamRef.current ?? undefined)
+    }
+    timer = window.setTimeout(run, NATIVE_CAMERA_PREVIEW ? 180 : 0)
+    return () => window.clearTimeout(timer)
+  }, [capturePhoto, deferredCameraActionToken, liveSurfaceVisible, nativeCameraBudget?.state, toggleVideo])
+
+  // A local recording cannot continue under a menu/composer. ON AIR may retain
+  // the capture track, but recording, torch and its high-rate counter stop.
+  useEffect(() => {
+    if (liveSurfaceVisible) return
+    const recorder = recorderRef.current
+    if (recorder && recorder.state !== 'inactive') recorder.stop()
+    if (nativeRecordingRef.current) {
+      nativeRecordingRef.current = false
+      postNativeEvent({ type: 'cameraControl', control: 'record' })
+      setRecStart(null)
+    }
+    flashOffRef.current()
+  }, [liveSurfaceVisible])
+
+  // The counter, and the ten-second ceiling. Reported upward every tick so the
   // radius label can BE the counter while this runs.
   useEffect(() => {
     if (recStart == null) { onRecordingChange?.(null); return }
     // An interval, NOT requestAnimationFrame. rAF stops dead whenever the page
     // is not compositing — backgrounded, another tab, the app behind a screen —
     // and the recorder keeps running the whole time. That would freeze the
-    // counter AND let a recording sail past the one-minute ceiling, because
+    // counter AND let a recording sail past the ten-second ceiling, because
     // the ceiling is checked in here. An interval still fires when hidden.
     const tick = () => {
       const elapsed = performance.now() - recStart
@@ -954,8 +1082,25 @@ export default function Camera({
 
   useEffect(() => {
     bindActions?.({
-      photo: capturePhoto,
-      video: toggleVideo,
+      photo: () => {
+        const webPhotoReady = Boolean(streamRef.current && videoRef.current?.videoWidth)
+        if (!liveSurfaceVisible
+          || nativeCameraBudget?.state === 'parked'
+          || (!NATIVE_CAMERA_PREVIEW && !webPhotoReady)) {
+          deferCameraAction('photo')
+          return
+        }
+        capturePhoto()
+      },
+      video: () => {
+        if (!liveSurfaceVisible
+          || nativeCameraBudget?.state === 'parked'
+          || (!NATIVE_CAMERA_PREVIEW && !streamRef.current)) {
+          deferCameraAction('video')
+          return
+        }
+        toggleVideo()
+      },
       detect: () => {
         const next = !isDetectOn()
         setDetectOn(next)
@@ -967,8 +1112,21 @@ export default function Camera({
       // plays the broadcast itself, not a recording of it.
       live: () => {
         playPop()
-        if (isLive()) stopBroadcast()
-        else startBroadcast(streamRef.current ?? undefined)
+        if (isLive()) {
+          deferredCameraActionRef.current = null
+          stopBroadcast()
+          if (liveSurfaceVisible && !NATIVE_CAMERA_PREVIEW) {
+            setStreamRequest(value => value + 1)
+          }
+          return
+        }
+        if (!liveSurfaceVisible
+          || nativeCameraBudget?.state === 'parked'
+          || (!NATIVE_CAMERA_PREVIEW && !streamRef.current)) {
+          deferCameraAction('live')
+          return
+        }
+        startBroadcast(streamRef.current ?? undefined)
       },
       roll: () => onOpenRoll?.(),
       // Offer the arrows to the composer first. On the live camera they page
@@ -989,7 +1147,7 @@ export default function Camera({
         return true
       },
     })
-  }, [applyZoomStep, bindActions, capturePhoto, onOpenRoll, toggleVideo])
+  }, [applyZoomStep, bindActions, capturePhoto, deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state, onOpenRoll, toggleVideo])
 
   const [pos, setPos] = useState(page === 'live' ? 1 : 2)
   const [animated, setAnimated] = useState(true)
@@ -1165,6 +1323,30 @@ export default function Camera({
             >
               OPEN CAMERA
             </button>
+          )}
+        </div>
+      )}
+      {NATIVE_CAMERA_PREVIEW && real && liveSurfaceVisible && nativeCameraBudget?.state === 'parked' && (
+        <div
+          className={styles.camCameraUnavailable}
+          style={{ background: 'rgba(5, 4, 7, 0.34)', zIndex: 6 }}
+        >
+          {nativeCameraBudget.canResume ? (
+            <button
+              type="button"
+              className={styles.camRetry}
+              onClick={resumeNativePreview}
+            >
+              TAP TO RESUME PREVIEW
+            </button>
+          ) : (
+            <span
+              className={styles.camRetry}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              aria-live="polite"
+            >
+              CAMERA PAUSED
+            </span>
           )}
         </div>
       )}

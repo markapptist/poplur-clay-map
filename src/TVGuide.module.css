@@ -99,6 +99,26 @@
   object-fit: cover;
 }
 
+.pipReplay {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 50%;
+  background: rgba(3, 10, 6, 0.64);
+  color: #fff;
+  font: 900 22px/1 system-ui, sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+.pipReplay:active { transform: scale(0.94); }
+
 .pipLogo {
   object-fit: contain;
   padding: 16%;

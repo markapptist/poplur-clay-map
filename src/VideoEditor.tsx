@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './VideoEditor.module.css'
 import { playPop } from './pop'
 import { TRACKS, loadTrackBuffer, type Track } from './musicLibrary'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // ── POPLUR VIDEO EDITOR ─────────────────────────────────────────────────────
 //
@@ -41,6 +42,89 @@ export interface VideoEdit {
 const FILMSTRIP_FRAMES = 12
 /** Below this a trim is an accident, not an edit. */
 const MIN_TRIM_S = 0.6
+/** One user gesture may own the decoder for at most one short-form clip. */
+const MAX_MEDIA_CHUNK_S = 12
+const MAX_MEDIA_CHUNK_MS = MAX_MEDIA_CHUNK_S * 1000
+const MAX_INITIAL_METADATA_MS = 6_000
+const MAX_FILMSTRIP_BUILD_MS = 8_000
+
+function releaseVideo(video: HTMLVideoElement): void {
+  video.pause()
+  video.removeAttribute('src')
+  video.load()
+}
+
+function abortError(): DOMException {
+  return new DOMException('Video export cancelled', 'AbortError')
+}
+
+function waitFor(target: EventTarget, eventName: string, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(abortError()); return }
+    const cleanup = () => {
+      target.removeEventListener(eventName, onEvent)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const onEvent = () => { cleanup(); resolve() }
+    const onAbort = () => { cleanup(); reject(abortError()) }
+    target.addEventListener(eventName, onEvent, { once: true })
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(abortError()); return }
+    let settled = false
+    const cleanup = () => signal.removeEventListener('abort', onAbort)
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+    const onAbort = () => finish(() => reject(abortError()))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      value => finish(() => resolve(value)),
+      error => finish(() => reject(error)),
+    )
+  })
+}
+
+interface BakeRun {
+  abort: AbortController
+  cleaned: boolean
+  cancelled: boolean
+  timedOut: boolean
+  raf: number
+  timeout: number
+  recorder: MediaRecorder | null
+  audioContext: AudioContext | null
+  musicSource: AudioBufferSourceNode | null
+  streams: Set<MediaStream>
+  videos: Set<HTMLVideoElement>
+}
+
+function cleanBakeRun(run: BakeRun): void {
+  if (run.cleaned) return
+  run.cleaned = true
+  run.abort.abort()
+  if (run.raf) cancelAnimationFrame(run.raf)
+  run.raf = 0
+  if (run.timeout) window.clearTimeout(run.timeout)
+  run.timeout = 0
+  try { run.musicSource?.stop() } catch { /* already stopped */ }
+  try { run.musicSource?.disconnect() } catch { /* already disconnected */ }
+  if (run.recorder && run.recorder.state !== 'inactive') {
+    try { run.recorder.stop() } catch { /* already stopping */ }
+  }
+  run.streams.forEach(stream => stream.getTracks().forEach(track => track.stop()))
+  run.streams.clear()
+  run.videos.forEach(releaseVideo)
+  run.videos.clear()
+  if (run.audioContext && run.audioContext.state !== 'closed') void run.audioContext.close().catch(() => {})
+}
 
 function clockOf(seconds: number): string {
   const s = Math.max(0, seconds)
@@ -82,46 +166,166 @@ export default function VideoEditor({
   const previewCtx = useRef<AudioContext | null>(null)
   const previewSource = useRef<AudioBufferSourceNode | null>(null)
   const previewGain = useRef<GainNode | null>(null)
+  const previewGeneration = useRef(0)
+  const playingRef = useRef(false)
+  const playbackLease = useRef<number | null>(null)
+  const mediaAttached = useRef(true)
+  const pendingPlay = useRef(false)
+  const pendingSeek = useRef<number | null>(null)
+  const retireFilmstripDecoder = useRef<(() => void) | null>(null)
+  const initialMetadataLease = useRef<number | null>(null)
+  const metadataReady = useRef(false)
+  const mounted = useRef(true)
+  const bakeRunRef = useRef<BakeRun | null>(null)
 
   const track: Track | null = trackId ? TRACKS.find(t => t.id === trackId) ?? null : null
+
+  const cancelBake = useCallback(() => {
+    const run = bakeRunRef.current
+    if (!run) return
+    run.cancelled = true
+    cleanBakeRun(run)
+  }, [])
+
+  const clearInitialMetadataLease = useCallback(() => {
+    if (initialMetadataLease.current != null) window.clearTimeout(initialMetadataLease.current)
+    initialMetadataLease.current = null
+  }, [])
+
+  // ── track preview ─────────────────────────────────────────────────────────
+  const stopTrackPreview = useCallback(() => {
+    previewGeneration.current += 1
+    try { previewSource.current?.stop() } catch { /* already stopped */ }
+    try { previewSource.current?.disconnect() } catch { /* already disconnected */ }
+    previewSource.current = null
+  }, [])
+
+  const restartTrackPreview = useCallback((atClipTime: number) => {
+    stopTrackPreview()
+    if (!track || !playingRef.current) return
+    const ctx = previewCtx.current ?? new AudioContext()
+    previewCtx.current = ctx
+    void ctx.resume()
+    const generation = previewGeneration.current
+    void loadTrackBuffer(ctx, track).then(buffer => {
+      // Track loads may finish out of order. A stale load never gets to become
+      // a second loop hidden behind the source stored in previewSource.
+      if (
+        previewGeneration.current !== generation
+        || previewCtx.current !== ctx
+        || !playingRef.current
+        || ctx.state === 'closed'
+      ) return
+      const source = ctx.createBufferSource()
+      source.buffer = buffer
+      source.loop = true
+      const gain = previewGain.current ?? ctx.createGain()
+      gain.gain.value = trackVolume
+      source.connect(gain)
+      gain.connect(ctx.destination)
+      if (previewGeneration.current !== generation || !playingRef.current) {
+        try { source.stop() } catch { /* it never started */ }
+        source.disconnect()
+        return
+      }
+      previewGain.current = gain
+      const into = (trackOffset + (atClipTime - trimStart)) % buffer.duration
+      source.start(0, Math.max(0, into))
+      previewSource.current = source
+    }).catch(() => { /* a missing preview track must not break video editing */ })
+  }, [track, trackVolume, trackOffset, trimStart, stopTrackPreview])
+
+  const stopPlayback = useCallback((releaseDecoder = false) => {
+    if (playbackLease.current != null) window.clearTimeout(playbackLease.current)
+    playbackLease.current = null
+    pendingPlay.current = false
+    playingRef.current = false
+    videoRef.current?.pause()
+    setPlaying(false)
+    stopTrackPreview()
+    const preview = previewCtx.current
+    previewCtx.current = null
+    try { previewGain.current?.disconnect() } catch { /* already disconnected */ }
+    previewGain.current = null
+    void preview?.close().catch(() => {})
+    if (releaseDecoder && videoRef.current) {
+      releaseVideo(videoRef.current)
+      mediaAttached.current = false
+    }
+  }, [stopTrackPreview])
+
+  const startPreviewChunk = useCallback(() => {
+    const video = videoRef.current
+    if (!video || document.hidden) return
+    retireFilmstripDecoder.current?.()
+    if (playbackLease.current != null) window.clearTimeout(playbackLease.current)
+    if (track && !previewCtx.current) previewCtx.current = new AudioContext()
+    void previewCtx.current?.resume()
+    if (video.currentTime < trimStart || video.currentTime >= trimEnd - 0.03) video.currentTime = trimStart
+    playingRef.current = true
+    setPlaying(true)
+    void video.play().catch(() => {
+      if (playingRef.current) stopPlayback(true)
+    })
+    playbackLease.current = window.setTimeout(() => stopPlayback(true), MAX_MEDIA_CHUNK_MS)
+  }, [stopPlayback, track, trimEnd, trimStart])
 
   // ── metadata + filmstrip ──────────────────────────────────────────────────
   const onLoaded = useCallback(() => {
     const video = videoRef.current
-    if (!video) return
+    if (!video || video.readyState < HTMLMediaElement.HAVE_METADATA) return
     // A MediaRecorder blob often reports Infinity until it is seeked. Nudging
     // to the end and back is the standard way to force a real duration; without
     // it the whole timeline is NaN and nothing can be trimmed.
     if (!Number.isFinite(video.duration)) {
-      video.currentTime = 1e101
+      try { video.currentTime = 1e101 } catch { /* the metadata lease will retire an unusable source */ }
       return
     }
+    metadataReady.current = true
+    clearInitialMetadataLease()
     setDuration(video.duration)
-    setTrimEnd(video.duration)
-  }, [])
+    setTrimEnd(current => current > 0
+      ? Math.min(current, video.duration, trimStart + MAX_MEDIA_CHUNK_S)
+      : Math.min(video.duration, trimStart + MAX_MEDIA_CHUNK_S))
+    if (pendingSeek.current != null) {
+      const next = pendingSeek.current
+      pendingSeek.current = null
+      video.currentTime = next
+      setPlayhead(next)
+    }
+  }, [clearInitialMetadataLease, trimStart])
 
   const onTimeUpdate = useCallback(() => {
     const video = videoRef.current
     if (!video) return
     if (!Number.isFinite(duration) && Number.isFinite(video.duration)) {
       setDuration(video.duration)
-      setTrimEnd(video.duration)
+      setTrimEnd(Math.min(video.duration, MAX_MEDIA_CHUNK_S))
       video.currentTime = 0
       return
     }
     setPlayhead(video.currentTime)
-    // Preview loops the TRIMMED range, so what you hear and see while editing
-    // is the clip you are actually making.
-    if (video.currentTime >= trimEnd - 0.03) {
-      video.currentTime = trimStart
-      restartTrackPreview(trimStart)
+    // One tap previews the selected range once. Repeating here used to keep a
+    // decoder and a looped AudioBufferSource alive until the editor closed.
+    if (trimEnd > 0 && video.currentTime >= trimEnd - 0.03) {
+      stopPlayback(true)
     }
-  }, [duration, trimEnd, trimStart])
+  }, [duration, stopPlayback, trimEnd])
 
   // Pull evenly spaced stills for the scrub strip.
   useEffect(() => {
-    if (!duration || !Number.isFinite(duration)) return
+    if (
+      !duration
+      || !Number.isFinite(duration)
+      || !PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed
+    ) return
     let alive = true
+    // Metadata has done its job. Park the visible element before the private
+    // grabber starts so frame extraction never overlaps a second decoder.
+    if (videoRef.current && !playingRef.current) {
+      releaseVideo(videoRef.current)
+      mediaAttached.current = false
+    }
     const grabber = document.createElement('video')
     grabber.src = src
     grabber.muted = true
@@ -129,8 +333,34 @@ export default function VideoEditor({
     const canvas = document.createElement('canvas')
     const shots: string[] = []
 
+    let wallClockTimeout = 0
+    const retireGrabber = () => {
+      if (wallClockTimeout) window.clearTimeout(wallClockTimeout)
+      wallClockTimeout = 0
+      grabber.onloadeddata = null
+      grabber.onseeked = null
+      grabber.onerror = null
+      grabber.onstalled = null
+      releaseVideo(grabber)
+    }
+
+    const retireHiddenGrabber = () => {
+      if (!alive) return
+      alive = false
+      retireGrabber()
+      if (retireFilmstripDecoder.current === retireHiddenGrabber) retireFilmstripDecoder.current = null
+    }
+
     const shoot = (index: number) => {
-      if (!alive || index >= FILMSTRIP_FRAMES) { if (alive) setFrames([...shots]); return }
+      if (!alive || index >= FILMSTRIP_FRAMES) {
+        if (alive) {
+          setFrames([...shots])
+          alive = false
+        }
+        retireGrabber()
+        if (retireFilmstripDecoder.current === retireHiddenGrabber) retireFilmstripDecoder.current = null
+        return
+      }
       grabber.currentTime = (duration / FILMSTRIP_FRAMES) * index + 0.05
       grabber.onseeked = () => {
         if (!alive) return
@@ -148,38 +378,21 @@ export default function VideoEditor({
       }
     }
     grabber.onloadeddata = () => shoot(0)
-    return () => { alive = false; grabber.src = '' }
+    grabber.onerror = retireHiddenGrabber
+    grabber.onstalled = retireHiddenGrabber
+    retireFilmstripDecoder.current = retireHiddenGrabber
+    wallClockTimeout = window.setTimeout(retireHiddenGrabber, MAX_FILMSTRIP_BUILD_MS)
+    const onVisibility = () => { if (document.hidden) retireHiddenGrabber() }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', retireHiddenGrabber)
+    return () => {
+      alive = false
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', retireHiddenGrabber)
+      retireGrabber()
+      if (retireFilmstripDecoder.current === retireHiddenGrabber) retireFilmstripDecoder.current = null
+    }
   }, [src, duration])
-
-  // ── track preview ─────────────────────────────────────────────────────────
-  const stopTrackPreview = useCallback(() => {
-    try { previewSource.current?.stop() } catch { /* already stopped */ }
-    previewSource.current?.disconnect()
-    previewSource.current = null
-  }, [])
-
-  const restartTrackPreview = useCallback((atClipTime: number) => {
-    stopTrackPreview()
-    if (!track || !playing) return
-    const ctx = previewCtx.current
-    if (!ctx) return
-    void loadTrackBuffer(ctx, track).then(buffer => {
-      if (!previewCtx.current) return
-      const source = ctx.createBufferSource()
-      source.buffer = buffer
-      source.loop = true
-      const gain = previewGain.current ?? ctx.createGain()
-      gain.gain.value = trackVolume
-      source.connect(gain)
-      gain.connect(ctx.destination)
-      previewGain.current = gain
-      // Start the track at the offset the user chose, advanced by how far into
-      // the clip we are — so scrubbing keeps picture and music in step.
-      const into = (trackOffset + (atClipTime - trimStart)) % buffer.duration
-      source.start(0, Math.max(0, into))
-      previewSource.current = source
-    })
-  }, [track, playing, trackVolume, trackOffset, trimStart, stopTrackPreview])
 
   useEffect(() => {
     if (previewGain.current) previewGain.current.gain.value = trackVolume
@@ -190,27 +403,48 @@ export default function VideoEditor({
     if (video) video.volume = originalVolume
   }, [originalVolume])
 
-  useEffect(() => () => {
-    stopTrackPreview()
-    void previewCtx.current?.close()
-    previewCtx.current = null
-  }, [stopTrackPreview])
-
   const togglePlay = () => {
     const video = videoRef.current
     if (!video) return
     playPop()
-    if (playing) {
-      video.pause()
-      setPlaying(false)
-      stopTrackPreview()
+    if (!PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed) {
+      setNote('Video preview is paused until the phone cools.')
+      stopPlayback(true)
       return
     }
-    if (!previewCtx.current) previewCtx.current = new AudioContext()
-    void previewCtx.current.resume()
-    if (video.currentTime < trimStart || video.currentTime >= trimEnd) video.currentTime = trimStart
-    void video.play()
-    setPlaying(true)
+    if (playingRef.current) { stopPlayback(true); return }
+    retireFilmstripDecoder.current?.()
+    if (!mediaAttached.current) {
+      pendingPlay.current = true
+      mediaAttached.current = true
+      video.src = src
+      video.load()
+      return
+    }
+    startPreviewChunk()
+  }
+
+  const onCanPlay = () => {
+    if (!pendingPlay.current) return
+    pendingPlay.current = false
+    startPreviewChunk()
+  }
+
+  const seekPreview = (next: number) => {
+    const video = videoRef.current
+    if (!video) return
+    if (playingRef.current) stopPlayback(false)
+    retireFilmstripDecoder.current?.()
+    if (!mediaAttached.current) {
+      pendingSeek.current = next
+      mediaAttached.current = true
+      video.src = src
+      video.load()
+    } else {
+      video.currentTime = next
+    }
+    if (playbackLease.current != null) window.clearTimeout(playbackLease.current)
+    playbackLease.current = window.setTimeout(() => stopPlayback(true), MAX_MEDIA_CHUNK_MS)
   }
 
   // Starting playback has to wait for `playing` to be true before the track can
@@ -221,6 +455,75 @@ export default function VideoEditor({
     // restartTrackPreview identity changes with the controls it reads; that is
     // wanted — changing track or offset mid-play re-cues it.
   }, [playing, restartTrackPreview, stopTrackPreview, trimStart])
+
+  // Backgrounding is a hard ownership boundary. The next visible preview is
+  // another explicit tap, which reattaches the source for one bounded chunk.
+  useEffect(() => {
+    const retire = () => {
+      stopPlayback(true)
+      cancelBake()
+    }
+    const onVisibility = () => { if (document.hidden) retire() }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', retire)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', retire)
+    }
+  }, [cancelBake, stopPlayback])
+
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
+    if (!snapshot.isForeground || !snapshot.expensiveVideoBackedTexturesAllowed) {
+      stopPlayback(true)
+      retireFilmstripDecoder.current?.()
+      cancelBake()
+    }
+  }), [cancelBake, stopPlayback])
+
+  useEffect(() => {
+    mounted.current = true
+    clearInitialMetadataLease()
+    const video = videoRef.current
+    metadataReady.current = Boolean(
+      video
+      && video.readyState >= HTMLMediaElement.HAVE_METADATA
+      && Number.isFinite(video.duration),
+    )
+    if (
+      video
+      && !video.getAttribute('src')
+      && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed
+    ) {
+      video.src = src
+      video.load()
+      mediaAttached.current = true
+    }
+    initialMetadataLease.current = window.setTimeout(() => {
+      if (metadataReady.current) return
+      const currentVideo = videoRef.current
+      if (currentVideo) releaseVideo(currentVideo)
+      mediaAttached.current = false
+      pendingPlay.current = false
+      pendingSeek.current = null
+      if (mounted.current) setNote('The source did not provide video details in time. Your original clip is unchanged.')
+    }, MAX_INITIAL_METADATA_MS)
+    return () => {
+      mounted.current = false
+      metadataReady.current = false
+      clearInitialMetadataLease()
+      if (playbackLease.current != null) window.clearTimeout(playbackLease.current)
+      playingRef.current = false
+      stopTrackPreview()
+      const currentVideo = videoRef.current
+      if (currentVideo) releaseVideo(currentVideo)
+      mediaAttached.current = false
+      const run = bakeRunRef.current
+      if (run) cleanBakeRun(run)
+      bakeRunRef.current = null
+      void previewCtx.current?.close().catch(() => {})
+      previewCtx.current = null
+    }
+  }, [clearInitialMetadataLease, src, stopTrackPreview])
 
   // ── scrubbing and handles ─────────────────────────────────────────────────
   const timeAtClientX = (clientX: number): number => {
@@ -238,15 +541,17 @@ export default function VideoEditor({
     const move = (e: PointerEvent) => {
       const t = timeAtClientX(e.clientX)
       if (which === 'start') {
-        setTrimStart(Math.min(t, trimEnd - MIN_TRIM_S))
-        if (videoRef.current) videoRef.current.currentTime = Math.min(t, trimEnd - MIN_TRIM_S)
+        const next = Math.max(trimEnd - MAX_MEDIA_CHUNK_S, Math.min(t, trimEnd - MIN_TRIM_S))
+        setTrimStart(next)
+        seekPreview(next)
       } else if (which === 'end') {
-        setTrimEnd(Math.max(t, trimStart + MIN_TRIM_S))
-        if (videoRef.current) videoRef.current.currentTime = Math.max(t, trimStart + MIN_TRIM_S)
+        const next = Math.min(trimStart + MAX_MEDIA_CHUNK_S, Math.max(t, trimStart + MIN_TRIM_S))
+        setTrimEnd(next)
+        seekPreview(next)
       } else {
         const clamped = Math.min(trimEnd, Math.max(trimStart, t))
         setPlayhead(clamped)
-        if (videoRef.current) videoRef.current.currentTime = clamped
+        seekPreview(clamped)
       }
     }
     const up = () => {
@@ -258,11 +563,46 @@ export default function VideoEditor({
     window.addEventListener('pointerup', up)
   }
 
+  const dragSelection = (event: React.PointerEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!duration) return
+    const rail = stripRef.current
+    if (!rail) return
+    const box = rail.getBoundingClientRect()
+    const initialClientX = event.clientX
+    const initialStart = trimStart
+    const span = Math.min(
+      duration,
+      MAX_MEDIA_CHUNK_S,
+      Math.max(Math.min(MIN_TRIM_S, duration), trimEnd - trimStart),
+    )
+    let selectedStart = initialStart
+    const move = (e: PointerEvent) => {
+      const delta = ((e.clientX - initialClientX) / Math.max(1, box.width)) * duration
+      selectedStart = Math.min(Math.max(0, duration - span), Math.max(0, initialStart + delta))
+      setTrimStart(selectedStart)
+      setTrimEnd(selectedStart + span)
+      setPlayhead(selectedStart)
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      seekPreview(selectedStart)
+      playPop()
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
   // ── the bake ──────────────────────────────────────────────────────────────
   const bake = async () => {
-    const video = videoRef.current
-    if (!video) return
+    if (bakeRunRef.current) return
     playPop()
+    if (!PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed) {
+      setNote('Rendering is paused until the phone cools. Your original clip is unchanged.')
+      return
+    }
 
     const canRecord = typeof MediaRecorder !== 'undefined'
       && typeof (HTMLCanvasElement.prototype as unknown as { captureStream?: unknown }).captureStream === 'function'
@@ -276,11 +616,47 @@ export default function VideoEditor({
 
     setBaking(true)
     setBakeProgress(0)
-    stopTrackPreview()
-    video.pause()
-    setPlaying(false)
+    setNote(null)
+    stopPlayback(true)
+    retireFilmstripDecoder.current?.()
+    // The short preview music and the export graph never coexist. Closing the
+    // first context also gives the device's audio hardware an immediate idle
+    // boundary before real-time encoding starts.
+    void previewCtx.current?.close().catch(() => {})
+    previewCtx.current = null
+
+    const run: BakeRun = {
+      abort: new AbortController(),
+      cleaned: false,
+      cancelled: false,
+      timedOut: false,
+      raf: 0,
+      timeout: 0,
+      recorder: null,
+      audioContext: null,
+      musicSource: null,
+      streams: new Set(),
+      videos: new Set(),
+    }
+    bakeRunRef.current = run
+    // Selected clips are capped at twelve seconds, but stalled media must not
+    // turn that finite job into an unbounded recorder/AudioContext/rAF owner.
+    run.timeout = window.setTimeout(() => {
+      run.timedOut = true
+      cleanBakeRun(run)
+    }, MAX_MEDIA_CHUNK_MS + 5_000)
 
     try {
+      const video = document.createElement('video')
+      video.src = src
+      video.preload = 'auto'
+      video.playsInline = true
+      run.videos.add(video)
+      if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+        await waitFor(video, 'loadedmetadata', run.abort.signal)
+      }
+      if (run.abort.signal.aborted) throw abortError()
+
       const canvas = document.createElement('canvas')
       canvas.width = video.videoWidth || 720
       canvas.height = video.videoHeight || 1280
@@ -288,14 +664,14 @@ export default function VideoEditor({
       if (!ctx) throw new Error('no 2d context')
 
       const audioCtx = new AudioContext()
+      run.audioContext = audioCtx
       const destination = audioCtx.createMediaStreamDestination()
 
       // The capture's own audio, at the level the user set.
       const originalGain = audioCtx.createGain()
       originalGain.gain.value = originalVolume
-      let originalNode: MediaElementAudioSourceNode | null = null
       try {
-        originalNode = audioCtx.createMediaElementSource(video)
+        const originalNode = audioCtx.createMediaElementSource(video)
         originalNode.connect(originalGain)
         originalGain.connect(destination)
         // Keep it audible locally too, so the bake is watchable.
@@ -308,8 +684,10 @@ export default function VideoEditor({
       // The music, from the chosen offset, looped to cover the clip.
       let musicSource: AudioBufferSourceNode | null = null
       if (track) {
-        const buffer = await loadTrackBuffer(audioCtx, track)
+        const buffer = await abortable(loadTrackBuffer(audioCtx, track), run.abort.signal)
+        if (run.abort.signal.aborted) throw abortError()
         musicSource = audioCtx.createBufferSource()
+        run.musicSource = musicSource
         musicSource.buffer = buffer
         musicSource.loop = true
         const musicGain = audioCtx.createGain()
@@ -321,59 +699,97 @@ export default function VideoEditor({
       const videoStream = (canvas as HTMLCanvasElement & {
         captureStream: (fps?: number) => MediaStream
       }).captureStream(30)
+      run.streams.add(videoStream)
       const mixed = new MediaStream([
         ...videoStream.getVideoTracks(),
         ...destination.stream.getAudioTracks(),
       ])
+      run.streams.add(mixed)
 
       const mime = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
         .find(type => MediaRecorder.isTypeSupported(type)) ?? ''
       const recorder = new MediaRecorder(mixed, mime ? { mimeType: mime } : undefined)
+      run.recorder = recorder
       const chunks: BlobPart[] = []
+      let recorderFailure: Error | null = null
       recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
 
       const finished = new Promise<Blob>(resolve => {
-        recorder.onstop = () => resolve(new Blob(chunks, { type: mime || 'video/webm' }))
+        let settled = false
+        const settle = () => {
+          if (settled) return
+          settled = true
+          resolve(new Blob(chunks, { type: mime || 'video/webm' }))
+        }
+        recorder.onstop = () => {
+          settle()
+        }
+        recorder.onerror = event => {
+          recorderFailure = (event as Event & { error?: DOMException }).error ?? new Error('media recorder failed')
+          settle()
+        }
       })
 
-      const span = trimEnd - trimStart
-      video.currentTime = trimStart
-      await new Promise<void>(resolve => { video.onseeked = () => resolve() })
+      const exportEnd = Math.min(trimEnd, trimStart + MAX_MEDIA_CHUNK_S, video.duration)
+      const span = exportEnd - trimStart
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        await waitFor(video, 'loadeddata', run.abort.signal)
+      }
+      if (Math.abs(video.currentTime - trimStart) > 0.02) {
+        video.currentTime = trimStart
+        await waitFor(video, 'seeked', run.abort.signal)
+      }
+      if (run.abort.signal.aborted) throw abortError()
 
       recorder.start()
       musicSource?.start(0, trackOffset % (musicSource.buffer?.duration ?? 1))
-      void audioCtx.resume()
-      void video.play()
+      await abortable(audioCtx.resume(), run.abort.signal)
+      await abortable(video.play(), run.abort.signal)
 
       // Draw every frame the element gives us for the length of the trim.
-      await new Promise<void>(resolve => {
-        let raf = 0
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          if (run.raf) cancelAnimationFrame(run.raf)
+          run.raf = 0
+          reject(abortError())
+        }
+        run.abort.signal.addEventListener('abort', onAbort, { once: true })
         const draw = () => {
-          if (video.currentTime >= trimEnd || video.ended) {
-            cancelAnimationFrame(raf)
+          if (video.currentTime >= exportEnd || video.ended) {
+            run.abort.signal.removeEventListener('abort', onAbort)
+            run.raf = 0
             resolve()
             return
           }
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-          setBakeProgress(Math.min(1, (video.currentTime - trimStart) / span))
-          raf = requestAnimationFrame(draw)
+          if (mounted.current) setBakeProgress(Math.min(1, (video.currentTime - trimStart) / span))
+          run.raf = requestAnimationFrame(draw)
         }
-        raf = requestAnimationFrame(draw)
+        run.raf = requestAnimationFrame(draw)
       })
 
       video.pause()
       try { musicSource?.stop() } catch { /* already stopped */ }
       recorder.stop()
-      const blob = await finished
-      await audioCtx.close()
-
+      const blob = await abortable(finished, run.abort.signal)
+      if (recorderFailure) throw recorderFailure
+      if (run.timedOut || run.cancelled || run.abort.signal.aborted) throw abortError()
+      cleanBakeRun(run)
+      if (bakeRunRef.current === run) bakeRunRef.current = null
+      if (!mounted.current || run.cancelled) return
       setBakeProgress(1)
-      onDone({ src: URL.createObjectURL(blob), trimStart, trimEnd, trackId })
+      onDone({ src: URL.createObjectURL(blob), trimStart, trimEnd: exportEnd, trackId })
     } catch (error) {
-      setNote(error instanceof Error
-        ? `The edit could not be rendered: ${error.message}`
-        : 'The edit could not be rendered.')
-      setBaking(false)
+      cleanBakeRun(run)
+      if (!mounted.current || run.cancelled) return
+      setNote(run.timedOut
+        ? 'The edit stopped because rendering exceeded the safe media limit. Your original clip is unchanged.'
+        : error instanceof Error && error.name !== 'AbortError'
+          ? `The edit could not be rendered: ${error.message}`
+          : 'The edit could not be rendered.')
+    } finally {
+      if (bakeRunRef.current === run) bakeRunRef.current = null
+      if (mounted.current) setBaking(false)
     }
   }
 
@@ -384,7 +800,14 @@ export default function VideoEditor({
   return (
     <div className={styles.editor} role="dialog" aria-label="Edit your video">
       <header className={styles.head}>
-        <button className={styles.headBtn} onClick={() => { playPop(); onCancel() }}>Cancel</button>
+        <button
+          className={styles.headBtn}
+          onClick={() => {
+            playPop()
+            cancelBake()
+            onCancel()
+          }}
+        >{baking ? 'Stop' : 'Cancel'}</button>
         <span className={styles.headTitle}>EDIT</span>
         <button
           className={`${styles.headBtn} ${styles.headDone}`}
@@ -400,8 +823,20 @@ export default function VideoEditor({
           ref={videoRef}
           className={styles.video}
           src={src}
+          poster={frames[0]}
           playsInline
           onLoadedMetadata={onLoaded}
+          onDurationChange={onLoaded}
+          onCanPlay={onCanPlay}
+          onError={() => {
+            if (metadataReady.current) return
+            clearInitialMetadataLease()
+            stopPlayback(true)
+            setNote('The source could not be opened for preview. Your original clip is unchanged.')
+          }}
+          onStalled={() => {
+            if (!metadataReady.current || playingRef.current) stopPlayback(true)
+          }}
           onTimeUpdate={onTimeUpdate}
           onClick={togglePlay}
         />
@@ -419,9 +854,9 @@ export default function VideoEditor({
       </div>
 
       <div className={styles.clock}>
-        <span>{clockOf(trimStart)}</span>
-        <b>{clockOf(trimEnd - trimStart)} selected</b>
-        <span>{clockOf(trimEnd)}</span>
+        <span>IN {clockOf(trimStart)}</span>
+        <b>{clockOf(trimEnd - trimStart)} selected · 12-second maximum</b>
+        <span>SOURCE {clockOf(duration)}</span>
       </div>
 
       {/* ── the filmstrip: scrub, and drag the ends to trim ── */}
@@ -433,7 +868,16 @@ export default function VideoEditor({
         </div>
         <div className={styles.shade} style={{ left: 0, width: `${startPct}%` }} />
         <div className={styles.shade} style={{ left: `${endPct}%`, right: 0 }} />
-        <div className={styles.selection} style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }} />
+        <div
+          className={styles.selection}
+          style={{ left: `${startPct}%`, width: `${endPct - startPct}%`, pointerEvents: 'auto', cursor: 'grab', touchAction: 'none' }}
+          onPointerDown={dragSelection}
+          role="slider"
+          aria-label="Move the selected video segment"
+          aria-valuemin={0}
+          aria-valuemax={Math.max(0, duration - (trimEnd - trimStart))}
+          aria-valuenow={trimStart}
+        />
         <button
           className={`${styles.handle} ${styles.handleStart}`}
           style={{ left: `${startPct}%` }}
@@ -452,6 +896,11 @@ export default function VideoEditor({
           onPointerDown={dragHandle('playhead')}
         />
       </div>
+      {duration > MAX_MEDIA_CHUNK_S && (
+        <p className={styles.licenceNote}>
+          First 12 seconds selected by default. Drag the pink selection to choose any part of the full source.
+        </p>
+      )}
 
       {/* ── sound ── */}
       <div className={styles.sound}>

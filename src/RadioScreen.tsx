@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './RadioScreen.module.css'
 import { playPop } from './pop'
-import { isUserMuted, setUserMuted } from './audioGate'
+import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import RadioBoot from './RadioBootScreen'
-import { isRadioBackgroundEnabled, listLocalStations, playStation, stopMapRadio, nowPlayingStation, type LocalStation } from './mapRadio'
+import { isRadioBackgroundEnabled, listLocalStations, playStation, readRadioScope, stopMapRadio, nowPlayingStation, type LocalStation } from './mapRadio'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // POPLUR RADIO — the station deck.
 //
@@ -84,10 +85,74 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
   const [wave, setWave] = useState<Wave>('all')
   const [favourites, setFavourites] = useState<Set<string>>(() => new Set())
   const [muted, setMuted] = useState(isUserMuted)
+  const [outsideScope, setOutsideScope] = useState(() => readRadioScope() === 'outside')
+  const [pageVisible, setPageVisible] = useState(() => !document.hidden)
+  const [gateOpen, setGateOpen] = useState(() => !isGateMuted())
+  const [embeddedPlaybackAllowed, setEmbeddedPlaybackAllowed] = useState(() =>
+    PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
   // The set warms up before it plays. 'off' is the collapsing picture.
   const [boot, setBoot] = useState<'on' | 'off' | 'done'>('on')
   const [error, setError] = useState<string | null>(null)
   const railRef = useRef<HTMLDivElement>(null)
+  const soundCloudFrameRef = useRef<HTMLIFrameElement>(null)
+
+  const unloadSoundCloudFrame = () => {
+    if (soundCloudFrameRef.current) soundCloudFrameRef.current.src = 'about:blank'
+  }
+
+  // SoundCloud is the one radio path that lives outside the shared
+  // AudioContext/media-element gate. Its iframe therefore follows that gate
+  // explicitly and is destroyed (not merely hidden) with the page.
+  useEffect(() => {
+    const syncGate = () => {
+      // OUTSIDE bypasses only the page-hidden gate. It must still respect an
+      // explicit user/host mute while Poplur is visible.
+      const outsideBackground = outsideScope && document.hidden
+      const open = outsideBackground || !isGateMuted()
+      if (!open) unloadSoundCloudFrame()
+      setGateOpen(open)
+    }
+    const syncVisibility = () => {
+      const visible = outsideScope || !document.hidden
+      if (!visible) unloadSoundCloudFrame()
+      setPageVisible(visible)
+    }
+    const pageHidden = () => {
+      if (outsideScope) {
+        setPageVisible(true)
+        return
+      }
+      unloadSoundCloudFrame()
+      setPageVisible(false)
+    }
+    syncGate()
+    syncVisibility()
+    const stopGate = onGateChange(syncGate)
+    document.addEventListener('visibilitychange', syncVisibility)
+    window.addEventListener('pagehide', pageHidden)
+    window.addEventListener('pageshow', syncVisibility)
+    return () => {
+      stopGate()
+      document.removeEventListener('visibilitychange', syncVisibility)
+      window.removeEventListener('pagehide', pageHidden)
+      window.removeEventListener('pageshow', syncVisibility)
+    }
+  }, [outsideScope])
+
+  useEffect(() => {
+    const syncScope = () => setOutsideScope(readRadioScope() === 'outside')
+    window.addEventListener('poplur-radio-scope', syncScope)
+    return () => window.removeEventListener('poplur-radio-scope', syncScope)
+  }, [])
+
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
+    // An explicit OUTSIDE choice may keep audio alive with the document hidden,
+    // but LOW_POWER/EMERGENCY still retire the cross-origin player.
+    const allowed = snapshot.expensiveVideoBackedTexturesAllowed
+      && (snapshot.isForeground || outsideScope)
+    if (!allowed) unloadSoundCloudFrame()
+    setEmbeddedPlaybackAllowed(allowed)
+  }), [outsideScope])
 
   useEffect(() => {
     let alive = true
@@ -395,13 +460,14 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
               />
             </div>
 
-            {soundCloudUrl && (
+            {soundCloudUrl && boot === 'done' && pageVisible && gateOpen && !muted && embeddedPlaybackAllowed && (
               <iframe
-                key={`${soundCloudUrl}:${muted ? 'muted' : 'playing'}`}
+                key={soundCloudUrl}
+                ref={soundCloudFrameRef}
                 className={styles.soundCloudPlayer}
                 title="SoundCloud player"
                 allow="autoplay; encrypted-media"
-                src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(soundCloudUrl)}&auto_play=${muted ? 'false' : 'true'}&color=%23f63b9a&show_artwork=false&show_comments=false&show_playcount=true&show_user=true&sharing=false&download=false&single_active=true`}
+                src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(soundCloudUrl)}&auto_play=true&color=%23f63b9a&show_artwork=false&show_comments=false&show_playcount=true&show_user=true&sharing=false&download=false&single_active=true`}
               />
             )}
 

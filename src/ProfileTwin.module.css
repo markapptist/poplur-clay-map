@@ -1115,6 +1115,26 @@
   object-fit: cover;
 }
 
+.viewerReplay {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 50%;
+  background: rgba(5, 4, 7, 0.6);
+  color: #fff;
+  font: 900 26px/1 system-ui, sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+.viewerReplay:active { transform: scale(0.94); }
+
 .viewerTop {
   position: absolute;
   top: 52px;

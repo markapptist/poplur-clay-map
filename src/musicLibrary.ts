@@ -53,14 +53,19 @@ export const TRACKS: Track[] = [
  * offset, which is everything the editor's controls need to be testable.
  */
 export async function loadTrackBuffer(ctx: BaseAudioContext, track: Track): Promise<AudioBuffer> {
-  const cacheKey = `audio-track:${track.id}:${ctx.sampleRate}`
+  // The editor loops these buffers, so synthesising all 30 display seconds is
+  // unnecessary work. Two bars preserve the beat, harmony and stereo movement
+  // while placing a small, deterministic ceiling on main-thread synthesis and
+  // cached PCM (roughly 3.4–5.7s for the placeholder library).
+  const beat = 60 / track.bpm
+  const loopDuration = Math.min(6, Math.max(2, beat * 8))
+  const cacheKey = `audio-track:short-loop-v1:${track.id}:${ctx.sampleRate}:${loopDuration}`
   const hit = poplurAssetCache.get<AudioBuffer>(cacheKey)
   if (hit) return hit
 
   const rate = ctx.sampleRate
-  const frames = Math.floor(track.duration * rate)
+  const frames = Math.floor(loopDuration * rate)
   const buffer = ctx.createBuffer(2, frames, rate)
-  const beat = 60 / track.bpm
   // A4 = 440, shifted by the track's root, dropped two octaves for the bass.
   const rootHz = 440 * Math.pow(2, track.root / 12)
   const bassHz = rootHz / 4
@@ -91,7 +96,7 @@ export async function loadTrackBuffer(ctx: BaseAudioContext, track: Track): Prom
       const hat = offBeat < 0.06 ? (Math.random() * 2 - 1) * Math.exp(-offBeat * 40) * 0.12 : 0
 
       // Fade the last half-second so a loop point does not click.
-      const tail = t > track.duration - 0.5 ? (track.duration - t) / 0.5 : 1
+      const tail = t > loopDuration - 0.5 ? (loopDuration - t) / 0.5 : 1
 
       out[i] = (bass + pad + hat) * 0.62 * tail
     }

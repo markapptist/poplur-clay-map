@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import styles from './popups.module.css'
 import type { SmartCard } from './tourSmarts'
 import CommerceSuggestionWindow, { type SuggestionPrimaryAction } from './CommerceSuggestionWindow'
+import BoundedPopupVideo from './BoundedPopupVideo'
 import { playPop, playPopAmbient } from './pop'
 
 // The app's one transient popup layer: engagement and suggestions, centred on
@@ -85,8 +86,8 @@ const TTL: Record<PopupKind, number> = {
   // come down — if it needs to go lower, the honest move is to stop showing
   // the card on that surface rather than to flash it.
   suggestion: 4_000,
-  // A post is the destination rather than a passing ad. Give a looping video
-  // enough time to read, while retaining the shared guarantee that every
+  // A post is the destination rather than a passing ad. Give its single video
+  // pass enough time to read, while retaining the shared guarantee that every
   // transient window eventually leaves on its own.
   mapContent: 10_000,
 }
@@ -265,15 +266,11 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
               </header>
               <div className={styles.mapContentMedia}>
                 {item.content.media.kind === 'video' ? (
-                  <video
+                  <BoundedPopupVideo
+                    key={item.content.media.src}
                     src={item.content.media.src}
                     poster={item.content.media.poster}
-                    aria-label={item.content.media.alt}
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    preload="metadata"
+                    alt={item.content.media.alt}
                   />
                 ) : (
                   <img src={item.content.media.src} alt={item.content.media.alt} draggable="false" />

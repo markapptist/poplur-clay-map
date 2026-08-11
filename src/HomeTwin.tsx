@@ -1795,6 +1795,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )}
         {pageVisible && !overlayOpen && activePermission === null && committedTab === 'post' && (
           <Camera
+            surfaceVisible={!holdOpen}
             onComposingChange={handleComposingChange}
             onPhotoCapture={() => {
               setPopping(false)

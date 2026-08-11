@@ -6,6 +6,7 @@ import { playPop } from './pop'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { setPendingAICompose, setPendingMapPost, type PendingMapPost } from './cameraStore'
 import VideoEditor from './VideoEditor'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -59,6 +60,27 @@ type NativeUploadResult = {
 }
 
 const NATIVE_UPLOAD_TIMEOUT_MS = 90_000
+const MAX_PREVIEW_PLAY_MS = 12_000
+
+function releasePreviewVideo(video: HTMLVideoElement): void {
+  video.pause()
+  video.removeAttribute('src')
+  video.load()
+}
+
+function stillFromVideo(video: HTMLVideoElement): string | null {
+  if (!video.videoWidth || !video.videoHeight) return null
+  try {
+    const canvas = document.createElement('canvas')
+    const width = Math.min(720, video.videoWidth)
+    canvas.width = width
+    canvas.height = Math.max(1, Math.round(width * video.videoHeight / video.videoWidth))
+    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.72)
+  } catch {
+    return null
+  }
+}
 
 /**
  * A native shell owns Firebase auth, Storage and the Firestore write. The web
@@ -154,9 +176,48 @@ export default function PostComposer({
   // declined autoplay is silent — no error, no event, just a video that never
   // moves. Asking explicitly once the data is there is what actually starts it.
   const previewVideoRef = useRef<HTMLVideoElement | null>(null)
+  const [previewPlaying, setPreviewPlaying] = useState(() =>
+    incomingMedia.kind === 'video'
+      && (typeof document === 'undefined' || !document.hidden)
+      && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
+  const [previewStill, setPreviewStill] = useState<string | null>(null)
+
+  const retirePreview = React.useCallback(() => {
+    const video = previewVideoRef.current
+    if (video) {
+      const still = stillFromVideo(video)
+      if (still) setPreviewStill(still)
+      releasePreviewVideo(video)
+    }
+    setPreviewPlaying(false)
+  }, [])
+
+  // A new capture receives one automatic, muted pass. Subsequent passes are
+  // explicit taps, and every pass has the same hard decoder lease.
+  useEffect(() => {
+    setPreviewStill(null)
+    setPreviewPlaying(media.kind === 'video'
+      && !document.hidden
+      && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
+  }, [media.kind, media.src])
+
+  // The editor owns this source while it is open. Unmounting the composer's
+  // player avoids two decoders reading the same recording behind the overlay.
+  useEffect(() => {
+    if (editorOpen) retirePreview()
+  }, [editorOpen, retirePreview])
+
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
+    if (!snapshot.isForeground || !snapshot.expensiveVideoBackedTexturesAllowed) retirePreview()
+  }), [retirePreview])
+
   useEffect(() => {
     const v = previewVideoRef.current
-    if (!v || media.kind !== 'video') return
+    if (!v || media.kind !== 'video' || !previewPlaying || editorOpen) return
+    if (!v.getAttribute('src')) {
+      v.src = media.src
+      v.load()
+    }
     let cancelled = false
     const kick = () => {
       if (cancelled) return
@@ -168,12 +229,20 @@ export default function PostComposer({
     kick()
     v.addEventListener('loadeddata', kick)
     v.addEventListener('canplay', kick)
+    const lease = window.setTimeout(retirePreview, MAX_PREVIEW_PLAY_MS)
+    const onVisibility = () => { if (document.hidden) retirePreview() }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', retirePreview)
     return () => {
       cancelled = true
+      window.clearTimeout(lease)
       v.removeEventListener('loadeddata', kick)
       v.removeEventListener('canplay', kick)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', retirePreview)
+      releasePreviewVideo(v)
     }
-  }, [media.kind, media.src])
+  }, [editorOpen, media.kind, media.src, previewPlaying, retirePreview])
 
   const backRef = useRef({ step, onClose })
   backRef.current = { step, onClose }
@@ -292,13 +361,38 @@ export default function PostComposer({
   const preview = (
     <div className={styles.preview}>
       {media.kind === 'video' ? (
-        <video
-          ref={previewVideoRef}
-          className={styles.media}
-          src={media.src}
-          style={{ filter: filterCss === 'none' ? undefined : filterCss }}
-          autoPlay loop muted playsInline preload="auto"
-        />
+        <>
+          {previewPlaying && !editorOpen ? (
+            <video
+              ref={previewVideoRef}
+              className={styles.media}
+              src={media.src}
+              style={{ filter: filterCss === 'none' ? undefined : filterCss }}
+              autoPlay muted playsInline preload="metadata"
+              onEnded={retirePreview}
+              onClick={retirePreview}
+            />
+          ) : previewStill ? (
+            <img
+              className={styles.media}
+              src={previewStill}
+              alt="Your video preview"
+              style={{ filter: filterCss === 'none' ? undefined : filterCss }}
+            />
+          ) : null}
+          {!editorOpen && !previewPlaying && (
+            <button
+              type="button"
+              className={styles.previewReplay}
+              onClick={() => {
+                if (!document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed) {
+                  setPreviewPlaying(true)
+                }
+              }}
+              aria-label="Play video preview"
+            >▶</button>
+          )}
+        </>
       ) : (
         <img
           className={styles.media}

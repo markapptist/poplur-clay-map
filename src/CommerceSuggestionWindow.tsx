@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import type { SmartCard } from './tourSmarts'
+import BoundedPopupVideo from './BoundedPopupVideo'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { productImage } from './productImage'
@@ -223,14 +224,11 @@ export default function CommerceSuggestionWindow({
                  shape of regression the thermal gate exists to catch. */
               <img src={shot} alt={card.media?.alt ?? 'Product'} draggable={false} />
             ) : card.media?.kind === 'video' ? (
-              <video
+              <BoundedPopupVideo
+                key={card.media.src}
                 src={card.media.src}
                 poster={card.media.poster}
-                aria-label={card.media.alt}
-                autoPlay
-                muted
-                loop
-                playsInline
+                alt={card.media.alt}
                 disablePictureInPicture
               />
             ) : card.media ? (

@@ -112,6 +112,13 @@ const VISITING_TILE_BY_POP_ID: Record<string, number> = Object.fromEntries(
 // sixteen of them dragged the screen to single-digit fps. Video is for the
 // fullscreen viewer only.
 const posterFor = (video: string) => video.replace('feed/', 'feed/posters/').replace('.mp4', '.jpg')
+const MAX_VIEWER_PLAY_MS = 12_000
+
+function releaseViewerMedia(video: HTMLVideoElement): void {
+  video.pause()
+  video.removeAttribute('src')
+  video.load()
+}
 
 // like / view / comment are the engagement kinds. Notifications is where the
 // history of your content's engagement lives: the map and feed pop a notice for
@@ -558,6 +565,8 @@ export default function ProfileTwin({
   const [showNotifs, setShowNotifs] = useState(false)
   const [notifsClosing, setNotifsClosing] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
+  const [viewerPlaying, setViewerPlaying] = useState(false)
+  const viewerLeaseRef = useRef<number | null>(null)
   // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
   // to the OS share sheet / clipboard for outside.
   const [shareOpen, setShareOpen] = useState(false)
@@ -659,6 +668,55 @@ export default function ProfileTwin({
   const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const notifCloseTimerRef = useRef<number | null>(null)
+
+  const retireViewer = useCallback(() => {
+    if (viewerLeaseRef.current != null) window.clearTimeout(viewerLeaseRef.current)
+    viewerLeaseRef.current = null
+    if (viewerVideoRef.current) releaseViewerMedia(viewerVideoRef.current)
+    setViewerPlaying(false)
+  }, [])
+
+  // Opening a tile or stepping with the channel arrows grants one visible
+  // play-through. Closing/covering/backgrounding the viewer destroys the
+  // decoder; replay is another explicit tap, never an ambient loop.
+  useEffect(() => {
+    if (
+      viewerIdx == null
+      || document.hidden
+      || !PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed
+    ) retireViewer()
+    else setViewerPlaying(true)
+  }, [mode, retireViewer, viewerIdx])
+
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
+    if (!snapshot.isForeground || !snapshot.expensiveVideoBackedTexturesAllowed) retireViewer()
+  }), [retireViewer])
+
+  useEffect(() => {
+    if (shareOpen) retireViewer()
+  }, [retireViewer, shareOpen])
+
+  useEffect(() => {
+    const video = viewerVideoRef.current
+    if (!video || viewerIdx == null || !viewerPlaying || shareOpen) return
+    if (!video.getAttribute('src')) {
+      const selected = (mode === 'liked' ? LIKED : POSTS)[viewerIdx % (mode === 'liked' ? LIKED.length : POSTS.length)]
+      if (selected) { video.src = selected.video; video.load() }
+    }
+    video.muted = isGateMuted()
+    void video.play().catch(() => retireViewer())
+    viewerLeaseRef.current = window.setTimeout(retireViewer, MAX_VIEWER_PLAY_MS)
+    const onVisibility = () => { if (document.hidden) retireViewer() }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', retireViewer)
+    return () => {
+      if (viewerLeaseRef.current != null) window.clearTimeout(viewerLeaseRef.current)
+      viewerLeaseRef.current = null
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', retireViewer)
+      releaseViewerMedia(video)
+    }
+  }, [mode, retireViewer, shareOpen, viewerIdx, viewerPlaying])
 
   const openNotifs = () => {
     if (notifCloseTimerRef.current != null) {
@@ -1297,7 +1355,6 @@ export default function ProfileTwin({
       const v = viewerVideoRef.current
       if (!v) return
       v.muted = isGateMuted()
-      if (!v.muted && v.paused) void v.play().catch(() => {})
     }
     apply()
     return onGateChange(apply)
@@ -1647,16 +1704,40 @@ export default function ProfileTwin({
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}
       {viewerPost && (
         <div className={styles.viewer}>
-          <video
-            key={viewerPost.video}
-            ref={viewerVideoRef}
-            className={styles.viewerVideo}
-            src={viewerPost.video}
-            autoPlay
-            muted
-            loop
-            playsInline
-          />
+          {viewerPlaying && !shareOpen ? (
+            <video
+              key={viewerPost.video}
+              ref={viewerVideoRef}
+              className={styles.viewerVideo}
+              src={viewerPost.video}
+              poster={posterFor(viewerPost.video)}
+              autoPlay
+              muted
+              playsInline
+              preload="metadata"
+              onEnded={retireViewer}
+              onClick={retireViewer}
+            />
+          ) : (
+            <img
+              className={styles.viewerVideo}
+              src={posterFor(viewerPost.video)}
+              alt=""
+              draggable={false}
+            />
+          )}
+          {!shareOpen && !viewerPlaying && (
+            <button
+              type="button"
+              className={styles.viewerReplay}
+              onClick={() => {
+                if (!document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed) {
+                  setViewerPlaying(true)
+                }
+              }}
+              aria-label="Play this post again"
+            >▶</button>
+          )}
           <span className={styles.tileScan} aria-hidden="true" />
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>

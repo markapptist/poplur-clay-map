@@ -49,6 +49,25 @@
    the capture to fit inside it. */
 .media { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+.previewReplay {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  translate: -50% -50%;
+  width: 62px;
+  height: 62px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 50%;
+  background: rgba(7, 4, 12, 0.58);
+  color: #fff;
+  font: 900 24px/1 system-ui, sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+.previewReplay:active { transform: scale(0.94); }
+
 /* The bar and the step panel sit above the full-bleed media, with a scrim so
    their text stays legible over a bright capture. */
 .bar, .panel { position: relative; z-index: 1; }
