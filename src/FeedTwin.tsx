@@ -144,6 +144,12 @@ function posterForFeedClip(source: string): string {
   return 'feed/posters/ad-food.jpg'
 }
 
+function shouldAutoplayFeedOnMount(explicitNavigation: boolean): boolean {
+  // An untouched cold launch remains decoder-free. Home supplies this token
+  // only for the one mount caused by an explicit transition back into Feed.
+  return isNativeShell() && explicitNavigation
+}
+
 const CHANNEL_USERS: Record<string, string[]> = {
   food: ['@sauceboss', '@nightmarket', '@poutine.patrol'],
   beauty: ['@glowgetter', '@softglam', '@lash.lab'],
@@ -285,6 +291,7 @@ export default function FeedTwin({
   onPostReach,
   onPlayerModeChange,
   bindGoBack,
+  autoPlayOnMount = false,
 }: {
   index?: number
   onIndexChange?: (index: number) => void
@@ -305,6 +312,9 @@ export default function FeedTwin({
   /** Long-press fullscreen: the shell hides its own chrome (cube, HUD, stat
       cards) while the feed is in player mode, and brings it back on exit. */
   onPlayerModeChange?: (on: boolean) => void
+  /** A settled user/navigation transition into Feed may start its one visible
+      native play-through. Initial cold launch deliberately leaves this false. */
+  autoPlayOnMount?: boolean
 } = {}) {
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
@@ -408,8 +418,10 @@ export default function FeedTwin({
   // and audio media session before any touch kept an otherwise-idle phone warm.
   // Start on the bundled poster instead; a deliberate touch grants one native
   // play-through, while browser previews retain their normal looping behavior.
-  const [mediaUnlocked, setMediaUnlocked] = useState(false)
-  const mediaUnlockedRef = useRef(false)
+  const [mediaUnlocked, setMediaUnlocked] = useState(
+    () => shouldAutoplayFeedOnMount(autoPlayOnMount),
+  )
+  const mediaUnlockedRef = useRef(mediaUnlocked)
   const recoveringAdSrcRef = useRef<string | null>(null)
   const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
   const ch = CHANNELS[index]
@@ -1294,19 +1306,20 @@ export default function FeedTwin({
         />
       )}
 
-      {adSrc && !post?.stream && !mediaUnlocked && posterSrc && posterKey && (
+      {adSrc && !post?.stream && posterSrc && posterKey && (!mediaUnlocked || !adReady) && (
         <img
-          key={`${posterKey}:locked`}
-          data-feed-media="true"
+          key={`${posterKey}:poster`}
+          data-feed-media={!mediaUnlocked ? 'true' : undefined}
           className={`${styles.adVideo} ${styles.adVideoReady}`}
           src={posterSrc}
           alt=""
           draggable={false}
-          role="button"
-          aria-label="Play feed video"
-          tabIndex={0}
+          role={!mediaUnlocked ? 'button' : undefined}
+          aria-label={!mediaUnlocked ? 'Play feed video' : undefined}
+          tabIndex={!mediaUnlocked ? 0 : -1}
           onLoad={() => setReadyPosterKey(posterKey)}
           onKeyDown={event => {
+            if (mediaUnlockedRef.current) return
             if (event.key !== 'Enter' && event.key !== ' ') return
             event.preventDefault()
             clearCommentRoll()

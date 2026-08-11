@@ -163,23 +163,18 @@ function cubeSizeFor(): number {
 // locked phone or another app cannot leave Mapbox/camera/media burning power.
 function subscribePageVisibility(onChange: () => void): () => void {
   if (typeof document === 'undefined') return () => undefined
-  const onPerformancePolicy = () => onChange()
   document.addEventListener('visibilitychange', onChange)
   window.addEventListener('pagehide', onChange)
   window.addEventListener('pageshow', onChange)
-  window.addEventListener('poplur-performance-policy', onPerformancePolicy)
   return () => {
     document.removeEventListener('visibilitychange', onChange)
     window.removeEventListener('pagehide', onChange)
     window.removeEventListener('pageshow', onChange)
-    window.removeEventListener('poplur-performance-policy', onPerformancePolicy)
   }
 }
 
 function pageIsVisible(): boolean {
-  if (typeof document === 'undefined') return true
-  return document.visibilityState === 'visible'
-    && document.documentElement.dataset.poplurPerformanceActive !== 'false'
+  return typeof document === 'undefined' || document.visibilityState === 'visible'
 }
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
@@ -397,15 +392,15 @@ function initialPostLoginPermissions(): PostLoginPermission[] {
 
 // Home and Map use the same bundle. The dedicated internal map route avoids a
 // second dev server while keeping `/` reserved for the post-login home.
-// `front=0` tells the embedded map it is booting behind another tab, so it
-// skips the 7s cinematic intro (which streams tiles and uploads textures the
-// whole way) and just lands. Without it the map's intro runs behind Feed /
-// Profile / Camera and drags those screens into single-digit fps.
+// The iframe is now mounted only after Map is the committed front tab, so its
+// route is honestly `front=1`. Older always-mounted behavior passed front=0
+// and then flipped it by postMessage during boot, which could start the intro
+// halfway through initialization and strand its camera at the first zoom.
 const CLAY_MAP_SRC = (() => {
   const parentParams = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams()
-  const front = parentParams.get('view') === 'map' ? '1' : '0'
+  const front = '1'
   const mode = parentParams.get('mapMode')
   const fallback = parentParams.get('fallback2d')
   const lite = parentParams.get('mapLite')
@@ -461,6 +456,12 @@ const MAP_SETTLE_MS = (() => {
   const parsed = Number(raw)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 })()
+
+// Semantic navigation may never depend indefinitely on the decorative cube
+// spring reaching its final rAF. Under a reduced native frame lease that spring
+// can be parked mid-flight, so commit whichever face has remained stable for
+// this bounded interval even if `cubeSpinning` did not clear itself.
+const SCREEN_COMMIT_MAX_MS = 1_000
 
 // Longest the boot cover may sit over a mounting map before it lifts on its own.
 // The cover normally comes off on the map's first postMessage; this is the
@@ -556,9 +557,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [activePermission, finishPermission])
   useEffect(() => {
     onTabChange?.(activeTab)
-    // Native shell: tell the app which tab is front so it can mount real
-    // device power behind the web chrome (e.g. the native ML camera on 'post').
-    if (isNativeShell()) postNativeEvent({ type: 'tabChanged', tab: activeTab })
   }, [activeTab, onTabChange])
   // The cube long-press hold menu floats as a translucent overlay over the
   // current tab, and its items match that tab.
@@ -642,12 +640,29 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from, so a face the spin merely passes THROUGH is never built. The chrome and
   // the cube keep tracking `activeTab`, so the app still feels immediate.
   const [committedTab, setCommittedTab] = useState<CubeTab>(initialTab)
+  const [feedAutoPlayOnMount, setFeedAutoPlayOnMount] = useState(false)
   useEffect(() => {
-    if (cubeSpinning) return
     if (committedTab === activeTab) return
-    const settle = window.setTimeout(() => setCommittedTab(activeTab), MAP_SETTLE_MS)
+    const settle = window.setTimeout(
+      () => {
+        setFeedAutoPlayOnMount(activeTab === 'feed' && committedTab !== 'feed')
+        setCommittedTab(activeTab)
+      },
+      cubeSpinning ? SCREEN_COMMIT_MAX_MS : MAP_SETTLE_MS,
+    )
     return () => window.clearTimeout(settle)
   }, [activeTab, cubeSpinning, committedTab])
+  useEffect(() => {
+    // Native power follows the settled screen, never a transient cube face.
+    // In particular, this is the point where the WebView yields its heavy
+    // lease and the real camera is allowed to mount behind its lightweight HUD.
+    if (isNativeShell()) postNativeEvent({ type: 'tabChanged', tab: committedTab })
+  }, [committedTab])
+  useEffect(() => {
+    // This is a one-mount token, not standing permission to restart playback
+    // after an overlay or background lifecycle remount.
+    if (committedTab === 'feed' && feedAutoPlayOnMount) setFeedAutoPlayOnMount(false)
+  }, [committedTab, feedAutoPlayOnMount])
   // undefined = the designed cube. Set while a screen takes the navigator over.
   const [cubeModel, setCubeModel] = useState<string | undefined>(undefined)
 
@@ -1399,7 +1414,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     const screenCanRender = pageVisible && !overlayOpen && activePermission === null
     const apply = () => {
-      if (activeTab === 'map' && screenCanRender) { setMapMounted(true); return }
+      if (committedTab === 'map' && screenCanRender) { setMapMounted(true); return }
       if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
       dropTimer = window.setTimeout(drop, MAP_GRACE_MS)
     }
@@ -1409,29 +1424,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       drop()
       return
     }
-    // Wait for the cube to STOP before touching the map at all.
-    //
-    // The cube commits a face the moment it wins the front (see CubeTab3D), i.e.
-    // halfway through each quarter turn — deliberate, so the screen changes under
-    // a cube that is still moving. But `activeTab` is also what decides whether a
-    // Mapbox iframe exists, so one spin was booting and destroying an entire map
-    // for every face it passed THROUGH. Measured on one gesture: 2 mounts and 2
-    // disposes, median frame 16.7ms -> 33.3ms, and a single 5.9-SECOND frame.
-    // That is the "sticky cube".
-    // Restarting this timer on every commit coalesces the whole gesture into one
-    // decision, taken on the face you actually land on. Deliberate navigation
-    // pays MAP_SETTLE_MS once, which is nothing against Mapbox's own boot — and
-    // the map route already covers that wait with the loading globe.
-    //
-    // The timer alone was not enough: the release spring keeps crossing faces
-    // after your finger is gone, and a crossing in its tail landed outside the
-    // window, so a map still got built and thrown away (measured: 2 mounts per
-    // spin -> 1). `cubeSpinning` covers that tail — while the cube is moving at
-    // all, the map layer does nothing.
-    if (cubeSpinning) return
-    const settleTimer = window.setTimeout(apply, MAP_SETTLE_MS)
-    return () => { window.clearTimeout(settleTimer); window.clearTimeout(dropTimer) }
-  }, [activePermission, activeTab, cubeSpinning, overlayOpen, pageVisible])
+    // `committedTab` already coalesces transient cube faces and carries its own
+    // parked-spring backstop. Applying it directly avoids a second timer and
+    // prevents decorative motion from owning map lifecycle forever.
+    apply()
+    return () => { window.clearTimeout(dropTimer) }
+  }, [activePermission, committedTab, overlayOpen, pageVisible])
 
   // Boot cover lifecycle. Unmounting re-arms it, so the NEXT mount renders
   // covered in the same commit that attaches the iframe — there is no frame in
@@ -1782,6 +1780,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             bindGoBack={fn => { feedBackRef.current = fn }}
             suppressed={overlayOpen || holdOpen || activePermission !== null}
             onPlayerModeChange={setFeedFullscreen}
+            autoPlayOnMount={feedAutoPlayOnMount}
             onOpenProfile={user => {
               setProfileOrigin(activeTab)
               setViewingUser(user)
