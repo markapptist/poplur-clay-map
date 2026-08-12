@@ -1220,7 +1220,9 @@
 
 .captureTop {
   position: absolute;
-  top: max(22px, env(safe-area-inset-top));
+  /* Keep the shared Home logo above the title and camera-source hint instead
+     of stacking all three labels in the same strip. */
+  top: max(76px, calc(env(safe-area-inset-top) + 54px));
   left: 18px;
   right: 18px;
   z-index: 3;
@@ -1303,7 +1305,7 @@
 
 .profileRoll {
   position: absolute;
-  inset: 86px 0 138px;
+  inset: 132px 0 138px;
   z-index: 1;
   overflow: hidden;
 }
@@ -1316,7 +1318,7 @@
 
 .vfRing {
   position: absolute;
-  inset: 108px 26px 148px;
+  inset: 132px 26px 148px;
   border: 3px solid rgba(255, 220, 240, 0.72);
   border-radius: 31px;
   box-shadow:
