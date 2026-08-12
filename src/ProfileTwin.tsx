@@ -75,6 +75,13 @@ const LIKED: LikedPost[] = [
 // app keeps. Every access is guarded: an embedded/partitioned shell can throw
 // on localStorage access, and a profile picture is never worth a thrown error.
 const PHOTO_KEY = 'poplur.profile.photo'
+const PROFILE_NAME_FALLBACK = 'MARK'
+
+function usableUsername(value: string | null | undefined): string | null {
+  const trimmed = value?.trim()
+  if (!trimmed || /^username$/i.test(trimmed)) return null
+  return trimmed.replace(/^@/, '')
+}
 
 function readStoredPhoto(): string | null {
   try {
@@ -471,6 +478,7 @@ export default function ProfileTwin({
   bindGoBack,
   highlightPops = null,
   onPostCountChange,
+  onBusinessChange,
 }: {
   bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
   /** a handle when you opened someone else's profile from the feed */
@@ -486,6 +494,8 @@ export default function ProfileTwin({
   highlightPops?: { ids: string[]; seq: number } | null
   /** Keeps the Home HUD's animated post count tied to this profile's grid. */
   onPostCountChange?: (count: number) => void
+  /** Keeps the persistent tab navigator in sync with the native account type. */
+  onBusinessChange?: (business: boolean) => void
 
 } = {}) {
   const [mode, setMode] = useState<Mode>('media')
@@ -597,26 +607,35 @@ export default function ProfileTwin({
 
   // ── Identity: the REAL username + account type. Native shells answer over
   // the bridge; the browser twin honours ?username= / ?business=1 and
-  // localStorage, falling back to the placeholder.
+  // localStorage. A literal USERNAME placeholder is never presented as
+  // identity while the native bridge is warming up; the approved demo account
+  // remains visible and is replaced as soon as Auth/Firestore responds.
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
-  const [username, setUsername] = useState(() =>
-    params?.get('username')
-    ?? (() => { try { return window.localStorage.getItem('poplur.username') } catch { return null } })()
-    ?? 'USERNAME')
-  const [isBusiness, setIsBusiness] = useState(() =>
-    params?.get('business') === '1'
-    || (() => { try { return window.localStorage.getItem('poplur.accountType') === 'business' } catch { return false } })())
+  const [username, setUsername] = useState(() => {
+    const fromQuery = usableUsername(params?.get('username'))
+    let stored: string | null = null
+    try { stored = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
+    return fromQuery ?? stored ?? PROFILE_NAME_FALLBACK
+  })
+  const [isBusiness, setIsBusiness] = useState(() => {
+    const explicitBusiness = params?.get('business')
+    if (explicitBusiness === '1') return true
+    if (explicitBusiness === '0') return false
+    try { return window.localStorage.getItem('poplur.accountType') === 'business' } catch { return false }
+  })
   useEffect(() => {
     if (!isNativeShell()) return
     type NativeProfile = { username?: string; business?: boolean; photo?: string }
     const applyProfile = (value: unknown) => {
       const prof = value as NativeProfile
-      if (prof?.username) {
-        setUsername(prof.username)
-        try { window.localStorage.setItem('poplur.username', prof.username) } catch { /* embedded */ }
+      const nextUsername = usableUsername(prof?.username)
+      if (nextUsername) {
+        setUsername(nextUsername)
+        try { window.localStorage.setItem('poplur.username', nextUsername) } catch { /* embedded */ }
       }
       if (typeof prof?.business === 'boolean') {
         setIsBusiness(prof.business)
+        onBusinessChange?.(prof.business)
         try { window.localStorage.setItem('poplur.accountType', prof.business ? 'business' : 'user') } catch { /* embedded */ }
       }
       if (prof?.photo && (prof.photo.startsWith('data:image/') || /^https:\/\//i.test(prof.photo))) {
@@ -626,15 +645,16 @@ export default function ProfileTwin({
       }
     }
     const receiveProfile = (event: Event) => applyProfile((event as CustomEvent<NativeProfile>).detail)
-    const w = window as unknown as { poplurProfile?: (p: unknown) => void }
-    w.poplurProfile = applyProfile
     window.addEventListener('poplur-native-profile', receiveProfile)
+    // Home asks once so the persistent navigator knows the account type before
+    // Profile is visited. Ask again here for the full username/photo payload:
+    // those fields are intentionally not retained by Home while Profile is
+    // unmounted, and a first visit must not show stale identity.
     postNativeEvent({ type: 'requestProfile' })
     return () => {
-      delete w.poplurProfile
       window.removeEventListener('poplur-native-profile', receiveProfile)
     }
-  }, [])
+  }, [onBusinessChange])
 
   // Business avatars use the 3D Poplur building object.
   useEffect(() => {
@@ -1223,8 +1243,11 @@ export default function ProfileTwin({
     }
   }
 
-  const captureSurface = capturing && typeof document !== 'undefined'
-    ? createPortal(
+  // Keep capture inside the Home stacking tree. Portalling it to <body> put it
+  // above the shared cube/arrows regardless of their z-index, so the camera
+  // lost the app's universal navigation controls.
+  const captureSurface = capturing
+    ? (
       <div className={styles.capture} role="dialog" aria-modal="true" aria-label="Take profile photo">
         {captureSource === 'library' ? (
           <div className={styles.profileRoll}>
@@ -1261,16 +1284,7 @@ export default function ProfileTwin({
         </div>
         {captureSource === 'camera' && <div className={styles.vfRing} />}
         <div className={styles.captureBar}>
-          <div className={styles.captureAction}>
-            <ClayCornerButton
-              kind="close"
-              label="Cancel"
-              onPress={() => { playPop(); setCapturing(false) }}
-              size={76}
-              activateOnClick
-            />
-            <span className={styles.captureActionLabel}>Cancel</span>
-          </div>
+          <div className={styles.captureSpacer} aria-hidden="true" />
           {captureSource === 'camera' ? (
             <div className={`${styles.captureAction} ${styles.captureActionPrimary}`}>
               <ClayCornerButton kind="capture" label="Capture photo" onPress={shoot} size={108} activateOnClick />
@@ -1279,8 +1293,7 @@ export default function ProfileTwin({
           ) : <div className={styles.captureLibraryHint}>{savingPhoto ? 'SAVING 4K PHOTO' : 'TAP A PHOTO'}</div>}
           <div className={styles.captureSpacer} aria-hidden="true" />
         </div>
-      </div>,
-      document.body,
+      </div>
     )
     : null
 

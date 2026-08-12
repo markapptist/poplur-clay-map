@@ -120,6 +120,60 @@
   .contentLayer > * { animation: none; }
 }
 
+/* TV-static handoff for Camera, Map and Profile. Feed renders this same asset
+   itself so its channel identity can stay attached to the transition. */
+.tabStaticTransition {
+  position: absolute;
+  inset: 0;
+  z-index: 250;
+  overflow: hidden;
+  pointer-events: none !important;
+  background: #111;
+  animation: none !important;
+  isolation: isolate;
+}
+
+.tabStaticTransition::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  content: "";
+  opacity: 0.94;
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.24) 0 1px, rgba(0,0,0,.32) 1px 3px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.17) 0 1px, rgba(0,0,0,.26) 1px 4px),
+    radial-gradient(circle at 22% 30%, #dedede 0 1px, transparent 1.8px),
+    radial-gradient(circle at 73% 68%, #a7a7a7 0 1px, transparent 2px),
+    #161616;
+  background-size: 100% 5px, 7px 100%, 8px 9px, 11px 13px, auto;
+  animation: tabStaticShift .14s steps(2) infinite;
+}
+
+.tabStaticVideo {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity .1s linear;
+}
+
+.tabStaticVideoReady { opacity: 1; }
+
+@keyframes tabStaticShift {
+  0% { transform: translate3d(-1%, -1%, 0) scale(1.03); }
+  50% { transform: translate3d(1%, 0, 0) scale(1.03); }
+  100% { transform: translate3d(0, 1%, 0) scale(1.03); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabStaticTransition::before { animation: none; }
+  .tabStaticVideo { transition: none; }
+}
+
 /* Approved Loading screen (GCL): the background fades pink → purple → blue
    over 2.4s and settles on blue, exactly like gcl-prototype's loadingPage(). */
 .mapLoading {
@@ -341,12 +395,16 @@
   right: 16px;
   bottom: 18px;
   height: var(--cube-size);
+  --home-gap: clamp(8px, calc((100vw - 480px) / 2.5), 440px);
+  --home-side-track: calc((100vw - 32px - var(--cube-size) - var(--home-gap) - var(--home-gap)) / 2);
+  --home-left-center: calc(16px + var(--home-side-track) / 2);
+  --map-mute-center: 36px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--cube-size) minmax(0, 1fr);
   /* Responsive breathing room: phones keep the tight ~8px hug, but past
      ~480px the arrows and label move away from the centered cube with the
      viewport (tablet ≈ 115px, desktop ≈ 384px, capped at 440px). */
-  column-gap: clamp(8px, calc((100vw - 480px) / 2.5), 440px);
+  column-gap: var(--home-gap);
   align-items: center;
   z-index: 20;
   pointer-events: none;
@@ -1216,9 +1274,19 @@
 .levelAbove {
   position: absolute;
   bottom: calc(100% + 12px);
-  left: 50%;
+  /* Keep the existing vertical relationship with the channel arrows, but put
+     the level glyph on the header Mute control's exact centre line. */
+  left: calc(50% + var(--map-mute-center) - var(--home-left-center));
   transform: translateX(-50%);
   pointer-events: auto;
+}
+
+@media (max-width: 430px) and (max-height: 850px) {
+  .bottomRow {
+    /* App.module.css scales the top-left header group to 78% on compact
+       phones, around its top-left origin at x=14px. */
+    --map-mute-center: 31.2px;
+  }
 }
 
 /* ── The navigator popping into its replacement ──────────────────────────────
@@ -1242,4 +1310,34 @@
   animation:
     cubeSwapPop 0.62s cubic-bezier(0.34, 1.4, 0.64, 1),
     cubeHover 3.6s ease-in-out infinite;
+}
+
+.cubeModelStage {
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 50%;
+}
+
+.cubeModelConcealed {
+  opacity: 0;
+  transform: scale(.42);
+}
+
+@keyframes cubeModelReveal {
+  0% { opacity: 0; transform: scale(.42); }
+  62% { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.cubeModelReveal {
+  animation: cubeModelReveal .28s cubic-bezier(.34, 1.4, .64, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cubeSwapPop {
+    animation: none;
+  }
+  .cubeModelReveal {
+    animation: none;
+  }
 }

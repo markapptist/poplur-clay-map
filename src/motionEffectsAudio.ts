@@ -307,7 +307,10 @@ export function playCubeTurnPop(direction: 'left' | 'right', speed01: number) {
 
     // A faster flick is a firmer sound, but never a silent one at rest: a
     // deliberate slow turn still has to announce its direction.
-    const level = 0.09 + speed * 0.07
+    // Phone speakers were swallowing the old floor beneath feed audio. Keep
+    // both syllables comfortably audible while direction still comes from
+    // pitch and envelope rather than loudness.
+    const level = 0.16 + speed * 0.11
 
     const body = c.createOscillator()
     const gain = c.createGain()
@@ -349,6 +352,50 @@ export function playCubeTurnPop(direction: 'left' | 'right', speed01: number) {
 
   // Scheduling against a suspended Safari context is not consistently queued.
   // Wait for the resume promise, then stamp oscillator times onto its live clock.
+  if (c.state === 'running') schedule()
+  else void c.resume().then(schedule).catch(() => armIdle(ONE_SHOT_IDLE_MS))
+}
+
+/** Brief television hiss paired with the visual static between app tabs. */
+export function playTabStaticBurst() {
+  if (isGateMuted()) return
+  const c = audioContext()
+  if (!c) return
+  cancelIdle()
+
+  const schedule = () => {
+    if (isGateMuted()) { armIdle(ONE_SHOT_IDLE_MS); return }
+    const now = c.currentTime
+    const duration = 0.36
+    const frames = Math.max(1, Math.floor(c.sampleRate * duration))
+    const buffer = c.createBuffer(1, frames, c.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < frames; i += 1) data[i] = Math.random() * 2 - 1
+
+    const source = c.createBufferSource()
+    source.buffer = buffer
+    const highpass = c.createBiquadFilter()
+    highpass.type = 'highpass'
+    highpass.frequency.value = 1050
+    const presence = c.createBiquadFilter()
+    presence.type = 'peaking'
+    presence.frequency.value = 3300
+    presence.Q.value = 0.7
+    presence.gain.value = 5
+    const gain = c.createGain()
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.012)
+    gain.gain.setValueAtTime(0.1, now + duration - 0.055)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+    source.connect(highpass).connect(presence).connect(gain).connect(c.destination)
+    source.start(now)
+    source.stop(now + duration + 0.01)
+    source.addEventListener('ended', () => {
+      source.disconnect(); highpass.disconnect(); presence.disconnect(); gain.disconnect()
+    }, { once: true })
+    armIdle(ONE_SHOT_IDLE_MS)
+  }
+
   if (c.state === 'running') schedule()
   else void c.resume().then(schedule).catch(() => armIdle(ONE_SHOT_IDLE_MS))
 }

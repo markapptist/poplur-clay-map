@@ -340,7 +340,7 @@
 
 .rowOn .rowNum {
   background-image: linear-gradient(168deg,
-    #eaffe6 0%, #7dff६f 26%, #4fff40 48%, #27c41c 70%, #17870f 100%);
+    #eaffe6 0%, #7dff6f 26%, #4fff40 48%, #27c41c 70%, #17870f 100%);
   filter: drop-shadow(0 0 9px rgba(79, 255, 64, 0.55)) drop-shadow(0 1px 0 rgba(0, 0, 0, 0.85));
 }
 
@@ -460,6 +460,25 @@
   color: var(--ch-bright);
   font-size: 9px;
   letter-spacing: 0.6px;
+}
+
+/* Phone-width guide: keep every semantic column on screen and give the live
+   leaderboard the remaining room. The old desktop widths consumed 274px
+   before LEADING began, leaving only a sliver on compact iPhones. */
+@media (max-width: 430px) {
+  .pipBand { padding-inline: 10px; }
+  .columns { padding-inline: 12px; }
+  .row { padding-inline: 12px; }
+  .colRank, .rank { width: 22px; }
+  .colCh, .rowCh { width: 84px; }
+  .colCat, .rowCat { width: 82px; }
+  .rowCh { gap: 5px; }
+  .rowIconPad { width: 34px; height: 36px; }
+  .rowIcon { width: 34px; height: 34px; }
+  .rowNum { font-size: 19px; }
+  .rowCat { padding-right: 6px; font-size: 10px; letter-spacing: 0; }
+  .colNow { min-width: 0; line-height: 1.05; }
+  .leaderName { font-size: 13px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

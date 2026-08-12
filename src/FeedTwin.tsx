@@ -343,6 +343,8 @@ export default function FeedTwin({
   suppressedRef.current = suppressed
   const [commentOpen, setCommentOpen] = useState(false)
   const [commentClosing, setCommentClosing] = useState(false)
+  const [shareNote, setShareNote] = useState<string | null>(null)
+  const shareNoteTimerRef = useRef<number | null>(null)
   const [radiusReaction, setRadiusReaction] = useState<'up' | 'down' | null>(null)
   // End-of-clip comments: the roll runs when the video finishes, then leaves.
   // Deliberately NOT the comment window — that one autofocuses its input and
@@ -358,6 +360,7 @@ export default function FeedTwin({
   const [playerMode, setPlayerMode] = useState(false)
   const playerModeRef = useRef(false)
   const [playerPaused, setPlayerPaused] = useState(false)
+  const playerPausedByUserRef = useRef(false)
   const [playerTime, setPlayerTime] = useState(0)
   const [playerDuration, setPlayerDuration] = useState(0)
   const [playerBuffered, setPlayerBuffered] = useState(0)
@@ -500,6 +503,7 @@ export default function FeedTwin({
       clearCommentRoll()
     } else {
       setPlayerPaused(false)
+      playerPausedByUserRef.current = false
       const video = adVideoRef.current
       if (video && !suppressedRef.current) void video.play().catch(() => {})
     }
@@ -514,8 +518,13 @@ export default function FeedTwin({
     const video = adVideoRef.current
     if (!video) return
     playPop()
-    if (video.paused) void video.play().catch(() => {})
-    else video.pause()
+    if (video.paused) {
+      playerPausedByUserRef.current = false
+      void video.play().catch(() => {})
+    } else {
+      playerPausedByUserRef.current = true
+      video.pause()
+    }
   }, [])
 
   const seekBy = useCallback((deltaSeconds: number) => {
@@ -802,6 +811,13 @@ export default function FeedTwin({
   // The static loop's autoplay can be refused if it mounted while the page
   // was hidden — re-kick it whenever the cover is (about to be) visible.
   const staticVideoRef = useRef<HTMLVideoElement>(null)
+
+  // Map decoration and Feed playback are different kinds of work. The shared
+  // ambient gate may park a motionless Map after four seconds on-device, but a
+  // person passively watching a finite Feed clip is still actively using the
+  // app. Visibility/suppression and the media's natural end own this decoder;
+  // do not pause it merely because there was no new touch.
+
   const settleAfterFrame = (video: HTMLVideoElement, callback: () => void) => {
     const frameAware = video as HTMLVideoElement & {
       requestVideoFrameCallback?: (listener: (now: number, metadata: unknown) => void) => number
@@ -883,8 +899,8 @@ export default function FeedTwin({
   }, [])
 
   useEffect(() => {
-    if (!adReady) void staticVideoRef.current?.play().catch(() => {})
-  }, [adReady, ch.id])
+    if (showStatic) void staticVideoRef.current?.play().catch(() => {})
+  }, [showStatic, ch.id])
 
   // A bad/blocked creative can never strand the channel on static. Retry play
   // first, then rotate through bundled, decode-verified stock clips until time
@@ -940,7 +956,12 @@ export default function FeedTwin({
       // Covered by News / TV Guide / the hold menu: stay silent and stopped,
       // whatever the gate says — this effect used to resume playback the moment
       // it ran, which is why the feed kept going behind the paper.
-      if (suppressedRef.current) { video.muted = true; video.pause(); return }
+      if (suppressedRef.current) {
+        video.muted = true
+        video.pause()
+        releaseAudioFocus('feed')
+        return
+      }
       // Claim the floor even during the muted autoplay warm-up. Taking focus
       // does not make Feed audible, but it does stop a late Map/radio callback
       // before the first post-login gesture. requestAudioFocus deliberately
@@ -966,7 +987,8 @@ export default function FeedTwin({
     const offGate = onGateChange(apply)
     const offFocus = onAudioFocusChange(owner => {
       const video = adVideoRef.current
-      if (!video || suppressedRef.current) return
+      if (!video) return
+      if (suppressedRef.current) return
       // AI speech is deliberately temporary and owns the floor even though
       // Feed remains the visible picture. Reclaim as soon as Voice releases;
       // do not steal focus mid-answer and make the assistant appear silent.
@@ -1147,8 +1169,8 @@ export default function FeedTwin({
     const title = post?.caption ?? channel.caption
     const by = post?.user ?? channel.user
     // Native owns the real share sheet (UIActivityViewController); in the
-    // browser the Web Share API is the same gesture, and where neither
-    // exists the action is simply a no-op rather than a broken dialog.
+    // browser the Web Share API is the same gesture. Browsers without it copy
+    // a useful link and acknowledge the tap instead of silently doing nothing.
     const sent = postNativeEvent({
       type: 'sharePost',
       postId: radiusPostId(channel.id, post),
@@ -1156,9 +1178,47 @@ export default function FeedTwin({
       title,
       user: by,
     })
-    if (!sent && typeof navigator !== 'undefined' && navigator.share) {
-      void navigator.share({ title: 'poplur', text: `${title} — ${by}` }).catch(() => {})
+    if (sent || typeof navigator === 'undefined') return
+
+    const showNote = (note: string) => {
+      setShareNote(note)
+      if (shareNoteTimerRef.current != null) window.clearTimeout(shareNoteTimerRef.current)
+      shareNoteTimerRef.current = window.setTimeout(() => {
+        setShareNote(null)
+        shareNoteTimerRef.current = null
+      }, 2200)
     }
+    const copyFallback = async () => {
+      const shareText = `${title} — ${by}\n${window.location.href}`
+      try {
+        await navigator.clipboard.writeText(shareText)
+        showNote('Post link copied')
+      } catch {
+        const field = document.createElement('textarea')
+        field.value = shareText
+        field.setAttribute('readonly', '')
+        field.style.position = 'fixed'
+        field.style.opacity = '0'
+        document.body.appendChild(field)
+        field.select()
+        const copied = document.execCommand('copy')
+        field.remove()
+        showNote(copied ? 'Post link copied' : 'Share unavailable in this preview')
+      }
+    }
+    if (navigator.share) {
+      void navigator.share({ title: 'poplur', text: `${title} — ${by}` })
+        .catch(error => {
+          if (error instanceof DOMException && error.name === 'AbortError') return
+          void copyFallback()
+        })
+    } else {
+      void copyFallback()
+    }
+  }, [])
+
+  useEffect(() => () => {
+    if (shareNoteTimerRef.current != null) window.clearTimeout(shareNoteTimerRef.current)
   }, [])
 
   useEffect(() => {
@@ -1180,7 +1240,7 @@ export default function FeedTwin({
       }
     })
     return () => bindActions(null)
-  }, [bindActions])
+  }, [bindActions, ch.id, ch.user, onOpenProfile, sharePost])
 
   // Tapping outside sends the window back up the way it came, then unmounts.
   const closeComments = () => {
@@ -1594,6 +1654,7 @@ export default function FeedTwin({
       )}
 
       {commentSent && <div className={styles.commentToast}>Comment posted</div>}
+      {shareNote && <div className={styles.commentToast} role="status">{shareNote}</div>}
 
       {/* ── Fullscreen player chrome ──
           The ONLY thing on screen besides the clip: a thin white timeline you

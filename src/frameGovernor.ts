@@ -1,4 +1,4 @@
-import { MANAGED_RENDERING_OPERATION_EVENT } from './nativeBridge'
+import { isNativeShell, MANAGED_RENDERING_OPERATION_EVENT } from './nativeBridge'
 
 // One clock for every animation in the app, and a thermal ladder on top of it.
 //
@@ -64,7 +64,12 @@ let nativeThermalCeiling: Quality = 3
 let powerSavingCeiling: Quality = 3
 let memoryPressureCeiling: Quality = 3
 let boostUntil = 0
-const AMBIENT_IDLE_MS = 15_000
+// A browser showcase can breathe for fifteen seconds. On a physical phone the
+// same window let traffic/orbit/weather restart for fifteen seconds after every
+// map touch, which is enough repeated GPU work to become perceptibly warm even
+// though the eventual parked state is clean. Explicit map flights have their
+// own bounded operation leases; ordinary decoration gets four seconds on-device.
+const AMBIENT_IDLE_MS = isNativeShell() ? 4_000 : 15_000
 let ambientAwakeUntil = typeof performance !== 'undefined'
   ? performance.now() + AMBIENT_IDLE_MS
   : Number.POSITIVE_INFINITY
@@ -559,13 +564,21 @@ export function setSurfaceFront(front: boolean): void {
   surfaceFront = front
   if (typeof document !== 'undefined') {
     if (front && !document.hidden) {
-      ambientAwakeUntil = performance.now() + AMBIENT_IDLE_MS
-      setAmbientSleeping(false)
       window.clearTimeout(ambientSleepTimer)
-      ambientSleepTimer = window.setTimeout(() => {
+      const ceiling = effectiveQualityCeiling()
+      const lease = ceiling <= 0 ? 0 : ceiling <= 1 ? 4_000 : AMBIENT_IDLE_MS
+      if (lease <= 0) {
         ambientAwakeUntil = 0
         setAmbientSleeping(true)
-      }, AMBIENT_IDLE_MS)
+        ambientSleepTimer = 0
+      } else {
+        ambientAwakeUntil = performance.now() + lease
+        setAmbientSleeping(false)
+        ambientSleepTimer = window.setTimeout(() => {
+          ambientAwakeUntil = 0
+          setAmbientSleeping(true)
+        }, lease)
+      }
     } else {
       // A surface going away cannot leave a finger "down": the pointerup landed
       // somewhere else, and a stuck count would hold the renderer awake forever.

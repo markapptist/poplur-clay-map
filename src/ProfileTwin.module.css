@@ -1346,13 +1346,16 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: max(28px, env(safe-area-inset-bottom));
+  /* The Home cube owns the bottom centre and is the camera's back control.
+     Lift the shutter above that stable row instead of layering two controls. */
+  bottom: calc(max(18px, env(safe-area-inset-bottom)) + var(--cube-size, 176px) + 12px);
   display: grid;
   grid-template-columns: 88px 112px 88px;
   align-items: end;
   justify-content: center;
   gap: clamp(12px, 3.2vw, 24px);
   z-index: 2;
+  pointer-events: none;
 }
 
 .captureAction {
@@ -1363,6 +1366,7 @@
   align-items: center;
   justify-content: flex-end;
   filter: drop-shadow(0 10px 10px rgba(24, 2, 15, 0.46));
+  pointer-events: auto;
 }
 
 .captureActionPrimary {
@@ -1380,6 +1384,7 @@
   letter-spacing: 0.08em;
   text-align: center;
   text-shadow: 0 2px 5px #000;
+  pointer-events: auto;
 }
 
 .captureActionLabel {

@@ -649,7 +649,7 @@ export default function HoldMenuTwin({
           <TVGuide
             currentChannelId={currentFeedChannelId}
             onTune={onTuneFeedChannel}
-            onClose={() => { playPop(); onClose() }}
+            onClose={onClose}
           />
         </div>
       )

@@ -181,11 +181,15 @@ export default function TVGuide({
 
   // Selection persists: the next press on that row tunes even if the user
   // spent time watching the PiP preview first.
+  const tuneAndClose = (channel: TVGuideChannel) => {
+    playPop()
+    onTune?.(channel.id)
+    onClose()
+  }
+
   const onRowTap = (channel: TVGuideChannel) => {
     if (previewId === channel.id) {
-      playPop()
-      onTune?.(channel.id)
-      onClose()
+      tuneAndClose(channel)
       return
     }
     setPreviewId(channel.id)
@@ -225,17 +229,11 @@ export default function TVGuide({
             role="button"
             tabIndex={0}
             aria-label={`Watch ${preview.name} in the feed`}
-            onClick={() => {
-              playPop()
-              onTune?.(preview.id)
-              onClose()
-            }}
+            onClick={() => tuneAndClose(preview)}
             onKeyDown={event => {
               if (event.key !== 'Enter' && event.key !== ' ') return
               event.preventDefault()
-              playPop()
-              onTune?.(preview.id)
-              onClose()
+              tuneAndClose(preview)
             }}
           >
             {preview && pipPlaying ? (

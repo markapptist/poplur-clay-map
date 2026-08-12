@@ -45,25 +45,67 @@ export interface CubeTab3DProps {
   modelUrl?: string
   /** Reveals the cube's authored fork/knife top face while a food ad is open. */
   showFoodFace?: boolean
+  /** Decode only the next requested object while the current one shrinks. */
+  prepareModelUrl?: string
+  /** Fired after the replacement is installed and has a drawable frame. */
+  onModelReady?: (url: string) => void
 }
 
 /** The designed cube is authored as a true box, so it is normalised per-axis to
     an exact 2×2×2 and every face reads the same size as it turns. Any OTHER
     model must NOT be stretched that way — a TV squashed into a cube stops being
     a TV — so it is fitted uniformly into the same 2-unit box instead. */
-const CUBE_MODEL = 'poplur_cube_v4.glb'
+export const DEFAULT_CUBE_MODEL = 'poplur_cube_v4.glb'
+const CUBE_MODEL = DEFAULT_CUBE_MODEL
 
 /** The clay GLBs use Draco or Meshopt compression depending on which asset
     pipeline produced them. A bare GLTFLoader downloads either format and then
     fails during parse, which looks exactly like a model that never arrived.
     Every navigator swap uses one loader with both bundled decoders wired up. */
+let sharedClayLoader: GLTFLoader | null = null
+
 function clayLoader(): GLTFLoader {
+  if (sharedClayLoader) return sharedClayLoader
   const loader = new GLTFLoader()
   const draco = new DRACOLoader()
   draco.setDecoderPath('draco/')
+  // A tab gesture may request a second model while the first is still being
+  // decoded. One shared worker keeps that bounded; constructing a DRACOLoader
+  // per transition leaves each one's worker pool alive until dispose().
+  draco.setWorkerLimit(1)
   loader.setDRACOLoader(draco)
   loader.setMeshoptDecoder(MeshoptDecoder)
-  return loader
+  sharedClayLoader = loader
+  return sharedClayLoader
+}
+
+const IMAGE_MODEL_RE = /\.(?:avif|jpe?g|png|webp)(?:[?#].*)?$/i
+
+/** The Profile navigator uses the already-shipped transparent Mark/building
+    renders instead of decoding the 100+ MB authoring head at the bottom of
+    every screen. Treat those renders as honest, flat clay objects inside the
+    same 3D navigator scene: they still turn with a drag, but cost one tiny
+    texture rather than another heavyweight model/renderer. */
+async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
+  if (!IMAGE_MODEL_RE.test(url)) return (await clayLoader().loadAsync(url)).scene
+
+  const texture = await new THREE.TextureLoader().loadAsync(url)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const image = texture.image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number }
+  const width = image.naturalWidth ?? image.width ?? 1
+  const height = image.naturalHeight ?? image.height ?? 1
+  const aspect = width / Math.max(1, height)
+  const geometry = new THREE.PlaneGeometry(aspect, 1)
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    alphaTest: 0.015,
+    depthWrite: false,
+    toneMapped: false,
+  })
+  const object = new THREE.Group()
+  object.add(new THREE.Mesh(geometry, material))
+  return object
 }
 
 /** Fit a loaded model into the same 2-unit box the ortho camera is framed for,
@@ -100,22 +142,41 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string) {
     is not enough — three.js geometries and textures live on the GPU until they
     are explicitly disposed, and this app is already fighting for GPU headroom. */
 function disposeModel(node: THREE.Object3D) {
+  const disposedGeometries = new Set<THREE.BufferGeometry>()
+  const disposedMaterials = new Set<THREE.Material>()
+  const disposedTextures = new Set<THREE.Texture>()
+  const closedImages = new Set<unknown>()
   node.traverse(child => {
     const mesh = child as THREE.Mesh
     if (!mesh.isMesh) return
-    mesh.geometry?.dispose()
+    if (mesh.geometry && !disposedGeometries.has(mesh.geometry)) {
+      disposedGeometries.add(mesh.geometry)
+      mesh.geometry.dispose()
+    }
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
     for (const material of materials) {
-      if (!material) continue
+      if (!material || disposedMaterials.has(material)) continue
+      disposedMaterials.add(material)
       for (const value of Object.values(material)) {
-        if (value && (value as THREE.Texture).isTexture) (value as THREE.Texture).dispose()
+        const texture = value as THREE.Texture | null
+        if (!texture?.isTexture || disposedTextures.has(texture)) continue
+        disposedTextures.add(texture)
+        texture.dispose()
+        // GLTFLoader uses ImageBitmapLoader where supported. texture.dispose()
+        // releases the GPU allocation but does not close the decoded bitmap,
+        // which made repeated TV/profile swaps retain megabytes until GC.
+        const image = texture.source?.data ?? texture.image
+        if (!image || closedImages.has(image)) continue
+        closedImages.add(image)
+        const close = (image as { close?: () => void }).close
+        if (typeof close === 'function') close.call(image)
       }
       material.dispose()
     }
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -132,8 +193,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
   // below. Model swaps need both halves: merely waking a clean loop leaves the
   // old framebuffer on screen until a tap marks it dirty.
   const wakeLoopRef = useRef<() => void>(() => {})
-  const callbacksRef = useRef({ onFaceChange, onSpinChange, onTap, onHold })
-  callbacksRef.current = { onFaceChange, onSpinChange, onTap, onHold }
+  const callbacksRef = useRef({ onFaceChange, onSpinChange, onTap, onHold, onModelReady })
+  callbacksRef.current = { onFaceChange, onSpinChange, onTap, onHold, onModelReady }
 
   // The scene is built once (the effect below is keyed on `size`); swapping the
   // model must NOT tear it down, or the gesture handlers and render loop would
@@ -142,6 +203,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
   const groupRef = useRef<THREE.Group | null>(null)
   const modelNodeRef = useRef<THREE.Object3D | null>(null)
   const loadedUrlRef = useRef<string | null>(null)
+  const preparedModelRef = useRef<{ url: string; model: THREE.Object3D } | null>(null)
+  const preparingModelRef = useRef<{ url: string; generation: number } | null>(null)
+  const preparationGenerationRef = useRef(0)
+  const [preparedVersion, setPreparedVersion] = useState(0)
   const modelUrlRef = useRef(modelUrl)
   modelUrlRef.current = modelUrl
 
@@ -273,18 +338,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     }
 
     // ---- load model + face plates ----
-    const loader = clayLoader()
     // Capture the URL paired with this request. Reading modelUrlRef in the
     // completion handler can relabel an old cube as a newly requested clay TV
     // when navigation changes screens during GLB decoding.
     const initialModelUrl = modelUrlRef.current
-    loader.loadAsync(initialModelUrl).then(gltf => {
-      if (disposed) return
-      fitIntoGroup(gltf.scene, group, initialModelUrl)
-      modelNodeRef.current = gltf.scene
+    loadNavigatorObject(initialModelUrl).then(model => {
+      if (disposed) { disposeModel(model); return }
+      fitIntoGroup(model, group, initialModelUrl)
+      modelNodeRef.current = model
       loadedUrlRef.current = initialModelUrl
       setLoadedModel(initialModelUrl)
       setSceneReadyVersion(version => version + 1)
+      callbacksRef.current.onModelReady?.(initialModelUrl)
 
       // Straight-on camera. The cube normally has no pitch; food suggestions
       // animate the authored top face into this same square frame.
@@ -381,6 +446,25 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       needsRender = true
     }
 
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        callbacksRef.current.onTap()
+        return
+      }
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      event.preventDefault()
+      // A second key can land before the spring has visibly moved. Navigate
+      // from the already-requested semantic tab, not the old yaw, so rapid
+      // Right→Left reliably returns to where it started.
+      const current = targetTabRef.current
+      const index = FACES.findIndex(face => face.tab === current)
+      const delta = event.key === 'ArrowRight' ? 1 : -1
+      const next = FACES[(index + delta + FACES.length) % FACES.length].tab
+      springTo(next)
+      callbacksRef.current.onFaceChange(next)
+    }
+
     const onContextLost = (event: Event) => {
       event.preventDefault()
       setGlFailed(true)
@@ -390,6 +474,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     canvas.addEventListener('pointermove', onPointerMove)
     canvas.addEventListener('pointerup', onPointerUp)
     canvas.addEventListener('pointercancel', onPointerUp)
+    canvas.addEventListener('keydown', onKeyDown)
 
     // ---- spring + render loop ----
     let last = performance.now()
@@ -495,16 +580,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       canvas.removeEventListener('pointermove', onPointerMove)
       canvas.removeEventListener('pointerup', onPointerUp)
       canvas.removeEventListener('pointercancel', onPointerUp)
+      canvas.removeEventListener('keydown', onKeyDown)
       canvas.removeEventListener('webglcontextlost', onContextLost)
-      scene.traverse(obj => {
-        const mesh = obj as THREE.Mesh
-        if (mesh.geometry) mesh.geometry.dispose()
-        const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []
-        mats.forEach(m => {
-          Object.values(m).forEach(v => { if (v instanceof THREE.Texture) v.dispose() })
-          m.dispose()
-        })
-      })
+      disposeModel(scene)
       releaseWebGL(renderer)
       groupRef.current = null
       modelNodeRef.current = null
@@ -513,6 +591,42 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
+
+  // Decode at most one destination ahead of the visual trough. This avoids a
+  // cold 2MB globe appearing after the old object has already grown back, but
+  // does not retain all four tab models or create extra renderers/contexts.
+  useEffect(() => {
+    if (!prepareModelUrl || prepareModelUrl === loadedUrlRef.current || prepareModelUrl === modelUrlRef.current) return
+    if (preparedModelRef.current?.url === prepareModelUrl || preparingModelRef.current?.url === prepareModelUrl) return
+    if (preparedModelRef.current) {
+      disposeModel(preparedModelRef.current.model)
+      preparedModelRef.current = null
+    }
+    const generation = ++preparationGenerationRef.current
+    preparingModelRef.current = { url: prepareModelUrl, generation }
+    loadNavigatorObject(prepareModelUrl).then(model => {
+      if (
+        preparationGenerationRef.current !== generation
+        || preparingModelRef.current?.generation !== generation
+      ) {
+        disposeModel(model)
+        return
+      }
+      preparingModelRef.current = null
+      preparedModelRef.current = { url: prepareModelUrl, model }
+      setPreparedVersion(version => version + 1)
+    }).catch(err => {
+      if (preparingModelRef.current?.generation === generation) preparingModelRef.current = null
+      console.warn(`[CubeTab3D] could not prepare ${prepareModelUrl}`, err)
+    })
+  }, [prepareModelUrl])
+
+  useEffect(() => () => {
+    preparationGenerationRef.current += 1
+    preparingModelRef.current = null
+    if (preparedModelRef.current) disposeModel(preparedModelRef.current.model)
+    preparedModelRef.current = null
+  }, [])
 
   // Hot-swap the model when the screen asks the navigator to become something
   // else (the TV Guide turns it into the clay TV). Deliberately separate from
@@ -525,17 +639,35 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     // is still in flight — it reads modelUrlRef, so it will pick this up itself.
     if (!group || loadedUrlRef.current === null || loadedUrlRef.current === modelUrl) return
 
-    let cancelled = false
-    clayLoader().loadAsync(modelUrl).then(gltf => {
-      // The group can be torn down while the GLB is in flight.
-      if (cancelled || groupRef.current !== group) { disposeModel(gltf.scene); return }
+    const install = (model: THREE.Object3D) => {
       const previous = modelNodeRef.current
       if (previous) { group.remove(previous); disposeModel(previous) }
-      fitIntoGroup(gltf.scene, group, modelUrl)
-      modelNodeRef.current = gltf.scene
+      fitIntoGroup(model, group, modelUrl)
+      modelNodeRef.current = model
       loadedUrlRef.current = modelUrl
       setLoadedModel(modelUrl)
       wakeLoopRef.current()
+      callbacksRef.current.onModelReady?.(modelUrl)
+    }
+
+    const prepared = preparedModelRef.current
+    if (prepared?.url === modelUrl) {
+      preparedModelRef.current = null
+      install(prepared.model)
+      return
+    }
+    // The preparation effect owns the in-flight decode and will bump
+    // preparedVersion when it is safe to install. Never decode it twice.
+    if (preparingModelRef.current?.url === modelUrl) return
+
+    let cancelled = false
+    loadNavigatorObject(modelUrl).then(model => {
+      // The group can be torn down while the GLB is in flight.
+      if (cancelled || groupRef.current !== group || modelUrlRef.current !== modelUrl) {
+        disposeModel(model)
+        return
+      }
+      install(model)
     }).catch(err => {
       // Never silent: a swallowed rejection here is indistinguishable from a
       // model that simply never appears, which cost real time to diagnose.
@@ -543,7 +675,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     })
 
     return () => { cancelled = true }
-  }, [modelUrl, sceneReadyVersion])
+  }, [modelUrl, sceneReadyVersion, preparedVersion])
 
   return (
     <div
@@ -553,9 +685,16 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     >
       <canvas
         ref={canvasRef}
+        tabIndex={0}
+        role="button"
+        aria-roledescription="tab navigator"
         style={{ width: size, height: size, touchAction: 'none', cursor: 'grab', visibility: glFailed ? 'hidden' : 'visible' }}
-        aria-label="Poplur cube — drag to rotate, hold for menu"
+        aria-label={`${targetTab} tab model — drag or use arrow keys to change tabs, hold for menu`}
       />
+      <span
+        aria-live="polite"
+        style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' }}
+      >{`${targetTab} tab selected`}</span>
       {/* A failed WebGL context is intentionally left empty. Showing a static
           cube here makes a low-tier device look like it loaded a different
           build, and it can swallow the persistent channel HUD. The surrounding

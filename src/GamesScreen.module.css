@@ -206,43 +206,144 @@
 
 /* ── PS5-style boot screen ("PoplurStation") ─────────────────────────────── */
 .boot {
-  position: absolute; inset: 0; z-index: 30;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 28px;
-  background: #fff;
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(30px, 8vh, 72px);
+  overflow: hidden;
+  color: #fff;
+  background: #05030a;
   animation: fadeIn 0.4s ease both;
 }
 
-/* The logo: clay cube behind, clay-P in front — a PlayStation-esque mark that
-   assembles on boot, with a light sweep across it. */
+.bootBackdrop {
+  position: absolute;
+  inset: -3%;
+  background-image: var(--boot-art);
+  background-position: center;
+  background-size: cover;
+  filter: brightness(0.27) saturate(0.85);
+  transform: scale(1.04);
+  animation: bootBackdropIn 2.4s ease-out both;
+}
+
+.boot::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: rgba(3, 1, 8, 0.48);
+}
+
+.bootIdentity,
+.bootStatus {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.bootIdentity { gap: 18px; }
+
 .bootLogo {
   position: relative;
-  width: min(62vw, 250px); height: min(62vw, 250px);
-  display: grid; place-items: center;
+  width: clamp(104px, 29vw, 156px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 24%;
+  background: #17121d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2), 0 24px 54px rgba(0, 0, 0, 0.48);
   filter:
-    drop-shadow(0 20px 18px rgba(20, 12, 25, 0.24))
-    drop-shadow(0 42px 35px rgba(20, 12, 25, 0.14));
+    drop-shadow(0 0 18px color-mix(in srgb, var(--accent) 58%, transparent))
+    drop-shadow(0 26px 28px rgba(0, 0, 0, 0.38));
+  animation: bootMarkIn 0.8s cubic-bezier(0.2, 0.9, 0.28, 1.1) 0.1s both;
 }
-.bootConsole {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  inset: 0;
-  opacity: 0;
-  animation: bootCubeIn 0.9s cubic-bezier(0.2, 0.9, 0.28, 1.1) 0.15s forwards;
+
+.bootMark {
+  width: 88%;
+  height: 88%;
+  display: block;
+  object-fit: contain;
 }
 
 .bootWord {
-  font: 300 25px/1.05 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font: 300 clamp(24px, 7vw, 34px)/1.05 "Helvetica Neue", Helvetica, Arial, sans-serif;
   letter-spacing: 0;
-  color: #11131a;
+  color: #fff;
   opacity: 0;
-  animation: fadeIn 0.6s ease 1.0s forwards;
+  text-shadow: 0 3px 18px rgba(0, 0, 0, 0.9);
+  animation: fadeIn 0.55s ease 0.65s forwards;
 }
-.bootWord b { color: #11131a; font-weight: 700; }
+.bootWord b { color: #fff; font-weight: 700; }
 
-@keyframes bootCubeIn {
-  to { opacity: 1; }
+.bootStatus {
+  width: min(72vw, 320px);
+  gap: 7px;
+  text-align: center;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+}
+
+.bootStatus strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font: 800 clamp(18px, 5vw, 24px)/1.15 Inter, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+.bootStatus > span:not(.bootProgress) {
+  color: rgba(255, 255, 255, 0.76);
+  font: 650 13px/1.2 Inter, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+.bootProgress {
+  width: 100%;
+  height: 4px;
+  margin-top: 11px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.bootProgress span {
+  display: block;
+  width: 46%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  box-shadow: 0 0 14px var(--accent);
+  animation: bootProgress 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes bootMarkIn {
+  from { opacity: 0; transform: translateY(18px) scale(0.86); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes bootBackdropIn {
+  from { opacity: 0; transform: scale(1.12); }
+  to { opacity: 1; transform: scale(1.04); }
+}
+
+@keyframes bootProgress {
+  from { transform: translateX(-12%); }
+  to { transform: translateX(126%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot,
+  .bootBackdrop,
+  .bootLogo,
+  .bootWord,
+  .bootProgress span {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
 }
 
 /* ── a game actually running ─────────────────────────────────────────────── */

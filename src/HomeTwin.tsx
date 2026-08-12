@@ -21,7 +21,7 @@ import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGat
 import { isNativeShell, postNativeEvent, wakeManagedRendering } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
 import { initialMapMode, type PoplurMapMode } from './mapMode'
-import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
+import { playRadiusCounterDone, playRadiusCounterTick, playTabStaticBurst } from './motionEffectsAudio'
 import {
   readMapTourTopics,
   writeMapTourTopics,
@@ -30,7 +30,6 @@ import {
 import { noteNewsMessage } from './newsMessages'
 import { POIS } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
-import { onFoodSuggestionVisibilityChange } from './popups'
 import {
   RADIUS_CHANGE_EVENT,
   nextRadiusInactivityAt,
@@ -59,15 +58,40 @@ const CUBE_INTO_PHONE_MS = 1_600
 // cycled on the same 1.8s beat with the same 200ms cross-fade.
 /** The clay TV the navigator becomes while the TV Guide is open. Supplied art
     in public/, like every other clay model — never a drawn substitute. */
-const CLAY_TV_MODEL = 'clay_tv.glb'
+// Navigator-specific TV: same mesh, but its four 1024px textures are resized
+// to 256px and Draco-compressed (62KB / ~1.4MB decoded instead of ~21MB GPU).
+// The full TV remains available to screens that render it larger.
+const CLAY_TV_MODEL = 'clay_tv_navigator.glb'
 // The kodak camera the profile wears while you are taking your picture. Bundle
 // root, 131KB decimated from a 23MB supplied master — the weight rule in the
 // SUBSCREEN_CUBE_MODEL note below applies here too.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
+const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
+const PROFILE_MARK_MODEL = 'mark_talk0.png'
+const PROFILE_BUILDING_MODEL = 'clay_buildings.png'
 const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // The cube's recording face. Bundle ROOT, not models/ — same reason as every
 // other navigator here (sync-mobile strips models/ from the phone bundles).
 const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
+
+function readBusinessAccount(): boolean {
+  if (typeof window === 'undefined') return false
+  const query = new URLSearchParams(window.location.search).get('business')
+  if (query === '1') return true
+  if (query === '0') return false
+  try { return window.localStorage.getItem('poplur.accountType') === 'business' } catch { return false }
+}
+
+/** Each main tab now owns a recognisable clay object instead of another face
+    on a generic cube. Mark/building are the tiny transparent renders already
+    used by Profile; loading the 100+ MB authoring head here would undo the
+    thermal work for an object that lives on every screen. */
+function tabNavigatorModel(tab: CubeTab, business: boolean): string {
+  if (tab === 'map') return MAP_GLOBE_MODEL
+  if (tab === 'feed') return CLAY_TV_MODEL
+  if (tab === 'post') return PROFILE_CAMERA_MODEL
+  return business ? PROFILE_BUILDING_MODEL : PROFILE_MARK_MODEL
+}
 // ── The navigator's object, per subscreen ────────────────────────────────────
 // Every subscreen gets its own object in your hand: open it and the cube pops
 // into that thing, back out and it pops back into the cube. Add a screen id
@@ -483,6 +507,38 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
+  const [profileIsBusiness, setProfileIsBusiness] = useState(readBusinessAccount)
+  useEffect(() => {
+    type NativeProfile = { business?: boolean }
+    const applyBusiness = (value: unknown) => {
+      const business = (value as NativeProfile | null)?.business
+      if (typeof business !== 'boolean') return
+      setProfileIsBusiness(business)
+      try { window.localStorage.setItem('poplur.accountType', business ? 'business' : 'user') } catch { /* embedded */ }
+    }
+    const onNativeProfile = (event: Event) => applyBusiness((event as CustomEvent<NativeProfile>).detail)
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'poplur.accountType') setProfileIsBusiness(event.newValue === 'business')
+    }
+    const host = window as unknown as { poplurProfile?: (profile: unknown) => void }
+    const previous = host.poplurProfile
+    const profileReceiver = (profile: unknown) => {
+      previous?.(profile)
+      applyBusiness(profile)
+      window.dispatchEvent(new CustomEvent('poplur-native-profile', { detail: profile }))
+    }
+    host.poplurProfile = profileReceiver
+    window.addEventListener('poplur-native-profile', onNativeProfile)
+    window.addEventListener('storage', onStorage)
+    if (isNativeShell()) postNativeEvent({ type: 'requestProfile' })
+    return () => {
+      window.removeEventListener('poplur-native-profile', onNativeProfile)
+      window.removeEventListener('storage', onStorage)
+      if (host.poplurProfile !== profileReceiver) return
+      if (previous) host.poplurProfile = previous
+      else delete host.poplurProfile
+    }
+  }, [])
   // Message listeners are installed once, so read the current face through a
   // ref instead of capturing the initial tab forever.
   const activeTabRef = useRef(activeTab)
@@ -595,9 +651,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // map layer reads it — see the map lifetime effect. CubeTab3D only reports on
   // CHANGE, and reports false on teardown, so this cannot latch on.
   const [cubeSpinning, setCubeSpinning] = useState(false)
-  const [feedFoodAdVisible, setFeedFoodAdVisible] = useState(false)
-  const [mapFoodAdVisible, setMapFoodAdVisible] = useState(false)
-  useEffect(() => onFoodSuggestionVisibilityChange(setFeedFoodAdVisible), [])
 
   // ONE PAGE, ONE VOICE.
   //
@@ -647,6 +700,33 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // the cube keep tracking `activeTab`, so the app still feels immediate.
   const [committedTab, setCommittedTab] = useState<CubeTab>(initialTab)
   const [feedAutoPlayOnMount, setFeedAutoPlayOnMount] = useState(false)
+  const [tabStaticTransition, setTabStaticTransition] = useState<{ id: number; target: CubeTab } | null>(null)
+  const tabStaticSerial = useRef(0)
+  const tabStaticTimer = useRef<number | null>(null)
+  const tabStaticSource = useRef(activeTab)
+  const committedStaticSource = useRef(committedTab)
+
+  // Feed already owns its channel-static layer. Every other destination gets
+  // the same current static asset here, above the old and new screens but
+  // below Home chrome. The cover begins on the first face change, then stays
+  // through the settled screen's first paint instead of exposing an old tab
+  // while a slower phone finishes the cube spring.
+  useEffect(() => {
+    if (tabStaticSource.current === activeTab) return
+    tabStaticSource.current = activeTab
+    if (tabStaticTimer.current) {
+      window.clearTimeout(tabStaticTimer.current)
+      tabStaticTimer.current = null
+    }
+    if (activeTab === 'feed') {
+      setTabStaticTransition(null)
+      return
+    }
+    const id = ++tabStaticSerial.current
+    setTabStaticTransition({ id, target: activeTab })
+    playTabStaticBurst()
+  }, [activeTab])
+
   useEffect(() => {
     if (committedTab === activeTab) return
     const settle = window.setTimeout(
@@ -658,6 +738,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     )
     return () => window.clearTimeout(settle)
   }, [activeTab, cubeSpinning, committedTab])
+  useEffect(() => {
+    if (committedStaticSource.current === committedTab) return
+    committedStaticSource.current = committedTab
+    // Feed's own static starts when its settled screen mounts, so its hiss
+    // belongs on this edge rather than on a transient face passed mid-spin.
+    if (committedTab === 'feed' && committedTab === activeTab) playTabStaticBurst()
+  }, [activeTab, committedTab])
+  useEffect(() => {
+    const transition = tabStaticTransition
+    if (!transition || transition.target !== committedTab || committedTab !== activeTab) return
+    if (tabStaticTimer.current) window.clearTimeout(tabStaticTimer.current)
+    tabStaticTimer.current = window.setTimeout(() => {
+      tabStaticTimer.current = null
+      setTabStaticTransition(current => current?.id === transition.id ? null : current)
+    }, 500)
+    return () => {
+      if (tabStaticTimer.current) {
+        window.clearTimeout(tabStaticTimer.current)
+        tabStaticTimer.current = null
+      }
+    }
+  }, [activeTab, committedTab, tabStaticTransition])
+  useEffect(() => () => {
+    if (tabStaticTimer.current) window.clearTimeout(tabStaticTimer.current)
+  }, [])
   useEffect(() => {
     // Native power follows the settled screen, never a transient cube face.
     // In particular, this is the point where the WebView yields its heavy
@@ -689,10 +794,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     setCubeModel(PROFILE_CAMERA_MODEL)
     return () => setCubeModel(undefined)
   }, [profileCapture])
-  const showFoodCubeFace = cubeModel === undefined && (
-    (activeTab === 'feed' && feedFoodAdVisible)
-    || (activeTab === 'map' && mapFoodAdVisible)
-  )
   // The post composer is a full-screen modal, but it lives inside .contentLayer
   // (z-index 4) so it can never stack above the home chrome at 260 — the radius
   // readout, channel arrows and cube drew straight over it, with the cube
@@ -769,9 +870,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // shrink and the new one shrink with it.
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
   const [appliedCubeScreen, setAppliedCubeScreen] = useState<string | null>(null)
-  const [appliedCubeModel, setAppliedCubeModel] = useState<string | undefined>(undefined)
+  const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab, profileIsBusiness))
   const [cubeSwapping, setCubeSwapping] = useState(false)
   const cubeSwapTimer = useRef<number | null>(null)
+  const cubeSwapFinishTimer = useRef<number | null>(null)
+  const cubeModelRevealTimer = useRef<number | null>(null)
+  const pendingCubeSwap = useRef<{ model: string; screen: string | null } | null>(null)
+  const [awaitingCubeModel, setAwaitingCubeModel] = useState<string | null>(null)
+  const awaitingCubeModelRef = useRef<string | null>(null)
+  awaitingCubeModelRef.current = awaitingCubeModel
+  const [cubeModelRevealing, setCubeModelRevealing] = useState(false)
   const [photoPopping, setPhotoPopping] = useState(false)
 
   // Start in the measurement system implied by the device locale. Tapping the
@@ -843,9 +951,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stays absent so Profile / Feed / Camera keep their full frame budget. It is
   // torn down once the user leaves the map (after MAP_GRACE_MS, default 0).
   const [mapMounted, setMapMounted] = useState(initialTab === 'map')
-  useEffect(() => {
-    if (!mapMounted || activeTab !== 'map') setMapFoodAdVisible(false)
-  }, [activeTab, mapMounted])
   // iOS sends its real ProcessInfo thermal state to the main document. The map
   // lives in a child document with its own frame governor, so forward every
   // transition and replay the latest state after each low-memory remount.
@@ -977,9 +1082,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // boot is exactly what this app decided not to do.
       setMapPainted(true)
       if (event.data.type === 'poplur-map-loading') setMapReady(false)
-      if (event.data.type === 'poplur-food-ad-visibility') {
-        setMapFoodAdVisible(Boolean(event.data.visible))
-      }
       // The map flew to a pop and is telling us which one. This is the only
       // source of truth for the number shown between the channel arrows —
       // counting locally meant the readout and the destination disagreed.
@@ -1687,23 +1789,68 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // for exactly as long as the recording runs and pops back to whatever the
   // screen asks for when it stops — through the same swap as every other
   // navigator, so it transforms rather than hot-swapping mid-frame.
-  const requestedCubeModel = recordMs != null ? CAMCORDER_MODEL : cubeModel
+  const requestedCubeModel = recordMs != null
+    ? CAMCORDER_MODEL
+    : (cubeModel ?? tabNavigatorModel(committedTab, profileIsBusiness))
   useEffect(() => {
-    if (requestedCubeModel === appliedCubeModel && cubeScreen === appliedCubeScreen) return
+    const alreadyApplied = requestedCubeModel === appliedCubeModel && cubeScreen === appliedCubeScreen
+    // Replace the pending destination before the equality check. A→B→A inside
+    // one shrink window must cancel B, not apply a stale midpoint and pop twice.
+    pendingCubeSwap.current = alreadyApplied ? null : { model: requestedCubeModel, screen: cubeScreen }
+    if (alreadyApplied) return
+    // Reduced motion is also the safest low-work path: swap immediately rather
+    // than waiting on a CSS animation that the browser has been asked not to
+    // run. The renderer itself stays mounted either way.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const target = pendingCubeSwap.current
+      pendingCubeSwap.current = null
+      if (!target) return
+      setAppliedCubeModel(target.model)
+      setAppliedCubeScreen(target.screen)
+      setCubeSwapping(false)
+      return
+    }
+    // Coalesce rapid tab crossings into one transformation. If the old object
+    // is already shrinking, the midpoint below takes the latest request; if it
+    // arrived after that midpoint, animation-end starts one more bounded pop.
+    if (cubeSwapping) return
     setCubeSwapping(true)
     if (cubeSwapTimer.current) window.clearTimeout(cubeSwapTimer.current)
+    if (cubeSwapFinishTimer.current) window.clearTimeout(cubeSwapFinishTimer.current)
     // 340ms is the trough of cubeSwapPop (55% of 620ms): the cube is at its
     // smallest, so the pop lands exactly where the object disappears and the
     // replacement is what grows back out.
     cubeSwapTimer.current = window.setTimeout(() => {
       cubeSwapTimer.current = null
-      playPop()
-      setAppliedCubeModel(requestedCubeModel)
-      setAppliedCubeScreen(cubeScreen)
+      const target = pendingCubeSwap.current
+      if (!target) return
+      pendingCubeSwap.current = null
+      setCubeModelRevealing(false)
+      setAwaitingCubeModel(target.model)
+      setAppliedCubeModel(target.model)
+      setAppliedCubeScreen(target.screen)
+      if (cubeModelRevealTimer.current) window.clearTimeout(cubeModelRevealTimer.current)
+      // A corrupt/missing asset must not leave the navigator invisible. The
+      // ready callback normally clears this almost immediately from the staged
+      // decode; this is only a bounded recovery path.
+      cubeModelRevealTimer.current = window.setTimeout(() => {
+        cubeModelRevealTimer.current = null
+        if (awaitingCubeModelRef.current !== target.model) return
+        setAwaitingCubeModel(null)
+        setCubeModelRevealing(true)
+      }, 1_400)
     }, 340)
-  }, [requestedCubeModel, appliedCubeModel, cubeScreen, appliedCubeScreen])
+    // CSS animationend is the primary completion signal. This fallback keeps a
+    // throttled/parked WebView from leaving the navigator permanently tiny.
+    cubeSwapFinishTimer.current = window.setTimeout(() => {
+      cubeSwapFinishTimer.current = null
+      setCubeSwapping(false)
+    }, 720)
+  }, [requestedCubeModel, appliedCubeModel, cubeScreen, appliedCubeScreen, cubeSwapping])
   useEffect(() => () => {
     if (cubeSwapTimer.current) window.clearTimeout(cubeSwapTimer.current)
+    if (cubeSwapFinishTimer.current) window.clearTimeout(cubeSwapFinishTimer.current)
+    if (cubeModelRevealTimer.current) window.clearTimeout(cubeModelRevealTimer.current)
   }, [])
 
   const popCube = () => {
@@ -1850,12 +1997,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             viewUser={viewingUser}
             highlightPops={profilePopFlash}
             onPostCountChange={setProfilePostCount}
+            onBusinessChange={setProfileIsBusiness}
             onBackToOwn={() => {
               setActiveTab(profileOrigin ?? 'feed')
               setViewingUser(null)
               setProfileOrigin(null)
             }}
           />
+        )}
+        {tabStaticTransition && (
+          <div className={styles.tabStaticTransition} aria-hidden="true">
+            <video
+              key={tabStaticTransition.id}
+              className={styles.tabStaticVideo}
+              src="tv_static_clean.mp4"
+              autoPlay
+              muted
+              loop
+              playsInline
+              onLoadedData={event => event.currentTarget.classList.add(styles.tabStaticVideoReady)}
+              onPlaying={event => event.currentTarget.classList.add(styles.tabStaticVideoReady)}
+            />
+          </div>
         )}
       </div>
 
@@ -2087,24 +2250,44 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             // Checked BEFORE the generic Pop test — 'cubeSwapPop' contains
             // 'Pop', so the tap-pop branch would otherwise swallow it and the
             // swap class would never clear.
-            else if (e.animationName.includes('cubeSwapPop')) setCubeSwapping(false)
+            else if (e.animationName.includes('cubeSwapPop')) {
+              if (cubeSwapFinishTimer.current) window.clearTimeout(cubeSwapFinishTimer.current)
+              cubeSwapFinishTimer.current = null
+              setCubeSwapping(false)
+            }
             else if (e.animationName.includes('Pop')) setPopping(false)
           }}
         >
-          <CubeTab3D
-            key={`cube-${uiRecoveryKey}`}
-            size={cubeSize}
-            modelUrl={appliedCubeModel}
-            targetTab={activeTab}
-            showFoodFace={showFoodCubeFace && appliedCubeModel === undefined}
-            onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}
-            onSpinChange={setCubeSpinning}
-            onTap={popCube}
-            onHold={() => {
-              playPop()
-              setHoldOpen(true)
+          <div
+            className={`${styles.cubeModelStage}${awaitingCubeModel ? ` ${styles.cubeModelConcealed}` : cubeModelRevealing ? ` ${styles.cubeModelReveal}` : ''}`}
+            onAnimationEnd={event => {
+              if (event.animationName.includes('cubeModelReveal')) setCubeModelRevealing(false)
             }}
-          />
+          >
+            <CubeTab3D
+              key={`cube-${uiRecoveryKey}`}
+              size={cubeSize}
+              modelUrl={appliedCubeModel}
+              prepareModelUrl={requestedCubeModel}
+              onModelReady={url => {
+                if (url !== awaitingCubeModelRef.current) return
+                if (cubeModelRevealTimer.current) window.clearTimeout(cubeModelRevealTimer.current)
+                cubeModelRevealTimer.current = null
+                playPop()
+                setAwaitingCubeModel(null)
+                setCubeModelRevealing(true)
+              }}
+              targetTab={activeTab}
+              showFoodFace={false}
+              onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}
+              onSpinChange={setCubeSpinning}
+              onTap={popCube}
+              onHold={() => {
+                playPop()
+                setHoldOpen(true)
+              }}
+            />
+          </div>
         </div>
       </div>
 

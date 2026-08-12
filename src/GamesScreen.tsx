@@ -329,11 +329,27 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   // The game mounted bare and you saw exactly the blank first frame the boot
   // screen exists to cover: the fix that added it never actually ran.
   const bootCard = booting && (
-    <div className={styles.boot} style={{ ['--accent' as string]: booting.color }}>
-      <div className={styles.bootLogo} aria-label="PoplurStation">
-        <StationModel kind="console" className={styles.bootConsole} spinning />
+    <div
+      className={styles.boot}
+      role="status"
+      aria-live="polite"
+      style={{
+        ['--accent' as string]: booting.color,
+        ['--boot-art' as string]: `url("${import.meta.env.BASE_URL}${booting.preview}")`,
+      }}
+    >
+      <div className={styles.bootBackdrop} aria-hidden="true" />
+      <div className={styles.bootIdentity}>
+        <div className={styles.bootLogo} aria-label="Poplur Station">
+          <img className={styles.bootMark} src={`${import.meta.env.BASE_URL}logo_icon.png`} alt="" />
+        </div>
+        <span className={styles.bootWord}>Poplur <b>Station</b></span>
       </div>
-      <span className={styles.bootWord}>Poplur <b>Station</b></span>
+      <div className={styles.bootStatus}>
+        <strong>{booting.title}</strong>
+        <span>Loading game</span>
+        <span className={styles.bootProgress} aria-hidden="true"><span /></span>
+      </div>
     </div>
   )
 

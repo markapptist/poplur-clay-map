@@ -88,7 +88,7 @@ import {
 import {
   announceMapTour, isMapRadioActive, isRadioBackgroundEnabled, nowPlayingStation, tuneLiveRadio,
 } from './mapRadio'
-import { postNativeEvent, wakeManagedRendering } from './nativeBridge'
+import { isNativeShell, postNativeEvent, wakeManagedRendering } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
@@ -874,6 +874,10 @@ export default function App() {
           gestureEvents.forEach(name => map.off(name, onGesture))
         }
         stopChips = startEngagementChips({
+          // The fake 6–14s arrival is useful in the browser prototype. On a
+          // phone it could wake a camera traversal just as the initial ambient
+          // lease was trying to park; real engagement remains event-driven.
+          demo: !isNativeShell(),
           // The embed generates but does not draw: its PopupHost is inside the
           // map iframe, and the shell renders one above it. Drawing in both
           // would double every notice on the map surface.

@@ -103,6 +103,7 @@ export default function PoplurVoiceAssistant({
   const restartTimerRef = useRef<number | null>(null)
   const dismissTimerRef = useRef<number | null>(null)
   const commandTimerRef = useRef<number | null>(null)
+  const gestureRetryUsedRef = useRef(false)
   const tabRequestRef = useRef(onTabRequest)
   tabRequestRef.current = onTabRequest
   const channelRequestRef = useRef(onChannelRequest)
@@ -235,9 +236,19 @@ export default function PoplurVoiceAssistant({
       }
       const blocked = event.error === 'not-allowed' || event.error === 'service-not-allowed'
       if (!blocked) return
+      const wasExplicitRequest = awaitingCommandRef.current
       permissionBlockedRef.current = true
       listeningEnabledRef.current = false
       awaitingCommandRef.current = false
+      // Passive wake-word setup is optional browser plumbing. If a browser
+      // declines it at launch, do not pin an error banner over every screen;
+      // only an explicit HEY POPLUR request deserves visible feedback.
+      if (!wasExplicitRequest) {
+        clearDismissTimer()
+        setPhase('idle')
+        setMessage('')
+        return
+      }
       setPhase('unavailable')
       setMessage('Microphone unavailable')
       clearDismissTimer()
@@ -329,6 +340,8 @@ export default function PoplurVoiceAssistant({
     // without treating that ordinary tap as a voice command.
     if (!nativeShell) startWakeListening()
     const unlockWakeListening = () => {
+      if (gestureRetryUsedRef.current) return
+      gestureRetryUsedRef.current = true
       permissionBlockedRef.current = false
       startWakeListening()
     }

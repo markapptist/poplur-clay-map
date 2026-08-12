@@ -66,7 +66,7 @@ const mmssms = (ms: number) => {
   const m = Math.floor(ms / 60000)
   const s = Math.floor(ms / 1000) % 60
   const cs = Math.floor(ms / 10) % 100
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(cs).padStart(2, '0')}`
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
 }
 
 /** Deterministic pseudo-random so every clip's waveform is stable per render. */
@@ -85,7 +85,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   const [soloed, setSoloed] = useState<Record<string, boolean>>({})
   const [genre, setGenre] = useState<string>('Rap')
   const [rollTab, setRollTab] = useState<string>('SAMPLE')
-  const [nav, setNav] = useState('RECORD')
+  const [nav, setNav] = useState<(typeof NAV)[number]['label']>('RECORD')
   const [monitor, setMonitor] = useState(true)
   const [input, setInput] = useState('Built-in Mic')
   const [building, setBuilding] = useState(0)  // 0 = idle, else 0..1
@@ -106,7 +106,10 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   // GLBs are 44MB and 40MB — decoding either on a phone is exactly what the
   // prerender pass exists to prevent, so these resolve straight out of the
   // manifest and the models are never fetched on a device).
-  const [micArt3d, setMicArt3d] = useState<string | null>(null)
+  // The baked transparent render is the first paint. Waiting on the sprite
+  // manifest used to flash the older flat microphone photo before the same 3D
+  // object replaced it a moment later.
+  const [micArt3d, setMicArt3d] = useState<string | null>('sprites/poplur_mic_y0_p0_s512.png')
   const [mixerArt, setMixerArt] = useState<string | null>(null)
   useEffect(() => {
     let live = true
@@ -130,6 +133,40 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   const aiGenerationRef = useRef(0)
   const aiAbortRef = useRef<AbortController | null>(null)
   const stopCaptureRef = useRef<(discard?: boolean) => void>(() => {})
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const arrangementRef = useRef<HTMLElement | null>(null)
+  const recorderSectionRef = useRef<HTMLElement | null>(null)
+  const builderRef = useRef<HTMLElement | null>(null)
+  const rollRef = useRef<HTMLElement | null>(null)
+
+  const openStudioSection = (label: (typeof NAV)[number]['label']) => {
+    playPop()
+    setNav(label)
+    if (label === 'EXPORT') {
+      bodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+    const target = label === 'TRACKS' ? arrangementRef.current
+      : label === 'RECORD' ? recorderSectionRef.current
+      : label === 'MIXER' ? rollRef.current
+      : builderRef.current
+    window.requestAnimationFrame(() => {
+      const body = bodyRef.current
+      if (!body || !target) return
+      const top = target.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop - 8
+      body.scrollTo({ top, behavior: 'smooth' })
+    })
+  }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   // WebKit may pan the document to reveal a focused field even though Studio
   // is a full-screen overlay. Keep the app origin pinned while its keyboard is
@@ -570,7 +607,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     const key = import.meta.env.VITE_ELEVENLABS_KEY as string | undefined
     if (!key) {
       if (aiAbortRef.current === controller) aiAbortRef.current = null
-      setAiError('No AI music key configured (VITE_ELEVENLABS_KEY) — the clay band will back you instead.')
+      setAiError('The built-in Poplur band is backing your take.')
       setBuilding(0)
       setStage('studio')
       return
@@ -598,7 +635,9 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     } catch (e) {
       if (!mountedRef.current || generation !== aiGenerationRef.current) return
       const aborted = e instanceof DOMException && e.name === 'AbortError'
-      setAiError(`The AI track failed (${aborted ? 'timed out' : e instanceof Error ? e.message : 'network'}) — the clay band will back you instead.`)
+      setAiError(aborted
+        ? 'The music service took too long, so the built-in Poplur band is backing your take.'
+        : 'The built-in Poplur band is backing your take.')
     } finally {
       window.clearTimeout(timeout)
       if (aiAbortRef.current === controller) aiAbortRef.current = null
@@ -641,7 +680,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className={styles.micTime}>
-            {mmssms(recMs)} <span>/ 00:30:00</span>
+            {mmssms(recMs)} <span>/ 00:30.00</span>
           </div>
           <button className={recording ? `${styles.micBtn} ${styles.micBtnLive}` : styles.micBtn} type="button" onClick={micTap}>
             {recording ? '■ FINISH' : '● RECORD'}
@@ -716,9 +755,6 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
         <div className={styles.brandRow}>
           {/* In the row, not floating over it — as an overlay it landed on the
               wordmark, and the transport is already using the right-hand end. */}
-          <button className={styles.back} type="button" onClick={() => { playPop(); onClose() }}>
-            ‹
-          </button>
           {/* The mixing desk stands where the clay cube chip used to: this is
               the EDIT stage, and the object should say what the screen does. */}
           {mixerArt
@@ -811,7 +847,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
         </section>
       )}
 
-      <div className={styles.body}>
+      <div className={styles.body} ref={bodyRef}>
         {/* ── 2. playlist / arrangement ───────────────────────────────── */}
         <div className={styles.tabsRow}>
           <button className={`${styles.miniTab} ${styles.miniTabOn}`} type="button">Playlist</button>
@@ -819,7 +855,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
           <button className={styles.newTrack} type="button" onClick={() => playPop()}>+ New Track</button>
         </div>
 
-        <section className={`${styles.card} ${styles.arrange}`} aria-label="Arrangement">
+        <section ref={arrangementRef} className={`${styles.card} ${styles.arrange}`} aria-label="Arrangement">
           <div className={styles.ruler}>
             <span />
             <div className={styles.rulerBars}>
@@ -877,7 +913,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
         </section>
 
         {/* ── 3 + 4. the take and the recorder ────────────────────────── */}
-        <section className={styles.card} aria-label="Vocal recorder">
+        <section ref={recorderSectionRef} className={styles.card} aria-label="Vocal recorder">
           <div className={styles.cardHead}>
             <span className={styles.cardTitle}>VOCAL RECORDER</span>
           </div>
@@ -952,7 +988,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
         </section>
 
         {/* ── 5. AI song builder ──────────────────────────────────────── */}
-        <section className={styles.card} aria-label="AI song builder">
+        <section ref={builderRef} className={styles.card} aria-label="AI song builder">
           <div className={styles.cardHead}>
             <span className={styles.cardTitle}>AI SONG BUILDER</span>
             <span className={styles.beta}>BETA</span>
@@ -1008,7 +1044,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
         </section>
 
         {/* ── 6. sample / piano roll ──────────────────────────────────── */}
-        <section className={styles.card} aria-label="Sample and piano roll editor">
+        <section ref={rollRef} className={styles.card} aria-label="Sample and piano roll editor">
           <div className={styles.rollTabs}>
             {ROLL_TABS.map(t => (
               <button
@@ -1084,7 +1120,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             className={`${styles.navBtn}${nav === item.label ? ` ${styles.navBtnOn}` : ''}`}
             type="button"
             aria-pressed={nav === item.label}
-            onClick={() => { playPop(); setNav(item.label) }}
+            onClick={() => openStudioSection(item.label)}
           >
             {item.label === 'RECORD'
               ? <span className={styles.navRecord} aria-hidden="true">●</span>
