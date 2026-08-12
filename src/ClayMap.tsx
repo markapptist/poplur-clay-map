@@ -1482,37 +1482,49 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const parkedMap = map as unknown as {
         repaint: boolean
         triggerRepaint: () => void
-        _frame?: { cancel?: () => void } | null
-        _renderNextFrame?: boolean | null
       }
       const liveTriggerRepaint = map.triggerRepaint.bind(map)
       let parkRequested = false
+      let parkRequestSerial = 0
 
       const commitRendererPark = () => {
         if (!parkRequested || rendererParked || disposed) return
-        // Mapbox's emitted idle edge means its pauseable label-placement pass
-        // has finished. Freezing an arbitrary frame used to strand that private
-        // continuation and throw continuePlacement() after the next wake.
+        // This runs in a microtask AFTER every synchronous `idle` listener and
+        // Mapbox's own post-idle bookkeeping. Several clay-world listeners are
+        // registered after this gate and legitimately dirty sources on their
+        // first idle edge; freezing from inside the event stranded Mapbox's
+        // pauseable placement state and later crashed continuePlacement().
         if (!map.idle() || !map.frameReady()) return
         idleSnapshot.park()
         parkedMap.repaint = false
         rendererParked = true
-        parkedMap.triggerRepaint = () => {}
-        // idle schedules one final non-render bookkeeping frame; it is safe to
-        // cancel only now, after placement/style work has fully drained.
-        parkedMap._frame?.cancel?.()
-        parkedMap._frame = null
-        parkedMap._renderNextFrame = false
+        // Do not cancel or replace Mapbox's private frame scheduler. An async
+        // tile/source result is allowed to drain if it makes the map non-idle;
+        // repaint-only decoration remains suppressed while the settled static
+        // frame is retained. That preserves zero recurring idle frames without
+        // ever hiding required placement/style work from Mapbox.
+        parkedMap.triggerRepaint = () => {
+          if (!map.idle() || !map.frameReady()) liveTriggerRepaint()
+        }
         document.documentElement.dataset.poplurMapPark = '1'
       }
-      finishRendererParkOnIdle = commitRendererPark
-      map.on('idle', commitRendererPark)
+      const scheduleRendererParkAfterIdle = () => {
+        if (!parkRequested || rendererParked || disposed) return
+        const serial = ++parkRequestSerial
+        window.queueMicrotask(() => {
+          if (serial !== parkRequestSerial) return
+          commitRendererPark()
+        })
+      }
+      finishRendererParkOnIdle = scheduleRendererParkAfterIdle
+      map.on('idle', scheduleRendererParkAfterIdle)
       // The renderer park follows the gesture-aware signal, not raw ambient
       // sleep: a drag on a warm phone must still paint. Decoration below stays
       // on `onAmbientSleepChange` and stays down.
       stopRendererParking = onRendererParkChange(parked => {
         if (!parked) {
           parkRequested = false
+          parkRequestSerial += 1
           if (rendererParked) {
             rendererParked = false
             parkedMap.triggerRepaint = liveTriggerRepaint
@@ -1536,9 +1548,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         stopCarAudio()
         // Poplur-owned work is stopped immediately, but Mapbox gets to drain
         // its current style/tile/label pass before its renderer is frozen.
-        // Fast-path a map that was already truly idle; otherwise its own idle
-        // event commits the park without a timer or recurring work.
-        commitRendererPark()
+        // Even an already-idle map commits through a microtask: the sleep edge
+        // can itself be running inside another Mapbox event listener.
+        scheduleRendererParkAfterIdle()
       })
     }
     // Long-idle assertion: a programmatic camera start that bypasses a managed
