@@ -1235,24 +1235,40 @@
   }
 }
 
-/* ── The navigator popping into its replacement ──────────────────────────────
-   A subscreen that hands the cube over to another object (the clay TV, the
-   mixing desk) used to hot-swap the model mid-frame: one thing simply became
-   another, which reads as a glitch rather than a transformation.
-
-   Shrink the outgoing object to almost nothing and hold it there while the
-   prepared replacement installs. The replacement then grows out through
-   cubeModelReveal. No turn, flash, or static layer sits between the two. */
-@keyframes cubeSwapPop {
+/* ── D: Bubble Bounce navigator transition ──────────────────────────────────
+   One wrapper owns the whole motion: outgoing object to a dot, a still dot
+   while the prepared model installs, then the replacement bounces outward.
+   Hover is deliberately absent during all three phases. */
+@keyframes cubeSwapBubbleExit {
   0%   { scale: 1 1; }
-  55%  { scale: 0.34 0.34; }
-  100% { scale: 0.34 0.34; }
+  35%  { scale: .9 .9; }
+  100% { scale: .035 .035; }
 }
 
-.cubeSwapPop {
-  animation:
-    cubeSwapPop 0.62s cubic-bezier(0.34, 1.4, 0.64, 1),
-    cubeHover 3.6s ease-in-out infinite;
+@keyframes cubeSwapBubbleEnter {
+  0%   { scale: .035 .035; }
+  44%  { scale: 1.16 1.16; }
+  68%  { scale: .93 .93; }
+  84%  { scale: 1.055 1.055; }
+  100% { scale: 1 1; }
+}
+
+.cubeSwapExit {
+  transform-origin: 50% 50%;
+  animation: cubeSwapBubbleExit .12s cubic-bezier(.7, 0, 1, .5) both;
+  translate: 0 0;
+}
+
+.cubeSwapWaiting {
+  transform-origin: 50% 50%;
+  scale: .035 .035;
+  translate: 0 0;
+}
+
+.cubeSwapEnter {
+  transform-origin: 50% 50%;
+  animation: cubeSwapBubbleEnter .34s cubic-bezier(.2, 1.35, .35, 1) both;
+  translate: 0 0;
 }
 
 .cubeModelStage {
@@ -1261,26 +1277,12 @@
   transform-origin: 50% 50%;
 }
 
-.cubeModelConcealed {
-  opacity: 0;
-  transform: scale(.42);
-}
-
-@keyframes cubeModelReveal {
-  0% { opacity: 0; transform: scale(.42); }
-  62% { opacity: 1; transform: scale(1.12); }
-  100% { opacity: 1; transform: scale(1); }
-}
-
-.cubeModelReveal {
-  animation: cubeModelReveal .28s cubic-bezier(.34, 1.4, .64, 1);
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .cubeSwapPop {
+  .cubeSwapExit,
+  .cubeSwapEnter {
     animation: none;
   }
-  .cubeModelReveal {
-    animation: none;
+  .cubeSwapWaiting {
+    scale: 1 1;
   }
 }

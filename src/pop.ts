@@ -84,6 +84,18 @@ export function preloadPop() {
   } catch { /* audio is unavailable */ }
 }
 
+/** Unlocks the already-preloaded pop context inside a real user gesture. */
+export function primePopAudio() {
+  preloadPop()
+  const context = audioCtx
+  if (!context || context.state !== 'suspended') return
+  const serial = armPopIdle()
+  void context.resume().then(() => {
+    if (!ambientAllowed()) parkPopNow()
+    else parkPopIfCurrent(serial)
+  }).catch(() => { /* the next gesture can retry */ })
+}
+
 /** Short haptic tick — web vibration, plus the native shells' own haptics. */
 export function popHaptic() {
   try {

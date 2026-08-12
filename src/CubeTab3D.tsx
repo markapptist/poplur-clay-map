@@ -6,6 +6,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { primeMotionAudio } from './motionEffectsAudio'
+import { preloadPop, primePopAudio } from './pop'
 
 // Live 3D tab-object navigator. One persistent WebGL scene hot-swaps the Map,
 // Feed, Camera and Profile objects. Horizontal swipes choose one adjacent tab;
@@ -183,6 +184,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   const callbacksRef = useRef({ onFaceChange, onTap, onHold, onModelReady })
   callbacksRef.current = { onFaceChange, onTap, onHold, onModelReady }
 
+  // Decode the tiny shared sample before the first navigation gesture. The
+  // context stays suspended/parks at idle; pointerdown below performs the
+  // gesture-bound unlock so the later model-ready callback is actually heard.
+  useEffect(() => { preloadPop() }, [])
+
   // The scene is built once (the effect below is keyed on `size`); swapping the
   // model must NOT tear it down, or the gesture handlers and render loop would
   // be rebuilt mid-interaction. So the group is held in a ref and the model is
@@ -325,6 +331,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // Feed can unmute when it mounts a moment later. This is a silent,
       // one-frame buffer only; it adds no turn/static sound and parks itself.
       primeMotionAudio()
+      primePopAudio()
       try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
       dragging = true
       moved = false
