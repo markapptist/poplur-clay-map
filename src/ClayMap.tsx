@@ -1395,11 +1395,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // Install this before the clay world boots. A partial style build can throw
     // before the later traffic/prop setup is reached; putting the energy gate
     // there meant the map looked usable but never actually registered its idle
-    // renderer park. Freeze only after Mapbox emits `idle`: replacing its
-    // private frame scheduler mid-placement corrupts the continuation it keeps
-    // between label-layout frames.
+    // renderer park. Snapshot only after Mapbox emits `idle`, and leave its
+    // scheduler state untouched: symbol placement can legitimately continue
+    // across frames even after the public idle/frameReady checks briefly agree.
     {
-      const parkedMap = map as unknown as { repaint: boolean }
       let parkRequested = false
       let parkRequestSerial = 0
 
@@ -1412,12 +1411,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // pauseable placement state and later crashed continuePlacement().
         if (!map.idle() || !map.frameReady()) return
         idleSnapshot.park()
-        parkedMap.repaint = false
         rendererParked = true
-        // Mapbox is event-driven while `repaint` is false. Leave triggerRepaint
-        // untouched so late tile and label-placement work can finish through
-        // Mapbox's own scheduler; intercepting it can strand placement state
-        // between frames and make continuePlacement read a retired bucket.
+        // Mapbox is event-driven by default. Do not call stop(), rewrite
+        // repaint, or intercept triggerRepaint here: each can strand a pending
+        // placement continuation even though the public map looked settled.
         document.documentElement.dataset.poplurMapPark = '1'
       }
       const scheduleRendererParkAfterIdle = () => {
@@ -1449,7 +1446,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         }
 
         parkRequested = true
-        map.stop()
         stopOrbitRef.current()
         // A sleep edge can coincide with the tail of a finite startup/camera
         // lease. The ambient callback deliberately lets that operation finish,
