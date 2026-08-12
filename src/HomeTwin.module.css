@@ -120,60 +120,6 @@
   .contentLayer > * { animation: none; }
 }
 
-/* TV-static handoff for Camera, Map and Profile. Feed renders this same asset
-   itself so its channel identity can stay attached to the transition. */
-.tabStaticTransition {
-  position: absolute;
-  inset: 0;
-  z-index: 250;
-  overflow: hidden;
-  pointer-events: none !important;
-  background: #111;
-  animation: none !important;
-  isolation: isolate;
-}
-
-.tabStaticTransition::before {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  content: "";
-  opacity: 0.94;
-  background:
-    repeating-linear-gradient(0deg, rgba(255,255,255,.24) 0 1px, rgba(0,0,0,.32) 1px 3px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.17) 0 1px, rgba(0,0,0,.26) 1px 4px),
-    radial-gradient(circle at 22% 30%, #dedede 0 1px, transparent 1.8px),
-    radial-gradient(circle at 73% 68%, #a7a7a7 0 1px, transparent 2px),
-    #161616;
-  background-size: 100% 5px, 7px 100%, 8px 9px, 11px 13px, auto;
-  animation: tabStaticShift .14s steps(2) infinite;
-}
-
-.tabStaticVideo {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-  opacity: 0;
-  transition: opacity .1s linear;
-}
-
-.tabStaticVideoReady { opacity: 1; }
-
-@keyframes tabStaticShift {
-  0% { transform: translate3d(-1%, -1%, 0) scale(1.03); }
-  50% { transform: translate3d(1%, 0, 0) scale(1.03); }
-  100% { transform: translate3d(0, 1%, 0) scale(1.03); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tabStaticTransition::before { animation: none; }
-  .tabStaticVideo { transition: none; }
-}
-
 /* Approved Loading screen (GCL): the background fades pink → purple → blue
    over 2.4s and settles on blue, exactly like gcl-prototype's loadingPage(). */
 .mapLoading {
@@ -1294,16 +1240,13 @@
    mixing desk) used to hot-swap the model mid-frame: one thing simply became
    another, which reads as a glitch rather than a transformation.
 
-   Expand, shrink away to almost nothing, then grow back — the model is swapped
-   at the 55% trough and the pop sound lands there, so the object you get is the
-   one that grows OUT of the pop. Shares the hover loop so the cube keeps
-   breathing throughout instead of freezing for the length of the swap. */
+   Shrink the outgoing object to almost nothing and hold it there while the
+   prepared replacement installs. The replacement then grows out through
+   cubeModelReveal. No turn, flash, or static layer sits between the two. */
 @keyframes cubeSwapPop {
   0%   { scale: 1 1; }
-  32%  { scale: 1.2 1.16; }
-  55%  { scale: 0.42 0.42; }
-  74%  { scale: 1.12 1.14; }
-  100% { scale: 1 1; }
+  55%  { scale: 0.34 0.34; }
+  100% { scale: 0.34 0.34; }
 }
 
 .cubeSwapPop {

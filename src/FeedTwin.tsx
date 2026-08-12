@@ -757,10 +757,16 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('static') === '1'
   const forceTransition = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('transition') === '1'
-  // Static is the channel-change transition. Moving between posts inside a
-  // channel is not a channel change, so it must never raise static.
-  const [staticArmed, setStaticArmed] = useState(true)
-  useEffect(() => { setStaticArmed(true) }, [ch.id])
+  // Static belongs only to a deliberate channel zap. Entering the Feed tab is
+  // a tab change, so initialise with the current channel already accepted and
+  // arm static only when this mounted Feed actually receives a different id.
+  const [staticArmed, setStaticArmed] = useState(false)
+  const staticChannelRef = useRef(ch.id)
+  useEffect(() => {
+    if (staticChannelRef.current === ch.id) return
+    staticChannelRef.current = ch.id
+    setStaticArmed(true)
+  }, [ch.id])
 
   const adReady = Boolean(adSrc) && readyAdSrc === adSrc
   useEffect(() => { if (adReady) setStaticArmed(false) }, [adReady])

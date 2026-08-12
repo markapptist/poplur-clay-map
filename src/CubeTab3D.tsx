@@ -5,36 +5,33 @@ import { qualityPixelRatio } from './frameGovernor'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
-import { playCubeTurnPop, primeMotionAudio } from './motionEffectsAudio'
 
-// Live 3D cube tab navigator — the web twin of CubeTabView.swift.
-// Renders poplur_cube_v4.glb (a true 2×2×2 box built from the six designed clay
-// face tiles) in its own small canvas with a FIXED orthographic camera, so
-// every face reads at exactly the same size as the cube rotates.
-//
-// Gestures (like the app): horizontal drag rotates with momentum and a spring
-// snap to the nearest face; quick tap fires onTap; press-and-hold fires onHold.
+// Live 3D tab-object navigator. One persistent WebGL scene hot-swaps the Map,
+// Feed, Camera and Profile objects. Horizontal swipes choose one adjacent tab;
+// the object itself never yaws during navigation — Home owns the shrink/swap/
+// grow pop. Quick tap fires onTap; press-and-hold fires onHold.
 
 export type CubeTab = 'map' | 'feed' | 'post' | 'profile'
 
-// Baked face → side on poplur_cube_v4.glb: +Z Profile, +X Map, -Z Camera(Post),
-// -X Feed(TV). Cube rotation.y = -azimuth fronts a face.
-const FACES: { tab: CubeTab; az: number }[] = [
-  { tab: 'profile', az: 0 },
-  { tab: 'map', az: Math.PI / 2 },
-  { tab: 'post', az: Math.PI },
-  { tab: 'feed', az: -Math.PI / 2 },
-]
+// The navigator is a ring, not a list of unrelated destinations. Keep this
+// sequence explicit because it is shared by touch and keyboard navigation:
+// Feed -> Profile -> Map -> Camera -> Feed.
+export const TAB_ORDER: readonly CubeTab[] = ['feed', 'profile', 'map', 'post']
 
 const HALF_PI = Math.PI / 2
 
+const TAB_LABEL: Record<CubeTab, string> = {
+  map: 'Map',
+  feed: 'Feed',
+  post: 'Camera',
+  profile: 'Profile',
+}
+
 export interface CubeTab3DProps {
-  /** rotating here springs the cube to this tab's face */
+  /** semantic destination currently represented by the navigator object */
   targetTab: CubeTab
-  /** fired when a rotation settles on a new front face */
+  /** fired once when a completed swipe or keyboard step chooses a tab */
   onFaceChange: (tab: CubeTab) => void
-  /** true only while the cube is actually turning (drag or spring settle) */
-  onSpinChange?: (spinning: boolean) => void
   onTap: () => void
   onHold: () => void
   size?: number
@@ -81,11 +78,8 @@ function clayLoader(): GLTFLoader {
 
 const IMAGE_MODEL_RE = /\.(?:avif|jpe?g|png|webp)(?:[?#].*)?$/i
 
-/** The Profile navigator uses the already-shipped transparent Mark/building
-    renders instead of decoding the 100+ MB authoring head at the bottom of
-    every screen. Treat those renders as honest, flat clay objects inside the
-    same 3D navigator scene: they still turn with a drag, but cost one tiny
-    texture rather than another heavyweight model/renderer. */
+/** Image support remains for legacy subscreen objects. Main Profile navigation
+    now uses real static 3D LODs and never enters this billboard path. */
 async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
   if (!IMAGE_MODEL_RE.test(url)) return (await clayLoader().loadAsync(url)).scene
 
@@ -123,14 +117,6 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string) {
   } else {
     const largest = Math.max(dims.x, dims.y, dims.z) || 1
     model.scale.setScalar(2 / largest)
-    // Face the viewer on arrival. The group carries the yaw of whichever cube
-    // face the current tab fronts, and TV Guide opens from Feed — the -X face,
-    // so the group is parked at +90°. A cube does not care which way it is
-    // turned; the clay TV does, and it arrived showing you its side panel.
-    // Counter-rotating the MODEL (not the group) squares it to the camera
-    // without touching the face mapping, and it still turns with the group from
-    // there — the TV is the navigator, so it has to keep spinning.
-    model.rotation.y = -group.rotation.y
   }
   model.updateMatrixWorld(true)
   const centred = new THREE.Box3().setFromObject(model).getCenter(new THREE.Vector3())
@@ -176,7 +162,7 @@ function disposeModel(node: THREE.Object3D) {
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -193,8 +179,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
   // below. Model swaps need both halves: merely waking a clean loop leaves the
   // old framebuffer on screen until a tap marks it dirty.
   const wakeLoopRef = useRef<() => void>(() => {})
-  const callbacksRef = useRef({ onFaceChange, onSpinChange, onTap, onHold, onModelReady })
-  callbacksRef.current = { onFaceChange, onSpinChange, onTap, onHold, onModelReady }
+  const callbacksRef = useRef({ onFaceChange, onTap, onHold, onModelReady })
+  callbacksRef.current = { onFaceChange, onTap, onHold, onModelReady }
 
   // The scene is built once (the effect below is keyed on `size`); swapping the
   // model must NOT tear it down, or the gesture handlers and render loop would
@@ -210,14 +196,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
   const modelUrlRef = useRef(modelUrl)
   modelUrlRef.current = modelUrl
 
-  // imperative bridge: prop change → spring to that face
-  const springToRef = useRef<(tab: CubeTab) => void>(() => {})
   const showFoodFaceOnCubeRef = useRef<(visible: boolean) => void>(() => {})
   useEffect(() => {
-    if (targetTab !== targetTabRef.current) {
-      targetTabRef.current = targetTab
-      springToRef.current(targetTab)
-    }
+    targetTabRef.current = targetTab
   }, [targetTab])
   useEffect(() => {
     if (showFoodFace === showFoodFaceRef.current) return
@@ -258,79 +239,27 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     // so even its 45°-rotated silhouette (half-width √2 ≈ 1.414) never clips.
     const halfH = 1.46
     const camera = new THREE.OrthographicCamera(-halfH, halfH, halfH, -halfH, 0.01, 100)
-    // Yaw lives inside pitch. Rotating the cube around its own Y axis cannot
-    // disturb the +Y food face, while the outer X rotation brings that face to
-    // camera. The outer roll counter-rotates the top artwork so fork/knife stays
-    // upright whether Map or Feed was the side parked underneath it.
-    const rollGroup = new THREE.Group()
+    // Pitch is retained only for the authored food-face override. Tab swipes do
+    // not rotate this hierarchy; the active object stays front-facing.
     const pitchGroup = new THREE.Group()
     const group = new THREE.Group()
-    scene.add(rollGroup)
-    rollGroup.add(pitchGroup)
+    scene.add(pitchGroup)
     pitchGroup.add(group)
     groupRef.current = group
 
-    // ---- rotation state ----
-    let yaw = -FACES.find(f => f.tab === targetTabRef.current)!.az
-    let vel = 0
-    let springTarget: number | null = null
+    // ---- gesture/render state ----
     let dragging = false
     let disposed = false
     let needsRender = true
-    let lastTab = targetTabRef.current
-    let prevYaw = yaw
-    let spinReported = false
     let pitch = showFoodFaceRef.current ? HALF_PI : 0
     let pitchVelocity = 0
     let pitchTarget: number | null = null
 
-    const reportSpin = (spinning: boolean) => {
-      if (spinReported === spinning) return
-      spinReported = spinning
-      callbacksRef.current.onSpinChange?.(spinning)
-    }
-
-    const frontTab = (angle: number): CubeTab => {
-      const quarter = ((Math.round(-angle / HALF_PI) % 4) + 4) % 4
-      return FACES.find(f => ((Math.round(f.az / HALF_PI) % 4) + 4) % 4 === quarter)!.tab
-    }
-
-    // Which way the tabs are travelling, for the turn sound. Drag maps dx to
-    // yaw directly (`startYaw + dx * 0.017`) and the front face is
-    // round(-yaw / HALF_PI), so FALLING yaw advances rightward through the
-    // faces — the carousel convention, where swiping left brings the next
-    // screen in from the right.
-    const travelOf = (deltaYaw: number): 'left' | 'right' => (deltaYaw < 0 ? 'right' : 'left')
-
-    // The single place a face becomes THE face. Fires the sound and tells the
-    // app, exactly once per destination.
-    const commitTo = (tab: CubeTab, travel: 'left' | 'right') => {
-      if (tab === lastTab) return
-      lastTab = tab
+    const commitTo = (tab: CubeTab) => {
+      if (tab === targetTabRef.current) return
       targetTabRef.current = tab
-      playCubeTurnPop(travel, Math.min(1, Math.abs(vel) / 12))
       callbacksRef.current.onFaceChange(tab)
     }
-
-    const springTo = (tab: CubeTab) => {
-      const az = FACES.find(f => f.tab === tab)!.az
-      // nearest yaw equivalent of -az so we rotate the short way
-      const base = -az
-      const turns = Math.round((yaw - base) / (2 * Math.PI))
-      springTarget = base + turns * 2 * Math.PI
-      // Driven from outside (a nav tap): the app already knows where it is
-      // going, so claim the face now to stop the rotation echoing a redundant
-      // onFaceChange back at it — but still sound the direction, because the
-      // turn the user is about to watch should agree with what they hear.
-      if (tab !== lastTab) {
-        playCubeTurnPop(travelOf(springTarget - yaw), 0.5)
-        lastTab = tab
-        targetTabRef.current = tab
-      }
-      needsRender = true
-      wakeLoopRef.current()
-    }
-    springToRef.current = springTo
     showFoodFaceOnCubeRef.current = visible => {
       pitchTarget = visible ? HALF_PI : 0
       needsRender = true
@@ -341,29 +270,46 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     // Capture the URL paired with this request. Reading modelUrlRef in the
     // completion handler can relabel an old cube as a newly requested clay TV
     // when navigation changes screens during GLB decoding.
-    const initialModelUrl = modelUrlRef.current
-    loadNavigatorObject(initialModelUrl).then(model => {
-      if (disposed) { disposeModel(model); return }
-      fitIntoGroup(model, group, initialModelUrl)
-      modelNodeRef.current = model
-      loadedUrlRef.current = initialModelUrl
-      setLoadedModel(initialModelUrl)
-      setSceneReadyVersion(version => version + 1)
-      callbacksRef.current.onModelReady?.(initialModelUrl)
+    const loadInitialModel = async () => {
+      let requestedUrl = modelUrlRef.current
+      try {
+        while (!disposed) {
+          const model = await loadNavigatorObject(requestedUrl)
+          if (disposed) { disposeModel(model); return }
+          // A rapid tab gesture can change the requested object while its GLB
+          // is decoding. Never flash that stale result into the persistent
+          // scene; discard it and continue directly to the latest request.
+          if (modelUrlRef.current !== requestedUrl) {
+            disposeModel(model)
+            requestedUrl = modelUrlRef.current
+            continue
+          }
+          fitIntoGroup(model, group, requestedUrl)
+          modelNodeRef.current = model
+          loadedUrlRef.current = requestedUrl
+          setLoadedModel(requestedUrl)
+          setSceneReadyVersion(version => version + 1)
+          callbacksRef.current.onModelReady?.(requestedUrl)
 
-      // Straight-on camera. The cube normally has no pitch; food suggestions
-      // animate the authored top face into this same square frame.
-      camera.position.set(0, 0, 10)
-      camera.lookAt(0, 0, 0)
-      needsRender = true
-      wakeLoopRef.current()
-    }).catch(() => { setGlFailed(true) })
+          // Straight-on camera. The authored food-face override is the only
+          // path that pitches the object away from this resting pose.
+          camera.position.set(0, 0, 10)
+          camera.lookAt(0, 0, 0)
+          needsRender = true
+          wakeLoopRef.current()
+          return
+        }
+      } catch {
+        if (!disposed) setGlFailed(true)
+      }
+    }
+    void loadInitialModel()
 
     // ---- gestures ----
     let startX = 0
-    let startYaw = 0
+    let startY = 0
     let lastX = 0
-    let lastMoveTime = 0
+    let lastY = 0
     let moved = false
     let downTime = 0
     let holdTimer: ReturnType<typeof setTimeout> | null = null
@@ -375,18 +321,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
 
     const onPointerDown = (e: PointerEvent) => {
       try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
-      // WebKit grants Web Audio on pointer-down reliably; pointer-move is too
-      // late on some iPhones and made the first POP/PAP of a session disappear.
-      primeMotionAudio()
-      wakeLoopRef.current()
       dragging = true
       moved = false
       holdFired = false
       startX = lastX = e.clientX
-      startYaw = yaw
-      downTime = lastMoveTime = performance.now()
-      vel = 0
-      springTarget = null
+      startY = lastY = e.clientY
+      downTime = performance.now()
       holdTimer = setTimeout(() => {
         holdTimer = null
         holdFired = true
@@ -398,52 +338,43 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     const onPointerMove = (e: PointerEvent) => {
       if (!dragging) return
       const dx = e.clientX - startX
-      if (Math.abs(dx) > 3 && !moved) {
+      const dy = e.clientY - startY
+      lastX = e.clientX
+      lastY = e.clientY
+      if (Math.hypot(dx, dy) > 8 && !moved) {
         moved = true
         cancelHold()
-        reportSpin(true)
-        // Touch the audio clock inside the pointer gesture, not one rAF later:
-        // iOS only grants WebAudio activation from within the gesture, and the
-        // first pop of the turn has to be audible or the very first navigation
-        // a user ever makes is the one silent one.
-        primeMotionAudio()
       }
-      if (!moved) return
-      const now = performance.now()
-      const dt = Math.max(1, now - lastMoveTime) / 1000
-      // A short, forgiving drag should traverse a full face on phone screens.
-      const next = startYaw + dx * 0.017
-      vel = (next - yaw) / dt
-      yaw = next
-      lastX = e.clientX
-      lastMoveTime = now
-      needsRender = true
     }
 
-    const onPointerUp = () => {
+    const onPointerUp = (event: PointerEvent) => {
       cancelHold()
       if (!dragging) return
       dragging = false
       if (holdFired) return
-      if (!moved) {
+      // Use the release coordinate as well as pointermove. A fast flick can
+      // produce down→up with no intermediate move event, especially in WKWebView.
+      const releaseX = Number.isFinite(event.clientX) ? event.clientX : lastX
+      const releaseY = Number.isFinite(event.clientY) ? event.clientY : lastY
+      const dx = releaseX - startX
+      const dy = releaseY - startY
+      const gestureMoved = moved || Math.hypot(dx, dy) > 8
+      if (!gestureMoved) {
         if (performance.now() - downTime < 350) callbacksRef.current.onTap()
-        springTarget = Math.round(yaw / HALF_PI) * HALF_PI
         return
       }
-      // momentum decides which face we settle on (max one face past release)
-      const projected = yaw + vel * 0.14
-      const current = Math.round(yaw / HALF_PI)
-      const quarter = Math.max(current - 1, Math.min(current + 1, Math.round(projected / HALF_PI)))
-      springTarget = quarter * HALF_PI
-      // The destination is decided RIGHT HERE — momentum has been resolved and
-      // the cube cannot land anywhere else. So commit now, on the frame the
-      // finger lifts, instead of waiting for the cube to physically rotate past
-      // 45°. That wait was the hesitation: the screen used to arrive a beat
-      // after the gesture that asked for it, which reads as the cube deciding
-      // whether to obey. The turn still plays out underneath — it is the
-      // animation of a decision already made, not the decision itself.
-      commitTo(frontTab(springTarget), travelOf(springTarget - yaw))
-      needsRender = true
+      // A small attempted swipe is a cancellation, never a cube tap. This is
+      // especially important on Camera, where a tap is the shutter.
+      if (Math.abs(dx) < 28 || Math.abs(dx) < Math.abs(dy)) return
+      const index = TAB_ORDER.indexOf(targetTabRef.current)
+      const delta = dx < 0 ? 1 : -1
+      commitTo(TAB_ORDER[(index + delta + TAB_ORDER.length) % TAB_ORDER.length])
+    }
+
+    const onPointerCancel = () => {
+      cancelHold()
+      dragging = false
+      moved = false
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -454,15 +385,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       }
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
       event.preventDefault()
-      // A second key can land before the spring has visibly moved. Navigate
-      // from the already-requested semantic tab, not the old yaw, so rapid
+      // A second key can land before the first model has finished popping.
+      // Navigate from the already-requested semantic tab, so rapid
       // Right→Left reliably returns to where it started.
       const current = targetTabRef.current
-      const index = FACES.findIndex(face => face.tab === current)
+      const index = TAB_ORDER.indexOf(current)
       const delta = event.key === 'ArrowRight' ? 1 : -1
-      const next = FACES[(index + delta + FACES.length) % FACES.length].tab
-      springTo(next)
-      callbacksRef.current.onFaceChange(next)
+      commitTo(TAB_ORDER[(index + delta + TAB_ORDER.length) % TAB_ORDER.length])
     }
 
     const onContextLost = (event: Event) => {
@@ -473,35 +402,16 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
     canvas.addEventListener('pointerdown', onPointerDown)
     canvas.addEventListener('pointermove', onPointerMove)
     canvas.addEventListener('pointerup', onPointerUp)
-    canvas.addEventListener('pointercancel', onPointerUp)
+    canvas.addEventListener('pointercancel', onPointerCancel)
     canvas.addEventListener('keydown', onKeyDown)
 
-    // ---- spring + render loop ----
+    // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
     let raf = 0
     const loop = (now: number) => {
       if (disposed) return
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
-
-      if (!dragging && springTarget !== null) {
-        // Firmer and better damped than before (was 90 / 12). The cube has
-        // already told the app where it is going by this point, so the rotation
-        // is pure follow-through — it should arrive and stop, not drift in and
-        // wobble. Higher stiffness gets it there faster; the higher damping
-        // ratio that comes with it keeps a single crisp overshoot instead of a
-        // hesitant settle, which is what "confident" actually sounds like in
-        // motion terms.
-        const accel = -155 * (yaw - springTarget) - 21 * vel
-        vel += accel * dt
-        yaw += vel * dt
-        needsRender = true
-        if (Math.abs(yaw - springTarget) < 0.002 && Math.abs(vel) < 0.02) {
-          yaw = springTarget
-          vel = 0
-          springTarget = null
-        }
-      }
 
       if (pitchTarget !== null) {
         const pitchAccel = -155 * (pitch - pitchTarget) - 21 * pitchVelocity
@@ -515,29 +425,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
         }
       }
 
-      // Mid-drag crossings still commit here: a slow deliberate turn never
-      // reaches onPointerUp's momentum branch, and past 45° the new face IS the
-      // one you are looking at. Release commits earlier (see onPointerUp); this
-      // is the path for a finger that is still down.
-      const front = frontTab(yaw)
-      if (front !== lastTab) commitTo(front, travelOf(yaw - prevYaw))
-      prevYaw = yaw
-
-      // Spin is still reported for the visual cues that ride on it (Feed's
-      // bottom smoke). The cube no longer sounds while it turns: a continuous
-      // hydraulic bed said "machinery is moving" for the whole rotation and
-      // buried the one event that carries meaning. Two crisp pops at the
-      // crossings say more, and say which way.
-      const spinning = (dragging && moved)
-        || springTarget !== null
-        || (!dragging && Math.abs(vel) > 0.035)
-      reportSpin(spinning)
-
       if (needsRender) {
-        group.rotation.y = yaw
+        // Tab navigation never rotates the shared object. It remains
+        // front-facing while Home performs the shrink/swap/grow pop.
+        group.rotation.y = 0
         pitchGroup.rotation.x = pitch
-        const foodFaceProgress = Math.max(0, Math.min(1, pitch / HALF_PI))
-        rollGroup.rotation.z = -yaw * foodFaceProgress
         renderer.render(scene, camera)
         needsRender = false
       }
@@ -547,17 +439,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
       // display-rate loop (120Hz on ProMotion) turning a cube that was not
       // moving, plus an audio call per frame, forever. Idle now costs nothing;
       // wake() restarts the loop from a gesture or a tab change.
-      const active = dragging
-        || springTarget !== null
-        || pitchTarget !== null
-        || Math.abs(vel) > 0.02
+      const active = pitchTarget !== null
         || Math.abs(pitchVelocity) > 0.02
         || needsRender
       if (active) {
         raf = requestAnimationFrame(loop)
       } else {
         raf = 0
-        reportSpin(false)
       }
     }
     const wake = () => {
@@ -574,12 +462,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
 
     return () => {
       disposed = true
-      reportSpin(false)
       cancelAnimationFrame(raf)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)
       canvas.removeEventListener('pointerup', onPointerUp)
-      canvas.removeEventListener('pointercancel', onPointerUp)
+      canvas.removeEventListener('pointercancel', onPointerCancel)
       canvas.removeEventListener('keydown', onKeyDown)
       canvas.removeEventListener('webglcontextlost', onContextLost)
       disposeModel(scene)
@@ -689,12 +576,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onSpinChange, onTap
         role="button"
         aria-roledescription="tab navigator"
         style={{ width: size, height: size, touchAction: 'none', cursor: 'grab', visibility: glFailed ? 'hidden' : 'visible' }}
-        aria-label={`${targetTab} tab model — drag or use arrow keys to change tabs, hold for menu`}
+        aria-label={`${TAB_LABEL[targetTab]} tab model — swipe or use arrow keys to change tabs, hold for menu`}
       />
       <span
         aria-live="polite"
         style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' }}
-      >{`${targetTab} tab selected`}</span>
+      >{`${TAB_LABEL[targetTab]} tab selected`}</span>
       {/* A failed WebGL context is intentionally left empty. Showing a static
           cube here makes a low-tier device look like it loaded a different
           build, and it can swallow the persistent channel HUD. The surrounding

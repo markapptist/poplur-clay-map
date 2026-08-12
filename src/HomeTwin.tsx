@@ -15,13 +15,13 @@ import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import ClayPhonePop from './ClayPhonePop'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
-import { playPop, popHaptic } from './pop'
+import { playPop } from './pop'
 import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
-import { isNativeShell, postNativeEvent, wakeManagedRendering } from './nativeBridge'
+import { isIOSNativeShell, isNativeShell, postNativeEvent, wakeManagedRendering } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
 import { initialMapMode, type PoplurMapMode } from './mapMode'
-import { playRadiusCounterDone, playRadiusCounterTick, playTabStaticBurst } from './motionEffectsAudio'
+import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
 import {
   readMapTourTopics,
   writeMapTourTopics,
@@ -67,8 +67,8 @@ const CLAY_TV_MODEL = 'clay_tv_navigator.glb'
 // SUBSCREEN_CUBE_MODEL note below applies here too.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
 const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
-const PROFILE_MARK_MODEL = 'mark_talk0.png'
-const PROFILE_BUILDING_MODEL = 'clay_buildings.png'
+const PROFILE_MARK_MODEL = 'poplur_mark_head_navigator.glb'
+const PROFILE_BUILDING_MODEL = 'poplur_building_navigator.glb'
 const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // The cube's recording face. Bundle ROOT, not models/ — same reason as every
 // other navigator here (sync-mobile strips models/ from the phone bundles).
@@ -82,10 +82,9 @@ function readBusinessAccount(): boolean {
   try { return window.localStorage.getItem('poplur.accountType') === 'business' } catch { return false }
 }
 
-/** Each main tab now owns a recognisable clay object instead of another face
-    on a generic cube. Mark/building are the tiny transparent renders already
-    used by Profile; loading the 100+ MB authoring head here would undo the
-    thermal work for an object that lives on every screen. */
+/** Each main tab owns one recognisable, true 3D clay object. The Profile
+    models are navigator-specific static LODs (<=23k triangles, 256px textures)
+    rather than either a flat billboard or the 100+ MB talking authoring rig. */
 function tabNavigatorModel(tab: CubeTab, business: boolean): string {
   if (tab === 'map') return MAP_GLOBE_MODEL
   if (tab === 'feed') return CLAY_TV_MODEL
@@ -482,11 +481,9 @@ const MAP_SETTLE_MS = (() => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 })()
 
-// Semantic navigation may never depend indefinitely on the decorative cube
-// spring reaching its final rAF. Under a reduced native frame lease that spring
-// can be parked mid-flight, so commit whichever face has remained stable for
-// this bounded interval even if `cubeSpinning` did not clear itself.
-const SCREEN_COMMIT_MAX_MS = 1_000
+// The semantic screen and its prepared navigator object both settle inside one
+// short native render lease. This is a transition budget, not an idle loop.
+const TAB_TRANSITION_LEASE_MS = 1_600
 
 // Longest the boot cover may sit over a mounting map before it lifts on its own.
 // The cover normally comes off on the map's first postMessage; this is the
@@ -613,11 +610,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     finishPermission()
   }, [activePermission, finishPermission])
   useEffect(() => {
-    // A cube turn may take longer than the native runtime's ordinary input
+    // A model pop may take longer than the native runtime's ordinary input
     // tail. Keep the final semantic screen paint inside one finite lease so a
     // late-mounted Profile cannot sit on the first transparent fade frame
     // until the next tap.
-    wakeManagedRendering(SCREEN_COMMIT_MAX_MS + 600)
+    wakeManagedRendering(TAB_TRANSITION_LEASE_MS)
     onTabChange?.(activeTab)
   }, [activeTab, onTabChange])
   // The cube long-press hold menu floats as a translucent overlay over the
@@ -647,11 +644,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // model is pointer-events:none over it), so it remains the way out; only its
   // appearance changes.
   const [cubeIntoPhone, setCubeIntoPhone] = useState(false)
-  // True from the first drag until the cube's spring has fully settled. Only the
-  // map layer reads it — see the map lifetime effect. CubeTab3D only reports on
-  // CHANGE, and reports false on teardown, so this cannot latch on.
-  const [cubeSpinning, setCubeSpinning] = useState(false)
-
   // ONE PAGE, ONE VOICE.
   //
   // Leaving a page silences everything, everywhere — including inside the map
@@ -666,9 +658,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // could only hand the floor to a different surface, which is exactly how sound
   // kept arriving from a page the user had already left.
   //
-  // Gated on cubeSpinning for the same reason the map layer is: the cube commits
-  // a tab every 45 degrees, so an ungated version would cut the audio several
-  // times during a single flick.
   // Silence in CLEANUP, i.e. on the way out of a tab. Running it in the effect
   // body silenced the tab being landed ON: child effects run before parent
   // effects, so FeedTwin had already claimed the floor and unmuted, and this
@@ -678,55 +667,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // null until the next stray tap. React flushes all cleanups before any of the
   // new effects, so the outgoing tab is silenced before the incoming one claims.
   useEffect(() => {
-    if (cubeSpinning) return
     return () => { silenceAllAudio() }
-  }, [activeTab, cubeSpinning])
+  }, [activeTab])
 
   // THE PAGE YOU LAND ON IS THE ONLY PAGE THAT GETS BUILT.
   //
-  // `activeTab` is committed the instant a face wins the front — halfway through
-  // each quarter turn — which is the right feel for the CHROME but catastrophic
-  // for the screens. Measured, ONE map->feed navigation mounted and destroyed:
-  //     feed -> profile -> camera -> feed -> camera -> feed
-  // Camera, with 12 video elements and 6 WebGL contexts, was built and torn down
-  // TWICE in transit. Over 8 navigations that created 156 GL contexts and left
-  // 152 detached, because the clay components dispose() without
-  // forceContextLoss() — which is also why "clay arrows recover after GPU context
-  // loss" exists as a known bug. That churn is the overheating.
-  //
-  // The map layer already had this guard (MAP_SETTLE_MS + cubeSpinning); the
-  // content layer never did. `committedTab` is what the heavy screens render
-  // from, so a face the spin merely passes THROUGH is never built. The chrome and
-  // the cube keep tracking `activeTab`, so the app still feels immediate.
+  // Swipes choose exactly one semantic destination on release. Keep the heavy
+  // screen commit on the same short beat as the navigator shrink so Mapbox,
+  // Camera and Feed are never mounted merely because a finger is moving.
   const [committedTab, setCommittedTab] = useState<CubeTab>(initialTab)
   const [feedAutoPlayOnMount, setFeedAutoPlayOnMount] = useState(false)
-  const [tabStaticTransition, setTabStaticTransition] = useState<{ id: number; target: CubeTab } | null>(null)
-  const tabStaticSerial = useRef(0)
-  const tabStaticTimer = useRef<number | null>(null)
-  const tabStaticSource = useRef(activeTab)
-  const committedStaticSource = useRef(committedTab)
-
-  // Feed already owns its channel-static layer. Every other destination gets
-  // the same current static asset here, above the old and new screens but
-  // below Home chrome. The cover begins on the first face change, then stays
-  // through the settled screen's first paint instead of exposing an old tab
-  // while a slower phone finishes the cube spring.
-  useEffect(() => {
-    if (tabStaticSource.current === activeTab) return
-    tabStaticSource.current = activeTab
-    if (tabStaticTimer.current) {
-      window.clearTimeout(tabStaticTimer.current)
-      tabStaticTimer.current = null
-    }
-    if (activeTab === 'feed') {
-      setTabStaticTransition(null)
-      return
-    }
-    const id = ++tabStaticSerial.current
-    setTabStaticTransition({ id, target: activeTab })
-    playTabStaticBurst()
-  }, [activeTab])
-
   useEffect(() => {
     if (committedTab === activeTab) return
     const settle = window.setTimeout(
@@ -734,35 +684,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setFeedAutoPlayOnMount(activeTab === 'feed' && committedTab !== 'feed')
         setCommittedTab(activeTab)
       },
-      cubeSpinning ? SCREEN_COMMIT_MAX_MS : MAP_SETTLE_MS,
+      MAP_SETTLE_MS,
     )
     return () => window.clearTimeout(settle)
-  }, [activeTab, cubeSpinning, committedTab])
-  useEffect(() => {
-    if (committedStaticSource.current === committedTab) return
-    committedStaticSource.current = committedTab
-    // Feed's own static starts when its settled screen mounts, so its hiss
-    // belongs on this edge rather than on a transient face passed mid-spin.
-    if (committedTab === 'feed' && committedTab === activeTab) playTabStaticBurst()
   }, [activeTab, committedTab])
-  useEffect(() => {
-    const transition = tabStaticTransition
-    if (!transition || transition.target !== committedTab || committedTab !== activeTab) return
-    if (tabStaticTimer.current) window.clearTimeout(tabStaticTimer.current)
-    tabStaticTimer.current = window.setTimeout(() => {
-      tabStaticTimer.current = null
-      setTabStaticTransition(current => current?.id === transition.id ? null : current)
-    }, 500)
-    return () => {
-      if (tabStaticTimer.current) {
-        window.clearTimeout(tabStaticTimer.current)
-        tabStaticTimer.current = null
-      }
-    }
-  }, [activeTab, committedTab, tabStaticTransition])
-  useEffect(() => () => {
-    if (tabStaticTimer.current) window.clearTimeout(tabStaticTimer.current)
-  }, [])
   useEffect(() => {
     // Native power follows the settled screen, never a transient cube face.
     // In particular, this is the point where the WebView yields its heavy
@@ -861,8 +786,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // A subscreen that hands the cube over to another object (the clay TV on TV
   // Guide and Radio, the mixing desk in the studio) used to hot-swap the model
   // mid-frame — one object simply became another with no beat, which read as a
-  // glitch rather than a transformation. It now expands, shrinks away, pops,
-  // and the replacement grows out of the pop.
+  // glitch rather than a transformation. It now shrinks away and the prepared
+  // replacement grows straight out of that same pop, without turning.
   //
   // `cubeModel` is what the screen ASKS for; `appliedCubeModel` is what the
   // cube is actually wearing. They differ only for the length of the swap, and
@@ -976,6 +901,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     )
   }, [mapReady])
   const pageVisible = useSyncExternalStore(subscribePageVisibility, pageIsVisible, () => true)
+  const iOSNativeShell = isIOSNativeShell()
+  // WKWebView occasionally reports `pagehide` while Poplur is backgrounded but
+  // never follows it with `pageshow` on the same document. Let the native host
+  // be authoritative for its own foreground lifecycle so the existing Camera
+  // tree is rebuilt with its HUD when the app returns.
+  const [nativeAppActive, setNativeAppActive] = useState(true)
+  useEffect(() => {
+    if (!iOSNativeShell) return
+    const onLifecycle = (event: Event) => {
+      const active = (event as CustomEvent<{ active?: unknown }>).detail?.active
+      if (typeof active !== 'boolean') return
+      ;(window as unknown as { __poplurNativeAppActive?: boolean }).__poplurNativeAppActive = active
+      setNativeAppActive(active)
+    }
+    window.addEventListener('poplur-native-app-lifecycle', onLifecycle)
+    return () => window.removeEventListener('poplur-native-app-lifecycle', onLifecycle)
+  }, [iOSNativeShell])
+  const surfaceVisible = iOSNativeShell ? nativeAppActive : pageVisible
   // Has the map's own document painted since this iframe mounted?
   //
   // A remount is a brand-new DOCUMENT, and until that document's CSS applies
@@ -1355,12 +1298,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Which pops the map shows. The SHELL owns this because the control lives in
   // the shell's HUD; the map is told and does the drawing.
   const [popLevel, setPopLevel] = useState<PopLevel>('mine')
-  // Your profile picture, forwarded to the map so your pins wear your face.
-  // The map is a CROSS-ORIGIN iframe (:5199 against the shell's :5173), so it
-  // cannot read poplur.profile.photo out of localStorage itself — the shell is
-  // the only side that can see the key, and the bridge is the only way across.
+  // Profile media is forwarded to the cross-origin map frame. The still is the
+  // selfie video's poster; the pin itself is intentionally not a user photo.
   const [ownPhoto, setOwnPhoto] = useState<string | null>(() => {
     try { return window.localStorage.getItem('poplur.profile.photo') } catch { return null }
+  })
+  const [ownSelfieVideo, setOwnSelfieVideo] = useState<string | null>(() => {
+    try { return window.localStorage.getItem('poplur.profile.selfieVideo') } catch { return null }
   })
   useEffect(() => {
     const onPhoto = (event: Event) => {
@@ -1370,14 +1314,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-profile-photo', onPhoto)
     return () => window.removeEventListener('poplur-profile-photo', onPhoto)
   }, [])
+  useEffect(() => {
+    const onProfileMedia = (event: Event) => {
+      const detail = (event as CustomEvent<{ photo?: string | null; video?: string | null }>).detail
+      if (typeof detail?.photo === 'string' || detail?.photo === null) setOwnPhoto(detail.photo ?? null)
+      if (typeof detail?.video === 'string' || detail?.video === null) setOwnSelfieVideo(detail.video ?? null)
+    }
+    window.addEventListener('poplur-profile-media', onProfileMedia)
+    return () => window.removeEventListener('poplur-profile-media', onProfileMedia)
+  }, [])
   // Re-sent on every map (re)load as well as every change: the iframe remounts
   // on tab changes and a message sent to a dead frame is simply lost.
   useEffect(() => {
     if (!mapReady) return
     mapFrameRef.current?.contentWindow?.postMessage(
-      { type: 'poplur-map-action', action: 'setOwnPhoto', photo: ownPhoto }, '*',
+      {
+        type: 'poplur-map-action',
+        action: 'setOwnProfileMedia',
+        photo: ownPhoto,
+        video: ownSelfieVideo,
+      }, '*',
     )
-  }, [ownPhoto, mapReady])
+  }, [ownPhoto, ownSelfieVideo, mapReady])
   // A subscreen asking for the whole screen (the radio's long press). Kept as
   // shell state for the same reason feedFullscreen is: the chrome layer sits
   // ABOVE the subscreen stage, so a subscreen can neither cover it nor hide it
@@ -1536,7 +1494,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setMapMounted(false)
       setMapReady(false)
     }
-    const screenCanRender = pageVisible && !overlayOpen && activePermission === null
+    const screenCanRender = surfaceVisible && !overlayOpen && activePermission === null
     const apply = () => {
       if (committedTab === 'map' && screenCanRender) { setMapMounted(true); return }
       if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
@@ -1553,7 +1511,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // prevents decorative motion from owning map lifecycle forever.
     apply()
     return () => { window.clearTimeout(dropTimer) }
-  }, [activePermission, committedTab, overlayOpen, pageVisible])
+  }, [activePermission, committedTab, overlayOpen, surfaceVisible])
 
   // Boot cover lifecycle. Unmounting re-arms it, so the NEXT mount renders
   // covered in the same commit that attaches the iframe — there is no frame in
@@ -1808,6 +1766,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setAppliedCubeModel(target.model)
       setAppliedCubeScreen(target.screen)
       setCubeSwapping(false)
+      playPop()
       return
     }
     // Coalesce rapid tab crossings into one transformation. If the old object
@@ -1838,6 +1797,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         if (awaitingCubeModelRef.current !== target.model) return
         setAwaitingCubeModel(null)
         setCubeModelRevealing(true)
+        playPop()
       }, 1_400)
     }, 340)
     // CSS animationend is the primary completion signal. This fallback keeps a
@@ -1940,7 +1900,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       )}
 
       <div className={styles.contentLayer}>
-        {pageVisible && !overlayOpen && activePermission === null && committedTab === 'feed' && (
+        {surfaceVisible && !overlayOpen && activePermission === null && committedTab === 'feed' && (
           <FeedTwin
             index={chanIndex}
             onIndexChange={setChanIndex}
@@ -1957,7 +1917,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
           />
         )}
-        {pageVisible && !overlayOpen && activePermission === null && committedTab === 'post' && (
+        {surfaceVisible && !overlayOpen && activePermission === null && committedTab === 'post' && (
           <Camera
             surfaceVisible={!holdOpen}
             onComposingChange={handleComposingChange}
@@ -1990,7 +1950,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
           />
         )}
-        {pageVisible && !overlayOpen && activePermission === null && committedTab === 'profile' && (
+        {surfaceVisible && !overlayOpen && activePermission === null && committedTab === 'profile' && (
           <ProfileTwin
             bindArrows={fn => { profileArrowsRef.current = fn }}
             bindGoBack={fn => { profileBackRef.current = fn }}
@@ -2004,21 +1964,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               setProfileOrigin(null)
             }}
           />
-        )}
-        {tabStaticTransition && (
-          <div className={styles.tabStaticTransition} aria-hidden="true">
-            <video
-              key={tabStaticTransition.id}
-              className={styles.tabStaticVideo}
-              src="tv_static_clean.mp4"
-              autoPlay
-              muted
-              loop
-              playsInline
-              onLoadedData={event => event.currentTarget.classList.add(styles.tabStaticVideoReady)}
-              onPlaying={event => event.currentTarget.classList.add(styles.tabStaticVideoReady)}
-            />
-          </div>
         )}
       </div>
 
@@ -2279,8 +2224,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               }}
               targetTab={activeTab}
               showFoodFace={false}
-              onFaceChange={tab => { popHaptic(); setActiveTab(tab) }}
-              onSpinChange={setCubeSpinning}
+              onFaceChange={setActiveTab}
               onTap={popCube}
               onHold={() => {
                 playPop()
