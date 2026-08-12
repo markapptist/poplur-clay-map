@@ -14,7 +14,9 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 //    postMessage({ gcAudio: 'on' | 'off' }) to control it. Standalone frames
 //    are never embed-muted.
 //  - hidden — the page isn't visible (app minimized, tab in background).
-//    Applies everywhere, standalone included.
+//    Applies everywhere, standalone included. In the native shell UIKit's
+//    explicit lifecycle signal is authoritative because WKWebView can miss or
+//    delay visibilitychange while the process is being backgrounded.
 
 const embedded = window.parent !== window
 
@@ -58,6 +60,7 @@ const MUTE_STORAGE_KEY = 'poplur.muted'
 
 let embedMuted = embedded
 let hidden = document.visibilityState === 'hidden'
+let nativeAppActive: boolean | null = null
 // User mute — the speaker mark beside the AI line toggles this. Persisted so
 // a muted app stays muted across reloads.
 let userMuted = (() => {
@@ -65,7 +68,10 @@ let userMuted = (() => {
 })()
 const listeners = new Set<(muted: boolean) => void>()
 
-export function isGateMuted(): boolean { return embedMuted || hidden || userMuted }
+export function isGateMuted(): boolean {
+  const lifecycleHidden = nativeAppActive === null ? hidden : !nativeAppActive
+  return embedMuted || lifecycleHidden || userMuted
+}
 
 /** One-line census for the on-device heat probe: every AudioContext this page
     ever created (r=running s=suspended c=closed) and how many media elements
@@ -108,8 +114,10 @@ export function onGateChange(cb: (muted: boolean) => void): () => void {
 // is how "idle" surfaces kept a running context warming the audio thread —
 // the owner resumes its own context at next use.
 const gateSuspended = new WeakSet<AudioContext>()
+let applySerial = 0
 
 function apply() {
+  const serial = ++applySerial
   const muted = isGateMuted()
   for (const c of liveContexts()) {
     try {
@@ -117,7 +125,14 @@ function apply() {
         if (c.state === 'running') { gateSuspended.add(c); void c.suspend() }
       } else if (gateSuspended.has(c)) {
         gateSuspended.delete(c)
-        void c.resume()
+        // WebKit may resolve resume() after a new background transition has
+        // already closed the gate. Re-check the generation at resolution time
+        // so that late promise cannot leave an audio render thread running.
+        void c.resume().then(() => {
+          if (serial === applySerial && !isGateMuted()) return
+          gateSuspended.add(c)
+          if (c.state === 'running') void c.suspend()
+        }).catch(() => {})
       }
     } catch { /* ignore */ }
   }
@@ -213,6 +228,19 @@ if (embedded) {
     }
   })
 }
+
+// The native iOS host sends this before parking its managed WKWebView. Relying
+// on document.visibilityState alone left a small but audible hole on physical
+// devices: the radius animation could keep scheduling pips while iOS had
+// already minimized the app. Treat the host as the source of truth once it has
+// reported a lifecycle state. Its foreground event also repairs WKWebView's
+// occasional stale `hidden` value after returning to Poplur.
+window.addEventListener('poplur-native-app-lifecycle', (event: Event) => {
+  const active = (event as CustomEvent<{ active?: unknown }>).detail?.active
+  if (typeof active !== 'boolean') return
+  nativeAppActive = active
+  apply()
+})
 
 // Minimizing the app / backgrounding the tab silences everything; returning
 // restores whatever the embed state still allows.

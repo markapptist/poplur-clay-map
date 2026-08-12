@@ -1,4 +1,4 @@
-import { isGateMuted } from './audioGate'
+import { isGateMuted, onGateChange } from './audioGate'
 import { registerAudioOwner } from './audioFocus'
 
 // Small procedural UI effects shared by the cube turn and radius counter.
@@ -20,9 +20,9 @@ import { registerAudioOwner } from './audioFocus'
 // and the context is suspended once nothing is scheduled. One-shots reach the
 // context directly and never bring the bed up with them.
 //
-// The context is reused across teardowns rather than closed: close() is
-// irreversible and an OscillatorNode cannot be started twice, so the pair that
-// survives a restart is "keep the context, rebuild the nodes".
+// The context is reused across ordinary gesture teardowns. A closed app audio
+// gate is different: the context is retired completely so queued one-shots
+// cannot leak into the background or replay when the app returns.
 
 type MotionEngine = {
   master: GainNode
@@ -70,6 +70,19 @@ function stopEngine() {
   }
 }
 
+/** Hard lifecycle boundary: stop every source in this UI-effects context.
+ * Closing is intentional here. It clears queued radius pips as well as the
+ * cube bed, and the next foreground gesture can cheaply create a fresh clock. */
+function retireContext() {
+  cancelIdle()
+  stopEngine()
+  const retiring = ctx
+  ctx = null
+  if (retiring && retiring.state !== 'closed') {
+    void retiring.close().catch(() => {})
+  }
+}
+
 /** Nothing is meant to be sounding: drop the bed and park the audio clock. */
 function goIdle(serial = idleSerial) {
   if (serial !== idleSerial) return
@@ -113,7 +126,14 @@ function wakeContext(idleMs: number): AudioContext | null {
     // Under CPU contention WebKit/Chrome can resolve resume() after the idle
     // timeout has already fired. Re-check the same lease when it resolves so
     // a late resume cannot resurrect an otherwise parked audio thread.
-    void c.resume().then(() => goIdle(serial)).catch(() => {})
+    void c.resume().then(() => {
+      if (isGateMuted()) {
+        if (ctx === c) retireContext()
+        else if (c.state !== 'closed') void c.close().catch(() => {})
+        return
+      }
+      goIdle(serial)
+    }).catch(() => {})
   }
   return c
 }
@@ -475,10 +495,12 @@ export function playRadiusCounterDone() {
 // These effects never take the floor — they sit on top of whatever page is
 // playing — but leaving a page has to be able to switch them off, and until
 // this registration existed silenceAllAudio() could not see them at all.
-registerAudioOwner('ui', () => {
-  if (engine) {
-    engine.master.gain.setTargetAtTime(0, ctx?.currentTime ?? 0, 0.02)
-    engine.active = false
-  }
-  armIdle(300)
+registerAudioOwner('ui', retireContext)
+
+// `visibilitychange` is not dependable during iOS process suspension, but the
+// central gate also receives the native UIKit lifecycle event. Retiring here
+// makes that event an immediate stop, including oscillators already queued on
+// a suspended AudioContext.
+onGateChange((muted) => {
+  if (muted) retireContext()
 })
