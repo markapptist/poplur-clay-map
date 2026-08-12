@@ -5,6 +5,7 @@ import { qualityPixelRatio } from './frameGovernor'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
+import { primeMotionAudio } from './motionEffectsAudio'
 
 // Live 3D tab-object navigator. One persistent WebGL scene hot-swaps the Map,
 // Feed, Camera and Profile objects. Horizontal swipes choose one adjacent tab;
@@ -320,6 +321,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     }
 
     const onPointerDown = (e: PointerEvent) => {
+      // Prime WebKit's media permission inside the real navigation gesture so
+      // Feed can unmute when it mounts a moment later. This is a silent,
+      // one-frame buffer only; it adds no turn/static sound and parks itself.
+      primeMotionAudio()
       try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
       dragging = true
       moved = false

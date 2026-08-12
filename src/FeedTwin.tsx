@@ -1040,7 +1040,7 @@ export default function FeedTwin({
       unregister()
       releaseAudioFocus('feed')
     }
-  }, [adSrc, audioUnlocked])
+  }, [adSrc, sourceKey, audioUnlocked])
 
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
@@ -1329,7 +1329,7 @@ export default function FeedTwin({
         || currentAudioOwner() !== 'feed'
       if (completedAdRef.current !== adSrc) void video.play().catch(() => {})
     }
-  }, [suppressed, adSrc, audioUnlocked])
+  }, [suppressed, adSrc, sourceKey, audioUnlocked])
 
   const [c0, c1, c2] = ch.theme
 
