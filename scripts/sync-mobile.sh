@@ -56,6 +56,7 @@ acquire_publish_lock() {
 # from it can race a second Vite build: Vite clears the directory first and
 # rsync then ships a partially missing app. Build this release into an isolated
 # directory and keep that exact snapshot for every downstream target.
+node scripts/verify-tab-model-quality.mjs
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/vite build --outDir "$BUILD_DIR"
 # ripgrep is not installed on every machine that runs this script; fall back

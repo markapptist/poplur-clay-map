@@ -5,7 +5,6 @@ import { OTHER_POPS } from './data'
 import { playPop } from './pop'
 import { isGateMuted, onGateChange } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
-import { modelSprite } from './modelSprite'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
@@ -75,6 +74,8 @@ const LIKED: LikedPost[] = [
 // app keeps. Every access is guarded: an embedded/partitioned shell can throw
 // on localStorage access, and a profile picture is never worth a thrown error.
 const PHOTO_KEY = 'poplur.profile.photo'
+const SELFIE_VIDEO_KEY = 'poplur.profile.selfieVideo'
+const SELFIE_DURATION_SECONDS = 10
 const PROFILE_NAME_FALLBACK = 'MARK'
 
 function usableUsername(value: string | null | undefined): string | null {
@@ -95,6 +96,38 @@ function writeStoredPhoto(dataUri: string | null): void {
     if (dataUri) window.localStorage.setItem(PHOTO_KEY, dataUri)
     else window.localStorage.removeItem(PHOTO_KEY)
   } catch { /* quota or a partitioned shell — the photo still shows this session */ }
+}
+
+function usableSelfieVideo(value: string | null | undefined): string | null {
+  if (!value) return null
+  return value.startsWith('data:video/')
+    || /^https:\/\//i.test(value)
+    || /^poplur-clay:\/\//i.test(value)
+    || /^[\w-]+\/.+\.(?:mp4|webm)(?:[?#].*)?$/i.test(value)
+    ? value
+    : null
+}
+
+function readStoredSelfieVideo(): string | null {
+  try { return usableSelfieVideo(window.localStorage.getItem(SELFIE_VIDEO_KEY)) } catch { return null }
+}
+
+function writeStoredSelfieVideo(source: string | null): void {
+  try {
+    if (source) window.localStorage.setItem(SELFIE_VIDEO_KEY, source)
+    else window.localStorage.removeItem(SELFIE_VIDEO_KEY)
+  } catch { /* Native storage is the durable source when a data URI exceeds quota. */ }
+}
+
+function preferredSelfieMime(): string | undefined {
+  if (typeof MediaRecorder === 'undefined') return undefined
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ]
+  return candidates.find(type => MediaRecorder.isTypeSupported?.(type))
 }
 
 // The map's pops, standing in this grid. Real data (Aug 2026) joins posts to
@@ -478,7 +511,6 @@ export default function ProfileTwin({
   bindGoBack,
   highlightPops = null,
   onPostCountChange,
-  onBusinessChange,
 }: {
   bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
   /** a handle when you opened someone else's profile from the feed */
@@ -494,9 +526,6 @@ export default function ProfileTwin({
   highlightPops?: { ids: string[]; seq: number } | null
   /** Keeps the Home HUD's animated post count tied to this profile's grid. */
   onPostCountChange?: (count: number) => void
-  /** Keeps the persistent tab navigator in sync with the native account type. */
-  onBusinessChange?: (business: boolean) => void
-
 } = {}) {
   const [mode, setMode] = useState<Mode>('media')
   const [activeCall, setActiveCall] = useState<{ who: string; video: boolean } | null>(null)
@@ -565,9 +594,12 @@ export default function ProfileTwin({
   // read "no profile image set" forever — the reported bug. Stored as a data
   // URI under one key, rehydrated on mount.
   const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
+  const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
   const [camError, setCamError] = useState(false)
   const [captureSource, setCaptureSource] = useState<CaptureSource>('camera')
   const [savingPhoto, setSavingPhoto] = useState(false)
+  const [selfieRecording, setSelfieRecording] = useState(false)
+  const [selfieSecondsLeft, setSelfieSecondsLeft] = useState(SELFIE_DURATION_SECONDS)
   const [flash, setFlash] = useState(false)
   const [facingMode, setFacingMode] = useState<CaptureFacing>('user')
   const [torchOn, setTorchOn] = useState(false)
@@ -586,10 +618,6 @@ export default function ProfileTwin({
   const [askOpen, setAskOpen] = useState(false)
   const [askText, setAskText] = useState('')
   const [aiReply, setAiReply] = useState<string | null>(null)
-  // Which avatar face is up: true = the 3D head/building, false = the photo
-  // side (the captured photo, or the "no profile image set" card without one).
-  const [showHead, setShowHead] = useState(true)
-  const [buildingSprite, setBuildingSprite] = useState<string | null>(null)
 
   // The persistent Home-level microphone controller sends its visible/spoken
   // reply back here when Profile is front, so the profile still reflects a
@@ -617,15 +645,9 @@ export default function ProfileTwin({
     try { stored = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
     return fromQuery ?? stored ?? PROFILE_NAME_FALLBACK
   })
-  const [isBusiness, setIsBusiness] = useState(() => {
-    const explicitBusiness = params?.get('business')
-    if (explicitBusiness === '1') return true
-    if (explicitBusiness === '0') return false
-    try { return window.localStorage.getItem('poplur.accountType') === 'business' } catch { return false }
-  })
   useEffect(() => {
     if (!isNativeShell()) return
-    type NativeProfile = { username?: string; business?: boolean; photo?: string }
+    type NativeProfile = { username?: string; business?: boolean; photo?: string; video?: string }
     const applyProfile = (value: unknown) => {
       const prof = value as NativeProfile
       const nextUsername = usableUsername(prof?.username)
@@ -633,15 +655,21 @@ export default function ProfileTwin({
         setUsername(nextUsername)
         try { window.localStorage.setItem('poplur.username', nextUsername) } catch { /* embedded */ }
       }
-      if (typeof prof?.business === 'boolean') {
-        setIsBusiness(prof.business)
-        onBusinessChange?.(prof.business)
-        try { window.localStorage.setItem('poplur.accountType', prof.business ? 'business' : 'user') } catch { /* embedded */ }
-      }
       if (prof?.photo && (prof.photo.startsWith('data:image/') || /^https:\/\//i.test(prof.photo))) {
         setPhoto(prof.photo)
         writeStoredPhoto(prof.photo)
         window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: prof.photo } }))
+      }
+      const nativeVideo = usableSelfieVideo(prof?.video)
+      if (nativeVideo) {
+        setSelfieVideo(nativeVideo)
+        writeStoredSelfieVideo(nativeVideo)
+        window.dispatchEvent(new CustomEvent('poplur-profile-media', {
+          // A native save commonly returns only the durable video URL. Do not
+          // overwrite the poster the active capture just produced with an old
+          // closure value from this bridge listener.
+          detail: { video: nativeVideo },
+        }))
       }
     }
     const receiveProfile = (event: Event) => applyProfile((event as CustomEvent<NativeProfile>).detail)
@@ -654,17 +682,7 @@ export default function ProfileTwin({
     return () => {
       window.removeEventListener('poplur-native-profile', receiveProfile)
     }
-  }, [onBusinessChange])
-
-  // Business avatars use the 3D Poplur building object.
-  useEffect(() => {
-    if (!isBusiness || buildingSprite) return
-    // Reuse the pre-rendered 256px sprite. The old 512 request missed the
-    // manifest and decoded an 8.6 MB authoring GLB at runtime for one icon.
-    modelSprite('zoom_buildings.glb', { yaw: 25, pitch: 14, size: 256 })
-      .then(setBuildingSprite)
-      .catch(() => {})
-  }, [isBusiness, buildingSprite])
+  }, [])
 
   const markTileReady = useCallback((key: string) => {
     setReadyTiles(current => (current.has(key) ? current : new Set(current).add(key)))
@@ -687,6 +705,10 @@ export default function ProfileTwin({
   const videoRef = useRef<HTMLVideoElement>(null)
   const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const selfieRecorderRef = useRef<MediaRecorder | null>(null)
+  const selfieStopTimerRef = useRef<number | null>(null)
+  const selfieClockRef = useRef<number | null>(null)
+  const discardSelfieRecordingRef = useRef(false)
   const notifCloseTimerRef = useRef<number | null>(null)
 
   const retireViewer = useCallback(() => {
@@ -873,11 +895,6 @@ export default function ProfileTwin({
     return () => bindGoBack(null)
   }, [bindGoBack])
 
-  // Photo ⇄ head/building: a TAP flips between the two faces (the old timed
-  // auto-crossfade kept overriding whichever side the user had just chosen).
-  // A newly captured photo fronts itself, exactly as before.
-  useEffect(() => { setShowHead(!photo) }, [photo])
-
   // Pull-to-refresh on the grid, like the app's PoplurRefreshHeader.
   useEffect(() => {
     const content = contentRef.current
@@ -974,6 +991,17 @@ export default function ProfileTwin({
 
   // ── Camera capture (FULLSCREEN): webcam on open, tidy on close. ──────────
   const stopStream = () => {
+    const recorder = selfieRecorderRef.current
+    if (recorder?.state === 'recording') {
+      discardSelfieRecordingRef.current = true
+      recorder.stop()
+    }
+    if (selfieStopTimerRef.current != null) window.clearTimeout(selfieStopTimerRef.current)
+    if (selfieClockRef.current != null) window.clearInterval(selfieClockRef.current)
+    selfieStopTimerRef.current = null
+    selfieClockRef.current = null
+    selfieRecorderRef.current = null
+    setSelfieRecording(false)
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
   }
@@ -1137,11 +1165,14 @@ export default function ProfileTwin({
     }, 380)
   }
 
-  const commitPhoto = (preview: string, nativePayload?: Record<string, unknown>) => {
+  const commitSelfieVideo = (source: string, preview: string, nativePayload?: Record<string, unknown>) => {
     setPhoto(preview)
     writeStoredPhoto(preview)
+    setSelfieVideo(source)
+    writeStoredSelfieVideo(source)
     if (nativePayload) postNativeEvent(nativePayload)
     window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: preview } }))
+    window.dispatchEvent(new CustomEvent('poplur-profile-media', { detail: { photo: preview, video: source } }))
     try { window.localStorage.setItem('poplur.faceid.reference', '1') } catch { /* embedded */ }
     window.setTimeout(() => {
       setSavingPhoto(false)
@@ -1149,78 +1180,126 @@ export default function ProfileTwin({
     }, 220)
   }
 
-  const previewImage = (src: string): Promise<string> => new Promise((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => {
-      const maxEdge = 1024
-      const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight))
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
-      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
-      const context = canvas.getContext('2d')
-      if (!context) { reject(new Error('preview_context')); return }
-      context.drawImage(image, 0, 0, canvas.width, canvas.height)
-      resolve(canvas.toDataURL('image/jpeg', 0.92))
+  const captureSelfiePoster = (video: HTMLVideoElement): string | null => {
+    if (!video.videoWidth || !video.videoHeight) return null
+    const edge = Math.min(1024, Math.min(video.videoWidth, video.videoHeight))
+    const sourceEdge = Math.min(video.videoWidth, video.videoHeight)
+    const canvas = document.createElement('canvas')
+    canvas.width = edge
+    canvas.height = edge
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    const sx = (video.videoWidth - sourceEdge) / 2
+    const sy = (video.videoHeight - sourceEdge) / 2
+    context.save()
+    if (facingMode === 'user') {
+      context.translate(edge, 0)
+      context.scale(-1, 1)
     }
-    image.onerror = () => reject(new Error('preview_load'))
-    image.src = src
+    context.drawImage(video, sx, sy, sourceEdge, sourceEdge, 0, 0, edge, edge)
+    context.restore()
+    return canvas.toDataURL('image/jpeg', 0.92)
+  }
+
+  const previewVideo = (src: string): Promise<string> => new Promise((resolve, reject) => {
+    const video = document.createElement('video')
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'metadata'
+    const finish = () => {
+      const preview = captureSelfiePoster(video)
+      video.removeAttribute('src')
+      video.load()
+      if (preview) resolve(preview)
+      else reject(new Error('video_preview'))
+    }
+    video.onloadeddata = () => {
+      if (video.duration > 0.2) video.currentTime = Math.min(0.2, video.duration / 2)
+      else finish()
+    }
+    video.onseeked = finish
+    video.onerror = () => reject(new Error('video_preview_load'))
+    video.src = src
   })
 
-  const pickProfilePhoto = ({ kind, src }: { kind: 'photo' | 'video'; src: string }) => {
-    if (kind !== 'photo' || savingPhoto) return
+  const pickProfileSelfie = ({ kind, src }: { kind: 'photo' | 'video'; src: string }) => {
+    if (kind !== 'video' || savingPhoto || selfieRecording) return
     playPop()
     setSavingPhoto(true)
     const native = isNativeShell()
-    if (native) postNativeEvent({ type: 'saveProfilePhotoAsset', src })
-    void previewImage(src)
-      .then(preview => commitPhoto(
-        preview,
-        native ? undefined : { type: 'saveProfilePhoto', photo: preview },
-      ))
+    void previewVideo(src)
+      .then(preview => {
+        commitSelfieVideo(
+          src,
+          preview,
+          native ? undefined : { type: 'saveProfileSelfieVideo', video: src },
+        )
+        // Ask only after the preview has landed. Native may immediately reply
+        // with its durable (and, for Photos, ten-second exported) URL; sending
+        // first caused that reply to be overwritten by the temporary capture.
+        if (native) postNativeEvent({ type: 'saveProfileSelfieVideoAsset', src })
+      })
       .catch(() => setSavingPhoto(false))
   }
 
-  const shoot = () => {
-    if (savingPhoto) return
+  const recordSelfie = () => {
+    if (savingPhoto || selfieRecording) return
     playPop()
     setFlash(true)
     window.setTimeout(() => setFlash(false), 380)
     const video = videoRef.current
-    if (video && streamRef.current && video.videoWidth) {
-      const size = Math.min(3840, Math.min(video.videoWidth, video.videoHeight))
-      const canvas = document.createElement('canvas')
-      canvas.width = size
-      canvas.height = size
-      const g = canvas.getContext('2d')!
-      const s = Math.min(video.videoWidth, video.videoHeight)
-      const sx = (video.videoWidth - s) / 2
-      const sy = (video.videoHeight - s) / 2
-      g.save()
-      if (facingMode === 'user') {
-        g.translate(size, 0) // mirror the selfie, not the back camera.
-        g.scale(-1, 1)
-      }
-      g.drawImage(video, sx, sy, s, s, 0, 0, size, size)
-      g.restore()
-      setSavingPhoto(true)
-      const previewCanvas = document.createElement('canvas')
-      previewCanvas.width = 1024
-      previewCanvas.height = 1024
-      previewCanvas.getContext('2d')?.drawImage(canvas, 0, 0, 1024, 1024)
-      const preview = previewCanvas.toDataURL('image/jpeg', 0.92)
-      canvas.toBlob(blob => {
-        if (!blob) { setSavingPhoto(false); return }
-        const reader = new FileReader()
-        reader.onload = () => {
-          if (typeof reader.result !== 'string') { setSavingPhoto(false); return }
-          commitPhoto(preview, { type: 'saveProfilePhoto', photo: reader.result })
-        }
-        reader.onerror = () => setSavingPhoto(false)
-        reader.readAsDataURL(blob)
-      }, 'image/jpeg', 0.95)
+    const stream = streamRef.current
+    if (!video || !stream || !video.videoWidth || typeof MediaRecorder === 'undefined') {
+      setCamError(true)
       return
     }
-    window.setTimeout(() => setCapturing(false), 260)
+    const mimeType = preferredSelfieMime()
+    const chunks: BlobPart[] = []
+    let recorder: MediaRecorder
+    try {
+      recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1_600_000 })
+        : new MediaRecorder(stream, { videoBitsPerSecond: 1_600_000 })
+    } catch {
+      setCamError(true)
+      return
+    }
+    discardSelfieRecordingRef.current = false
+    setSavingPhoto(true)
+    setSelfieRecording(true)
+    setSelfieSecondsLeft(SELFIE_DURATION_SECONDS)
+    const startedAt = performance.now()
+    recorder.ondataavailable = event => {
+      if (event.data.size) chunks.push(event.data)
+    }
+    recorder.onstop = () => {
+      selfieRecorderRef.current = null
+      if (selfieStopTimerRef.current != null) window.clearTimeout(selfieStopTimerRef.current)
+      if (selfieClockRef.current != null) window.clearInterval(selfieClockRef.current)
+      selfieStopTimerRef.current = null
+      selfieClockRef.current = null
+      setSelfieRecording(false)
+      if (discardSelfieRecordingRef.current) { setSavingPhoto(false); return }
+      const clip = new Blob(chunks, { type: recorder.mimeType || mimeType || 'video/mp4' })
+      const preview = captureSelfiePoster(video)
+      if (!clip.size || !preview) { setSavingPhoto(false); return }
+      const reader = new FileReader()
+      reader.onload = () => {
+        if (typeof reader.result !== 'string') { setSavingPhoto(false); return }
+        commitSelfieVideo(reader.result, preview, { type: 'saveProfileSelfieVideo', video: reader.result })
+      }
+      reader.onerror = () => setSavingPhoto(false)
+      reader.readAsDataURL(clip)
+    }
+    selfieRecorderRef.current = recorder
+    recorder.start(1_000)
+    selfieClockRef.current = window.setInterval(() => {
+      const elapsed = (performance.now() - startedAt) / 1_000
+      setSelfieSecondsLeft(Math.max(0, Math.ceil(SELFIE_DURATION_SECONDS - elapsed)))
+    }, 120)
+    selfieStopTimerRef.current = window.setTimeout(() => {
+      if (recorder.state === 'recording') recorder.stop()
+    }, SELFIE_DURATION_SECONDS * 1_000)
   }
 
   const toggleTorch = async () => {
@@ -1248,22 +1327,22 @@ export default function ProfileTwin({
   // lost the app's universal navigation controls.
   const captureSurface = capturing
     ? (
-      <div className={styles.capture} role="dialog" aria-modal="true" aria-label="Take profile photo">
+      <div className={styles.capture} role="dialog" aria-modal="true" aria-label="Record profile selfie video">
         {captureSource === 'library' ? (
           <div className={styles.profileRoll}>
             <CameraRoll
               active
-              photoOnly
+              videoOnly
               hideHeader
               nativeRequestType="requestProfileCameraRoll"
               onDeny={() => setCaptureSource('camera')}
-              onPick={pickProfilePhoto}
+              onPick={pickProfileSelfie}
             />
           </div>
         ) : camError ? (
           <div className={styles.camFallback}>
             <span>📷</span>
-            <p>Camera unavailable here.<br />This is where you would frame your shot.</p>
+            <p>Camera unavailable here.<br />Try a selfie video from your camera roll.</p>
           </div>
         ) : (
           <video ref={videoRef} className={facingMode === 'user' ? styles.video : `${styles.video} ${styles.videoBack}`} playsInline muted />
@@ -1275,7 +1354,7 @@ export default function ProfileTwin({
             <ClayCornerButton kind="flash" active={torchOn} label={torchOn ? 'Turn flash off' : 'Turn flash on'} onPress={toggleTorch} size={48} />
           ) : <span />}
           <div className={styles.captureHead}>
-            {captureSource === 'camera' ? 'Profile photo' : 'Camera roll'}
+            {captureSource === 'camera' ? 'Profile selfie' : 'Selfie videos'}
             <small>CHANNEL BUTTONS SWITCH SOURCE</small>
           </div>
           {captureSource === 'camera' ? (
@@ -1287,10 +1366,12 @@ export default function ProfileTwin({
           <div className={styles.captureSpacer} aria-hidden="true" />
           {captureSource === 'camera' ? (
             <div className={`${styles.captureAction} ${styles.captureActionPrimary}`}>
-              <ClayCornerButton kind="capture" label="Capture photo" onPress={shoot} size={108} activateOnClick />
-              <span className={styles.captureActionLabel}>{savingPhoto ? 'Saving 4K' : 'Capture'}</span>
+              <ClayCornerButton kind="capture" label="Record 10 second selfie" onPress={recordSelfie} size={108} activateOnClick />
+              <span className={styles.captureActionLabel}>
+                {selfieRecording ? `${selfieSecondsLeft}s left` : savingPhoto ? 'Saving selfie' : 'Record 10s'}
+              </span>
             </div>
-          ) : <div className={styles.captureLibraryHint}>{savingPhoto ? 'SAVING 4K PHOTO' : 'TAP A PHOTO'}</div>}
+          ) : <div className={styles.captureLibraryHint}>{savingPhoto ? 'SAVING SELFIE VIDEO' : 'TAP A VIDEO'}</div>}
           <div className={styles.captureSpacer} aria-hidden="true" />
         </div>
       </div>
@@ -1393,20 +1474,14 @@ export default function ProfileTwin({
     }
   }, [capturing, visiting])
 
-  const identity = isBusiness
-    ? (buildingSprite
-      ? <img className={styles.headFrame} src={buildingSprite} alt="" draggable="false" />
-      : <img className={styles.headFrame} src="clay_buildings.png" alt="" draggable="false" />)
-    : <img className={styles.headFrame} src="mark_talk0.png" alt="" draggable="false" />
-
   return (
     <>
       {faceAsk && (
         <PermissionAlert
           icon="camera"
           label="Face recognition disclosure"
-          title="Your photo teaches Poplur your face"
-          copy={'Your profile picture becomes the on-device reference the camera uses to recognise you — the rainbow lights up when it sees its owner. For that to work, the picture has to actually show your face. Nothing leaves your phone, and you can skip this and still take a photo.'}
+          title="Your selfie teaches Poplur your face"
+          copy={'Your profile selfie becomes the on-device reference the camera uses to recognise you — the rainbow lights up when it sees its owner. For that to work, it has to show your face. Nothing leaves your phone, and you can skip this and still record a selfie.'}
           choices={[
             { label: 'Skip face ID', onPick: () => settleFaceAsk(false) },
             { label: 'Use my face', grants: true, onPick: () => settleFaceAsk(true) },
@@ -1434,30 +1509,26 @@ export default function ProfileTwin({
           {visiting ? (
             <img className={styles.photo} src={visitingAvatar!} alt="" draggable="false" />
           ) : (
-            /* Tap flips head/building ⇄ photo. With no photo set, the flip
-               side is the "no profile image set" card instead. */
-            <>
-              {photo ? (
-                <img
-                  className={showHead ? `${styles.photo} ${styles.fadeOut}` : styles.photo}
-                  src={photo} alt="" draggable="false"
-                  onClick={() => { playPop(); setShowHead(true) }}
-                />
-              ) : (
-                <div
-                  className={showHead ? `${styles.noPhoto} ${styles.fadeOut}` : styles.noPhoto}
-                  onClick={() => { playPop(); setShowHead(true) }}
-                >
-                  <span className={`${styles.noPhotoText} ${styles.shareShader}`}>no profile image set</span>
-                </div>
-              )}
-              <div
-                className={showHead ? styles.headStack : `${styles.headStack} ${styles.fadeOut}`}
-                onClick={() => { playPop(); setShowHead(false) }}
-              >
-                <div className={styles.headTilt}>{identity}</div>
+            // A profile is intentionally empty until its owner records or
+            // selects a ten-second selfie. Static heads/buildings must never
+            // stand in for a real profile video.
+            selfieVideo ? (
+              <video
+                className={styles.photo}
+                src={selfieVideo}
+                poster={photo ?? undefined}
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                aria-label="Profile selfie video"
+              />
+            ) : (
+              <div className={styles.noPhoto} aria-label="No profile photo set">
+                <span className={styles.noPhotoText}>NO PROFILE<br />PHOTO SET</span>
               </div>
-            </>
+            )
           )}
 
           {visiting ? (
@@ -1473,7 +1544,7 @@ export default function ProfileTwin({
               />
             </div>
           ) : (
-            <button ref={camBtnRef} className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Take profile photo">
+            <button ref={camBtnRef} className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Record profile selfie video">
               <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
             </button>
           )}

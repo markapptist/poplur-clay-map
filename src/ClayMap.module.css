@@ -342,24 +342,6 @@
 }
 
 /* Airplanes, satellites and clouds circling the clay globe */
-/* Sun and moon, parked over their sub-points. Non-interactive: they are sky,
-   not furniture, and a tap on the sun should still reach the ground under it. */
-.celestialBody {
-  pointer-events: none;
-}
-
-/* The rotation for the crescent's bright limb lives here rather than on the
-   marker element, whose transform Mapbox owns for positioning. */
-.celestialArt {
-  width: 100%;
-  height: 100%;
-  background-size: contain;
-  background-position: center;
-  background-repeat: no-repeat;
-  transform-origin: 50% 50%;
-  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.5));
-}
-
 .flyer {
   pointer-events: none;
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
@@ -1385,7 +1367,6 @@
   transform: translate(-50%, -50%);
   transition: opacity 1.2s ease;
   pointer-events: none;
-  animation: celestialFloat 7.5s ease-in-out infinite;
   filter:
     drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
     drop-shadow(0 8px 14px rgba(0, 0, 0, 0.5));
@@ -1393,15 +1374,6 @@
 
 /* the one below the horizon fades out rather than popping away */
 .celestialDim { opacity: 0.14; }
-
-@keyframes celestialFloat {
-  0%, 100% { transform: translate(-50%, -50%); }
-  50% { transform: translate(-50%, calc(-50% - 6px)); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .celestial { animation: none; }
-}
 
 /* What the wallet just did. */
 .premiumNote {
@@ -1521,3 +1493,21 @@
 /* Yours, on a board full of other people's. */
 .popPinMine { transform: translateY(6px) scale(1.16); }
 .popPinMine:active { transform: translateY(6px) scale(1.02); }
+
+/* One live, muted selfie preview floats over the owner's primary map pin.
+   It is outside the pin button so it never steals the marker's tap target. */
+.popPinSelfie {
+  position: absolute;
+  left: 50%;
+  bottom: 58px;
+  width: 58px;
+  height: 58px;
+  display: block;
+  object-fit: cover;
+  transform: translateX(-50%);
+  border: 3px solid #ff4ba7;
+  border-radius: 50%;
+  background: #170a18;
+  box-shadow: 0 3px 10px rgba(32, 2, 24, 0.58), 0 0 0 2px rgba(255, 255, 255, 0.88);
+  pointer-events: none;
+}

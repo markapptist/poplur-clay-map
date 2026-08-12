@@ -69,7 +69,7 @@ let boostUntil = 0
 // map touch, which is enough repeated GPU work to become perceptibly warm even
 // though the eventual parked state is clean. Explicit map flights have their
 // own bounded operation leases; ordinary decoration gets four seconds on-device.
-const AMBIENT_IDLE_MS = isNativeShell() ? 4_000 : 15_000
+const AMBIENT_IDLE_MS = isNativeShell() ? 2_000 : 15_000
 let ambientAwakeUntil = typeof performance !== 'undefined'
   ? performance.now() + AMBIENT_IDLE_MS
   : Number.POSITIVE_INFINITY
@@ -78,6 +78,7 @@ let ambientSleepTimer = 0
 const qualityListeners = new Set<(q: Quality) => void>()
 const ambientSleepListeners = new Set<(sleeping: boolean) => void>()
 let ambientSleeping = false
+let nativeAmbientShowcaseFinished = false
 
 // Decoration asleep and the map renderer parked are NOT the same decision, and
 // conflating them cost us a frozen map. A parked map has its private
@@ -361,6 +362,7 @@ if (typeof document !== 'undefined') {
     window.clearTimeout(ambientSleepTimer)
     ambientSleepTimer = 0
     ambientAwakeUntil = 0
+    if (isNativeShell()) nativeAmbientShowcaseFinished = true
     setAmbientSleeping(true)
   }
   /**
@@ -385,6 +387,13 @@ if (typeof document !== 'undefined') {
     // while still `thermal=serious`, once per touch. `setQuality` was clamped by
     // the ceiling all along (see the bound in setQuality); ambient sleep and the
     // frame boost were the two paths that never consulted it.
+    // Native screens get one short showcase after mount. Once it has settled,
+    // normal touches wake the renderer directly without restarting every
+    // decorative car, cloud, boat and CSS loop around it.
+    if (isNativeShell() && nativeAmbientShowcaseFinished && !managedRenderingOperationActive()) {
+      sleepAmbient()
+      return
+    }
     const lease = ambientLeaseMs()
     if (lease <= 0) {
       // Throttling: decoration stays down. Direct interaction survives because

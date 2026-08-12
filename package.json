@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "node scripts/verify-tab-model-quality.mjs && tsc && vite build",
+    "check:tab-models": "node scripts/verify-tab-model-quality.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

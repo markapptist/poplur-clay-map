@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
-import { cancelManagedRenderingWake, isNativeShell, wakeManagedRendering } from './nativeBridge'
+import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, wakeManagedRendering } from './nativeBridge'
 import { onFrame, onTick, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { installMapIdleSnapshot, type MapIdleSnapshotController } from './mapIdleSnapshot'
@@ -8,7 +8,6 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
-import { subsolarPoint, sublunarPoint, moonPhase, CELESTIAL_MODELS } from './celestial'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette } from './mapClaims'
 import { takeoverTint, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
@@ -78,8 +77,13 @@ export interface PopPin {
   radiusKm: number
   /** the owner's takeover colour */
   color: string
-  /** profile picture for the pin's head */
+  /** profile picture for the pin's head (other people only). */
   avatar: string | null
+  /** A short, muted selfie loop that floats above the single primary own pin. */
+  selfieVideo?: {
+    src: string
+    poster?: string
+  }
   /** Feed channel and optional uploaded creative for the intercept window. */
   channel?: string
   media?: {
@@ -162,13 +166,6 @@ const CLAY_LABEL_HALO = 'rgba(42, 10, 31, 0.82)'
 const CLAY_LABEL_HALO_WIDTH = 1.35
 const CLAY_LABEL_HALO_BLUR = 0.6
 const CLAY_LABEL_EMISSIVE = 0.8
-
-// On-screen size of the two bodies. Not to scale with each other and
-// deliberately so: the real sun and moon subtend the same half a degree from
-// here, which at globe zoom is a couple of pixels and reads as dirt on the
-// screen. These are the sizes at which a clay sun looks like a sun.
-const CELESTIAL_SUN_PX = 104
-const CELESTIAL_MOON_PX = 78
 
 // Sky follows the real time of day: clear blue by day, pitch-black space with
 // stars by night (like the lock-screen reference).
@@ -970,96 +967,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     return () => window.clearInterval(id)
   }, [])
 
-  // ── Sun and moon: the real ones, over the real Earth ──────────────────────
-  //
-  // Each marker sits at its SUB-POINT — the spot on Earth that body is directly
-  // overhead — which is what makes them orbit for free. The globe turns
-  // underneath, so the sun walks a full circle of longitude a day while the
-  // moon slips a lunar month out of step with it, and the day/night terminator
-  // `applySky` already draws is by definition the great circle 90 degrees from
-  // the sun's point. The two agree without being told about each other.
-  //
-  // GLOBE ONLY. On the flat tier "directly overhead at this coordinate" is a
-  // claim Mercator cannot render honestly — the body would sit over the wrong
-  // ground and swell towards the poles.
-  const celestialRef = useRef<{
-    sun: mapboxgl.Marker
-    moon: mapboxgl.Marker
-    moonArt: HTMLDivElement
-  } | null>(null)
-  const celestialSpritesRef = useRef<{ sun: string; full: string; crescent: string } | null>(null)
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || MAP_2D) return
-    let dropped = false
-
-    void (async () => {
-      // Prerender-backed, like every other GLB on this surface: these models
-      // are 62MB between them and decoding one per minute on the sky tick is
-      // exactly the cost modelSprite exists to avoid. Cached in a ref so the
-      // tick only moves markers.
-      if (!celestialSpritesRef.current) {
-        const [sun, full, crescent] = await Promise.all([
-          modelSprite(CELESTIAL_MODELS.sun, { yaw: 0, pitch: 0, size: 256 }),
-          modelSprite(CELESTIAL_MODELS.moonFull, { yaw: 0, pitch: 0, size: 256 }),
-          modelSprite(CELESTIAL_MODELS.moonCrescent, { yaw: 0, pitch: 0, size: 256 }),
-        ])
-        celestialSpritesRef.current = { sun, full, crescent }
-      }
-      const art = celestialSpritesRef.current
-      if (dropped || mapRef.current !== map || !art) return
-
-      if (!celestialRef.current) {
-        // The rotation lives on an INNER element: Mapbox owns the marker
-        // element's own transform for positioning and would overwrite ours.
-        const body = (src: string, px: number) => {
-          const el = document.createElement('div')
-          el.className = styles.celestialBody
-          el.style.width = `${px}px`
-          el.style.height = `${px}px`
-          const inner = document.createElement('div')
-          inner.className = styles.celestialArt
-          inner.style.backgroundImage = `url(${src})`
-          el.appendChild(inner)
-          const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
-            .setLngLat([0, 0])
-            .addTo(map)
-          return { marker, inner }
-        }
-        const sun = body(art.sun, CELESTIAL_SUN_PX)
-        const moon = body(art.full, CELESTIAL_MOON_PX)
-        celestialRef.current = { sun: sun.marker, moon: moon.marker, moonArt: moon.inner }
-      }
-
-      const live = celestialRef.current
-      const sunAt = subsolarPoint(skyClock)
-      const moonAt = sublunarPoint(skyClock)
-      const phase = moonPhase(skyClock)
-
-      live.sun.setLngLat([sunAt.lon, sunAt.lat])
-      live.moon.setLngLat([moonAt.lon, moonAt.lat])
-      live.moonArt.style.backgroundImage =
-        `url(${phase.model === 'full' ? art.full : art.crescent})`
-      // Turn the crescent so its horns point away from the sun. A crescent lit
-      // from the wrong side is the one thing about a moon everybody notices.
-      live.moonArt.style.transform = phase.model === 'crescent'
-        ? `rotate(${phase.brightLimbAngle.toFixed(1)}deg)`
-        : ''
-    })()
-
-    return () => { dropped = true }
-  // `mapEpoch` is essential here: on first render mapRef is still empty. The
-  // minute clock used to be the only retry, leaving both models absent for up
-  // to sixty seconds (and easy to conclude they were not in the app at all).
-  }, [skyClock, mapEpoch])
-
-  // Markers outlive the tick effect, so they are torn down on unmount only.
-  useEffect(() => () => {
-    celestialRef.current?.sun.remove()
-    celestialRef.current?.moon.remove()
-    celestialRef.current = null
-  }, [])
-
   const [fovValue, setFovValue] = useState(FOV_DEFAULT)
   // The clay cloud GLB, rendered once to a sprite for the zoom-in cloud band.
   const [cloudSprite, setCloudSprite] = useState<string | null>(null)
@@ -1349,7 +1256,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     //  - every other NATIVE shell (iPhones report no deviceMemory, so they
     //    never qualify as lite): cap at 2x — a 3x phone was pushing 2.25×
     //    the pixels of a 2x screen for no visible gain on a 6" display.
-    const dprCap = MAP_2D || MAP_LITE ? 1 : isNativeShell() ? 2 : Infinity
+    const iosNativeMap = isIOSNativeShell()
+    const dprCap = MAP_2D || MAP_LITE ? 1 : iosNativeMap ? 1.5 : isNativeShell() ? 2 : Infinity
     if (window.devicePixelRatio > dprCap) {
       try {
         Object.defineProperty(window, 'devicePixelRatio', { value: dprCap, configurable: true })
@@ -1369,7 +1277,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // sizes this cache from the viewport; this ceiling makes the phone's
         // retained history explicit. Current visible/cover/fade tiles are active
         // render data and intentionally sit outside the cache ceiling.
-        maxTileCacheSize: MAP_2D ? 12 : MAP_LITE ? 16 : isNativeShell() ? 24 : 48,
+        maxTileCacheSize: MAP_2D ? 12 : MAP_LITE || iosNativeMap ? 16 : isNativeShell() ? 24 : 48,
         style: 'mapbox://styles/mapbox/dark-v11',
         center: HOME_CENTER,
         // Constructed at street zoom deliberately: the Standard style never
@@ -1404,12 +1312,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       event.preventDefault()
       fallBackAfterWebGLFailure(new Error('WebGL context lost'))
     }
+    let startupLeaseActive = true
+    const releaseStartupLease = () => {
+      if (!startupLeaseActive) return
+      startupLeaseActive = false
+      cancelManagedRenderingWake()
+    }
+    map.once('idle', releaseStartupLease)
     const handleGestureSettle = () => {
       // Pointer/touch movement wakes native rendering while the finger is
       // down. Mapbox inertia and globe tile uploads continue after release,
       // so give that finite tail enough time to complete without requiring a
       // second touch to reveal the final camera frame.
-      wakeManagedRendering(2_400)
+      wakeManagedRendering(iosNativeMap ? 1_000 : 2_400)
       map.triggerRepaint()
     }
     mapCanvas.addEventListener('webglcontextlost', handleContextLost)
@@ -1423,25 +1338,30 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     mapRef.current = map
     const applyMapLightingPolicy = (dynamicShadowsAllowed: boolean, postProcessingAllowed: boolean) => {
       if (!map.isStyleLoaded()) return
+      // iPhone keeps the detailed geometry and textures, but bakes the depth
+      // read through stable fill colours instead of redrawing shadow maps/AO.
+      // Those two passes add little at phone size and are a sustained GPU cost.
+      const shadows = dynamicShadowsAllowed && !iosNativeMap
+      const post = postProcessingAllowed && !iosNativeMap
       try {
         map.setLights(REALISTIC_MAP ? [
           { id: 'ambient', type: 'ambient', properties: { color: '#ffffff', intensity: 0.48 } },
           { id: 'sun', type: 'directional', properties: {
             color: '#ffffff', intensity: 0.72, direction: [222, 44],
-            'cast-shadows': dynamicShadowsAllowed, 'shadow-intensity': dynamicShadowsAllowed ? 0.45 : 0,
+            'cast-shadows': shadows, 'shadow-intensity': shadows ? 0.45 : 0,
           } },
         ] as never : [
           { id: 'ambient', type: 'ambient', properties: { color: '#d8d2ff', intensity: 0.6 } },
           { id: 'sun', type: 'directional', properties: {
             color: '#fff0dd', intensity: 0.8, direction: [215, 38],
-            'cast-shadows': dynamicShadowsAllowed, 'shadow-intensity': dynamicShadowsAllowed ? 0.6 : 0,
+            'cast-shadows': shadows, 'shadow-intensity': shadows ? 0.6 : 0,
           } },
         ] as never)
         if (map.getLayer('clay-buildings-3d')) {
           map.setPaintProperty(
             'clay-buildings-3d',
             'fill-extrusion-ambient-occlusion-intensity',
-            postProcessingAllowed ? (REALISTIC_MAP ? 0.95 : 0.6) : 0,
+            post ? (REALISTIC_MAP ? 0.95 : 0.6) : 0,
           )
         }
       } catch { /* style or lighting API not ready */ }
@@ -3358,6 +3278,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const disposeMap = () => {
       if (disposed) return
       disposed = true
+      map.off('idle', releaseStartupLease)
       cancelManagedRenderingWake()
       performanceRenderer.dispose()
       if (performanceRendererRef.current === performanceRenderer) performanceRendererRef.current = null
@@ -3456,7 +3377,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // camera move: the sprite composite is async and re-running it per frame
   // would thrash. Markers are plain DOM, so they inherit the existing viewport
   // cull and the zoom-band visibility rules for free.
-  const pinKey = (pins ?? []).map(p => `${p.id}:${p.color}:${p.avatar ?? ''}`).join('|')
+  const pinKey = (pins ?? []).map(p => `${p.id}:${p.color}:${p.avatar ?? ''}:${p.selfieVideo?.src ?? ''}:${p.selfieVideo?.poster ?? ''}`).join('|')
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -3524,6 +3445,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // exact per-frame churn this LOD exists to avoid.
     const livePins = new Map<string, mapboxgl.Marker>()
 
+    const previewPinId = pins?.find(pin => pin.mine && pin.selfieVideo?.src)?.id ?? null
     const buildMarker = (pin: PopPin, src: string): mapboxgl.Marker => {
       // Mapbox owns the marker root's inline transform and rewrites it while
       // the camera moves. Keep that positioning transform off the button
@@ -3545,6 +3467,22 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       img.draggable = false
       el.appendChild(img)
       markerRoot.appendChild(el)
+      // There is deliberately one live profile decoder on the board. Several
+      // owned claims can be visible at once; putting the same selfie above all
+      // of them made a single profile video decode repeatedly while panning.
+      if (pin.id === previewPinId && pin.selfieVideo?.src) {
+        const selfie = document.createElement('video')
+        selfie.className = styles.popPinSelfie
+        selfie.src = pin.selfieVideo.src
+        if (pin.selfieVideo.poster) selfie.poster = pin.selfieVideo.poster
+        selfie.muted = true
+        selfie.autoplay = true
+        selfie.loop = true
+        selfie.playsInline = true
+        selfie.preload = 'metadata'
+        selfie.setAttribute('aria-hidden', 'true')
+        markerRoot.appendChild(selfie)
+      }
       // Your own pops get a quiet marker of ownership so a crowded board
       // still answers "which of these are mine" without reading faces.
       if (pin.mine) el.classList.add(styles.popPinMine)
@@ -3574,7 +3512,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (!missing.length) return
       syncing = true
       void Promise.all(missing.map(pin =>
-        pinWithFace({ avatar: pin.avatar, color: pin.color, mode: tier })
+        // Your profile media belongs above your pin as the video preview, not
+        // composited into its face. Other people retain their static identity.
+        pinWithFace({ avatar: pin.mine ? null : pin.avatar, color: pin.color, mode: tier })
           .then(src => ({ pin, src }))
           .catch(() => null),
       )).then(built => {

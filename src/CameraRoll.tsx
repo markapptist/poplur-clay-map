@@ -84,6 +84,7 @@ export default function CameraRoll({
   active = true,
   onPick,
   photoOnly = false,
+  videoOnly = false,
   hideHeader = false,
   nativeRequestType = 'requestCameraRoll',
 }: {
@@ -101,6 +102,8 @@ export default function CameraRoll({
   onPick?: (media: { kind: 'photo' | 'video'; src: string; length?: string }) => void
   /** Profile pictures only accept stills; the normal posting roll keeps videos. */
   photoOnly?: boolean
+  /** Profile selfie clips only accept videos; photo pickers keep their existing flow. */
+  videoOnly?: boolean
   /** Profile capture supplies its own chrome above the shared grid. */
   hideHeader?: boolean
   /** Explicit profile selection may ask iOS for Photos access from this gesture. */
@@ -205,7 +208,7 @@ export default function CameraRoll({
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   const shot: RollItem[] = captures.map(c => ({ kind: c.kind, src: c.src, length: c.length, id: c.id }))
   const items = [...shot, ...(nativeRoll ?? ROLL)]
-    .filter(item => !photoOnly || item.kind === 'photo')
+    .filter(item => (!photoOnly || item.kind === 'photo') && (!videoOnly || item.kind === 'video'))
 
   const pickItem = (item: RollItem) => {
     playPop()

@@ -112,6 +112,29 @@ async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
     only lands on zero when the model's own bounds happen to be centred, which is
     true of the designed cube but cannot be assumed of every clay model. */
 function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string) {
+  // Keep the globe's authored 1024px maps, but make its live material robust:
+  // a lost light/environment frame cannot black out a hemisphere, and the
+  // clay shell remains visible from either side.
+  if (url === 'poplur-globe-lite.glb') {
+    model.traverse(child => {
+      const mesh = child as THREE.Mesh
+      if (!mesh.isMesh) return
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      materials.forEach(material => {
+        const standard = material as THREE.MeshStandardMaterial
+        standard.side = THREE.DoubleSide
+        standard.metalness = 0
+        standard.roughness = Math.max(0.72, standard.roughness || 0)
+        // Reuse the colour map for a low self-lit floor. The normal/roughness
+        // maps still provide clay depth, while the albedo can no longer vanish
+        // when WebKit drops a directional-light frame during a tab swap.
+        if (standard.map) standard.emissiveMap = standard.map
+        standard.emissive.set(0xffffff)
+        standard.emissiveIntensity = Math.max(0.34, standard.emissiveIntensity || 0)
+        standard.needsUpdate = true
+      })
+    })
+  }
   const box = new THREE.Box3().setFromObject(model)
   const dims = box.getSize(new THREE.Vector3())
   if (url === CUBE_MODEL) {

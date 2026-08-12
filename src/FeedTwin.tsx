@@ -609,6 +609,18 @@ export default function FeedTwin({
     forceContentRender(n => n + 1)
   }, [ch])
 
+  // Feed playback is a continuous channel stream. A completed clip advances
+  // to the next post instead of holding on its last frame or replaying itself.
+  // Keep this separate from the arrow handler: a passive completion should
+  // not make the physical navigator say "pop".
+  const advanceCompletedContent = useCallback(() => {
+    const count = postsFor(ch).length
+    if (count < 2) return
+    const current = contentIdxRef.current[ch.id] ?? 0
+    contentIdxRef.current[ch.id] = (current + 1) % count
+    forceContentRender(n => n + 1)
+  }, [ch])
+
   const edgeTapRef = useRef<{ side: 'left' | 'right' | null; at: number; timer: number | null }>({
     side: null,
     at: 0,
@@ -818,6 +830,16 @@ export default function FeedTwin({
   // was hidden — re-kick it whenever the cover is (about to be) visible.
   const staticVideoRef = useRef<HTMLVideoElement>(null)
 
+  // Retire both decoders explicitly when Feed leaves the screen. WebKit can
+  // retain a removed <video>'s decoder until GC; repeated Feed swaps then make
+  // several old clips overlap the destination screen's startup burst.
+  useEffect(() => () => {
+    const ad = adVideoRef.current
+    const staticLoop = staticVideoRef.current
+    if (ad) retireFeedVideo(ad)
+    if (staticLoop) retireFeedVideo(staticLoop)
+  }, [])
+
   // Map decoration and Feed playback are different kinds of work. The shared
   // ambient gate may park a motionless Map after four seconds on-device, but a
   // person passively watching a finite Feed clip is still actively using the
@@ -905,8 +927,11 @@ export default function FeedTwin({
   }, [])
 
   useEffect(() => {
-    if (showStatic) void staticVideoRef.current?.play().catch(() => {})
-  }, [showStatic, ch.id])
+    const video = staticVideoRef.current
+    if (!video) return
+    if (showStatic && !suppressed) void video.play().catch(() => {})
+    else video.pause()
+  }, [showStatic, suppressed, ch.id])
 
   // A bad/blocked creative can never strand the channel on static. Retry play
   // first, then rotate through bundled, decode-verified stock clips until time
@@ -1412,7 +1437,10 @@ export default function FeedTwin({
 
       {adSrc && !post?.stream && mediaUnlocked && completedAdSrc !== adSrc && (
         <video
-          key={`${adSrc}:playing`}
+          // The same creative can appear in two adjacent posts. The post key
+          // forces a fresh decoder in that case; otherwise a completed video
+          // node is reused by React and remains paused at its final frame.
+          key={`${sourceKey}:playing`}
           data-feed-media="true"
           ref={adVideoRef}
           className={adReady ? `${styles.adVideo} ${styles.adVideoReady}` : styles.adVideo}
@@ -1433,16 +1461,15 @@ export default function FeedTwin({
           onPlaying={() => markAdReady(adSrc)}
           onTimeUpdate={() => markAdReady(adSrc)}
           onEnded={event => {
-            if (!playerModeRef.current) showCommentRoll()
             completedAdRef.current = adSrc
             // Retire synchronously before the state update unmounts this node.
             // That both releases the decoder immediately and makes any late
             // stalled/error callback harmless via completedAdRef above.
             retireFeedVideo(event.currentTarget)
-            setCompletedAdSrc(adSrc)
             setReadyAdSrc(null)
             settledAdRef.current = null
             releaseAudioFocus('feed')
+            advanceCompletedContent()
           }}
           onError={event => retryAdPlayback(adSrc, event.currentTarget)}
           onStalled={event => retryAdPlayback(adSrc, event.currentTarget)}

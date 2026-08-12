@@ -32,8 +32,9 @@ type SnapshotWindow = Window & {
   __poplurMapIdleSnapshot?: SnapshotDiagnostics
 }
 
-const JPEG_QUALITY = 0.9
+const JPEG_QUALITY = 0.88
 const SAMPLE_SIZE = 24
+const MAX_SNAPSHOT_EDGE = 1024
 
 export function installMapIdleSnapshot(
   map: mapboxgl.Map,
@@ -118,8 +119,12 @@ export function installMapIdleSnapshot(
     if (disposed || parked || !captureRequested || canvas.width < 2 || canvas.height < 2) return
     captureRequested = false
     try {
-      staging.width = canvas.width
-      staging.height = canvas.height
+      // This image is visible only while the unchanged WebGL frame is parked.
+      // Cap its decoded pixel count while leaving the live map and 3D textures
+      // at full quality.
+      const scale = Math.min(1, MAX_SNAPSHOT_EDGE / Math.max(canvas.width, canvas.height))
+      staging.width = Math.max(1, Math.round(canvas.width * scale))
+      staging.height = Math.max(1, Math.round(canvas.height * scale))
       const context = staging.getContext('2d', { alpha: false })
       if (!context) throw new Error('2D snapshot context unavailable')
       context.drawImage(canvas, 0, 0)

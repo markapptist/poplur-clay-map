@@ -1860,14 +1860,18 @@ export default function App() {
     return () => window.clearTimeout(t)
   }, [popLevel, mapLive])
 
-  // The pins the map should stand up, derived from the same level. Your own
-  // pops wear YOUR profile picture — the one the profile tab persisted.
-  // Seeded from this origin's own storage so the standalone map still shows a
-  // face; replaced by whatever the shell sends when it is the host.
+  // The pins the map should stand up, derived from the same level. Own pins
+  // do not wear a profile photo; the short selfie video sits above one of them.
   const [ownAvatar, setOwnAvatar] = useState<string | null>(() => {
     try {
       const raw = window.localStorage.getItem('poplur.profile.photo')
       return raw && raw.startsWith('data:image/') ? raw : null
+    } catch { return null }
+  })
+  const [ownSelfieVideo, setOwnSelfieVideo] = useState<string | null>(() => {
+    try {
+      const raw = window.localStorage.getItem('poplur.profile.selfieVideo')
+      return raw && (raw.startsWith('data:video/') || /^https:\/\//i.test(raw) || /^poplur-clay:\/\//i.test(raw)) ? raw : null
     } catch { return null }
   })
   // YOUR pops are painted in YOUR takeover colour, and follow it live — the
@@ -1884,7 +1888,8 @@ export default function App() {
       coords: poi.coords as [number, number],
       radiusKm: poi.radiusKm,
       color: myColor,
-      avatar: ownAvatar,
+      avatar: null,
+      selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
       channel: poi.channel,
       // Your OWN pops carry their post too: arriving on your ground should
       // play what you put there, exactly as arriving on someone else's does.
@@ -1914,7 +1919,7 @@ export default function App() {
       mine: false,
     }))
     return [...others, ...mine]
-  }, [popLevel, ownAvatar, myColor])
+  }, [popLevel, ownAvatar, ownSelfieVideo, myColor])
 
   const openMapPinContent = useCallback((pin: PopPin) => {
     // Never substitute an ad or cube for a post whose media record is missing.
@@ -2331,6 +2336,17 @@ export default function App() {
           setOwnAvatar(typeof photo === 'string' && photo.startsWith('data:image/') ? photo : null)
           break
         }
+        case 'setOwnProfileMedia': {
+          const photo = event.data.photo
+          const video = event.data.video
+          setOwnAvatar(typeof photo === 'string' && photo.startsWith('data:image/') ? photo : null)
+          setOwnSelfieVideo(
+            typeof video === 'string' && (video.startsWith('data:video/') || /^https:\/\//i.test(video) || /^poplur-clay:\/\//i.test(video))
+              ? video
+              : null,
+          )
+          break
+        }
         case 'setTourTopics': {
           const next = writeMapTourTopics(normalizeMapTourTopics(event.data.topics))
           tourTopicsRef.current = next
@@ -2412,7 +2428,8 @@ export default function App() {
               coords: ownSource.coords,
               radiusKm: ownSource.radiusKm,
               color: myColor,
-              avatar: ownAvatar,
+              avatar: null,
+              selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
               channel: ownSource.channel,
               media: {
                 kind: 'video',
@@ -2538,7 +2555,8 @@ export default function App() {
         coords: poi.coords,
         radiusKm: poi.radiusKm,
         color: myColor,
-        avatar: ownAvatar,
+        avatar: null,
+        selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
         channel: poi.channel,
         media: {
           kind: 'video',
@@ -2550,7 +2568,7 @@ export default function App() {
         mine: true,
       })
     }, 4_700)
-  }, [flyToCenter, myColor, openMapPinContent, ownAvatar])
+  }, [flyToCenter, myColor, openMapPinContent, ownAvatar, ownSelfieVideo])
 
   if (harnessView) {
     return (
