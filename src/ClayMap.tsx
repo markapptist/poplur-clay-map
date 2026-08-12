@@ -1399,11 +1399,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // private frame scheduler mid-placement corrupts the continuation it keeps
     // between label-layout frames.
     {
-      const parkedMap = map as unknown as {
-        repaint: boolean
-        triggerRepaint: () => void
-      }
-      const liveTriggerRepaint = map.triggerRepaint.bind(map)
+      const parkedMap = map as unknown as { repaint: boolean }
       let parkRequested = false
       let parkRequestSerial = 0
 
@@ -1418,14 +1414,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         idleSnapshot.park()
         parkedMap.repaint = false
         rendererParked = true
-        // Do not cancel or replace Mapbox's private frame scheduler. An async
-        // tile/source result is allowed to drain if it makes the map non-idle;
-        // repaint-only decoration remains suppressed while the settled static
-        // frame is retained. That preserves zero recurring idle frames without
-        // ever hiding required placement/style work from Mapbox.
-        parkedMap.triggerRepaint = () => {
-          if (!map.idle() || !map.frameReady()) liveTriggerRepaint()
-        }
+        // Mapbox is event-driven while `repaint` is false. Leave triggerRepaint
+        // untouched so late tile and label-placement work can finish through
+        // Mapbox's own scheduler; intercepting it can strand placement state
+        // between frames and make continuePlacement read a retired bucket.
         document.documentElement.dataset.poplurMapPark = '1'
       }
       const scheduleRendererParkAfterIdle = () => {
@@ -1447,12 +1439,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           parkRequestSerial += 1
           if (rendererParked) {
             rendererParked = false
-            parkedMap.triggerRepaint = liveTriggerRepaint
             // Keep the retained 2D frame over the canvas until Mapbox confirms
             // that WebGL has actually painted its first wake frame.
             idleSnapshot.wake()
             delete document.documentElement.dataset.poplurMapPark
-            liveTriggerRepaint()
+            map.triggerRepaint()
           }
           return
         }

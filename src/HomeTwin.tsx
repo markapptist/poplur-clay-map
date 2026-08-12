@@ -1913,7 +1913,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onPostReach={onFeedPostReach}
             bindActions={fn => { feedActionsRef.current = fn }}
             bindGoBack={fn => { feedBackRef.current = fn }}
-            suppressed={switchingScreens || overlayOpen || holdOpen || activePermission !== null}
+            suppressed={chromeIdle || switchingScreens || overlayOpen || holdOpen || activePermission !== null}
             onPlayerModeChange={setFeedFullscreen}
             autoPlayOnMount={feedAutoPlayOnMount}
             onOpenProfile={user => {
