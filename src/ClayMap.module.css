@@ -595,6 +595,9 @@
   will-change: bottom;
 }
 
+/* The globe stage is the map's outward-facing cube. It keeps a slow 3D turn
+   even after the ambient scene idles, so the world still feels alive without
+   restarting Mapbox or any WebGL renderer. */
 .zoomWrap:active .zoomRail {
   box-shadow:
     inset 0 2px 2px rgba(255, 255, 255, 0.62),
@@ -1269,6 +1272,14 @@
     drop-shadow(0 0 1px rgba(255, 255, 255, 0.95))
     drop-shadow(0 3px 0 rgba(20, 4, 18, 0.78))
     drop-shadow(0 7px 10px rgba(0, 0, 0, 0.48));
+}
+
+/* Weather is meaningful, not generic ambience. Let the compact map weather
+   continue to rain/flash during an idle map view; low-power and emergency
+   policy still override this through the shared global thermal gate. */
+:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating,
+:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating * {
+  animation-play-state: running !important;
 }
 
 .weatherVisualCompact { width: 42px; height: 42px; }

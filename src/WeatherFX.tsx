@@ -64,36 +64,43 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
     return () => { alive = false; window.clearTimeout(id) }
   }, [])
 
-  // Weather keeps its last visual frame at idle, but its JS/audio lifecycle is
-  // stopped synchronously at the ambient, audio-gate or visibility edge.
+  // The visible weather must remain weather: rain continues falling and a
+  // storm can still flash while the user is watching the map. Ambient idling
+  // only parks its audio. The lightning timer is sparse (roughly one wake per
+  // 5-10 seconds), and it is stopped completely when the document is hidden.
   const [flashTick, setFlashTick] = useState(0)
   useEffect(() => {
     let sleeping = !ambientAllowed()
     let muted = isGateMuted()
     let hidden = document.visibilityState !== 'visible'
-    let active = false
+    let audioActive = false
+    let visualActive = !hidden
     let timer = 0
     const strike = () => {
       timer = 0
-      if (!active) return
+      if (!visualActive) return
       setFlashTick(t => t + 1)
-      playThunder(0.55)
+      if (audioActive) playThunder(0.55)
       timer = window.setTimeout(strike, 4500 + Math.random() * 5500)
     }
+    const scheduleLightning = () => {
+      if (!visualActive || timer || (mode !== 'thunder' && mode !== 'storm')) return
+      timer = window.setTimeout(strike, 1800 + Math.random() * 1500)
+    }
     const sync = () => {
-      const next = !sleeping && !muted && !hidden
-      if (next === active) return
-      active = next
-      if (!active) {
+      visualActive = !hidden
+      const nextAudioActive = visualActive && !sleeping && !muted
+      if (nextAudioActive !== audioActive) {
+        audioActive = nextAudioActive
+        if (audioActive) startWeatherAudio(mode)
+        else stopWeatherAudio()
+      }
+      if (!visualActive) {
         window.clearTimeout(timer)
         timer = 0
-        stopWeatherAudio()
         return
       }
-      startWeatherAudio(mode)
-      if (mode === 'thunder' || mode === 'storm') {
-        timer = window.setTimeout(strike, 1800 + Math.random() * 1500)
-      }
+      scheduleLightning()
     }
     const stopAmbient = onAmbientSleepChange(next => { sleeping = next; sync() })
     const stopGate = onGateChange(next => { muted = next; sync() })
@@ -101,7 +108,8 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
     document.addEventListener('visibilitychange', onVisibility)
     sync()
     return () => {
-      active = false
+      visualActive = false
+      audioActive = false
       window.clearTimeout(timer)
       stopWeatherAudio()
       stopAmbient()
@@ -116,7 +124,7 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
   const dims = DIM_MODES.includes(mode)
 
   return (
-    <div className={styles.layer} aria-hidden="true">
+    <div className={`${styles.layer} ${styles.weatherAlwaysAnimating}`} aria-hidden="true">
       {rains && (
         <div className={dims ? styles.stormDim : undefined}>
           {drops.map((d, i) => (

@@ -116,7 +116,7 @@ function WeatherMark({
   const lightning = mode === 'thunder' || mode === 'storm'
   const hailing = mode === 'hail'
   return (
-    <span className={`${styles.weatherVisual}${compact ? ` ${styles.weatherVisualCompact}` : ''}`}>
+    <span className={`${styles.weatherVisual} ${styles.weatherAlwaysAnimating}${compact ? ` ${styles.weatherVisualCompact}` : ''}`}>
       {clouded ? (
         <img className={styles.weatherCloudModel} src={cloud ?? ''} alt="" draggable="false" />
       ) : (

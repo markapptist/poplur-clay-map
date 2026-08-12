@@ -20,9 +20,9 @@ import { registerAudioOwner } from './audioFocus'
 // and the context is suspended once nothing is scheduled. One-shots reach the
 // context directly and never bring the bed up with them.
 //
-// The context is reused across ordinary gesture teardowns. A closed app audio
-// gate is different: the context is retired completely so queued one-shots
-// cannot leak into the background or replay when the app returns.
+// The context is reused across ordinary gesture and focus handoffs. A closed
+// app audio gate is different: the context is retired completely so queued
+// one-shots cannot leak into the background or replay when the app returns.
 
 type MotionEngine = {
   master: GainNode
@@ -495,7 +495,17 @@ export function playRadiusCounterDone() {
 // These effects never take the floor — they sit on top of whatever page is
 // playing — but leaving a page has to be able to switch them off, and until
 // this registration existed silenceAllAudio() could not see them at all.
-registerAudioOwner('ui', retireContext)
+registerAudioOwner('ui', () => {
+  // Keep the approved D bubble-bounce navigator responsive after another
+  // surface claims content audio. This is an ordinary in-app handoff, not a
+  // lifecycle boundary, so fading the turn bed and parking it briefly preserves
+  // the selected cube pop and its sound on the next direct gesture.
+  if (engine) {
+    engine.master.gain.setTargetAtTime(0, ctx?.currentTime ?? 0, 0.02)
+    engine.active = false
+  }
+  armIdle(300)
+})
 
 // `visibilitychange` is not dependable during iOS process suspension, but the
 // central gate also receives the native UIKit lifecycle event. Retiring here
