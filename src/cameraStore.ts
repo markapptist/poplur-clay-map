@@ -1,4 +1,3 @@
-import { readCameraDetectDefault } from './cameraPreferences'
 // What the camera has actually captured this session, and what the roll has
 // selected. The viewfinder writes it, the roll reads and selects from it, and
 // the home's channel buttons show the selection count — so it lives here
@@ -22,7 +21,10 @@ export interface Capture {
 // true, so the model ran on every launch whether or not you wanted it —
 // the most expensive thing the camera does, spent by default. Read once at
 // module load: the value is a preference, not live state.
-let detectOn = readCameraDetectDefault()
+// Every app session starts with the viewfinder smooth and private. Scan is an
+// explicit foreground action, not a standing preference that can silently
+// re-arm image analysis after an update/relaunch.
+let detectOn = false
 
 const captures: Capture[] = []
 const selected = new Set<string>()

@@ -191,6 +191,7 @@ export default function Camera({
   onPostTargetUsed,
   onComposingChange,
   onPhotoCapture,
+  onFlashChange,
 }: {
   step?: number
   /** False while Home keeps this pager mounted behind its hold menu. */
@@ -219,6 +220,8 @@ export default function Camera({
   onComposingChange?: (open: boolean) => void
   /** One-shot feedback for the persistent cube when a live photo is taken. */
   onPhotoCapture?: () => void
+  /** Mirrors the real flash/torch state onto the Kodak navigator lamp. */
+  onFlashChange?: (on: boolean) => void
 }) {
   const [flash, setFlash] = useState(false)
   // The ML announcer's switch, on the viewfinder itself. It already existed in
@@ -296,11 +299,6 @@ export default function Camera({
     setCommercePinned(false)
     setCommerceCard(null)
   }, [])
-
-  // The camera opens with ML running. DETECT OFF remains available in the
-  // hold menu, but a later visit starts from the useful default again instead
-  // of inheriting a stale in-memory toggle from the previous visit.
-  useEffect(() => { setDetectOn(true) }, [])
 
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
@@ -762,6 +760,10 @@ export default function Camera({
 
   const flashRef = useRef(flash)
   useEffect(() => { flashRef.current = flash }, [flash])
+  useEffect(() => {
+    onFlashChange?.(flash)
+    return () => onFlashChange?.(false)
+  }, [flash, onFlashChange])
 
   /** Explicit on/off matters for gestures: repeated swipe-up must leave flash
    *  on rather than toggling it back off. Native bridges receive the intended
@@ -1455,7 +1457,7 @@ export default function Camera({
         const detected = sceneReads[0] ?? null
         const cameraParked = nativeCameraBudget?.state === 'parked'
         const primaryLabel = !detectOn
-          ? 'AI OFF'
+          ? 'TAP SCAN'
           : cameraParked
             ? 'CAMERA COOLING'
             : detected

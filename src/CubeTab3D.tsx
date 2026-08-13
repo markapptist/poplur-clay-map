@@ -48,6 +48,10 @@ export interface CubeTab3DProps {
   prepareModelUrl?: string
   /** Fired after the replacement is installed and has a drawable frame. */
   onModelReady?: (url: string) => void
+  /** Kodak navigator lamp mirrors the live camera's armed flash state. */
+  cameraFlashArmed?: boolean
+  /** Incremented for each shutter event, producing one rectangular flash. */
+  cameraFlashPulse?: number
 }
 
 /** The designed cube is authored as a true box, so it is normalised per-axis to
@@ -141,7 +145,11 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string) {
     model.scale.set(2 / dims.x, 2 / dims.y, 2 / dims.z)
   } else {
     const largest = Math.max(dims.x, dims.y, dims.z) || 1
-    model.scale.setScalar(2 / largest)
+    // The tall phone filled the same square but looked far larger than the
+    // wide TV/Kodak objects. Keep one renderer/viewport while normalising its
+    // visual footprint inside that square.
+    const visualScale = url === 'poplur_clay_phone_lite.glb' ? 0.76 : 1
+    model.scale.setScalar((2 / largest) * visualScale)
   }
   model.updateMatrixWorld(true)
   const centred = new THREE.Box3().setFromObject(model).getCenter(new THREE.Vector3())
@@ -187,7 +195,7 @@ function disposeModel(node: THREE.Object3D) {
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0 }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -225,6 +233,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   const [preparedVersion, setPreparedVersion] = useState(0)
   const modelUrlRef = useRef(modelUrl)
   modelUrlRef.current = modelUrl
+  const cameraFlashArmedRef = useRef(cameraFlashArmed)
+  cameraFlashArmedRef.current = cameraFlashArmed
+  const updateCameraFlashRef = useRef<(armed: boolean, pulse: boolean) => void>(() => {})
+  const priorFlashPulseRef = useRef(cameraFlashPulse)
 
   const showFoodFaceOnCubeRef = useRef<(visible: boolean) => void>(() => {})
   useEffect(() => {
@@ -235,6 +247,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     showFoodFaceRef.current = showFoodFace
     showFoodFaceOnCubeRef.current(showFoodFace)
   }, [showFoodFace])
+  useEffect(() => {
+    updateCameraFlashRef.current(cameraFlashArmed, cameraFlashPulse !== priorFlashPulseRef.current)
+    priorFlashPulseRef.current = cameraFlashPulse
+  }, [cameraFlashArmed, cameraFlashPulse])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -278,6 +294,43 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     pitchGroup.add(group)
     groupRef.current = group
 
+    // Kodak's authored GLB is a single mesh, so its flash cannot be selected by
+    // node name. Add one model-local rounded-looking rectangular lamp exactly
+    // over the upper-left flash window. It shares this renderer and redraws
+    // only on armed/shutter state changes — no extra canvas or animation loop.
+    const flashMaterial = new THREE.MeshBasicMaterial({
+      color: 0xe7f8ff,
+      transparent: true,
+      opacity: 0,
+      depthTest: false,
+      toneMapped: false,
+    })
+    const flashLamp = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.17), flashMaterial)
+    flashLamp.position.set(-0.57, 0.29, 0.48)
+    flashLamp.renderOrder = 30
+    flashLamp.visible = false
+    group.add(flashLamp)
+    const flashLight = new THREE.PointLight(0xe8fbff, 0, 2.2, 2)
+    flashLight.position.set(-0.57, 0.29, 0.72)
+    group.add(flashLight)
+    let flashPulseTimer = 0
+    const syncCameraFlash = (armed: boolean, pulse: boolean) => {
+      const kodak = loadedUrlRef.current === 'poplur_camera_kodak.glb'
+      const lit = kodak && (armed || pulse)
+      flashLamp.visible = lit
+      flashMaterial.opacity = pulse ? 1 : armed ? 0.72 : 0
+      flashLight.intensity = pulse ? 4.5 : armed ? 1.25 : 0
+      needsRender = true
+      wakeLoopRef.current()
+      window.clearTimeout(flashPulseTimer)
+      if (pulse) {
+        flashPulseTimer = window.setTimeout(() => {
+          syncCameraFlash(cameraFlashArmedRef.current, false)
+        }, 180)
+      }
+    }
+    updateCameraFlashRef.current = syncCameraFlash
+
     // ---- gesture/render state ----
     let dragging = false
     let disposed = false
@@ -287,6 +340,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let pitchTarget: number | null = null
     // Only the map's earth uses yaw now — navigation never turns the object.
     let yaw = 0
+    let motionYaw = 0
+    let lastMotionAt = 0
     let globeWakeTimer = 0
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
@@ -330,6 +385,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
           loadedUrlRef.current = requestedUrl
           setLoadedModel(requestedUrl)
           setSceneReadyVersion(version => version + 1)
+          updateCameraFlashRef.current(cameraFlashArmedRef.current, false)
           callbacksRef.current.onModelReady?.(requestedUrl)
 
           // Straight-on camera. The authored food-face override is the only
@@ -366,6 +422,15 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // one-frame buffer only; it adds no turn/static sound and parks itself.
       primeMotionAudio()
       primePopAudio()
+      // iOS requires motion permission from a direct user gesture. Asking on
+      // the navigator itself keeps the experience opt-in and avoids a prompt
+      // before the user has touched the object they want to move.
+      if (typeof DeviceOrientationEvent !== 'undefined') {
+        const orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+          requestPermission?: () => Promise<'granted' | 'denied'>
+        }
+        void orientation.requestPermission?.().catch(() => {})
+      }
       try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
       dragging = true
       moved = false
@@ -449,6 +514,17 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') wakeLoopRef.current()
     }
+    const onDeviceOrientation = (event: DeviceOrientationEvent) => {
+      if (document.visibilityState !== 'visible' || event.gamma == null) return
+      const now = performance.now()
+      if (now - lastMotionAt < 66) return
+      lastMotionAt = now
+      const next = THREE.MathUtils.clamp(event.gamma / 45, -1, 1) * 0.22
+      if (Math.abs(next - motionYaw) < 0.008) return
+      motionYaw = next
+      needsRender = true
+      wakeLoopRef.current()
+    }
     canvas.addEventListener('webglcontextlost', onContextLost)
     canvas.addEventListener('pointerdown', onPointerDown)
     canvas.addEventListener('pointermove', onPointerMove)
@@ -456,6 +532,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     canvas.addEventListener('pointercancel', onPointerCancel)
     canvas.addEventListener('keydown', onKeyDown)
     document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true })
 
     // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
@@ -486,7 +563,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       }
 
       if (needsRender) {
-        group.rotation.y = yaw
+        group.rotation.y = yaw + motionYaw
         pitchGroup.rotation.x = pitch
         renderer.render(scene, camera)
         needsRender = false
@@ -530,12 +607,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       disposed = true
       cancelAnimationFrame(raf)
       window.clearTimeout(globeWakeTimer)
+      window.clearTimeout(flashPulseTimer)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)
       canvas.removeEventListener('pointerup', onPointerUp)
       canvas.removeEventListener('pointercancel', onPointerCancel)
       canvas.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('deviceorientation', onDeviceOrientation)
       canvas.removeEventListener('webglcontextlost', onContextLost)
       disposeModel(scene)
       releaseWebGL(renderer)
@@ -543,6 +622,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       modelNodeRef.current = null
       loadedUrlRef.current = null
       wakeLoopRef.current = () => {}
+      updateCameraFlashRef.current = () => {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
@@ -601,6 +681,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       modelNodeRef.current = model
       loadedUrlRef.current = modelUrl
       setLoadedModel(modelUrl)
+      updateCameraFlashRef.current(cameraFlashArmedRef.current, false)
       wakeLoopRef.current()
       callbacksRef.current.onModelReady?.(modelUrl)
     }

@@ -6,6 +6,7 @@ import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import MapLevelButton from './MapLevelButton'
+import CameraScanButton from './CameraScanButton'
 import type { PopLevel } from './data'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
@@ -13,10 +14,9 @@ import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
-import ClayPhonePop from './ClayPhonePop'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, playPopBurst } from './pop'
-import { onCameraStore, selectedCount } from './cameraStore'
+import { isDetectOn, onCameraStore, selectedCount, setDetectOn } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import {
   cancelManagedRenderingWake,
@@ -47,9 +47,6 @@ import {
 
 /** Home chrome fades out after this long without a touch (see chromeIdle). */
 const CHROME_IDLE_MS = 30_000
-
-/** Length of the cube-into-phone flourish; must match the CSS animation. */
-const CUBE_INTO_PHONE_MS = 1_600
 
 // Browser twin of the iOS Home screen (map tab state), rebuilt from
 // HomeView.swift + RecordingCountdownView.swift + RadiusNumberDisplayFIXED.swift.
@@ -130,17 +127,16 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   'profile-stats': 'poplur_cube_stats.glb',
   'profile-store': 'poplur_cube_store.glb',
   'profile-settings': 'poplur_cube_settings.glb',
+  // PHONE uses the same persistent navigator renderer as every other screen.
+  // The previous separate ClayPhonePop created a second WebGL context and a
+  // larger 176px object, so it could never match the other tab objects.
+  'profile-phone': 'poplur_clay_phone_lite.glb',
   // STUDIO finally gets its mixing desk. The intent was recorded here months
   // ago and blocked on one number: the supplied desk was 39.5MB against the
   // TV's 136KB. Decimated (Draco + simplify 0.0005 + 256px webp) it is 329KB
   // and keeps every knob — see .codex/prerender-holdmenu-cubes.mjs for the
   // proofing harness that verified it survived.
   'camera-studio': 'poplur_mixer_lite.glb',
-  // NOT profile-phone: that screen already turns the navigator into the clay
-  // phone through ClayPhonePop (see setCubeIntoPhone below), so an entry here
-  // would fire the morph AND a model swap for the same screen. What it needed
-  // was not a cube but a smaller phone — ClayPhonePop now loads the 152KB
-  // decimation instead of the 33MB master.
   // SHOW ME is the map's find-it-for-me surface, so it takes the SEARCH cube.
   // The nearest fit in the supplied set rather than a bespoke mark — say if it
   // should be something else.
@@ -597,12 +593,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // This timer is only allowed to fade chrome above a full-screen subscreen.
   // The foreground home tab never dims or pauses from inactivity.
   const [chromeIdle, setChromeIdle] = useState(false)
-  // On the PHONE screen the cube IS the Poplur clay phone, for as long as that
-  // screen is up — not a 1.55s flourish that hands over and hands straight
-  // back. The cube element stays mounted and still takes the tap (the phone
-  // model is pointer-events:none over it), so it remains the way out; only its
-  // appearance changes.
-  const [cubeIntoPhone, setCubeIntoPhone] = useState(false)
   // ONE PAGE, ONE VOICE.
   //
   // Leaving a page silences everything, everywhere — including inside the map
@@ -707,11 +697,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   const handleSubscreenChange = useCallback((open: boolean, screen?: string) => {
     setOverlayOpen(open)
-    setCubeIntoPhone(prev => {
-      const wanted = open && screen === 'profile-phone'
-      if (wanted && !prev) playPop()
-      return wanted
-    })
     // On TV Guide the navigator stops being a cube and becomes the clay TV —
     // the screen you are on IS the object in your hand. It still turns, still
     // holds to open the wheel, and is still the way back out.
@@ -1533,6 +1518,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
    *  Rides on TOP of your own radius so the number visibly climbs per find. */
   const [scanKm, setScanKm] = useState<number | null>(null)
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
+  const cameraScanOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
+  const [cameraFlashArmed, setCameraFlashArmed] = useState(false)
+  const [cameraFlashPulse, setCameraFlashPulse] = useState(0)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
   useEffect(() => {
     if (activeTab !== 'profile') { setViewingUser(null); setProfileOrigin(null) }
@@ -1981,7 +1969,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onPhotoCapture={() => {
               setPopping(false)
               setPhotoPopping(true)
+              setCameraFlashPulse(value => value + 1)
             }}
+            onFlashChange={setCameraFlashArmed}
             step={cameraStep}
             onCloseRoll={() => setCameraStep(s => s - 1)}
             bindActions={actions => { cameraActionsRef.current = actions }}
@@ -2098,6 +2088,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 )
               }}
             />
+            </div>
+          )}
+          {activeTab === 'post' && !overlayOpen && (
+            <div className={styles.levelAbove}>
+              <CameraScanButton
+                active={cameraScanOn}
+                onToggle={() => setDetectOn(!isDetectOn())}
+              />
             </div>
           )}
           <ClayChannelArrows
@@ -2235,11 +2233,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* The HUD used to duck out while the composer was up. It stays now: the
           capture preview is a home surface — cube back, arrows flip filters. */}
       <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`} />
-      <ClayPhonePop visible={cubeIntoPhone} />
       <div
         data-poplur-cube
         data-poplur-cube-swap={cubeSwapPhase}
-        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeIntoPhone ? ` ${styles.cubeIntoPhone}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
@@ -2261,6 +2258,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               key={`cube-${uiRecoveryKey}`}
               size={cubeSize}
               modelUrl={appliedCubeModel}
+              cameraFlashArmed={cameraFlashArmed}
+              cameraFlashPulse={cameraFlashPulse}
               // Native loads only the final destination. Pre-decoding a second
               // textured GLB while the outgoing screen tears down is exactly
               // the short CPU/GPU overlap that made rapid switching run warm.

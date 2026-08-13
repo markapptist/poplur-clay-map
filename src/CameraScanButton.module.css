@@ -1,0 +1,59 @@
+.button {
+  display: block;
+  padding: 7px;
+  margin: -7px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 120ms ease;
+}
+
+.button:active { transform: translateY(1px) scale(.93); }
+
+.glyph {
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, .62));
+}
+
+.back path {
+  fill: rgba(20, 12, 24, .32);
+  stroke: none;
+}
+
+.shadow {
+  fill: rgba(0, 0, 0, .42);
+  filter: blur(1.2px);
+}
+
+.sphere {
+  stroke: #210719;
+  stroke-width: 1.4;
+  transition: fill 150ms ease;
+}
+
+.glint { fill: rgba(255, 255, 255, .72); }
+
+.cage path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3.2;
+}
+
+.crossEdge { stroke: rgba(255, 94, 171, .9); stroke-width: 2.2 !important; }
+
+.on .sphere {
+  filter: drop-shadow(0 0 4px rgba(94, 232, 255, .95));
+}
+
+.on .glyph {
+  filter:
+    drop-shadow(0 3px 4px rgba(0, 0, 0, .62))
+    drop-shadow(0 0 8px rgba(43, 216, 255, .45));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button, .sphere { transition: none; }
+}
