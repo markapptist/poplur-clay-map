@@ -595,6 +595,7 @@ export default function ProfileTwin({
   // URI under one key, rehydrated on mount.
   const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
   const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
+  const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
   const [captureSource, setCaptureSource] = useState<CaptureSource>('camera')
   const [savingPhoto, setSavingPhoto] = useState(false)
@@ -618,6 +619,23 @@ export default function ProfileTwin({
   const [askOpen, setAskOpen] = useState(false)
   const [askText, setAskText] = useState('')
   const [aiReply, setAiReply] = useState<string | null>(null)
+
+  // The profile itself is the active screen while mounted. WKWebView can pause
+  // an inline, muted loop after a tab transition even though the element is
+  // visible; resume that one visible decoder on foreground/visibility instead
+  // of retaining any hidden Profile tree in memory.
+  const resumeSelfie = useCallback(() => {
+    const video = selfieVideoRef.current
+    if (!video || document.visibilityState !== 'visible') return
+    void video.play().catch(() => { /* autoplay is muted; retry on next visible event */ })
+  }, [])
+  useEffect(() => {
+    if (!selfieVideo) return
+    const onVisible = () => resumeSelfie()
+    document.addEventListener('visibilitychange', onVisible)
+    resumeSelfie()
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [selfieVideo, resumeSelfie])
 
   // The persistent Home-level microphone controller sends its visible/spoken
   // reply back here when Profile is front, so the profile still reflects a
@@ -1514,6 +1532,7 @@ export default function ProfileTwin({
             // stand in for a real profile video.
             selfieVideo ? (
               <video
+                ref={selfieVideoRef}
                 className={styles.photo}
                 src={selfieVideo}
                 poster={photo ?? undefined}
@@ -1521,7 +1540,9 @@ export default function ProfileTwin({
                 muted
                 loop
                 playsInline
-                preload="metadata"
+                preload="auto"
+                onPause={resumeSelfie}
+                onStalled={resumeSelfie}
                 aria-label="Profile selfie video"
               />
             ) : (

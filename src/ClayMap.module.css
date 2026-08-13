@@ -3,6 +3,9 @@
   height: 100%;
   position: absolute;
   inset: 0;
+  /* Prevent the WebGL clear colour from flashing black while Mapbox rebuilds
+     its globe atmosphere after an iOS tab swap. */
+  background: #8ec9f2;
 }
 
 .photorealMessage {

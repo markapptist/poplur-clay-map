@@ -10,8 +10,9 @@ import { preloadPop, primePopAudio } from './pop'
 
 // Live 3D tab-object navigator. One persistent WebGL scene hot-swaps the Map,
 // Feed, Camera and Profile objects. Horizontal swipes choose one adjacent tab
-// without rotating the object; Home owns the shrink/swap/grow bubble pop.
-// Quick tap fires onTap; press-and-hold fires onHold.
+// while letting a deliberate navigation swipe spin it in the swipe direction.
+// Home owns the shrink/swap/grow bubble pop. Quick tap fires onTap;
+// press-and-hold fires onHold.
 
 export type CubeTab = 'map' | 'feed' | 'post' | 'profile'
 
@@ -134,7 +135,7 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string) {
         // when WebKit drops a directional-light frame during a tab swap.
         if (standard.map) standard.emissiveMap = standard.map
         standard.emissive.set(0xffffff)
-        standard.emissiveIntensity = Math.max(0.34, standard.emissiveIntensity || 0)
+        standard.emissiveIntensity = Math.max(0.62, standard.emissiveIntensity || 0)
         standard.needsUpdate = true
       })
     })
@@ -338,19 +339,21 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let pitch = showFoodFaceRef.current ? HALF_PI : 0
     let pitchVelocity = 0
     let pitchTarget: number | null = null
-    // Only the map's earth uses yaw now — navigation never turns the object.
+    // The map earth idles at a deliberately modest cadence. Navigation adds a
+    // one-turn inertial yaw, so the model still answers the speed/direction of
+    // a swipe without leaving an idle display-rate render loop behind.
     let yaw = 0
+    let yawVelocity = 0
+    let yawTarget: number | null = null
     let motionYaw = 0
     let lastMotionAt = 0
     let globeWakeTimer = 0
+    let nextGlobeFrameAt = 0
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && targetTabRef.current === 'map'
       && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
 
-    // Navigation does NOT turn the object. yaw survives only for the map's
-    // slowly rotating earth below; every navigation lands front-on because it
-    // never leaves front-on.
     const commitTo = (tab: CubeTab) => {
       if (tab === targetTabRef.current) return
       targetTabRef.current = tab
@@ -479,8 +482,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       if (Math.abs(dx) < 28 || Math.abs(dx) < Math.abs(dy)) return
       const index = TAB_ORDER.indexOf(targetTabRef.current)
       const delta = dx < 0 ? 1 : -1
-      // No turn. Navigation is the bubble pop in the shell: the object bursts
-      // away and the next one bursts out of it, always front-on.
+      // A fast swipe gives a stronger, but bounded, single turn. The model
+      // settles front-on before the next face grows in.
+      const velocity = Math.min(2.1, Math.max(0.65, Math.abs(dx) / Math.max(90, performance.now() - downTime)))
+      yawVelocity = (dx < 0 ? -1 : 1) * velocity * Math.PI * 2
+      yawTarget = yaw + (dx < 0 ? -1 : 1) * Math.PI * 2
+      needsRender = true
+      wakeLoopRef.current()
       commitTo(TAB_ORDER[(index + delta + TAB_ORDER.length) % TAB_ORDER.length])
     }
 
@@ -504,6 +512,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const current = targetTabRef.current
       const index = TAB_ORDER.indexOf(current)
       const delta = event.key === 'ArrowRight' ? 1 : -1
+      yawVelocity = delta * Math.PI * 3.5
+      yawTarget = yaw + delta * Math.PI * 2
+      needsRender = true
+      wakeLoopRef.current()
       commitTo(TAB_ORDER[(index + delta + TAB_ORDER.length) % TAB_ORDER.length])
     }
 
@@ -554,11 +566,26 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         }
       }
 
+      if (yawTarget !== null) {
+        const yawAccel = -118 * (yaw - yawTarget) - 17 * yawVelocity
+        yawVelocity += yawAccel * dt
+        yaw += yawVelocity * dt
+        needsRender = true
+        if (Math.abs(yaw - yawTarget) < 0.003 && Math.abs(yawVelocity) < 0.035) {
+          yaw = THREE.MathUtils.euclideanModulo(yawTarget, Math.PI * 2)
+          yawVelocity = 0
+          yawTarget = null
+        }
+      }
+
       // The map's earth is the one navigational object that stays alive while
       // the map is being viewed. It turns at 12fps, rather than retaining a
       // 60/120fps rAF loop, and only ever redraws this small cube canvas.
-      if (mapGlobeIsVisible()) {
-        yaw = (yaw + dt * 0.5) % (Math.PI * 2)
+      if (mapGlobeIsVisible() && now >= nextGlobeFrameAt) {
+        // 12fps is ample for the small persistent map object and avoids a
+        // ProMotion-rate rAF keeping the phone warm on the map tab.
+        yaw = (yaw + 0.5 / 12) % (Math.PI * 2)
+        nextGlobeFrameAt = now + 1000 / 12
         needsRender = true
       }
 
@@ -576,6 +603,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // wake() restarts the loop from a gesture or a tab change.
       const active = pitchTarget !== null
         || Math.abs(pitchVelocity) > 0.02
+        || yawTarget !== null
+        || Math.abs(yawVelocity) > 0.035
         || needsRender
       if (active) {
         raf = requestAnimationFrame(loop)

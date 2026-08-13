@@ -167,8 +167,9 @@ const CLAY_LABEL_HALO_WIDTH = 1.35
 const CLAY_LABEL_HALO_BLUR = 0.6
 const CLAY_LABEL_EMISSIVE = 0.8
 
-// Sky follows the real time of day: clear blue by day, pitch-black space with
-// stars by night (like the lock-screen reference).
+// Sky follows the real time of day. Keep the globe's atmosphere luminous even
+// at night: a black "space" pass reads as a missing lower hemisphere in the
+// constrained Mapbox globe view used by the app.
 function applySky(map: mapboxgl.Map, day: boolean) {
   // The fallback map is deliberately FLAT. Fog/atmosphere only makes sense on
   // the globe; keeping it on in 2D leaves Mapbox's atmosphere pass alive and
@@ -188,11 +189,11 @@ function applySky(map: mapboxgl.Map, day: boolean) {
       'star-intensity': 0,
     } as never : {
       range: [0.6, 8],
-      color: 'rgba(246, 59, 154, 0.12)',
-      'high-color': '#0a0510',
-      'horizon-blend': 0.04,
-      'space-color': '#050407',
-      'star-intensity': 0.85,
+      color: 'rgba(142, 201, 242, 0.38)',
+      'high-color': '#74b7e6',
+      'horizon-blend': 0.1,
+      'space-color': '#8ec9f2',
+      'star-intensity': 0,
     } as never)
   } catch { /* fog unsupported */ }
 }
@@ -3247,15 +3248,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       swapSprite(() => flyerMarkersRef.current, 'models/plane.glb', { pitch: 74, size: 256 }, undefined,
         i => FLYERS[i]?.kind === 'plane')
 
-      // Atmosphere: dark space with a faint pink rim, like the toy globe on black
+      // A bright atmosphere keeps the full toy globe readable. A black space
+      // pass makes Mapbox's underside look like a failed/unfinished texture.
       try {
         map.setFog({
           range: [0.6, 8],
-          color: 'rgba(246, 59, 154, 0.12)',
-          'high-color': '#0a0510',
-          'horizon-blend': 0.04,
-          'space-color': '#050407',
-          'star-intensity': 0.85,
+          color: 'rgba(142, 201, 242, 0.38)',
+          'high-color': '#74b7e6',
+          'horizon-blend': 0.1,
+          'space-color': '#8ec9f2',
+          'star-intensity': 0,
         } as never)
       } catch { /* fog unsupported */ }
 

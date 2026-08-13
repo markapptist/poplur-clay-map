@@ -719,6 +719,9 @@ export default function FeedTwin({
     settledAdRef.current = null
     completedAdRef.current = null
     setCompletedAdSrc(null)
+    // Every fresh source starts under static, including the first source when
+    // Feed mounts. Never expose a held/black decoder frame while it buffers.
+    setStaticArmed(true)
   }, [sourceKey])
   useEffect(() => {
     recoveringAdSrcRef.current = null
@@ -744,6 +747,9 @@ export default function FeedTwin({
       video.pause()
       return
     }
+    setReadyAdSrc(null)
+    settledAdRef.current = null
+    setStaticArmed(true)
     void video.play().catch(() => {
       if (adVideoRef.current === video && video.getAttribute('src') === source) {
         advanceAdSource(source)
@@ -769,16 +775,10 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('static') === '1'
   const forceTransition = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('transition') === '1'
-  // Static belongs only to a deliberate channel zap. Entering the Feed tab is
-  // a tab change, so initialise with the current channel already accepted and
-  // arm static only when this mounted Feed actually receives a different id.
-  const [staticArmed, setStaticArmed] = useState(false)
-  const staticChannelRef = useRef(ch.id)
-  useEffect(() => {
-    if (staticChannelRef.current === ch.id) return
-    staticChannelRef.current = ch.id
-    setStaticArmed(true)
-  }, [ch.id])
+  // Static belongs to every source handoff, not just a deliberate channel
+  // zap. This protects the initial Feed mount and a fallback source after a
+  // decoder stall as well.
+  const [staticArmed, setStaticArmed] = useState(true)
 
   const adReady = Boolean(adSrc) && readyAdSrc === adSrc
   useEffect(() => { if (adReady) setStaticArmed(false) }, [adReady])
@@ -1466,6 +1466,7 @@ export default function FeedTwin({
           onLoadedData={() => markAdReady(adSrc)}
           onPlaying={() => markAdReady(adSrc)}
           onTimeUpdate={() => markAdReady(adSrc)}
+          onWaiting={event => retryAdPlayback(adSrc, event.currentTarget)}
           onEnded={event => {
             completedAdRef.current = adSrc
             // Retire synchronously before the state update unmounts this node.
