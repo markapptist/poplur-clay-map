@@ -91,7 +91,7 @@ export function primePopAudio() {
   if (!context || context.state !== 'suspended') return
   const serial = armPopIdle()
   void context.resume().then(() => {
-    if (!ambientAllowed()) parkPopNow()
+    if (typeof document !== 'undefined' && document.hidden) parkPopNow()
     else parkPopIfCurrent(serial)
   }).catch(() => { /* the next gesture can retry */ })
 }
@@ -107,12 +107,11 @@ export function popHaptic() {
 
 /** Plays the pop sound and fires the haptic. Silent until the first gesture. */
 export function playPop(volume = 0.6) {
-  // Backgrounded map callbacks can still finish after a tab transition. Do
-  // not let a pop resume the shared AudioContext while another view owns sound.
-  // Autonomous camera/state completions can also arrive after the foreground
-  // surface has parked. They must not create an audio render thread for a sound
-  // nobody requested; direct input has already renewed the ambient lease.
-  if (isGateMuted() || !ambientAllowed()) return
+  // Interactive pops are governed by actual visibility/audio ownership, not by
+  // an inactivity timer. Autonomous effects use playPopAmbient below; making
+  // this path depend on ambientAllowed() silenced the hold menu after the old
+  // two-second visible-page timeout.
+  if (isGateMuted() || (typeof document !== 'undefined' && document.hidden)) return
   try {
     audioCtx ??= new AudioContext()
     let resumeSerial: number | null = null
@@ -121,7 +120,7 @@ export function playPop(volume = 0.6) {
       // deadline and leave the audio renderer mixing silence indefinitely.
       resumeSerial = armPopIdle()
       void audioCtx.resume().then(() => {
-        if (!ambientAllowed()) parkPopNow()
+        if (typeof document !== 'undefined' && document.hidden) parkPopNow()
         else if (resumeSerial !== null) parkPopIfCurrent(resumeSerial)
       }).catch(() => {})
     }
@@ -155,6 +154,59 @@ export function playPop(volume = 0.6) {
 // Every play bumps this; an ambient pop only parks the context if it is still
 // the newest play when its own sample finishes.
 let playSerial = 0
+
+/**
+ * The BIG pop — the navigator bursting from one object into the next. The one
+ * shot pop.mp3 reads as a tick at this size; a balloon or a Gusher gives you a
+ * deep body under a bright skin-split, so this plays the same sample twice:
+ * slowed for the body, and a hair later at pitch for the burst on top.
+ *
+ * Same gate and same nap as playPop — this is a louder voicing of that sound,
+ * not a second audio path.
+ */
+export function playPopBurst(volume = 0.95) {
+  if (isGateMuted() || (typeof document !== 'undefined' && document.hidden)) return
+  try {
+    audioCtx ??= new AudioContext()
+    let resumeSerial: number | null = null
+    if (audioCtx.state === 'suspended') {
+      resumeSerial = armPopIdle()
+      void audioCtx.resume().then(() => {
+        if (typeof document !== 'undefined' && document.hidden) parkPopNow()
+        else if (resumeSerial !== null) parkPopIfCurrent(resumeSerial)
+      }).catch(() => {})
+    }
+    if (!popBuffer) {
+      preloadPop()
+      if (resumeSerial === null) armPopIdle()
+      popHaptic()
+      return
+    }
+    const now = audioCtx.currentTime
+    // [rate, gain, delay] — body first, skin-split 12ms behind it.
+    const layers: Array<[number, number, number]> = [
+      [0.68, volume * 0.85, 0],
+      [1.24, volume, 0.012],
+    ]
+    for (const [rate, gainValue, delay] of layers) {
+      const src = audioCtx.createBufferSource()
+      src.buffer = popBuffer
+      src.playbackRate.value = rate
+      const gain = audioCtx.createGain()
+      gain.gain.value = gainValue
+      src.connect(gain)
+      gain.connect(audioCtx.destination)
+      src.onended = () => {
+        try { src.disconnect() } catch { /* already disconnected */ }
+        try { gain.disconnect() } catch { /* already disconnected */ }
+      }
+      src.start(now + delay)
+    }
+    playSerial++
+    armPopIdle()
+  } catch { /* audio blocked until user gesture */ }
+  popHaptic()
+}
 
 // Ambient pops only sound for someone who is actually there. 30s without a
 // touch is the same beat the home chrome uses to fade (CHROME_IDLE_MS) — past

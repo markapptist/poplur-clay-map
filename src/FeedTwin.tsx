@@ -1367,6 +1367,7 @@ export default function FeedTwin({
   return (
     <div
       className={styles.feed}
+      data-poplur-screen="feed"
       onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

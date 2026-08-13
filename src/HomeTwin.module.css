@@ -977,10 +977,14 @@
   50% { translate: 0 -8px; }
 }
 
+/* Squash hard, then burst well past full size and wobble down — the tap reads
+   as something under pressure letting go, not a button depressing. */
 @keyframes cubeTapPop {
   0% { scale: 1 1; }
-  30% { scale: 0.9 0.78; }
-  60% { scale: 1.06 1.1; }
+  20% { scale: 0.82 0.68; }
+  44% { scale: 1.2 1.28; }
+  66% { scale: 0.94 0.9; }
+  84% { scale: 1.06 1.05; }
   100% { scale: 1 1; }
 }
 
@@ -1238,36 +1242,76 @@
 /* ── D: Bubble Bounce navigator transition ──────────────────────────────────
    One wrapper owns the whole motion: outgoing object to a dot, a still dot
    while the prepared model installs, then the replacement bounces outward.
-   Hover is deliberately absent during all three phases. */
+   Hover is deliberately absent during all three phases.
+
+   The scale is deliberately non-uniform: a balloon does not shrink, it swells
+   against its skin and then bursts, and a Gusher splits before it spills. So
+   the outgoing object inflates a little WIDER than tall, then snaps to nothing
+   through a tall, thin pinch, and the replacement bursts out overshooting far
+   past its size and wobbles down through two decreasing squashes. */
 @keyframes cubeSwapBubbleExit {
   0%   { scale: 1 1; }
-  35%  { scale: .9 .9; }
-  100% { scale: .035 .035; }
+  46%  { scale: 1.22 1.14; }
+  70%  { scale: 1.3 1.24; }
+  100% { scale: .06 .16; }
 }
 
 @keyframes cubeSwapBubbleEnter {
-  0%   { scale: .035 .035; }
-  44%  { scale: 1.16 1.16; }
-  68%  { scale: .93 .93; }
-  84%  { scale: 1.055 1.055; }
+  0%   { scale: .05 .14; }
+  26%  { scale: 1.42 1.34; }
+  46%  { scale: .84 1.1; }
+  64%  { scale: 1.14 .93; }
+  80%  { scale: .95 1.04; }
+  92%  { scale: 1.03 .99; }
   100% { scale: 1 1; }
+}
+
+/* The burst itself: a ring thrown off at the instant the object goes. It hangs
+   on the OUTER wrapper, not on the animating stage — the stage is scaled to a
+   .05 dot at exactly this moment, and a ring nested inside it would be
+   multiplied down to nothing. Keyed to `waiting` because that phase begins on
+   the pop and lasts until the replacement is ready, so the ring always plays
+   its full throw no matter how long the model takes. */
+@keyframes cubeSwapBurstRing {
+  0%   { opacity: 0; scale: .18; }
+  18%  { opacity: .95; }
+  100% { opacity: 0; scale: 1.9; }
+}
+
+/* Both phases carry an IDENTICAL animation declaration on purpose. The ring
+   starts on `waiting` (the pop) and the throw outlasts it — around 200ms with a
+   prepared model. A rule that only matched `waiting` cut the ring off mid-throw
+   when the phase advanced; because the computed animation is unchanged between
+   these two rules, the attribute flip does not restart it and the ring simply
+   keeps going over the incoming object. */
+.cubeWrap[data-poplur-cube-swap='waiting']::after,
+.cubeWrap[data-poplur-cube-swap='enter']::after {
+  content: '';
+  position: absolute;
+  inset: 16%;
+  z-index: -1;
+  border-radius: 50%;
+  border: 5px solid rgba(255, 98, 173, .92);
+  box-shadow: 0 0 28px rgba(246, 59, 154, .8);
+  pointer-events: none;
+  animation: cubeSwapBurstRing .3s ease-out both;
 }
 
 .cubeSwapExit {
   transform-origin: 50% 50%;
-  animation: cubeSwapBubbleExit .12s cubic-bezier(.7, 0, 1, .5) both;
+  animation: cubeSwapBubbleExit .16s cubic-bezier(.55, 0, .95, .35) both;
   translate: 0 0;
 }
 
 .cubeSwapWaiting {
   transform-origin: 50% 50%;
-  scale: .035 .035;
+  scale: .05 .14;
   translate: 0 0;
 }
 
 .cubeSwapEnter {
   transform-origin: 50% 50%;
-  animation: cubeSwapBubbleEnter .34s cubic-bezier(.2, 1.35, .35, 1) both;
+  animation: cubeSwapBubbleEnter .42s cubic-bezier(.16, 1.5, .3, 1) both;
   translate: 0 0;
 }
 
@@ -1281,6 +1325,10 @@
   .cubeSwapExit,
   .cubeSwapEnter {
     animation: none;
+  }
+  .cubeWrap[data-poplur-cube-swap='waiting']::after,
+  .cubeWrap[data-poplur-cube-swap='enter']::after {
+    content: none;
   }
   .cubeSwapWaiting {
     scale: 1 1;

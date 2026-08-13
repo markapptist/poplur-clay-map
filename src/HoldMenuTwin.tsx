@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import styles from './HoldMenuTwin.module.css'
-import { playPop } from './pop'
+import { playPop, primePopAudio } from './pop'
 import type { CubeTab } from './CubeTab3D'
 import ClayCornerButton from './ClayCornerButton'
 import { isDetectOn, onCameraStore } from './cameraStore'
@@ -545,6 +545,10 @@ export default function HoldMenuTwin({
   const movedRef = useRef(0)
   const consumedTileTapRef = useRef(false)
   const onPointerDown = (e: React.PointerEvent) => {
+    // The long-press that opened this menu primed audio, but WebKit may have
+    // suspended the context before a later wheel gesture. Re-prime inside the
+    // real menu gesture so every notch is allowed to make its pop.
+    primePopAudio()
     draggingRef.current = true
     dragYRef.current = e.clientY
     downPtRef.current = { x: e.clientX, y: e.clientY }
@@ -726,7 +730,7 @@ export default function HoldMenuTwin({
   }
 
   return (
-    <div className={styles.stage} role="dialog" aria-label="Cube hold menu">
+    <div className={styles.stage} data-poplur-screen="hold" role="dialog" aria-label="Cube hold menu">
       <div
         className={styles.wheel}
         onPointerDown={onPointerDown}

@@ -15,7 +15,7 @@ import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import ClayPhonePop from './ClayPhonePop'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
-import { playPop } from './pop'
+import { playPop, playPopBurst } from './pop'
 import { onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import {
@@ -575,8 +575,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     onTabChange?.(activeTab)
   }, [activeTab, onTabChange])
-  // The cube long-press hold menu floats as a translucent overlay over the
-  // current tab, and its items match that tab.
+  // The cube long-press hold menu becomes the active screen and releases the
+  // tab underneath; its items still match the tab it was opened from.
   const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
   // The hold menu belongs to the tab it was opened from ("its item set matches
   // that tab"), so a tab change has to dismiss it. It also owns the screens that
@@ -592,9 +592,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The cube floats over every screen, so on a subscreen it is the one control
   // that is always there — it goes back a level. Registered by HoldMenuTwin.
   const goBackRef = useRef<(() => boolean) | null>(null)
-  // Home-view idle rule: the chrome fades almost away after 10s untouched so it
-  // stops obstructing whatever is behind it, and any touch brings it straight
-  // back. Applies on every tab, not just subscreens.
+  // This timer is only allowed to fade chrome above a full-screen subscreen.
+  // The foreground home tab never dims or pauses from inactivity.
   const [chromeIdle, setChromeIdle] = useState(false)
   // On the PHONE screen the cube IS the Poplur clay phone, for as long as that
   // screen is up — not a 1.55s flourish that hands over and hands straight
@@ -1253,6 +1252,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // behind it must stop playing, its captions must not show through, and the
   // map iframe must go quiet.
   const [overlayOpen, setOverlayOpen] = useState(false)
+  // Exactly one heavyweight tab owns memory at a time. The outgoing page is
+  // removed on the semantic navigation edge; the settled destination mounts
+  // after the short pop handoff. No hidden Profile/Feed/Camera tree survives
+  // behind that transition or a full-screen subscreen.
+  const mainSurfaceVisible = surfaceVisible
+    && !overlayOpen
+    && !holdOpen
+    && activePermission === null
+    && !switchingScreens
   // The idle fade exists so the chrome stops obstructing a SUBSCREEN you are
   // reading (News, TV Guide, Radio, an RCL capture). On the home view itself the
   // chrome IS the screen — fading it there just makes the app look like it
@@ -1462,7 +1470,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setMapMounted(false)
       setMapReady(false)
     }
-    const screenCanRender = surfaceVisible && !overlayOpen && activePermission === null
+    const screenCanRender = mainSurfaceVisible
     const apply = () => {
       if (activeTab === 'map' && committedTab === 'map' && screenCanRender) { setMapMounted(true); return }
       if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
@@ -1479,7 +1487,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // prevents decorative motion from owning map lifecycle forever.
     apply()
     return () => { window.clearTimeout(dropTimer) }
-  }, [activePermission, activeTab, committedTab, overlayOpen, surfaceVisible])
+  }, [activeTab, committedTab, mainSurfaceVisible])
 
   // Boot cover lifecycle. Unmounting re-arms it, so the NEXT mount renders
   // covered in the same commit that attaches the iframe — there is no frame in
@@ -1542,7 +1550,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
   type HomeCameraAction = Exclude<keyof CameraActions, 'arrow' | 'composerBack'> | 'roll'
-  const runMenuAction = (action: FeedAction | HomeCameraAction) => {
+  const pendingMenuActionRef = useRef<FeedAction | HomeCameraAction | null>(null)
+  const performMenuAction = useCallback((action: FeedAction | HomeCameraAction) => {
     if (action === 'roll') {
       setCameraStep(current => current + 1)
       return
@@ -1553,7 +1562,39 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       return
     }
     feedActionsRef.current?.(action)
+  }, [])
+  const runMenuAction = (action: FeedAction | HomeCameraAction) => {
+    if (holdOpen) {
+      // The hold menu is now the sole active screen, so the tab underneath has
+      // no component instance to receive this yet. Close the menu, remount that
+      // one tab, then deliver the action to its fresh owner.
+      pendingMenuActionRef.current = action
+      setHoldOpen(false)
+      return
+    }
+    performMenuAction(action)
   }
+  useEffect(() => {
+    if (holdOpen || !mainSurfaceVisible || pendingMenuActionRef.current == null) return
+    const frame = window.requestAnimationFrame(() => {
+      const action = pendingMenuActionRef.current
+      pendingMenuActionRef.current = null
+      if (action != null) performMenuAction(action)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [holdOpen, mainSurfaceVisible, performMenuAction])
+
+  type MapHoldAction = 'search' | 'locate' | 'directions' | 'tour' | 'mapMode'
+  const pendingMapActionRef = useRef<MapHoldAction | null>(null)
+  useEffect(() => {
+    if (holdOpen || !mapReady || activeTab !== 'map') return
+    const action = pendingMapActionRef.current
+    if (!action) return
+    pendingMapActionRef.current = null
+    mapFrameRef.current?.contentWindow?.postMessage(
+      { type: 'poplur-map-action', action }, '*',
+    )
+  }, [activeTab, holdOpen, mapReady])
 
   // null = your own profile; a handle = that user's profile.
   const [viewingUser, setViewingUser] = useState<string | null>(null)
@@ -1724,7 +1765,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     cubeModelReadyTimer.current = null
     awaitingCubeModelRef.current = null
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      if (withSound) playPop()
+      if (withSound) playPopBurst()
       setCubeSwapPhase('idle')
     } else {
       cubeSwapEnterSound.current = withSound
@@ -1763,7 +1804,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // expansion. This remains a defensive completion fallback.
     if (cubeSwapEnterSound.current) {
       cubeSwapEnterSound.current = false
-      playPop()
+      playPopBurst()
     }
     setCubeSwapPhase('idle')
   }, [])
@@ -1797,10 +1838,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     if (cubeSwapFallbackTimer.current) window.clearTimeout(cubeSwapFallbackTimer.current)
     cubeSwapFallbackTimer.current = null
+    // Backstops only, and both must outlast their keyframes — a fallback that
+    // fires first drops the class mid-wobble and the burst ends in a snap.
     if (cubeSwapPhase === 'exit') {
-      cubeSwapFallbackTimer.current = window.setTimeout(finishCubeSwapExit, 220)
+      cubeSwapFallbackTimer.current = window.setTimeout(finishCubeSwapExit, 260)
     } else if (cubeSwapPhase === 'enter') {
-      cubeSwapFallbackTimer.current = window.setTimeout(finishCubeSwapEnter, 440)
+      cubeSwapFallbackTimer.current = window.setTimeout(finishCubeSwapEnter, 560)
     }
   }, [cubeSwapPhase, finishCubeSwapExit, finishCubeSwapEnter])
 
@@ -1810,7 +1853,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     if (cubeSwapPhase !== 'enter' || !cubeSwapEnterSound.current) return
     cubeSwapEnterSound.current = false
-    playPop()
+    playPopBurst()
   }, [cubeSwapPhase])
 
   useEffect(() => () => {
@@ -1884,6 +1927,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         <>
           <iframe
             ref={mapFrameRef}
+            data-poplur-screen="map"
             className={activeTab === 'map' ? styles.mapLayer : `${styles.mapLayer} ${styles.mapLayerIdle}`}
             src={CLAY_MAP_SRC}
             title="Poplur clay map"
@@ -1906,14 +1950,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       )}
 
       <div className={styles.contentLayer}>
-        {surfaceVisible && !overlayOpen && activePermission === null && committedTab === 'feed' && (
+        {mainSurfaceVisible && committedTab === 'feed' && (
           <FeedTwin
             index={chanIndex}
             onIndexChange={setChanIndex}
             onPostReach={onFeedPostReach}
             bindActions={fn => { feedActionsRef.current = fn }}
             bindGoBack={fn => { feedBackRef.current = fn }}
-            suppressed={chromeIdle || switchingScreens || overlayOpen || holdOpen || activePermission !== null}
+            suppressed={false}
             onPlayerModeChange={setFeedFullscreen}
             autoPlayOnMount={feedAutoPlayOnMount}
             onOpenProfile={user => {
@@ -1923,7 +1967,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
           />
         )}
-        {surfaceVisible && !overlayOpen && activePermission === null && committedTab === 'post' && (
+        {mainSurfaceVisible && committedTab === 'post' && (
           <Camera
             surfaceVisible={!switchingScreens && !holdOpen}
             onComposingChange={handleComposingChange}
@@ -1956,7 +2000,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
           />
         )}
-        {surfaceVisible && !overlayOpen && activePermission === null && committedTab === 'profile' && (
+        {mainSurfaceVisible && committedTab === 'profile' && (
           <ProfileTwin
             bindArrows={fn => { profileArrowsRef.current = fn }}
             bindGoBack={fn => { profileBackRef.current = fn }}
@@ -2301,6 +2345,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           onClose={() => setHoldOpen(false)}
           onAction={runMenuAction}
           onMapAction={action => {
+            if (holdOpen) {
+              pendingMapActionRef.current = action
+              setHoldOpen(false)
+              return
+            }
             mapFrameRef.current?.contentWindow?.postMessage(
               { type: 'poplur-map-action', action }, '*',
             )

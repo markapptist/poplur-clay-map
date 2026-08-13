@@ -10,8 +10,8 @@ import { preloadPop, primePopAudio } from './pop'
 
 // Live 3D tab-object navigator. One persistent WebGL scene hot-swaps the Map,
 // Feed, Camera and Profile objects. Horizontal swipes choose one adjacent tab
-// and send the object through a velocity-sensitive full turn; Home owns the
-// shrink/swap/grow pop. Quick tap fires onTap; press-and-hold fires onHold.
+// without rotating the object; Home owns the shrink/swap/grow bubble pop.
+// Quick tap fires onTap; press-and-hold fires onHold.
 
 export type CubeTab = 'map' | 'feed' | 'post' | 'profile'
 
@@ -285,26 +285,17 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let pitch = showFoodFaceRef.current ? HALF_PI : 0
     let pitchVelocity = 0
     let pitchTarget: number | null = null
+    // Only the map's earth uses yaw now — navigation never turns the object.
     let yaw = 0
-    let yawVelocity = 0
-    let yawTarget: number | null = null
     let globeWakeTimer = 0
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && targetTabRef.current === 'map'
       && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
 
-    const spinForNavigation = (direction: 1 | -1, flingVelocity = 0) => {
-      // A full turn keeps every destination's authored front face forward once
-      // it lands. The launch velocity comes from the actual swipe, so a quick
-      // flick feels lighter and faster than a deliberate drag.
-      const speed = Math.max(0, Math.min(2.2, flingVelocity))
-      yawTarget = yaw + direction * Math.PI * 2
-      yawVelocity = direction * (5.8 + speed * 4.4)
-      needsRender = true
-      wakeLoopRef.current()
-    }
-
+    // Navigation does NOT turn the object. yaw survives only for the map's
+    // slowly rotating earth below; every navigation lands front-on because it
+    // never leaves front-on.
     const commitTo = (tab: CubeTab) => {
       if (tab === targetTabRef.current) return
       targetTabRef.current = tab
@@ -360,8 +351,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let startY = 0
     let lastX = 0
     let lastY = 0
-    let lastMoveAt = 0
-    let swipeVelocityX = 0
     let moved = false
     let downTime = 0
     let holdTimer: ReturnType<typeof setTimeout> | null = null
@@ -384,8 +373,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       startX = lastX = e.clientX
       startY = lastY = e.clientY
       downTime = performance.now()
-      lastMoveAt = downTime
-      swipeVelocityX = 0
       holdTimer = setTimeout(() => {
         holdTimer = null
         holdFired = true
@@ -398,12 +385,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       if (!dragging) return
       const dx = e.clientX - startX
       const dy = e.clientY - startY
-      const now = performance.now()
-      const elapsed = Math.max(1, now - lastMoveAt)
-      // Low-pass this a little so a noisy touch sample cannot make one cube
-      // turn feel wildly faster than the next.
-      swipeVelocityX = swipeVelocityX * 0.36 + ((e.clientX - lastX) / elapsed) * 0.64
-      lastMoveAt = now
       lastX = e.clientX
       lastY = e.clientY
       if (Math.hypot(dx, dy) > 8 && !moved) {
@@ -433,10 +414,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       if (Math.abs(dx) < 28 || Math.abs(dx) < Math.abs(dy)) return
       const index = TAB_ORDER.indexOf(targetTabRef.current)
       const delta = dx < 0 ? 1 : -1
-      const elapsed = Math.max(1, performance.now() - downTime)
-      const velocity = Math.max(Math.abs(swipeVelocityX), Math.abs(dx) / elapsed)
-      // Swipe left carries the object left; swipe right carries it right.
-      spinForNavigation(dx < 0 ? -1 : 1, velocity)
+      // No turn. Navigation is the bubble pop in the shell: the object bursts
+      // away and the next one bursts out of it, always front-on.
       commitTo(TAB_ORDER[(index + delta + TAB_ORDER.length) % TAB_ORDER.length])
     }
 
@@ -460,7 +439,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const current = targetTabRef.current
       const index = TAB_ORDER.indexOf(current)
       const delta = event.key === 'ArrowRight' ? 1 : -1
-      spinForNavigation(event.key === 'ArrowRight' ? 1 : -1)
       commitTo(TAB_ORDER[(index + delta + TAB_ORDER.length) % TAB_ORDER.length])
     }
 
@@ -499,24 +477,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         }
       }
 
-      if (yawTarget !== null) {
-        const yawAccel = -118 * (yaw - yawTarget) - 18 * yawVelocity
-        yawVelocity += yawAccel * dt
-        yaw += yawVelocity * dt
-        needsRender = true
-        if (Math.abs(yaw - yawTarget) < 0.003 && Math.abs(yawVelocity) < 0.035) {
-          // Every turn ends exactly front-on, without accumulating floating
-          // point drift after a long navigation session.
-          yaw = 0
-          yawVelocity = 0
-          yawTarget = null
-        }
-      }
-
       // The map's earth is the one navigational object that stays alive while
       // the map is being viewed. It turns at 12fps, rather than retaining a
       // 60/120fps rAF loop, and only ever redraws this small cube canvas.
-      if (yawTarget === null && mapGlobeIsVisible()) {
+      if (mapGlobeIsVisible()) {
         yaw = (yaw + dt * 0.5) % (Math.PI * 2)
         needsRender = true
       }
@@ -535,8 +499,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // wake() restarts the loop from a gesture or a tab change.
       const active = pitchTarget !== null
         || Math.abs(pitchVelocity) > 0.02
-        || yawTarget !== null
-        || Math.abs(yawVelocity) > 0.035
         || needsRender
       if (active) {
         raf = requestAnimationFrame(loop)

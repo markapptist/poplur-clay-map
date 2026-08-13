@@ -141,7 +141,7 @@ export default function Camera({
   /** Camera Roll is entered only from the camera hold menu. */
   onOpenRoll?: () => void
   /** hands the home the actions its cube and hold menu fire */
-  bindActions?: (actions: CameraActions) => void
+  bindActions?: (actions: CameraActions | null) => void
   /** elapsed ms while recording, null when stopped — drives the radius counter */
   onRecordingChange?: (elapsedMs: number | null) => void
   /** Current camera zoom, displayed between the clay channel buttons. */
@@ -1086,16 +1086,12 @@ export default function Camera({
       nativeRecordingRef.current = false
       postNativeEvent({ type: 'cameraControl', control: 'recordStop' })
     }
-    // Do NOT end the broadcast here. Camera renders only while
-    // `committedTab === 'post'`, so simply turning the cube unmounts this
-    // screen — ending the stream on unmount meant a glance at the feed killed
-    // the user's live broadcast. A broadcast outliving its screen is correct;
-    // the camera staying on for it is the POINT, not a leak.
-    // What must never survive is a camera held for a broadcast that is over.
-    if (!isLive()) {
-      heldStreamRef.current?.getTracks().forEach(t => t.stop())
-      heldStreamRef.current = null
-    }
+    // Strict screen ownership: ON AIR cannot keep the camera sensor, tracks,
+    // and live-store references alive after Camera stops being the active
+    // screen. Leaving Camera ends the broadcast and releases every track.
+    if (isLive()) stopBroadcast()
+    heldStreamRef.current?.getTracks().forEach(t => t.stop())
+    heldStreamRef.current = null
   }, [])
 
   useEffect(() => {
@@ -1165,6 +1161,7 @@ export default function Camera({
         return true
       },
     })
+    return () => bindActions?.(null)
   }, [applyZoomStep, bindActions, capturePhoto, deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state, onOpenRoll, toggleVideo])
 
   const [pos, setPos] = useState(page === 'live' ? 1 : 2)
@@ -1464,7 +1461,7 @@ export default function Camera({
   )
 
   return (
-    <div className={styles.camPager} aria-label="Camera">
+    <div className={styles.camPager} data-poplur-screen="camera" aria-label="Camera">
       <div
         className={animated ? styles.camPagerTrack : `${styles.camPagerTrack} ${styles.camPagerSnap}`}
         style={{ transform: `translateY(${-pos * 25}%)` }}

@@ -1488,7 +1488,7 @@ export default function ProfileTwin({
           ]}
         />
       )}
-      <section className={styles.profile}>
+      <section className={styles.profile} data-poplur-screen="profile">
       <div className={styles.header}>
         <div className={styles.avatarWrap}>
           {visiting ? (
