@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
-import { qualityPixelRatio } from './frameGovernor'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
@@ -18,7 +17,7 @@ declare global {
 
 // Live 3D tab-object navigator. One persistent WebGL scene hot-swaps the Map,
 // Feed, Camera and Profile objects. Horizontal swipes choose one adjacent tab
-// without turning the object; Home owns the shrink/swap/grow bubble pop. The
+// without turning the object; Home owns the expand/swap/settle bubble pop. The
 // only yaw is authored motion: device tilt on every object and the Map globe's
 // slow idle turn. Quick tap fires onTap; press-and-hold fires onHold.
 
@@ -53,7 +52,7 @@ export interface CubeTab3DProps {
   modelUrl?: string
   /** Reveals the cube's authored fork/knife top face while a food ad is open. */
   showFoodFace?: boolean
-  /** Decode only the next requested object while the current one shrinks. */
+  /** Decode only the next requested object while the current one expands. */
   prepareModelUrl?: string
   /** Fired after the replacement is installed and has a drawable frame. */
   onModelReady?: (url: string) => void
@@ -124,7 +123,25 @@ async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
     Centring is done AFTER scaling and from a re-measured box: recentring first
     only lands on zero when the model's own bounds happen to be centred, which is
     true of the designed cube but cannot be assumed of every clay model. */
-function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string) {
+function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string, maxAnisotropy = 1) {
+  // GLTF's mipmaps are correct at rest, but an accelerometer tilt makes those
+  // textures oblique. Use the GPU's supported anisotropic filter so lettering
+  // and clay detail stay crisp while the phone moves.
+  model.traverse(child => {
+    const mesh = child as THREE.Mesh
+    if (!mesh.isMesh) return
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    materials.forEach(material => {
+      if (!material) return
+      for (const value of Object.values(material)) {
+        const texture = value as THREE.Texture | null
+        if (!texture?.isTexture) continue
+        texture.anisotropy = maxAnisotropy
+        texture.magFilter = THREE.LinearFilter
+        texture.needsUpdate = true
+      }
+    })
+  })
   // Keep the globe's authored 1024px maps, but make its live material robust:
   // a lost light/environment frame cannot black out a hemisphere, and the
   // clay shell remains visible from either side.
@@ -234,6 +251,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   // be rebuilt mid-interaction. So the group is held in a ref and the model is
   // hot-swapped into it by its own effect.
   const groupRef = useRef<THREE.Group | null>(null)
+  const navigatorAnisotropyRef = useRef(1)
   const modelNodeRef = useRef<THREE.Object3D | null>(null)
   const loadedUrlRef = useRef<string | null>(null)
   const preparedModelRef = useRef<{ url: string; model: THREE.Object3D } | null>(null)
@@ -265,19 +283,22 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const canvas = canvasRef.current
     if (!canvas) return
 
-    // Android shell (budget GPUs): render the cube at a reduced pixel ratio and
-    // skip MSAA — ~60% fewer GL pixels for a visually near-identical cube.
-    const androidShell = Boolean((window as unknown as { PoplurNative?: unknown }).PoplurNative)
     let renderer: THREE.WebGLRenderer
     try {
-      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: !androidShell })
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
     } catch {
       setGlFailed(true)
       return
     }
-    renderer.setPixelRatio(qualityPixelRatio(androidShell ? 1.25 : 2))
+    // This is the one small, foreground navigator canvas. Rendering it below
+    // the phone's display density made every clay edge visibly stair-stepped,
+    // especially on a 3x iPhone. Hidden screens are unmounted, so preserve the
+    // native panel density here instead of globally lowering visible quality.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3))
     renderer.setSize(size, size)
     renderer.setClearColor(0x000000, 0)
+    const navigatorAnisotropy = renderer.capabilities.getMaxAnisotropy()
+    navigatorAnisotropyRef.current = navigatorAnisotropy
 
     const scene = new THREE.Scene()
     scene.add(new THREE.AmbientLight(0xd8d2ff, 1.4))
@@ -390,7 +411,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
             requestedUrl = modelUrlRef.current
             continue
           }
-          fitIntoGroup(model, group, requestedUrl)
+          fitIntoGroup(model, group, requestedUrl, navigatorAnisotropy)
           modelNodeRef.current = model
           loadedUrlRef.current = requestedUrl
           setLoadedModel(requestedUrl)
@@ -527,10 +548,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const now = performance.now()
       if (now - lastMotionAt < 33) return
       lastMotionAt = now
-      const nextYaw = THREE.MathUtils.clamp((event.gamma ?? 0) / 45, -1, 1) * 0.30
+      const nextYaw = THREE.MathUtils.clamp((event.gamma ?? 0) / 45, -1, 1) * -0.30
       // beta is centred around the natural upright portrait hold. Keep the
       // model's authored front face, then let a modest phone nod aim it up/down.
-      const nextPitch = THREE.MathUtils.clamp(((event.beta ?? 45) - 45) / 45, -1, 1) * -0.24
+      const nextPitch = THREE.MathUtils.clamp(((event.beta ?? 45) - 45) / 45, -1, 1) * 0.24
       if (Math.abs(nextYaw - motionTargetYaw) < 0.004
         && Math.abs(nextPitch - motionTargetPitch) < 0.004) return
       motionTargetYaw = nextYaw
@@ -544,8 +565,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const devicePitch = detail?.pitch
       if (document.visibilityState !== 'visible'
         || (typeof roll !== 'number' && typeof devicePitch !== 'number')) return
-      const nextYaw = THREE.MathUtils.clamp((roll ?? 0) / 0.72, -1, 1) * 0.30
-      const nextPitch = THREE.MathUtils.clamp((devicePitch ?? 0) / 0.72, -1, 1) * -0.24
+      // Inverse parallax: the model aims against the phone's movement, as if
+      // it were looking back toward the direction the handset points.
+      const nextYaw = THREE.MathUtils.clamp((roll ?? 0) / 0.72, -1, 1) * -0.30
+      const nextPitch = THREE.MathUtils.clamp((devicePitch ?? 0) / 0.72, -1, 1) * 0.24
       if (Math.abs(nextYaw - motionTargetYaw) < 0.002
         && Math.abs(nextPitch - motionTargetPitch) < 0.002) return
       motionTargetYaw = nextYaw
@@ -675,7 +698,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   }, [size])
 
   // Decode at most one destination ahead of the visual trough. This avoids a
-  // cold 2MB globe appearing after the old object has already grown back, but
+  // cold 2MB globe appearing after the old object has already settled back, but
   // does not retain all four tab models or create extra renderers/contexts.
   useEffect(() => {
     if (!prepareModelUrl || prepareModelUrl === loadedUrlRef.current || prepareModelUrl === modelUrlRef.current) return
@@ -724,7 +747,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const install = (model: THREE.Object3D) => {
       const previous = modelNodeRef.current
       if (previous) { group.remove(previous); disposeModel(previous) }
-      fitIntoGroup(model, group, modelUrl)
+      fitIntoGroup(model, group, modelUrl, navigatorAnisotropyRef.current)
       modelNodeRef.current = model
       loadedUrlRef.current = modelUrl
       setLoadedModel(modelUrl)

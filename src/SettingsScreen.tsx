@@ -19,6 +19,7 @@ import {
   worldRadiusRemainingMs,
 } from './referral'
 import { readRadioScope, setRadioScope, type RadioScope } from './mapRadio'
+import { readControlSide, setControlSide, type ControlSide } from './controlPlacement'
 
 // Settings, and the one thing in it that is a feature rather than a switch:
 // REFER A FRIEND. Radius is earned slowly and decays; a referral hands you the
@@ -40,6 +41,7 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
   const [aiVoice, setAiVoice] = useState(readCameraAiVoice)
   const [detectDefault, setDetectDefault] = useState(readCameraDetectDefault)
   const [radioScope, setRadioScopeState] = useState<RadioScope>(readRadioScope)
+  const [controlSide, setControlSideState] = useState<ControlSide>(readControlSide)
 
   // The native side owns both behaviours — CameraAIAnnouncer does the talking
   // and the capture session decides what runs at start — so a switch here has
@@ -60,6 +62,10 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
     setRadioScopeState(scope)
     postNativeEvent({ type: 'radioScope', scope })
     if (window.parent !== window) window.parent.postMessage({ poplurRadioScope: scope }, '*')
+  }
+  const chooseControlSide = (side: ControlSide) => {
+    playPop()
+    setControlSideState(setControlSide(side))
   }
 
   // The countdown, and only while this screen is open. Half a minute is fine
@@ -232,6 +238,25 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
             {radioScope === 'app' && 'Keeps playing while you browse Poplur.'}
             {radioScope === 'outside' && 'Keeps the station playing when Poplur is in the background.'}
           </p>
+        </article>
+
+        <article className={styles.group} aria-label="Control position">
+          <span className={styles.groupKicker}>CONTROL POSITION</span>
+          <div className={styles.radioScope} role="radiogroup" aria-label="Side for camera and map controls">
+            {([['left', 'Left side'], ['right', 'Right side']] as Array<[ControlSide, string]>).map(([side, label]) => (
+              <button
+                type="button"
+                key={side}
+                role="radio"
+                aria-checked={controlSide === side}
+                className={controlSide === side ? styles.radioScopeOn : undefined}
+                onClick={() => chooseControlSide(side)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className={styles.radioScopeNote}>Moves the Camera and Map action rails to your preferred thumb side.</p>
         </article>
 
         {note && <p className={styles.note} role="status">{note}</p>}

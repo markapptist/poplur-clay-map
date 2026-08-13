@@ -69,6 +69,7 @@ import { suggestionForMapPlace } from './commerceSuggestions'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed, onAmbientSleepChange, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
+import { useControlSide } from './controlPlacement'
 
 interface RadioStationCue {
   name: string
@@ -664,6 +665,7 @@ function nativeLocationFrom(value: unknown): NativeLocation | null {
 }
 
 export default function App() {
+  const controlSide = useControlSide()
   // The public root is the post-login home. The map runs standalone only when
   // HomeTwin embeds this same bundle with the internal map route below.
   const params = new URLSearchParams(window.location.search)
@@ -2699,9 +2701,9 @@ export default function App() {
 
       {/* ── Top chrome: provided clay logo + wordmark, with the AI line ── */}
       <TopChrome />
-      {/* The clay mute lives UP beside the logo (title row, left) — always
-          present; silences every map sound through the shared audio gate. */}
-      <div className={styles.headerVolume}>
+      {/* Reachable thumb rail. Settings can mirror the whole group for a
+          right-handed layout without scattering controls around the title. */}
+      <div className={`${styles.mapControlRail} ${controlSide === 'right' ? styles.mapControlRailRight : styles.mapControlRailLeft}`}>
         <ClayMuteButton
           muted={muted}
           size={44}
@@ -2720,14 +2722,6 @@ export default function App() {
             <span className={styles.mapModeClayFace}>{currentMapMode.toUpperCase()}</span>
           </span>
         </button>
-      </div>
-      {/* The weather overlay itself: rain, snow, hail, lightning over the map.
-          It had never been mounted, so every weather change was invisible. */}
-      <WeatherFX mode={weatherMode} />
-
-      {/* Top right, level with the sound mark: location stays nearest the
-          centered title while Search sits on the protected outer edge. */}
-      <div className={styles.mapTools}>
         <ClayCornerButton
           kind="locate"
           label="Go to my location"
@@ -2754,6 +2748,8 @@ export default function App() {
           onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
         />
       </div>
+      {/* The weather overlay itself: rain, snow, hail, lightning over the map. */}
+      <WeatherFX mode={weatherMode} />
 
       {searchOpen && (
         <div className={styles.searchScrim} onClick={closeSearch}>

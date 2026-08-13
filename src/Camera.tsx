@@ -19,6 +19,7 @@ import PermissionAlert from './PermissionAlert'
 import CommerceSuggestionWindow from './CommerceSuggestionWindow'
 import { purchaseSuggestionForDetection } from './commerceSuggestions'
 import type { SmartCard } from './tourSmarts'
+import { useControlSide } from './controlPlacement'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
@@ -223,6 +224,7 @@ export default function Camera({
   /** Mirrors the real flash/torch state onto the Kodak navigator lamp. */
   onFlashChange?: (on: boolean) => void
 }) {
+  const controlSide = useControlSide()
   const [flash, setFlash] = useState(false)
   // The ML announcer's switch, on the viewfinder itself. It already existed in
   // Settings → CAMERA → "AI voice", which is the wrong distance away from a
@@ -1430,7 +1432,7 @@ export default function Camera({
       {/* …and the bloom at the instant of capture — the front camera's flash */}
       {bloom && <div className={styles.camBloom} aria-hidden="true" />}
 
-      <div className={`${styles.camCornerSlot} ${styles.camSlotLeft}`}>
+      <div className={`${styles.camControlRail} ${controlSide === 'right' ? styles.camControlRailRight : styles.camControlRailLeft}`}>
         <ClayCornerButton
           kind="flash"
           active={flash}
@@ -1441,6 +1443,11 @@ export default function Camera({
             map wear, so one mark means one thing everywhere in the app — but
             here it silences the ML announcer, not a soundtrack. */}
         <ClayMuteButton muted={!aiVoice} onToggle={toggleAiVoice} size={36} />
+        <ClayCornerButton
+          kind="flip"
+          label="Switch camera"
+          onPress={flipCamera}
+        />
       </div>
       {/* Hands the spot to the ML readout while something is detected, then
           takes it back — the wordmark and the scan result never print over each
@@ -1499,14 +1506,6 @@ export default function Camera({
       {real && arOpen && (
         <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
       )}
-
-      <div className={`${styles.camCornerSlot} ${styles.camSlotRight}`}>
-        <ClayCornerButton
-          kind="flip"
-          label="Switch camera"
-          onPress={flipCamera}
-        />
-      </div>
 
       {/* Lens presets, riding just above the cube: 0.5× (iOS ultra-wide),
           1× and 2×. The lit one is whichever preset the current zoom is

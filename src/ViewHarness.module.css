@@ -333,16 +333,17 @@
 /* Corner controls — bare clay 3D marks (flash + ML mute left, flip right), no
    backing. A row, because the left corner carries two marks now: the flash and
    the switch for the voice that narrates the frame. */
-.camCornerSlot {
+.camControlRail {
   position: absolute;
-  top: max(14px, env(safe-area-inset-top));
+  top: max(154px, calc(env(safe-area-inset-top) + 112px));
   z-index: 8;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
 }
-.camSlotLeft { left: max(12px, env(safe-area-inset-left)); }
-.camSlotRight { right: max(12px, env(safe-area-inset-right)); }
+.camControlRailLeft { left: max(12px, env(safe-area-inset-left)); }
+.camControlRailRight { right: max(12px, env(safe-area-inset-right)); }
 
 /* Lens presets (.5× / 1× / 2×) in a clay pill row riding just above the cube.
    The home HUD's cube is bottom-center at z-260; this sits under its top edge

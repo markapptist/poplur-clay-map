@@ -616,7 +616,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // THE PAGE YOU LAND ON IS THE ONLY PAGE THAT GETS BUILT.
   //
   // Swipes choose exactly one semantic destination on release. Keep the heavy
-  // screen commit on the same short beat as the navigator shrink so Mapbox,
+  // screen commit on the same short beat as the navigator expansion so Mapbox,
   // Camera and Feed are never mounted merely because a finger is moving.
   const [committedTab, setCommittedTab] = useState<CubeTab>(initialTab)
   const switchingScreens = committedTab !== activeTab

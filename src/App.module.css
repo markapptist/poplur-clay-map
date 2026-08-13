@@ -230,16 +230,19 @@
 
 /* ── HomeView overlays ── */
 
-/* Clay mute mark, up beside the logo on the title row. */
-.headerVolume {
+/* One reachable side rail for every Map action. The user can mirror it from
+   Settings; the wordmark/status stay centred and uncluttered. */
+.mapControlRail {
   position: absolute;
-  top: calc(var(--header-title-top) - 2px);
-  left: 14px;
-  z-index: 31;
+  top: max(154px, calc(env(safe-area-inset-top) + 112px));
+  z-index: 46;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
 }
+.mapControlRailLeft { left: max(10px, env(safe-area-inset-left)); }
+.mapControlRailRight { right: max(10px, env(safe-area-inset-right)); }
 
 .mapModeToggle {
   appearance: none;
@@ -669,27 +672,6 @@
 /* ── Place search: clay magnifier, top right, with its results panel ── */
 
 /* Level with the sound mark on the left. */
-.mapTools {
-  position: absolute;
-  /* The sound mark's exact top, lifted by half the size difference (44 → 56)
-     so all three sit on one centre line. */
-  top: calc(var(--header-title-top) - 2px - 6px);
-  right: clamp(10px, 2.6vw, 18px);
-  z-index: 46;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* Search moves to the outer edge in the markup. On phones, the group scales
-   just enough to clear the centered title while preserving a 44.8px target. */
-@media (max-width: 430px) {
-  .mapTools {
-    top: calc(var(--header-title-top) - 2px);
-    transform: scale(0.8);
-    transform-origin: top right;
-  }
-}
 
 .searchScrim {
   position: absolute;
@@ -897,14 +879,7 @@
     --header-row-gap: 8px;
   }
 
-  .headerVolume {
-    transform: scale(0.78);
-    transform-origin: top left;
-  }
-
-  .mapTools {
-    gap: 2px;
-  }
+  .mapControlRail { gap: 6px; }
 
   .headerStack {
     left: 48px;
