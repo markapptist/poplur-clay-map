@@ -575,8 +575,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     onTabChange?.(activeTab)
   }, [activeTab, onTabChange])
-  // The cube long-press hold menu becomes the active screen and releases the
-  // tab underneath; its items still match the tab it was opened from.
+  // The raw cube long-press wheel is a translucent control over the active tab,
+  // so that one tab stays mounted and remains the picture behind it. A route
+  // opened FROM the wheel reports `overlayOpen` below and then takes sole
+  // ownership of the heavyweight screen tree.
   const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
   // The hold menu belongs to the tab it was opened from ("its item set matches
   // that tab"), so a tab change has to dismiss it. It also owns the screens that
@@ -739,11 +741,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // art for a clay surface is the one thing this project never does.
       return undefined
     })
-    // A subscreen IS a page change. Radio, TV Guide and Games each bring their
-    // own sound, and the tab-change rule below never fires for them because
-    // `activeTab` does not move — so opening or closing one used to leave the
-    // previous page still playing underneath.
-    silenceAllAudio()
+    // Opening a real subscreen IS a page change. Radio, TV Guide and Games each
+    // bring their own sound, and `activeTab` does not move, so silence the tab
+    // just before it unmounts. A `false` report also occurs when the raw wheel
+    // first mounts and when it closes; silencing there paused the still-visible
+    // Feed with no state edge that could resume it.
+    if (open) silenceAllAudio()
   }, [])
   const [popping, setPopping] = useState(false)
   // ── Cube model swap: the navigator POPS into its replacement ──────────────
@@ -1248,9 +1251,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [])
 
-  // A hold-menu screen (Radio, News, TV Guide) is covering the app: the feed
-  // behind it must stop playing, its captions must not show through, and the
-  // map iframe must go quiet.
+  // A full hold-menu screen (Radio, News, TV Guide) is covering the app: the
+  // feed behind it must stop playing, its captions must not show through, and
+  // the map iframe must go quiet. The raw translucent wheel is not a screen and
+  // deliberately leaves the current tab mounted underneath it.
   const [overlayOpen, setOverlayOpen] = useState(false)
   // Exactly one heavyweight tab owns memory at a time. The outgoing page is
   // removed on the semantic navigation edge; the settled destination mounts
@@ -1258,7 +1262,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // behind that transition or a full-screen subscreen.
   const mainSurfaceVisible = surfaceVisible
     && !overlayOpen
-    && !holdOpen
     && activePermission === null
     && !switchingScreens
   // The idle fade exists so the chrome stops obstructing a SUBSCREEN you are
@@ -1418,15 +1421,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // this harness itself is audible (not board-muted, not backgrounded). Resent
   // on mapReady because the iframe's listener isn't up for the earliest sends.
   //
-  // A hold-menu screen also silences it. The Radio deck runs its OWN station
-  // from this document while the map runs one inside the iframe — without this
-  // you hear both at once.
+  // A full hold-menu screen also silences it. The translucent wheel is only
+  // controls over the map the user is still watching, so it must not pause or
+  // mute that attended surface. The Radio deck reports `overlayOpen` before it
+  // starts its own station, preventing the two sources from overlapping.
   useEffect(() => {
     const send = () => {
       const audible = activeTab === 'map'
         && !isGateMuted()
         && !overlayOpen
-        && !holdOpen
         && activePermission === null
       mapFrameRef.current?.contentWindow?.postMessage(
         audible ? { gcAudio: 'on' } : { gcAudio: 'off', type: 'poplur-audio-stop' },
@@ -1435,7 +1438,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     send()
     return onGateChange(send)
-  }, [activePermission, activeTab, holdOpen, mapReady, overlayOpen])
+  }, [activePermission, activeTab, mapReady, overlayOpen])
 
   // Whether the map is the surface the user is LOOKING at — which the audio
   // message above cannot answer. That one goes quiet whenever the app is muted,
@@ -1447,9 +1450,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     mapFrameRef.current?.contentWindow?.postMessage({
       type: 'poplur-map-front',
-      front: activeTab === 'map' && !overlayOpen && !holdOpen && activePermission === null,
+      front: activeTab === 'map' && !overlayOpen && activePermission === null,
     }, '*')
-  }, [activePermission, activeTab, holdOpen, mapReady, overlayOpen])
+  }, [activePermission, activeTab, mapReady, overlayOpen])
 
   // Rotate the loading copy only while the overlay is up.
   // Map lifetime. Coming back to the map remounts it immediately; leaving it
@@ -1565,9 +1568,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
   const runMenuAction = (action: FeedAction | HomeCameraAction) => {
     if (holdOpen) {
-      // The hold menu is now the sole active screen, so the tab underneath has
-      // no component instance to receive this yet. Close the menu, remount that
-      // one tab, then deliver the action to its fresh owner.
+      // Close the wheel before delivering its command. The active tab remains
+      // mounted behind the translucent wheel, but deferring one frame preserves
+      // the existing close-then-act ordering and prevents the closing pointer
+      // gesture from also reaching the newly opened tab layer.
       pendingMenuActionRef.current = action
       setHoldOpen(false)
       return
@@ -1969,7 +1973,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )}
         {mainSurfaceVisible && committedTab === 'post' && (
           <Camera
-            surfaceVisible={!switchingScreens && !holdOpen}
+            // The translucent wheel is controls over the live lens, not a new
+            // heavyweight screen. Keep the preview alive behind it; a real
+            // Hold destination flips overlayOpen and unmounts Camera entirely.
+            surfaceVisible={!switchingScreens}
             onComposingChange={handleComposingChange}
             onPhotoCapture={() => {
               setPopping(false)

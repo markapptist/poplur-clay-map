@@ -314,7 +314,7 @@ export default function FeedTwin({
   bindActions?: (fn: ((action: FeedAction) => void) | null) => void
   /** PROFILE opens the poster's profile, not yours */
   onOpenProfile?: (user: string) => void
-  /** something is covering the feed (hold menu, News, TV Guide): go quiet */
+  /** a full screen is replacing the feed (News, TV Guide): go quiet */
   suppressed?: boolean
   /** The cube is the universal back. The comment box is a layer over the feed
    *  with no ✕ of its own, so it answers the cube the way every subscreen and
@@ -1449,6 +1449,11 @@ export default function FeedTwin({
           poster={posterSrc}
           preload="auto"
           autoPlay
+          // A one-post channel (notably LIVE with no current broadcaster) has
+          // nowhere to advance at EOF. Loop that sole clip so a visible Feed
+          // never settles on a paused final frame; multi-post channels keep
+          // flowing forward through `advanceCompletedContent` below.
+          loop={posts.length === 1}
           muted
           playsInline
           controls={false}

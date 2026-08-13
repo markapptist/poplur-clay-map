@@ -27,6 +27,10 @@ export interface Detection {
    *  object. It has no position, so it must never be drawn as a box — it is
    *  the readout's answer. Set by the native bridge. */
   whole?: boolean
+  /** Native classification publishes several true findings from one frame.
+   *  `primary` marks the stable, human-meaningful one chosen for the single AI
+   *  readout; confidence remains the model's unmodified confidence. */
+  primary?: boolean
   /** THIS user: the face matched their profile picture (on-device). Set by the
    *  native Vision matcher when it ships; the browser twin approximates it via
    *  faceIdEnabled() so the aura's owner state is demonstrable today. */

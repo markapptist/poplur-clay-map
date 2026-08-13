@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
@@ -30,12 +30,70 @@ const NATIVE_SHELL = isNativeShell()
 // card for something you have walked away from does not linger.
 const COMMERCE_MIN_DWELL_MS = 12_000
 
+// Vision publishes a ranked bag for every analyzed frame. The title has room
+// for a short scene read, not just one brittle taxonomy clue, so retain the
+// native primary and add up to two distinct, useful corroborating findings.
+// Low-information visual features still reach the scan-radius engine; they
+// simply do not masquerade as the camera's whole understanding of the scene.
+const LOW_INFORMATION_CAMERA_TERMS = [
+  'cord', 'wire', 'line', 'edge', 'pattern', 'texture', 'material',
+  'shadow', 'color', 'shape', 'structure', 'artifact',
+]
+
+function isLowInformationCameraLabel(label: string): boolean {
+  const terms = new Set(label.toLowerCase().split(/[^a-z]+/).filter(Boolean))
+  return LOW_INFORMATION_CAMERA_TERMS.some(term => terms.has(term))
+}
+
 function strongestCameraRead(items: Detection[]): Detection | null {
   const byConfidence = (a: Detection, b: Detection) => b.confidence - a.confidence
-  return items.find(item => item.user)
+  const selected = items.find(item => item.user)
+    ?? items.find(item => item.whole && item.primary)
     ?? [...items].filter(item => item.whole).sort(byConfidence)[0]
     ?? [...items].sort(byConfidence)[0]
     ?? null
+  if (!selected || !isLowInformationCameraLabel(selected.label)) return selected
+
+  // If Vision only has a texture clue, keep scanning instead of confidently
+  // declaring that clue to be the whole scene. A real located object may still
+  // rescue the read when the broad classifier is uncertain.
+  return items.find(item => item.whole
+      && item.confidence >= 0.12
+      && !isLowInformationCameraLabel(item.label))
+    ?? [...items].filter(item => !item.whole
+      && item.confidence >= 0.25
+      && !isLowInformationCameraLabel(item.label)).sort(byConfidence)[0]
+    ?? null
+}
+
+function meaningfulCameraReads(items: Detection[]): Detection[] {
+  const primary = strongestCameraRead(items)
+  if (!primary) return []
+
+  const isLowInformation = (item: Detection) => {
+    return isLowInformationCameraLabel(item.label)
+  }
+  const candidates = [
+    ...items.filter(item => !item.whole && item !== primary)
+      .sort((a, b) => b.confidence - a.confidence),
+    ...items.filter(item => item.whole && item !== primary)
+      .sort((a, b) => b.confidence - a.confidence),
+  ]
+  const reads = [primary]
+
+  for (const candidate of candidates) {
+    if (reads.length >= 3) break
+    if (candidate.confidence < (candidate.whole ? 0.15 : 0.25)) continue
+    if (isLowInformation(candidate)) continue
+    const label = candidate.label.trim().toLowerCase()
+    if (!label) continue
+    if (reads.some(read => {
+      const existing = read.label.trim().toLowerCase()
+      return existing === label || existing.includes(label) || label.includes(existing)
+    })) continue
+    reads.push(candidate)
+  }
+  return reads
 }
 // Only the iOS host currently mounts a camera surface behind the web view.
 // Android's post-login host is a WebView plus the capture intents; there is no
@@ -218,8 +276,8 @@ export default function Camera({
   const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
   const onAir = useSyncExternalStore(onLiveStore, isLive, isLive)
   const [detections, setDetections] = useState<Detection[]>([])
-  const currentCameraRead = strongestCameraRead(detections)
-  const [lastCameraRead, setLastCameraRead] = useState<Detection | null>(null)
+  const currentCameraReads = useMemo(() => meaningfulCameraReads(detections), [detections])
+  const [lastCameraReads, setLastCameraReads] = useState<Detection[]>([])
   const detectorRef = useRef<FrameDetector | null>(null)
   const [commerceCard, setCommerceCard] = useState<SmartCard | null>(null)
   const [commercePinned, setCommercePinned] = useState(false)
@@ -290,11 +348,15 @@ export default function Camera({
   const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing
   useEffect(() => {
     if (!detectOn || !liveSurfaceVisible) {
-      setLastCameraRead(null)
+      setLastCameraReads([])
       return
     }
-    if (currentCameraRead) setLastCameraRead(currentCameraRead)
-  }, [currentCameraRead, detectOn, liveSurfaceVisible])
+    // `detections` stays unchanged between the deliberately sparse native
+    // samples, so retaining this list preserves a steady readout without a
+    // timer. When a fresh sample explicitly has no meaningful answer, clear it
+    // instead of carrying the previous room/object into a different scene.
+    setLastCameraReads(currentCameraReads)
+  }, [currentCameraReads, detectOn, liveSurfaceVisible])
   const webCaptureRequired = liveSurfaceVisible || onAir
   const [nativeCameraBudget, setNativeCameraBudget] = useState<NativeCameraBudget | null>(null)
   useEffect(() => {
@@ -1389,21 +1451,30 @@ export default function Camera({
           deliberately sparse native analysis samples; before the first one,
           say that AI is scanning instead of leaving a mysterious blank. */}
       {real && (() => {
-        const detected = currentCameraRead ?? lastCameraRead
+        const sceneReads = currentCameraReads.length ? currentCameraReads : lastCameraReads
+        const detected = sceneReads[0] ?? null
         const cameraParked = nativeCameraBudget?.state === 'parked'
-        const label = !detectOn
+        const primaryLabel = !detectOn
           ? 'AI OFF'
           : cameraParked
             ? 'CAMERA COOLING'
             : detected
               ? (detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase())
               : 'AI SCANNING'
+        const contextLabel = detectOn && detected && !cameraParked
+          ? sceneReads.slice(1)
+              .map(read => read.label.replace(/_/g, ' ').toUpperCase())
+              .join(' · ')
+          : ''
         return (
           <div className={styles.camDetectionTitle} role="status" aria-live="polite">
-            <span>{label}</span>
-            {detectOn && detected && !cameraParked && (
-              <small>{Math.round(detected.confidence * 100)}%</small>
-            )}
+            <div className={styles.camDetectionPrimary}>
+              <span>{primaryLabel}</span>
+              {detectOn && detected && !cameraParked && (
+                <small>{Math.round(detected.confidence * 100)}%</small>
+              )}
+            </div>
+            {contextLabel && <b className={styles.camDetectionContext}>{contextLabel}</b>}
           </div>
         )
       })()}

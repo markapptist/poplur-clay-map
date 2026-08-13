@@ -418,12 +418,21 @@
   left: 50%;
   z-index: 27;
   display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  max-width: min(74vw, 320px);
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  max-width: min(84vw, 360px);
   transform: translateX(-50%);
   white-space: nowrap;
   pointer-events: none;
+}
+
+.camDetectionPrimary {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 7px;
+  max-width: 100%;
 }
 
 .camDetectionTitle span {
@@ -454,6 +463,19 @@
   font: 850 10px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   color: #bfeaff;
   -webkit-text-stroke: .7px rgba(2, 15, 52, 0.95);
+  paint-order: stroke fill;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 7px rgba(54, 166, 255, .62);
+}
+
+.camDetectionContext {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 850 clamp(8px, 2.4vw, 10px)/1.1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: .08em;
+  color: #bfeaff;
+  -webkit-text-stroke: .65px rgba(2, 15, 52, 0.95);
   paint-order: stroke fill;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 7px rgba(54, 166, 255, .62);
 }

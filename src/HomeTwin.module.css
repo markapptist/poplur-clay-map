@@ -1266,37 +1266,6 @@
   100% { scale: 1 1; }
 }
 
-/* The burst itself: a ring thrown off at the instant the object goes. It hangs
-   on the OUTER wrapper, not on the animating stage — the stage is scaled to a
-   .05 dot at exactly this moment, and a ring nested inside it would be
-   multiplied down to nothing. Keyed to `waiting` because that phase begins on
-   the pop and lasts until the replacement is ready, so the ring always plays
-   its full throw no matter how long the model takes. */
-@keyframes cubeSwapBurstRing {
-  0%   { opacity: 0; scale: .18; }
-  18%  { opacity: .95; }
-  100% { opacity: 0; scale: 1.9; }
-}
-
-/* Both phases carry an IDENTICAL animation declaration on purpose. The ring
-   starts on `waiting` (the pop) and the throw outlasts it — around 200ms with a
-   prepared model. A rule that only matched `waiting` cut the ring off mid-throw
-   when the phase advanced; because the computed animation is unchanged between
-   these two rules, the attribute flip does not restart it and the ring simply
-   keeps going over the incoming object. */
-.cubeWrap[data-poplur-cube-swap='waiting']::after,
-.cubeWrap[data-poplur-cube-swap='enter']::after {
-  content: '';
-  position: absolute;
-  inset: 16%;
-  z-index: -1;
-  border-radius: 50%;
-  border: 5px solid rgba(255, 98, 173, .92);
-  box-shadow: 0 0 28px rgba(246, 59, 154, .8);
-  pointer-events: none;
-  animation: cubeSwapBurstRing .3s ease-out both;
-}
-
 .cubeSwapExit {
   transform-origin: 50% 50%;
   animation: cubeSwapBubbleExit .16s cubic-bezier(.55, 0, .95, .35) both;
@@ -1325,10 +1294,6 @@
   .cubeSwapExit,
   .cubeSwapEnter {
     animation: none;
-  }
-  .cubeWrap[data-poplur-cube-swap='waiting']::after,
-  .cubeWrap[data-poplur-cube-swap='enter']::after {
-    content: none;
   }
   .cubeSwapWaiting {
     scale: 1 1;
