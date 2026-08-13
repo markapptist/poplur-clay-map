@@ -744,13 +744,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // A subscreen that hands the cube over to another object (the clay TV on TV
   // Guide and Radio, the mixing desk in the studio) used to hot-swap the model
   // mid-frame — one object simply became another with no beat, which read as a
-  // glitch rather than a transformation. It now shrinks away and the prepared
-  // replacement grows straight out of that same pop, without turning.
+  // glitch rather than a transformation. It now expands in place, swaps at
+  // the expansion peak, and lets the prepared replacement settle to normal
+  // size from that same pop, without turning or shrinking below 1×.
   //
   // `cubeModel` is what the screen ASKS for; `appliedCubeModel` is what the
   // cube is actually wearing. They differ only for the length of the swap, and
-  // the model changes at the animation's trough so you never see the old one
-  // shrink and the new one shrink with it.
+  // the model changes at the expanded peak so the handoff reads as one
+  // continuous clay pop rather than a disappearance and reappearance.
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
   const [appliedCubeScreen, setAppliedCubeScreen] = useState<string | null>(null)
   const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab))
@@ -1780,8 +1781,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     cubeSwapFallbackTimer.current = null
     const target = pendingCubeSwap.current
     pendingCubeSwap.current = null
-    // A rapid A→B→A reversal still completes the visible shrink, but grows
-    // A back smoothly instead of applying stale B or snapping straight to 1.
+    // A rapid A→B→A reversal still completes the visible expansion, then lets
+    // A settle smoothly instead of applying stale B or snapping straight to 1.
     if (!target) {
       beginCubeSwapEnter(false)
       return
@@ -1790,8 +1791,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     setAppliedCubeModel(target.model)
     setAppliedCubeScreen(target.screen)
     setCubeSwapPhase('waiting')
-    // A broken asset must not strand the navigator as a tiny dot. Successful
-    // loads enter from onModelReady below; this is bounded recovery only.
+    // A broken asset must not strand the navigator at its expanded peak.
+    // Successful loads enter from onModelReady below; this is bounded recovery.
     cubeModelReadyTimer.current = window.setTimeout(() => {
       cubeModelReadyTimer.current = null
       if (awaitingCubeModelRef.current !== target.model) return
