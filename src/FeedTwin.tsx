@@ -719,9 +719,6 @@ export default function FeedTwin({
     settledAdRef.current = null
     completedAdRef.current = null
     setCompletedAdSrc(null)
-    // Every fresh source starts under static, including the first source when
-    // Feed mounts. Never expose a held/black decoder frame while it buffers.
-    setStaticArmed(true)
   }, [sourceKey])
   useEffect(() => {
     recoveringAdSrcRef.current = null
@@ -749,7 +746,6 @@ export default function FeedTwin({
     }
     setReadyAdSrc(null)
     settledAdRef.current = null
-    setStaticArmed(true)
     void video.play().catch(() => {
       if (adVideoRef.current === video && video.getAttribute('src') === source) {
         advanceAdSource(source)
@@ -775,13 +771,7 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('static') === '1'
   const forceTransition = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('transition') === '1'
-  // Static belongs to every source handoff, not just a deliberate channel
-  // zap. This protects the initial Feed mount and a fallback source after a
-  // decoder stall as well.
-  const [staticArmed, setStaticArmed] = useState(true)
-
   const adReady = Boolean(adSrc) && readyAdSrc === adSrc
-  useEffect(() => { if (adReady) setStaticArmed(false) }, [adReady])
   useEffect(() => {
     if (adReady || post?.stream) recordPostView(postId)
   }, [adReady, post?.stream, postId])
@@ -822,7 +812,13 @@ export default function FeedTwin({
     }, 650)
     return () => window.clearTimeout(settle)
   }, [openingVisualReady, mediaUnlocked, index, showCommentRoll])
-  const showStatic = forceStatic || forceTransition || (mediaUnlocked && staticArmed && !adReady)
+  // Normal Feed handoffs keep the authored poster visible until the first
+  // decoded frame, then cross-fade directly to the clip. Do not run a second
+  // full-screen static decoder over the active video: on a slow WebKit start
+  // both could play for seconds, hiding the content the user is waiting for
+  // and spending two decoder leases on one visible surface. Static remains an
+  // explicit QA/transition treatment only.
+  const showStatic = forceStatic || forceTransition
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
   const staticReady = readyStaticKey === staticKey
@@ -1178,7 +1174,6 @@ export default function FeedTwin({
     if (start.mediaTap && adSrc && completedAdRef.current === adSrc) {
       completedAdRef.current = null
       setCompletedAdSrc(null)
-      setStaticArmed(true)
     }
     lastTap.current = 0
   }

@@ -1293,6 +1293,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // MSAA is a browser-only luxury: on phone GPUs it multiplies the
         // fill-extrusion cost at zero perceptible gain on small screens.
         antialias: !MAP_2D && !MAP_LITE && !isNativeShell(),
+        // Mapbox's default cross-frame symbol fade can retain a pauseable
+        // placement for a layer while the live clay style adds/replaces that
+        // layer during startup. The next continuation then dereferences the
+        // retired layer/source and throws. Complete each label placement in
+        // one frame instead: it removes that stale cross-frame owner and also
+        // avoids a recurring fade repaint without changing map detail.
+        fadeDuration: 0,
+        // Poplur renders one composed map style. Cross-source label collision
+        // state is unnecessary here, and Mapbox 3.26 can retain a pauseable
+        // collision layer while asynchronous Standard-style sources are still
+        // being replaced during cold boot. Keeping placement source-local
+        // removes that stale cross-source continuation without hiding labels.
+        crossSourceCollisions: false,
         attributionControl: false,
         // 2D means a genuinely flat renderer, not a top-down camera pointed at
         // the still-expensive globe shader. Constructing in Mercator is stable

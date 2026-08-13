@@ -351,6 +351,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let yaw = 0
     let motionYaw = 0
     let motionTargetYaw = 0
+    let motionPitch = 0
+    let motionTargetPitch = 0
     let lastMotionAt = 0
     let nextGlobeFrameAt = 0
     const mapGlobeIsVisible = () =>
@@ -521,22 +523,33 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       if (document.visibilityState === 'visible') wakeLoopRef.current()
     }
     const onDeviceOrientation = (event: DeviceOrientationEvent) => {
-      if (document.visibilityState !== 'visible' || event.gamma == null) return
+      if (document.visibilityState !== 'visible' || (event.gamma == null && event.beta == null)) return
       const now = performance.now()
       if (now - lastMotionAt < 33) return
       lastMotionAt = now
-      const next = THREE.MathUtils.clamp(event.gamma / 45, -1, 1) * 0.22
-      if (Math.abs(next - motionTargetYaw) < 0.004) return
-      motionTargetYaw = next
+      const nextYaw = THREE.MathUtils.clamp((event.gamma ?? 0) / 45, -1, 1) * 0.30
+      // beta is centred around the natural upright portrait hold. Keep the
+      // model's authored front face, then let a modest phone nod aim it up/down.
+      const nextPitch = THREE.MathUtils.clamp(((event.beta ?? 45) - 45) / 45, -1, 1) * -0.24
+      if (Math.abs(nextYaw - motionTargetYaw) < 0.004
+        && Math.abs(nextPitch - motionTargetPitch) < 0.004) return
+      motionTargetYaw = nextYaw
+      motionTargetPitch = nextPitch
       needsRender = true
       wakeLoopRef.current()
     }
     const onNativeMotion = (event: Event) => {
-      const roll = (event as CustomEvent<{ roll?: number }>).detail?.roll
-      if (document.visibilityState !== 'visible' || typeof roll !== 'number') return
-      const next = THREE.MathUtils.clamp(roll / 0.72, -1, 1) * 0.22
-      if (Math.abs(next - motionTargetYaw) < 0.002) return
-      motionTargetYaw = next
+      const detail = (event as CustomEvent<{ roll?: number; pitch?: number }>).detail
+      const roll = detail?.roll
+      const devicePitch = detail?.pitch
+      if (document.visibilityState !== 'visible'
+        || (typeof roll !== 'number' && typeof devicePitch !== 'number')) return
+      const nextYaw = THREE.MathUtils.clamp((roll ?? 0) / 0.72, -1, 1) * 0.30
+      const nextPitch = THREE.MathUtils.clamp((devicePitch ?? 0) / 0.72, -1, 1) * -0.24
+      if (Math.abs(nextYaw - motionTargetYaw) < 0.002
+        && Math.abs(nextPitch - motionTargetPitch) < 0.002) return
+      motionTargetYaw = nextYaw
+      motionTargetPitch = nextPitch
       needsRender = true
       wakeLoopRef.current()
     }
@@ -578,6 +591,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         motionYaw = motionTargetYaw
         needsRender = true
       }
+      const motionPitchDelta = motionTargetPitch - motionPitch
+      if (Math.abs(motionPitchDelta) > 0.0005) {
+        motionPitch += motionPitchDelta * (1 - Math.exp(-18 * dt))
+        needsRender = true
+      } else if (motionPitch !== motionTargetPitch) {
+        motionPitch = motionTargetPitch
+        needsRender = true
+      }
 
       // This is the one foreground canvas allowed to render at 60fps. Native's
       // private display RAF bypasses the general document governor, so making
@@ -596,7 +617,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         // object stays front-facing and moves only from live device tilt; a
         // tab change never carries the globe's accumulated yaw into it.
         group.rotation.y = (targetTabRef.current === 'map' ? yaw : 0) + motionYaw
-        pitchGroup.rotation.x = pitch
+        pitchGroup.rotation.x = pitch + motionPitch
         renderer.render(scene, camera)
         needsRender = false
       }
@@ -609,6 +630,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const active = pitchTarget !== null
         || Math.abs(pitchVelocity) > 0.02
         || Math.abs(motionTargetYaw - motionYaw) > 0.0005
+        || Math.abs(motionTargetPitch - motionPitch) > 0.0005
         || needsRender
       if (active || mapGlobeIsVisible()) {
         raf = (window.__poplurDisplayRAF ?? window.requestAnimationFrame)(loop)
