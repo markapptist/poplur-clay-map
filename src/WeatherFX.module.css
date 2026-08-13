@@ -11,8 +11,8 @@
    layer moving while this screen is visible. Audio and document-hidden timers
    are still stopped in WeatherFX.tsx. Emergency/low-power modes retain their
    global pause as a final thermal safety valve. */
-:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating,
-:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating * {
+:global(html[data-poplur-surface-front="1"].poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating,
+:global(html[data-poplur-surface-front="1"].poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating * {
   animation-play-state: running !important;
 }
 

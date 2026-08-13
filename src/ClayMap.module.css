@@ -1280,8 +1280,8 @@
 /* Weather is meaningful, not generic ambience. Let the compact map weather
    continue to rain/flash during an idle map view; low-power and emergency
    policy still override this through the shared global thermal gate. */
-:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating,
-:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating * {
+:global(html[data-poplur-surface-front="1"].poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating,
+:global(html[data-poplur-surface-front="1"].poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating * {
   animation-play-state: running !important;
 }
 
@@ -1508,8 +1508,7 @@
 .popPinMine { transform: translateY(6px) scale(1.16); }
 .popPinMine:active { transform: translateY(6px) scale(1.02); }
 
-/* One live, muted selfie preview floats over the owner's primary map pin.
-   It is outside the pin button so it never steals the marker's tap target. */
+/* The owner's static profile face floats above every owned pin. */
 .popPinSelfie {
   position: absolute;
   left: 50%;

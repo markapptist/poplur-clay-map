@@ -13,6 +13,7 @@
    the item is dismissed early. */
 
 .host {
+  --popup-safe-side: clamp(68px, 18vw, 104px);
   position: fixed;
   inset: 0;
   /* Ads draw over EVERYTHING, by instruction. This layer used to sit at 520,
@@ -48,7 +49,7 @@
   position: absolute;
   inset: 0;
   width: auto;
-  padding: 10px;
+  padding: 10px var(--popup-safe-side);
   display: grid;
   place-items: center;
   cursor: default;
@@ -59,14 +60,14 @@
   inset: 0;
   display: grid;
   place-items: center;
-  padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+  padding: max(18px, env(safe-area-inset-top)) var(--popup-safe-side) max(18px, env(safe-area-inset-bottom));
   background: rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
 }
 
 .mapContent {
-  width: min(420px, calc(100vw - 30px));
+  width: min(286px, calc(100vw - var(--popup-safe-side) - var(--popup-safe-side)));
   max-height: min(72vh, 660px);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.6);
@@ -186,6 +187,7 @@
   animation-name: engageRise;
   animation-timing-function: linear;
   animation-fill-mode: both;
+  max-width: min(286px, calc(100vw - var(--popup-safe-side) - var(--popup-safe-side)));
 }
 
 .engageIcon {

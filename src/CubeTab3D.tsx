@@ -8,6 +8,14 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { primeMotionAudio } from './motionEffectsAudio'
 import { preloadPop, primePopAudio } from './pop'
 
+declare global {
+  interface Window {
+    __poplurDisplayRAF?: (callback: FrameRequestCallback) => number
+    __poplurCancelDisplayRAF?: (id: number) => void
+    __poplurDisplayActive?: () => boolean
+  }
+}
+
 // Live 3D tab-object navigator. One persistent WebGL scene hot-swaps the Map,
 // Feed, Camera and Profile objects. Horizontal swipes choose one adjacent tab
 // without turning the object; Home owns the shrink/swap/grow bubble pop. The
@@ -338,15 +346,16 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let pitch = showFoodFaceRef.current ? HALF_PI : 0
     let pitchVelocity = 0
     let pitchTarget: number | null = null
-    // The map earth idles at a deliberately modest cadence. Other objects use
-    // only the bounded device-orientation yaw below.
+    // Navigation itself never rotates. The visible map earth and live device
+    // orientation use the navigator-only display clock below.
     let yaw = 0
     let motionYaw = 0
+    let motionTargetYaw = 0
     let lastMotionAt = 0
-    let globeWakeTimer = 0
     let nextGlobeFrameAt = 0
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
+      && (window.__poplurDisplayActive?.() ?? true)
       && targetTabRef.current === 'map'
       && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
 
@@ -514,11 +523,20 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const onDeviceOrientation = (event: DeviceOrientationEvent) => {
       if (document.visibilityState !== 'visible' || event.gamma == null) return
       const now = performance.now()
-      if (now - lastMotionAt < 66) return
+      if (now - lastMotionAt < 33) return
       lastMotionAt = now
       const next = THREE.MathUtils.clamp(event.gamma / 45, -1, 1) * 0.22
-      if (Math.abs(next - motionYaw) < 0.008) return
-      motionYaw = next
+      if (Math.abs(next - motionTargetYaw) < 0.004) return
+      motionTargetYaw = next
+      needsRender = true
+      wakeLoopRef.current()
+    }
+    const onNativeMotion = (event: Event) => {
+      const roll = (event as CustomEvent<{ roll?: number }>).detail?.roll
+      if (document.visibilityState !== 'visible' || typeof roll !== 'number') return
+      const next = THREE.MathUtils.clamp(roll / 0.72, -1, 1) * 0.22
+      if (Math.abs(next - motionTargetYaw) < 0.002) return
+      motionTargetYaw = next
       needsRender = true
       wakeLoopRef.current()
     }
@@ -530,6 +548,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     canvas.addEventListener('keydown', onKeyDown)
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true })
+    window.addEventListener('poplur-native-motion', onNativeMotion)
 
     // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
@@ -551,19 +570,32 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         }
       }
 
-      // The map's earth is the one navigational object that stays alive while
-      // the map is being viewed. It turns at 12fps, rather than retaining a
-      // 60/120fps rAF loop, and only ever redraws this small cube canvas.
-      if (mapGlobeIsVisible() && now >= nextGlobeFrameAt) {
-        // 12fps is ample for the small persistent map object and avoids a
-        // ProMotion-rate rAF keeping the phone warm on the map tab.
-        yaw = (yaw + 0.5 / 12) % (Math.PI * 2)
-        nextGlobeFrameAt = now + 1000 / 12
+      const motionDelta = motionTargetYaw - motionYaw
+      if (Math.abs(motionDelta) > 0.0005) {
+        motionYaw += motionDelta * (1 - Math.exp(-18 * dt))
+        needsRender = true
+      } else if (motionYaw !== motionTargetYaw) {
+        motionYaw = motionTargetYaw
+        needsRender = true
+      }
+
+      // This is the one foreground canvas allowed to render at 60fps. Native's
+      // private display RAF bypasses the general document governor, so making
+      // the globe premium does not wake the full map or any inactive screen.
+      // Leave a 1ms tolerance for 16.666…ms display timestamps. Requiring an
+      // exact deadline let harmless sub-millisecond jitter miss every other
+      // 60Hz frame and made the globe visibly fall to 30fps.
+      if (mapGlobeIsVisible() && now >= nextGlobeFrameAt - 1) {
+        yaw = (yaw + 0.5 * dt) % (Math.PI * 2)
+        nextGlobeFrameAt = now + 1000 / 60
         needsRender = true
       }
 
       if (needsRender) {
-        group.rotation.y = yaw + motionYaw
+        // Globe authorship includes a continuous spin. Every other navigator
+        // object stays front-facing and moves only from live device tilt; a
+        // tab change never carries the globe's accumulated yaw into it.
+        group.rotation.y = (targetTabRef.current === 'map' ? yaw : 0) + motionYaw
         pitchGroup.rotation.x = pitch
         renderer.render(scene, camera)
         needsRender = false
@@ -576,37 +608,29 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // wake() restarts the loop from a gesture or a tab change.
       const active = pitchTarget !== null
         || Math.abs(pitchVelocity) > 0.02
+        || Math.abs(motionTargetYaw - motionYaw) > 0.0005
         || needsRender
-      if (active) {
-        raf = requestAnimationFrame(loop)
+      if (active || mapGlobeIsVisible()) {
+        raf = (window.__poplurDisplayRAF ?? window.requestAnimationFrame)(loop)
       } else {
         raf = 0
-        // Avoid keeping an rAF callback alive between globe frames. A timer
-        // restarts the finite loop at a deliberately modest cadence instead.
-        if (mapGlobeIsVisible() && !globeWakeTimer) {
-          globeWakeTimer = window.setTimeout(() => {
-            globeWakeTimer = 0
-            wake()
-          }, 1000 / 12)
-        }
       }
     }
     const wake = () => {
       if (!raf && !disposed) {
         last = performance.now()
-        raf = requestAnimationFrame(loop)
+        raf = (window.__poplurDisplayRAF ?? window.requestAnimationFrame)(loop)
       }
     }
     wakeLoopRef.current = () => {
       needsRender = true
       wake()
     }
-    raf = requestAnimationFrame(loop)
+    raf = (window.__poplurDisplayRAF ?? window.requestAnimationFrame)(loop)
 
     return () => {
       disposed = true
-      cancelAnimationFrame(raf)
-      window.clearTimeout(globeWakeTimer)
+      ;(window.__poplurCancelDisplayRAF ?? window.cancelAnimationFrame)(raf)
       window.clearTimeout(flashPulseTimer)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)
@@ -615,6 +639,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       canvas.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('deviceorientation', onDeviceOrientation)
+      window.removeEventListener('poplur-native-motion', onNativeMotion)
       canvas.removeEventListener('webglcontextlost', onContextLost)
       disposeModel(scene)
       releaseWebGL(renderer)

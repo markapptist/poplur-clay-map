@@ -77,7 +77,7 @@ export interface PopPin {
   radiusKm: number
   /** the owner's takeover colour */
   color: string
-  /** profile picture for the pin's head (other people only). */
+  /** profile picture shown above the pin. */
   avatar: string | null
   /** A short, muted selfie loop that floats above the single primary own pin. */
   selfieVideo?: {
@@ -1374,8 +1374,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       visible: mapIsFrontRef.current && !document.hidden,
       onActiveChange: (active, policy) => {
         setSurfaceFront(active && mapIsFrontRef.current && !document.hidden)
-        if (!active) map.stop()
-        else {
+        if (active) {
           applyMapLightingPolicy(policy.dynamicShadowsAllowed, policy.postProcessingAllowed)
           map.triggerRepaint()
         }
@@ -2760,11 +2759,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // A finite camera/navigation lease keeps only operation-owned rendering
         // alive. Decoration still sleeps; the expiry park performs the stop.
         if (!sleeping || managedRenderingOperationActive()) return
-        map.stop()
+        // The shared governor has already stopped every Poplur-owned camera
+        // driver at this edge. Do not call Mapbox `stop()` while its async
+        // symbol placement is between frames: Mapbox 3.26 can retain a partial
+        // PauseablePlacement and crash on the next style update. With no
+        // owner left mutating the camera, its event-driven renderer drains to
+        // `idle` by itself and the park acknowledgement below remains exact.
         stopOrbit()
         if (carFeaturesLive) {
+          // Do not mutate a live GeoJSON source at the exact sleep edge.
+          // Mapbox may be between two PauseablePlacement frames; changing the
+          // style/source graph there can invalidate the layer layout object
+          // that continuePlacement still owns. The already-painted cars are
+          // harmless in the retained static frame and the next awake update
+          // replaces them normally.
           carFeaturesLive = false
-          setCarFeatures([])
         }
         setCarProximity(0)
       })
@@ -3434,7 +3443,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // exact per-frame churn this LOD exists to avoid.
     const livePins = new Map<string, mapboxgl.Marker>()
 
-    const previewPinId = pins?.find(pin => pin.mine && pin.selfieVideo?.src)?.id ?? null
     const buildMarker = (pin: PopPin, src: string): mapboxgl.Marker => {
       // Mapbox owns the marker root's inline transform and rewrites it while
       // the camera moves. Keep that positioning transform off the button
@@ -3456,21 +3464,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       img.draggable = false
       el.appendChild(img)
       markerRoot.appendChild(el)
-      // There is deliberately one live profile decoder on the board. Several
-      // owned claims can be visible at once; putting the same selfie above all
-      // of them made a single profile video decode repeatedly while panning.
-      if (pin.id === previewPinId && pin.selfieVideo?.src) {
-        const selfie = document.createElement('video')
-        selfie.className = styles.popPinSelfie
-        selfie.src = pin.selfieVideo.src
-        if (pin.selfieVideo.poster) selfie.poster = pin.selfieVideo.poster
-        selfie.muted = true
-        selfie.autoplay = true
-        selfie.loop = true
-        selfie.playsInline = true
-        selfie.preload = 'metadata'
-        selfie.setAttribute('aria-hidden', 'true')
-        markerRoot.appendChild(selfie)
+      // Every one of your pins wears the same static profile face. A still is
+      // both clearer ownership and dramatically cheaper than cloning the
+      // profile-video decoder above every visible claim.
+      if (pin.mine && pin.avatar) {
+        const face = document.createElement('img')
+        face.className = styles.popPinSelfie
+        face.src = pin.avatar
+        face.alt = ''
+        face.draggable = false
+        markerRoot.appendChild(face)
       }
       // Your own pops get a quiet marker of ownership so a crowded board
       // still answers "which of these are mine" without reading faces.

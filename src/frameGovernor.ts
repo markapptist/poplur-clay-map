@@ -1,4 +1,4 @@
-import { MANAGED_RENDERING_OPERATION_EVENT } from './nativeBridge'
+import { MANAGED_RENDERING_OPERATION_EVENT, isNativeShell } from './nativeBridge'
 
 // One clock for every animation in the app, and a thermal ladder on top of it.
 //
@@ -64,18 +64,20 @@ let nativeThermalCeiling: Quality = 3
 let powerSavingCeiling: Quality = 3
 let memoryPressureCeiling: Quality = 3
 let boostUntil = 0
-// The front-most page stays alive. Earlier builds treated two seconds without a
-// touch as permission to freeze the page the user was still looking at; that
-// saved work by visibly cheapening Map and by silencing interaction sounds.
-// Resource ownership now happens at the screen boundary instead: Home unmounts
-// the outgoing tab, while this clock sleeps only for a hidden/background
-// document or a surface explicitly marked not-front.
-let ambientAwakeUntil = Number.POSITIVE_INFINITY
+// This gate does NOT hide or pause the visible screen. It retires only ambient
+// decoration and Mapbox's already-settled renderer, preserving its last frame.
+// The tiny tab navigator owns a separate foreground display clock, so the globe
+// and live tilt remain 60fps while the city/weather/traffic stop burning power.
+const AMBIENT_IDLE_MS = isNativeShell() ? 2_000 : 15_000
+let ambientAwakeUntil = typeof performance !== 'undefined'
+  ? performance.now() + AMBIENT_IDLE_MS
+  : Number.POSITIVE_INFINITY
 let ambientSleepTimer = 0
 
 const qualityListeners = new Set<(q: Quality) => void>()
 const ambientSleepListeners = new Set<(sleeping: boolean) => void>()
 let ambientSleeping = false
+let nativeAmbientShowcaseFinished = false
 
 // Decoration asleep and the map renderer parked are NOT the same decision, and
 // conflating them cost us a frozen map. A parked map has its private
@@ -365,27 +367,48 @@ if (typeof document !== 'undefined') {
     window.clearTimeout(ambientSleepTimer)
     ambientSleepTimer = 0
     ambientAwakeUntil = 0
+    if (isNativeShell()) nativeAmbientShowcaseFinished = true
     setAmbientSleeping(true)
+  }
+  const ambientLeaseMs = () => {
+    const ceiling = effectiveQualityCeiling()
+    if (ceiling <= 0) return 0
+    if (ceiling <= 1) return 4_000
+    return AMBIENT_IDLE_MS
   }
   const wakeAmbient = () => {
     if (document.hidden || !surfaceFront) {
       sleepAmbient()
       return
     }
-    ambientAwakeUntil = Number.POSITIVE_INFINITY
+    // A physical phone gets one short authored showcase after the screen
+    // appears. Later touches wake only the renderer's direct-gesture window;
+    // they do not restart traffic, weather, boats and every ambient subscriber.
+    if (isNativeShell() && nativeAmbientShowcaseFinished && !managedRenderingOperationActive()) {
+      sleepAmbient()
+      return
+    }
+    const lease = ambientLeaseMs()
+    if (lease <= 0) {
+      sleepAmbient()
+      return
+    }
+    ambientAwakeUntil = performance.now() + lease
     setAmbientSleeping(false)
     window.clearTimeout(ambientSleepTimer)
-    ambientSleepTimer = 0
+    ambientSleepTimer = window.setTimeout(sleepAmbient, lease)
     boostFrames()
   }
   const onVisibility = () => {
+    document.documentElement.dataset.poplurSurfaceFront = !document.hidden && surfaceFront ? '1' : '0'
     if (document.hidden || !surfaceFront) sleepAmbient()
     else wakeAmbient()
     sync()
   }
 
-  // Input only promotes the cadence briefly. It never starts an idle countdown
-  // that later freezes the visible page.
+  // Input keeps the renderer responsive through the gesture and a short tail.
+  // The ambient lease may expire afterward, but that only parks internal map
+  // work behind its retained frame; it never hides or freezes the visible UI.
   const opts: AddEventListenerOptions = { passive: true, capture: true }
   const onGestureStart = (event: Event) => {
     if (event.type === 'pointerdown') pointersDown++
@@ -427,12 +450,14 @@ if (typeof document !== 'undefined') {
     document.documentElement.dataset.poplurThermal = state
     const nextCeiling = effectiveQualityCeiling()
     if (quality > nextCeiling) setQuality(nextCeiling)
-    if (previousCeiling < 2 && nextCeiling >= 2) {
+    if (nextCeiling < 2) {
+      sleepAmbient()
+    } else if (previousCeiling < 2) {
       // Recover conservatively: native has returned to nominal, but jumping
       // straight from survival to every effect can heat it again immediately.
       setQuality(2)
+      if (surfaceFront && !document.hidden) wakeAmbient()
     }
-    if (surfaceFront && !document.hidden) wakeAmbient()
   }
   window.addEventListener('poplur-native-thermal', event => {
     applyNativeThermal((event as CustomEvent).detail)
@@ -537,12 +562,25 @@ export function boostFrames(ms = 400): void {
 export function setSurfaceFront(front: boolean): void {
   surfaceFront = front
   if (typeof document !== 'undefined') {
+    document.documentElement.dataset.poplurSurfaceFront = front && !document.hidden ? '1' : '0'
     if (front && !document.hidden) {
       window.clearTimeout(ambientSleepTimer)
-      ambientAwakeUntil = Number.POSITIVE_INFINITY
-      if (quality < 3) setQuality(3)
-      setAmbientSleeping(false)
-      ambientSleepTimer = 0
+      const lease = effectiveQualityCeiling() <= 0
+        ? 0
+        : effectiveQualityCeiling() <= 1 ? 4_000 : AMBIENT_IDLE_MS
+      if (lease <= 0) {
+        ambientAwakeUntil = 0
+        setAmbientSleeping(true)
+        ambientSleepTimer = 0
+      } else {
+        ambientAwakeUntil = performance.now() + lease
+        setAmbientSleeping(false)
+        ambientSleepTimer = window.setTimeout(() => {
+          ambientAwakeUntil = 0
+          if (isNativeShell()) nativeAmbientShowcaseFinished = true
+          setAmbientSleeping(true)
+        }, lease)
+      }
     } else {
       // A surface going away cannot leave a finger "down": the pointerup landed
       // somewhere else, and a stuck count would hold the renderer awake forever.
@@ -568,10 +606,14 @@ export function setPowerSavingMode(enabled: boolean): void {
   powerSavingCeiling = enabled ? 1 : 3
   const next = effectiveQualityCeiling()
   if (quality > next) setQuality(next)
-  if (previous < 2 && next >= 2 && surfaceFront && !document.hidden) {
+  if (next < 2) {
+    ambientAwakeUntil = 0
+    setAmbientSleeping(true)
+  } else if (previous < 2 && surfaceFront && !document.hidden) {
+    // Recovery is permission to render on the next interaction, not a reason
+    // to restart every ambient subscriber while the phone is untouched.
     setQuality(2)
   }
-  if (surfaceFront && !document.hidden) setAmbientSleeping(false)
   sync()
 }
 
@@ -583,10 +625,13 @@ export function setMemoryPressure(level: 'normal' | 'warning' | 'critical'): voi
   memoryPressureCeiling = level === 'critical' ? 0 : level === 'warning' ? 1 : 3
   const next = effectiveQualityCeiling()
   if (quality > next) setQuality(next)
-  if (previous < 2 && next >= 2 && surfaceFront && !document.hidden) {
+  if (next < 2) {
+    ambientAwakeUntil = 0
+    setAmbientSleeping(true)
+  } else if (previous < 2 && surfaceFront && !document.hidden) {
+    // Stay settled until a real gesture or managed operation needs rendering.
     setQuality(2)
   }
-  if (surfaceFront && !document.hidden) setAmbientSleeping(false)
   sync()
 }
 

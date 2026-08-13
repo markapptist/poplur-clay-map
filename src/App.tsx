@@ -1822,6 +1822,7 @@ export default function App() {
   // The visible control is numbered 1 → 2 → 3, so launch on Level 1 and let
   // each press advance in the same order the lit sheets communicate.
   const [popLevel, setPopLevel] = useState<PopLevel>('mine')
+  const [publishedPins, setPublishedPins] = useState<PopPin[]>([])
   const popLevelRef = useRef(popLevel)
   popLevelRef.current = popLevel
 
@@ -1865,7 +1866,7 @@ export default function App() {
   const [ownAvatar, setOwnAvatar] = useState<string | null>(() => {
     try {
       const raw = window.localStorage.getItem('poplur.profile.photo')
-      return raw && raw.startsWith('data:image/') ? raw : null
+      return raw && (raw.startsWith('data:image/') || /^https:\/\//i.test(raw) || /^poplur-clay:\/\//i.test(raw)) ? raw : null
     } catch { return null }
   })
   const [ownSelfieVideo, setOwnSelfieVideo] = useState<string | null>(() => {
@@ -1888,7 +1889,7 @@ export default function App() {
       coords: poi.coords as [number, number],
       radiusKm: poi.radiusKm,
       color: myColor,
-      avatar: null,
+      avatar: ownAvatar,
       selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
       channel: poi.channel,
       // Your OWN pops carry their post too: arriving on your ground should
@@ -1918,8 +1919,14 @@ export default function App() {
       world: pop.world === true,
       mine: false,
     }))
-    return [...others, ...mine]
-  }, [popLevel, ownAvatar, ownSelfieVideo, myColor])
+    const published = popLevel === 'others' ? [] : publishedPins.map(pin => ({
+      ...pin,
+      color: myColor,
+      avatar: ownAvatar,
+      selfieVideo: undefined,
+    }))
+    return [...others, ...mine, ...published]
+  }, [popLevel, ownAvatar, ownSelfieVideo, myColor, publishedPins])
 
   const openMapPinContent = useCallback((pin: PopPin) => {
     // Never substitute an ad or cube for a post whose media record is missing.
@@ -2333,13 +2340,13 @@ export default function App() {
         // the shell's localStorage, which this origin cannot read).
         case 'setOwnPhoto': {
           const photo = event.data.photo
-          setOwnAvatar(typeof photo === 'string' && photo.startsWith('data:image/') ? photo : null)
+          setOwnAvatar(typeof photo === 'string' && (photo.startsWith('data:image/') || /^https:\/\//i.test(photo) || /^poplur-clay:\/\//i.test(photo)) ? photo : null)
           break
         }
         case 'setOwnProfileMedia': {
           const photo = event.data.photo
           const video = event.data.video
-          setOwnAvatar(typeof photo === 'string' && photo.startsWith('data:image/') ? photo : null)
+          setOwnAvatar(typeof photo === 'string' && (photo.startsWith('data:image/') || /^https:\/\//i.test(photo) || /^poplur-clay:\/\//i.test(photo)) ? photo : null)
           setOwnSelfieVideo(
             typeof video === 'string' && (video.startsWith('data:video/') || /^https:\/\//i.test(video) || /^poplur-clay:\/\//i.test(video))
               ? video
@@ -2369,11 +2376,50 @@ export default function App() {
           const center = event.data.center as [number, number] | undefined
           if (!map || !center) break
           const radiusKm = typeof event.data.radiusKm === 'number' ? event.data.radiusKm : 2
+          const droppedId = typeof event.data.id === 'string'
+            ? event.data.id
+            : `drop-${center[0].toFixed(4)},${center[1].toFixed(4)}`
+          const rawMedia = event.data.media
+          const media = rawMedia && (rawMedia.kind === 'photo' || rawMedia.kind === 'video')
+            && typeof rawMedia.src === 'string'
+            ? {
+                kind: rawMedia.kind === 'video' ? 'video' as const : 'image' as const,
+                src: rawMedia.src,
+                alt: typeof event.data.caption === 'string' && event.data.caption.trim()
+                  ? event.data.caption.trim()
+                  : 'Your published pop',
+              }
+            : undefined
+          if (media) {
+            setPublishedPins(current => [
+              ...current.filter(pin => pin.id !== droppedId),
+              {
+                id: droppedId,
+                user: null,
+                name: typeof event.data.caption === 'string' && event.data.caption.trim()
+                  ? event.data.caption.trim()
+                  : 'Your new pop',
+                coords: center,
+                radiusKm,
+                color: myColor,
+                avatar: ownAvatar,
+                channel: typeof event.data.channel === 'string' ? event.data.channel : undefined,
+                media,
+                mine: true,
+              },
+            ])
+          }
+          // Rehydrate the bounded Home-owned pin set after the Map iframe is
+          // remounted without replaying a stack of camera flights/popups.
+          if (event.data.replay === true) {
+            try { setClaim(map, { id: droppedId, center, radiusKm }) } catch { /* torn down */ }
+            break
+          }
           stopTour()
           flyToPop(center)
           // Let the claim pop AS the camera arrives, not before it.
           window.setTimeout(() => {
-            try { setClaim(map, { id: `drop-${center[0].toFixed(4)},${center[1].toFixed(4)}`, center, radiusKm }) } catch { /* torn down */ }
+            try { setClaim(map, { id: droppedId, center, radiusKm }) } catch { /* torn down */ }
           }, 2400)
           break
         }

@@ -45,7 +45,13 @@ import {
 } from './radiusLedger'
 
 
-/** Home chrome fades out after this long without a touch (see chromeIdle). */
+/**
+ * Diagnostic boundary for teardown/accounting only. The current visible
+ * screen never fades or pauses at this edge; hidden surfaces are unmounted by
+ * the active-screen owner instead. Keeping the explicit acknowledgement lets
+ * the thermal gate prove that background chrome work has quiesced without
+ * cheapening what the user is looking at.
+ */
 const CHROME_IDLE_MS = 30_000
 
 // Browser twin of the iOS Home screen (map tab state), rebuilt from
@@ -821,6 +827,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(false)
   const pendingMapCyclesRef = useRef<Array<1 | -1>>([])
+  const droppedClaimsRef = useRef<Array<Record<string, unknown>>>([])
   // The map iframe mounts only while the Map tab is front (the Android trade):
   // it starts mounted only when Home opens directly on the map, and otherwise
   // stays absent so Profile / Feed / Camera keep their full frame budget. It is
@@ -1083,6 +1090,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
       if (event.data.type === 'poplur-map-ready') {
         setMapReady(true)
+        droppedClaimsRef.current.forEach(claim => {
+          mapFrameRef.current?.contentWindow?.postMessage({ ...claim, replay: true }, '*')
+        })
         const pending = pendingMapCyclesRef.current.splice(0)
         pending.forEach((dir, index) => {
           window.setTimeout(() => {
@@ -1987,12 +1997,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               // the MAP, watching the new territory pop at that spot. The map
               // draws the claim; the tab switch shows it to you.
               if (!post.target) return
-              mapFrameRef.current?.contentWindow?.postMessage({
+              const droppedClaim = {
                 type: 'poplur-map-action',
                 action: 'dropClaim',
+                id: `drop-${post.target.lng.toFixed(4)},${post.target.lat.toFixed(4)}`,
                 center: [post.target.lng, post.target.lat],
                 radiusKm: post.target.radiusKm ?? 2,
-              }, '*')
+                media: post.media,
+                channel: post.channelId,
+                caption: post.caption,
+              }
+              droppedClaimsRef.current = [
+                ...droppedClaimsRef.current.filter(claim => claim.id !== droppedClaim.id),
+                droppedClaim,
+              ].slice(-24)
+              if (mapReady && mapFrameRef.current?.contentWindow) {
+                mapFrameRef.current.contentWindow.postMessage(droppedClaim, '*')
+              }
               setActiveTab('map')
             }}
           />

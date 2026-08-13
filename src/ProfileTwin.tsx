@@ -152,8 +152,6 @@ const VISITING_TILE_BY_POP_ID: Record<string, number> = Object.fromEntries(
 // sixteen of them dragged the screen to single-digit fps. Video is for the
 // fullscreen viewer only.
 const posterFor = (video: string) => video.replace('feed/', 'feed/posters/').replace('.mp4', '.jpg')
-const MAX_VIEWER_PLAY_MS = 12_000
-
 function releaseViewerMedia(video: HTMLVideoElement): void {
   video.pause()
   video.removeAttribute('src')
@@ -609,7 +607,6 @@ export default function ProfileTwin({
   const [notifsClosing, setNotifsClosing] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
   const [viewerPlaying, setViewerPlaying] = useState(false)
-  const viewerLeaseRef = useRef<number | null>(null)
   // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
   // to the OS share sheet / clipboard for outside.
   const [shareOpen, setShareOpen] = useState(false)
@@ -730,26 +727,20 @@ export default function ProfileTwin({
   const notifCloseTimerRef = useRef<number | null>(null)
 
   const retireViewer = useCallback(() => {
-    if (viewerLeaseRef.current != null) window.clearTimeout(viewerLeaseRef.current)
-    viewerLeaseRef.current = null
     if (viewerVideoRef.current) releaseViewerMedia(viewerVideoRef.current)
     setViewerPlaying(false)
   }, [])
 
-  // Opening a tile or stepping with the channel arrows grants one visible
-  // play-through. Closing/covering/backgrounding the viewer destroys the
-  // decoder; replay is another explicit tap, never an ambient loop.
+  // The selected profile post is the visible screen: it autoplays continuously
+  // until the user closes/covers it. Only a real lifecycle boundary retires
+  // the decoder; there is no foreground timer or replay affordance.
   useEffect(() => {
-    if (
-      viewerIdx == null
-      || document.hidden
-      || !PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed
-    ) retireViewer()
+    if (viewerIdx == null || document.hidden || shareOpen) retireViewer()
     else setViewerPlaying(true)
-  }, [mode, retireViewer, viewerIdx])
+  }, [mode, retireViewer, shareOpen, viewerIdx])
 
   useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
-    if (!snapshot.isForeground || !snapshot.expensiveVideoBackedTexturesAllowed) retireViewer()
+    if (!snapshot.isForeground) retireViewer()
   }), [retireViewer])
 
   useEffect(() => {
@@ -763,15 +754,21 @@ export default function ProfileTwin({
       const selected = (mode === 'liked' ? LIKED : POSTS)[viewerIdx % (mode === 'liked' ? LIKED.length : POSTS.length)]
       if (selected) { video.src = selected.video; video.load() }
     }
-    video.muted = isGateMuted()
-    void video.play().catch(() => retireViewer())
-    viewerLeaseRef.current = window.setTimeout(retireViewer, MAX_VIEWER_PLAY_MS)
-    const onVisibility = () => { if (document.hidden) retireViewer() }
+    // Begin muted so autoplay is deterministic even before WebKit has carried
+    // the opening gesture through React. Once playback owns the visible
+    // decoder, restore the user's actual audio-gate choice.
+    video.muted = true
+    void video.play().then(() => { video.muted = isGateMuted() }).catch(() => {
+      video.muted = true
+      void video.play().catch(() => { /* visibility/foreground will retry */ })
+    })
+    const onVisibility = () => {
+      if (document.hidden) retireViewer()
+      else setViewerPlaying(true)
+    }
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('pagehide', retireViewer)
     return () => {
-      if (viewerLeaseRef.current != null) window.clearTimeout(viewerLeaseRef.current)
-      viewerLeaseRef.current = null
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pagehide', retireViewer)
       releaseViewerMedia(video)
@@ -1818,10 +1815,9 @@ export default function ProfileTwin({
               poster={posterFor(viewerPost.video)}
               autoPlay
               muted
+              loop
               playsInline
               preload="metadata"
-              onEnded={retireViewer}
-              onClick={retireViewer}
             />
           ) : (
             <img
@@ -1830,18 +1826,6 @@ export default function ProfileTwin({
               alt=""
               draggable={false}
             />
-          )}
-          {!shareOpen && !viewerPlaying && (
-            <button
-              type="button"
-              className={styles.viewerReplay}
-              onClick={() => {
-                if (!document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed) {
-                  setViewerPlaying(true)
-                }
-              }}
-              aria-label="Play this post again"
-            >▶</button>
           )}
           <span className={styles.tileScan} aria-hidden="true" />
           <div className={styles.viewerTop}>

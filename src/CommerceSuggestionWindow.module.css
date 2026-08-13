@@ -4,7 +4,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(390px, calc(100vw - 32px));
+  width: min(286px, calc(100vw - 136px));
   max-height: min(680px, calc(100dvh - 110px));
   overflow: hidden;
   border: 1px solid rgba(0, 0, 0, 0.48);
@@ -22,17 +22,17 @@
 }
 
 .camera {
-  width: min(350px, calc(100vw - 28px));
+  width: min(286px, calc(100vw - 136px));
   max-height: min(600px, calc(100dvh - 170px));
 }
 
 .expanded {
-  width: min(720px, calc(100vw - 20px));
+  width: min(286px, calc(100vw - 136px));
   max-height: calc(100dvh - 42px);
 }
 
 .minimized {
-  width: min(300px, calc(100vw - 28px));
+  width: min(286px, calc(100vw - 136px));
   max-height: 35px;
 }
 
