@@ -4,7 +4,7 @@ import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
 import { feedSuggestionFor } from './tourSmarts'
-import { onTick } from './frameGovernor'
+import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
 // hands back on its own; background radio is a standing choice the user made
@@ -429,6 +429,8 @@ export default function FeedTwin({
   } | null>(null)
   const wheelLock = useRef(false)
   const adVideoRef = useRef<HTMLVideoElement>(null)
+  const decoderLeaseRef = useRef<PoplurResourceLease | null>(null)
+  const [decoderGranted, setDecoderGranted] = useState(false)
   const settledAdRef = useRef<string | null>(null)
   const completedAdRef = useRef<string | null>(null)
   const [completedAdSrc, setCompletedAdSrc] = useState<string | null>(null)
@@ -446,6 +448,30 @@ export default function FeedTwin({
   const ch = CHANNELS[index]
   const contentIdxRef = useRef<Record<string, number>>({})
   const [contentRevision, forceContentRender] = useState(0)
+
+  // One visible Feed owns one decoder. A destination swap releases it before
+  // the next heavyweight screen mounts, so WebKit never has to choose between
+  // an old Feed pipeline and a new camera/map workload.
+  useEffect(() => {
+    const lease = poplurResourcePool.acquire('media-decoder', 'feed', {
+      priority: 100,
+      onRevoke: () => {
+        const video = adVideoRef.current
+        if (video) retireFeedVideo(video)
+        setReadyAdSrc(null)
+        settledAdRef.current = null
+        setDecoderGranted(false)
+      },
+    })
+    decoderLeaseRef.current = lease
+    setDecoderGranted(Boolean(lease))
+    return () => {
+      const video = adVideoRef.current
+      if (video) retireFeedVideo(video)
+      lease?.release()
+      if (decoderLeaseRef.current === lease) decoderLeaseRef.current = null
+    }
+  }, [])
 
   // The AI's quiet offer for the post you are watching — the feed twin of the
   // tour's smart card. Appears after you have SETTLED on a channel (3.5s: a
@@ -715,6 +741,7 @@ export default function FeedTwin({
   const [readyPosterKey, setReadyPosterKey] = useState<string | null>(null)
   useEffect(() => {
     setRecoveryAttempt(0)
+    setRecoveringPlayback(true)
     setReadyAdSrc(null)
     settledAdRef.current = null
     completedAdRef.current = null
@@ -818,7 +845,8 @@ export default function FeedTwin({
   // both could play for seconds, hiding the content the user is waiting for
   // and spending two decoder leases on one visible surface. Static remains an
   // explicit QA/transition treatment only.
-  const showStatic = forceStatic || forceTransition
+  const [recoveringPlayback, setRecoveringPlayback] = useState(true)
+  const showStatic = forceStatic || forceTransition || recoveringPlayback || !decoderGranted
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
   const staticReady = readyStaticKey === staticKey
@@ -929,20 +957,17 @@ export default function FeedTwin({
     else video.pause()
   }, [showStatic, suppressed, ch.id])
 
-  // A bad/blocked creative can never strand the channel on static. Retry play
-  // first, then rotate through bundled, decode-verified stock clips until time
-  // advances. Loop wrap counts as progress.
+  // A bad/blocked creative can never strand the channel on a frozen frame.
+  // Decoder health is resource ownership, not decoration, so this monitor is
+  // independent of the animation governor and keeps running while a person is
+  // passively watching. Static covers recovery immediately; the one leased
+  // decoder restarts once, then rotates to a verified bundled source.
   useEffect(() => {
     const video = adVideoRef.current
-    if (!video || !adSrc || suppressed || !mediaUnlocked || completedAdSrc === adSrc) return
+    if (!video || !adSrc || suppressed || !mediaUnlocked || !decoderGranted || completedAdSrc === adSrc) return
     let lastTime = video.currentTime
     let stalledTicks = 0
-    // On the governor rather than its own interval: a stall the user is not
-    // there to see does not need catching on the second it happens, and this
-    // ran once a second for the life of every mounted channel — including the
-    // feed sitting behind the map. It resumes with a check the instant the
-    // screen is touched again, which is the first moment a stall matters.
-    const stopWatchdog = onTick(() => {
+    const watchdog = window.setInterval(() => {
       if (
         adVideoRef.current !== video
         || suppressedRef.current
@@ -953,17 +978,24 @@ export default function FeedTwin({
       if (advanced) {
         lastTime = now
         stalledTicks = 0
+        setRecoveringPlayback(false)
         markAdReady(adSrc)
         return
       }
       stalledTicks += 1
+      setRecoveringPlayback(true)
       if (video.paused || video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
         retryAdPlayback(adSrc, video)
       }
+      if (stalledTicks === 2) {
+        video.load()
+        lastTime = video.currentTime
+        void video.play().catch(() => {})
+      }
       if (stalledTicks >= 3) advanceAdSource(adSrc)
-    }, 1000)
-    return () => stopWatchdog()
-  }, [adSrc, completedAdSrc, suppressed, mediaUnlocked, markAdReady, advanceAdSource, retryAdPlayback])
+    }, 900)
+    return () => window.clearInterval(watchdog)
+  }, [adSrc, completedAdSrc, suppressed, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource, retryAdPlayback])
 
   // Channel audio. The ad creative is the channel's soundtrack, so it plays
   // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
@@ -1431,7 +1463,7 @@ export default function FeedTwin({
         />
       )}
 
-      {adSrc && !post?.stream && mediaUnlocked && completedAdSrc !== adSrc && (
+      {adSrc && !post?.stream && mediaUnlocked && decoderGranted && completedAdSrc !== adSrc && (
         <video
           // The same creative can appear in two adjacent posts. The post key
           // forces a fresh decoder in that case; otherwise a completed video

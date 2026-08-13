@@ -20,6 +20,7 @@ import CommerceSuggestionWindow from './CommerceSuggestionWindow'
 import { purchaseSuggestionForDetection } from './commerceSuggestions'
 import type { SmartCard } from './tourSmarts'
 import { useControlSide } from './controlPlacement'
+import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
@@ -346,8 +347,38 @@ export default function Camera({
   // explicit MediaStream, but the native sensor always follows real surface
   // visibility and the OS thermal tripwire.
   const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing
+  const captureLeaseRef = useRef<PoplurResourceLease | null>(null)
+  const analysisLeaseRef = useRef<PoplurResourceLease | null>(null)
+  const [captureGranted, setCaptureGranted] = useState(false)
+  const [analysisGranted, setAnalysisGranted] = useState(false)
+  const captureRequested = liveSurfaceVisible || onAir
+
   useEffect(() => {
-    if (!detectOn || !liveSurfaceVisible) {
+    if (!captureRequested) {
+      captureLeaseRef.current?.release()
+      captureLeaseRef.current = null
+      setCaptureGranted(false)
+      return
+    }
+    const lease = poplurResourcePool.acquire('camera', 'camera-live', {
+      priority: 110,
+      onRevoke: () => {
+        postNativeEvent({ type: 'cameraLiveVisibilityChanged', visible: false })
+        streamRef.current?.getTracks().forEach(track => track.stop())
+        setCaptureGranted(false)
+      },
+    })
+    captureLeaseRef.current = lease
+    setCaptureGranted(Boolean(lease))
+    return () => {
+      lease?.release()
+      if (captureLeaseRef.current === lease) captureLeaseRef.current = null
+    }
+  }, [captureRequested])
+
+  const effectiveLiveSurfaceVisible = liveSurfaceVisible && captureGranted
+  useEffect(() => {
+    if (!detectOn || !effectiveLiveSurfaceVisible) {
       setLastCameraReads([])
       return
     }
@@ -356,8 +387,8 @@ export default function Camera({
     // timer. When a fresh sample explicitly has no meaningful answer, clear it
     // instead of carrying the previous room/object into a different scene.
     setLastCameraReads(currentCameraReads)
-  }, [currentCameraReads, detectOn, liveSurfaceVisible])
-  const webCaptureRequired = liveSurfaceVisible || onAir
+  }, [currentCameraReads, detectOn, effectiveLiveSurfaceVisible])
+  const webCaptureRequired = captureRequested && captureGranted
   const [nativeCameraBudget, setNativeCameraBudget] = useState<NativeCameraBudget | null>(null)
   useEffect(() => {
     if (!NATIVE_CAMERA_PREVIEW) return
@@ -372,17 +403,39 @@ export default function Camera({
   const resumeNativePreview = useCallback(() => {
     // This bridge event is intentionally reachable only from pointer/click
     // handlers below. Never renew the ten-second window from a timer or effect.
-    if (!NATIVE_CAMERA_PREVIEW || !liveSurfaceVisible || !nativeCameraBudget?.canResume) return
+    if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible || !nativeCameraBudget?.canResume) return
     postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
-  }, [liveSurfaceVisible, nativeCameraBudget?.canResume])
+  }, [effectiveLiveSurfaceVisible, nativeCameraBudget?.canResume])
   // AR filters need a face reading even when object detection is toggled off.
   // The read remains private to the effect unless DETECT is also enabled.
-  const liveDetectionActive = (detectOn || arOpen || arFilter !== 'none') && liveSurfaceVisible
+  const analysisRequested = (detectOn || arOpen || arFilter !== 'none') && effectiveLiveSurfaceVisible
+  useEffect(() => {
+    if (!analysisRequested) {
+      analysisLeaseRef.current?.release()
+      analysisLeaseRef.current = null
+      setAnalysisGranted(false)
+      return
+    }
+    const lease = poplurResourcePool.acquire('analysis', 'camera-analysis', {
+      priority: 100,
+      onRevoke: () => {
+        postNativeEvent({ type: 'cameraControl', control: 'detect', on: false })
+        setAnalysisGranted(false)
+      },
+    })
+    analysisLeaseRef.current = lease
+    setAnalysisGranted(Boolean(lease))
+    return () => {
+      lease?.release()
+      if (analysisLeaseRef.current === lease) analysisLeaseRef.current = null
+    }
+  }, [analysisRequested])
+  const liveDetectionActive = analysisRequested && analysisGranted
   useEffect(() => {
     if (isNativeShell()) {
-      postNativeEvent({ type: 'cameraLiveVisibilityChanged', visible: liveSurfaceVisible })
+      postNativeEvent({ type: 'cameraLiveVisibilityChanged', visible: effectiveLiveSurfaceVisible })
     }
-  }, [liveSurfaceVisible])
+  }, [effectiveLiveSurfaceVisible])
   useEffect(() => () => {
     if (isNativeShell()) {
       // Home unmounts its heavy pages while the app is backgrounded. That is
@@ -555,7 +608,7 @@ export default function Camera({
     if (NATIVE_CAMERA_PREVIEW) return
     const video = videoRef.current
     if (!video) return
-    if (!liveSurfaceVisible) {
+    if (!effectiveLiveSurfaceVisible) {
       video.pause()
       video.srcObject = null
       return
@@ -564,7 +617,7 @@ export default function Camera({
     if (!stream) return
     video.srcObject = stream
     void video.play().catch(() => {})
-  }, [liveSurfaceVisible, streamOn])
+  }, [effectiveLiveSurfaceVisible, streamOn])
 
   useEffect(() => {
     const retry = () => setStreamRequest(value => value + 1)
