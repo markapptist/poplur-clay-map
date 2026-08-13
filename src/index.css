@@ -227,11 +227,10 @@ html.camera-live,
   animation: none !important;
 }
 
-/* Once the shared frame governor marks the untouched surface asleep, pause
-   the remaining compositor-only ambience too. These animations are cheap per
-   frame but otherwise keep WebKit/GPU work alive forever: the home cube, map
-   boats, weather particles/clouds/fog and the globe sun/moon. The scene stays
-   visually complete at its current frame and resumes on the next gesture. */
+/* A document that is actually hidden or no longer front is marked asleep and
+   sheds every compositor animation. The visible home document no longer enters
+   this state merely because the user stopped touching it. Low-power/emergency
+   remain the explicit OS-pressure override for decorative motion. */
 .poplur-ambient-sleep [class*="cubeFloat"],
 .poplur-ambient-sleep [class*="drift"],
 .poplur-ambient-sleep [class*="grain"],

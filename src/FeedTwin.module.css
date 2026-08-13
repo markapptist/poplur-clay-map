@@ -624,15 +624,6 @@
   .endComments { animation: none; }
 }
 
-/* Native cold mode pauses CSS after its short interaction lease. If a comment
-   roll mounts after that boundary, freezing the entrance animation at 0%
-   leaves an otherwise-present roll fully transparent. Its idle state is the
-   final visible pose; the inner credit track may remain paused in place. */
-:global(.poplur-performance-idle) .endComments {
-  animation: none;
-  opacity: 1;
-}
-
 /* Centred, translucent window: the post keeps playing behind it. */
 .commentWindow {
   position: absolute;
