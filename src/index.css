@@ -200,13 +200,6 @@ html.camera-live,
   display: none !important;
 }
 
-/* 1d. poplurRecCube animates a glow plus a clear opacity blink on the
-   always-mounted cube for as long as recording runs. The thermal iOS tier
-   keeps the opacity channel but drops the continuously re-filtered glow. */
-.tier-ios [class*="cubeRecording"] {
-  animation-name: poplurRecCubeLite !important;
-}
-
 /* 2. Infinite background-position sweeps. The 6 Aug on-device census named
    every animation running on the idle surface: homeLabelShader (both stat
    labels), feedCenterTextShader (the feed's centre line) — 4.8s gradient
@@ -337,24 +330,9 @@ html.camera-live,
     0 0 9px rgba(77, 255, 105, 0.5) !important;
 }
 
-/* The recording tell blinks under the camera's channel arrows, and the cube
-   pulses with it — one clock for both, so they blink together. */
 @keyframes poplurRecBlink {
   0%, 49% { opacity: 1; }
   50%, 100% { opacity: 0.15; }
-}
-
-@keyframes poplurRecCube {
-  0%, 49% { opacity: 1; filter: drop-shadow(0 0 0 rgba(255, 45, 75, 0)); }
-  50%, 100% { opacity: 0.24; filter: drop-shadow(0 0 18px rgba(255, 45, 75, 0.85)) brightness(1.12); }
-}
-
-/* tier-ios substitute for the above: the same clock and the same hard step, on
-   opacity instead of filter, so the cube still blinks while recording without
-   the compositor re-filtering its layer twice a second. */
-@keyframes poplurRecCubeLite {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0.24; }
 }
 
 /* ── Engagement chips (map) ─────────────────────────────────────────────────

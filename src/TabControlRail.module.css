@@ -1,0 +1,26 @@
+.rail {
+  position: absolute;
+  top: max(154px, calc(env(safe-area-inset-top, 0px) + 112px));
+  z-index: 46;
+  display: grid;
+  grid-auto-flow: row;
+  grid-auto-rows: 44px;
+  grid-template-columns: 44px;
+  align-items: center;
+  justify-items: center;
+  gap: 12px;
+  width: 44px;
+  pointer-events: auto;
+}
+
+.rail > * {
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+}
+
+.left { left: max(12px, env(safe-area-inset-left, 0px)); }
+.right { right: max(12px, env(safe-area-inset-right, 0px)); }

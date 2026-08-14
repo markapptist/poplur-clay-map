@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import TopChrome from './TopChrome'
 import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import styles from './ViewHarness.module.css'
@@ -74,7 +73,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   // it returns you to that home. So ?view=holdmenu keeps the home (map) mounted
   // underneath rather than swapping it out.
   const baseView: Exclude<HarnessView, 'holdmenu'> = view === 'holdmenu' ? 'home' : view
-  const [inlineTab, setInlineTab] = useState<CubeTab>(VIEW_TO_TAB[baseView])
+  const [, setInlineTab] = useState<CubeTab>(VIEW_TO_TAB[baseView])
 
   useEffect(() => { setInlineTab(VIEW_TO_TAB[baseView]) }, [baseView])
 
@@ -95,13 +94,6 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     <div className={styles.stage}>
       <div className={styles.phone}>
         <div className={styles.backdrop} />
-        {/* Only for screens that DON'T bring their own wordmark. The feed
-            TV-flips the brand with its channel info; the map is an iframe
-            running App, which renders TopChrome (plus its own mute and
-            search) inside itself — so the harness copy landed on top of the
-            map's, which is the doubled logo on the phone. */}
-        {inlineTab === 'profile' && <TopChrome />}
-
         <main className={styles.viewport} aria-label={`${VIEW_LABELS[view]} test view`}>
           <div key={baseView} className={styles.screenSurface}>
             {screen}

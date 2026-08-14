@@ -70,6 +70,7 @@ import { startEngagementChips, engagementVerb, type EngagementEvent } from './en
 import { ambientAllowed, onAmbientSleepChange, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
 import { useControlSide } from './controlPlacement'
+import TabControlRail from './TabControlRail'
 
 interface RadioStationCue {
   name: string
@@ -2700,10 +2701,10 @@ export default function App() {
 
 
       {/* ── Top chrome: provided clay logo + wordmark, with the AI line ── */}
-      <TopChrome />
+      {!isEmbedded && <TopChrome />}
       {/* Reachable thumb rail. Settings can mirror the whole group for a
           right-handed layout without scattering controls around the title. */}
-      <div className={`${styles.mapControlRail} ${controlSide === 'right' ? styles.mapControlRailRight : styles.mapControlRailLeft}`}>
+      <TabControlRail side={controlSide} label="Map controls">
         <ClayMuteButton
           muted={muted}
           size={44}
@@ -2725,7 +2726,7 @@ export default function App() {
         <ClayCornerButton
           kind="locate"
           label="Go to my location"
-          size={56}
+          size={44}
           still
           activateOnClick
           onPress={() => {
@@ -2742,12 +2743,12 @@ export default function App() {
         <ClayCornerButton
           kind="search"
           label={searchOpen ? 'Close search' : 'Search places'}
-          size={56}
+          size={44}
           still
           activateOnClick
           onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
         />
-      </div>
+      </TabControlRail>
       {/* The weather overlay itself: rain, snow, hail, lightning over the map. */}
       <WeatherFX mode={weatherMode} />
 

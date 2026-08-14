@@ -14,6 +14,8 @@ const deferToOwner = (owner: AudioOwner | null): boolean =>
   owner === 'voice' || owner === 'radio'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
+import TabControlRail from './TabControlRail'
+import { useControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
@@ -331,11 +333,9 @@ export default function FeedTwin({
       native play-through. Initial cold launch deliberately leaves this false. */
   autoPlayOnMount?: boolean
 } = {}) {
+  const controlSide = useControlSide()
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
-  // Top slot TV-flip: alternates the poplur brand and the channel info row.
-  const [face, setFace] = useState<'logo' | 'info'>('logo')
-  const [flipOut, setFlipOut] = useState(false)
   // Centered line cycles: video title → channel username → coordinates.
   const [centerIdx, setCenterIdx] = useState(0)
   const [muted, setMuted] = useState(isUserMuted)
@@ -592,21 +592,6 @@ export default function FeedTwin({
     if (onIndexChange) onIndexChange(next)
     else setOwnIndex(next)
   }, [index, onIndexChange])
-
-  // Top slot: fade out, swap face (brand ⇄ channel info), fade back in — an
-  // unhurried beat, not a channel zap.
-  useEffect(() => {
-    if (!mediaUnlocked) return
-    let swap = 0
-    const iv = window.setInterval(() => {
-      setFlipOut(true)
-      swap = window.setTimeout(() => {
-        setFace(f => (f === 'logo' ? 'info' : 'logo'))
-        setFlipOut(false)
-      }, 340)
-    }, 6500)
-    return () => { window.clearInterval(iv); window.clearTimeout(swap) }
-  }, [mediaUnlocked])
 
   // Centered info line: title → username → coordinates, slow cross-fade.
   useEffect(() => {
@@ -1557,56 +1542,35 @@ export default function FeedTwin({
         </>
       )}
 
-      {/* ── Top bar ──
-          Far left: the clay 3D mute mark (same extruded-clay recipe as the
-          channel arrows) — always present, never part of the swap. The rest is
-          ONE slot that cross-fades between the poplur brand and the channel
-          info row: [channel logo | title⇄username⇄coords | CH + name]. */}
+      {/* The Home shell owns the one Poplur wordmark. Feed contributes only
+          its two same-sized actions in the universal left rail and its channel
+          information underneath the title. */}
       {!playerMode && (
-      <div className={styles.topBar}>
-        <ClayMuteButton muted={muted} onToggle={toggleMute} size={40} />
-        <div className={flipOut ? `${styles.flipSlot} ${styles.flipSlotOut}` : styles.flipSlot}>
-          {face === 'logo' ? (
-            <div className={styles.brandRow}>
-              <img className={styles.brandIcon} src="logo_icon.png" alt="" draggable={false} />
-              <img className={styles.brandWordmark} src="logo_text.png" alt="poplur" draggable={false} />
+      <>
+        <TabControlRail side={controlSide} label="Feed controls">
+          <ClayMuteButton muted={muted} onToggle={toggleMute} size={44} />
+          <ClayCornerButton kind="share" label="Share this post" size={44} still onPress={sharePost} />
+        </TabControlRail>
+        <div className={styles.topBar}>
+          <div className={styles.infoRow}>
+            <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
+            <div className={styles.centerTicker}>
+              {[post?.caption ?? ch.caption, post?.user ?? ch.user].map((line, i) => (
+                <span
+                  key={i}
+                  className={`${i === centerIdx % 2 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
+                >
+                  {line}
+                </span>
+              ))}
             </div>
-          ) : (
-            <div className={styles.infoRow}>
-              <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
-              <div className={styles.centerTicker}>
-                {[post?.caption ?? ch.caption, post?.user ?? ch.user].map((line, i) => (
-                  <span
-                    key={i}
-                    className={`${i === centerIdx % 2 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
-                  >
-                    {line}
-                  </span>
-                ))}
-              </div>
-              <div className={styles.chTag}>
-                <span>CH {ch.number}</span>
-                <span>{ch.name.toUpperCase()}</span>
-              </div>
-              {/* Suggestions render in the shared centred popup layer now. */}
+            <div className={styles.chTag}>
+              <span>CH {ch.number}</span>
+              <span>{ch.name.toUpperCase()}</span>
             </div>
-          )}
+          </div>
         </div>
-        {/* SHARE lives in the corner, not in the hold menu. Sending a post on
-            is a one-tap thing you do WHILE watching; two gestures down a wheel
-            is the wrong price for it. Same moulded clay as the mute mark
-            opposite and the profile viewer's share — one object, one language,
-            never a flat glyph pretending to be it. */}
-        {/* `still`: it holds its pose and draws only while a press pulse is
-            decaying. The feed already runs a decoding video next to the cube,
-            the channel arrows and the mute mark, and this is the fifth GL
-            context on that screen — a corner ornament tumbling forever is a
-            renderer running for nothing on the one surface whose thermals we
-            just measured clean. */}
-        <div className={styles.shareCorner}>
-          <ClayCornerButton kind="share" label="Share this post" size={40} still onPress={sharePost} />
-        </div>
-      </div>
+      </>
       )}
 
       {/* Why this post is in front of you. Deliberately NOT part of the top

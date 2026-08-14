@@ -2,6 +2,7 @@ import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore }
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
 import CubeTab3D, { type CubeTab } from './CubeTab3D'
+import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
@@ -12,10 +13,11 @@ import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
+import TopChrome from './TopChrome'
 import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
-import { playPop, playPopBurst } from './pop'
+import { playPop } from './pop'
 import { isDetectOn, onCameraStore, selectedCount, setDetectOn } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import {
@@ -1768,7 +1770,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     cubeModelReadyTimer.current = null
     awaitingCubeModelRef.current = null
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      if (withSound) playPopBurst()
+      if (withSound) playPop()
       setCubeSwapPhase('idle')
     } else {
       cubeSwapEnterSound.current = withSound
@@ -1807,7 +1809,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // expansion. This remains a defensive completion fallback.
     if (cubeSwapEnterSound.current) {
       cubeSwapEnterSound.current = false
-      playPopBurst()
+      playPop()
     }
     setCubeSwapPhase('idle')
   }, [])
@@ -1844,9 +1846,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // Backstops only, and both must outlast their keyframes — a fallback that
     // fires first drops the class mid-wobble and the burst ends in a snap.
     if (cubeSwapPhase === 'exit') {
-      cubeSwapFallbackTimer.current = window.setTimeout(finishCubeSwapExit, 260)
+      cubeSwapFallbackTimer.current = window.setTimeout(finishCubeSwapExit, 180)
     } else if (cubeSwapPhase === 'enter') {
-      cubeSwapFallbackTimer.current = window.setTimeout(finishCubeSwapEnter, 560)
+      cubeSwapFallbackTimer.current = window.setTimeout(finishCubeSwapEnter, 240)
     }
   }, [cubeSwapPhase, finishCubeSwapExit, finishCubeSwapEnter])
 
@@ -1856,7 +1858,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     if (cubeSwapPhase !== 'enter' || !cubeSwapEnterSound.current) return
     cubeSwapEnterSound.current = false
-    playPopBurst()
+    playPop()
   }, [cubeSwapPhase])
 
   useEffect(() => () => {
@@ -1921,6 +1923,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       data-poplur-watchdog={chromeFaded ? 'off' : 'on'}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
+      {/* One brand owner for the entire home. Tabs and subscreens never mount
+          their own wordmark, so changing surfaces cannot duplicate or replace
+          the Poplur title. */}
+      <div className={styles.universalTitle}>
+        <TopChrome />
+      </div>
       {/* The map iframe mounts only while the Map tab is front. CSS cannot make
           an idle map cheap (a hidden iframe still holds its GL context, tile
           workers and full-res canvas), so leaving the map unmounts it entirely
@@ -2125,9 +2133,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             size={cubeSize}
             number={activeTab === 'map' ? mapPostIdx + 1 : CHANNELS[chanIndex].number}
             // The camera's two pages are not channels. The slot shows what the
-            // roll has selected instead, and carries the recording dot.
+            // roll has selected instead; the recording light belongs on the
+            // physical camcorder model rather than beside the channel arrows.
             label={overlayOpen ? '' : activeTab === 'post' ? (picked ? String(picked) : '') : undefined}
-            dot={activeTab === 'post' && recordMs != null}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
           />
@@ -2258,7 +2266,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       <div
         data-poplur-cube
         data-poplur-cube-swap={cubeSwapPhase}
-        className={`${recordMs != null ? `${styles.cubeWrap} ${styles.cubeRecording}` : styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
@@ -2282,10 +2290,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               modelUrl={appliedCubeModel}
               cameraFlashArmed={cameraFlashArmed}
               cameraFlashPulse={cameraFlashPulse}
-              // Native loads only the final destination. Pre-decoding a second
-              // textured GLB while the outgoing screen tears down is exactly
-              // the short CPU/GPU overlap that made rapid switching run warm.
-              prepareModelUrl={isNativeShell() ? undefined : requestedCubeModel}
+              camcorderRecording={recordMs != null}
+              // Decode only the requested destination while the current model
+              // begins its short expansion. One prepared object is retained at
+              // most, avoiding a cold GLB parse at the visible swap point.
+              prepareModelUrl={requestedCubeModel}
               onModelReady={url => {
                 if (url !== awaitingCubeModelRef.current) return
                 if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
@@ -2293,7 +2302,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 awaitingCubeModelRef.current = null
                 // CubeTab3D wakes its renderer before this callback. Two
                 // browser frames ensure the new framebuffer is composited
-                // before the tiny dot expands into the replacement object.
+                // before the replacement settles from the shared expansion.
                 cubeModelReadyFrame.current = window.requestAnimationFrame(() => {
                   cubeModelReadyFrame.current = window.requestAnimationFrame(() => {
                     cubeModelReadyFrame.current = null
@@ -2313,6 +2322,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           </div>
         </div>
       </div>
+
+      <CubeMotionLab />
 
       {/* No tab pills. The cube IS the navigation — a row of buttons beside it
           was a testing shortcut that kept leaking into views of the app. Turn

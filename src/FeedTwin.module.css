@@ -178,71 +178,14 @@
     linear-gradient(180deg, rgba(5, 4, 7, 0.18), rgba(5, 4, 7, 0.72));
 }
 
-/* ── Top bar: fixed clay mute mark + the cross-fade slot. Chromeless — no
-      pill, no banner — the marks sit straight on the video. ── */
 .topBar {
   position: absolute;
   z-index: 4;
-  top: var(--header-title-top, 44px);
-  left: 16px;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 8px);
+  left: 72px;
   right: 16px;
   height: 44px;
-  display: grid;
-  /* mute · slot · share. The two clay marks bookend the bar; the middle column
-     is the only one that flexes, so the bar's centre stays the viewport's
-     centre and the absolutely-centred ticker and brand keep the cube's axis. */
-  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-}
-
-/* The share mark's own box, so the clay canvas cannot be stretched by the grid
-   row — a squashed 40px object reads as a rendering fault, not a button. */
-.shareCorner {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  width: 40px;
-  height: 40px;
-}
-
-/* The slot cross-fades between its two faces: ease out, swap, ease back in. */
-.flipSlot {
-  height: 100%;
-  min-width: 0;
-  opacity: 1;
-  transition: opacity 0.34s ease;
-}
-
-.flipSlotOut {
-  opacity: 0;
-}
-
-/* Brand face is screen-centred too, so both faces share the cube's axis. */
-.brandRow {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.brandIcon {
-  width: 40px;
-  height: auto;
-  filter: drop-shadow(0 4px 10px rgba(246, 59, 154, 0.45));
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-.brandWordmark {
-  width: 132px;
-  height: auto;
-  filter: drop-shadow(0 4px 10px rgba(246, 59, 154, 0.4));
-  user-select: none;
-  -webkit-user-drag: none;
 }
 
 .infoRow {
@@ -261,7 +204,7 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: min(60%, 420px);
+  width: min(58%, 420px);
   display: grid;
   text-align: center;
 }
@@ -302,7 +245,7 @@
 .reachLine {
   position: absolute;
   z-index: 4;
-  top: calc(var(--header-title-top, 44px) + 46px);
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 58px);
   left: 16px;
   right: 16px;
   display: flex;

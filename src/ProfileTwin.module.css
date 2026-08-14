@@ -154,21 +154,14 @@
   50% { transform: rotateY(9deg); }
 }
 
-/* notification bell — centred on the square's Y, to its left; drifts further
-   out with screen width so wide screens keep the home-HUD spread */
+/* Profile actions join the same universal 44px left rail as Map, Feed and
+   Camera. Container-relative positioning preserves their action ownership and
+   lines the rail up with the shell edge without escaping the phone preview. */
 .bell {
-  position: absolute;
-  top: 50%;
-  /* 46px, was 30. These are real clay objects rendered at 256px and then shown
-     in a 30px box — most of the modelling was being thrown away, and the bell
-     read as a speck beside the avatar. The left offset grows by the same 16px
-     the box did, so the mark keeps its old clearance from the avatar instead
-     of drifting inwards as it gets bigger. */
-  left: calc(-74px - var(--control-outset) - var(--flank));
-  transform: translateY(-50%);
-  z-index: 6;
-  width: 46px;
-  height: 46px;
+  position: relative;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   border: 0;
   background: transparent;
   font-size: 30px;
@@ -196,20 +189,12 @@
   background: #f63b9a;
 }
 
-/* 3D camera — centred on the square's Y, to its right (opposite the bell) */
+/* The profile-camera action is the second item in that rail: 44px item plus
+   the same 12px gap used on all other main tabs. */
 .camBtn {
-  position: absolute;
-  top: 50%;
-  /* 84×76, was 58×52 — same reasoning as the bell: the kodak is a 320px sprite
-     that was being shown at a third of its detail. It is also the control you
-     press to take your profile photo, so it earns the larger target. The right
-     offset grows by the added width so the camera keeps its clearance rather
-     than leaning into the avatar. */
-  right: calc(-86px - var(--control-outset) - var(--flank));
-  transform: translateY(-50%);
-  z-index: 6;
-  width: 84px;
-  height: 76px;
+  position: relative;
+  width: 44px;
+  height: 44px;
   border: 0;
   padding: 0;
   background: transparent;
@@ -218,7 +203,7 @@
   transition: transform 0.12s ease;
 }
 
-.camBtn:active { transform: translateY(-50%) scale(0.9); }
+.camBtn:active { transform: scale(0.9); }
 
 .camBtnPop {
   animation: cameraOriginPop 380ms cubic-bezier(0.2, 1.35, 0.35, 1) both;
@@ -266,9 +251,9 @@
 }
 
 @keyframes cameraOriginPop {
-  0% { transform: translateY(-50%) scale(1); }
-  45% { transform: translateY(-50%) scale(0.82); }
-  100% { transform: translateY(-50%) scale(1.08); }
+  0% { transform: scale(1); }
+  45% { transform: scale(0.82); }
+  100% { transform: scale(1.08); }
 }
 
 @keyframes cameraEject {

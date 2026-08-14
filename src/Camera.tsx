@@ -20,6 +20,7 @@ import CommerceSuggestionWindow from './CommerceSuggestionWindow'
 import { purchaseSuggestionForDetection } from './commerceSuggestions'
 import type { SmartCard } from './tourSmarts'
 import { useControlSide } from './controlPlacement'
+import TabControlRail from './TabControlRail'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
@@ -1485,9 +1486,10 @@ export default function Camera({
       {/* …and the bloom at the instant of capture — the front camera's flash */}
       {bloom && <div className={styles.camBloom} aria-hidden="true" />}
 
-      <div className={`${styles.camControlRail} ${controlSide === 'right' ? styles.camControlRailRight : styles.camControlRailLeft}`}>
+      <TabControlRail side={controlSide} label="Camera controls">
         <ClayCornerButton
           kind="flash"
+          size={44}
           active={flash}
           label={flash ? 'Flash on' : 'Flash off'}
           onPress={() => setFlashEnabled(!flashRef.current)}
@@ -1495,20 +1497,14 @@ export default function Camera({
         {/* Mute for the thing that TALKS. Same clay speaker the feed and the
             map wear, so one mark means one thing everywhere in the app — but
             here it silences the ML announcer, not a soundtrack. */}
-        <ClayMuteButton muted={!aiVoice} onToggle={toggleAiVoice} size={36} />
+        <ClayMuteButton muted={!aiVoice} onToggle={toggleAiVoice} size={44} />
         <ClayCornerButton
           kind="flip"
+          size={44}
           label="Switch camera"
           onPress={flipCamera}
         />
-      </div>
-      {/* Hands the spot to the ML readout while something is detected, then
-          takes it back — the wordmark and the scan result never print over each
-          other. Mirrors the feed's brand/channel-info flip. */}
-      {/* The wordmark STAYS. Swapping it out for the scan result meant the
-          screen lost its identity the moment the model saw anything; the
-          answer belongs underneath the title, not in place of it. */}
-      <img className={styles.camLogo} src="logo_text.png" alt="poplur" draggable={false} />
+      </TabControlRail>
       {/* ONE persistent AI line. Keep the latest real reading between the
           deliberately sparse native analysis samples; before the first one,
           say that AI is scanning instead of leaving a mysterious blank. */}

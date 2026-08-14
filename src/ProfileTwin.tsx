@@ -14,6 +14,8 @@ import CameraRoll from './CameraRoll'
 import { radiusStats } from './radiusLedger'
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
+import TabControlRail from './TabControlRail'
+import { useControlSide } from './controlPlacement'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -525,6 +527,7 @@ export default function ProfileTwin({
   /** Keeps the Home HUD's animated post count tied to this profile's grid. */
   onPostCountChange?: (count: number) => void
 } = {}) {
+  const controlSide = useControlSide()
   const [mode, setMode] = useState<Mode>('media')
   const [activeCall, setActiveCall] = useState<{ who: string; video: boolean } | null>(null)
   useEffect(() => { onPostCountChange?.(POSTS.length) }, [onPostCountChange])
@@ -1366,14 +1369,14 @@ export default function ProfileTwin({
           {/* 3D clay flash / flip — the same extruded-clay marks as the post
               camera, instead of flat glyph buttons. */}
           {captureSource === 'camera' ? (
-            <ClayCornerButton kind="flash" active={torchOn} label={torchOn ? 'Turn flash off' : 'Turn flash on'} onPress={toggleTorch} size={48} />
+            <ClayCornerButton kind="flash" active={torchOn} label={torchOn ? 'Turn flash off' : 'Turn flash on'} onPress={toggleTorch} size={44} />
           ) : <span />}
           <div className={styles.captureHead}>
             {captureSource === 'camera' ? 'Profile selfie' : 'Selfie videos'}
             <small>CHANNEL BUTTONS SWITCH SOURCE</small>
           </div>
           {captureSource === 'camera' ? (
-            <ClayCornerButton kind="flip" label="Switch camera" onPress={() => { playPop(); setFacingMode(mode => mode === 'user' ? 'environment' : 'user') }} size={48} />
+            <ClayCornerButton kind="flip" label="Switch camera" onPress={() => { playPop(); setFacingMode(mode => mode === 'user' ? 'environment' : 'user') }} size={44} />
           ) : <span />}
         </div>
         {captureSource === 'camera' && <div className={styles.vfRing} />}
@@ -1504,12 +1507,9 @@ export default function ProfileTwin({
         />
       )}
       <section className={styles.profile} data-poplur-screen="profile">
-      <div className={styles.header}>
-        <div className={styles.avatarWrap}>
-          {visiting ? (
-            /* No ✕ — the cube takes you back to your own profile. */
-            null
-          ) : <button
+      <TabControlRail side={controlSide} label="Profile controls">
+        {!visiting && (
+          <button
             className={styles.bell}
             onClick={() => { playPop(); toggleNotifs() }}
             aria-label="Notifications"
@@ -1517,8 +1517,25 @@ export default function ProfileTwin({
           >
             <ClaySwayObject url="poplur_bell.glb" pitch={12} size={256} alt="" />
             <span className={styles.bellDot} />
-          </button>}
-
+          </button>
+        )}
+        {visiting ? (
+          <ClayCornerButton
+            kind="mail"
+            tone="cream"
+            label={`Message ${shownName}`}
+            size={44}
+            activateOnClick
+            onPress={() => { playPop(); setMailingUser(true) }}
+          />
+        ) : (
+          <button ref={camBtnRef} className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Record profile selfie video">
+            <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
+          </button>
+        )}
+      </TabControlRail>
+      <div className={styles.header}>
+        <div className={styles.avatarWrap}>
           <div className={styles.avatarFrame} />
 
           {visiting ? (
@@ -1549,23 +1566,6 @@ export default function ProfileTwin({
             )
           )}
 
-          {visiting ? (
-            /* their profile: message them, rather than set their photo */
-            <div className={styles.visitMail}>
-              <ClayCornerButton
-                kind="mail"
-                tone="cream"
-                label={`Message ${shownName}`}
-                size={68}
-                activateOnClick
-                onPress={() => { playPop(); setMailingUser(true) }}
-              />
-            </div>
-          ) : (
-            <button ref={camBtnRef} className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Record profile selfie video">
-              <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
-            </button>
-          )}
           {!visiting && launchingCamera && (
             <div className={styles.camEject} aria-hidden="true">
               <i />

@@ -333,18 +333,6 @@
 /* Corner controls — bare clay 3D marks (flash + ML mute left, flip right), no
    backing. A row, because the left corner carries two marks now: the flash and
    the switch for the voice that narrates the frame. */
-.camControlRail {
-  position: absolute;
-  top: max(154px, calc(env(safe-area-inset-top) + 112px));
-  z-index: 8;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-.camControlRailLeft { left: max(12px, env(safe-area-inset-left)); }
-.camControlRailRight { right: max(12px, env(safe-area-inset-right)); }
-
 /* Lens presets (.5× / 1× / 2×) in a clay pill row riding just above the cube.
    The home HUD's cube is bottom-center at z-260; this sits under its top edge
    but above the viewfinder. */
@@ -415,7 +403,7 @@
      cost the screen its identity, and the two elements sharing one line meant
      any overlap read as text printing through the logo. Clear of the
      wordmark's box (top 12px + ~30px tall), so they stack. */
-  top: 52px;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 8px);
   left: 50%;
   z-index: 27;
   display: inline-flex;

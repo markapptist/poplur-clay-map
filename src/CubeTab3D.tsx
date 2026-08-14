@@ -7,12 +7,9 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { primeMotionAudio } from './motionEffectsAudio'
 import { preloadPop, primePopAudio } from './pop'
 import { isNativeShell } from './nativeBridge'
-import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 declare global {
   interface Window {
-    __poplurDisplayRAF?: (callback: FrameRequestCallback) => number
-    __poplurCancelDisplayRAF?: (id: number) => void
     __poplurDisplayActive?: () => boolean
   }
 }
@@ -24,6 +21,11 @@ declare global {
 // slow idle turn. Quick tap fires onTap; press-and-hold fires onHold.
 
 export type CubeTab = 'map' | 'feed' | 'post' | 'profile'
+
+type MotionTuning = {
+  gain?: number
+  response?: number
+}
 
 // The navigator is a ring, not a list of unrelated destinations. Keep this
 // sequence explicit because it is shared by touch and keyboard navigation:
@@ -62,6 +64,8 @@ export interface CubeTab3DProps {
   cameraFlashArmed?: boolean
   /** Incremented for each shutter event, producing one rectangular flash. */
   cameraFlashPulse?: number
+  /** Video capture puts a steady red recording LED on the camcorder model. */
+  camcorderRecording?: boolean
 }
 
 /** The designed cube is authored as a true box, so it is normalised per-axis to
@@ -70,6 +74,7 @@ export interface CubeTab3DProps {
     a TV — so it is fitted uniformly into the same 2-unit box instead. */
 export const DEFAULT_CUBE_MODEL = 'poplur_cube_v4.glb'
 const CUBE_MODEL = DEFAULT_CUBE_MODEL
+const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
 
 /** The clay GLBs use Draco or Meshopt compression depending on which asset
     pipeline produced them. A bare GLTFLoader downloads either format and then
@@ -142,6 +147,12 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string, ma
         texture.magFilter = THREE.LinearFilter
         texture.needsUpdate = true
       }
+      // Shader-level ordered dithering removes visible colour-band steps from
+      // the small clay models while they tilt. It is effectively free beside
+      // a post-process pass and keeps the transparent canvas edge untouched.
+      material.dithering = true
+      material.precision = 'highp'
+      material.needsUpdate = true
     })
   })
   // Keep the globe's authored 1024px maps, but make its live material robust:
@@ -223,7 +234,7 @@ function disposeModel(node: THREE.Object3D) {
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0 }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -266,6 +277,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   cameraFlashArmedRef.current = cameraFlashArmed
   const updateCameraFlashRef = useRef<(armed: boolean, pulse: boolean) => void>(() => {})
   const priorFlashPulseRef = useRef(cameraFlashPulse)
+  const camcorderRecordingRef = useRef(camcorderRecording)
+  camcorderRecordingRef.current = camcorderRecording
+  const updateCamcorderRecordingRef = useRef<() => void>(() => {})
+  const reconcileMotionRef = useRef<() => void>(() => {})
 
   const showFoodFaceOnCubeRef = useRef<(visible: boolean) => void>(() => {})
   useEffect(() => {
@@ -280,26 +295,36 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     updateCameraFlashRef.current(cameraFlashArmed, cameraFlashPulse !== priorFlashPulseRef.current)
     priorFlashPulseRef.current = cameraFlashPulse
   }, [cameraFlashArmed, cameraFlashPulse])
+  useEffect(() => {
+    updateCamcorderRecordingRef.current()
+  }, [camcorderRecording])
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const initialPolicy = PoplurPerformanceManager.policy
-
     let renderer: THREE.WebGLRenderer
     try {
-      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        alpha: true,
+        antialias: true,
+        powerPreference: 'high-performance',
+        precision: 'highp',
+      })
     } catch {
       setGlFailed(true)
       return
     }
-    // Preserve the authored texture maps while bounding only the framebuffer
-    // work. The shared policy raises this again automatically after the phone
-    // leaves thermal pressure.
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, initialPolicy.maximumPixelRatio))
+    // This is the always-visible navigator, not hidden decorative rendering.
+    // Give its small 176px canvas enough backing resolution to remain crisp
+    // while it expands and tilts; the scene still parks completely at rest.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3))
     renderer.setSize(size, size)
     renderer.setClearColor(0x000000, 0)
+    renderer.outputColorSpace = THREE.SRGBColorSpace
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.06
     const navigatorAnisotropy = renderer.capabilities.getMaxAnisotropy()
     navigatorAnisotropyRef.current = navigatorAnisotropy
 
@@ -363,6 +388,30 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     }
     updateCameraFlashRef.current = syncCameraFlash
 
+    // The recording light belongs to the camcorder, not to the outer cube
+    // shell. It is deliberately static: a real camcorder's REC tally stays
+    // lit, so motion stays readable while the model follows the handset.
+    const camcorderLedMaterial = new THREE.MeshBasicMaterial({
+      color: 0xff2748,
+      toneMapped: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+    const camcorderLed = new THREE.Mesh(new THREE.CircleGeometry(0.072, 20), camcorderLedMaterial)
+    // The camcorder's authored front plane sits at z ~= 0.37 after fitting.
+    // This lands the LED over the upper-right body panel rather than floating
+    // in front of its lens.
+    camcorderLed.position.set(0.48, 0.34, 0.382)
+    camcorderLed.renderOrder = 30
+    camcorderLed.visible = false
+    group.add(camcorderLed)
+    const syncCamcorderRecording = () => {
+      camcorderLed.visible = loadedUrlRef.current === CAMCORDER_MODEL && camcorderRecordingRef.current
+      needsRender = true
+      wakeLoopRef.current()
+    }
+    updateCamcorderRecordingRef.current = syncCamcorderRecording
+
     // ---- gesture/render state ----
     let dragging = false
     let disposed = false
@@ -377,14 +426,42 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let motionTargetYaw = 0
     let motionPitch = 0
     let motionTargetPitch = 0
+    // Defaults mirror the original device-motion behaviour. The motion lab can
+    // adjust them in-memory, so desktop tuning uses this exact renderer path
+    // without changing what a normal phone session receives.
+    let motionGain = 1
+    let motionResponse = 18
     let lastMotionAt = 0
+    let normalisedMotionRoll = 0
+    let normalisedMotionPitch = 0
     let nextGlobeFrameAt = 0
-    let navigatorFPS = Math.max(10, initialPolicy.targetFPS)
+    const navigatorFPS = 60
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && (window.__poplurDisplayActive?.() ?? true)
       && targetTabRef.current === 'map'
       && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
+
+    // Every replacement object shares this path, which means the main tab
+    // cube, each subscreen object, and camera-navigation models all inherit the
+    // same accelerometer response. The active camcorder gets a wider range so
+    // it reads as something being aimed rather than a small parallax nudge.
+    const applyMotionTarget = (roll: number, devicePitch: number, epsilon: number) => {
+      normalisedMotionRoll = THREE.MathUtils.clamp(roll, -1, 1)
+      normalisedMotionPitch = THREE.MathUtils.clamp(devicePitch, -1, 1)
+      const camcorder = loadedUrlRef.current === CAMCORDER_MODEL
+      const yawRange = camcorder ? 0.54 : 0.30
+      const pitchRange = camcorder ? 0.42 : 0.24
+      const nextYaw = normalisedMotionRoll * -yawRange * motionGain
+      const nextPitch = normalisedMotionPitch * pitchRange * motionGain
+      if (Math.abs(nextYaw - motionTargetYaw) < epsilon
+        && Math.abs(nextPitch - motionTargetPitch) < epsilon) return
+      motionTargetYaw = nextYaw
+      motionTargetPitch = nextPitch
+      needsRender = true
+      wakeLoopRef.current()
+    }
+    reconcileMotionRef.current = () => applyMotionTarget(normalisedMotionRoll, normalisedMotionPitch, 0)
 
     const commitTo = (tab: CubeTab) => {
       if (tab === targetTabRef.current) return
@@ -421,6 +498,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
           setLoadedModel(requestedUrl)
           setSceneReadyVersion(version => version + 1)
           updateCameraFlashRef.current(cameraFlashArmedRef.current, false)
+          updateCamcorderRecordingRef.current()
+          reconcileMotionRef.current()
           callbacksRef.current.onModelReady?.(requestedUrl)
 
           // Straight-on camera. The authored food-face override is the only
@@ -552,16 +631,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const now = performance.now()
       if (now - lastMotionAt < 33) return
       lastMotionAt = now
-      const nextYaw = THREE.MathUtils.clamp((event.gamma ?? 0) / 45, -1, 1) * -0.30
       // beta is centred around the natural upright portrait hold. Keep the
-      // model's authored front face, then let a modest phone nod aim it up/down.
-      const nextPitch = THREE.MathUtils.clamp(((event.beta ?? 45) - 45) / 45, -1, 1) * 0.24
-      if (Math.abs(nextYaw - motionTargetYaw) < 0.004
-        && Math.abs(nextPitch - motionTargetPitch) < 0.004) return
-      motionTargetYaw = nextYaw
-      motionTargetPitch = nextPitch
-      needsRender = true
-      wakeLoopRef.current()
+      // model's authored front face, then let the phone aim it up/down.
+      applyMotionTarget((event.gamma ?? 0) / 45, ((event.beta ?? 45) - 45) / 45, 0.004)
     }
     const onNativeMotion = (event: Event) => {
       const detail = (event as CustomEvent<{ roll?: number; pitch?: number }>).detail
@@ -569,14 +641,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const devicePitch = detail?.pitch
       if (document.visibilityState !== 'visible'
         || (typeof roll !== 'number' && typeof devicePitch !== 'number')) return
-      // Inverse parallax: the model aims against the phone's movement, as if
-      // it were looking back toward the direction the handset points.
-      const nextYaw = THREE.MathUtils.clamp((roll ?? 0) / 0.72, -1, 1) * -0.30
-      const nextPitch = THREE.MathUtils.clamp((devicePitch ?? 0) / 0.72, -1, 1) * 0.24
-      if (Math.abs(nextYaw - motionTargetYaw) < 0.002
-        && Math.abs(nextPitch - motionTargetPitch) < 0.002) return
-      motionTargetYaw = nextYaw
-      motionTargetPitch = nextPitch
+      applyMotionTarget((roll ?? 0) / 0.72, (devicePitch ?? 0) / 0.72, 0.002)
+    }
+    const onMotionTuning = (event: Event) => {
+      const detail = (event as CustomEvent<MotionTuning>).detail
+      if (typeof detail?.gain === 'number') {
+        motionGain = THREE.MathUtils.clamp(detail.gain, 0.45, 1.65)
+      }
+      if (typeof detail?.response === 'number') {
+        motionResponse = THREE.MathUtils.clamp(detail.response, 6, 34)
+      }
+      // Reconcile the live target immediately after a tuning change. The next
+      // sample supplies its own target, but this makes the lab feel direct.
       needsRender = true
       wakeLoopRef.current()
     }
@@ -591,6 +667,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true })
     }
     window.addEventListener('poplur-native-motion', onNativeMotion)
+    window.addEventListener('poplur-motion-tuning', onMotionTuning)
 
     // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
@@ -614,7 +691,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
 
       const motionDelta = motionTargetYaw - motionYaw
       if (Math.abs(motionDelta) > 0.0005) {
-        motionYaw += motionDelta * (1 - Math.exp(-18 * dt))
+        motionYaw += motionDelta * (1 - Math.exp(-motionResponse * dt))
         needsRender = true
       } else if (motionYaw !== motionTargetYaw) {
         motionYaw = motionTargetYaw
@@ -622,7 +699,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       }
       const motionPitchDelta = motionTargetPitch - motionPitch
       if (Math.abs(motionPitchDelta) > 0.0005) {
-        motionPitch += motionPitchDelta * (1 - Math.exp(-18 * dt))
+        motionPitch += motionPitchDelta * (1 - Math.exp(-motionResponse * dt))
         needsRender = true
       } else if (motionPitch !== motionTargetPitch) {
         motionPitch = motionTargetPitch
@@ -658,7 +735,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         || Math.abs(motionTargetPitch - motionPitch) > 0.0005
         || needsRender
       if (active || mapGlobeIsVisible()) {
-        raf = (window.__poplurDisplayRAF ?? window.requestAnimationFrame)(loop)
+        raf = window.requestAnimationFrame(loop)
       } else {
         raf = 0
       }
@@ -666,30 +743,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const wake = () => {
       if (!raf && !disposed) {
         last = performance.now()
-        raf = (window.__poplurDisplayRAF ?? window.requestAnimationFrame)(loop)
+        raf = window.requestAnimationFrame(loop)
       }
     }
     wakeLoopRef.current = () => {
       needsRender = true
       wake()
     }
-    const unsubscribePerformance = PoplurPerformanceManager.subscribe(snapshot => {
-      navigatorFPS = Math.max(10, snapshot.targetFPS)
-      renderer.setPixelRatio(Math.min(
-        window.devicePixelRatio || 1,
-        snapshot.maximumPixelRatio,
-      ))
-      renderer.setSize(size, size, false)
-      nextGlobeFrameAt = 0
-      needsRender = true
-      wake()
-    })
-    raf = (window.__poplurDisplayRAF ?? window.requestAnimationFrame)(loop)
+    raf = window.requestAnimationFrame(loop)
 
     return () => {
       disposed = true
-      unsubscribePerformance()
-      ;(window.__poplurCancelDisplayRAF ?? window.cancelAnimationFrame)(raf)
+      window.cancelAnimationFrame(raf)
       window.clearTimeout(flashPulseTimer)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)
@@ -699,6 +764,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       document.removeEventListener('visibilitychange', onVisibilityChange)
       if (!isNativeShell()) window.removeEventListener('deviceorientation', onDeviceOrientation)
       window.removeEventListener('poplur-native-motion', onNativeMotion)
+      window.removeEventListener('poplur-motion-tuning', onMotionTuning)
       canvas.removeEventListener('webglcontextlost', onContextLost)
       disposeModel(scene)
       releaseWebGL(renderer)
@@ -707,6 +773,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       loadedUrlRef.current = null
       wakeLoopRef.current = () => {}
       updateCameraFlashRef.current = () => {}
+      updateCamcorderRecordingRef.current = () => {}
+      reconcileMotionRef.current = () => {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
@@ -766,6 +834,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       loadedUrlRef.current = modelUrl
       setLoadedModel(modelUrl)
       updateCameraFlashRef.current(cameraFlashArmedRef.current, false)
+      updateCamcorderRecordingRef.current()
+      reconcileMotionRef.current()
       wakeLoopRef.current()
       callbacksRef.current.onModelReady?.(modelUrl)
     }

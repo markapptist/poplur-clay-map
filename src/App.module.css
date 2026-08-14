@@ -230,20 +230,6 @@
 
 /* ── HomeView overlays ── */
 
-/* One reachable side rail for every Map action. The user can mirror it from
-   Settings; the wordmark/status stay centred and uncluttered. */
-.mapControlRail {
-  position: absolute;
-  top: max(154px, calc(env(safe-area-inset-top) + 112px));
-  z-index: 46;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-.mapControlRailLeft { left: max(10px, env(safe-area-inset-left)); }
-.mapControlRailRight { right: max(10px, env(safe-area-inset-right)); }
-
 .mapModeToggle {
   appearance: none;
   width: 44px;
@@ -878,8 +864,6 @@
     --header-title-height: 32px;
     --header-row-gap: 8px;
   }
-
-  .mapControlRail { gap: 6px; }
 
   .headerStack {
     left: 48px;
