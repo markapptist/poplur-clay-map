@@ -6,6 +6,8 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { primeMotionAudio } from './motionEffectsAudio'
 import { preloadPop, primePopAudio } from './pop'
+import { isNativeShell } from './nativeBridge'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 declare global {
   interface Window {
@@ -283,6 +285,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const canvas = canvasRef.current
     if (!canvas) return
 
+    const initialPolicy = PoplurPerformanceManager.policy
+
     let renderer: THREE.WebGLRenderer
     try {
       renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
@@ -290,11 +294,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       setGlFailed(true)
       return
     }
-    // This is the one small, foreground navigator canvas. Rendering it below
-    // the phone's display density made every clay edge visibly stair-stepped,
-    // especially on a 3x iPhone. Hidden screens are unmounted, so preserve the
-    // native panel density here instead of globally lowering visible quality.
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3))
+    // Preserve the authored texture maps while bounding only the framebuffer
+    // work. The shared policy raises this again automatically after the phone
+    // leaves thermal pressure.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, initialPolicy.maximumPixelRatio))
     renderer.setSize(size, size)
     renderer.setClearColor(0x000000, 0)
     const navigatorAnisotropy = renderer.capabilities.getMaxAnisotropy()
@@ -376,6 +379,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let motionTargetPitch = 0
     let lastMotionAt = 0
     let nextGlobeFrameAt = 0
+    let navigatorFPS = Math.max(10, initialPolicy.targetFPS)
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && (window.__poplurDisplayActive?.() ?? true)
@@ -456,7 +460,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // iOS requires motion permission from a direct user gesture. Asking on
       // the navigator itself keeps the experience opt-in and avoids a prompt
       // before the user has touched the object they want to move.
-      if (typeof DeviceOrientationEvent !== 'undefined') {
+      if (!isNativeShell() && typeof DeviceOrientationEvent !== 'undefined') {
         const orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
           requestPermission?: () => Promise<'granted' | 'denied'>
         }
@@ -583,7 +587,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     canvas.addEventListener('pointercancel', onPointerCancel)
     canvas.addEventListener('keydown', onKeyDown)
     document.addEventListener('visibilitychange', onVisibilityChange)
-    window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true })
+    if (!isNativeShell()) {
+      window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true })
+    }
     window.addEventListener('poplur-native-motion', onNativeMotion)
 
     // ---- finite pitch + event-driven render loop ----
@@ -623,15 +629,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         needsRender = true
       }
 
-      // This is the one foreground canvas allowed to render at 60fps. Native's
-      // private display RAF bypasses the general document governor, so making
-      // the globe premium does not wake the full map or any inactive screen.
-      // Leave a 1ms tolerance for 16.666…ms display timestamps. Requiring an
-      // exact deadline let harmless sub-millisecond jitter miss every other
-      // 60Hz frame and made the globe visibly fall to 30fps.
+      // The globe keeps moving, but it shares the same thermal frame budget as
+      // every other 3D surface instead of forcing a permanent 60Hz workload.
       if (mapGlobeIsVisible() && now >= nextGlobeFrameAt - 1) {
         yaw = (yaw + 0.5 * dt) % (Math.PI * 2)
-        nextGlobeFrameAt = now + 1000 / 60
+        nextGlobeFrameAt = now + 1000 / navigatorFPS
         needsRender = true
       }
 
@@ -671,10 +673,22 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       needsRender = true
       wake()
     }
+    const unsubscribePerformance = PoplurPerformanceManager.subscribe(snapshot => {
+      navigatorFPS = Math.max(10, snapshot.targetFPS)
+      renderer.setPixelRatio(Math.min(
+        window.devicePixelRatio || 1,
+        snapshot.maximumPixelRatio,
+      ))
+      renderer.setSize(size, size, false)
+      nextGlobeFrameAt = 0
+      needsRender = true
+      wake()
+    })
     raf = (window.__poplurDisplayRAF ?? window.requestAnimationFrame)(loop)
 
     return () => {
       disposed = true
+      unsubscribePerformance()
       ;(window.__poplurCancelDisplayRAF ?? window.cancelAnimationFrame)(raf)
       window.clearTimeout(flashPulseTimer)
       canvas.removeEventListener('pointerdown', onPointerDown)
@@ -683,7 +697,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       canvas.removeEventListener('pointercancel', onPointerCancel)
       canvas.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('visibilitychange', onVisibilityChange)
-      window.removeEventListener('deviceorientation', onDeviceOrientation)
+      if (!isNativeShell()) window.removeEventListener('deviceorientation', onDeviceOrientation)
       window.removeEventListener('poplur-native-motion', onNativeMotion)
       canvas.removeEventListener('webglcontextlost', onContextLost)
       disposeModel(scene)
