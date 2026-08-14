@@ -59,6 +59,26 @@ type NativeUploadResult = {
   error?: string
 }
 
+type NativeUploadProgress = {
+  requestId?: string
+  /** Preferred bridge shape: a normalized 0...1 transfer fraction. */
+  progress?: number
+  /** iOS PostUploadService bridge field. */
+  fraction?: number
+  /** Accepted for native implementations that mirror Foundation Progress. */
+  fractionCompleted?: number
+  bytesTransferred?: number
+  totalBytes?: number
+  phase?: string
+}
+
+type UploadPhase = 'preparing' | 'uploading' | 'saving'
+
+type UploadProgressUpdate = {
+  fraction: number | null
+  phase: UploadPhase
+}
+
 const NATIVE_UPLOAD_TIMEOUT_MS = 90_000
 const MAX_PREVIEW_PLAY_MS = 12_000
 
@@ -87,7 +107,34 @@ function stillFromVideo(video: HTMLVideoElement): string | null {
  * composer must wait for that side to report the result; otherwise it can show
  * a green "Posted" state while the device has not uploaded anything yet.
  */
-function awaitNativeUpload(requestId: string): Promise<void> {
+function normalizedUploadProgress(detail: NativeUploadProgress): number | null {
+  let fraction = detail.progress ?? detail.fraction ?? detail.fractionCompleted
+  if (!Number.isFinite(fraction)
+      && Number.isFinite(detail.bytesTransferred)
+      && Number.isFinite(detail.totalBytes)
+      && Number(detail.totalBytes) > 0) {
+    fraction = Number(detail.bytesTransferred) / Number(detail.totalBytes)
+  }
+  if (!Number.isFinite(fraction)) return null
+  // A few bridges report an integer percentage. Accept that without requiring
+  // a second event name, while keeping the preferred contract normalized.
+  const normalized = Number(fraction) > 1 ? Number(fraction) / 100 : Number(fraction)
+  return Math.min(1, Math.max(0, normalized))
+}
+
+function uploadPhase(detail: NativeUploadProgress, fraction: number | null): UploadPhase {
+  const phase = detail.phase?.trim().toLowerCase() ?? ''
+  if (phase.includes('queue') || phase.includes('prepar') || phase.includes('encod') || phase.includes('stag')) return 'preparing'
+  if (phase.includes('sav') || phase.includes('publish') || phase.includes('finish') || phase.includes('complete')) return 'saving'
+  // A completed Storage transfer can still be waiting on its Firestore post.
+  if (fraction === 1) return 'saving'
+  return 'uploading'
+}
+
+function awaitNativeUpload(
+  requestId: string,
+  onProgress: (update: UploadProgressUpdate) => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       cleanup()
@@ -102,12 +149,21 @@ function awaitNativeUpload(requestId: string): Promise<void> {
       else reject(new Error(detail.error || 'The post could not be uploaded.'))
     }
 
+    const onNativeProgress = (event: Event) => {
+      const detail = (event as CustomEvent<NativeUploadProgress>).detail
+      if (!detail || detail.requestId !== requestId) return
+      const fraction = normalizedUploadProgress(detail)
+      onProgress({ fraction, phase: uploadPhase(detail, fraction) })
+    }
+
     const cleanup = () => {
       window.clearTimeout(timeout)
       window.removeEventListener('poplur-upload-result', onResult)
+      window.removeEventListener('poplur-upload-progress', onNativeProgress)
     }
 
     window.addEventListener('poplur-upload-result', onResult)
+    window.addEventListener('poplur-upload-progress', onNativeProgress)
   })
 }
 
@@ -151,6 +207,11 @@ export default function PostComposer({
   const [radiusKm, setRadiusKm] = useState(target?.radiusKm ?? 3)
   const [posted, setPosted] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  // A percentage is displayed only when the host reports real transferred
+  // bytes. Preparing/awaiting-native phases stay visibly indeterminate rather
+  // than filling a made-up timeline that could reach 99% and stall.
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null)
+  const [uploadPhaseState, setUploadPhaseState] = useState<UploadPhase>('preparing')
   // Set when the post could NOT actually be uploaded (browser preview has no
   // account) — the confirmation must never imply an upload that did not happen.
   const [uploadNote, setUploadNote] = useState<string | null>(null)
@@ -316,6 +377,8 @@ export default function PostComposer({
   const publish = async () => {
     playPop()
     setPublishing(true)
+    setUploadProgress(null)
+    setUploadPhaseState('preparing')
     const post: PublishedPost = { media, filterId, channelId, caption, usedAI, target: target && { ...target, radiusKm } }
     try {
       // The app shell owns the account, Firebase Storage and the posts write
@@ -325,6 +388,17 @@ export default function PostComposer({
         const baked = await renderForUpload()
         const data = await asTransferable(baked)
         const requestId = `post-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        // Install both listeners before native receives the message. Decode
+        // failures can answer immediately, and the first byte-progress event
+        // must not be lost to a bridge race.
+        const uploadResult = awaitNativeUpload(requestId, update => {
+          setUploadPhaseState(update.phase)
+          setUploadProgress(current => {
+            if (update.fraction === null) return current
+            return current === null ? update.fraction : Math.max(current, update.fraction)
+          })
+        })
+        setUploadPhaseState('uploading')
         postNativeEvent({
           type: 'publishPost',
           requestId,
@@ -338,7 +412,7 @@ export default function PostComposer({
           longitude: target?.lng,
           radiusKm: target ? radiusKm : undefined,
         })
-        await awaitNativeUpload(requestId)
+        await uploadResult
         onPosted?.(post)
         setPosted(true)
         window.setTimeout(onClose, 1800)
@@ -357,6 +431,13 @@ export default function PostComposer({
       setPublishing(false)
     }
   }
+
+  const uploadPhaseLabel = uploadPhaseState === 'preparing'
+    ? 'Preparing your pop'
+    : uploadPhaseState === 'saving'
+      ? 'Finishing your pop'
+      : 'Uploading your pop'
+  const uploadPercent = uploadProgress === null ? null : Math.round(uploadProgress * 100)
 
   const preview = (
     <div className={styles.preview}>
@@ -421,10 +502,34 @@ export default function PostComposer({
   }
 
   return (
-    <div className={styles.stage} role="dialog" aria-label="Post composer">
+    <div className={styles.stage} role="dialog" aria-label="Post composer" aria-busy={publishing}>
       {/* No header, no ‹, no ✕ — the cube is the back button here, like every
           subscreen. The capture IS the screen. */}
       {preview}
+
+      {publishing && (
+        <section className={styles.uploadProgressCard} aria-label="Post upload progress">
+          <div className={styles.uploadProgressHead}>
+            <span aria-live="polite">{uploadPhaseLabel}</span>
+            <b aria-hidden="true">{uploadPercent === null ? 'IN PROGRESS' : `${uploadPercent}%`}</b>
+          </div>
+          <div
+            className={`${styles.uploadProgressTrack} ${uploadPercent === null ? styles.uploadProgressTrackIndeterminate : ''}`}
+            role="progressbar"
+            aria-label={uploadPhaseLabel}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={uploadPercent ?? undefined}
+            aria-valuetext={uploadPercent === null ? `${uploadPhaseLabel}, in progress` : `${uploadPercent}%`}
+          >
+            <span
+              className={styles.uploadProgressFill}
+              style={uploadProgress === null ? undefined : { width: `${uploadProgress * 100}%` }}
+            />
+          </div>
+          <p>{uploadPercent === null ? 'Keeping your capture safe while Poplur sends it.' : 'Your capture is uploading securely.'}</p>
+        </section>
+      )}
 
       {/* ── 1. edit: full-bleed capture, Snapchat-style. The clay channel
              arrows flip through the filters; the name of the current one

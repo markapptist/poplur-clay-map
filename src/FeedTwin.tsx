@@ -92,13 +92,17 @@ function usesMiles(): boolean {
   }
 }
 
-/** "◆ reached you from 12.4 km" — renders a post's snapshotted reach. */
+/** "◆ reached you 12.4 km" — renders a post's snapshotted reach. */
 function reachLabel(km: number): string {
   const value = usesMiles() ? `${(km * 0.621371).toFixed(1)} mi` : `${km.toFixed(1)} km`
-  // Its own full-width line now, so it fits on one line and is set nowrap. The
-  // non-breaking space stays as belt-and-braces: if a longer locale string ever
-  // does wrap, it must not break between the number and its unit.
-  return `◆ reached you from ${value.replace(' ', '\u00a0')}`
+  // A chip sharing one row with the channel chip, so its width is budgeted, not
+  // free: at 393px the band is 251px, and "…reached you from 13.8 mi" measured
+  // 268px alongside its neighbour — wrapping the pair onto two rows and costing
+  // 40px of video. Dropping "from" buys ~27px of slack, enough that a
+  // four-figure distance still shares the row; "reached you" carries the
+  // mechanic and stays. The non-breaking space keeps the number welded to its
+  // unit if a longer locale string ever does wrap anyway.
+  return `◆ reached you ${value.replace(' ', '\u00a0')}`
 }
 
 export const CHANNELS: Channel[] = [
@@ -306,6 +310,7 @@ export default function FeedTwin({
   onOpenProfile,
   suppressed = false,
   onPostReach,
+  onContentAdvance,
   onPlayerModeChange,
   bindGoBack,
   autoPlayOnMount = false,
@@ -326,6 +331,9 @@ export default function FeedTwin({
       RADIUS card can re-run its money counter — the user is shown how much
       radius each video carries, in the card that owns that number. */
   onPostReach?: (km: number | null) => void
+  /** A real feed progression (swipe or completed clip), reported to the
+      native shell so its ad cadence follows posts rather than channel buttons. */
+  onContentAdvance?: (channelId: string, contentIndex: number) => void
   /** Long-press fullscreen: the shell hides its own chrome (cube, HUD, stat
       cards) while the feed is in player mode, and brings it back on exit. */
   onPlayerModeChange?: (on: boolean) => void
@@ -336,8 +344,6 @@ export default function FeedTwin({
   const controlSide = useControlSide()
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
-  // Centered line cycles: video title → channel username → coordinates.
-  const [centerIdx, setCenterIdx] = useState(0)
   const [muted, setMuted] = useState(isUserMuted)
   const suppressedRef = useRef(suppressed)
   suppressedRef.current = suppressed
@@ -593,13 +599,6 @@ export default function FeedTwin({
     else setOwnIndex(next)
   }, [index, onIndexChange])
 
-  // Centered info line: title → username → coordinates, slow cross-fade.
-  useEffect(() => {
-    if (!mediaUnlocked) return
-    const iv = window.setInterval(() => setCenterIdx(i => (i + 1) % 3), 3400)
-    return () => window.clearInterval(iv)
-  }, [mediaUnlocked])
-
   const toggleMute = () => {
     const next = !muted
     setUserMuted(next)
@@ -615,10 +614,12 @@ export default function FeedTwin({
     const count = postsFor(ch).length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
-    contentIdxRef.current[ch.id] = (current + dir + count) % count
+    const next = (current + dir + count) % count
+    contentIdxRef.current[ch.id] = next
     playPop()
+    onContentAdvance?.(ch.id, next)
     forceContentRender(n => n + 1)
-  }, [ch])
+  }, [ch, onContentAdvance])
 
   // Feed playback is a continuous channel stream. A completed clip advances
   // to the next post instead of holding on its last frame or replaying itself.
@@ -628,9 +629,11 @@ export default function FeedTwin({
     const count = postsFor(ch).length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
-    contentIdxRef.current[ch.id] = (current + 1) % count
+    const next = (current + 1) % count
+    contentIdxRef.current[ch.id] = next
+    onContentAdvance?.(ch.id, next)
     forceContentRender(n => n + 1)
-  }, [ch])
+  }, [ch, onContentAdvance])
 
   const edgeTapRef = useRef<{ side: 'left' | 'right' | null; at: number; timer: number | null }>({
     side: null,
@@ -1559,38 +1562,26 @@ export default function FeedTwin({
           <div className={styles.infoRow}>
             <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
             <div className={styles.feedHeaderCopy}>
-              <div className={styles.centerTicker}>
-                {[post?.caption ?? ch.caption, post?.user ?? ch.user].map((line, i) => (
-                  <span
-                    key={i}
-                    className={`${i === centerIdx % 2 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
-                  >
-                    {line}
-                  </span>
-                ))}
-              </div>
-              <div className={styles.chTag}>
-                <span>CH {ch.number}</span>
-                <span aria-hidden="true">•</span>
-                <span>{ch.name.toUpperCase()}</span>
-              </div>
+              <div className={styles.feedTitle}>{post?.caption ?? ch.caption}</div>
+              <div className={styles.feedHandle}>{post?.user ?? ch.user}</div>
             </div>
+          </div>
+          {/* Channel and reach ride together on a chip band under the copy.
+              Radius is the product, so the reach chip is always up — except in
+              the fullscreen player, where NOTHING is up. Both were previously
+              rationed: the reach line only surfaced ~1 ticker slot in 6, which
+              is too rare to teach anyone the mechanic. */}
+          <div className={styles.metaPills}>
+            {/* Category is deliberately not repeated here — the channel icon
+                to the left already is the category, and spelling it out pushed
+                the reach chip onto a second row, costing 40px of video. */}
+            <span className={`${styles.pill} ${styles.pillCh}`}>CH {ch.number}</span>
+            <span className={`${styles.pill} ${styles.reachText}`}>
+              {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
+            </span>
           </div>
         </div>
       </>
-      )}
-
-      {/* Why this post is in front of you. Deliberately NOT part of the top
-          bar's logo⇄info flip or the caption⇄handle rotation: in the ticker it
-          was only on screen ~1 slot in 6, which is too rare to teach anyone the
-          mechanic. Radius is the product, so this line is always up — except in
-          the fullscreen player, where NOTHING is up. */}
-      {!playerMode && (
-      <div className={`${styles.reachLine} ${controlSide === 'right' ? styles.reachLineRailRight : styles.reachLineRailLeft}`}>
-        <span className={styles.reachText}>
-          {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
-        </span>
-      </div>
       )}
 
       {/* Channel changer + RADIUS⇄TRENDING label: OWNED BY THE HOME HUD.

@@ -29,6 +29,13 @@ type MotionTuning = {
   response?: number
 }
 
+/** Shipping motion is deliberately more expressive than raw handset attitude:
+    the navigator is small, so a physically accurate few-degree parallax barely
+    reads on a phone. These defaults keep the motion smooth while making normal
+    wrist movement unmistakable. */
+export const DEFAULT_CUBE_MOTION_GAIN = 1.45
+export const DEFAULT_CUBE_MOTION_RESPONSE = 24
+
 // The navigator is a ring, not a list of unrelated destinations. Keep this
 // sequence explicit because it is shared by touch and keyboard navigation:
 // Feed -> Profile -> Map -> Camera -> Feed.
@@ -428,11 +435,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let motionTargetYaw = 0
     let motionPitch = 0
     let motionTargetPitch = 0
-    // Defaults mirror the original device-motion behaviour. The motion lab can
-    // adjust them in-memory, so desktop tuning uses this exact renderer path
-    // without changing what a normal phone session receives.
-    let motionGain = 1
-    let motionResponse = 18
+    // The motion lab can adjust these in-memory, but its reset values mirror
+    // these shipping defaults so desktop tuning matches the physical phone.
+    let motionGain = DEFAULT_CUBE_MOTION_GAIN
+    let motionResponse = DEFAULT_CUBE_MOTION_RESPONSE
     let lastMotionAt = 0
     let normalisedMotionRoll = 0
     let normalisedMotionPitch = 0
@@ -462,8 +468,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       normalisedMotionRoll = THREE.MathUtils.clamp(roll, -1, 1)
       normalisedMotionPitch = THREE.MathUtils.clamp(devicePitch, -1, 1)
       const camcorder = loadedUrlRef.current === CAMCORDER_MODEL
-      const yawRange = camcorder ? 0.54 : 0.30
-      const pitchRange = camcorder ? 0.42 : 0.24
+      // Standard objects reach about 38° yaw / 30° pitch after the default
+      // gain. Camera-oriented objects get a little more travel so they visibly
+      // aim with the handset, while the final clamp prevents a back-face flip.
+      const yawRange = camcorder ? 0.62 : 0.46
+      const pitchRange = camcorder ? 0.48 : 0.36
       const nextYaw = normalisedMotionRoll * -yawRange * motionGain
       const nextPitch = normalisedMotionPitch * pitchRange * motionGain
       if (Math.abs(nextYaw - motionTargetYaw) < epsilon
@@ -636,7 +645,21 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       setGlFailed(true)
     }
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') wakeLoopRef.current()
+      if (document.visibilityState !== 'visible') return
+      // WebKit may discard a pending native rAF while the app is inactive but
+      // leave our numeric callback id untouched. Force a fresh callback at the
+      // real foreground edge; otherwise every later motion sample sees `raf`
+      // as non-zero and incorrectly assumes a frame is already on its way.
+      if (raf) cancelDisplayFrame(raf)
+      raf = 0
+      wakeLoopRef.current()
+    }
+    const onNativeLifecycle = (event: Event) => {
+      const active = (event as CustomEvent<{ active?: boolean }>).detail?.active
+      if (active !== true) return
+      if (raf) cancelDisplayFrame(raf)
+      raf = 0
+      wakeLoopRef.current()
     }
     const onDeviceOrientation = (event: DeviceOrientationEvent) => {
       if (document.visibilityState !== 'visible' || (event.gamma == null && event.beta == null)) return
@@ -658,7 +681,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const onMotionTuning = (event: Event) => {
       const detail = (event as CustomEvent<MotionTuning>).detail
       if (typeof detail?.gain === 'number') {
-        motionGain = THREE.MathUtils.clamp(detail.gain, 0.45, 1.65)
+        motionGain = THREE.MathUtils.clamp(detail.gain, 0.45, 1.9)
       }
       if (typeof detail?.response === 'number') {
         motionResponse = THREE.MathUtils.clamp(detail.response, 6, 34)
@@ -675,6 +698,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     canvas.addEventListener('pointercancel', onPointerCancel)
     canvas.addEventListener('keydown', onKeyDown)
     document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('poplur-native-app-lifecycle', onNativeLifecycle)
     if (!isNativeShell()) {
       window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true })
     }
@@ -683,10 +707,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
 
     // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
+    let lastLoopCallbackAt = last
     let lastDisplayFrame = 0
     let raf = 0
     const loop = (now: number) => {
       if (disposed) return
+      lastLoopCallbackAt = now
       // ProMotion may call the physical display clock at 120Hz. Keep the
       // navigator visually fluid without drawing the same small scene twice
       // per 60Hz frame.
@@ -762,6 +788,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       }
     }
     const wake = () => {
+      // A callback that has not arrived for 120ms on the visible foreground
+      // document is stale, not merely a low frame rate. Replacing it is bounded
+      // to this one small canvas and lets motion recover without touching the
+      // active page's media, Mapbox, timers, or performance policy.
+      if (raf && performance.now() - lastLoopCallbackAt > 120) {
+        cancelDisplayFrame(raf)
+        raf = 0
+      }
       if (!raf && !disposed) {
         last = performance.now()
         lastDisplayFrame = 0
@@ -784,6 +818,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       canvas.removeEventListener('pointercancel', onPointerCancel)
       canvas.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('poplur-native-app-lifecycle', onNativeLifecycle)
       if (!isNativeShell()) window.removeEventListener('deviceorientation', onDeviceOrientation)
       window.removeEventListener('poplur-native-motion', onNativeMotion)
       window.removeEventListener('poplur-motion-tuning', onMotionTuning)

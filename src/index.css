@@ -214,8 +214,7 @@ html.camera-live,
    arrowPulse are transform/opacity and stay: composited animations are not
    what heats the phone. */
 .tier-ios [class*="statLabel"],
-.tier-ios [class*="centerOn"],
-.tier-ios [class*="centerOff"],
+.tier-ios [class*="feedTitle"],
 .tier-ios [class*="staticLayer"] {
   animation: none !important;
 }

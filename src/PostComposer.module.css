@@ -179,6 +179,138 @@
   text-align: center;
 }
 
+/* ── clay upload progress ────────────────────────────────────────────────── */
+/* The host currently has two kinds of truth: named preparation/upload phases,
+   and (when supplied) real Storage byte progress. The same clay meter renders
+   both; its travelling fill means "working" and never poses as a percentage. */
+.uploadProgressCard {
+  position: absolute;
+  z-index: 8;
+  top: 43%;
+  left: 50%;
+  width: min(316px, calc(100% - 72px));
+  translate: -50% -50%;
+  box-sizing: border-box;
+  padding: 15px 16px 14px;
+  border: 2px solid rgba(255, 153, 205, 0.75);
+  border-radius: 24px;
+  color: #fff8fc;
+  background:
+    radial-gradient(circle at 24% 8%, rgba(255, 146, 205, 0.28), transparent 38%),
+    linear-gradient(155deg, #5b123d 0%, #290b22 48%, #160a18 100%);
+  box-shadow:
+    0 9px 0 #700d45,
+    0 17px 36px rgba(0, 0, 0, 0.58),
+    0 0 24px rgba(246, 59, 154, 0.25),
+    inset 0 2px 1px rgba(255, 255, 255, 0.24),
+    inset 0 -5px 10px rgba(40, 0, 24, 0.48);
+  isolation: isolate;
+}
+
+.uploadProgressCard::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 5px 8px auto;
+  height: 35%;
+  border-radius: 18px 18px 50% 50%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent);
+  pointer-events: none;
+}
+
+.uploadProgressHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.uploadProgressHead span {
+  min-width: 0;
+  font: 950 14px/1.1 system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+  letter-spacing: 0.2px;
+}
+
+.uploadProgressHead b {
+  flex: none;
+  color: #8eeaff;
+  font: 950 10px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.9px;
+  text-shadow: 0 0 10px rgba(76, 211, 255, 0.64);
+}
+
+.uploadProgressTrack {
+  position: relative;
+  height: 22px;
+  overflow: hidden;
+  padding: 4px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 210, 234, 0.34);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #100810, #25101f);
+  box-shadow:
+    inset 0 4px 8px rgba(0, 0, 0, 0.78),
+    0 2px 0 rgba(255, 255, 255, 0.12);
+}
+
+.uploadProgressFill {
+  position: relative;
+  display: block;
+  width: 0;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff8ac4 0%, #f63b9a 42%, #c60b67 100%);
+  box-shadow:
+    0 0 12px rgba(255, 70, 164, 0.78),
+    inset 0 2px 1px rgba(255, 255, 255, 0.54),
+    inset 0 -3px 5px rgba(118, 0, 57, 0.58);
+  transition: width 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.uploadProgressFill::after {
+  content: '';
+  position: absolute;
+  inset: 1px 8px auto 8px;
+  height: 35%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.uploadProgressTrackIndeterminate .uploadProgressFill {
+  width: 38%;
+  animation: clayUploadTravel 1.05s cubic-bezier(0.64, 0, 0.36, 1) infinite alternate;
+}
+
+.uploadProgressCard p {
+  margin: 9px 2px 0;
+  color: rgba(255, 235, 246, 0.72);
+  font: 700 11px/1.35 system-ui, -apple-system, sans-serif;
+  text-align: center;
+}
+
+@keyframes clayUploadTravel {
+  from { transform: translateX(-104%); }
+  to { transform: translateX(267%); }
+}
+
+@media (max-width: 360px) {
+  .uploadProgressCard {
+    width: min(292px, calc(100% - 56px));
+    padding-inline: 14px;
+  }
+  .uploadProgressHead b { font-size: 9px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uploadProgressFill { transition: none; }
+  .uploadProgressTrackIndeterminate .uploadProgressFill {
+    transform: translateX(82%);
+    animation: none;
+  }
+}
+
 .choiceHead {
   margin: 2px 0 4px;
   font-size: 19px; font-weight: 950; text-align: center;

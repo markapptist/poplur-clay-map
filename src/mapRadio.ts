@@ -39,11 +39,16 @@ let fallbackFadeTimer: number | null = null
 let unlockInstalled = false
 let soundWanted = false
 let targetRadioLevel = RADIO_IDLE_LEVEL
+let lastPublishedRadioState: 'off' | 'muted' | 'fallback' | 'live' = 'off'
 
 function publishRadioState(state: 'off' | 'muted' | 'fallback' | 'live') {
   if (typeof document === 'undefined') return
+  lastPublishedRadioState = state
   document.documentElement.dataset.poplurRadio = state
   document.documentElement.dataset.poplurRadioContext = audioContext?.state ?? 'none'
+  if (isNativeShell()) {
+    postNativeEvent({ type: 'radioPlayback', state, scope: readRadioScope() })
+  }
 }
 
 // ── Master volume: user-controlled, scales every radio path (live stream,
@@ -86,6 +91,9 @@ export function setRadioScope(scope: RadioScope) {
     window.localStorage.setItem(RADIO_BG_KEY, scope === 'screen' ? '0' : '1')
   } catch { /* embedded */ }
   window.dispatchEvent(new CustomEvent('poplur-radio-scope', { detail: { scope } }))
+  if (isNativeShell()) {
+    postNativeEvent({ type: 'radioPlayback', state: lastPublishedRadioState, scope })
+  }
 }
 
 export function isRadioBackgroundEnabled(): boolean {

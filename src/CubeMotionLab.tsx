@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './CubeMotionLab.module.css'
+import { DEFAULT_CUBE_MOTION_GAIN, DEFAULT_CUBE_MOTION_RESPONSE } from './CubeTab3D'
 
 const MAX_TILT_RADIANS = 0.72
 
@@ -22,8 +23,8 @@ export default function CubeMotionLab() {
   const enabled = isMotionLabEnabled()
   const [roll, setRoll] = useState(0)
   const [pitch, setPitch] = useState(0)
-  const [gain, setGain] = useState(1)
-  const [response, setResponse] = useState(18)
+  const [gain, setGain] = useState(DEFAULT_CUBE_MOTION_GAIN)
+  const [response, setResponse] = useState(DEFAULT_CUBE_MOTION_RESPONSE)
   const padRef = useRef<HTMLDivElement>(null)
   const trackingRef = useRef<number | null>(null)
 
@@ -45,9 +46,9 @@ export default function CubeMotionLab() {
 
   const reset = useCallback(() => {
     applyTilt(0, 0)
-    setGain(1)
-    setResponse(18)
-    postTuning(1, 18)
+    setGain(DEFAULT_CUBE_MOTION_GAIN)
+    setResponse(DEFAULT_CUBE_MOTION_RESPONSE)
+    postTuning(DEFAULT_CUBE_MOTION_GAIN, DEFAULT_CUBE_MOTION_RESPONSE)
   }, [applyTilt])
 
   useEffect(() => {
@@ -59,7 +60,7 @@ export default function CubeMotionLab() {
   useEffect(() => () => {
     if (!enabled) return
     postMotion(0, 0)
-    postTuning(1, 18)
+    postTuning(DEFAULT_CUBE_MOTION_GAIN, DEFAULT_CUBE_MOTION_RESPONSE)
   }, [enabled])
 
   if (!enabled) return null
@@ -107,7 +108,7 @@ export default function CubeMotionLab() {
       </div>
       <label className={styles.control}>
         <span>GAIN <output>{gain.toFixed(2)}x</output></span>
-        <input type="range" min="0.45" max="1.65" step="0.05" value={gain} onChange={event => setGain(Number(event.target.value))} />
+        <input type="range" min="0.45" max="1.9" step="0.05" value={gain} onChange={event => setGain(Number(event.target.value))} />
       </label>
       <label className={styles.control}>
         <span>RESPONSE <output>{Math.round(response)}</output></span>

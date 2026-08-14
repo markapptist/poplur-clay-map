@@ -206,41 +206,25 @@
 .feedHeaderCopy {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 2px;
   align-content: center;
 }
 
-/* Keep the title and its metadata in one aligned block. The previous absolute
-   screen-centred ticker fought the icon and the right-side channel tag for the
-   same pixels, producing the scattered three-column header in the phone
-   screenshot. */
-.centerTicker {
-  position: relative;
-  width: 100%;
-  min-height: 34px;
-  display: grid;
-  align-items: center;
-  text-align: left;
-}
-
-/* Overlaid via grid-area (not absolute) so the tallest line sets the height —
-   long titles wrap instead of being cut off. */
-.centerOn,
-.centerOff {
-  grid-area: 1 / 1;
+/* The caption. Previously one half of a cross-fading ticker that swapped with
+   the handle every 3.4s — so you only ever saw half the header, and the caption
+   was additionally squeezed to 46% width under 480px, which is what truncated
+   "late-night poutine run downtown" to "poutine run…" on the phone. Caption and
+   handle are both up permanently now, at full column width. */
+.feedTitle {
   font-size: clamp(15px, 4.2vw, 18px);
-  line-height: 1.08;
+  line-height: 1.12;
   font-weight: 950;
   color: #fff2f8;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
-  transition: opacity 0.34s ease, transform 0.34s ease;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-}
-
-.centerTitleShader {
   color: transparent;
   background-image: linear-gradient(105deg, #fff2f8 0%, #ff8ac6 18%, #f63b9a 38%, #ffffff 50%, #73d7ff 68%, #35c8ef 82%, #fff2f8 100%);
   background-size: 260% 100%;
@@ -252,32 +236,51 @@
   animation: feedCenterTextShader 4.8s linear 3;
 }
 
-.centerOff {
-  opacity: 0;
-  transform: translateY(9px);
+/* Quieter than the caption so the two rows read as title-then-byline rather
+   than two competing headlines. One line, ellipsed — a long handle has no break
+   opportunity, so clamping it would hard-cut it mid-glyph instead. */
+.feedHandle {
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: rgba(255, 242, 248, 0.8);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* "◆ reached you from 12.4 km" — why this post is in front of you at all.
-   Pinned just under the top bar and never part of its flip, so it is on screen
-   the whole time the post is. Spans the full width the bar uses, which is why
-   it no longer has to wrap the way it did inside the 166px ticker box. */
-.reachLine {
-  position: absolute;
-  z-index: 4;
-  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 75px);
+/* Channel and reach as chips on their own band. Indented by the icon column
+   (44px + 12px gap) so they start on the caption's left edge, not the icon's —
+   two ragged left edges in this header is the thing we just removed. */
+.metaPills {
   display: flex;
-  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+  padding-left: 56px;
   pointer-events: none;
 }
 
-.reachLineRailLeft {
-  left: max(72px, calc(env(safe-area-inset-left, 0px) + 72px));
-  right: max(14px, env(safe-area-inset-right, 0px));
+/* No backdrop-filter: a blur layer over playing video is exactly the kind of
+   per-frame compositor work the thermal gate exists to catch. Flat translucent
+   plates instead. */
+.pill {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
-.reachLineRailRight {
-  left: max(14px, env(safe-area-inset-left, 0px));
-  right: max(72px, calc(env(safe-area-inset-right, 0px) + 72px));
+.pillCh {
+  color: #4dff69;
+  background: rgba(5, 28, 11, 0.62);
+  border: 1px solid rgba(77, 255, 105, 0.34);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
 }
 
 /* A tapped "viewed your post" notice: the reach line is what a view proves, so
@@ -295,35 +298,18 @@
   }
 }
 
-/* Same no-plate legibility treatment as the home radius: stroke under fill, so
-   it survives any video frame behind it without a background. */
+/* Radius is the product, so the reach chip is the warmer of the two: it keeps
+   its cyan glow where the channel chip stays flat. Name kept as `reachText` so
+   the `.reachFlash .reachText` pulse above still finds it. */
 .reachText {
-  font-size: 13px;
-  font-weight: 900;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
   color: #d6f6ff;
-  -webkit-text-stroke: 1.6px rgba(5, 2, 9, 0.9);
-  paint-order: stroke fill;
-  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.9), 0 0 14px rgba(53, 200, 239, 0.42);
+  background: rgba(4, 24, 32, 0.62);
+  border: 1px solid rgba(53, 200, 239, 0.38);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85), 0 0 12px rgba(53, 200, 239, 0.4);
 }
 
 @keyframes feedCenterTextShader {
   to { background-position: -260% 0; }
-}
-
-.chTag {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  justify-content: flex-start;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  font-weight: 900;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  color: #4dff69;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
 }
 
 .shareSlot {
@@ -534,11 +520,6 @@
   }
 }
 
-@media (max-width: 480px) {
-  .centerTicker {
-    width: 46%;
-  }
-}
 
 /* ---- Closed captions (language chosen in Settings) ---- */
 

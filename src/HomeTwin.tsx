@@ -1292,13 +1292,26 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-profile-photo', onPhoto)
   }, [])
   useEffect(() => {
-    const onProfileMedia = (event: Event) => {
-      const detail = (event as CustomEvent<{ photo?: string | null; video?: string | null }>).detail
+    type ProfileMedia = { username?: string; photo?: string | null; video?: string | null }
+    const applyProfileMedia = (detail: ProfileMedia | undefined) => {
       if (typeof detail?.photo === 'string' || detail?.photo === null) setOwnPhoto(detail.photo ?? null)
       if (typeof detail?.video === 'string' || detail?.video === null) setOwnSelfieVideo(detail.video ?? null)
+      if (detail?.username?.trim()) {
+        try { window.localStorage.setItem('poplur.username', detail.username.trim().replace(/^@/, '')) } catch { /* embedded */ }
+      }
     }
+    const onProfileMedia = (event: Event) => applyProfileMedia((event as CustomEvent<ProfileMedia>).detail)
+    const onNativeProfile = (event: Event) => applyProfileMedia((event as CustomEvent<ProfileMedia>).detail)
     window.addEventListener('poplur-profile-media', onProfileMedia)
-    return () => window.removeEventListener('poplur-profile-media', onProfileMedia)
+    window.addEventListener('poplur-native-profile', onNativeProfile)
+    // Home owns identity-dependent Camera and Map chrome even before Profile is
+    // visited. Ask once at the home lifetime boundary so recognition can show
+    // the durable selfie video immediately instead of waiting for Profile mount.
+    if (isNativeShell()) postNativeEvent({ type: 'requestProfile' })
+    return () => {
+      window.removeEventListener('poplur-profile-media', onProfileMedia)
+      window.removeEventListener('poplur-native-profile', onNativeProfile)
+    }
   }, [])
   // Re-sent on every map (re)load as well as every change: the iframe remounts
   // on tab changes and a message sent to a dead frame is simply lost.
@@ -1373,6 +1386,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // launch, on both platforms. The home view opens on the feed tab (see
   // VIEW_TO_TAB), so "every launch" was literal.
   const lastAdChannelRef = useRef<number | null>(null)
+  const feedAdSequenceRef = useRef(0)
   useEffect(() => {
     if (activeTab !== 'feed' || !isNativeShell()) return
     // First sight of the feed only records where we started.
@@ -1385,6 +1399,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     lastAdChannelRef.current = chanIndex
     postNativeEvent({ type: 'feedChannelChanged', channelId: CHANNELS[chanIndex].id, index: chanIndex })
   }, [activeTab, chanIndex])
+  const reportFeedContentAdvance = useCallback((channelId: string, index: number) => {
+    if (!isNativeShell()) return
+    feedAdSequenceRef.current += 1
+    postNativeEvent({
+      type: 'feedContentAdvanced',
+      channelId,
+      index,
+      sequence: feedAdSequenceRef.current,
+    })
+  }, [])
   const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>(() => initialMapMode())
   const [mapTourTopics, setMapTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
   const handleMapTourTopicsChange = useCallback((topics: MapTourTopic[]) => {
@@ -1966,6 +1990,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             index={chanIndex}
             onIndexChange={setChanIndex}
             onPostReach={onFeedPostReach}
+            onContentAdvance={reportFeedContentAdvance}
             bindActions={fn => { feedActionsRef.current = fn }}
             bindGoBack={fn => { feedBackRef.current = fn }}
             suppressed={false}
@@ -1996,6 +2021,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             bindActions={actions => { cameraActionsRef.current = actions }}
             onRecordingChange={setRecordMs}
             onDetectUser={setSeenUser}
+            recognizedSelfieVideo={ownSelfieVideo}
+            recognizedSelfiePoster={ownPhoto}
             onScanTotal={setScanKm}
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}

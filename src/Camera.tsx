@@ -208,6 +208,8 @@ export default function Camera({
   onRecordingChange,
   onZoomChange,
   onDetectUser,
+  recognizedSelfieVideo,
+  recognizedSelfiePoster,
   onScanTotal,
   postTarget,
   onPosted,
@@ -230,6 +232,10 @@ export default function Camera({
   onZoomChange?: (zoom: number) => void
   /** the detected user, whose OWN reach the radius label adopts */
   onDetectUser?: (user: { handle: string; radiusKm: number } | null) => void
+  /** The signed-in user's real ten-second profile selfie. It appears only while
+   *  the on-device matcher says the face in frame is this user. */
+  recognizedSelfieVideo?: string | null
+  recognizedSelfiePoster?: string | null
   /** The scanner: the session's accumulated object-radius, climbing with each
    *  new ML find. null when not scanning. */
   onScanTotal?: (totalKm: number | null) => void
@@ -666,17 +672,34 @@ export default function Camera({
       const detail = (event as CustomEvent<Detection[]>).detail
       if (!Array.isArray(detail)) return
       if (!liveDetectionActive) { setDetections([]); onDetectUser?.(null); return }
-      const recognized = detail.find(detection => detection.user)?.user
+      const recognizedDetection = detail.find(detection => detection.user)
+      const recognized = recognizedDetection?.user
       const selfieFace = facing === 'user' && detail.some(detection => isSelfieIdentityLabel(detection.label))
+      const viewer = currentViewerDetection()
+      // Native face recognition matches the signed-in user's enrolled selfie.
+      // Use the Home ledger's accumulated overall radius for that identity so
+      // Camera cannot show an older Firestore radius while Profile/Map already
+      // show the current total.
+      const resolvedUser = recognized
+        ? (recognizedDetection?.isUser
+          ? {
+              ...recognized,
+              name: recognized.name || viewer.name,
+              radiusKm: viewer.radiusKm > 0 ? viewer.radiusKm : recognized.radiusKm,
+            }
+          : recognized)
+        : selfieFace ? viewer : null
       const enriched = recognized
-        ? detail
+        ? detail.map(detection => detection === recognizedDetection
+          ? { ...detection, user: resolvedUser ?? recognized, isUser: detection.isUser ?? true }
+          : detection)
         : selfieFace
           ? detail.map(detection => isSelfieIdentityLabel(detection.label)
-            ? { ...detection, user: currentViewerDetection(), isUser: true }
+            ? { ...detection, user: viewer, isUser: true }
             : detection)
           : detail
       setDetections(enriched)
-      onDetectUser?.(recognized ?? (selfieFace ? currentViewerDetection() : null))
+      onDetectUser?.(resolvedUser)
       // The scanner: each DISTINCT object cashes in the radius it holds in
       // other people's posts. A new find pops, exactly like a claim landing.
       if (recordScanDetections(detail.map(d => d.label)).length) {
@@ -1542,6 +1565,7 @@ export default function Camera({
       {real && (() => {
         const sceneReads = currentCameraReads.length ? currentCameraReads : lastCameraReads
         const detected = sceneReads.find(read => read.user) ?? sceneReads[0] ?? null
+        const recognizedSelf = Boolean(detected?.isUser && detected.user)
         const cameraParked = nativeCameraBudget?.state === 'parked'
         const primaryLabel = !detectOn
           ? 'TAP SCAN'
@@ -1566,6 +1590,22 @@ export default function Camera({
               )}
             </div>
             {contextLabel && <b className={styles.camDetectionContext}>{contextLabel}</b>}
+            {recognizedSelf && recognizedSelfieVideo && (
+              <div className={styles.camRecognizedSelfie} aria-label={`${detected?.user?.name ?? detected?.user?.handle ?? 'Your'} profile selfie`}>
+                <video
+                  key={recognizedSelfieVideo}
+                  src={recognizedSelfieVideo}
+                  poster={recognizedSelfiePoster ?? undefined}
+                  autoPlay
+                  muted
+                  playsInline
+                  preload="metadata"
+                  onPause={event => {
+                    if (!event.currentTarget.ended) void event.currentTarget.play().catch(() => {})
+                  }}
+                />
+              </div>
+            )}
           </div>
         )
       })()}
