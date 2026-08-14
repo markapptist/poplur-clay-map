@@ -130,8 +130,6 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // FRIEND, which gives away a day of worldwide radius and therefore has to
     // actually work.
     { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings', native: true },
-    // HEY POPLUR wakes the assistant directly — no wake phrase needed.
-    { icon: 'HeyPoplur', title: 'HEY POPLUR', screen: 'profile-voice', event: 'voice' },
   ],
 }
 

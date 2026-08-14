@@ -71,6 +71,7 @@ import { ambientAllowed, onAmbientSleepChange, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
+import { localDaylight } from './skyCycle'
 
 interface RadioStationCue {
   name: string
@@ -728,7 +729,10 @@ export default function App() {
   const [searchText, setSearchText] = useState('')
   const [searchHits, setSearchHits] = useState<Array<{ name: string; center: [number, number] }>>([])
   const [searching, setSearching] = useState(false)
-  const [dayTime, setDayTime] = useState(true)
+  // Use the phone clock on the first paint. The weather service improves this
+  // once it returns, but a missing or slow request must not leave a 1 AM globe
+  // in full daylight.
+  const [dayTime, setDayTime] = useState(() => localDaylight())
   // Tour narration stays separate from the visible status. The map header only
   // says where the camera is — the station readout left with the radio.
   const [tourLine, setTourLine] = useState<string | null>(null)
@@ -1247,6 +1251,16 @@ export default function App() {
   // Real weather + day/night for the map area (same open-meteo endpoint the
   // iOS app uses). Fahrenheit only where people actually use it — the US, its
   // territories, and a short list besides; everywhere else gets Celsius.
+  useEffect(() => {
+    const syncLocalSky = () => setDayTime(localDaylight())
+    const interval = window.setInterval(syncLocalSky, 60_000)
+    window.addEventListener('visibilitychange', syncLocalSky)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('visibilitychange', syncLocalSky)
+    }
+  }, [])
+
   useEffect(() => {
     const unit = usesFahrenheit() ? 'fahrenheit' : 'celsius'
     fetch(`https://api.open-meteo.com/v1/forecast?latitude=43.65&longitude=-79.38&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=5&temperature_unit=${unit}&timezone=auto`)

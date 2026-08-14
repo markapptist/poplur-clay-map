@@ -21,8 +21,8 @@ export interface Detection {
   h: number
   label: string
   confidence: number
-  /** a Poplur user rather than an object — carries their handle and reach */
-  user?: { handle: string; radiusKm: number }
+  /** a Poplur user rather than an object — carries their identity and reach */
+  user?: { handle: string; radiusKm: number; name?: string }
   /** A WHOLE-FRAME classification ("what is this a picture of"), not a located
    *  object. It has no position, so it must never be drawn as a box — it is
    *  the readout's answer. Set by the native bridge. */

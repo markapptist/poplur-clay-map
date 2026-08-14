@@ -180,6 +180,9 @@ function applySky(map: mapboxgl.Map, day: boolean) {
     return
   }
   try {
+    map.setConfigProperty('basemap', 'lightPreset', day ? 'day' : 'night')
+  } catch { /* light presets vary by Mapbox style */ }
+  try {
     map.setFog(day ? {
       range: [0.6, 8],
       color: 'rgba(160, 210, 250, 0.35)',
@@ -189,11 +192,11 @@ function applySky(map: mapboxgl.Map, day: boolean) {
       'star-intensity': 0,
     } as never : {
       range: [0.6, 8],
-      color: 'rgba(142, 201, 242, 0.38)',
-      'high-color': '#74b7e6',
-      'horizon-blend': 0.1,
-      'space-color': '#8ec9f2',
-      'star-intensity': 0,
+      color: 'rgba(20, 27, 79, 0.72)',
+      'high-color': '#302b70',
+      'horizon-blend': 0.24,
+      'space-color': '#030512',
+      'star-intensity': 0.86,
     } as never)
   } catch { /* fog unsupported */ }
 }
@@ -229,8 +232,6 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
   // it turns low-rise houses into flat blocks. We add a scoped solid layer for
   // taller buildings below, while house roofs keep their satellite detail.
   cfg('show3dBuildings', false)
-  cfg('lightPreset', 'day')
-
   if (REALISTIC_MAP) {
     // Photoreal flyover: let the satellite basemap speak for itself — its own
     // labels on (like the reference), no clay recolouring.
@@ -911,6 +912,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // freeze whatever callback identity existed at that moment.
   const onPinOpenRef = useRef(onPinOpen)
   onPinOpenRef.current = onPinOpen
+  const dayTimeRef = useRef(dayTime)
+  dayTimeRef.current = dayTime
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1357,17 +1360,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // Those two passes add little at phone size and are a sustained GPU cost.
       const shadows = dynamicShadowsAllowed && !iosNativeMap
       const post = postProcessingAllowed && !iosNativeMap
+      const isDay = dayTimeRef.current
       try {
         map.setLights(REALISTIC_MAP ? [
-          { id: 'ambient', type: 'ambient', properties: { color: '#ffffff', intensity: 0.48 } },
+          { id: 'ambient', type: 'ambient', properties: { color: isDay ? '#ffffff' : '#8090d7', intensity: isDay ? 0.48 : 0.19 } },
           { id: 'sun', type: 'directional', properties: {
-            color: '#ffffff', intensity: 0.72, direction: [222, 44],
+            color: isDay ? '#ffffff' : '#90a5ff', intensity: isDay ? 0.72 : 0.16, direction: [222, 44],
             'cast-shadows': shadows, 'shadow-intensity': shadows ? 0.45 : 0,
           } },
         ] as never : [
-          { id: 'ambient', type: 'ambient', properties: { color: '#d8d2ff', intensity: 0.6 } },
+          { id: 'ambient', type: 'ambient', properties: { color: isDay ? '#d8d2ff' : '#6b5a9c', intensity: isDay ? 0.6 : 0.22 } },
           { id: 'sun', type: 'directional', properties: {
-            color: '#fff0dd', intensity: 0.8, direction: [215, 38],
+            color: isDay ? '#fff0dd' : '#9ba9ff', intensity: isDay ? 0.8 : 0.18, direction: [215, 38],
             'cast-shadows': shadows, 'shadow-intensity': shadows ? 0.6 : 0,
           } },
         ] as never)
@@ -3270,18 +3274,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       swapSprite(() => flyerMarkersRef.current, 'models/plane.glb', { pitch: 74, size: 256 }, undefined,
         i => FLYERS[i]?.kind === 'plane')
 
-      // A bright atmosphere keeps the full toy globe readable. A black space
-      // pass makes Mapbox's underside look like a failed/unfinished texture.
-      try {
-        map.setFog({
-          range: [0.6, 8],
-          color: 'rgba(142, 201, 242, 0.38)',
-          'high-color': '#74b7e6',
-          'horizon-blend': 0.1,
-          'space-color': '#8ec9f2',
-          'star-intensity': 0,
-        } as never)
-      } catch { /* fog unsupported */ }
+      applySky(map, dayTimeRef.current)
 
       setMapEpoch(epoch => epoch + 1)
     }
@@ -3567,6 +3560,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
     applySky(map, dayTime)
+    const isDay = dayTime
+    try {
+      map.setLights([
+        { id: 'ambient', type: 'ambient', properties: { color: isDay ? '#d8d2ff' : '#6b5a9c', intensity: isDay ? 0.6 : 0.22 } },
+        { id: 'sun', type: 'directional', properties: {
+          color: isDay ? '#fff0dd' : '#9ba9ff', intensity: isDay ? 0.8 : 0.18, direction: [215, 38],
+          'cast-shadows': false, 'shadow-intensity': 0,
+        } },
+      ] as never)
+    } catch { /* style may be rebuilding */ }
     idleSnapshotRef.current?.requestCapture()
   }, [dayTime, mapEpoch])
 

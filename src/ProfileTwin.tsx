@@ -1533,6 +1533,19 @@ export default function ProfileTwin({
             <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
           </button>
         )}
+        {!visiting && (
+          <button
+            type="button"
+            className={styles.heyPoplurButton}
+            onClick={() => {
+              playPop()
+              window.dispatchEvent(new CustomEvent('poplur-voice-request'))
+            }}
+            aria-label="Hey Poplur"
+          >
+            <ClaySwayObject url="poplur_mic_lite.glb" pitch={0} size={512} alt="" />
+          </button>
+        )}
       </TabControlRail>
       <div className={styles.header}>
         <div className={styles.avatarWrap}>
@@ -1574,9 +1587,8 @@ export default function ProfileTwin({
           )}
         </div>
 
-        {/* Hey Poplur now lives in the profile hold menu (a mic tile that wakes
-            the assistant) and shows as the rainbow voice ring — the equaliser
-            trigger button that used to sit here has been removed. */}
+        {/* Voice replies stay anchored to the profile while the dedicated mic
+            button in the control rail owns assistant activation. */}
         {(askOpen || aiReply) && (
           <div className={styles.askWrap}>
             {askOpen && (

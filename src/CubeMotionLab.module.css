@@ -1,0 +1,126 @@
+.lab {
+  position: absolute;
+  top: max(76px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 340;
+  width: min(232px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid rgba(255, 138, 198, 0.7);
+  border-radius: 8px;
+  color: #fff6fb;
+  background: rgba(20, 8, 20, 0.88);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(16px);
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  color: #ff8ac6;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.reset {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(127, 227, 255, 0.7);
+  border-radius: 6px;
+  color: #7fe3ff;
+  background: rgba(3, 11, 20, 0.7);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.reset:active { transform: scale(0.95); }
+
+.pad {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1.5;
+  margin: 9px 0 11px;
+  overflow: hidden;
+  border: 1px solid rgba(127, 227, 255, 0.48);
+  border-radius: 7px;
+  background: #0b1016;
+  cursor: crosshair;
+  touch-action: none;
+  outline: none;
+}
+
+.pad:focus-visible {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(246, 59, 154, 0.85);
+}
+
+.axisX,
+.axisY {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.axisX { top: 50%; right: 0; left: 0; height: 1px; }
+.axisY { top: 0; bottom: 0; left: 50%; width: 1px; }
+
+.device {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 35px;
+  height: 56px;
+  border: 2px solid #ff8ac6;
+  border-radius: 7px;
+  background: #2a1324;
+  box-shadow: 0 0 12px rgba(246, 59, 154, 0.62), inset 0 0 0 2px rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+}
+
+.device::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: #7fe3ff;
+  transform: translateX(-50%);
+}
+
+.control {
+  display: grid;
+  gap: 4px;
+  margin-top: 9px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.control span {
+  display: flex;
+  justify-content: space-between;
+  color: rgba(255, 246, 251, 0.82);
+}
+
+.control output { color: #7fe3ff; }
+
+.control input {
+  width: 100%;
+  margin: 0;
+  accent-color: #f63b9a;
+}
+
+@media (max-width: 430px) {
+  .lab {
+    top: max(92px, env(safe-area-inset-top));
+    width: 194px;
+    padding: 10px;
+  }
+
+  .pad { margin: 7px 0 8px; }
+}

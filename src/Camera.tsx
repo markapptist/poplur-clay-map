@@ -98,6 +98,26 @@ function meaningfulCameraReads(items: Detection[]): Detection[] {
   }
   return reads
 }
+
+function currentViewerDetection(): NonNullable<Detection['user']> {
+  let handle = 'MARK'
+  let radiusKm = 0
+  try {
+    const storedHandle = window.localStorage.getItem('poplur.username')?.trim().replace(/^@/, '')
+    if (storedHandle && !/^username$/i.test(storedHandle)) handle = storedHandle
+    const storedRadius = Number.parseFloat(window.localStorage.getItem('poplur.totalRadiusKm') ?? '')
+    if (Number.isFinite(storedRadius)) radiusKm = storedRadius
+  } catch { /* embedded storage can be unavailable */ }
+  return { handle: `@${handle}`, name: handle, radiusKm }
+}
+
+const SELFIE_IDENTITY_LABELS = new Set([
+  'face', 'faces', 'human', 'humans', 'person', 'people', 'portrait', 'selfie', 'user', 'users',
+])
+
+function isSelfieIdentityLabel(label: string) {
+  return SELFIE_IDENTITY_LABELS.has(label.trim().toLowerCase())
+}
 // Only the iOS host currently mounts a camera surface behind the web view.
 // Android's post-login host is a WebView plus the capture intents; there is no
 // behind-WebView preview to reveal. Treating it as an iOS hole makes A03 show a
@@ -645,8 +665,18 @@ export default function Camera({
     const receive = (event: Event) => {
       const detail = (event as CustomEvent<Detection[]>).detail
       if (!Array.isArray(detail)) return
-      if (!liveDetectionActive) { setDetections([]); return }
-      setDetections(detail)
+      if (!liveDetectionActive) { setDetections([]); onDetectUser?.(null); return }
+      const recognized = detail.find(detection => detection.user)?.user
+      const selfieFace = facing === 'user' && detail.some(detection => isSelfieIdentityLabel(detection.label))
+      const enriched = recognized
+        ? detail
+        : selfieFace
+          ? detail.map(detection => isSelfieIdentityLabel(detection.label)
+            ? { ...detection, user: currentViewerDetection(), isUser: true }
+            : detection)
+          : detail
+      setDetections(enriched)
+      onDetectUser?.(recognized ?? (selfieFace ? currentViewerDetection() : null))
       // The scanner: each DISTINCT object cashes in the radius it holds in
       // other people's posts. A new find pops, exactly like a claim landing.
       if (recordScanDetections(detail.map(d => d.label)).length) {
@@ -658,10 +688,11 @@ export default function Camera({
     return () => {
       window.removeEventListener('poplur-native-detections', receive)
       setDetections([])
+      onDetectUser?.(null)
       resetScan()
       onScanTotal?.(null)
     }
-  }, [liveDetectionActive, onScanTotal])
+  }, [facing, liveDetectionActive, onDetectUser, onScanTotal])
 
   // Android's camera is the WebView video rather than a native layer behind
   // it. Send a small frame to the shell at 4 fps; ML Kit returns real face
@@ -1510,19 +1541,21 @@ export default function Camera({
           say that AI is scanning instead of leaving a mysterious blank. */}
       {real && (() => {
         const sceneReads = currentCameraReads.length ? currentCameraReads : lastCameraReads
-        const detected = sceneReads[0] ?? null
+        const detected = sceneReads.find(read => read.user) ?? sceneReads[0] ?? null
         const cameraParked = nativeCameraBudget?.state === 'parked'
         const primaryLabel = !detectOn
           ? 'TAP SCAN'
           : cameraParked
             ? 'CAMERA COOLING'
             : detected
-              ? (detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase())
+              ? (detected.user?.name ?? detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase())
               : 'AI SCANNING'
         const contextLabel = detectOn && detected && !cameraParked
-          ? sceneReads.slice(1)
+          ? (detected.user
+            ? `${detected.user.radiusKm.toFixed(1)} KM OVERALL`
+            : sceneReads.slice(1)
               .map(read => read.label.replace(/_/g, ' ').toUpperCase())
-              .join(' · ')
+              .join(' · '))
           : ''
         return (
           <div className={styles.camDetectionTitle} role="status" aria-live="polite">
