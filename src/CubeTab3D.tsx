@@ -11,6 +11,8 @@ import { isNativeShell } from './nativeBridge'
 declare global {
   interface Window {
     __poplurDisplayActive?: () => boolean
+    __poplurDisplayRAF?: (callback: FrameRequestCallback) => number
+    __poplurCancelDisplayRAF?: (id: number) => void
   }
 }
 
@@ -436,6 +438,16 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let normalisedMotionPitch = 0
     let nextGlobeFrameAt = 0
     const navigatorFPS = 60
+    const navigatorFrameMs = 1000 / navigatorFPS
+    // The managed document clock deliberately slows ambient work. The cube is
+    // the visible tab control, not ambient decoration, so use the native
+    // physical-display clock that the iOS host exposes for this one canvas.
+    // Rendering remains capped at 60fps below; Mapbox, weather and every
+    // inactive surface stay on the governed clock.
+    const requestDisplayFrame = window.__poplurDisplayRAF
+      ?? window.requestAnimationFrame.bind(window)
+    const cancelDisplayFrame = window.__poplurCancelDisplayRAF
+      ?? window.cancelAnimationFrame.bind(window)
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && (window.__poplurDisplayActive?.() ?? true)
@@ -671,9 +683,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
 
     // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
+    let lastDisplayFrame = 0
     let raf = 0
     const loop = (now: number) => {
       if (disposed) return
+      // ProMotion may call the physical display clock at 120Hz. Keep the
+      // navigator visually fluid without drawing the same small scene twice
+      // per 60Hz frame.
+      if (lastDisplayFrame > 0 && now - lastDisplayFrame < navigatorFrameMs - 0.5) {
+        raf = requestDisplayFrame(loop)
+        return
+      }
+      lastDisplayFrame = now
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
 
@@ -735,7 +756,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         || Math.abs(motionTargetPitch - motionPitch) > 0.0005
         || needsRender
       if (active || mapGlobeIsVisible()) {
-        raf = window.requestAnimationFrame(loop)
+        raf = requestDisplayFrame(loop)
       } else {
         raf = 0
       }
@@ -743,18 +764,19 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const wake = () => {
       if (!raf && !disposed) {
         last = performance.now()
-        raf = window.requestAnimationFrame(loop)
+        lastDisplayFrame = 0
+        raf = requestDisplayFrame(loop)
       }
     }
     wakeLoopRef.current = () => {
       needsRender = true
       wake()
     }
-    raf = window.requestAnimationFrame(loop)
+    raf = requestDisplayFrame(loop)
 
     return () => {
       disposed = true
-      window.cancelAnimationFrame(raf)
+      cancelDisplayFrame(raf)
       window.clearTimeout(flashPulseTimer)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)

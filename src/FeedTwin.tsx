@@ -1513,7 +1513,11 @@ export default function FeedTwin({
             decoder behind the ad for no visible gain. Unmount it when the ad is
             ready (the identity card stays as the "no signal" state for channels
             with no creative, where adReady never flips). */}
-        {showStatic && !isNativeShell() && (
+        {/* Playback recovery uses the immediate CSS noise layer above, not a
+            second video decoder over the active post. The richer static clip
+            is reserved for the explicit QA/transition modes that asked for
+            it, so normal Feed playback can never own two playing videos. */}
+        {(forceStatic || forceTransition) && !isNativeShell() && (
           <video
             ref={staticVideoRef}
             className={staticReady ? `${styles.staticVideo} ${styles.staticVideoReady}` : styles.staticVideo}
@@ -1551,22 +1555,25 @@ export default function FeedTwin({
           <ClayMuteButton muted={muted} onToggle={toggleMute} size={44} />
           <ClayCornerButton kind="share" label="Share this post" size={44} still onPress={sharePost} />
         </TabControlRail>
-        <div className={styles.topBar}>
+        <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
             <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
-            <div className={styles.centerTicker}>
-              {[post?.caption ?? ch.caption, post?.user ?? ch.user].map((line, i) => (
-                <span
-                  key={i}
-                  className={`${i === centerIdx % 2 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
-                >
-                  {line}
-                </span>
-              ))}
-            </div>
-            <div className={styles.chTag}>
-              <span>CH {ch.number}</span>
-              <span>{ch.name.toUpperCase()}</span>
+            <div className={styles.feedHeaderCopy}>
+              <div className={styles.centerTicker}>
+                {[post?.caption ?? ch.caption, post?.user ?? ch.user].map((line, i) => (
+                  <span
+                    key={i}
+                    className={`${i === centerIdx % 2 ? styles.centerOn : styles.centerOff}${i === 0 ? ` ${styles.centerTitleShader}` : ''}`}
+                  >
+                    {line}
+                  </span>
+                ))}
+              </div>
+              <div className={styles.chTag}>
+                <span>CH {ch.number}</span>
+                <span aria-hidden="true">•</span>
+                <span>{ch.name.toUpperCase()}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1579,7 +1586,7 @@ export default function FeedTwin({
           mechanic. Radius is the product, so this line is always up — except in
           the fullscreen player, where NOTHING is up. */}
       {!playerMode && (
-      <div className={styles.reachLine}>
+      <div className={`${styles.reachLine} ${controlSide === 'right' ? styles.reachLineRailRight : styles.reachLineRailLeft}`}>
         <span className={styles.reachText}>
           {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
         </span>
