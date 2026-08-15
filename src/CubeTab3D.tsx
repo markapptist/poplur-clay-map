@@ -25,16 +25,23 @@ declare global {
 export type CubeTab = 'map' | 'feed' | 'post' | 'profile'
 
 type MotionTuning = {
-  gain?: number
-  response?: number
+  sensitivity?: number
+  smoothing?: number
 }
 
-/** Shipping motion is deliberately more expressive than raw handset attitude:
-    the navigator is small, so a physically accurate few-degree parallax barely
-    reads on a phone. These defaults keep the motion smooth while making normal
-    wrist movement unmistakable. */
-export const DEFAULT_CUBE_MOTION_GAIN = 1.45
-export const DEFAULT_CUBE_MOTION_RESPONSE = 24
+/** Balanced motion profile chosen in the motion simulator. Raw handset attitude
+    is mapped through a small dead zone, folded so upright and tabletop holds
+    settle flat, and hard-limited before the spring runs. The limits apply to
+    the rendered model too, so spring momentum can never expose a side/back
+    face. */
+export const DEFAULT_CUBE_MOTION_SENSITIVITY = 0.58
+export const DEFAULT_CUBE_MOTION_SMOOTHING = 82
+const CUBE_MOTION_ROLL_INPUT_LIMIT = THREE.MathUtils.degToRad(45)
+const CUBE_MOTION_PITCH_INPUT_LIMIT = Math.PI / 2
+const CUBE_MOTION_DEAD_ZONE = THREE.MathUtils.degToRad(2)
+const CUBE_MOTION_PITCH_PEAK = THREE.MathUtils.degToRad(14)
+const CUBE_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(8)
+const CUBE_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(6)
 
 // The navigator is a ring, not a list of unrelated destinations. Keep this
 // sequence explicit because it is shared by touch and keyboard navigation:
@@ -474,11 +481,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let motionTargetPitch = 0
     // The motion lab can adjust these in-memory, but its reset values mirror
     // these shipping defaults so desktop tuning matches the physical phone.
-    let motionGain = DEFAULT_CUBE_MOTION_GAIN
-    let motionResponse = DEFAULT_CUBE_MOTION_RESPONSE
+    let motionSensitivity = DEFAULT_CUBE_MOTION_SENSITIVITY
+    let motionSmoothing = DEFAULT_CUBE_MOTION_SMOOTHING
+    let motionYawVelocity = 0
+    let motionPitchVelocity = 0
     let lastMotionAt = 0
-    let normalisedMotionRoll = 0
-    let normalisedMotionPitch = 0
+    let rawMotionRoll = 0
+    let rawMotionPitch = 0
     let nextGlobeFrameAt = 0
     const navigatorFPS = 60
     const navigatorFrameMs = 1000 / navigatorFPS
@@ -497,21 +506,37 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       && targetTabRef.current === 'map'
       && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
 
-    // Every replacement object shares this path, which means the main tab
-    // cube, each subscreen object, and camera-navigation models all inherit the
-    // same accelerometer response. The active camcorder gets a wider range so
-    // it reads as something being aimed rather than a small parallax nudge.
+    const applyMotionDeadZone = (angle: number) => {
+      if (Math.abs(angle) <= CUBE_MOTION_DEAD_ZONE) return 0
+      return angle - Math.sign(angle) * CUBE_MOTION_DEAD_ZONE
+    }
+
+    // A phone can rest face-up on a table or be held upright. Neither position
+    // should leave the navigator leaning. Folding physical pitch gives the
+    // middle of that travel a gentle parallax response and returns it to flat
+    // at both endpoints; roll is faded by the same factor so the whole object
+    // settles instead of only one axis.
+    const foldedPitch = (angle: number) => Math.sin(angle * 2)
+
+    // Every replacement object shares one controlled response. Inputs are raw
+    // attitude radians from Core Motion (or their browser equivalent), so the
+    // simulator's 2° dead zone, 0.58 sensitivity and 8°/6° envelope map here
+    // exactly. Both axes oppose the phone tilt for physical clay parallax.
     const applyMotionTarget = (roll: number, devicePitch: number, epsilon: number) => {
-      normalisedMotionRoll = THREE.MathUtils.clamp(roll, -1, 1)
-      normalisedMotionPitch = THREE.MathUtils.clamp(devicePitch, -1, 1)
-      const camcorder = loadedUrlRef.current === CAMCORDER_MODEL
-      // Standard objects reach about 38° yaw / 30° pitch after the default
-      // gain. Camera-oriented objects get a little more travel so they visibly
-      // aim with the handset, while the final clamp prevents a back-face flip.
-      const yawRange = camcorder ? 0.62 : 0.46
-      const pitchRange = camcorder ? 0.48 : 0.36
-      const nextYaw = normalisedMotionRoll * -yawRange * motionGain
-      const nextPitch = normalisedMotionPitch * pitchRange * motionGain
+      rawMotionRoll = THREE.MathUtils.clamp(roll, -CUBE_MOTION_ROLL_INPUT_LIMIT, CUBE_MOTION_ROLL_INPUT_LIMIT)
+      rawMotionPitch = THREE.MathUtils.clamp(devicePitch, -CUBE_MOTION_PITCH_INPUT_LIMIT, CUBE_MOTION_PITCH_INPUT_LIMIT)
+      const pitchResponse = foldedPitch(rawMotionPitch)
+      const pitchEngagement = Math.abs(pitchResponse)
+      const nextYaw = THREE.MathUtils.clamp(
+        -applyMotionDeadZone(rawMotionRoll) * pitchEngagement * motionSensitivity,
+        -CUBE_MOTION_YAW_LIMIT,
+        CUBE_MOTION_YAW_LIMIT,
+      )
+      const nextPitch = THREE.MathUtils.clamp(
+        -applyMotionDeadZone(pitchResponse * CUBE_MOTION_PITCH_PEAK) * motionSensitivity,
+        -CUBE_MOTION_PITCH_LIMIT,
+        CUBE_MOTION_PITCH_LIMIT,
+      )
       if (Math.abs(nextYaw - motionTargetYaw) < epsilon
         && Math.abs(nextPitch - motionTargetPitch) < epsilon) return
       motionTargetYaw = nextYaw
@@ -519,7 +544,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       needsRender = true
       wakeLoopRef.current()
     }
-    reconcileMotionRef.current = () => applyMotionTarget(normalisedMotionRoll, normalisedMotionPitch, 0)
+    reconcileMotionRef.current = () => applyMotionTarget(rawMotionRoll, rawMotionPitch, 0)
 
     const commitTo = (tab: CubeTab) => {
       if (tab === targetTabRef.current) return
@@ -703,9 +728,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const now = performance.now()
       if (now - lastMotionAt < 33) return
       lastMotionAt = now
-      // beta is centred around the natural upright portrait hold. Keep the
-      // model's authored front face, then let the phone aim it up/down.
-      applyMotionTarget((event.gamma ?? 0) / 45, ((event.beta ?? 45) - 45) / 45, 0.004)
+      // beta runs from the tabletop hold (0°) to upright (90°). The folded
+      // pitch response keeps the navigator flat at either end of that range.
+      applyMotionTarget(
+        THREE.MathUtils.degToRad(event.gamma ?? 0),
+        THREE.MathUtils.degToRad(event.beta ?? 0),
+        THREE.MathUtils.degToRad(0.2),
+      )
     }
     const onNativeMotion = (event: Event) => {
       const detail = (event as CustomEvent<{ roll?: number; pitch?: number }>).detail
@@ -713,20 +742,19 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const devicePitch = detail?.pitch
       if (document.visibilityState !== 'visible'
         || (typeof roll !== 'number' && typeof devicePitch !== 'number')) return
-      applyMotionTarget((roll ?? 0) / 0.72, (devicePitch ?? 0) / 0.72, 0.002)
+      applyMotionTarget(roll ?? 0, devicePitch ?? 0, THREE.MathUtils.degToRad(0.08))
     }
     const onMotionTuning = (event: Event) => {
       const detail = (event as CustomEvent<MotionTuning>).detail
-      if (typeof detail?.gain === 'number') {
-        motionGain = THREE.MathUtils.clamp(detail.gain, 0.45, 1.9)
+      if (typeof detail?.sensitivity === 'number') {
+        motionSensitivity = THREE.MathUtils.clamp(detail.sensitivity, 0.35, 0.85)
       }
-      if (typeof detail?.response === 'number') {
-        motionResponse = THREE.MathUtils.clamp(detail.response, 6, 34)
+      if (typeof detail?.smoothing === 'number') {
+        motionSmoothing = THREE.MathUtils.clamp(detail.smoothing, 55, 94)
       }
       // Reconcile the live target immediately after a tuning change. The next
       // sample supplies its own target, but this makes the lab feel direct.
-      needsRender = true
-      wakeLoopRef.current()
+      applyMotionTarget(rawMotionRoll, rawMotionPitch, 0)
     }
     canvas.addEventListener('webglcontextlost', onContextLost)
     canvas.addEventListener('pointerdown', onPointerDown)
@@ -774,19 +802,40 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       }
 
       const motionDelta = motionTargetYaw - motionYaw
-      if (Math.abs(motionDelta) > 0.0005) {
-        motionYaw += motionDelta * (1 - Math.exp(-motionResponse * dt))
-        needsRender = true
-      } else if (motionYaw !== motionTargetYaw) {
-        motionYaw = motionTargetYaw
-        needsRender = true
-      }
       const motionPitchDelta = motionTargetPitch - motionPitch
-      if (Math.abs(motionPitchDelta) > 0.0005) {
-        motionPitch += motionPitchDelta * (1 - Math.exp(-motionResponse * dt))
+      if (Math.abs(motionDelta) > 0.0002
+        || Math.abs(motionPitchDelta) > 0.0002
+        || Math.abs(motionYawVelocity) > 0.00008
+        || Math.abs(motionPitchVelocity) > 0.00008) {
+        // Match the selected Balanced simulator spring at a 60Hz reference
+        // rate. Substeps make the feel frame-rate independent after an
+        // occasional long WebKit frame without increasing the 60fps draw cap.
+        const retain = motionSmoothing / 100
+        const stiffness = Math.max(0.035, (1 - retain) * 0.72)
+        const damping = 0.72 + retain * 0.18
+        let remainingSteps = Math.min(3, dt * navigatorFPS)
+        while (remainingSteps > 0.0001) {
+          const step = Math.min(1, remainingSteps)
+          motionYawVelocity = (motionYawVelocity
+            + (motionTargetYaw - motionYaw) * stiffness * step) * Math.pow(damping, step)
+          motionPitchVelocity = (motionPitchVelocity
+            + (motionTargetPitch - motionPitch) * stiffness * step) * Math.pow(damping, step)
+          motionYaw += motionYawVelocity * step
+          motionPitch += motionPitchVelocity * step
+          remainingSteps -= step
+        }
+        const boundedYaw = THREE.MathUtils.clamp(motionYaw, -CUBE_MOTION_YAW_LIMIT, CUBE_MOTION_YAW_LIMIT)
+        const boundedPitch = THREE.MathUtils.clamp(motionPitch, -CUBE_MOTION_PITCH_LIMIT, CUBE_MOTION_PITCH_LIMIT)
+        if (boundedYaw !== motionYaw) motionYawVelocity = 0
+        if (boundedPitch !== motionPitch) motionPitchVelocity = 0
+        motionYaw = boundedYaw
+        motionPitch = boundedPitch
         needsRender = true
-      } else if (motionPitch !== motionTargetPitch) {
+      } else if (motionYaw !== motionTargetYaw || motionPitch !== motionTargetPitch) {
+        motionYaw = motionTargetYaw
         motionPitch = motionTargetPitch
+        motionYawVelocity = 0
+        motionPitchVelocity = 0
         needsRender = true
       }
 
@@ -815,8 +864,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // wake() restarts the loop from a gesture or a tab change.
       const active = pitchTarget !== null
         || Math.abs(pitchVelocity) > 0.02
-        || Math.abs(motionTargetYaw - motionYaw) > 0.0005
-        || Math.abs(motionTargetPitch - motionPitch) > 0.0005
+        || Math.abs(motionTargetYaw - motionYaw) > 0.0002
+        || Math.abs(motionTargetPitch - motionPitch) > 0.0002
+        || Math.abs(motionYawVelocity) > 0.00008
+        || Math.abs(motionPitchVelocity) > 0.00008
         || needsRender
       if (active || mapGlobeIsVisible()) {
         raf = requestDisplayFrame(loop)
