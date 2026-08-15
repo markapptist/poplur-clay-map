@@ -19,7 +19,7 @@ import { useControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
-import { readFeedCommentsAtEnd } from './feedPreferences'
+import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 import styles from './FeedTwin.module.css'
 import { interceptingLive, isLive, onLiveStore } from './liveStore'
 import {
@@ -357,6 +357,11 @@ export default function FeedTwin({
   // would throw the keyboard up over a post you are only watching.
   const [endComments, setEndComments] = useState(false)
   const endCommentsTimerRef = useRef<number | null>(null)
+  const [commentsAtEnd, setCommentsAtEnd] = useState(() => readFeedCommentsAtEnd())
+  const commentsAtEndRef = useRef(commentsAtEnd)
+  commentsAtEndRef.current = commentsAtEnd
+  const likedPostIdsRef = useRef(new Set<string>())
+  const [, setLikeRevision] = useState(0)
 
   // ── Long-press fullscreen player ──────────────────────────────────────────
   // Hold the video and every overlay leaves — the feed becomes a plain player:
@@ -382,7 +387,7 @@ export default function FeedTwin({
   }, [])
 
   const showCommentRoll = useCallback((opts?: { silent?: boolean; persist?: boolean }) => {
-    if (!readFeedCommentsAtEnd()) return
+    if (!commentsAtEndRef.current) return
     if (playerModeRef.current) return // fullscreen: the video owns the screen
     if (endCommentsTimerRef.current != null) return // already rolling
     // Ambient: the wrap fires with nobody touching the screen, so it must not
@@ -1208,6 +1213,33 @@ export default function FeedTwin({
    *  would go on sharing that one after you changed channels. */
   const chRef = useRef(ch)
   chRef.current = ch
+
+  const likeCurrentPost = useCallback(() => {
+    const id = radiusPostId(ch.id, postRef.current)
+    if (likedPostIdsRef.current.has(id)) return
+    likedPostIdsRef.current.add(id)
+    recordPostLike(id)
+    setLikeRevision(revision => revision + 1)
+    setRadiusReaction('up')
+    playPop()
+    window.setTimeout(() => setRadiusReaction(null), 720)
+  }, [ch.id])
+
+  const openComments = useCallback(() => {
+    playPop()
+    clearCommentRoll()
+    setCommentOpen(true)
+  }, [clearCommentRoll])
+
+  const toggleCommentsAtEnd = useCallback(() => {
+    playPop()
+    setCommentsAtEnd(current => {
+      const next = writeFeedCommentsAtEnd(!current)
+      if (!next) clearCommentRoll()
+      return next
+    })
+  }, [clearCommentRoll])
+
   const sharePost = useCallback(() => {
     playPop()
     const channel = chRef.current
@@ -1270,8 +1302,8 @@ export default function FeedTwin({
   useEffect(() => {
     if (!bindActions) return
     bindActions(action => {
-      if (action === 'like') { playPop(); return }
-      if (action === 'comment') { playPop(); setCommentOpen(true); return }
+      if (action === 'like') { likeCurrentPost(); return }
+      if (action === 'comment') { openComments(); return }
       if (action === 'share') { sharePost(); return }
       if (action === 'captions') {
         playPop()
@@ -1286,7 +1318,7 @@ export default function FeedTwin({
       }
     })
     return () => bindActions(null)
-  }, [bindActions, ch.id, ch.user, onOpenProfile, sharePost])
+  }, [bindActions, ch.id, ch.user, likeCurrentPost, onOpenProfile, openComments, sharePost])
 
   // Tapping outside sends the window back up the way it came, then unmounts.
   const closeComments = () => {
@@ -1378,6 +1410,8 @@ export default function FeedTwin({
   // clip would show up under the football one.
   const rollKey = `${ch.id}:${post?.user ?? ''}`
   const liveRoll = [...(myComments[rollKey] ?? []), ...COMMENT_ROLL]
+  const title = post?.caption ?? ch.caption
+  const currentPostLiked = likedPostIdsRef.current.has(postId)
 
   return (
     <div
@@ -1557,25 +1591,42 @@ export default function FeedTwin({
         <TabControlRail side={controlSide} label="Feed controls">
           <ClayMuteButton muted={muted} onToggle={toggleMute} size={44} />
           <ClayCornerButton kind="share" label="Share this post" size={44} still onPress={sharePost} />
+          <ClayCornerButton
+            kind="comments"
+            active={commentsAtEnd}
+            label={commentsAtEnd ? 'Hide end-of-video comments' : 'Show end-of-video comments'}
+            size={44}
+            still
+            onPress={toggleCommentsAtEnd}
+          />
+          <ClayCornerButton kind="comment" label="Comment on this post" size={44} still onPress={openComments} />
+          <ClayCornerButton
+            kind="heart"
+            active={currentPostLiked}
+            label={currentPostLiked ? 'Post liked' : 'Like this post'}
+            size={44}
+            still
+            onPress={likeCurrentPost}
+          />
         </TabControlRail>
+        <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
+          <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt="" draggable={false} />
+        </div>
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
-            <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt={ch.name} draggable={false} />
             <div className={styles.feedHeaderCopy}>
-              <div className={styles.feedTitle}>{post?.caption ?? ch.caption}</div>
+              <div className={styles.feedTitle} aria-label={title}>
+                <div className={styles.feedTitleTrack} key={title}>
+                  <span>{title}</span>
+                  <span aria-hidden="true">{title}</span>
+                </div>
+              </div>
               <div className={styles.feedHandle}>{post?.user ?? ch.user}</div>
             </div>
           </div>
-          {/* Channel and reach ride together on a chip band under the copy.
-              Radius is the product, so the reach chip is always up — except in
-              the fullscreen player, where NOTHING is up. Both were previously
-              rationed: the reach line only surfaced ~1 ticker slot in 6, which
-              is too rare to teach anyone the mechanic. */}
+          {/* The channel number belongs to the channel buttons. Keep the one
+              useful supporting fact here: how far this post reached. */}
           <div className={styles.metaPills}>
-            {/* Category is deliberately not repeated here — the channel icon
-                to the left already is the category, and spelling it out pushed
-                the reach chip onto a second row, costing 40px of video. */}
-            <span className={`${styles.pill} ${styles.pillCh}`}>CH {ch.number}</span>
             <span className={`${styles.pill} ${styles.reachText}`}>
               {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
             </span>

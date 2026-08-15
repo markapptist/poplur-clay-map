@@ -24,8 +24,8 @@ function migrateNativeCommentsDefault(): void {
  * Show a post's comments when its clip finishes.
  *
  * Defaults ON: the comments are part of watching a post, not a thing you have
- * to go looking for. The hold menu's COMMENTS tile turns it off for people who
- * would rather watch clean.
+ * to go looking for. The Feed's visible comments control turns it off for
+ * people who would rather watch clean.
  */
 export function readFeedCommentsAtEnd(): boolean {
   if (typeof window === 'undefined') return true

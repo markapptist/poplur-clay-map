@@ -13,7 +13,6 @@ import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
 import SettingsScreen from './SettingsScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
-import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 import { onFrame } from './frameGovernor'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
@@ -31,7 +30,7 @@ interface Item {
   screen: string
   format?: 'png' | 'svg'
   preview?: boolean
-  toggle?: 'tour' | 'captions' | 'detection' | 'comments'
+  toggle?: 'tour' | 'captions' | 'detection'
   activeTitle?: string
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
@@ -73,18 +72,12 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
   feed: [
-    { icon: 'Like', title: 'LIKE', screen: 'feed-like', format: 'svg', action: 'like' },
-    { icon: 'Chat', title: 'COMMENT', screen: 'feed-comments', action: 'comment' },
-    // No SHARE tile: it is the clay mark in the feed's top-right corner now.
-    // Sending a post on is a one-tap thing you do WHILE watching, so it should
-    // not cost a hold plus a wheel. The `share` ACTION is still handled in
-    // FeedTwin, because a native shell can raise it from its own menu.
+    // Feed engagement lives in its visible clay rail: share, comment controls,
+    // comment composer, and heart must be reachable while watching.
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
     { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
     { icon: 'CC', title: 'CC ON', activeTitle: 'CC OFF', toggle: 'captions', screen: 'feed-cc', format: 'svg', action: 'captions' },
-    // The end-of-clip comment roll (defaults on) — this is its off switch.
-    { icon: 'Chat', title: 'COMMENTS ON', activeTitle: 'COMMENTS OFF', toggle: 'comments', screen: 'feed-comments' },
   ],
   post: [
     // PHOTO and VIDEO act on the camera behind the menu. PHOTO is also the
@@ -179,12 +172,11 @@ const FRICTION = 0.955
 const MAX_VELOCITY = 16
 const SNAP_VELOCITY = 0.9
 const CENTER_Y_FRAC = 0.46
-type HoldMenuState = { tour: boolean; captions: boolean; detection: boolean; comments: boolean }
+type HoldMenuState = { tour: boolean; captions: boolean; detection: boolean }
 // ML detection ships ON: the native viewfinder has it running from the moment
-// it opens, so the tile's job is to turn it OFF. End-of-clip comments also
-// ship ON, and unlike the others their answer persists across sessions.
+// it opens, so the tile's job is to turn it OFF.
 let persistedMenuState: HoldMenuState = {
-  tour: false, captions: true, detection: true, comments: readFeedCommentsAtEnd(),
+  tour: false, captions: true, detection: true,
 }
 
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
@@ -404,20 +396,8 @@ export default function HoldMenuTwin({
   const activateItem = (item: Item) => {
     // a hold set the favourite; don't also fire the item
     if (heldRef.current) { heldRef.current = false; return }
-    // COMMENTS is a pure setting: flip, persist, done. It must not fall
-    // through to the subscreen branch below.
-    if (item.toggle === 'comments') {
-      playPop()
-      setMenuState(current => {
-        const next = { ...current, comments: writeFeedCommentsAtEnd(!current.comments) }
-        persistedMenuState = next
-        return next
-      })
-      onClose()
-      return
-    }
-    // LIKE / COMMENT / CC / PROFILE happen on the screen behind the menu —
-    // they were never really sub-screens.
+    // CC / PROFILE happen on the screen behind the menu — they were never
+    // really sub-screens. Engagement is now in Feed's visible clay rail.
     if (item.action) {
       if (item.toggle) {
         setMenuState(current => {

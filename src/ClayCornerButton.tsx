@@ -95,7 +95,7 @@ export default function ClayCornerButton({
   still = true,
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
-    | 'heart' | 'play' | 'seekBack' | 'seekFwd'
+    | 'heart' | 'comment' | 'comments' | 'play' | 'seekBack' | 'seekFwd'
   active?: boolean
   label: string
   onPress: () => void
@@ -243,6 +243,27 @@ export default function ClayCornerButton({
       heart.bezierCurveTo(0.95, 1.15, 1.5, -0.1, 0, -1.05)
       heart.closePath()
       root.add(mesh(heart))
+    } else if (kind === 'comment' || kind === 'comments') {
+      // A compact speech bubble in the same extruded clay as the other rail
+      // controls. `comments` gets three dots because it controls the roll;
+      // `comment` is the empty bubble that opens the composer.
+      const bubble = mesh(barShape(2.15, 1.42, 0.45))
+      bubble.position.set(0.06, 0.18, 0)
+      const tail = new THREE.Shape()
+      tail.moveTo(-0.58, -0.36)
+      tail.lineTo(-0.92, -1.02)
+      tail.lineTo(-0.1, -0.5)
+      tail.closePath()
+      const tailMesh = mesh(tail)
+      tailMesh.position.set(0.06, 0.18, 0)
+      root.add(bubble, tailMesh)
+      if (kind === 'comments') {
+        for (const x of [-0.46, 0, 0.46]) {
+          const dot = mesh(discShape(0.13), creamMat)
+          dot.position.set(x + 0.06, 0.18, 0.28)
+          root.add(dot)
+        }
+      }
     } else if (kind === 'play') {
       // The play triangle, pointing right.
       const tri = mesh(arrowShape(1.16))
@@ -313,15 +334,15 @@ export default function ClayCornerButton({
       const t = still ? 0.7 : clock.getElapsedTime()
       root.rotation.set(-0.14 + Math.sin(t * 0.9) * 0.07, Math.sin(t * 1.15) * 0.45, 0)
       if (tone !== 'cream') {
-        const lit = activeRef.current && (kind === 'flash' || kind === 'heart')
-        mat.color.copy(lit ? (kind === 'heart' ? litHeart : goldColor) : clayColor)
+        const lit = activeRef.current && (kind === 'flash' || kind === 'heart' || kind === 'comments')
+        mat.color.copy(lit ? (kind === 'heart' || kind === 'comments' ? litHeart : goldColor) : clayColor)
       }
       pulse.current += (0 - pulse.current) * 0.12
       const restScale = kind === 'capture' ? 1.32 : kind === 'close' ? 1.18 : 0.9
       root.scale.setScalar(restScale + pulse.current * 0.1)
       bodyMat.emissive.copy(restEmissive).lerp(litEmissive, pulse.current)
       bodyMat.emissiveIntensity =
-        ((kind === 'flash' || kind === 'heart') && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
+        ((kind === 'flash' || kind === 'heart' || kind === 'comments') && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
       renderer.render(scene, camera)
       // Still buttons hold their pose: keep drawing only while a press pulse is
       // still decaying, otherwise stop the loop entirely.
@@ -353,6 +374,7 @@ export default function ClayCornerButton({
   const FLAT_GLYPH: Partial<Record<typeof kind, string>> = {
     close: '✕', flash: '⚡', flip: '⟳', share: '↑', link: '🔗',
     send: '➤', capture: '◉', mail: '✉', search: '⌕', locate: '◎',
+    comment: '◌', comments: '•••', heart: '♥',
   }
 
   return (
@@ -393,7 +415,7 @@ export default function ClayCornerButton({
       <button
         type="button"
         aria-label={label}
-        aria-pressed={kind === 'flash' ? active : undefined}
+        aria-pressed={kind === 'flash' || kind === 'heart' || kind === 'comments' ? active : undefined}
         onPointerDown={() => {
           pulse.current = 1
           if (!activateOnClick) onPress()
