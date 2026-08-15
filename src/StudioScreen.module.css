@@ -191,7 +191,8 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: 14px;
+  /* Reserve the cube, which floats above every subscreen. */
+  padding-bottom: calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
 }
 
 /* ── 2. playlist / arrangement ─────────────────────────────────────────── */

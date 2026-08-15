@@ -3,9 +3,26 @@
 
 .screen {
   width: 100%;
-  min-height: 100%;
-  padding: max(24px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
+  /* A definite height, not min-height. The subscreen stage is absolutely
+     positioned with overflow:hidden, so a box that grows past it is CLIPPED
+     rather than scrolled — scrollHeight stayed equal to clientHeight and the
+     page could not move at all. With a fixed height this is a real scroll view. */
+  height: 100%;
+  /* Clear the home chrome, the same reserve the composer uses: the cube and
+     bottom row sit at `bottom: 18px` with a height of --cube-size, ABOVE
+     subscreens, so the cube stays reachable as the universal back control.
+     Without this, the last rows sat under the cube canvas — SIGN OUT was lit
+     and on screen, but the canvas swallowed every tap aimed at its middle. */
+  /* Start below the Poplur wordmark. It belongs to the home view and sits over
+     every subscreen at z-index 270, so this screen's rows go UNDER it rather
+     than removing it — the same reserve Feed, ClayNav and the harness use. */
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px)
+    20px
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* The clay bar itself lives in index.css under [data-clay-scroll]. */
   color: #fff4fa;
   background:
     radial-gradient(circle at 22% 8%, rgba(246, 59, 154, 0.32), transparent 31%),
@@ -14,38 +31,124 @@
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 }
 
-.header {
-  max-width: 420px;
-  margin: 0 auto 18px;
-  text-align: center;
-}
-
-.header h2 {
-  margin: 2px 0 6px;
-  color: #ff80bf;
-  font-size: clamp(30px, 8vw, 42px);
-  line-height: 1;
-  letter-spacing: -0.05em;
-  text-shadow: 0 3px 0 #751c4a, 0 8px 18px rgba(0, 0, 0, 0.58);
-}
-
-.eyebrow {
-  margin: 0;
-  color: #7fe3ff;
-  font-size: 10px;
-  font-weight: 950;
-  letter-spacing: 0.22em;
-}
+/* No title block on the root list. The clay POPLUR wordmark sits behind the top
+   of every subscreen, so a "SETTINGS" heading and a POPLUR eyebrow stacked
+   straight into it — two wordmarks fighting over the same 60px. The hold-menu
+   tile you arrived from already names the screen. */
 
 .body {
   max-width: 420px;
   margin: 0 auto;
 }
 
+/* ── the root list ──────────────────────────────────────────────────────────
+   Settings is an index, not a control panel: each row opens the screen that
+   owns those controls. One clay card holds the rows so the list reads as a
+   single object, the way .group does for switches. */
+.list {
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(14, 5, 20, 0.72);
+  border: 1px solid rgba(255, 138, 198, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 15px 16px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row + .row { border-top: 1px solid rgba(255, 138, 198, 0.14); }
+.row:active { background: rgba(255, 138, 198, 0.08); }
+
+.rowText { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+
+.rowText b {
+  font: 800 15px/1.2 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: #fff2f8;
+}
+
+.rowText i {
+  font: 500 11.5px/1.3 system-ui, -apple-system, sans-serif;
+  font-style: normal;
+  color: rgba(255, 226, 242, 0.62);
+}
+
+/* The current setting, read without opening the screen. */
+.rowValue {
+  flex: none;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 12.5px/1 system-ui, -apple-system, sans-serif;
+  color: #7fe3ff;
+}
+
+.chev {
+  flex: none;
+  color: rgba(255, 138, 198, 0.72);
+  font-size: 17px;
+  line-height: 1;
+}
+
+/* ── a section screen ───────────────────────────────────────────────────────
+   Reached from a row. The cube is still the universal way out of Settings
+   altogether; this bar is the way back up one level, to the list. */
+.navBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 8px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  color: #fff4fa;
+  font: 950 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+.back:active { transform: scale(0.97); }
+
+/* A page that has a settings screen but nothing on it yet. */
+.empty {
+  margin: 4px 2px 8px;
+  font: 500 12.5px/1.4 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 226, 242, 0.62);
+}
+
+.pageTitle {
+  margin: 0;
+  font: 950 13px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.18em;
+  color: #ff8ac6;
+}
+
 /* ── Refer a friend ─────────────────────────────────────────────────────────
    The one card here that gives something away, so it is allowed to look like
    a prize: pink clay rim, dark dough fill, the house recipe. */
 .refer {
+  /* Sits under the list now, in the gap DONE used to hold. */
+  margin-top: 18px;
   padding: 16px 16px 14px;
   border-radius: 22px;
   background:
@@ -172,21 +275,13 @@
   color: #7fe3ff;
 }
 
-.done {
+/* Wrapper for the sign-out row. The TSX referenced this class but it never
+   existed in the stylesheet, so the block rendered with className=undefined. */
+.card {
   display: block;
-  width: 100%;
-  margin: 18px 0 6px;
-  padding: 13px 16px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
-  color: #fff4fa;
-  font-size: 13px;
-  font-weight: 950;
-  letter-spacing: 0.16em;
-  cursor: pointer;
+  margin-top: 4px;
 }
+
 
 /* ── grouped switches ─────────────────────────────────────────────────────── */
 /* Same clay card as the referral block above, without the prize framing —
@@ -200,14 +295,6 @@
   background: rgba(14, 5, 20, 0.72);
   border: 1px solid rgba(255, 138, 198, 0.22);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-.groupKicker {
-  font-size: 9.5px;
-  font-weight: 900;
-  letter-spacing: 1.4px;
-  color: #ff8ac6;
-  margin-bottom: 6px;
 }
 
 .switchRow {

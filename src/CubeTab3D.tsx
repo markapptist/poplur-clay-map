@@ -139,6 +139,33 @@ async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
     Centring is done AFTER scaling and from a re-measured box: recentring first
     only lands on zero when the model's own bounds happen to be centred, which is
     true of the designed cube but cannot be assumed of every clay model. */
+/** Resting orientation correction, per authored object.
+
+    The camera is orthographic and dead-on at (0,0,10), and navigation never
+    writes yaw — so an object that does not face the viewer at rest is authored
+    that way in its own GLB. Rather than re-export the asset, each such object
+    declares the rotation that brings its labelled face square to the camera.
+    Applied before the recentre below, so the fix cannot push the object off
+    centre. Radians. */
+const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> = {}
+
+/** The supplied `poplur_cube_*` set is authored face-UP: the coloured pad that
+    says what the cube is — the settings gear, the mail flap, the store bag —
+    sits on the top of each cube, not its front. At rest you therefore met a
+    blank clay side and never saw the mark. A quarter turn up lays that pad flat
+    to the camera, the same quarter turn the authored food face uses.
+
+    The tab navigator is deliberately EXCLUDED. It is `poplur_cube_v4.glb`, it
+    belongs to the same family by name, and it carries its marks on its SIDES
+    because turning between them is the tab gesture — tipping it would put the
+    whole tab bar on its back. */
+function restingOrientation(url: string) {
+  const explicit = MODEL_ORIENTATION[url]
+  if (explicit) return explicit
+  if (url.startsWith('poplur_cube_') && url !== CUBE_MODEL) return { x: Math.PI / 2 }
+  return null
+}
+
 function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string, maxAnisotropy = 1) {
   // GLTF's mipmaps are correct at rest, but an accelerometer tilt makes those
   // textures oblique. Use the GPU's supported anisotropic filter so lettering
@@ -199,10 +226,20 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string, ma
     const visualScale = url === 'poplur_clay_phone_lite.glb' ? 0.76 : 1
     model.scale.setScalar((2 / largest) * visualScale)
   }
+  const orientation = restingOrientation(url)
+  if (orientation) {
+    model.rotation.set(orientation.x ?? 0, orientation.y ?? 0, orientation.z ?? 0)
+  }
   model.updateMatrixWorld(true)
   const centred = new THREE.Box3().setFromObject(model).getCenter(new THREE.Vector3())
   model.position.sub(centred)
   group.add(model)
+
+  // Dev-only handle for dialling a resting orientation against the real render
+  // instead of guessing radians. Stripped from production builds.
+  if (import.meta.env.DEV) {
+    ;(window as unknown as Record<string, unknown>).__poplurCubeModel = model
+  }
 }
 
 /** Free the GPU memory a swapped-out model was holding. Dropping the reference

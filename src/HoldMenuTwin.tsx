@@ -673,7 +673,7 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'profile-settings') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Settings">
-          <SettingsScreen onClose={() => { playPop(); onClose() }} />
+          <SettingsScreen />
         </div>
       )
     }

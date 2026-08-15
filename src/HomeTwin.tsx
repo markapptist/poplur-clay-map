@@ -1950,6 +1950,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* One brand owner for the entire home. Tabs and subscreens never mount
           their own wordmark, so changing surfaces cannot duplicate or replace
           the Poplur title. */}
+      {/* The wordmark stays up on EVERY subscreen, Settings included: it belongs
+          to the home view. Settings reserves room for it in its own top padding
+          rather than hiding it. */}
       <div className={styles.universalTitle}>
         <TopChrome />
       </div>

@@ -25,7 +25,12 @@
   position: absolute;
   inset: 0;
   overflow-y: auto;
-  padding: max(18px, env(safe-area-inset-top)) 18px 40px;
+  /* Top: clear the Poplur wordmark, which is the title of every subscreen.
+     Bottom: clear the cube, which floats above them. */
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 12px)
+    18px
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }

@@ -1,8 +1,17 @@
 .screen {
   width: 100%;
-  min-height: 100%;
-  padding: max(24px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
+  /* A definite height, not min-height: the subscreen stage is absolutely
+     positioned with overflow:hidden, so a box that grows past it is CLIPPED
+     rather than scrolled. Same fix as Settings. */
+  height: 100%;
+  /* Top: clear the Poplur wordmark, which is this screen's title.
+     Bottom: clear the cube, which sits above subscreens as the way out. */
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px)
+    20px
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   color: #fff4fa;
   background:
     radial-gradient(circle at 22% 8%, rgba(246, 59, 154, 0.32), transparent 31%),

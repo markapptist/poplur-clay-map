@@ -26,7 +26,40 @@ import { readControlSide, setControlSide, type ControlSide } from './controlPlac
 // entire planet for a day, which is the only place in the app where reach is
 // given outright. See referral.ts for the mechanic and the live-service wire.
 
-export default function SettingsScreen({ onClose }: { onClose: () => void }) {
+// Settings is an index of screens, not one long control panel: the root is a
+// list, and each row opens the screen that owns those controls. It grew past a
+// single page once Camera, Radio and Controls all landed in it, and a flat page
+// put the last rows under the home chrome where they could not be tapped.
+// One row per page of the app, so a setting is looked up where you met it:
+// what the camera says lives under Camera, how far the station follows you
+// lives under Radio. Pages with nothing to set yet still get a row — a gap in
+// the list would read as "this page has no settings screen", which is a
+// different claim from "there is nothing to set here yet".
+type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'profile'
+
+const PAGE_TITLE: Record<Page, string> = {
+  home: 'HOME',
+  map: 'MAP',
+  feed: 'FEED',
+  camera: 'CAMERA',
+  radio: 'RADIO',
+  profile: 'PROFILE',
+}
+
+const RADIO_LABEL: Record<RadioScope, string> = {
+  screen: 'Radio screen',
+  app: 'Across Poplur',
+  outside: 'Outside app',
+}
+
+const SIDE_LABEL: Record<ControlSide, string> = {
+  left: 'Left side',
+  right: 'Right side',
+}
+
+// No onClose prop: with DONE gone, the cube is the only way out of this screen,
+// and the cube is the shell's own handler — nothing here needs to call it.
+export default function SettingsScreen() {
   const code = referralCode()
   const link = referralLink(code)
   const [active, setActive] = useState(isWorldRadiusActive)
@@ -42,6 +75,9 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
   const [detectDefault, setDetectDefault] = useState(readCameraDetectDefault)
   const [radioScope, setRadioScopeState] = useState<RadioScope>(readRadioScope)
   const [controlSide, setControlSideState] = useState<ControlSide>(readControlSide)
+  // null is the root list. The cube still closes Settings outright, so this only
+  // ever has to walk back one level.
+  const [page, setPage] = useState<Page | null>(null)
 
   // The native side owns both behaviours — CameraAIAnnouncer does the talking
   // and the capture session decides what runs at start — so a switch here has
@@ -67,6 +103,9 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
     playPop()
     setControlSideState(setControlSide(side))
   }
+
+  const openPage = (next: Page) => { playPop(); setPage(next) }
+  const backToList = () => { playPop(); setPage(null) }
 
   // The countdown, and only while this screen is open. Half a minute is fine
   // for a readout in hours and minutes — a per-second tick would be a timer
@@ -136,13 +175,96 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <section className={styles.screen} aria-label="Settings">
-      <header className={styles.header}>
-        <p className={styles.eyebrow}>POPLUR</p>
-        <h2>SETTINGS</h2>
-      </header>
-
+    <section className={styles.screen} aria-label="Settings" data-clay-scroll>
       <div className={styles.body}>
+        {page === null && (
+          <>
+            <div className={styles.list}>
+              <button type="button" className={styles.row} onClick={() => openPage('home')}>
+                <span className={styles.rowText}>
+                  <b>Home</b>
+                  <i>Which thumb the action rails sit under.</i>
+                </span>
+                <span className={styles.rowValue}>{SIDE_LABEL[controlSide]}</span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className={styles.row} onClick={() => openPage('map')}>
+                <span className={styles.rowText}>
+                  <b>Map</b>
+                  <i>Your radius, and what the map narrates.</i>
+                </span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className={styles.row} onClick={() => openPage('feed')}>
+                <span className={styles.rowText}>
+                  <b>Feed</b>
+                  <i>Captions, comments and what autoplays.</i>
+                </span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className={styles.row} onClick={() => openPage('camera')}>
+                <span className={styles.rowText}>
+                  <b>Camera</b>
+                  <i>What the lens says and when it looks.</i>
+                </span>
+                <span className={styles.rowValue}>{aiVoice ? 'Voice on' : 'Voice off'}</span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className={styles.row} onClick={() => openPage('radio')}>
+                <span className={styles.rowText}>
+                  <b>Radio</b>
+                  <i>How far the station follows you.</i>
+                </span>
+                <span className={styles.rowValue}>{RADIO_LABEL[radioScope]}</span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className={styles.row} onClick={() => openPage('profile')}>
+                <span className={styles.rowText}>
+                  <b>Profile</b>
+                  <i>Your account and this session on this device.</i>
+                </span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+            </div>
+            {/* No DONE: every control here commits the moment you touch it, so
+                there is nothing to confirm. The cube closes the screen. */}
+          </>
+        )}
+
+        {page !== null && (
+          <div className={styles.navBar}>
+            <button type="button" className={styles.back} onClick={backToList}>
+              <span aria-hidden="true">‹</span> SETTINGS
+            </button>
+            <h2 className={styles.pageTitle}>{PAGE_TITLE[page]}</h2>
+          </div>
+        )}
+
+        {/* Map and Feed have a screen but no switches yet: both pages still take
+            their choices from their own hold menus (radius, narration, captions,
+            comments). The screen says so rather than the list hiding the page. */}
+        {(page === 'map' || page === 'feed' || (page === 'profile' && !isNativeShell())) && (
+          <article className={styles.group}>
+            <p className={styles.empty}>
+              {page === 'map'
+                ? 'Radius and map narration are still set from the map’s own hold menu. Nothing to change here yet.'
+                : page === 'feed'
+                  ? 'Captions and comments are still set from the feed’s own hold menu. Nothing to change here yet.'
+                  : 'Signing out needs the app shell — in the browser preview there is no session to end.'}
+            </p>
+          </article>
+        )}
+
+        {/* The referral sits where DONE used to, at the foot of the index: it is
+            the one thing here you DO rather than set, and it is worth meeting
+            without opening a page first. Nothing names it up here, so the card
+            carries its own title. */}
+        {page === null && (
         <article className={active ? `${styles.refer} ${styles.referOn}` : styles.refer}>
           <div className={styles.referTop}>
             <span className={styles.referKicker}>REFER A FRIEND</span>
@@ -176,10 +298,10 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
             <i style={{ width: active ? `${Math.max(2, Math.min(100, (remaining / (WORLD_RADIUS_HOURS * 3_600_000)) * 100))}%` : '0%' }} />
           </div>
         </article>
+        )}
 
+        {page === 'camera' && (
         <article className={styles.group} aria-label="Camera">
-          <span className={styles.groupKicker}>CAMERA</span>
-
           <button
             type="button"
             className={styles.switchRow}
@@ -212,15 +334,12 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
             </span>
           </button>
         </article>
+        )}
 
+        {page === 'radio' && (
         <article className={styles.group} aria-label="Radio playback">
-          <span className={styles.groupKicker}>RADIO PLAYBACK</span>
           <div className={styles.radioScope} role="radiogroup" aria-label="Where radio keeps playing">
-            {([
-              ['screen', 'Radio screen'],
-              ['app', 'Across Poplur'],
-              ['outside', 'Outside app'],
-            ] as Array<[RadioScope, string]>).map(([scope, label]) => (
+            {(Object.entries(RADIO_LABEL) as Array<[RadioScope, string]>).map(([scope, label]) => (
               <button
                 type="button"
                 key={scope}
@@ -239,11 +358,12 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
             {radioScope === 'outside' && 'Keeps the station playing when Poplur is in the background.'}
           </p>
         </article>
+        )}
 
+        {page === 'home' && (
         <article className={styles.group} aria-label="Control position">
-          <span className={styles.groupKicker}>CONTROL POSITION</span>
           <div className={styles.radioScope} role="radiogroup" aria-label="Side for camera and map controls">
-            {([['left', 'Left side'], ['right', 'Right side']] as Array<[ControlSide, string]>).map(([side, label]) => (
+            {(Object.entries(SIDE_LABEL) as Array<[ControlSide, string]>).map(([side, label]) => (
               <button
                 type="button"
                 key={side}
@@ -258,6 +378,7 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
           </div>
           <p className={styles.radioScopeNote}>Moves the Camera and Map action rails to your preferred thumb side.</p>
         </article>
+        )}
 
         {note && <p className={styles.note} role="status">{note}</p>}
 
@@ -270,7 +391,7 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
             tested on a real device.
             Native shells only: in the plain browser preview there is no
             session to end, and a dead button is worse than no button. */}
-        {isNativeShell() && (
+        {page === 'profile' && isNativeShell() && (
           <article className={styles.card}>
             <button
               type="button"
@@ -289,9 +410,6 @@ export default function SettingsScreen({ onClose }: { onClose: () => void }) {
           </article>
         )}
 
-        {/* DONE, the same way SHOW ME ends — the cube is still the universal
-            back, this is the one that is on the screen you are reading. */}
-        <button type="button" className={styles.done} onClick={onClose}>DONE</button>
       </div>
     </section>
   )

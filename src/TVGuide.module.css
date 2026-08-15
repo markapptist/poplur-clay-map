@@ -19,7 +19,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: max(14px, env(safe-area-inset-top)) 18px 14px;
+  /* Start below the Poplur wordmark, which is this screen's title. */
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 10px)
+    18px 14px;
   background: rgba(0, 0, 0, 0.86);
 }
 
@@ -217,6 +220,9 @@
   flex: 0 0 auto;
   max-height: 52%;
   overflow-y: auto;
+  /* The last channels sat behind the cube, which floats above every subscreen.
+     Reserve its height so they can scroll clear of it. */
+  padding-bottom: calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   background: rgba(0, 0, 0, 0.36);
   scrollbar-width: none;
 }

@@ -5,6 +5,9 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
+  /* The composer is the last grid row and the cube floats above it — without
+     this reserve the cube sat on top of the message box. */
+  padding-bottom: calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   color: #24141d;
   background:
     linear-gradient(180deg, #fff9fc 0%, #f8edf3 52%, #f4e5ed 100%);
@@ -51,7 +54,9 @@
   grid-template-columns: minmax(0, 1fr) 42px;
   align-items: center;
   gap: 8px;
-  margin: 6px 10px 0;
+  /* Start below the Poplur wordmark, which is the title of every subscreen —
+     this bar was sitting straight underneath it. */
+  margin: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 8px) 10px 0;
   border: 1px solid rgba(255, 255, 255, .8);
   border-radius: 8px;
   background:

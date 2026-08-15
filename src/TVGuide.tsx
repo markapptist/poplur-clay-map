@@ -199,8 +199,9 @@ export default function TVGuide({
   return (
     <div className={styles.guide} role="dialog" aria-label="TV Guide">
       <header className={styles.header}>
+        {/* No TV GUIDE heading — the Poplur wordmark above is the title of every
+            subscreen. What the screen is showing you stays. */}
         <div className={styles.titles}>
-          <h1 className={styles.title}>TV GUIDE</h1>
           <p className={styles.subtitle}>LIVE CHANNELS</p>
         </div>
         <div className={styles.headerTools}>

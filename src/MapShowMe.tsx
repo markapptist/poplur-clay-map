@@ -27,10 +27,11 @@ export default function MapShowMe({
   }
 
   return (
-    <section className={styles.screen} aria-label="Choose what the map shows">
+    <section className={styles.screen} aria-label="Choose what the map shows" data-clay-scroll>
+      {/* No screen title. The Poplur wordmark sits over every subscreen and is
+          the title — a SHOW ME heading landed straight on top of it. The line
+          that says what to DO here stays; only the name goes. */}
       <header className={styles.header}>
-        <p className={styles.eyebrow}>MAP TOUR</p>
-        <h2>SHOW ME</h2>
         <p>Choose the places Poplur visits.</p>
       </header>
       <div className={styles.grid}>
