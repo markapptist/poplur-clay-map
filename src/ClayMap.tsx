@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, wakeManagedRendering } from './nativeBridge'
 import { onFrame, onTick, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
@@ -95,6 +95,8 @@ export interface PopPin {
   /** A regional holder rather than a street-level one. Ranked first when the
    *  board is capped, so zooming out never drops the pins that ARE the board. */
   world?: boolean
+  /** A brief, signed radius change shown directly on this pin. */
+  radiusDeltaKm?: number
   mine: boolean
 }
 
@@ -904,6 +906,21 @@ export default function ClayMap(props: ClayMapProps) {
 }
 
 function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherTemp, weatherForecast = [], pins, onPinOpen }: ClayMapProps) {
+  const launchParams = typeof window === 'undefined'
+    ? new URLSearchParams()
+    : new URLSearchParams(window.location.search)
+  const focusedPostLaunch = launchParams.get('pickSpot') === '1'
+  const deferInitialGeolocation = launchParams.get('deferLocation') === '1'
+  const requestedPickLatRaw = launchParams.get('pickLat')
+  const requestedPickLngRaw = launchParams.get('pickLng')
+  const requestedPickLat = requestedPickLatRaw?.trim() ? Number(requestedPickLatRaw) : Number.NaN
+  const requestedPickLng = requestedPickLngRaw?.trim() ? Number(requestedPickLngRaw) : Number.NaN
+  const requestedPickCenter: [number, number] | null =
+    focusedPostLaunch
+      && Number.isFinite(requestedPickLat) && Math.abs(requestedPickLat) <= 90
+      && Number.isFinite(requestedPickLng) && Math.abs(requestedPickLng) <= 180
+      ? [requestedPickLng, requestedPickLat]
+      : null
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -920,7 +937,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const carMarkersRef = useRef<mapboxgl.Marker[]>([])
   const stopOrbitRef = useRef<() => void>(() => {})
   const streetViewRef = useRef(streetView)
-  const nativeLocationRef = useRef<[number, number] | null>(null)
+  const nativeLocationRef = useRef<[number, number] | null>(requestedPickCenter)
+  const [focusedPostLocationStatus, setFocusedPostLocationStatus] = useState<
+    'waiting' | 'ready' | 'unavailable'
+  >(focusedPostLaunch
+    ? requestedPickCenter ? 'ready' : deferInitialGeolocation ? 'unavailable' : 'waiting'
+    : 'ready')
+  // A late native/browser fix may refine the initial fallback, but it must not
+  // pull the prompt away after the user has deliberately chosen another point.
+  const focusedPostManualSelectionRef = useRef(false)
+  // Native shells may replay the same fix while an iframe is mounting. The
+  // picker accepts one authoritative refinement, then becomes user-owned.
+  const focusedPostResolvedLocationRef = useRef(false)
   // True while the map tab is front. The dedicated poplur-map-front message is
   // authoritative; gcAudio remains a compatibility fallback for old shells.
   // The embed's `front=0` says the map booted behind another tab; the home
@@ -1028,6 +1056,41 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const prototypeClaimSeeds = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('sample-claims') === '1'
 
+  const composeScreenPoint = useCallback((map: mapboxgl.Map, point: { x: number; y: number }) => {
+    if (!focusedPostLaunch) return point
+    const container = map.getContainer()
+    return {
+      // The focused card always stays between the two side-control lanes.
+      x: container.clientWidth / 2,
+      y: Math.max(180, Math.min(container.clientHeight - 96, point.y)),
+    }
+  }, [focusedPostLaunch])
+
+  const positionFocusedPostComposer = useCallback((center: [number, number]) => {
+    if (!focusedPostLaunch) return false
+    const map = mapRef.current
+    if (!map) return false
+    initialCameraInteractionRef.current = true
+    stopOrbitRef.current()
+    const camera = map as mapboxgl.Map & { __cinematic?: boolean }
+    camera.__cinematic = false
+    map.stop()
+    wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
+    map.jumpTo({
+      center,
+      zoom: INTRO_LANDING_ZOOM,
+      pitch: MAP_2D ? 0 : 52,
+      bearing: MAP_2D ? 0 : -18,
+    })
+    zoomValueRef.current = INTRO_LANDING_ZOOM
+    zoomTargetRef.current = INTRO_LANDING_ZOOM
+    setZoomValue(INTRO_LANDING_ZOOM)
+    const point = composeScreenPoint(map, map.project(center))
+    composeOpenRef.current = true
+    setComposeAt({ lng: center[0], lat: center[1], x: point.x, y: point.y })
+    return true
+  }, [composeScreenPoint, focusedPostLaunch, mapRef])
+
   useEffect(() => {
     const readLocation = (value: unknown): [number, number] | null => {
       if (!value || typeof value !== 'object') return null
@@ -1041,7 +1104,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }
     const apply = (value: unknown) => {
       const center = readLocation(value)
-      if (center) nativeLocationRef.current = center
+      if (!center) return
+      nativeLocationRef.current = center
+      if (focusedPostLaunch
+        && !focusedPostManualSelectionRef.current
+        && !focusedPostResolvedLocationRef.current) {
+        focusedPostResolvedLocationRef.current = true
+        setFocusedPostLocationStatus('ready')
+        positionFocusedPostComposer(center)
+      }
     }
     const onLocation = (event: Event) => apply((event as CustomEvent).detail)
     // Host state messages may be resent when unrelated shell state changes.
@@ -1094,7 +1165,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       document.removeEventListener('visibilitychange', syncFrameSurface)
       setSurfaceFront(false)
     }
-  }, [])
+  }, [focusedPostLaunch, positionFocusedPostComposer])
 
   // Directions: the active route, the routing profile, whether we're mid
   // eye-level navigation, the current turn banner, and a routing-in-flight flag.
@@ -1880,9 +1951,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // starts directly on useful ground: the old six-second world dive forced
       // Mapbox to stream, layout and upload every intermediate zoom level and
       // was enough to push an already-warm iPhone into OS throttling on launch.
-      const launchZoom = MAP_2D ? INTRO_LANDING_ZOOM : 0.85
+      const focusedCenter = nativeLocationRef.current ?? HOME_CENTER
+      const launchZoom = focusedPostLaunch || MAP_2D ? INTRO_LANDING_ZOOM : 0.85
+      if (focusedPostLaunch) initialCameraInteractionRef.current = true
       wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
-      map.jumpTo({ center: HOME_CENTER, zoom: launchZoom, pitch: 0, bearing: 0 })
+      map.jumpTo({
+        center: focusedPostLaunch ? focusedCenter : HOME_CENTER,
+        zoom: launchZoom,
+        pitch: focusedPostLaunch && !MAP_2D ? 52 : 0,
+        bearing: focusedPostLaunch && !MAP_2D ? -18 : 0,
+      })
       zoomValueRef.current = launchZoom
       zoomTargetRef.current = launchZoom
       setZoomValue(launchZoom)
@@ -1901,8 +1979,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         revealed = true
         onGlobeReady?.()
       }
-      map.once('idle', revealAtGlobe)
-      later(revealAtGlobe, 1200)
+      if (focusedPostLaunch) {
+        // This is a task surface, not a destination reveal. Report ready on the
+        // next turn after the direct local camera has painted; never show space.
+        later(revealAtGlobe, 0)
+      } else {
+        map.once('idle', revealAtGlobe)
+        later(revealAtGlobe, 1200)
+      }
 
       let introDone = false
       const finishInterruptedIntro = () => {
@@ -1999,21 +2083,22 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         () => landOn(nativeLocationRef.current ?? landingCenter),
         MAP_2D ? 120 : 1400,
       )
-      const deferInitialGeolocation = new URLSearchParams(window.location.search).get('deferLocation') === '1'
-      if (!deferInitialGeolocation && !nativeLocationRef.current && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          pos => {
-            landingCenter = [pos.coords.longitude, pos.coords.latitude]
-            // The direct 2D launch may already have painted its cached fallback
-            // before Core Location answers. Recenter once, without animating
-            // through another set of intermediate tiles.
-            if (MAP_2D && introDone) landOn(landingCenter)
-          },
-          () => { /* fallback already scheduled */ },
-          { timeout: 1200, maximumAge: 300000 },
-        )
+      if (!focusedPostLaunch) {
+        if (!deferInitialGeolocation && !nativeLocationRef.current && navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            pos => {
+              landingCenter = [pos.coords.longitude, pos.coords.latitude]
+              // The direct 2D launch may already have painted its cached fallback
+              // before Core Location answers. Recenter once, without animating
+              // through another set of intermediate tiles.
+              if (MAP_2D && introDone) landOn(landingCenter)
+            },
+            () => { /* fallback already scheduled */ },
+            { timeout: 1200, maximumAge: 300000 },
+          )
+        }
+        startIntro()
       }
-      startIntro()
 
       // ── Clay geometry ──────────────────────────────────────────────────────
       if (!REALISTIC_MAP) {
@@ -2991,7 +3076,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // just teleported, and the only way to close it was the cancel
           // button. Taps inside the bubble are DOM events on an overlay and
           // never reach the canvas, so this cannot fire while you are typing.
-          if (composeOpenRef.current) {
+          if (composeOpenRef.current && !focusedPostLaunch) {
             composeOpenRef.current = false
             setComposeMessage('')
             setComposeAt(null)
@@ -2999,14 +3084,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           }
           // A tap on open ground starts a pop there: pick a radius, drop it.
           // Taps that land on a POI/venue marker are handled by those layers.
-          setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: e.point.x, y: e.point.y })
+          if (focusedPostLaunch) {
+            focusedPostManualSelectionRef.current = true
+            setFocusedPostLocationStatus('ready')
+          }
+          composeOpenRef.current = true
+          const point = composeScreenPoint(map, e.point)
+          setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: point.x, y: point.y })
         })
       }
       // Keep the composer bubble pinned to its ground point as the camera moves.
       map.on('move', () => {
         setComposeAt(prev => {
           if (!prev) return prev
-          const p = map.project([prev.lng, prev.lat])
+          const p = composeScreenPoint(map, map.project([prev.lng, prev.lat]))
           return { ...prev, x: p.x, y: p.y }
         })
       })
@@ -3276,6 +3367,38 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
       applySky(map, dayTimeRef.current)
 
+      if (focusedPostLaunch) {
+        const center = nativeLocationRef.current ?? HOME_CENTER
+        positionFocusedPostComposer(center)
+        // Keep the normal readiness/context plumbing, but App treats this query
+        // as a focused picker and skips radio, speech, ads and tour setup.
+        onIntroComplete?.(center)
+        if (!nativeLocationRef.current && !deferInitialGeolocation && navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            pos => {
+              if (disposed
+                || focusedPostManualSelectionRef.current
+                || focusedPostResolvedLocationRef.current) return
+              const located: [number, number] = [pos.coords.longitude, pos.coords.latitude]
+              focusedPostResolvedLocationRef.current = true
+              setFocusedPostLocationStatus('ready')
+              nativeLocationRef.current = located
+              positionFocusedPostComposer(located)
+            },
+            () => {
+              if (!disposed
+                && !focusedPostResolvedLocationRef.current
+                && !focusedPostManualSelectionRef.current) {
+                setFocusedPostLocationStatus('unavailable')
+              }
+            },
+            { timeout: 1200, maximumAge: 300000 },
+          )
+        } else if (!nativeLocationRef.current) {
+          setFocusedPostLocationStatus('unavailable')
+        }
+      }
+
       setMapEpoch(epoch => epoch + 1)
     }
 
@@ -3381,7 +3504,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // camera move: the sprite composite is async and re-running it per frame
   // would thrash. Markers are plain DOM, so they inherit the existing viewport
   // cull and the zoom-band visibility rules for free.
-  const pinKey = (pins ?? []).map(p => `${p.id}:${p.color}:${p.avatar ?? ''}:${p.selfieVideo?.src ?? ''}:${p.selfieVideo?.poster ?? ''}`).join('|')
+  const pinKey = (pins ?? []).map(p => `${p.id}:${p.radiusKm}:${p.radiusDeltaKm ?? ''}:${p.color}:${p.avatar ?? ''}:${p.selfieVideo?.src ?? ''}:${p.selfieVideo?.poster ?? ''}`).join('|')
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -3480,6 +3603,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         face.alt = ''
         face.draggable = false
         markerRoot.appendChild(face)
+      }
+      if (typeof pin.radiusDeltaKm === 'number' && pin.radiusDeltaKm !== 0) {
+        const delta = document.createElement('span')
+        const amount = Math.abs(pin.radiusDeltaKm)
+        delta.className = pin.radiusDeltaKm > 0
+          ? `${styles.popPinRadiusDelta} ${styles.popPinRadiusGain}`
+          : `${styles.popPinRadiusDelta} ${styles.popPinRadiusLoss}`
+        delta.textContent = `${pin.radiusDeltaKm > 0 ? '+' : '−'}${Number.isInteger(amount) ? amount : amount.toFixed(1)}`
+        delta.setAttribute('aria-hidden', 'true')
+        markerRoot.appendChild(delta)
       }
       // Your own pops get a quiet marker of ownership so a crowded board
       // still answers "which of these are mine" without reading faces.
@@ -3787,22 +3920,56 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         <button
           type="button"
           className={styles.composeDismissLayer}
-          aria-label="Close post composer"
-          onClick={() => { playPop(); setComposeMessage(''); setComposeAt(null) }}
+          aria-label={focusedPostLaunch ? 'Move the post to another spot' : 'Close post composer'}
+          onClick={(event) => {
+            playPop()
+            if (!focusedPostLaunch) {
+              composeOpenRef.current = false
+              setComposeMessage('')
+              setComposeAt(null)
+              return
+            }
+            const map = mapRef.current
+            if (!map) return
+            const rect = map.getContainer().getBoundingClientRect()
+            const rawPoint = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+            const next = map.unproject([rawPoint.x, rawPoint.y])
+            const point = composeScreenPoint(map, rawPoint)
+            focusedPostManualSelectionRef.current = true
+            setFocusedPostLocationStatus('ready')
+            composeOpenRef.current = true
+            setComposeAt({ lng: next.lng, lat: next.lat, x: point.x, y: point.y })
+          }}
         />
       )}
       {composeAt && (
         <div
           className={styles.composeBubble}
           style={{ left: composeAt.x, top: composeAt.y }}
+          data-focused-picker={focusedPostLaunch ? 'true' : undefined}
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="poplur-map-compose-title"
         >
-          <div className={styles.composeTitle}>Drop a pop here</div>
+          <div className={styles.composeTitle} id="poplur-map-compose-title">
+            {focusedPostLaunch
+              ? focusedPostLocationStatus === 'ready'
+                ? 'Place this post here'
+                : focusedPostLocationStatus === 'waiting'
+                  ? 'Finding your current area…'
+                  : 'Choose a post spot'
+              : 'Drop a pop here'}
+          </div>
           <label className={styles.composeRadiusRow}>
             <span>Claim radius</span>
             <strong>{composeRadiusKm} km</strong>
           </label>
           <div className={styles.composeCoverage}>
-            Live coverage · {composeRadiusKm * 2} km across
+            {focusedPostLaunch && focusedPostLocationStatus !== 'ready'
+              ? focusedPostLocationStatus === 'waiting'
+                ? 'Getting your location…'
+                : 'Tap the map to select a spot'
+              : `Live coverage · ${composeRadiusKm * 2} km across`}
           </div>
           <input
             type="range"
@@ -3819,30 +3986,39 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
               ground, and it is what the Times sets as a MESSAGE inside this
               radius. Leave it blank and Post here still takes you to the
               camera, which is the video half of the same drop. */}
-          <textarea
-            className={styles.composeMessage}
-            value={composeMessage}
-            onChange={(e) => setComposeMessage(e.currentTarget.value.slice(0, MESSAGE_MAX))}
-            placeholder="Say something to this radius…"
-            maxLength={MESSAGE_MAX}
-            rows={2}
-            aria-label="Message"
-          />
-          {composeMessage.trim() && (
-            <div className={styles.composeMessageHint}>
-              <span>Runs in The Poplur Times</span>
-              <span className={styles.composeCount}>
-                {MESSAGE_MAX - composeMessage.length}
-              </span>
-            </div>
+          {!focusedPostLaunch && (
+            <>
+              <textarea
+                className={styles.composeMessage}
+                value={composeMessage}
+                onChange={(e) => setComposeMessage(e.currentTarget.value.slice(0, MESSAGE_MAX))}
+                placeholder="Say something to this radius…"
+                maxLength={MESSAGE_MAX}
+                rows={2}
+                aria-label="Message"
+              />
+              {composeMessage.trim() && (
+                <div className={styles.composeMessageHint}>
+                  <span>Runs in The Poplur Times</span>
+                  <span className={styles.composeCount}>
+                    {MESSAGE_MAX - composeMessage.length}
+                  </span>
+                </div>
+              )}
+            </>
           )}
           <div className={styles.composeActions}>
             <button
               type="button"
               className={styles.composeCancel}
-              onClick={() => { setComposeMessage(''); setComposeAt(null) }}
+              onClick={() => {
+                focusedPostManualSelectionRef.current = true
+                composeOpenRef.current = false
+                setComposeMessage('')
+                setComposeAt(null)
+              }}
             >
-              Cancel
+              {focusedPostLaunch ? 'Choose another' : 'Cancel'}
             </button>
             {/* THE post action — the map→camera half of the May '26
                 CaptureFlow (CaptureFlowManager). Posting from the map takes
@@ -3859,12 +4035,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             <button
               type="button"
               className={styles.composeDrop}
+              disabled={focusedPostLaunch && focusedPostLocationStatus !== 'ready'}
               onClick={() => {
                 const { lat, lng } = composeAt
                 const words = composeMessage.trim()
                 playPop()
                 if (words) {
                   const dropped = dropNewsMessage({ body: words, lat, lng, radiusKm: composeRadiusKm })
+                  composeOpenRef.current = false
                   setComposeMessage('')
                   setComposeAt(null)
                   if (!dropped) return
@@ -3882,6 +4060,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
                   window.parent?.postMessage({ type: 'poplur-post-message', message: dropped }, '*')
                   return
                 }
+                composeOpenRef.current = false
                 setComposeAt(null)
                 window.parent?.postMessage(
                   { type: 'poplur-post-here', lat, lng, radiusKm: composeRadiusKm },
@@ -3889,21 +4068,26 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
                 )
               }}
             >
-              {composeMessage.trim() ? '✚ Post message' : '✚ Post here'}
+              {focusedPostLaunch
+                ? focusedPostLocationStatus === 'waiting' ? 'Finding location…' : 'Use this spot'
+                : composeMessage.trim() ? '✚ Post message' : '✚ Post here'}
             </button>
           </div>
-          <button
-            type="button"
-            className={styles.composeDirections}
-            disabled={routing}
-            onClick={() => {
-              const dest: [number, number] = [composeAt.lng, composeAt.lat]
-              setComposeAt(null)
-              void requestDirections(dest, dirProfile)
-            }}
-          >
-            {routing ? 'Routing…' : '➤ Directions here'}
-          </button>
+          {!focusedPostLaunch && (
+            <button
+              type="button"
+              className={styles.composeDirections}
+              disabled={routing}
+              onClick={() => {
+                const dest: [number, number] = [composeAt.lng, composeAt.lat]
+                composeOpenRef.current = false
+                setComposeAt(null)
+                void requestDirections(dest, dirProfile)
+              }}
+            >
+              {routing ? 'Routing…' : '➤ Directions here'}
+            </button>
+          )}
         </div>
       )}
 

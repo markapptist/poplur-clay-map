@@ -23,6 +23,9 @@ import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences
 import styles from './FeedTwin.module.css'
 import { interceptingLive, isLive, onLiveStore } from './liveStore'
 import {
+  RADIUS_CHANGE_EVENT,
+  radiusDeltaForPost,
+  recordPostComment,
   recordPostDislike,
   recordPostLike,
   recordPostView,
@@ -92,17 +95,11 @@ function usesMiles(): boolean {
   }
 }
 
-/** "◆ reached you 12.4 km" — renders a post's snapshotted reach. */
+/** "◆ reached you from 12.4 km away" — renders a post's current reach. */
 function reachLabel(km: number): string {
   const value = usesMiles() ? `${(km * 0.621371).toFixed(1)} mi` : `${km.toFixed(1)} km`
-  // A chip sharing one row with the channel chip, so its width is budgeted, not
-  // free: at 393px the band is 251px, and "…reached you from 13.8 mi" measured
-  // 268px alongside its neighbour — wrapping the pair onto two rows and costing
-  // 40px of video. Dropping "from" buys ~27px of slack, enough that a
-  // four-figure distance still shares the row; "reached you" carries the
-  // mechanic and stays. The non-breaking space keeps the number welded to its
-  // unit if a longer locale string ever does wrap anyway.
-  return `◆ reached you ${value.replace(' ', '\u00a0')}`
+  // Keep the distance and its unit together in the compact header byline.
+  return `◆ reached you from ${value.replace(' ', '\u00a0')} away`
 }
 
 export const CHANNELS: Channel[] = [
@@ -351,7 +348,8 @@ export default function FeedTwin({
   const [commentClosing, setCommentClosing] = useState(false)
   const [shareNote, setShareNote] = useState<string | null>(null)
   const shareNoteTimerRef = useRef<number | null>(null)
-  const [radiusReaction, setRadiusReaction] = useState<'up' | 'down' | null>(null)
+  const [radiusReaction, setRadiusReaction] = useState<{ direction: 'up' | 'down'; amount: number } | null>(null)
+  const radiusReactionTimerRef = useRef<number | null>(null)
   // End-of-clip comments: the roll runs when the video finishes, then leaves.
   // Deliberately NOT the comment window — that one autofocuses its input and
   // would throw the keyboard up over a post you are only watching.
@@ -360,8 +358,6 @@ export default function FeedTwin({
   const [commentsAtEnd, setCommentsAtEnd] = useState(() => readFeedCommentsAtEnd())
   const commentsAtEndRef = useRef(commentsAtEnd)
   commentsAtEndRef.current = commentsAtEnd
-  const likedPostIdsRef = useRef(new Set<string>())
-  const [, setLikeRevision] = useState(0)
 
   // ── Long-press fullscreen player ──────────────────────────────────────────
   // Hold the video and every overlay leaves — the feed becomes a plain player:
@@ -640,36 +636,12 @@ export default function FeedTwin({
     forceContentRender(n => n + 1)
   }, [ch, onContentAdvance])
 
-  const edgeTapRef = useRef<{ side: 'left' | 'right' | null; at: number; timer: number | null }>({
-    side: null,
-    at: 0,
-    timer: null,
-  })
   const handleEdgeTap = useCallback((side: 'left' | 'right') => {
-    const now = performance.now()
-    const pending = edgeTapRef.current
-    if (pending.side === side && now - pending.at <= 330) {
-      if (pending.timer != null) window.clearTimeout(pending.timer)
-      edgeTapRef.current = { side: null, at: 0, timer: null }
-      const currentPost = postRef.current
-      const postId = radiusPostId(ch.id, currentPost)
-      if (side === 'left') recordPostLike(postId)
-      else recordPostDislike(postId)
-      setRadiusReaction(side === 'left' ? 'up' : 'down')
-      playPop()
-      window.setTimeout(() => setRadiusReaction(null), 720)
-      return
-    }
-    if (pending.timer != null) window.clearTimeout(pending.timer)
-    const timer = window.setTimeout(() => {
-      edgeTapRef.current = { side: null, at: 0, timer: null }
-      changeContent(side === 'left' ? -1 : 1)
-    }, 335)
-    edgeTapRef.current = { side, at: now, timer }
-  }, [ch.id, changeContent])
+    changeContent(side === 'left' ? -1 : 1)
+  }, [changeContent])
 
   useEffect(() => () => {
-    if (edgeTapRef.current.timer != null) window.clearTimeout(edgeTapRef.current.timer)
+    if (radiusReactionTimerRef.current != null) window.clearTimeout(radiusReactionTimerRef.current)
   }, [])
 
   // Keyboard twin of the gestures: up/down = channel, left/right = content.
@@ -709,13 +681,20 @@ export default function FeedTwin({
   // Every video change re-reports its reach — channel swipe, content swipe,
   // or a live broadcast replacing the fallback clip. Cleared on unmount so the
   // card falls back to your own radius the moment the feed is gone.
-  const reportedReachRef = useRef<number | null>(null)
+  const reportedReachRef = useRef<string | null>(null)
   useEffect(() => {
-    const km = post?.reachKm ?? null
-    if (km === reportedReachRef.current) return
-    reportedReachRef.current = km
-    onPostReach?.(km)
-  })
+    const report = () => {
+      const baseKm = post?.reachKm
+      const km = baseKm == null ? null : Math.max(0, baseKm + radiusDeltaForPost(postId))
+      const signature = km == null ? 'none' : `${postId}:${km}`
+      if (signature === reportedReachRef.current) return
+      reportedReachRef.current = signature
+      onPostReach?.(km)
+    }
+    report()
+    window.addEventListener(RADIUS_CHANGE_EVENT, report)
+    return () => window.removeEventListener(RADIUS_CHANGE_EVENT, report)
+  }, [onPostReach, post?.reachKm, postId])
   useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
 
   const desiredAdSrc = post?.stream
@@ -1214,16 +1193,19 @@ export default function FeedTwin({
   const chRef = useRef(ch)
   chRef.current = ch
 
-  const likeCurrentPost = useCallback(() => {
+  const reactToCurrentPost = useCallback((direction: 'up' | 'down') => {
     const id = radiusPostId(ch.id, postRef.current)
-    if (likedPostIdsRef.current.has(id)) return
-    likedPostIdsRef.current.add(id)
-    recordPostLike(id)
-    setLikeRevision(revision => revision + 1)
-    setRadiusReaction('up')
+    const amountKm = usesMiles() ? 1 / 0.621371 : 1
+    if (direction === 'up') recordPostLike(id, amountKm)
+    else recordPostDislike(id, amountKm)
+    setRadiusReaction({ direction, amount: 1 })
     playPop()
-    window.setTimeout(() => setRadiusReaction(null), 720)
+    if (radiusReactionTimerRef.current != null) window.clearTimeout(radiusReactionTimerRef.current)
+    radiusReactionTimerRef.current = window.setTimeout(() => setRadiusReaction(null), 720)
   }, [ch.id])
+
+  const likeCurrentPost = useCallback(() => reactToCurrentPost('up'), [reactToCurrentPost])
+  const dislikeCurrentPost = useCallback(() => reactToCurrentPost('down'), [reactToCurrentPost])
 
   const openComments = useCallback(() => {
     playPop()
@@ -1235,10 +1217,12 @@ export default function FeedTwin({
     playPop()
     setCommentsAtEnd(current => {
       const next = writeFeedCommentsAtEnd(!current)
-      if (!next) clearCommentRoll()
+      commentsAtEndRef.current = next
+      if (next) showCommentRoll()
+      else clearCommentRoll()
       return next
     })
-  }, [clearCommentRoll])
+  }, [clearCommentRoll, showCommentRoll])
 
   const sharePost = useCallback(() => {
     playPop()
@@ -1356,6 +1340,10 @@ export default function FeedTwin({
       ...all,
       [key]: [{ who: '@you', body, pic: mine ?? 'mark_talk0.png', mine: true }, ...(all[key] ?? [])],
     }))
+    recordPostComment(radiusPostId(ch.id, post), usesMiles() ? 2 / 0.621371 : 2)
+    setRadiusReaction({ direction: 'up', amount: 2 })
+    if (radiusReactionTimerRef.current != null) window.clearTimeout(radiusReactionTimerRef.current)
+    radiusReactionTimerRef.current = window.setTimeout(() => setRadiusReaction(null), 720)
     setCommentText('')
     closeComments()
     setCommentSent(body)
@@ -1411,7 +1399,6 @@ export default function FeedTwin({
   const rollKey = `${ch.id}:${post?.user ?? ''}`
   const liveRoll = [...(myComments[rollKey] ?? []), ...COMMENT_ROLL]
   const title = post?.caption ?? ch.caption
-  const currentPostLiked = likedPostIdsRef.current.has(postId)
 
   return (
     <div
@@ -1424,27 +1411,27 @@ export default function FeedTwin({
       onPointerCancel={onPointerCancel}
     >
       {/* Tap the left or right edge to step through the other users posting on
-          this channel — the tap twin of the horizontal swipe. The middle is
-          left clear so double-tap-to-like still works. */}
+          this channel — the tap twin of the horizontal swipe. Radius reactions
+          intentionally live only on the visible thumbs controls in the rail. */}
       {!playerMode && (
         <>
           <button
             className={`${styles.userStep} ${styles.userStepLeft}`}
             onClick={() => handleEdgeTap('left')}
-            aria-label="Previous user. Double tap to add one kilometre of radius"
+            aria-label="Previous post"
           />
           <button
             className={`${styles.userStep} ${styles.userStepRight}`}
             onClick={() => handleEdgeTap('right')}
-            aria-label="Next user. Double tap to remove one kilometre of radius"
+            aria-label="Next post"
           />
         </>
       )}
 
       {radiusReaction && (
-        <div className={radiusReaction === 'up' ? `${styles.radiusReaction} ${styles.radiusReactionUp}` : `${styles.radiusReaction} ${styles.radiusReactionDown}`} role="status">
-          <span aria-hidden="true">{radiusReaction === 'up' ? '👍' : '👎'}</span>
-          <strong>{radiusReaction === 'up' ? '+1' : '-1'} {usesMiles() ? 'mi' : 'km'}</strong>
+        <div className={radiusReaction.direction === 'up' ? `${styles.radiusReaction} ${styles.radiusReactionUp}` : `${styles.radiusReaction} ${styles.radiusReactionDown}`} role="status">
+          <span aria-hidden="true">{radiusReaction.direction === 'up' ? '👍' : '👎'}</span>
+          <strong>{radiusReaction.direction === 'up' ? '+' : '-'}{radiusReaction.amount} {usesMiles() ? 'mi' : 'km'}</strong>
         </div>
       )}
 
@@ -1597,16 +1584,25 @@ export default function FeedTwin({
             label={commentsAtEnd ? 'Hide end-of-video comments' : 'Show end-of-video comments'}
             size={44}
             still
+            cssOnly
             onPress={toggleCommentsAtEnd}
           />
-          <ClayCornerButton kind="comment" label="Comment on this post" size={44} still onPress={openComments} />
+          <ClayCornerButton kind="comment" label="Comment on this post" size={44} still cssOnly onPress={openComments} />
           <ClayCornerButton
-            kind="heart"
-            active={currentPostLiked}
-            label={currentPostLiked ? 'Post liked' : 'Like this post'}
+            kind="thumbUp"
+            label="Increase this post's radius by one"
             size={44}
             still
+            cssOnly
             onPress={likeCurrentPost}
+          />
+          <ClayCornerButton
+            kind="thumbDown"
+            label="Reduce this post's radius by one"
+            size={44}
+            still
+            cssOnly
+            onPress={dislikeCurrentPost}
           />
         </TabControlRail>
         <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
@@ -1621,15 +1617,13 @@ export default function FeedTwin({
                   <span aria-hidden="true">{title}</span>
                 </div>
               </div>
-              <div className={styles.feedHandle}>{post?.user ?? ch.user}</div>
+              <div className={styles.feedMetaRow}>
+                <div className={styles.feedHandle}>{post?.user ?? ch.user}</div>
+                <span className={`${styles.reachText} ${styles.feedReach}`}>
+                  {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
+                </span>
+              </div>
             </div>
-          </div>
-          {/* The channel number belongs to the channel buttons. Keep the one
-              useful supporting fact here: how far this post reached. */}
-          <div className={styles.metaPills}>
-            <span className={`${styles.pill} ${styles.reachText}`}>
-              {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
-            </span>
           </div>
         </div>
       </>
@@ -1717,7 +1711,10 @@ export default function FeedTwin({
               </div>
             </div>
 
-            <div className={styles.commentTitle}>Comment on {post?.user ?? ch.user}</div>
+            <div className={styles.commentHeading}>
+              <div className={styles.commentTitle}>Comment on {post?.user ?? ch.user}</div>
+              <button type="button" className={styles.commentClose} onClick={closeComments} aria-label="Close comments">×</button>
+            </div>
             <div className={styles.commentRow}>
               <input
                 className={styles.commentInput}

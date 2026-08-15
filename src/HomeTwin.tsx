@@ -1,13 +1,13 @@
 import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
-import CubeTab3D, { type CubeTab } from './CubeTab3D'
+import CubeTab3D, { DEFAULT_CUBE_MODEL, type CubeTab } from './CubeTab3D'
+import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import MapLevelButton from './MapLevelButton'
-import CameraScanButton from './CameraScanButton'
 import type { PopLevel } from './data'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
@@ -18,7 +18,7 @@ import PermissionAlert from './PermissionAlert'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop } from './pop'
-import { isDetectOn, onCameraStore, selectedCount, setDetectOn } from './cameraStore'
+import { clearPendingMapPost, onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import {
   cancelManagedRenderingWake,
@@ -90,6 +90,30 @@ function tabNavigatorModel(tab: CubeTab): string {
   if (tab === 'feed') return CLAY_TV_MODEL
   if (tab === 'post') return PROFILE_CAMERA_MODEL
   return PROFILE_MARK_MODEL
+}
+
+/**
+ * The cube you MADE (AvatarScreen → avatarCube.ts), where it is the right
+ * object to be holding:
+ *
+ *   • On Profile itself, with nothing over it — that is what "set it as my
+ *     cube" means, and Profile is the only tab it claims. The map is still the
+ *     globe and the feed is still the TV; your logo does not get to be those.
+ *   • On the AVATAR screen, where looking at the cube IS the screen. With no
+ *     custom cube yet, that screen holds the plain Poplur cube rather than the
+ *     profile head, so the thing being changed is the thing in your hand.
+ *
+ * A blob: URL out of IndexedDB, so it loads through exactly the same
+ * GLTFLoader path as every shipped model.
+ */
+function wornNavigatorModel(
+  tab: CubeTab,
+  screen: string | null,
+  worn: string | null,
+): string | undefined {
+  if (screen === 'profile-avatar') return worn ?? DEFAULT_CUBE_MODEL
+  if (!screen && tab === 'profile' && worn) return worn
+  return undefined
 }
 // ── The navigator's object, per subscreen ────────────────────────────────────
 // Every subscreen gets its own object in your hand: open it and the cube pops
@@ -666,6 +690,27 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // undefined = the designed cube. Set while a screen takes the navigator over.
   const [cubeModel, setCubeModel] = useState<string | undefined>(undefined)
 
+  // The custom cube you are wearing, if any. Read synchronously (the index is
+  // in localStorage) but its MODEL comes out of IndexedDB, so the first call
+  // returns null and the change event lands once the blob URL exists.
+  const [wornCube, setWornCube] = useState<string | null>(() => wornCubeModelUrl())
+  useEffect(() => {
+    const sync = () => setWornCube(wornCubeModelUrl())
+    sync()
+    return onAvatarCubeChange(sync)
+  }, [])
+  // AVATAR previewing a cube it has just made. It has no 3D canvas of its own —
+  // a second WebGL context is what the phone cannot afford — so the navigator
+  // holds the new cube while you decide whether to wear it.
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+  useEffect(() => {
+    const onPreview = (event: Event) => {
+      setAvatarPreview((event as CustomEvent<string | null>).detail ?? null)
+    }
+    window.addEventListener('poplur-avatar-preview', onPreview)
+    return () => window.removeEventListener('poplur-avatar-preview', onPreview)
+  }, [])
+
   // Taking your profile picture is NOT a subscreen — it is overlay state inside
   // ProfileTwin, so it has no id and cannot be keyed in SUBSCREEN_CUBE_MODEL
   // above (the same reason 'camera-capture' has no entry there). It announces
@@ -774,6 +819,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     let timer = 0
     let syncing = false
     let syncAgain = false
+    let queuedRadiusEvent: Event | undefined
     const scheduleDeadline = () => {
       window.clearTimeout(timer)
       timer = 0
@@ -781,16 +827,45 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (deadline == null) return
       timer = window.setTimeout(sync, Math.max(25, deadline - Date.now() + 25))
     }
-    const sync = () => {
-      if (syncing) { syncAgain = true; return }
+    const sync = (event?: Event) => {
+      if (syncing) {
+        syncAgain = true
+        // Inactivity reconciliation publishes synchronously. Retain that
+        // signed loss so a visible map animates it rather than only catching
+        // up on its next mount.
+        queuedRadiusEvent = event ?? queuedRadiusEvent
+        return
+      }
       syncing = true
       reconcileRadiusInactivity()
       setEarnedRadiusKm(radiusKm())
+      // Radius is a shared fact: the ledger lives in Home while Map lives in
+      // an iframe. Forward only the newly appended signed event; Map reads the
+      // persisted ledger on mount, so an off-screen map never needs to stay
+      // alive merely to hear a reward.
+      const detail = (event as CustomEvent<{
+        events?: Array<{ postId?: unknown; deltaKm?: unknown }>
+      }> | undefined)?.detail
+      const events = Array.isArray(detail?.events) ? detail.events : []
+      const latest = events.length ? events[events.length - 1] : null
+      if (typeof latest?.postId === 'string' && typeof latest.deltaKm === 'number' && latest.deltaKm !== 0) {
+        mapFrameRef.current?.contentWindow?.postMessage({
+          type: 'poplur-map-action',
+          action: 'applyRadiusDelta',
+          postId: latest.postId,
+          deltaKm: latest.deltaKm,
+        }, '*')
+      }
       syncing = false
       scheduleDeadline()
       // reconcile publishes after applying a due penalty. Consume that one
       // synchronous event after storage is stable rather than recursing into it.
-      if (syncAgain) { syncAgain = false; sync() }
+      if (syncAgain) {
+        syncAgain = false
+        const queued = queuedRadiusEvent
+        queuedRadiusEvent = undefined
+        sync(queued)
+      }
     }
     sync()
     window.addEventListener(RADIUS_CHANGE_EVENT, sync)
@@ -836,6 +911,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stays absent so Profile / Feed / Camera keep their full frame budget. It is
   // torn down once the user leaves the map (after MAP_GRACE_MS, default 0).
   const [mapMounted, setMapMounted] = useState(initialTab === 'map')
+  // Camera uploads use the Map as a focused location picker, not as a normal
+  // destination. Keep that intent on the iframe URL for this mount so ClayMap
+  // can skip its globe launch before the first frame is drawn. An empty object
+  // means "pick mode, waiting for a fresh location"; a coordinate is the last
+  // native fix already cached in the home document.
+  const [mapPickSpotLaunch, setMapPickSpotLaunch] = useState<{
+    latitude?: number
+    longitude?: number
+  } | null>(null)
   // iOS sends its real ProcessInfo thermal state to the main document. The map
   // lives in a child document with its own frame governor, so forward every
   // transition and replay the latest state after each low-memory remount.
@@ -1056,6 +1140,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           })
         }
       }
+      if (event.data.type === 'poplur-map-radius' && typeof event.data.radiusKm === 'number') {
+        // The visible pin's ground just changed. Keep the shell card on that
+        // same settled number instead of waiting for another camera arrival.
+        setMapPopRadiusKm(event.data.radiusKm)
+        setMapWorldTotalKm(null)
+        setMapHudContext(previous => previous?.scope === 'pop'
+          ? { ...previous, popRadiusKm: event.data.radiusKm }
+          : previous)
+      }
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
       if (event.data.type === 'poplur-map-tour') setMapTourOn(Boolean(event.data.on))
@@ -1172,7 +1265,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // message through onMapMessage: that handler's first line filters to
     // event.source === the map iframe, which is exactly right for map traffic
     // and exactly wrong for the composer, which lives in this document.
-    const onPickSpot = () => { pickingSpotRef.current = true; setActiveTab('map') }
+    const onPickSpot = () => {
+      pickingSpotRef.current = true
+      const cached = (window as typeof window & {
+        __poplurNativeLocation?: { latitude?: unknown; longitude?: unknown }
+      }).__poplurNativeLocation
+      const latitude = Number(cached?.latitude)
+      const longitude = Number(cached?.longitude)
+      const valid = Number.isFinite(latitude) && Math.abs(latitude) <= 90
+        && Number.isFinite(longitude) && Math.abs(longitude) <= 180
+      setMapPickSpotLaunch(valid ? { latitude, longitude } : {})
+      // This is an explicit location action, so it is the right moment to ask
+      // the native shell for a fresh fix. iOS replays it into the newly mounted
+      // iframe; browser/Android map code retains a geolocation fallback.
+      postNativeEvent({ type: 'requestLocation' })
+      setActiveTab('map')
+    }
     window.addEventListener('poplur-pick-spot', onPickSpot)
     window.addEventListener('message', onMapMessage)
     return () => {
@@ -1514,6 +1622,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => { window.clearTimeout(dropTimer) }
   }, [activeTab, committedTab, mainSurfaceVisible])
 
+  // Do not mutate the iframe URL while it is still mounted: changing `src`
+  // during the return-to-Camera transition would reload a map that is about to
+  // be disposed. Reset the one-shot intent only after that focused map is gone.
+  useEffect(() => {
+    if (activeTab === 'map' || mapMounted || mapPickSpotLaunch === null) return
+    if (pickingSpotRef.current) {
+      // Leaving without accepting a coordinate is a real cancellation. Do not
+      // let a later ordinary Map post revive this capture as a stale resume.
+      pickingSpotRef.current = false
+      clearPendingMapPost()
+    }
+    setMapPickSpotLaunch(null)
+  }, [activeTab, mapMounted, mapPickSpotLaunch])
+
   // Boot cover lifecycle. Unmounting re-arms it, so the NEXT mount renders
   // covered in the same commit that attaches the iframe — there is no frame in
   // which the new subframe is visible before its document has painted.
@@ -1555,7 +1677,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
    *  Rides on TOP of your own radius so the number visibly climbs per find. */
   const [scanKm, setScanKm] = useState<number | null>(null)
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
-  const cameraScanOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
   const [cameraFlashArmed, setCameraFlashArmed] = useState(false)
   const [cameraFlashPulse, setCameraFlashPulse] = useState(0)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
@@ -1785,9 +1906,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // for exactly as long as the recording runs and pops back to whatever the
   // screen asks for when it stops — through the same swap as every other
   // navigator, so it transforms rather than hot-swapping mid-frame.
+  //
+  // AVATAR's live preview outranks everything below it for the same reason the
+  // camcorder outranks the screen: it is what you are doing right now. Under it
+  // the order is unchanged — a subscreen's own object, then the cube you made
+  // (Profile only), then the tab's object.
   const requestedCubeModel = recordMs != null
     ? CAMCORDER_MODEL
-    : (cubeModel ?? tabNavigatorModel(activeTab))
+    : (avatarPreview
+      ?? cubeModel
+      ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
+      ?? tabNavigatorModel(activeTab))
 
   const beginCubeSwapEnter = useCallback((withSound: boolean) => {
     if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
@@ -1967,7 +2096,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             ref={mapFrameRef}
             data-poplur-screen="map"
             className={activeTab === 'map' ? styles.mapLayer : `${styles.mapLayer} ${styles.mapLayerIdle}`}
-            src={CLAY_MAP_SRC}
+            src={mapPickSpotLaunch
+              ? `${CLAY_MAP_SRC}&pickSpot=1${
+                  typeof mapPickSpotLaunch.latitude === 'number'
+                    && typeof mapPickSpotLaunch.longitude === 'number'
+                    ? `&pickLat=${encodeURIComponent(mapPickSpotLaunch.latitude)}&pickLng=${encodeURIComponent(mapPickSpotLaunch.longitude)}`
+                    : ''
+                }`
+              : CLAY_MAP_SRC}
             title="Poplur clay map"
             allow="autoplay; geolocation"
           />
@@ -2150,14 +2286,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             />
             </div>
           )}
-          {activeTab === 'post' && !overlayOpen && (
-            <div className={styles.levelAbove}>
-              <CameraScanButton
-                active={cameraScanOn}
-                onToggle={() => setDetectOn(!isDetectOn())}
-              />
-            </div>
-          )}
           <ClayChannelArrows
             key={`channel-arrows-${uiRecoveryKey}`}
             size={cubeSize}
@@ -2208,6 +2336,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           >
             <span className={styles.statLabel}>{seenUser
               ? `${seenUser.handle} ◆`
+              : activeTab === 'feed'
+                ? 'POST RADIUS ◆'
               : mapHasPopSubject
                 ? 'POP RADIUS ◆'
                 : mapHasAccumulatedRadius || (profileTotalKm != null && activeTab === 'profile')

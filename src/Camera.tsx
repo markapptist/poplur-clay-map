@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExtern
 import CameraRoll from './CameraRoll'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
+import CameraScanButton from './CameraScanButton'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -1557,6 +1558,11 @@ export default function Camera({
           size={44}
           label="Switch camera"
           onPress={flipCamera}
+        />
+        <CameraScanButton
+          active={detectOn}
+          size={44}
+          onToggle={() => setDetectOn(!detectOn)}
         />
       </TabControlRail>
       {/* ONE persistent AI line. Keep the latest real reading between the

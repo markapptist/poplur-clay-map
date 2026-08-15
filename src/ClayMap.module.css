@@ -775,6 +775,25 @@
   animation: composePop 0.28s cubic-bezier(0.2, 1.7, 0.4, 1) both;
 }
 
+/* Upload location is a focused choice over a still-usable map. Keep the card
+   inside the two side-control lanes and make both decisions proper iOS targets. */
+.composeBubble[data-focused-picker='true'] {
+  width: min(270px, calc(100vw - 144px));
+  min-width: 0;
+  padding: 14px 16px;
+}
+
+.composeBubble[data-focused-picker='true'] .composeCancel,
+.composeBubble[data-focused-picker='true'] .composeDrop {
+  height: 44px;
+}
+
+@media (max-width: 370px) {
+  .composeBubble[data-focused-picker='true'] .composeActions {
+    flex-direction: column;
+  }
+}
+
 /* Little clay pointer down to the tapped spot */
 .composeBubble::after {
   content: '';
@@ -886,6 +905,12 @@
   color: #2a0716;
   background: radial-gradient(circle at 40% 28%, #FF8AC6, #F63B9A 60%);
   box-shadow: 0 0 14px rgba(246, 59, 154, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.composeDrop:disabled {
+  cursor: default;
+  opacity: 0.55;
+  filter: saturate(0.55);
 }
 
 .composeCancel:active,
@@ -1523,4 +1548,47 @@
   background: #170a18;
   box-shadow: 0 3px 10px rgba(32, 2, 24, 0.58), 0 0 0 2px rgba(255, 255, 255, 0.88);
   pointer-events: none;
+}
+
+/* A signed radius gain/loss belongs on the claimed pin, not in another global
+   toast. One short compositor-only beat, then React removes the badge. */
+.popPinRadiusDelta {
+  position: absolute;
+  left: 50%;
+  bottom: 68px;
+  z-index: 2;
+  min-width: 31px;
+  padding: 3px 6px 4px;
+  transform: translateX(-50%);
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  color: #fff;
+  font: 900 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -0.04em;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(27, 4, 20, 0.72);
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.popPinRadiusGain {
+  background: #18bc69;
+  box-shadow: 0 3px 9px rgba(6, 95, 49, 0.52);
+  animation: popPinRadiusGain 1.05s cubic-bezier(.16, .82, .24, 1) both;
+}
+.popPinRadiusLoss {
+  background: #d84b74;
+  box-shadow: 0 3px 9px rgba(107, 12, 39, 0.5);
+  animation: popPinRadiusLoss 1.05s cubic-bezier(.16, .82, .24, 1) both;
+}
+@keyframes popPinRadiusGain {
+  0% { opacity: 0; transform: translate(-50%, 7px) scale(.78); }
+  24% { opacity: 1; transform: translate(-50%, -8px) scale(1.1); }
+  72% { opacity: 1; transform: translate(-50%, -24px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -34px) scale(.92); }
+}
+@keyframes popPinRadiusLoss {
+  0% { opacity: 0; transform: translate(-50%, -4px) scale(.78); }
+  24% { opacity: 1; transform: translate(-50%, 5px) scale(1.08); }
+  72% { opacity: 1; transform: translate(-50%, 17px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, 27px) scale(.92); }
 }

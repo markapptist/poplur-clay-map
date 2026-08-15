@@ -96,6 +96,9 @@ export function takePendingMapPost(): PendingMapPost | null {
   return draft
 }
 
+/** Abandoning the location-picker trip must release its retained media draft. */
+export function clearPendingMapPost(): void { pendingMapPost = null }
+
 // composer→AI chat. Same shape of hand-off, different destination.
 //
 // "Generate in Poplur AI" used to navigate to the chat and nothing else: it

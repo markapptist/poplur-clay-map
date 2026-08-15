@@ -187,11 +187,11 @@
 
 .topBarRailLeft {
   left: max(72px, calc(env(safe-area-inset-left, 0px) + 72px));
-  right: max(14px, env(safe-area-inset-right, 0px));
+  right: max(72px, calc(env(safe-area-inset-right, 0px) + 72px));
 }
 
 .topBarRailRight {
-  left: max(14px, env(safe-area-inset-left, 0px));
+  left: max(72px, calc(env(safe-area-inset-left, 0px) + 72px));
   right: max(72px, calc(env(safe-area-inset-right, 0px) + 72px));
 }
 
@@ -202,7 +202,7 @@
 .feedHeaderCopy {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 5px;
   align-content: center;
 }
 
@@ -214,6 +214,8 @@
   line-height: 1.12;
   font-weight: 950;
   min-width: 0;
+  box-sizing: border-box;
+  padding-inline: 8px;
   overflow: hidden;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
 }
@@ -244,7 +246,7 @@
    than two competing headlines. One line, ellipsed — a long handle has no break
    opportunity, so clamping it would hard-cut it mid-glyph instead. */
 .feedHandle {
-  font-size: 12.5px;
+  font-size: clamp(10.5px, 3.1vw, 12.5px);
   font-weight: 800;
   letter-spacing: 0.01em;
   color: rgba(255, 242, 248, 0.8);
@@ -254,28 +256,17 @@
   text-overflow: ellipsis;
 }
 
-/* The reach chip stays under the caption. Channel is already named by the
-   home HUD's channel buttons, so showing it again in the video wastes space. */
-.metaPills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 9px;
+/* The handle and its reach are one compact byline. Keeping them in opposite
+   columns gives the title a clear, symmetrical block above without covering
+   either side control rail. */
+.feedMetaRow {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  padding-inline: 8px;
   pointer-events: none;
-}
-
-/* No backdrop-filter: a blur layer over playing video is exactly the kind of
-   per-frame compositor work the thermal gate exists to catch. Flat translucent
-   plates instead. */
-.pill {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  font-weight: 900;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  padding: 4px 8px;
-  border-radius: 999px;
-  white-space: nowrap;
 }
 
 /* A tapped "viewed your post" notice: the reach line is what a view proves, so
@@ -293,14 +284,21 @@
   }
 }
 
-/* Radius is the product, so the reach chip is the warmer of the two: it keeps
-   its cyan glow where the channel chip stays flat. Name kept as `reachText` so
-   the `.reachFlash .reachText` pulse above still finds it. */
+/* Reach deliberately shares the handle's typography. Its small cyan tint keeps
+   radius readable without turning the supporting text into a competing chip.
+   Name stays `reachText` so the finite `.reachFlash` pulse still applies. */
 .reachText {
-  color: #d6f6ff;
-  background: rgba(4, 24, 32, 0.62);
-  border: 1px solid rgba(53, 200, 239, 0.38);
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85), 0 0 12px rgba(53, 200, 239, 0.4);
+  font-size: clamp(10.5px, 3.1vw, 12.5px);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  line-height: normal;
+  color: rgba(214, 246, 255, 0.9);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+}
+
+.feedReach {
+  justify-self: end;
 }
 
 @keyframes feedCenterTextShader {
@@ -713,7 +711,8 @@
 }
 
 .commentTitle {
-  margin: 4px 0 10px;
+  margin: 0;
+  flex: 1;
   color: #fff2f8;
   font: 900 14px/1 system-ui, -apple-system, sans-serif;
   letter-spacing: 0.4px;
@@ -722,6 +721,28 @@
     0 1px 0 rgba(0, 0, 0, 0.95),
     0 2px 7px rgba(0, 0, 0, 0.85);
 }
+
+.commentHeading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+.commentClose {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ff9acc, #ef258b 58%, #9d104f);
+  color: #fff1f8;
+  font: 900 26px/1 system-ui, sans-serif;
+  box-shadow: inset 0 3px 4px rgba(255, 255, 255, .45), inset 0 -4px 5px rgba(77, 5, 42, .38), 0 4px 8px rgba(20, 0, 13, .4);
+  cursor: pointer;
+}
+
+.commentClose:active { transform: scale(.92); }
 
 .commentRow {
   display: flex;

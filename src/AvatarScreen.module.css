@@ -1,0 +1,430 @@
+/* AVATAR — the same dark clay subscreen ground as Settings and SHOW ME, so it
+   reads as one of the native hold-menu screens rather than a new place. */
+
+.screen {
+  width: 100%;
+  /* A definite height, not min-height: the subscreen stage is absolutely
+     positioned with overflow:hidden, so a taller box would be clipped instead
+     of scrolled (the same trap SettingsScreen documents). */
+  height: 100%;
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px)
+    20px
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  color: #fff4fa;
+  background:
+    radial-gradient(circle at 22% 8%, rgba(246, 59, 154, 0.32), transparent 31%),
+    radial-gradient(circle at 86% 86%, rgba(104, 57, 191, 0.34), transparent 35%),
+    linear-gradient(165deg, #2b1124 0%, #100813 58%, #09060c 100%);
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+
+/* The bottom reserve above is not decoration: the cube sits over every
+   subscreen as the universal back control AND, on this screen, as the live
+   preview of the cube being made. Content must never run under it. */
+
+.body {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.kicker {
+  margin: 0 2px 8px;
+  font: 950 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.18em;
+  color: #ff80bf;
+}
+
+.blurb {
+  margin: 0;
+  font: 600 13px/1.4 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 238, 247, 0.78);
+}
+
+.blurb b { color: #fff4fa; }
+
+/* ── the wallet ─────────────────────────────────────────────────────────────
+   Credits gate the sculptor, so the balance leads the screen. */
+.wallet {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 12px 12px 16px;
+  border-radius: 18px;
+  background: rgba(14, 5, 20, 0.72);
+  border: 1px solid rgba(255, 138, 198, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.walletText { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.walletText b { font: 950 21px/1 system-ui, -apple-system, sans-serif; color: #7fe3ff; }
+.walletText i {
+  font: 700 10.5px/1 system-ui, -apple-system, sans-serif;
+  font-style: normal;
+  letter-spacing: 0.14em;
+  color: rgba(255, 226, 242, 0.55);
+}
+
+.walletButton {
+  flex: none;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  color: #fff4fa;
+  font: 950 10px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+.walletButton:active { transform: scale(0.97); }
+
+/* ── what you are wearing ───────────────────────────────────────────────── */
+.wearing {
+  margin-bottom: 16px;
+  padding: 14px 16px 16px;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 20% 12%, rgba(255, 255, 255, 0.1), transparent 58%),
+    linear-gradient(180deg, #3a2027 0%, #2a151c 58%, #1a0b11 100%);
+  box-shadow:
+    0 0 0 1px rgba(244, 69, 156, 0.4),
+    0 10px 26px rgba(30, 0, 16, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+/* Wearing a custom cube: the rim goes cyan, the same "this is live" signal the
+   referral card uses when the whole planet is yours. */
+.wearing[data-on] {
+  box-shadow:
+    0 0 0 1px rgba(127, 227, 255, 0.7),
+    0 10px 30px rgba(0, 40, 60, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.wearingRow { display: flex; align-items: center; gap: 12px; }
+
+.wearingArt {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.wearingText { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.wearingText b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 800 15px/1.2 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: #fff2f8;
+}
+.wearingText i {
+  font: 500 11px/1.3 system-ui, -apple-system, sans-serif;
+  font-style: normal;
+  color: rgba(255, 226, 242, 0.6);
+}
+
+/* ── buttons ────────────────────────────────────────────────────────────── */
+.primary, .primaryLocked, .secondary {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 999px;
+  font: 950 13.5px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.primary {
+  background: linear-gradient(180deg, #ff5fae, #f4459c 46%, #b81566);
+  box-shadow: 0 6px 16px rgba(244, 69, 156, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+
+/* Not enough credits. Still a live button — it goes to the top-up — but it
+   must not look like the one that spends. */
+.primaryLocked {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 198, 0.45);
+  color: rgba(255, 226, 242, 0.72);
+}
+
+.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  color: #fff4fa;
+}
+
+.primary:active, .primaryLocked:active, .secondary:active { transform: scale(0.98); }
+
+.ghost {
+  flex: none;
+  padding: 9px 13px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  color: #fff4fa;
+  font: 950 10px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+.ghost:active { transform: scale(0.97); }
+
+.back {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 11px;
+  border: 0;
+  background: none;
+  color: rgba(255, 226, 242, 0.58);
+  font: 800 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+/* ── the shelf of cubes you have made ───────────────────────────────────── */
+.shelf { margin-top: 22px; }
+
+.shelfRow {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.shelfItem {
+  flex: none;
+  width: 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shelfArt {
+  position: relative;
+  width: 104px;
+  height: 104px;
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 198, 0.28);
+  cursor: pointer;
+}
+
+.shelfItem[data-worn] .shelfArt { box-shadow: inset 0 0 0 2px rgba(127, 227, 255, 0.85); }
+
+.shelfArt img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.shelfWorn {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(8, 4, 10, 0.78);
+  color: #7fe3ff;
+  font: 950 9px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.12em;
+}
+
+.shelfName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 800 11.5px/1.2 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 242, 248, 0.9);
+}
+
+.shelfDelete {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: rgba(255, 138, 198, 0.62);
+  font: 800 9.5px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+/* ── the source picture and the sculpt options ──────────────────────────── */
+.sourceCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 20px;
+  background: rgba(14, 5, 20, 0.72);
+  border: 1px solid rgba(255, 138, 198, 0.22);
+}
+
+.sourceArt {
+  flex: 1;
+  min-width: 0;
+  height: 132px;
+  border-radius: 14px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.field { display: block; margin-bottom: 16px; }
+
+.field span {
+  display: block;
+  margin: 0 2px 6px;
+  font: 950 10px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.16em;
+  color: rgba(255, 226, 242, 0.5);
+}
+
+.field input {
+  width: 100%;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  color: #fff4fa;
+  font: 700 14px/1 system-ui, -apple-system, sans-serif;
+}
+
+.field input::placeholder { color: rgba(255, 226, 242, 0.35); }
+
+.styles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.style, .styleOn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.style {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  color: rgba(255, 242, 248, 0.66);
+}
+
+.styleOn {
+  background: linear-gradient(180deg, rgba(255, 95, 174, 0.28), rgba(184, 21, 102, 0.26));
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 198, 0.7);
+  color: #fff4fa;
+}
+
+.style b, .styleOn b { font: 800 12.5px/1.1 system-ui, -apple-system, sans-serif; }
+.style i, .styleOn i {
+  font: 500 9.5px/1.2 system-ui, -apple-system, sans-serif;
+  font-style: normal;
+  opacity: 0.72;
+}
+
+/* ── working ────────────────────────────────────────────────────────────── */
+.working {
+  margin-top: 8px;
+  padding: 18px 16px;
+  border-radius: 22px;
+  background: rgba(14, 5, 20, 0.72);
+  border: 1px solid rgba(255, 138, 198, 0.22);
+  text-align: center;
+}
+
+.meter {
+  margin: 4px 0 12px;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7fe3ff, #ff80bf);
+  transition: width 0.45s ease;
+}
+
+.workingNote {
+  margin: 0 0 14px;
+  font: 700 12.5px/1.35 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 238, 247, 0.75);
+}
+
+/* ── done ───────────────────────────────────────────────────────────────── */
+.done {
+  padding: 16px;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 20% 12%, rgba(255, 255, 255, 0.1), transparent 58%),
+    linear-gradient(180deg, #3a2027 0%, #2a151c 58%, #1a0b11 100%);
+  box-shadow:
+    0 0 0 1px rgba(127, 227, 255, 0.6),
+    0 10px 30px rgba(0, 40, 60, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.doneMeta {
+  margin: 10px 0 0;
+  font: 700 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.06em;
+  color: rgba(255, 226, 242, 0.5);
+}
+
+/* ── messages ───────────────────────────────────────────────────────────── */
+.error {
+  margin: 12px 2px;
+  font: 700 12px/1.4 system-ui, -apple-system, sans-serif;
+  color: #ffb3d3;
+}
+
+.note {
+  margin: 14px 2px 0;
+  font: 800 12px/1.4 system-ui, -apple-system, sans-serif;
+  color: #7fe3ff;
+}
+
+.footnote {
+  margin: 18px 2px 0;
+  font: 500 11.5px/1.45 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 226, 242, 0.5);
+}
+
+/* The picker itself is never seen — MAKE A CUBE clicks it. */
+.file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary, .primaryLocked, .secondary, .meter i { transition: none; }
+}

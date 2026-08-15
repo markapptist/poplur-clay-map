@@ -26,9 +26,13 @@ RN_DEST="/Users/matrix/Developer/Poplur2025-ReactNative/src/assets/claymap/claym
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/poplur-mobile-dist.XXXXXX")"
 PUBLISH_LOCK="${TMPDIR:-/tmp}/poplur-mobile-sync.lock"
 RN_TMP="$(mktemp "${TMPDIR:-/tmp}/poplur-claymap.zip.XXXXXX")"
+GATE_SERVER_LOG="$(mktemp "${TMPDIR:-/tmp}/poplur-gate-server.log.XXXXXX")"
+GATE_SERVER_PID=""
 LOCK_HELD=0
 
 cleanup() {
+  if [[ -n "$GATE_SERVER_PID" ]]; then kill "$GATE_SERVER_PID" 2>/dev/null || true; fi
+  rm -f "$GATE_SERVER_LOG"
   rm -rf "$BUILD_DIR"
   rm -f "$RN_TMP"
   if [[ "$LOCK_HELD" -eq 1 ]]; then rm -rf "$PUBLISH_LOCK"; fi
@@ -59,6 +63,11 @@ acquire_publish_lock() {
 node scripts/verify-tab-model-quality.mjs
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/vite build --outDir "$BUILD_DIR"
+# Phones never receive models/ (the rsync and the RN zip below both exclude
+# it). Drop it from the snapshot now so everything downstream of this line —
+# including the thermal gate's measurement — sees exactly the bytes a device
+# will run.
+rm -rf "$BUILD_DIR/models"
 # ripgrep is not installed on every machine that runs this script; fall back
 # to plain grep for the same fixed-string check rather than failing the
 # release with a misleading "token was not embedded" error.
@@ -84,7 +93,60 @@ fi
 # a regression against .codex/thermal-budgets.json aborts the publish. Raising
 # a budget is a deliberate edit shipped with the feature that needs the heat.
 # POPLUR_THERMAL_SKIP=1 skips in an emergency, loudly.
-node /Users/matrix/Developer/.codex/thermal-gate.mjs
+#
+# The gate must measure THIS snapshot, not the persistent dev server: gating
+# on 5199 meant any concurrent editing session's HMR orphaned rAF loops and
+# WebGL contexts on the measured pages (canvases read 7 where the shipped
+# page owns 4) and home/feed billed 320–420ms of foreign dev-page work
+# against their 250ms budgets — the gate failed closed on builds that had
+# not changed. Serve the exact bytes being published on a throwaway loopback
+# port instead. An explicitly exported POPLUR_THERMAL_BASE still wins, for
+# deliberate ad-hoc runs against another target.
+start_gate_server() {
+  local attempt port probe
+  for attempt in 1 2 3 4 5; do
+    port=$((49152 + RANDOM % 16000))
+    if lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then continue; fi
+    ./node_modules/.bin/vite preview --outDir "$BUILD_DIR" \
+      --host 127.0.0.1 --port "$port" --strictPort --logLevel warn \
+      >>"$GATE_SERVER_LOG" 2>&1 &
+    GATE_SERVER_PID=$!
+    for ((probe = 0; probe < 40; probe++)); do
+      if curl -sf -o /dev/null "http://127.0.0.1:${port}/"; then
+        GATE_BASE="http://127.0.0.1:${port}"
+        return 0
+      fi
+      if ! kill -0 "$GATE_SERVER_PID" 2>/dev/null; then GATE_SERVER_PID=""; break; fi
+      sleep 0.25
+    done
+    if [[ -n "$GATE_SERVER_PID" ]]; then
+      kill "$GATE_SERVER_PID" 2>/dev/null || true
+      wait "$GATE_SERVER_PID" 2>/dev/null || true
+      GATE_SERVER_PID=""
+    fi
+  done
+  return 1
+}
+
+if [[ "${POPLUR_THERMAL_SKIP:-}" == "1" || -n "${POPLUR_THERMAL_BASE:-}" ]]; then
+  # The emergency skip prints its own loud warning; an explicit base is a
+  # deliberate ad-hoc target. Neither needs the snapshot server.
+  node /Users/matrix/Developer/.codex/thermal-gate.mjs
+else
+  GATE_BASE=""
+  if ! start_gate_server; then
+    echo "Mobile release failed: could not serve the built snapshot for the thermal gate." >&2
+    cat "$GATE_SERVER_LOG" >&2 || true
+    exit 1
+  fi
+  # POPLUR_THERMAL_REQUIRE=1: this path owns the server the gate measures, so
+  # an unreachable base is a release failure, never a silent unmeasured pass.
+  POPLUR_THERMAL_BASE="$GATE_BASE" POPLUR_THERMAL_REQUIRE=1 \
+    node /Users/matrix/Developer/.codex/thermal-gate.mjs
+  kill "$GATE_SERVER_PID" 2>/dev/null || true
+  wait "$GATE_SERVER_PID" 2>/dev/null || true
+  GATE_SERVER_PID=""
+fi
 
 # Watchers can legitimately queue more than one isolated build. Serialize the
 # short publish phase so rsync --delete and the RN archive replacement cannot

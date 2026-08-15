@@ -1135,11 +1135,14 @@ export default function ProfileTwin({
       // properly instead of skewing one flat picture of it. What is left for
       // CSS is the front/back lean, where a skew still reads honestly.
       const pitch = Math.max(-14, Math.min(14, ((e.beta ?? 0) - 45) * 0.28))
-      // translateY(-50%) FIRST and always: the stylesheet uses it to centre the
-      // button on the avatar, so an inline transform that omits it drops the
-      // button half its height down the page.
+      // NO translateY here. This used to carry translateY(-50%) because the
+      // stylesheet centred the button on the avatar with the same offset. Since
+      // the camera joined the universal 44px TabControlRail grid it is an
+      // ordinary grid item, so that -50% became a bare 22px upward pull —
+      // measured on device as translateY(-22px), which lifted the camera out of
+      // its row and made the three rail buttons look unevenly spaced.
       button.style.transform =
-        `translateY(-50%) perspective(620px) rotateX(${(-pitch).toFixed(1)}deg)`
+        `perspective(620px) rotateX(${(-pitch).toFixed(1)}deg)`
     }
     window.addEventListener('deviceorientation', onOrient)
     return () => window.removeEventListener('deviceorientation', onOrient)

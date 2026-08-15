@@ -72,6 +72,7 @@ import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, se
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import { localDaylight } from './skyCycle'
+import { radiusDeltaForChannel } from './radiusLedger'
 
 interface RadioStationCue {
   name: string
@@ -636,6 +637,12 @@ function accumulatedRadiusKm(): number {
   return live > 0 ? live : POIS.reduce((sum, poi) => sum + poi.radiusKm, 0)
 }
 
+/** A map pin's standing territory is its published reach plus real, persisted
+ * reactions for the Feed channel attached to that post. */
+function livePoiRadiusKm(poi: Pick<typeof POIS[number], 'radiusKm' | 'channel'>): number {
+  return Math.max(0, poi.radiusKm + radiusDeltaForChannel(poi.channel))
+}
+
 /** Stable local presence until the live audience service replaces it. Keeping
  *  it coordinate-derived avoids a number that flickers every time moveend
  *  fires while still making different neighbourhoods feel different. */
@@ -672,6 +679,7 @@ export default function App() {
   // HomeTwin embeds this same bundle with the internal map route below.
   const params = new URLSearchParams(window.location.search)
   const isMapEmbed = params.get('map') === '1'
+  const focusedPostPicker = params.get('pickSpot') === '1'
   const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const placeSuggestionTimerRef = useRef<number | null>(null)
@@ -1821,7 +1829,7 @@ export default function App() {
         seedClaims(map, POIS.map(poi => ({
           id: `pop-${poi.id}`,
           center: poi.coords as [number, number],
-          radiusKm: poi.radiusKm,
+          radiusKm: livePoiRadiusKm(poi),
         })))
       } catch { /* map torn down */ }
     }
@@ -1840,8 +1848,63 @@ export default function App() {
   // each press advance in the same order the lit sheets communicate.
   const [popLevel, setPopLevel] = useState<PopLevel>('mine')
   const [publishedPins, setPublishedPins] = useState<PopPin[]>([])
+  // Values remain in radiusLedger; this revision only recomputes the visible
+  // pin set after Home relays a signed reward or loss into this iframe.
+  const [radiusLedgerRevision, setRadiusLedgerRevision] = useState(0)
+  const [pinRadiusPulse, setPinRadiusPulse] = useState<{
+    id: string
+    deltaKm: number
+    token: number
+  } | null>(null)
+  const pinRadiusPulseTimerRef = useRef(0)
+  const pinRadiusPulseTokenRef = useRef(0)
+  useEffect(() => () => window.clearTimeout(pinRadiusPulseTimerRef.current), [])
+  const showPinRadiusPulse = useCallback((id: string, deltaKm: number) => {
+    if (!Number.isFinite(deltaKm) || Math.abs(deltaKm) < 0.001) return
+    window.clearTimeout(pinRadiusPulseTimerRef.current)
+    const token = ++pinRadiusPulseTokenRef.current
+    setPinRadiusPulse({ id, deltaKm, token })
+    pinRadiusPulseTimerRef.current = window.setTimeout(() => {
+      setPinRadiusPulse(current => current?.token === token ? null : current)
+    }, 1_100)
+  }, [])
   const popLevelRef = useRef(popLevel)
   popLevelRef.current = popLevel
+
+  /**
+   * Home records reactions in radiusLedger, then sends the signed record down
+   * to this disposable map frame. Apply that exact result to one territory and
+   * its pin: green +N grows outward, red −N contracts inward.
+   */
+  const applyRadiusDelta = useCallback((postId: unknown, deltaKm: unknown) => {
+    if (typeof postId !== 'string' || typeof deltaKm !== 'number' || !Number.isFinite(deltaKm) || deltaKm === 0) return
+    const separator = postId.indexOf(':')
+    const channel = separator > 0 ? postId.slice(0, separator) : ''
+    const poi = POIS.find(candidate => candidate.channel === channel)
+    if (!poi) return
+
+    // The ledger already contains this event when Home posts it. This makes
+    // repeated bridge delivery idempotent rather than growing the same claim
+    // twice.
+    const nextRadiusKm = livePoiRadiusKm(poi)
+    const claimId = `pop-${poi.id}`
+    const existing = getClaims().find(claim => claim.id === claimId)
+    const previousRadiusKm = existing?.radiusKm ?? Math.max(0, nextRadiusKm - deltaKm)
+    const appliedDeltaKm = nextRadiusKm - previousRadiusKm
+    setRadiusLedgerRevision(revision => revision + 1)
+    if (Math.abs(appliedDeltaKm) < 0.001) return
+
+    showPinRadiusPulse(claimId, appliedDeltaKm)
+    const map = mapRef.current
+    if (map) {
+      try {
+        setClaim(map, { id: claimId, center: poi.coords as [number, number], radiusKm: nextRadiusKm })
+      } catch { /* style can be rebuilding; persisted value is used on remount */ }
+    }
+    if (arrivedPinRef.current === claimId) {
+      window.parent?.postMessage({ type: 'poplur-map-radius', popId: claimId, radiusKm: nextRadiusKm }, '*')
+    }
+  }, [showPinRadiusPulse])
 
   // Your own claims are seeded above and never re-pushed by the level switch;
   // only the OTHERS half arrives and leaves, which is why this uses the
@@ -1869,7 +1932,7 @@ export default function App() {
             : popLevel === 'others' ? [] : POIS.map(poi => ({
               id: `pop-${poi.id}`,
               center: poi.coords as [number, number],
-              radiusKm: poi.radiusKm,
+              radiusKm: livePoiRadiusKm(poi),
             })))
       } catch { /* map torn down */ }
     }
@@ -1904,7 +1967,7 @@ export default function App() {
       user: null,
       name: poi.name,
       coords: poi.coords as [number, number],
-      radiusKm: poi.radiusKm,
+      radiusKm: livePoiRadiusKm(poi),
       color: myColor,
       avatar: ownAvatar,
       selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
@@ -1919,6 +1982,7 @@ export default function App() {
         alt: `Your post at ${poi.name}`,
       },
       world: false,
+      radiusDeltaKm: pinRadiusPulse?.id === `pop-${poi.id}` ? pinRadiusPulse.deltaKm : undefined,
       mine: true,
     }))
     const others = popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
@@ -1943,7 +2007,7 @@ export default function App() {
       selfieVideo: undefined,
     }))
     return [...others, ...mine, ...published]
-  }, [popLevel, ownAvatar, ownSelfieVideo, myColor, publishedPins])
+  }, [popLevel, ownAvatar, ownSelfieVideo, myColor, publishedPins, radiusLedgerRevision, pinRadiusPulse])
 
   const openMapPinContent = useCallback((pin: PopPin) => {
     // Never substitute an ad or cube for a post whose media record is missing.
@@ -2006,6 +2070,9 @@ export default function App() {
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
   useEffect(() => {
+    // The upload picker is choosing ground, not arriving at content. Its direct
+    // local jump/radius fit must never raise a nearby post over the prompt.
+    if (focusedPostPicker) return
     const map = mapRef.current
     if (!map || !mapLive) return
     // Close enough that the pop is the subject of the shot, not scenery.
@@ -2035,7 +2102,7 @@ export default function App() {
     }
     map.on('moveend', onSettle)
     return () => { map.off('moveend', onSettle) }
-  }, [mapLive, openMapPinContent])
+  }, [focusedPostPicker, mapLive, openMapPinContent])
 
   // ── One map context drives every line in the shell HUD ───────────────────
   // Report only on settled camera states. This keeps the title/counters stable
@@ -2120,6 +2187,15 @@ export default function App() {
     postNativeEvent({ type: 'mapReady' })
     if (landingCenter) setNavigationOrigin(landingCenter)
 
+    // Camera upload asked only for a coordinate. Keep all the normal map tools,
+    // but do not turn this focused picker into a globe arrival, radio handoff,
+    // narrated greeting, nearby ad, or tour setup competing with its prompt.
+    if (focusedPostPicker) {
+      setCurrentPlace('Choose a post spot')
+      setArrivedAtPlace(true)
+      return
+    }
+
     // Begin looking up the local station now, but do not sound it yet. The
     // greeting below gets the first beat; its mixer feathers Radio underneath
     // after the first word, then raises it when the host finishes.
@@ -2192,7 +2268,7 @@ export default function App() {
         }
       }, estimatedVoiceDurationMs(greeting) + 1200)
     }, 900)
-  }, [scheduleTourIdle, drainPendingSpeech, scheduleTourTimer, speakMapLine])
+  }, [focusedPostPicker, scheduleTourIdle, drainPendingSpeech, scheduleTourTimer, speakMapLine])
 
   // The home shell mirrors the tour state onto the hold-menu tile.
   useEffect(() => {
@@ -2221,13 +2297,13 @@ export default function App() {
    * that happened to be current at mount.
    */
   const traversalPops = useCallback((): Array<{
-    id: string; name: string; coords: [number, number]; radiusKm: number; mine: boolean
+    id: string; name: string; coords: [number, number]; radiusKm: number; channel: string; mine: boolean
   }> => {
     const mine = POIS.map(p => ({
-      id: p.id, name: p.name, coords: p.coords as [number, number], radiusKm: p.radiusKm, mine: true,
+      id: p.id, name: p.name, coords: p.coords as [number, number], radiusKm: p.radiusKm, channel: p.channel, mine: true,
     }))
     const theirs = OTHER_POPS.map(p => ({
-      id: p.id, name: p.name, coords: p.coords, radiusKm: p.radiusKm, mine: false,
+      id: p.id, name: p.name, coords: p.coords, radiusKm: p.radiusKm, channel: p.channel, mine: false,
     }))
     if (popLevelRef.current === 'mine') return mine
     if (popLevelRef.current === 'others') return theirs
@@ -2309,7 +2385,7 @@ export default function App() {
             index: popCycleRef.current,
             total: POIS.length,
             name: poi.name,
-            radiusKm: poi.radiusKm,
+            radiusKm: livePoiRadiusKm(poi),
             // How many of YOUR pops stand in this area — the shell renders the
             // count under the place title and routes a tap to the profile.
             nearby: nearby.length,
@@ -2351,6 +2427,10 @@ export default function App() {
         case 'setPopLevel': {
           const next = event.data.level
           if (next === 'mine' || next === 'others' || next === 'all') setPopLevel(next)
+          break
+        }
+        case 'applyRadiusDelta': {
+          applyRadiusDelta(event.data.postId, event.data.deltaKm)
           break
         }
         // Your profile picture, handed down by the shell (the photo lives in
@@ -2563,7 +2643,7 @@ export default function App() {
                   name: poi.name,
                   // The HUD's RADIUS card shows THIS pop's takeover while you
                   // travel, not the signed-in user's own reach.
-                  radiusKm: poi.radiusKm,
+                  radiusKm: livePoiRadiusKm(poi),
                   // How many of YOUR pops stand in this area — the shell
                   // renders the count under the place title and routes a tap
                   // to the profile.
@@ -2580,7 +2660,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startExplicitTourLoop, stopTour, flyToCenter, flyToPop, myColor, openMapPinContent, ownAvatar, theme, traverseToEngagement])
+  }, [applyRadiusDelta, handleGoToCurrentLocation, handleToggleMapMode, handleToggleStreetView, startExplicitTourLoop, stopTour, flyToCenter, flyToPop, myColor, openMapPinContent, ownAvatar, theme, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -2616,7 +2696,7 @@ export default function App() {
         user: null,
         name: poi.name,
         coords: poi.coords,
-        radiusKm: poi.radiusKm,
+        radiusKm: livePoiRadiusKm(poi),
         color: myColor,
         avatar: null,
         selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,

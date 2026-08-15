@@ -1,4 +1,4 @@
-export type RadiusEventKind = 'view' | 'like' | 'dislike' | 'profile' | 'inactive'
+export type RadiusEventKind = 'view' | 'like' | 'dislike' | 'comment' | 'profile' | 'inactive'
 
 export interface RadiusEvent {
   id: string
@@ -72,12 +72,17 @@ export function recordPostView(postId: string): boolean {
   return once('view', 1, postId)
 }
 
-export function recordPostLike(postId: string): RadiusEvent {
-  return append('like', 1, postId)
+export function recordPostLike(postId: string, deltaKm = 1): RadiusEvent {
+  return append('like', Math.abs(deltaKm), postId)
 }
 
-export function recordPostDislike(postId: string): RadiusEvent {
-  return append('dislike', -1, postId)
+export function recordPostDislike(postId: string, deltaKm = 1): RadiusEvent {
+  return append('dislike', -Math.abs(deltaKm), postId)
+}
+
+/** A posted comment is a stronger signal than a simple reaction. */
+export function recordPostComment(postId: string, deltaKm = 2): RadiusEvent {
+  return append('comment', Math.abs(deltaKm), postId)
 }
 
 export function recordProfileVisitAfterView(postId: string): boolean {
@@ -126,6 +131,24 @@ export function radiusKm(): number {
   return Math.max(0, BASE_RADIUS_KM + delta)
 }
 
+/**
+ * The map's standing pins are keyed by Feed channel. Keep the same persisted
+ * ledger as the home-radius counter, so a like/dislike changes both the
+ * account total and the specific piece of ground that post owns. Post ids are
+ * deliberately channel-prefixed by FeedTwin (`food:…`, `music:…`).
+ */
+export function radiusDeltaForChannel(channelId: string): number {
+  const prefix = `${channelId}:`
+  return events().reduce((sum, event) => (
+    event.postId?.startsWith(prefix) ? sum + event.deltaKm : sum
+  ), 0)
+}
+
+/** The current post's reach is its published snapshot plus its live reactions. */
+export function radiusDeltaForPost(postId: string): number {
+  return events().reduce((sum, event) => event.postId === postId ? sum + event.deltaKm : sum, 0)
+}
+
 export function radiusStats() {
   const all = events()
   const count = (kind: RadiusEventKind) => all.filter(event => event.kind === kind).length
@@ -138,6 +161,7 @@ export function radiusStats() {
     views: count('view'),
     likes: count('like'),
     dislikes: count('dislike'),
+    comments: count('comment'),
     profileVisits: count('profile'),
     inactivePosts: count('inactive'),
     events: all,

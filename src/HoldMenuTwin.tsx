@@ -12,6 +12,7 @@ import MapShowMe from './MapShowMe'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
 import SettingsScreen from './SettingsScreen'
+import AvatarScreen from './AvatarScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { onFrame } from './frameGovernor'
 
@@ -119,6 +120,13 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The `poplur-open-notifications` event it used to fire is still listened
     // for (ProfileTwin), so a host can open the sheet without a tile here.
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
+    // AVATAR makes the cube you wear on this tab out of a picture you supply —
+    // a logo, a face, a product. Meshy sculpts it (Poplur credits) or the app
+    // presses the image onto a clay cube for free. It sits next to SETTINGS
+    // because both change what Profile IS rather than showing you something.
+    // The CREATE mark stands in until an avatar mark is drawn; nothing here
+    // invents one.
+    { icon: 'Create', title: 'AVATAR', screen: 'profile-avatar', native: true },
     // A real screen now, not a Rough Copy capture: Settings holds REFER A
     // FRIEND, which gives away a day of worldwide radius and therefore has to
     // actually work.
@@ -647,6 +655,13 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Studio">
           <StudioScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-avatar') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Avatar cube">
+          <AvatarScreen onClose={() => { playPop(); onClose() }} />
         </div>
       )
     }

@@ -93,9 +93,10 @@ export default function ClayCornerButton({
   activateOnClick = false,
   tone = 'clay',
   still = true,
+  cssOnly = false,
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
-    | 'heart' | 'comment' | 'comments' | 'play' | 'seekBack' | 'seekFwd'
+    | 'heart' | 'thumbUp' | 'thumbDown' | 'comment' | 'comments' | 'play' | 'seekBack' | 'seekFwd'
   active?: boolean
   label: string
   onPress: () => void
@@ -107,6 +108,9 @@ export default function ClayCornerButton({
   /** Render once and stop, waking only for state changes and presses. Pass
    *  false only when a screen deliberately budgets for an idle tumble. */
   still?: boolean
+  /** A lightweight puffy-clay control for dense rails. It keeps the tactile
+   *  treatment without reserving another mobile WebGL context. */
+  cssOnly?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeRef = useRef(active)
@@ -121,7 +125,8 @@ export default function ClayCornerButton({
   const [flat, setFlat] = useState(false)
 
   useEffect(() => {
-    const canvas = canvasRef.current!
+    const canvas = canvasRef.current
+    if (cssOnly || !canvas) return
     let renderer: THREE.WebGLRenderer
     try {
       // This component is instantiated ~26 times across the app, and every
@@ -363,7 +368,7 @@ export default function ClayCornerButton({
       creamMat.dispose()
       releaseWebGL(renderer)
     }
-  }, [size, kind, tone, still])
+  }, [cssOnly, size, kind, tone, still])
 
   // A parked renderer still has to repaint when flash/heart state changes.
   // This is one finite frame, not a permanent animation loop.
@@ -374,7 +379,76 @@ export default function ClayCornerButton({
   const FLAT_GLYPH: Partial<Record<typeof kind, string>> = {
     close: '✕', flash: '⚡', flip: '⟳', share: '↑', link: '🔗',
     send: '➤', capture: '◉', mail: '✉', search: '⌕', locate: '◎',
-    comment: '◌', comments: '•••', heart: '♥',
+    comment: '◌', comments: '•••', heart: '♥', thumbUp: '👍', thumbDown: '👎',
+  }
+
+  if (cssOnly) {
+    const pressed = kind === 'heart' || kind === 'comments'
+    const enabled = kind === 'comments' ? active : false
+    const isComment = kind === 'comment'
+    const thumbDirection = kind === 'thumbUp' ? 'up' : kind === 'thumbDown' ? 'down' : null
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={pressed ? active : undefined}
+        onPointerDown={() => onPress()}
+        style={{
+          position: 'relative',
+          width: size,
+          height: size,
+          border: 0,
+          padding: 0,
+          background: 'transparent',
+          cursor: 'pointer',
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: size * 0.1,
+            top: size * 0.16,
+            width: size * 0.8,
+            height: size * 0.58,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: size * 0.09,
+            borderRadius: size * 0.27,
+            background: enabled
+              ? 'linear-gradient(145deg, #ff9acc, #ef258b 58%, #9d104f)'
+              : 'linear-gradient(145deg, #ff9acc, #ef62a6 58%, #9d104f)',
+            boxShadow: `inset 0 ${size * 0.07}px ${size * 0.1}px rgba(255,255,255,.52), inset 0 -${size * 0.08}px ${size * 0.1}px rgba(77,5,42,.48), 0 ${size * 0.12}px ${size * 0.15}px rgba(20,0,13,.48)`,
+            transform: 'perspective(90px) rotateX(12deg) rotateY(-10deg)',
+          }}
+        >
+          {thumbDirection ? (
+            <svg viewBox="0 0 24 24" width={size * 0.58} height={size * 0.58} fill="none" aria-hidden="true" style={{ transform: thumbDirection === 'down' ? 'rotate(180deg)' : undefined }}>
+              <path d="M9 21H5.6a1.6 1.6 0 0 1-1.6-1.6v-7.8A1.6 1.6 0 0 1 5.6 10H9m0 11V10l3.15-6.08A1.8 1.8 0 0 1 15.55 4l-.7 6H19a2 2 0 0 1 1.98 2.28l-1.06 6.9A2 2 0 0 1 17.94 21H9Z" fill="#fff1f8" stroke="#8e174d" strokeWidth="1.25" strokeLinejoin="round" />
+            </svg>
+          ) : isComment ? (
+            <span style={{ width: size * 0.31, height: size * 0.06, borderRadius: size, background: '#fff1f8', boxShadow: `0 ${size * 0.1}px 0 #fff1f8` }} />
+          ) : (
+            [-1, 0, 1].map(dot => <i key={dot} style={{ width: size * 0.1, height: size * 0.1, borderRadius: '50%', background: '#fff1f8', boxShadow: `0 ${size * 0.025}px ${size * 0.04}px rgba(83,6,43,.4)` }} />)
+          )}
+        </span>
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: size * 0.25,
+            top: size * 0.64,
+            width: 0,
+            height: 0,
+            borderTop: `${size * 0.19}px solid ${enabled ? '#c61569' : '#cf3a7d'}`,
+            borderRight: `${size * 0.14}px solid transparent`,
+            transform: 'rotate(18deg)',
+            filter: 'drop-shadow(0 3px 2px rgba(20,0,13,.38))',
+          }}
+        />
+      </button>
+    )
   }
 
   return (
