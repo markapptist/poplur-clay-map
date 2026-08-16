@@ -13,6 +13,7 @@ import VFXStudio, {
   type VFXEffectId,
 } from './VFXStudio'
 import ComposerAIChat from './ComposerAIChat'
+import BoundedPopupVideo from './BoundedPopupVideo'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -250,18 +251,6 @@ export default function PostComposer({
   const [uploadNote, setUploadNote] = useState<string | null>(null)
   const filterCss = AR_FILTERS.find(f => f.id === filterId)?.css ?? 'none'
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      const previous = previousComposerStep(step, usedAI)
-      if (previous === null) onClose()
-      else setStep(previous)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, step, usedAI])
-
   // The cube's back: one screen at a time, closing from the first. Matches
   // the Escape key exactly.
   // The preview had `autoPlay loop muted playsInline` and still came up frozen
@@ -288,6 +277,26 @@ export default function PostComposer({
     setPreviewPlaying(false)
   }, [])
 
+  const goToStep = React.useCallback((next: PostComposerStep) => {
+    // Pause/detach the current owner inside the gesture, before React commits a
+    // VFX/AI/channel child that may acquire the same clip on its next effect.
+    retirePreview()
+    setStep(next)
+  }, [retirePreview])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      retirePreview()
+      const previous = previousComposerStep(step, usedAI)
+      if (previous === null) onClose()
+      else setStep(previous)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, retirePreview, step, usedAI])
+
   // A new capture receives one automatic, muted pass. Subsequent passes are
   // explicit taps, and every pass has the same hard decoder lease.
   useEffect(() => {
@@ -297,18 +306,13 @@ export default function PostComposer({
       && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
   }, [media.kind, media.src])
 
-  // The editor owns this source while it is open. Unmounting the composer's
-  // player avoids two decoders reading the same recording behind the overlay.
-  useEffect(() => {
-    if (editorOpen) retirePreview()
-  }, [editorOpen, retirePreview])
+  const basePreviewOwnsMedia = !editorOpen && (step === 'edit' || step === 'choice')
 
-  // The channel step owns a compact, framed playback preview. Retire the
-  // full-bleed player before mounting it so one clip never consumes two video
-  // decoder leases at the same time on a phone.
+  // Defense in depth for non-gesture state changes. User transitions call
+  // goToStep above, which retires synchronously before the child can mount.
   useEffect(() => {
-    if (step === 'channel') retirePreview()
-  }, [retirePreview, step])
+    if (!basePreviewOwnsMedia) retirePreview()
+  }, [basePreviewOwnsMedia, retirePreview])
 
   useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
     if (!snapshot.isForeground || !snapshot.expensiveVideoBackedTexturesAllowed) retirePreview()
@@ -316,7 +320,7 @@ export default function PostComposer({
 
   useEffect(() => {
     const v = previewVideoRef.current
-    if (!v || media.kind !== 'video' || !previewPlaying || editorOpen) return
+    if (!v || media.kind !== 'video' || !previewPlaying || !basePreviewOwnsMedia) return
     if (!v.getAttribute('src')) {
       v.src = media.src
       v.load()
@@ -345,7 +349,7 @@ export default function PostComposer({
       window.removeEventListener('pagehide', retirePreview)
       releasePreviewVideo(v)
     }
-  }, [editorOpen, media.kind, media.src, previewPlaying, retirePreview])
+  }, [basePreviewOwnsMedia, media.kind, media.src, previewPlaying, retirePreview])
 
   const backRef = useRef({ step, usedAI, onClose })
   backRef.current = { step, usedAI, onClose }
@@ -354,11 +358,12 @@ export default function PostComposer({
     bindBack(() => {
       const { step: current, usedAI: currentUsesAI, onClose: close } = backRef.current
       const previous = previousComposerStep(current, currentUsesAI)
+      retirePreview()
       if (previous === null) close()
       else setStep(previous)
     })
     return () => bindBack(null)
-  }, [bindBack])
+  }, [bindBack, retirePreview])
 
   /** Bake the chosen filter into the pixels so the post carries what you saw.
    *  Photos are re-drawn through the CSS filter here; video keeps its filter id
@@ -526,8 +531,9 @@ export default function PostComposer({
     <div className={styles.preview}>
       {media.kind === 'video' ? (
         <>
-          {previewPlaying && !editorOpen ? (
+          {previewPlaying && basePreviewOwnsMedia ? (
             <video
+              key={media.src}
               ref={previewVideoRef}
               className={styles.media}
               src={media.src}
@@ -549,7 +555,7 @@ export default function PostComposer({
               style={{ filter: filterCss === 'none' ? undefined : filterCss }}
             />
           ) : null}
-          {!editorOpen && !previewPlaying && (
+          {basePreviewOwnsMedia && !previewPlaying && (
             <button
               type="button"
               className={styles.previewReplay}
@@ -665,13 +671,13 @@ export default function PostComposer({
           {media.kind === 'video' && (
             <button
               className={styles.editFab}
-              onClick={() => { playPop(); setEditorOpen(true) }}
+              onClick={() => { playPop(); retirePreview(); setEditorOpen(true) }}
               aria-label="Trim and add music"
             >✂ TRIM &amp; MUSIC</button>
           )}
           <button
             className={styles.nextFab}
-            onClick={() => { playPop(); setStep('effects') }}
+            onClick={() => { playPop(); goToStep('effects') }}
             aria-label="Continue to post"
             title="Next"
           ><span aria-hidden="true">›</span></button>
@@ -726,13 +732,14 @@ export default function PostComposer({
       {step === 'effects' && (
         <VFXStudio
           media={media}
+          poster={previewStill}
           value={effectId}
           timing={effectTiming}
           customAsset={effectAsset}
           onChange={effect => { playPop(); setEffectId(effect) }}
           onTimingChange={setEffectTiming}
           onCustomAssetChange={setEffectAsset}
-          onContinue={() => { playPop(); setStep('choice') }}
+          onContinue={() => { playPop(); goToStep('choice') }}
         />
       )}
 
@@ -746,7 +753,7 @@ export default function PostComposer({
           <button
             type="button"
             className={`${styles.secondary} ${styles.choiceAction}`}
-            onClick={() => { playPop(); setUsedAI(false); setStep('channel') }}
+            onClick={() => { playPop(); setUsedAI(false); goToStep('channel') }}
           >
             <b aria-hidden="true">✓</b>
             <span>Post original</span>
@@ -754,7 +761,7 @@ export default function PostComposer({
           <button
             type="button"
             className={`${styles.primary} ${styles.choiceAction}`}
-            onClick={() => { playPop(); setUsedAI(false); setStep('ai') }}
+            onClick={() => { playPop(); setUsedAI(false); goToStep('ai') }}
           >
             <b aria-hidden="true">P</b>
             <span>Create with Poplur AI</span>
@@ -766,13 +773,14 @@ export default function PostComposer({
       {step === 'ai' && (
         <ComposerAIChat
           media={media}
+          poster={previewStill}
           prompt={aiPrompt}
           onPromptChange={setAiPrompt}
           onGenerate={() => {
             playPop()
             if (reviewMode) {
               setUsedAI(true)
-              setStep('channel')
+              goToStep('channel')
               return
             }
             setPendingAICompose({
@@ -789,7 +797,7 @@ export default function PostComposer({
             postNativeEvent({ type: 'holdMenuNavigate', action: 'create' })
             onClose()
           }}
-          onUseOriginal={() => { playPop(); setUsedAI(false); setStep('channel') }}
+          onUseOriginal={() => { playPop(); setUsedAI(false); goToStep('channel') }}
         />
       )}
 
@@ -831,7 +839,12 @@ export default function PostComposer({
           <section className={target ? styles.readyPreview : styles.channelContentPreview} aria-label="Post preview">
             <div className={styles.channelPreviewMedia}>
               {media.kind === 'video' ? (
-                <video src={media.src} autoPlay muted loop playsInline preload="metadata" />
+                <BoundedPopupVideo
+                  src={media.src}
+                  poster={previewStill ?? undefined}
+                  alt="Post preview"
+                  disablePictureInPicture
+                />
               ) : (
                 <img src={media.src} alt="Post preview" />
               )}

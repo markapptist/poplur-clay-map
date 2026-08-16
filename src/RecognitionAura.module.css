@@ -34,26 +34,45 @@
     0 0 7px rgba(246, 59, 154, 0.32),
     0 0 6px rgba(94, 225, 234, 0.28),
     0 0 9px rgba(139, 107, 255, 0.2);
-  /* Present but dark until something is recognised: the ∞ spin/pulse run ONLY
-     while .ringOn is applied, so an idle camera carries zero running
-     animations from this layer. */
+  /* Present but dark until something is recognised. Motion is a separate
+     class so a thermally parked preview can retain its last recognition ring
+     without retaining the infinite compositor animations. */
   opacity: 0;
   transition: opacity 0.24s ease-out;
 }
 
 .ringOn {
   opacity: 1;
+}
+
+.ringMoving {
   animation: recogSpin 4s linear infinite, recogPulse 1.35s ease-in-out infinite;
 }
 
 /* The camera knows its owner: brighter, quicker breath. */
 .ringUser {
   padding: 1px;
-  animation: recogSpin 2.6s linear infinite, recogPulse 0.9s ease-in-out infinite;
   box-shadow:
     0 0 9px rgba(246, 59, 154, 0.42),
     0 0 8px rgba(94, 225, 234, 0.36),
     0 0 11px rgba(139, 107, 255, 0.28);
+}
+
+.ringMoving.ringUser {
+  animation-duration: 2.6s, 0.9s;
+}
+
+:global(.poplur-ambient-sleep) .ringMoving,
+:global([data-poplur-performance-mode='low_power']) .ringMoving,
+:global([data-poplur-performance-mode='emergency']) .ringMoving {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ringMoving,
+  .ringMoving.ringUser {
+    animation: none;
+  }
 }
 
 @keyframes recogSpin {

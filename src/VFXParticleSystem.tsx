@@ -1,6 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import styles from './VFXStudio.module.css'
+import { onFrame } from './frameGovernor'
+import {
+  PoplurPerformanceManager,
+  type PoplurPerformancePolicy,
+} from './poplurPerformanceManager'
 
 export type VFXParticleEffect = 'explosion' | 'fireworks' | 'confetti' | 'rain' | 'fire'
 
@@ -17,8 +22,6 @@ const PARTICLE_CAP: Record<VFXParticleEffect, number> = {
   rain: 180,
   fire: 130,
 }
-
-const FRAME_INTERVAL_MS = 1000 / 30
 
 function geometryFor(effect: VFXParticleEffect): THREE.BufferGeometry {
   if (effect === 'confetti') return new THREE.BoxGeometry(.04, .075, .014, 1, 1, 1)
@@ -149,6 +152,8 @@ function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min)
 }
 
+let vfxParticleSequence = 0
+
 export default function VFXParticleSystem({
   effect,
   intensity,
@@ -159,6 +164,65 @@ export default function VFXParticleSystem({
   intensity: number
   speed: number
   active: boolean
+}) {
+  const [rendererID] = useState(() => `vfx-particles-${++vfxParticleSequence}`)
+  const rendererHandle = useRef<ReturnType<typeof PoplurPerformanceManager.registerRenderer> | null>(null)
+  const [grant, setGrant] = useState(() => ({
+    active: false,
+    policy: PoplurPerformanceManager.policy,
+  }))
+
+  useEffect(() => {
+    let alive = true
+    const handle = PoplurPerformanceManager.registerRenderer({
+      id: rendererID,
+      heavy: true,
+      priority: 98,
+      visible: true,
+      demanded: active,
+      onActiveChange: (granted, policy) => {
+        if (alive) setGrant({ active: granted, policy })
+      },
+    })
+    rendererHandle.current = handle
+    return () => {
+      alive = false
+      rendererHandle.current = null
+      handle.dispose()
+    }
+  }, [rendererID])
+
+  useEffect(() => rendererHandle.current?.setDemand(active), [active])
+
+  if (!active
+    || !grant.active
+    || !grant.policy.particlesAllowed
+    || !grant.policy.decorativeRenderingAllowed) return null
+
+  return (
+    <ParticleSurface
+      key={`${effect}-${grant.policy.mode}`}
+      effect={effect}
+      intensity={intensity}
+      speed={speed}
+      active
+      policy={grant.policy}
+    />
+  )
+}
+
+function ParticleSurface({
+  effect,
+  intensity,
+  speed,
+  active,
+  policy,
+}: {
+  effect: VFXParticleEffect
+  intensity: number
+  speed: number
+  active: boolean
+  policy: PoplurPerformancePolicy
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const runtimeRef = useRef<ParticleRuntime | null>(null)
@@ -195,7 +259,7 @@ export default function VFXParticleSystem({
     }
 
     renderer.setClearColor(0x000000, 0)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5, policy.maximumPixelRatio))
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.domElement.className = styles.particleCanvas
     renderer.domElement.setAttribute('aria-hidden', 'true')
@@ -225,8 +289,7 @@ export default function VFXParticleSystem({
     const spin = new Float32Array(capacity * 3)
     const dummy = new THREE.Object3D()
     let halfWidth = 1
-    let animationFrame = 0
-    let lastFrame = performance.now()
+    let stopFrames: (() => void) | null = null
     let burstClock = 0
     let enabled = false
     let disposed = false
@@ -367,17 +430,15 @@ export default function VFXParticleSystem({
       return 1
     }
 
-    const renderFrame = (now: number) => {
-      animationFrame = 0
+    const renderFrame = (dtMs: number) => {
       if (!enabled || disposed || document.hidden) return
-      const elapsedMs = now - lastFrame
-      if (elapsedMs < FRAME_INTERVAL_MS) {
-        animationFrame = window.requestAnimationFrame(renderFrame)
-        return
-      }
-      lastFrame = now - (elapsedMs % FRAME_INTERVAL_MS)
-      const dt = Math.min(.05, elapsedMs / 1000) * speedRef.current
-      const visibleCount = Math.max(18, Math.round(capacity * intensityRef.current / 100))
+      const dt = Math.min(.05, dtMs / 1000) * speedRef.current
+      const requestedCount = Math.round(
+        capacity * (intensityRef.current / 100) * policy.particleDensityMultiplier,
+      )
+      const visibleCount = policy.particlesAllowed
+        ? Math.max(0, Math.min(capacity, policy.maxParticleObjects, requestedCount))
+        : 0
       particles.count = visibleCount
       material.opacity = effect === 'rain'
         ? .68 + intensityRef.current / 260
@@ -410,21 +471,25 @@ export default function VFXParticleSystem({
       }
       particles.instanceMatrix.needsUpdate = true
       renderer.render(scene, camera)
-      animationFrame = window.requestAnimationFrame(renderFrame)
     }
 
     const start = () => {
-      if (animationFrame || disposed || document.hidden) return
+      if (stopFrames
+        || disposed
+        || document.hidden
+        || !activeRef.current
+        || !policy.particlesAllowed
+        || !policy.decorativeRenderingAllowed) return
       enabled = true
-      lastFrame = performance.now() - FRAME_INTERVAL_MS
-      animationFrame = window.requestAnimationFrame(renderFrame)
+      stopFrames = onFrame(dtMs => renderFrame(dtMs), 'managed')
     }
     const stop = () => {
       enabled = false
-      if (animationFrame) window.cancelAnimationFrame(animationFrame)
-      animationFrame = 0
+      stopFrames?.()
+      stopFrames = null
       renderer.clear()
     }
+
     const onVisibility = () => {
       if (document.hidden) stop()
       else if (activeRef.current) start()
@@ -463,7 +528,7 @@ export default function VFXParticleSystem({
       if (runtimeRef.current === runtime) runtimeRef.current = null
       runtime.dispose()
     }
-  }, [effect])
+  }, [effect, policy])
 
   return (
     <div

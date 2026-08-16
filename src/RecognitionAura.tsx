@@ -19,6 +19,7 @@ export default function RecognitionAura({
   active,
   userSeen,
   tag = true,
+  motionAllowed = active,
 }: {
   /** something is recognised in the frame right now */
   active: boolean
@@ -30,6 +31,9 @@ export default function RecognitionAura({
   /** the "it's you" caption. Camera-only — the voice screen wears the ring
    *  without claiming to have recognised a face. */
   tag?: boolean
+  /** Keep the last recognition visible without spending compositor frames.
+   *  Camera uses this while its native preview is thermally parked. */
+  motionAllowed?: boolean
 }) {
   return (
     <div className={styles.aura} aria-hidden="true">
@@ -37,6 +41,7 @@ export default function RecognitionAura({
         className={[
           styles.ring,
           active ? styles.ringOn : '',
+          active && motionAllowed ? styles.ringMoving : '',
           active && userSeen ? styles.ringUser : '',
         ].filter(Boolean).join(' ')}
       />

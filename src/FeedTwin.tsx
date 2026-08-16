@@ -1025,48 +1025,124 @@ export default function FeedTwin({
   }, [showStatic, suppressed, ch.id])
 
   // A bad/blocked creative can never strand the channel on a frozen frame.
-  // Decoder health is resource ownership, not decoration, so this monitor is
-  // independent of the animation governor and keeps running while a person is
-  // passively watching. Static covers recovery immediately; the one leased
-  // decoder restarts once, then rotates to a verified bundled source.
+  // Media events own recovery: the old 900ms interval woke JavaScript forever
+  // even while a healthy clip was decoding normally. `waiting`/`stalled` arm
+  // one bounded retry; `playing`/`timeupdate` cancel it. Visible autoplay is
+  // unchanged, but a Feed left open overnight no longer runs a polling clock.
   useEffect(() => {
     const video = adVideoRef.current
     if (!video || !adSrc || suppressed || !mediaUnlocked || !decoderGranted || completedAdSrc === adSrc) return
-    let lastTime = video.currentTime
-    let stalledTicks = 0
-    const watchdog = window.setInterval(() => {
-      if (
-        adVideoRef.current !== video
-        || suppressedRef.current
-        || document.visibilityState === 'hidden'
-        || playerPausedByUserRef.current
-      ) return
+    let retryTimer = 0
+    let rotateTimer = 0
+    let checkpoint = video.currentTime
+    let awaitingPostLoadProgress = false
+    const clearRecovery = () => {
+      if (retryTimer) window.clearTimeout(retryTimer)
+      if (rotateTimer) window.clearTimeout(rotateTimer)
+      retryTimer = 0
+      rotateTimer = 0
+    }
+    const stillOwnsVideo = () => (
+      adVideoRef.current === video
+      && !suppressedRef.current
+      && frontMostRef.current
+      && document.visibilityState !== 'hidden'
+      && (window.__poplurDisplayActive?.() ?? true)
+      && !playerPausedByUserRef.current
+      && completedAdRef.current !== adSrc
+    )
+    const onProgress = () => {
+      if (!stillOwnsVideo()) return
       const now = video.currentTime
-      const advanced = now > lastTime + 0.03 || now < lastTime - 0.5
-      if (advanced) {
-        lastTime = now
-        stalledTicks = 0
-        setRecoveringPlayback(false)
-        markAdReady(adSrc)
-        return
-      }
-      stalledTicks += 1
-      // Initial decode stays covered. A clip that already painted keeps its
-      // last real frame while the same decoder is restarted; only an actual
-      // source rotation re-arms static.
+      const advanced = now > checkpoint + 0.03
+      const naturallyWrapped = !awaitingPostLoadProgress && now < checkpoint - 0.5
+      if (!advanced && !naturallyWrapped) return
+      checkpoint = now
+      awaitingPostLoadProgress = false
+      clearRecovery()
+      setRecoveringPlayback(false)
+      markAdReady(adSrc)
+    }
+    const armRecovery = () => {
+      if (!stillOwnsVideo() || retryTimer || rotateTimer) return
       if (!adReady) setRecoveringPlayback(true)
-      if (video.paused || video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
-        retryAdPlayback(adSrc, video)
-      }
-      if (stalledTicks === 2) {
+      checkpoint = video.currentTime
+      retryTimer = window.setTimeout(() => {
+        retryTimer = 0
+        if (!stillOwnsVideo()) return
+        const progressed = video.currentTime > checkpoint + 0.03
+          || video.currentTime < checkpoint - 0.5
+        if (progressed) {
+          onProgress()
+          return
+        }
         video.load()
-        lastTime = video.currentTime
+        awaitingPostLoadProgress = true
+        checkpoint = video.currentTime
         void video.play().catch(() => {})
+        const retryCheckpoint = video.currentTime
+        rotateTimer = window.setTimeout(() => {
+          rotateTimer = 0
+          if (!stillOwnsVideo()) return
+          const recovered = video.currentTime > retryCheckpoint + 0.03
+          if (recovered) onProgress()
+          else advanceAdSource(adSrc)
+        }, 1800)
+      }, 900)
+    }
+    const onPlaying = () => {
+      if (
+        stillOwnsVideo()
+        && !video.paused
+        && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+      ) {
+        // `playing` only means WebKit left its paused state. Some failed
+        // decoders emit it with one frame and never advance currentTime, so it
+        // is not strong enough to cancel the bounded startup deadline. A real
+        // `timeupdate` calls onProgress and retires both recovery timers.
+        markAdReady(adSrc)
+        armRecovery()
       }
-      if (stalledTicks >= 3) advanceAdSource(adSrc)
-    }, 900)
-    return () => window.clearInterval(watchdog)
-  }, [adReady, adSrc, completedAdSrc, suppressed, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource, retryAdPlayback])
+    }
+    const onForeground = (event?: Event) => {
+      if (event?.type === 'poplur-native-app-lifecycle') {
+        const active = (event as CustomEvent<{ active?: boolean }>).detail?.active
+        if (active !== true) {
+          clearRecovery()
+          return
+        }
+      }
+      if (document.visibilityState === 'visible') armRecovery()
+      else clearRecovery()
+    }
+    const onError = () => {
+      clearRecovery()
+      if (stillOwnsVideo()) advanceAdSource(adSrc)
+    }
+    video.addEventListener('timeupdate', onProgress)
+    video.addEventListener('playing', onPlaying)
+    video.addEventListener('waiting', armRecovery)
+    video.addEventListener('stalled', armRecovery)
+    video.addEventListener('error', onError)
+    document.addEventListener('visibilitychange', onForeground)
+    window.addEventListener('pageshow', onForeground)
+    window.addEventListener('poplur-native-app-lifecycle', onForeground)
+    // Some WebKit failures emit neither `waiting` nor `stalled` before the
+    // first frame. This is a one-shot startup deadline, cancelled permanently
+    // as soon as playback advances; it is not an idle heartbeat.
+    armRecovery()
+    return () => {
+      clearRecovery()
+      video.removeEventListener('timeupdate', onProgress)
+      video.removeEventListener('playing', onPlaying)
+      video.removeEventListener('waiting', armRecovery)
+      video.removeEventListener('stalled', armRecovery)
+      video.removeEventListener('error', onError)
+      document.removeEventListener('visibilitychange', onForeground)
+      window.removeEventListener('pageshow', onForeground)
+      window.removeEventListener('poplur-native-app-lifecycle', onForeground)
+    }
+  }, [adReady, adSrc, completedAdSrc, suppressed, frontMost, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource])
 
   // Channel audio. The ad creative is the channel's soundtrack, so it plays
   // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,

@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ModelViewerElement } from '@google/model-viewer'
 import styles from './VFXStudio.module.css'
 import { generateMeshyObject, MeshyUnavailable, type MeshyProgress } from './meshy'
 import VFXParticleSystem, { type VFXParticleEffect } from './VFXParticleSystem'
+import { onFrame } from './frameGovernor'
+import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
+import { wakeManagedRendering } from './nativeBridge'
 
 ModelViewerElement.meshoptDecoderLocation = `${import.meta.env.BASE_URL}meshopt_decoder.js`
 
@@ -49,6 +52,8 @@ type Placement = { x: number; y: number; scale: number; rotation: number }
 type Tool = 'objects' | 'effects' | 'meshy' | 'transform'
 
 const DEFAULT_PLACEMENT: Placement = { x: 64, y: 43, scale: 42, rotation: 0 }
+const PREVIEW_ACTIVITY_LEASE_MS = 12_000
+let vfxModelSequence = 0
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -57,6 +62,26 @@ function clamp(value: number, min: number, max: number): number {
 function mediaDuration(media: VFXMedia): number {
   if (media.kind === 'photo') return 6
   return 12
+}
+
+function stillFromPreviewVideo(video: HTMLVideoElement): string | null {
+  if (!video.videoWidth || !video.videoHeight) return null
+  try {
+    const canvas = document.createElement('canvas')
+    const width = Math.min(720, video.videoWidth)
+    canvas.width = width
+    canvas.height = Math.max(1, Math.round(width * video.videoHeight / video.videoWidth))
+    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', .72)
+  } catch {
+    return null
+  }
+}
+
+function releasePreviewVideo(video: HTMLVideoElement): void {
+  video.pause()
+  video.removeAttribute('src')
+  video.load()
 }
 
 function formatTimestamp(seconds: number): string {
@@ -74,7 +99,51 @@ function engineLabel(engine: VFXEngine): string {
   return 'No effect'
 }
 
-function ActiveModel({ src, name }: { src: string; name: string }) {
+function ActiveModel({
+  src,
+  name,
+  active,
+  fallbackSrc,
+}: {
+  src: string
+  name: string
+  active: boolean
+  fallbackSrc: string
+}) {
+  const [rendererID] = useState(() => `vfx-model-${++vfxModelSequence}`)
+  const rendererHandle = useRef<ReturnType<typeof PoplurPerformanceManager.registerRenderer> | null>(null)
+  const [rendererState, setRendererState] = useState({ active: false, shadows: false })
+
+  useEffect(() => {
+    let alive = true
+    const handle = PoplurPerformanceManager.registerRenderer({
+      id: rendererID,
+      heavy: true,
+      priority: 96,
+      visible: true,
+      demanded: active,
+      onActiveChange: (granted, policy) => {
+        if (!alive) return
+        setRendererState({
+          active: granted && policy.decorativeRenderingAllowed,
+          shadows: policy.dynamicShadowsAllowed,
+        })
+      },
+    })
+    rendererHandle.current = handle
+    return () => {
+      alive = false
+      rendererHandle.current = null
+      handle.dispose()
+    }
+  }, [rendererID])
+
+  useEffect(() => rendererHandle.current?.setDemand(active), [active])
+
+  if (!active || !rendererState.active) {
+    return <img className={styles.activeModelFallback} src={fallbackSrc} alt={`${name} overlay`} />
+  }
+
   return React.createElement('model-viewer', {
     class: styles.activeModel,
     src,
@@ -82,13 +151,11 @@ function ActiveModel({ src, name }: { src: string; name: string }) {
     'camera-orbit': '20deg 72deg 2.8m',
     'field-of-view': '28deg',
     exposure: '1.2',
-    shadowIntensity: '1.1',
+    shadowIntensity: rendererState.shadows ? '1.1' : '0',
     shadowSoftness: '.8',
-    'auto-rotate': true,
-    'rotation-per-second': '18deg',
     interactionPrompt: 'none',
     disableZoom: true,
-    loading: 'eager',
+    loading: active ? 'eager' : 'lazy',
   })
 }
 
@@ -104,6 +171,7 @@ function EffectThumbnail({ id, thumb }: { id: VFXEffectId; thumb: string | null 
 
 export default function VFXStudio({
   media,
+  poster,
   value,
   timing,
   customAsset,
@@ -113,6 +181,7 @@ export default function VFXStudio({
   onContinue,
 }: {
   media: VFXMedia
+  poster?: string | null
   value: VFXEffectId
   timing?: VFXCueTiming
   customAsset?: VFXCustomAsset | null
@@ -124,11 +193,15 @@ export default function VFXStudio({
   const videoRef = useRef<HTMLVideoElement>(null)
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null)
   const generationRef = useRef<AbortController | null>(null)
+  const previewLeaseRef = useRef(0)
   const initialClipDuration = mediaDuration(media)
   const [placement, setPlacement] = useState<Placement>(DEFAULT_PLACEMENT)
   const [tracking, setTracking] = useState<'subject' | 'screen'>('subject')
   const [playing, setPlaying] = useState(media.kind === 'video')
   const [playhead, setPlayhead] = useState(24)
+  const playheadRef = useRef(playhead)
+  playheadRef.current = playhead
+  const [previewStill, setPreviewStill] = useState<string | null>(poster ?? null)
   const [tool, setTool] = useState<Tool>('objects')
   const [intensity, setIntensity] = useState(72)
   const [speed, setSpeed] = useState(1)
@@ -144,6 +217,18 @@ export default function VFXStudio({
   const [meshyProgress, setMeshyProgress] = useState<MeshyProgress | null>(null)
   const [meshyError, setMeshyError] = useState<string | null>(null)
   const [meshyGenerating, setMeshyGenerating] = useState(false)
+  const [performanceSnapshot, setPerformanceSnapshot] = useState<PoplurPerformanceSnapshot>(
+    () => PoplurPerformanceManager.snapshot,
+  )
+  const performanceSnapshotRef = useRef(performanceSnapshot)
+  performanceSnapshotRef.current = performanceSnapshot
+  const [previewAwake, setPreviewAwake] = useState(() => {
+    const snapshot = PoplurPerformanceManager.snapshot
+    return snapshot.isForeground
+      && snapshot.decorativeRenderingAllowed
+      && (media.kind !== 'video' || snapshot.expensiveVideoBackedTexturesAllowed)
+  })
+  useEffect(() => setPreviewStill(poster ?? null), [media.src, poster])
   const selected = useMemo(
     () => VFX_EFFECTS.find(effect => effect.id === value) ?? VFX_EFFECTS[0],
     [value],
@@ -160,6 +245,9 @@ export default function VFXStudio({
   )
   const isParticle = selected.group === 'effects'
   const activeModelUrl = selected.id === 'meshy' ? customAsset?.modelUrl ?? null : selected.model
+  const activeModelPoster = selected.id === 'meshy'
+    ? customAsset?.thumbnailUrl ?? '/logo_icon.png'
+    : selected.thumb ?? '/logo_icon.png'
   const currentSeconds = (playhead / 100) * clipDurationSeconds
   const cueEndSeconds = Math.min(clipDurationSeconds, effectStartSeconds + effectDurationSeconds)
   const cueLeft = clipDurationSeconds > 0 ? (effectStartSeconds / clipDurationSeconds) * 100 : 0
@@ -167,6 +255,74 @@ export default function VFXStudio({
   const effectActive = value !== 'none'
     && currentSeconds >= effectStartSeconds
     && currentSeconds <= cueEndSeconds
+
+  const sleepPreview = useCallback(() => {
+    if (previewLeaseRef.current) window.clearTimeout(previewLeaseRef.current)
+    previewLeaseRef.current = 0
+    const video = videoRef.current
+    if (video) {
+      const still = stillFromPreviewVideo(video)
+      if (still) setPreviewStill(still)
+      releasePreviewVideo(video)
+    }
+    setPreviewAwake(false)
+  }, [])
+
+  const wakePreview = useCallback(() => {
+    const snapshot = performanceSnapshotRef.current
+    const allowed = snapshot.isForeground
+      && snapshot.decorativeRenderingAllowed
+      && (media.kind !== 'video' || snapshot.expensiveVideoBackedTexturesAllowed)
+    if (!allowed) {
+      sleepPreview()
+      return
+    }
+    if (previewLeaseRef.current) window.clearTimeout(previewLeaseRef.current)
+    wakeManagedRendering(PREVIEW_ACTIVITY_LEASE_MS)
+    setPreviewAwake(true)
+    previewLeaseRef.current = window.setTimeout(sleepPreview, PREVIEW_ACTIVITY_LEASE_MS)
+  }, [media.kind, sleepPreview])
+
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
+    performanceSnapshotRef.current = snapshot
+    setPerformanceSnapshot(snapshot)
+    if (!snapshot.isForeground
+      || !snapshot.decorativeRenderingAllowed
+      || (media.kind === 'video' && !snapshot.expensiveVideoBackedTexturesAllowed)) {
+      sleepPreview()
+    }
+  }), [media.kind, sleepPreview])
+
+  useEffect(() => {
+    wakePreview()
+    return () => {
+      if (previewLeaseRef.current) window.clearTimeout(previewLeaseRef.current)
+      previewLeaseRef.current = 0
+      const video = videoRef.current
+      if (video) releasePreviewVideo(video)
+    }
+  }, [wakePreview])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || media.kind !== 'video') return
+    const allowed = previewAwake
+      && playing
+      && performanceSnapshot.isForeground
+      && performanceSnapshot.expensiveVideoBackedTexturesAllowed
+    if (allowed) {
+      if (!video.getAttribute('src')) {
+        video.src = media.src
+        video.load()
+      }
+      void video.play().catch(() => setPlaying(false))
+      return () => releasePreviewVideo(video)
+    }
+    const still = stillFromPreviewVideo(video)
+    if (still) setPreviewStill(still)
+    releasePreviewVideo(video)
+    return () => releasePreviewVideo(video)
+  }, [media.kind, media.src, performanceSnapshot.expensiveVideoBackedTexturesAllowed, performanceSnapshot.isForeground, playing, previewAwake])
 
   useEffect(() => {
     onTimingChange?.({
@@ -177,15 +333,18 @@ export default function VFXStudio({
   }, [effectDurationSeconds, effectStartSeconds, onTimingChange, selected.engine])
 
   useEffect(() => {
-    if (media.kind !== 'photo' || !playing) return
-    const timer = window.setInterval(() => {
-      setPlayhead(current => {
-        const step = (100 * .1) / clipDurationSeconds
-        return current + step >= 100 ? 0 : current + step
-      })
-    }, 100)
-    return () => window.clearInterval(timer)
-  }, [clipDurationSeconds, media.kind, playing])
+    if (media.kind !== 'photo' || !playing || !previewAwake) return
+    return onFrame(dtMs => {
+      const step = (100 * (dtMs / 1000)) / clipDurationSeconds
+      const next = Math.min(100, playheadRef.current + step)
+      playheadRef.current = next
+      setPlayhead(next)
+      if (next >= 100) {
+        setPlaying(false)
+        sleepPreview()
+      }
+    }, 'managed')
+  }, [clipDurationSeconds, media.kind, playing, previewAwake, sleepPreview])
 
   useEffect(() => () => generationRef.current?.abort(), [])
 
@@ -249,18 +408,15 @@ export default function VFXStudio({
   }
 
   const togglePlayback = () => {
-    const video = videoRef.current
-    if (!video) {
-      setPlaying(current => !current)
+    if (previewAwake && playing) {
+      sleepPreview()
+      setPlaying(false)
       return
     }
-    if (video.paused) {
-      void video.play()
-      setPlaying(true)
-    } else {
-      video.pause()
-      setPlaying(false)
-    }
+    playheadRef.current = 0
+    setPlayhead(0)
+    setPlaying(true)
+    wakePreview()
   }
 
   const seek = (next: number) => {
@@ -303,7 +459,12 @@ export default function VFXStudio({
   }
 
   return (
-    <section className={styles.studio} aria-label="Poplur VFX studio">
+    <section
+      className={styles.studio}
+      aria-label="Poplur VFX studio"
+      onPointerDownCapture={wakePreview}
+      onKeyDownCapture={wakePreview}
+    >
       <header className={styles.header}>
         <div className={styles.title}>
           <img src="/subscreens/assets/create_ic_vfx.imageset/create_ic_vfx.png" alt="" />
@@ -318,36 +479,51 @@ export default function VFXStudio({
 
       <div className={styles.stage}>
         {media.kind === 'video' ? (
-          <video
-            ref={videoRef}
-            src={media.src}
-            autoPlay
-            muted
-            loop
-            playsInline
-            preload="metadata"
-            onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
-            onLoadedMetadata={event => {
-              const duration = event.currentTarget.duration
-              if (!duration || !Number.isFinite(duration)) return
-              setClipDurationSeconds(duration)
-              setEffectStartSeconds(current => clamp(current, 0, Math.max(0, duration - .25)))
-              setEffectDurationSeconds(current => clamp(current, .25, duration))
-            }}
-            onTimeUpdate={event => {
-              const video = event.currentTarget
-              if (video.duration && Number.isFinite(video.duration)) {
-                setPlayhead((video.currentTime / video.duration) * 100)
-              }
-            }}
-          />
+          previewAwake && playing ? (
+            <video
+              key={media.src}
+              ref={videoRef}
+              src={media.src}
+              muted
+              playsInline
+              preload="metadata"
+              poster={previewStill ?? undefined}
+              onLoadedData={event => {
+                if (previewStill) return
+                const still = stillFromPreviewVideo(event.currentTarget)
+                if (still) setPreviewStill(still)
+              }}
+              onLoadedMetadata={event => {
+                const duration = event.currentTarget.duration
+                if (!duration || !Number.isFinite(duration)) return
+                setClipDurationSeconds(duration)
+                setEffectStartSeconds(current => clamp(current, 0, Math.max(0, duration - .25)))
+                setEffectDurationSeconds(current => clamp(current, .25, duration))
+              }}
+              onTimeUpdate={event => {
+                const video = event.currentTarget
+                if (video.duration && Number.isFinite(video.duration)) {
+                  const next = (video.currentTime / video.duration) * 100
+                  playheadRef.current = next
+                  setPlayhead(next)
+                }
+              }}
+              onEnded={() => {
+                setPlaying(false)
+                sleepPreview()
+              }}
+            />
+          ) : previewStill ? (
+            <img src={previewStill} alt="Effect preview" />
+          ) : (
+            <span role="img" aria-label="Video effect preview paused" />
+          )
         ) : (
           <img src={media.src} alt="Effect preview" />
         )}
 
         <div className={styles.stageShade} aria-hidden="true" />
-        <div className={styles.previewBadge}><i /> LIVE PREVIEW</div>
+        <div className={styles.previewBadge}><i /> {previewAwake && playing ? 'LIVE PREVIEW' : 'PREVIEW PAUSED'}</div>
         {effectActive && activeModelUrl && (
           <div
             className={styles.objectPlacement}
@@ -363,18 +539,29 @@ export default function VFXStudio({
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
           >
-            <ActiveModel src={activeModelUrl} name={selected.name} />
+            <ActiveModel
+              src={activeModelUrl}
+              name={selected.name}
+              active={previewAwake && playing && effectActive}
+              fallbackSrc={activeModelPoster}
+            />
             <i className={styles.handleNW} /><i className={styles.handleNE} />
             <i className={styles.handleSW} /><i className={styles.handleSE} />
             <span>{tracking === 'subject' ? 'TRACKED' : 'SCREEN'}</span>
           </div>
         )}
-        {isParticle && (
+        {isParticle
+          && playing
+          && effectActive
+          && previewAwake
+          && performanceSnapshot.isForeground
+          && performanceSnapshot.decorativeRenderingAllowed
+          && performanceSnapshot.particlesAllowed && (
           <VFXParticleSystem
             effect={selected.id as VFXParticleEffect}
             intensity={intensity}
             speed={speed}
-            active={effectActive}
+            active
           />
         )}
         {activeModelUrl && (
@@ -395,8 +582,8 @@ export default function VFXStudio({
       </div>
 
       <div className={styles.timeline}>
-        <button type="button" className={styles.playButton} onClick={togglePlayback} aria-label={playing ? 'Pause preview' : 'Play preview'}>
-          {playing ? 'Ⅱ' : '▶'}
+        <button type="button" className={styles.playButton} onClick={togglePlayback} aria-label={playing && previewAwake ? 'Pause preview' : 'Play preview'}>
+          {playing && previewAwake ? 'Ⅱ' : '▶'}
         </button>
         <div className={styles.timelineTrack}>
           <div className={styles.frames} aria-hidden="true">

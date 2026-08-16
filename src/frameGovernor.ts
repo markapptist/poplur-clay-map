@@ -30,7 +30,7 @@ import { MANAGED_RENDERING_OPERATION_EVENT, isNativeShell } from './nativeBridge
 export type Quality = 0 | 1 | 2 | 3
 
 /** Rate classes. Ambient work is the stuff that heats the phone for no gain. */
-export type Rate = 'interactive' | 'ambient' | 'idle'
+export type Rate = 'interactive' | 'managed' | 'ambient' | 'idle'
 
 type Sub = {
   cb: (dtMs: number, now: number) => void
@@ -194,6 +194,10 @@ function setAmbientSleeping(sleeping: boolean): void {
 const HZ: Record<Rate, [number, number, number, number]> = {
   //           q0  q1  q2  q3
   interactive: [30, 45, 60, 60],
+  // Finite, explicitly requested media/VFX work. It is permitted through the
+  // native ambient gate only while wakeManagedRendering owns a bounded lease,
+  // and follows the public 10/15/24/30 policy rather than display refresh.
+  managed:     [10, 15, 24, 30],
   // Ambient decoration must have a hard energy ceiling even on a phone that
   // can still hit every deadline. Waiting for thermal throttling before
   // reducing it means the device is already hot. Twenty frames is enough for
@@ -232,6 +236,7 @@ function intervalFor(sub: Sub): number {
  */
 function subscriberWorkPaused(sub: Sub): boolean {
   if (!ambientSleeping) return false
+  if (sub.rate === 'managed') return !managedRenderingOperationActive()
   // A finite camera/navigation operation may keep attended work alive, but it
   // never re-enables ambient or idle decoration while the thermal gate is shut.
   return !managedRenderingOperationActive() || sub.rate !== 'interactive'

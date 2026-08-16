@@ -1,5 +1,6 @@
 import React from 'react'
 import styles from './ComposerAIChat.module.css'
+import BoundedPopupVideo from './BoundedPopupVideo'
 
 const IDEAS = ['Make this cinematic', 'Build a commercial', 'Add surreal VFX', 'Cut it like a music video']
 
@@ -9,8 +10,10 @@ export default function ComposerAIChat({
   onPromptChange,
   onGenerate,
   onUseOriginal,
+  poster,
 }: {
   media: { kind: 'photo' | 'video'; src: string }
+  poster?: string | null
   prompt: string
   onPromptChange: (value: string) => void
   onGenerate: () => void
@@ -35,7 +38,12 @@ export default function ComposerAIChat({
 
         <div className={styles.attachment}>
           {media.kind === 'video' ? (
-            <video src={media.src} autoPlay muted loop playsInline preload="metadata" />
+            <BoundedPopupVideo
+              src={media.src}
+              poster={poster ?? undefined}
+              alt="Your recording attached to Poplur AI"
+              disablePictureInPicture
+            />
           ) : (
             <img src={media.src} alt="Capture attached to Poplur AI" />
           )}

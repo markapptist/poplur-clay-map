@@ -704,6 +704,7 @@ export default function ProfileTwin({
   const [torchAvailable, setTorchAvailable] = useState(false)
   const [showNotifs, setShowNotifs] = useState(false)
   const [notifsClosing, setNotifsClosing] = useState(false)
+  const [faceAsk, setFaceAsk] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
   const [viewerPlaying, setViewerPlaying] = useState(false)
   // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
@@ -716,22 +717,51 @@ export default function ProfileTwin({
   const [askText, setAskText] = useState('')
   const [aiReply, setAiReply] = useState<string | null>(null)
 
-  // The profile itself is the active screen while mounted. WKWebView can pause
-  // an inline, muted loop after a tab transition even though the element is
-  // visible; resume that one visible decoder on foreground/visibility instead
-  // of retaining any hidden Profile tree in memory.
+  // The avatar loop is a real decoder, not decorative CSS. Keep it only while
+  // the avatar itself is the visible experience; fullscreen Profile layers can
+  // otherwise leave it decoding underneath a second video or camera stream.
+  const [selfiePolicyAllowsPlayback, setSelfiePolicyAllowsPlayback] = useState(() => {
+    const snapshot = PoplurPerformanceManager.snapshot
+    return snapshot.isForeground && snapshot.expensiveVideoBackedTexturesAllowed
+  })
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
+    setSelfiePolicyAllowsPlayback(
+      snapshot.isForeground && snapshot.expensiveVideoBackedTexturesAllowed,
+    )
+  }), [])
+  const selfiePlaybackActive = Boolean(
+    selfieVideo
+    && selfiePolicyAllowsPlayback
+    && !capturing
+    && !launchingCamera
+    && viewerIdx == null
+    && !showNotifs
+    && !faceAsk
+    && !activeCall,
+  )
+
+  // WKWebView can pause an inline muted loop across a lifecycle edge. Resume
+  // only when this avatar owns the visible surface; cleanup removes the source
+  // so covered/low-power Profile does not retain a live decoder.
   const resumeSelfie = useCallback(() => {
     const video = selfieVideoRef.current
-    if (!video || document.visibilityState !== 'visible') return
+    if (!video || !selfiePlaybackActive || document.visibilityState !== 'visible') return
     void video.play().catch(() => { /* autoplay is muted; retry on next visible event */ })
-  }, [])
+  }, [selfiePlaybackActive])
   useEffect(() => {
-    if (!selfieVideo) return
+    if (!selfieVideo || !selfiePlaybackActive) return
+    const video = selfieVideoRef.current
+    if (!video) return
     const onVisible = () => resumeSelfie()
     document.addEventListener('visibilitychange', onVisible)
     resumeSelfie()
-    return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [selfieVideo, resumeSelfie])
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      video.pause()
+      video.removeAttribute('src')
+      video.load()
+    }
+  }, [selfiePlaybackActive, selfieVideo, resumeSelfie])
 
   // The persistent Home-level microphone controller sends its visible/spoken
   // reply back here when Profile is front, so the profile still reflects a
@@ -1278,8 +1308,6 @@ export default function ProfileTwin({
   // reference the camera matches your face against, so changing it is the
   // moment to say so. "Use my face" opts in; "Skip face ID" still takes the
   // photo — recognition simply stays off.
-  const [faceAsk, setFaceAsk] = useState(false)
-
   const openCapture = () => {
     if (launchingCamera || capturing) return
     let asked = false
@@ -1724,8 +1752,9 @@ export default function ProfileTwin({
             // A profile is intentionally empty until its owner records or
             // selects a ten-second selfie. Static heads/buildings must never
             // stand in for a real profile video.
-            selfieVideo ? (
+            selfieVideo && selfiePlaybackActive ? (
               <video
+                key={selfieVideo}
                 ref={selfieVideoRef}
                 className={styles.photo}
                 src={selfieVideo}
@@ -1735,10 +1764,11 @@ export default function ProfileTwin({
                 loop
                 playsInline
                 preload="auto"
-                onPause={resumeSelfie}
                 onStalled={resumeSelfie}
                 aria-label="Profile selfie video"
               />
+            ) : photo ? (
+              <img className={styles.photo} src={photo} alt="" draggable="false" />
             ) : (
               <div className={styles.noPhoto} aria-label="No profile photo set">
                 <span className={styles.noPhotoText}>NO PROFILE<br />PHOTO SET</span>

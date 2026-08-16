@@ -397,6 +397,12 @@
   .filterName, .filterNameShader { animation: none; }
 }
 
+:global(.poplur-ambient-sleep) .filterNameShader,
+:global([data-poplur-performance-mode='low_power']) .filterNameShader,
+:global([data-poplur-performance-mode='emergency']) .filterNameShader {
+  animation: none;
+}
+
 /* ── capture-aware filter browser ────────────────────────────────────────── */
 .filterPreviewRail {
   display: flex;

@@ -24,6 +24,7 @@ import type { SmartCard } from './tourSmarts'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
@@ -209,7 +210,6 @@ export default function Camera({
   onRecordingChange,
   onZoomChange,
   onDetectUser,
-  recognizedSelfieVideo,
   recognizedSelfiePoster,
   onScanTotal,
   postTarget,
@@ -233,8 +233,9 @@ export default function Camera({
   onZoomChange?: (zoom: number) => void
   /** the detected user, whose OWN reach the radius label adopts */
   onDetectUser?: (user: { handle: string; radiusKm: number } | null) => void
-  /** The signed-in user's real ten-second profile selfie. It appears only while
-   *  the on-device matcher says the face in frame is this user. */
+  /** Kept for native-shell API compatibility. The camera intentionally shows
+   *  the stored poster below instead of running a second decoder over its live
+   *  viewfinder. */
   recognizedSelfieVideo?: string | null
   recognizedSelfiePoster?: string | null
   /** The scanner: the session's accumulated object-radius, climbing with each
@@ -320,6 +321,8 @@ export default function Camera({
   const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
   const onAir = useSyncExternalStore(onLiveStore, isLive, isLive)
   const [detections, setDetections] = useState<Detection[]>([])
+  const detectionsRef = useRef(detections)
+  detectionsRef.current = detections
   const currentCameraReads = useMemo(() => meaningfulCameraReads(detections), [detections])
   const [lastCameraReads, setLastCameraReads] = useState<Detection[]>([])
   const detectorRef = useRef<FrameDetector | null>(null)
@@ -428,11 +431,13 @@ export default function Camera({
   }, [currentCameraReads, detectOn, effectiveLiveSurfaceVisible])
   const webCaptureRequired = captureRequested && captureGranted
   const [nativeCameraBudget, setNativeCameraBudget] = useState<NativeCameraBudget | null>(null)
+  const [parkedDetections, setParkedDetections] = useState<Detection[]>([])
   useEffect(() => {
     if (!NATIVE_CAMERA_PREVIEW) return
     const receiveBudget = (event: Event) => {
       const detail = (event as CustomEvent<NativeCameraBudget>).detail
       if (!detail || !['running', 'parked', 'recording'].includes(detail.state)) return
+      setParkedDetections(detail.state === 'parked' ? detectionsRef.current : [])
       setNativeCameraBudget(detail)
     }
     window.addEventListener('poplur-camera-budget', receiveBudget)
@@ -446,7 +451,21 @@ export default function Camera({
   }, [effectiveLiveSurfaceVisible, nativeCameraBudget?.canResume])
   // AR filters need a face reading even when object detection is toggled off.
   // The read remains private to the effect unless DETECT is also enabled.
-  const analysisRequested = (detectOn || arOpen || arFilter !== 'none') && effectiveLiveSurfaceVisible
+  // A parked native preview deliberately retains one still frame. Do not keep
+  // analysing that stale frame—or animating its last recognition result—while
+  // the camera's thermal budget is asleep.
+  const nativePreviewParked = NATIVE_CAMERA_PREVIEW && nativeCameraBudget?.state === 'parked'
+  const auraDetections = nativePreviewParked ? parkedDetections : detections
+  const [recognitionMotionAllowed, setRecognitionMotionAllowed] = useState(() => {
+    const snapshot = PoplurPerformanceManager.snapshot
+    return snapshot.isForeground && snapshot.decorativeRenderingAllowed
+  })
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
+    setRecognitionMotionAllowed(snapshot.isForeground && snapshot.decorativeRenderingAllowed)
+  }), [])
+  const analysisRequested = (detectOn || arOpen || arFilter !== 'none')
+    && effectiveLiveSurfaceVisible
+    && !nativePreviewParked
   useEffect(() => {
     if (!analysisRequested) {
       analysisLeaseRef.current?.release()
@@ -1600,8 +1619,9 @@ export default function Camera({
           PERSON while face ID is enabled counts as you in the twin. */}
       {real && detectOn && (
         <RecognitionAura
-          active={detections.length > 0}
-          userSeen={detections.some(d => d.isUser || (faceIdEnabled() && !!d.user))}
+          active={effectiveLiveSurfaceVisible && auraDetections.length > 0}
+          motionAllowed={liveDetectionActive && !nativePreviewParked && recognitionMotionAllowed}
+          userSeen={auraDetections.some(d => d.isUser || (faceIdEnabled() && !!d.user))}
         />
       )}
 
@@ -1670,20 +1690,9 @@ export default function Camera({
               )}
             </div>
             {contextLabel && <b className={styles.camDetectionContext}>{contextLabel}</b>}
-            {recognizedSelf && recognizedSelfieVideo && (
+            {recognizedSelf && recognizedSelfiePoster && (
               <div className={styles.camRecognizedSelfie} aria-label={`${detected?.user?.name ?? detected?.user?.handle ?? 'Your'} profile selfie`}>
-                <video
-                  key={recognizedSelfieVideo}
-                  src={recognizedSelfieVideo}
-                  poster={recognizedSelfiePoster ?? undefined}
-                  autoPlay
-                  muted
-                  playsInline
-                  preload="metadata"
-                  onPause={event => {
-                    if (!event.currentTarget.ended) void event.currentTarget.play().catch(() => {})
-                  }}
-                />
+                <img src={recognizedSelfiePoster} alt="Recognized profile selfie" />
               </div>
             )}
           </div>
