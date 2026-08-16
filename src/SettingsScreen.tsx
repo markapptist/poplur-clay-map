@@ -27,6 +27,13 @@ import {
   selectProfileTheme,
   type ProfileTheme,
 } from './profileThemes'
+import {
+  APP_ICONS,
+  appIconById,
+  readSelectedAppIcon,
+  rememberSelectedAppIcon,
+  type AppIconOption,
+} from './appIcons'
 
 // Settings, and the one thing in it that is a feature rather than a switch:
 // REFER A FRIEND. Radius is earned slowly and decays; a referral hands you the
@@ -42,7 +49,7 @@ import {
 // lives under Radio. Pages with nothing to set yet still get a row — a gap in
 // the list would read as "this page has no settings screen", which is a
 // different claim from "there is nothing to set here yet".
-type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'profile'
+type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'app' | 'profile'
 
 const PAGE_TITLE: Record<Page, string> = {
   home: 'HOME',
@@ -50,6 +57,7 @@ const PAGE_TITLE: Record<Page, string> = {
   feed: 'FEED',
   camera: 'CAMERA',
   radio: 'RADIO',
+  app: 'APP ICON',
   profile: 'PROFILE',
 }
 
@@ -83,6 +91,7 @@ export default function SettingsScreen() {
   const [radioScope, setRadioScopeState] = useState<RadioScope>(readRadioScope)
   const [controlSide, setControlSideState] = useState<ControlSide>(readControlSide)
   const [profileTheme, setProfileThemeState] = useState<ProfileTheme>(readSelectedProfileTheme)
+  const [appIcon, setAppIcon] = useState<AppIconOption>(readSelectedAppIcon)
   // null is the root list. The cube still closes Settings outright, so this only
   // ever has to walk back one level.
   const [page, setPage] = useState<Page | null>(null)
@@ -116,6 +125,16 @@ export default function SettingsScreen() {
     setProfileThemeState(selectProfileTheme(theme.id))
     say(`${theme.displayName} profile applied.`)
   }
+  const chooseAppIcon = (icon: AppIconOption) => {
+    playPop()
+    if (!isNativeShell()) {
+      say('App icon changes are available in the installed app.')
+      return
+    }
+    if (!postNativeEvent({ type: 'appIconChanged', id: icon.id })) {
+      say('The app icon could not be changed.')
+    }
+  }
 
   const openPage = (next: Page) => { playPop(); setPage(next) }
   const backToList = () => { playPop(); setPage(null) }
@@ -133,6 +152,22 @@ export default function SettingsScreen() {
   }, [])
 
   useEffect(() => onProfileThemeChange(setProfileThemeState), [])
+
+  useEffect(() => {
+    const onNativeIcon = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string; accepted?: boolean; message?: string }>).detail
+      const icon = appIconById(detail?.id)
+      if (detail?.accepted && icon) {
+        setAppIcon(rememberSelectedAppIcon(icon.id))
+        say(`${icon.displayName} icon applied.`)
+      } else if (detail?.message) {
+        say(detail.message)
+      }
+    }
+    window.addEventListener('poplur-native-app-icon', onNativeIcon)
+    if (isNativeShell()) postNativeEvent({ type: 'requestAppIcon' })
+    return () => window.removeEventListener('poplur-native-app-icon', onNativeIcon)
+  }, [])
 
   const say = (message: string) => {
     setNote(message)
@@ -244,6 +279,15 @@ export default function SettingsScreen() {
                   <i>Your account and this session on this device.</i>
                 </span>
                 <span className={styles.rowValue}>{profileTheme.displayName}</span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className={styles.row} onClick={() => openPage('app')}>
+                <span className={styles.rowText}>
+                  <b>App Icon</b>
+                  <i>Choose how Poplur appears on this device.</i>
+                </span>
+                <span className={styles.rowValue}>{appIcon.displayName}</span>
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
             </div>
@@ -429,6 +473,44 @@ export default function SettingsScreen() {
               })}
             </div>
             <p className={styles.themeFootnote}>Stored on this device. Premium entitlement checks can be added without changing your saved theme ID.</p>
+          </article>
+        )}
+
+        {page === 'app' && (
+          <article className={styles.themeGroup} aria-label="App icon">
+            <div className={styles.themeHeading}>
+              <div>
+                <b>App icon</b>
+                <span>Choose how Poplur looks on your Home Screen.</span>
+              </div>
+              <strong>{appIcon.displayName}</strong>
+            </div>
+            <div className={styles.themeGrid} role="radiogroup" aria-label="Choose an app icon">
+              {APP_ICONS.map(icon => {
+                const selected = appIcon.id === icon.id
+                return (
+                  <button
+                    type="button"
+                    key={icon.id}
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={`${icon.displayName}${selected ? ', selected' : ''}`}
+                    className={selected ? `${styles.themeTile} ${styles.themeTileSelected}` : styles.themeTile}
+                    onClick={() => chooseAppIcon(icon)}
+                  >
+                    <span
+                      className={`${styles.themePreview} ${styles.appIconPreview}`}
+                      style={{ backgroundImage: `url("${icon.previewSrc}")` }}
+                      aria-hidden="true"
+                    >
+                      {selected && <i>✓</i>}
+                    </span>
+                    <span className={styles.themeName}>{icon.displayName}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <p className={styles.themeFootnote}>Saved on this device. The operating system may take a moment to refresh the Home Screen.</p>
           </article>
         )}
 

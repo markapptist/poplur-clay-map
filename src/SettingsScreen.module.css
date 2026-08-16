@@ -355,6 +355,12 @@
     linear-gradient(180deg, #f7f4ef, #efeae3);
 }
 
+.appIconPreview {
+  aspect-ratio: 1;
+  background-color: #080509;
+  background-size: contain;
+}
+
 .themePreview i {
   position: absolute;
   top: 6px;
