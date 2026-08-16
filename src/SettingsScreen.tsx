@@ -20,6 +20,13 @@ import {
 } from './referral'
 import { readRadioScope, setRadioScope, type RadioScope } from './mapRadio'
 import { readControlSide, setControlSide, type ControlSide } from './controlPlacement'
+import {
+  PROFILE_THEMES,
+  onProfileThemeChange,
+  readSelectedProfileTheme,
+  selectProfileTheme,
+  type ProfileTheme,
+} from './profileThemes'
 
 // Settings, and the one thing in it that is a feature rather than a switch:
 // REFER A FRIEND. Radius is earned slowly and decays; a referral hands you the
@@ -75,6 +82,7 @@ export default function SettingsScreen() {
   const [detectDefault, setDetectDefault] = useState(readCameraDetectDefault)
   const [radioScope, setRadioScopeState] = useState<RadioScope>(readRadioScope)
   const [controlSide, setControlSideState] = useState<ControlSide>(readControlSide)
+  const [profileTheme, setProfileThemeState] = useState<ProfileTheme>(readSelectedProfileTheme)
   // null is the root list. The cube still closes Settings outright, so this only
   // ever has to walk back one level.
   const [page, setPage] = useState<Page | null>(null)
@@ -103,6 +111,11 @@ export default function SettingsScreen() {
     playPop()
     setControlSideState(setControlSide(side))
   }
+  const chooseProfileTheme = (theme: ProfileTheme) => {
+    playPop()
+    setProfileThemeState(selectProfileTheme(theme.id))
+    say(`${theme.displayName} profile applied.`)
+  }
 
   const openPage = (next: Page) => { playPop(); setPage(next) }
   const backToList = () => { playPop(); setPage(null) }
@@ -118,6 +131,8 @@ export default function SettingsScreen() {
     const timer = window.setInterval(sync, 30_000)
     return () => { off(); window.clearInterval(timer) }
   }, [])
+
+  useEffect(() => onProfileThemeChange(setProfileThemeState), [])
 
   const say = (message: string) => {
     setNote(message)
@@ -228,6 +243,7 @@ export default function SettingsScreen() {
                   <b>Profile</b>
                   <i>Your account and this session on this device.</i>
                 </span>
+                <span className={styles.rowValue}>{profileTheme.displayName}</span>
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
             </div>
@@ -248,14 +264,12 @@ export default function SettingsScreen() {
         {/* Map and Feed have a screen but no switches yet: both pages still take
             their choices from their own hold menus (radius, narration, captions,
             comments). The screen says so rather than the list hiding the page. */}
-        {(page === 'map' || page === 'feed' || (page === 'profile' && !isNativeShell())) && (
+        {(page === 'map' || page === 'feed') && (
           <article className={styles.group}>
             <p className={styles.empty}>
               {page === 'map'
                 ? 'Radius and map narration are still set from the map’s own hold menu. Nothing to change here yet.'
-                : page === 'feed'
-                  ? 'Captions and comments are still set from the feed’s own hold menu. Nothing to change here yet.'
-                  : 'Signing out needs the app shell — in the browser preview there is no session to end.'}
+                : 'Captions and comments are still set from the feed’s own hold menu. Nothing to change here yet.'}
             </p>
           </article>
         )}
@@ -378,6 +392,44 @@ export default function SettingsScreen() {
           </div>
           <p className={styles.radioScopeNote}>Moves the Camera and Map action rails to your preferred thumb side.</p>
         </article>
+        )}
+
+        {page === 'profile' && (
+          <article className={styles.themeGroup} aria-label="Profile theme">
+            <div className={styles.themeHeading}>
+              <div>
+                <b>Profile background</b>
+                <span>Preview and apply instantly. Your posts stay untouched.</span>
+              </div>
+              <strong>{profileTheme.displayName}</strong>
+            </div>
+            <div className={styles.themeGrid} role="radiogroup" aria-label="Choose a profile background">
+              {PROFILE_THEMES.map(theme => {
+                const selected = profileTheme.id === theme.id
+                return (
+                  <button
+                    type="button"
+                    key={theme.id}
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={`${theme.displayName}${selected ? ', selected' : ''}`}
+                    className={selected ? `${styles.themeTile} ${styles.themeTileSelected}` : styles.themeTile}
+                    onClick={() => chooseProfileTheme(theme)}
+                  >
+                    <span
+                      className={theme.thumbnailSrc ? styles.themePreview : `${styles.themePreview} ${styles.themePreviewDefault}`}
+                      style={theme.thumbnailSrc ? { backgroundImage: `url("${theme.thumbnailSrc}")` } : undefined}
+                      aria-hidden="true"
+                    >
+                      {selected && <i>✓</i>}
+                    </span>
+                    <span className={styles.themeName}>{theme.displayName}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <p className={styles.themeFootnote}>Stored on this device. Premium entitlement checks can be added without changing your saved theme ID.</p>
+          </article>
         )}
 
         {note && <p className={styles.note} role="status">{note}</p>}

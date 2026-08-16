@@ -10,7 +10,7 @@ import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette } from './mapClaims'
-import { takeoverTint, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
+import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
 import {
   fetchRoute,
   installRouteLayers,
@@ -41,8 +41,9 @@ export interface ClayMapProps {
   weatherIcon?: string
   /** Transparent sprite rendered from the real Poplur cloud.glb. */
   weatherCloud?: string | null
-  /** already formatted for the locale, e.g. "18°C" or "64°F" */
-  weatherTemp?: string | null
+  /** The side-rail weather control owns this state; the map owns the panel. */
+  weatherOpen: boolean
+  onWeatherOpenChange: (open: boolean) => void
   /** Five real daily readings from the same weather service as current conditions. */
   weatherForecast?: Array<{
     date: string
@@ -102,7 +103,7 @@ export interface PopPin {
 
 const CLOUD_WEATHER = new Set<WeatherMode>(['cloudy', 'rain', 'thunder', 'storm', 'hail', 'fog'])
 
-function WeatherMark({
+export function WeatherMark({
   mode,
   icon,
   cloud,
@@ -594,6 +595,23 @@ const COMPOSE_RADIUS_TEXTURE_IMAGE = 'poplur-compose-radius-hatch'
 const COMPOSE_RADIUS_EDGE = 'poplur-compose-radius-edge'
 const COMPOSE_RADIUS_LABEL = 'poplur-compose-radius-label'
 
+function composeRadiusTexture() {
+  const size = 16
+  const data = new Uint8Array(size * size * 4)
+  const [red, green, blue] = takeoverTintRGB(255, 214, 235)
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      if ((x + y) % 8 > 1) continue
+      const offset = (y * size + x) * 4
+      data[offset] = red
+      data[offset + 1] = green
+      data[offset + 2] = blue
+      data[offset + 3] = 88
+    }
+  }
+  return { width: size, height: size, data }
+}
+
 /**
  * Where the takeover paint belongs in the layer stack.
  *
@@ -632,19 +650,7 @@ export function installComposeRadiusPreview(map: mapboxgl.Map) {
     })
   }
   if (!map.hasImage(COMPOSE_RADIUS_TEXTURE_IMAGE)) {
-    const size = 16
-    const data = new Uint8Array(size * size * 4)
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        if ((x + y) % 8 > 1) continue
-        const offset = (y * size + x) * 4
-        data[offset] = 255
-        data[offset + 1] = 214
-        data[offset + 2] = 235
-        data[offset + 3] = 88
-      }
-    }
-    map.addImage(COMPOSE_RADIUS_TEXTURE_IMAGE, { width: size, height: size, data }, { pixelRatio: 2 })
+    map.addImage(COMPOSE_RADIUS_TEXTURE_IMAGE, composeRadiusTexture(), { pixelRatio: 2 })
   }
   if (!map.getLayer(COMPOSE_RADIUS_FILL)) {
     map.addLayer({
@@ -731,7 +737,13 @@ export function updateComposeRadiusPreview(
    * already standing on the destination at zoom 9.6, and the only thing left to
    * watch was the descent.
    */
-  options?: { fit?: boolean },
+  options?: {
+    fit?: boolean
+    pitch?: number
+    bearing?: number
+    duration?: number
+    maxZoom?: number
+  },
 ) {
   const source = map.getSource(COMPOSE_RADIUS_SOURCE) as mapboxgl.GeoJSONSource | undefined
   if (!source) return
@@ -768,6 +780,14 @@ export function updateComposeRadiusPreview(
     ],
   }
   source.setData(preview)
+  try {
+    if (map.getLayer(COMPOSE_RADIUS_FILL)) {
+      map.setPaintProperty(COMPOSE_RADIUS_FILL, 'fill-color', takeoverTint('#E04791'))
+    }
+    if (map.hasImage(COMPOSE_RADIUS_TEXTURE_IMAGE)) {
+      map.updateImage(COMPOSE_RADIUS_TEXTURE_IMAGE, composeRadiusTexture())
+    }
+  } catch { /* style changed while the preview was repainting */ }
   applyComposeSurfacePreview(map, preview, theme)
 
   if (options?.fit === false) return
@@ -785,8 +805,13 @@ export function updateComposeRadiusPreview(
       padding: compact
         ? { top: 176, right: 30, bottom: 96, left: 30 }
         : { top: 138, right: 72, bottom: 88, left: 72 },
-      duration: 0,
-      maxZoom: 15.5,
+      // Radius review uses a short ease on every slider notch. It reads as one
+      // responsive camera pull during a drag, while a zero-duration fit made
+      // each half-kilometre step snap visibly.
+      duration: options?.duration ?? 0,
+      maxZoom: options?.maxZoom ?? 15.5,
+      pitch: options?.pitch,
+      bearing: options?.bearing,
     },
   )
 }
@@ -905,18 +930,20 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherTemp, weatherForecast = [], pins, onPinOpen }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, weatherForecast = [], pins, onPinOpen }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
-  const focusedPostLaunch = launchParams.get('pickSpot') === '1'
+  const radiusPreviewLaunch = launchParams.get('radiusReview') === '1'
+  const focusedPostLaunch = launchParams.get('pickSpot') === '1' || radiusPreviewLaunch
   const deferInitialGeolocation = launchParams.get('deferLocation') === '1'
   const requestedPickLatRaw = launchParams.get('pickLat')
   const requestedPickLngRaw = launchParams.get('pickLng')
   const requestedPickLat = requestedPickLatRaw?.trim() ? Number(requestedPickLatRaw) : Number.NaN
   const requestedPickLng = requestedPickLngRaw?.trim() ? Number(requestedPickLngRaw) : Number.NaN
-  const requestedPickCenter: [number, number] | null =
-    focusedPostLaunch
+  const requestedPickCenter: [number, number] | null = radiusPreviewLaunch
+    ? HOME_CENTER
+    : focusedPostLaunch
       && Number.isFinite(requestedPickLat) && Math.abs(requestedPickLat) <= 90
       && Number.isFinite(requestedPickLng) && Math.abs(requestedPickLng) <= 180
       ? [requestedPickLng, requestedPickLat]
@@ -924,6 +951,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const containerRef = useRef<HTMLDivElement>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([])
+  const radiusPreviewPinRef = useRef<mapboxgl.Marker | null>(null)
   // Read through a ref inside the marker's click listener: the listener is
   // attached once when the pin is built, and capturing the prop directly would
   // freeze whatever callback identity existed at that moment.
@@ -1007,7 +1035,25 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // The takeover colour the circle wears. Module state owns the colour; this
   // mirror only exists so React repaints the face when it changes.
   const [takeoverFace, setTakeoverFace] = useState(() => takeoverBaseColor())
-  useEffect(() => onTakeoverColor(() => setTakeoverFace(takeoverBaseColor())), [])
+  useEffect(() => {
+    const publishPalette = () => {
+      const face = takeoverBaseColor()
+      setTakeoverFace(face)
+      if (radiusPreviewLaunch && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'poplur-radius-palette',
+          palette: {
+            face,
+            fillA: takeoverTint('#ffe1f1'),
+            fillB: takeoverTint('#ff86c4'),
+            fillC: takeoverTint('#f53c99'),
+          },
+        }, '*')
+      }
+    }
+    publishPalette()
+    return onTakeoverColor(publishPalette)
+  }, [radiusPreviewLaunch])
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
   // Fill percentage aligned to the CENTER of the native thumb: a range thumb
@@ -1038,13 +1084,29 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
+  const composeAtRef = useRef(composeAt)
+  composeAtRef.current = composeAt
   // Mirrors composeAt for the map's click handler, which is bound once inside
   // the style-load effect and would otherwise close over the very first value
   // forever. A ref is the whole reason the dismiss below can see the window.
   const composeOpenRef = useRef(false)
   composeOpenRef.current = composeAt !== null
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
-  const [weatherOpen, setWeatherOpen] = useState(false)
+  const composeRadiusKmRef = useRef(composeRadiusKm)
+  composeRadiusKmRef.current = composeRadiusKm
+  const themeRef = useRef(theme)
+  themeRef.current = theme
+  useEffect(() => {
+    if (!radiusPreviewLaunch) return
+    const onRadiusPreview = (event: MessageEvent) => {
+      if (event.data?.type !== 'poplur-radius-preview') return
+      const next = Number(event.data.radiusKm)
+      if (!Number.isFinite(next)) return
+      setComposeRadiusKm(Math.max(0.5, Math.min(25, next)))
+    }
+    window.addEventListener('message', onRadiusPreview)
+    return () => window.removeEventListener('message', onRadiusPreview)
+  }, [radiusPreviewLaunch])
   // The words on the pop. Typed here, they make it a WRITTEN pop: it claims the
   // same ground and runs in The Poplur Times instead of the camera roll.
   const [composeMessage, setComposeMessage] = useState('')
@@ -1085,11 +1147,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     zoomValueRef.current = INTRO_LANDING_ZOOM
     zoomTargetRef.current = INTRO_LANDING_ZOOM
     setZoomValue(INTRO_LANDING_ZOOM)
+    if (radiusPreviewLaunch) {
+      composeOpenRef.current = false
+      const point = composeScreenPoint(map, map.project(center))
+      setComposeAt({ lng: center[0], lat: center[1], x: point.x, y: point.y })
+      return true
+    }
     const point = composeScreenPoint(map, map.project(center))
     composeOpenRef.current = true
     setComposeAt({ lng: center[0], lat: center[1], x: point.x, y: point.y })
     return true
-  }, [composeScreenPoint, focusedPostLaunch, mapRef])
+  }, [composeScreenPoint, focusedPostLaunch, mapRef, radiusPreviewLaunch])
 
   useEffect(() => {
     const readLocation = (value: unknown): [number, number] | null => {
@@ -1429,23 +1497,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // iPhone keeps the detailed geometry and textures, but bakes the depth
       // read through stable fill colours instead of redrawing shadow maps/AO.
       // Those two passes add little at phone size and are a sustained GPU cost.
-      const shadows = dynamicShadowsAllowed && !iosNativeMap
       const post = postProcessingAllowed && !iosNativeMap
-      const isDay = dayTimeRef.current
       try {
-        map.setLights(REALISTIC_MAP ? [
-          { id: 'ambient', type: 'ambient', properties: { color: isDay ? '#ffffff' : '#8090d7', intensity: isDay ? 0.48 : 0.19 } },
-          { id: 'sun', type: 'directional', properties: {
-            color: isDay ? '#ffffff' : '#90a5ff', intensity: isDay ? 0.72 : 0.16, direction: [222, 44],
-            'cast-shadows': shadows, 'shadow-intensity': shadows ? 0.45 : 0,
-          } },
-        ] as never : [
-          { id: 'ambient', type: 'ambient', properties: { color: isDay ? '#d8d2ff' : '#6b5a9c', intensity: isDay ? 0.6 : 0.22 } },
-          { id: 'sun', type: 'directional', properties: {
-            color: isDay ? '#fff0dd' : '#9ba9ff', intensity: isDay ? 0.8 : 0.18, direction: [215, 38],
-            'cast-shadows': shadows, 'shadow-intensity': shadows ? 0.6 : 0,
-          } },
-        ] as never)
+        // Standard's day/night lightPreset is applied through applySky. Do not
+        // replace the style light graph here: Mapbox can still be continuing a
+        // symbol placement while the clay layers are installing, and a light
+        // rewrite at that point can invalidate its pending layer lookup.
         if (map.getLayer('clay-buildings-3d')) {
           map.setPaintProperty(
             'clay-buildings-3d',
@@ -2978,6 +3035,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // RESULT of the pop rather than a palette swap that happened nearby.
       let recolorBeat = 0
       const unsubscribeTakeover = onTakeoverColor(() => {
+        if (radiusPreviewLaunch) {
+          playPop()
+          const point = composeAtRef.current
+          if (point) {
+            updateComposeRadiusPreview(
+              map,
+              new mapboxgl.LngLat(point.lng, point.lat),
+              composeRadiusKmRef.current,
+              themeRef.current,
+              { fit: false },
+            )
+          }
+          return
+        }
         // Beat 1 — pop the claimed buildings on screen. Bounded to the first
         // 24 rendered: a metropolis-sized claim must not arm hundreds of
         // springs. Gesture-driven and one-shot — no idle cost.
@@ -3062,6 +3133,28 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       }
       installRouteLayers(map, 'clay-buildings-3d')
       installComposeRadiusPreview(map)
+      if (radiusPreviewLaunch) {
+        // This screen previews TERRAIN COVERAGE, not claim geometry. Existing
+        // posts normally draw rims and shockwave rings, and the temporary
+        // composer normally draws a dashed edge. Leaving those on makes the
+        // real recoloured roads/buildings look like another circle overlay.
+        // Hide only those outlines in the dedicated review launch; the land,
+        // streets, parks and buildings remain the radius visualization.
+        const hidePaint: Array<[string, string]> = [
+          [COMPOSE_RADIUS_EDGE, 'line-opacity'],
+          [COMPOSE_RADIUS_LABEL, 'text-opacity'],
+          ['poplur-claims-rim', 'line-opacity'],
+          ['poplur-claims-rings', 'line-opacity'],
+          ['poplur-claims-core', 'circle-opacity'],
+          ['poplur-claims-globe', 'circle-opacity'],
+          ['poplur-claims-globe-bloom', 'circle-opacity'],
+        ]
+        for (const [layer, property] of hidePaint) {
+          try {
+            if (map.getLayer(layer)) map.setPaintProperty(layer, property as never, 0 as never)
+          } catch { /* style changed while entering the review */ }
+        }
+      }
       if (prototypeComposer) {
         map.on('click', (e) => {
           // Mapbox synthesizes its map click from the pointer sequence before
@@ -3070,6 +3163,22 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // ground composer underneath it. Marker taps belong to the marker.
           const target = e.originalEvent?.target
           if (target instanceof Element && target.closest('.mapboxgl-marker')) return
+          if (radiusPreviewLaunch) {
+            focusedPostManualSelectionRef.current = true
+            setFocusedPostLocationStatus('ready')
+            const point = composeScreenPoint(map, e.point)
+            composeOpenRef.current = true
+            setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: point.x, y: point.y })
+            playPop(.24)
+            if (window.parent !== window) {
+              window.parent.postMessage({
+                type: 'poplur-radius-location',
+                lat: e.lngLat.lat,
+                lng: e.lngLat.lng,
+              }, '*')
+            }
+            return
+          }
           // With the composer ALREADY open, a tap on the map is "put this
           // away", not "start again over there". It used to re-drop on every
           // tap, so the window could never be dismissed by tapping out — it
@@ -3435,6 +3544,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         ref.current.forEach(mk => mk.remove())
         ref.current = []
       })
+      radiusPreviewPinRef.current?.remove()
+      radiusPreviewPinRef.current = null
       markersRef.current.forEach(m => m.remove())
       let gl: WebGLRenderingContext | WebGL2RenderingContext | null = null
       try {
@@ -3487,10 +3598,105 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // Range inputs can emit faster than the display refresh rate. One map
     // update per animation frame stays fluid on budget Android hardware.
     const raf = window.requestAnimationFrame(() => {
-      updateComposeRadiusPreview(map, center, composeRadiusKm, theme)
+      updateComposeRadiusPreview(map, center, composeRadiusKm, theme, {
+        // In the review, the camera must show the ENTIRE changing claim. Keep
+        // the map's dimensional building angle while pulling back for a larger
+        // radius and diving in again for a smaller one.
+        fit: true,
+        pitch: radiusPreviewLaunch ? 52 : undefined,
+        bearing: radiusPreviewLaunch ? -18 : undefined,
+        duration: radiusPreviewLaunch ? 110 : 0,
+        maxZoom: radiusPreviewLaunch ? INTRO_LANDING_ZOOM : 15.5,
+      })
     })
     return () => window.cancelAnimationFrame(raf)
-  }, [composeAt?.lng, composeAt?.lat, composeRadiusKm, mapEpoch, mapRef, theme])
+  }, [composeAt?.lng, composeAt?.lat, composeRadiusKm, mapEpoch, mapRef, radiusPreviewLaunch, takeoverFace, theme])
+
+  // The claim review owns exactly one pin and one optional video decoder. It
+  // follows the chosen ground point and is torn down as a unit when this map
+  // leaves memory, so the live profile loop never joins the normal world-pin
+  // pool or survives screen navigation.
+  useEffect(() => {
+    const map = mapRef.current
+    radiusPreviewPinRef.current?.remove()
+    radiusPreviewPinRef.current = null
+    if (!radiusPreviewLaunch || !map || mapEpoch === 0 || !composeAt) return
+
+    let cancelled = false
+    let selfieVideo: HTMLVideoElement | null = null
+    const readStored = (key: string): string | null => {
+      try { return window.localStorage.getItem(key) } catch { return null }
+    }
+    const profileVideo = readStored('poplur.profile.selfieVideo')
+    const usableVideo = profileVideo && (
+      profileVideo.startsWith('data:video/')
+      || /^https:\/\//i.test(profileVideo)
+      || /^poplur-clay:\/\//i.test(profileVideo)
+      || /^[\w-]+\/.+\.(?:mp4|webm)(?:[?#].*)?$/i.test(profileVideo)
+    ) ? profileVideo : null
+    const profilePhoto = readStored('poplur.profile.photo')
+    const usablePhoto = profilePhoto && (
+      profilePhoto.startsWith('data:image/')
+      || /^https:\/\//i.test(profilePhoto)
+      || /^poplur-clay:\/\//i.test(profilePhoto)
+    ) ? profilePhoto : '/mark_talk0.png'
+
+    void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: '3d' })
+      .then(src => {
+        if (cancelled || mapRef.current !== map) return
+        const markerRoot = document.createElement('div')
+        markerRoot.className = `${styles.popPinMarker} ${styles.radiusPreviewPinMarker}`
+        markerRoot.dataset.radiusPreviewPin = 'true'
+
+        const pin = document.createElement('div')
+        pin.className = `${styles.popPin} ${styles.popPinMine}`
+        const pinImage = document.createElement('img')
+        pinImage.src = src
+        pinImage.alt = ''
+        pinImage.draggable = false
+        pin.appendChild(pinImage)
+        markerRoot.appendChild(pin)
+
+        if (usableVideo) {
+          selfieVideo = document.createElement('video')
+          selfieVideo.className = `${styles.popPinSelfie} ${styles.popPinSelfieVideo}`
+          selfieVideo.dataset.radiusSelfie = 'video'
+          selfieVideo.src = usableVideo
+          selfieVideo.poster = usablePhoto
+          selfieVideo.muted = true
+          selfieVideo.loop = true
+          selfieVideo.playsInline = true
+          selfieVideo.autoplay = true
+          selfieVideo.preload = 'metadata'
+          selfieVideo.setAttribute('aria-hidden', 'true')
+          markerRoot.appendChild(selfieVideo)
+          void selfieVideo.play().catch(() => { /* a stored native URL resumes in its shell */ })
+        } else {
+          const face = document.createElement('img')
+          face.className = styles.popPinSelfie
+          face.dataset.radiusSelfie = 'photo'
+          face.src = usablePhoto
+          face.alt = ''
+          face.draggable = false
+          markerRoot.appendChild(face)
+        }
+
+        radiusPreviewPinRef.current = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
+          .setLngLat([composeAt.lng, composeAt.lat])
+          .addTo(map)
+      })
+
+    return () => {
+      cancelled = true
+      if (selfieVideo) {
+        selfieVideo.pause()
+        selfieVideo.removeAttribute('src')
+        selfieVideo.load()
+      }
+      radiusPreviewPinRef.current?.remove()
+      radiusPreviewPinRef.current = null
+    }
+  }, [composeAt?.lat, composeAt?.lng, mapEpoch, mapRef, radiusPreviewLaunch, takeoverFace])
 
   // Add / update POI markers whenever pois, selection, or the map instance changes
   useEffect(() => {
@@ -3513,6 +3719,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
     pinMarkersRef.current.forEach(m => m.remove())
     pinMarkersRef.current = []
+    if (radiusPreviewLaunch) return
     if (!list.length) return
 
     // ── Level of detail: which pops get a DOM pin at all ────────────────────
@@ -3678,7 +3885,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       livePins.clear()
       pinMarkersRef.current = []
     }
-  }, [pinKey, mapEpoch])
+  }, [pinKey, mapEpoch, radiusPreviewLaunch])
 
   // Re-skin the map whenever the theme changes (matches the app's cube skins)
   useEffect(() => {
@@ -3693,16 +3900,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
     applySky(map, dayTime)
-    const isDay = dayTime
-    try {
-      map.setLights([
-        { id: 'ambient', type: 'ambient', properties: { color: isDay ? '#d8d2ff' : '#6b5a9c', intensity: isDay ? 0.6 : 0.22 } },
-        { id: 'sun', type: 'directional', properties: {
-          color: isDay ? '#fff0dd' : '#9ba9ff', intensity: isDay ? 0.8 : 0.18, direction: [215, 38],
-          'cast-shadows': false, 'shadow-intensity': 0,
-        } },
-      ] as never)
-    } catch { /* style may be rebuilding */ }
     idleSnapshotRef.current?.requestCapture()
   }, [dayTime, mapEpoch])
 
@@ -3916,7 +4113,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       {/* Tap-to-post composer: a clay bubble anchored to the tapped ground.
           Choose the claim radius, then Drop → the territory disc pops out and
           grows to that many km. */}
-      {composeAt && (
+      {composeAt && !radiusPreviewLaunch && (
         <button
           type="button"
           className={styles.composeDismissLayer}
@@ -3942,7 +4139,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           }}
         />
       )}
-      {composeAt && (
+      {composeAt && !radiusPreviewLaunch && (
         <div
           className={styles.composeBubble}
           style={{ left: composeAt.x, top: composeAt.y }}
@@ -4196,33 +4393,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         )
       })()}
 
-      {weatherIcon && zoomValue > 4.4 && (
-        <button
-          type="button"
-          className={weatherOpen ? `${styles.zoomWeather} ${styles.zoomWeatherOpen}` : styles.zoomWeather}
-          aria-label={`Current weather: ${weatherMode}. Show five day forecast`}
-          aria-expanded={weatherOpen}
-          onClick={() => { playPop(); setWeatherOpen(open => !open) }}
-        >
-          <WeatherMark mode={weatherMode} icon={weatherIcon} cloud={weatherCloud} />
-          {weatherTemp != null && <div className={styles.zoomTemp}>{weatherTemp}</div>}
-        </button>
-      )}
-
-      {weatherOpen && weatherForecast.length > 0 && zoomValue > 4.4 && (
+      {weatherOpen && weatherForecast.length > 0 && (
         <button
           type="button"
           className={styles.weatherDismissLayer}
           aria-label="Close weather forecast"
-          onClick={() => { playPop(); setWeatherOpen(false) }}
+          onClick={() => { playPop(); onWeatherOpenChange(false) }}
         />
       )}
 
-      {weatherOpen && weatherForecast.length > 0 && zoomValue > 4.4 && (
+      {weatherOpen && weatherForecast.length > 0 && (
         <section
           className={styles.weatherForecast}
           aria-label="Five day weather forecast"
-          onClick={() => { playPop(); setWeatherOpen(false) }}
+          onClick={() => { playPop(); onWeatherOpenChange(false) }}
         >
           <header className={styles.weatherTitleBar}>
             <div className={styles.weatherTraffic} aria-label="Window controls">
@@ -4230,7 +4414,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
                 type="button"
                 className={`${styles.weatherLight} ${styles.weatherClose}`}
                 aria-label="Close forecast"
-                onClick={event => { event.stopPropagation(); playPop(); setWeatherOpen(false) }}
+                onClick={event => { event.stopPropagation(); playPop(); onWeatherOpenChange(false) }}
               />
               <span className={`${styles.weatherLight} ${styles.weatherMinimize}`} aria-hidden="true" />
               <span className={`${styles.weatherLight} ${styles.weatherZoom}`} aria-hidden="true" />

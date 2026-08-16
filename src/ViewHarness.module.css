@@ -294,6 +294,17 @@
   background: #050407;
 }
 
+.camWideBackdrop {
+  position: absolute;
+  inset: -18px;
+  z-index: 0;
+  pointer-events: none;
+  background-position: center;
+  background-size: cover;
+  filter: blur(14px) saturate(.85) brightness(.62);
+  transform: scale(1.08);
+}
+
 /* Live getUserMedia feed. Keep its geometry identical to the AR overlay so
    normalized ML face bounds land on the face instead of a legacy 6% crop. */
 .camSpoofFeed {
@@ -333,9 +344,9 @@
 /* Corner controls — bare clay 3D marks (flash + ML mute left, flip right), no
    backing. A row, because the left corner carries two marks now: the flash and
    the switch for the voice that narrates the frame. */
-/* Lens presets (.5× / 1× / 2×) in a clay pill row riding just above the cube.
-   The home HUD's cube is bottom-center at z-260; this sits under its top edge
-   but above the viewfinder. */
+/* Lens presets (.5× / 1× / 2×) riding just above the cube. Their hit targets
+   stay a comfortable 42px, but the control is text-only: no black rail or
+   button plates over the live camera. */
 .camZoomPresets {
   position: absolute;
   left: 50%;
@@ -345,34 +356,55 @@
   display: inline-flex;
   gap: 6px;
   padding: 5px;
-  border-radius: 999px;
-  background: rgba(10, 6, 14, 0.55);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 6px 16px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: transparent;
+  box-shadow: none;
 }
 .camZoomPreset {
   min-width: 42px;
   height: 42px;
   padding: 0 10px;
   border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.82);
-  font: 900 14px/1 system-ui, sans-serif;
+  background-image: linear-gradient(105deg, #ff80be 0%, #ffffff 27%, #7fe3ff 52%, #ffffff 72%, #ff80be 100%);
+  background-size: 260% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font: 950 16px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  -webkit-text-stroke: .75px rgba(5, 2, 9, 0.9);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 2px 0 rgba(5, 14, 46, 0.62))
+    drop-shadow(0 4px 7px rgba(0, 0, 0, 0.62))
+    drop-shadow(0 0 6px rgba(246, 59, 154, 0.35));
+  animation: camZoomTextShader 4.8s linear 3;
   cursor: pointer;
   display: inline-grid;
   place-items: center;
   grid-auto-flow: column;
   gap: 1px;
+  transition: transform 160ms ease, filter 160ms ease;
 }
-.camZoomPreset small { font-size: 10px; font-weight: 900; opacity: 0.75; }
+.camZoomPreset small { font-size: 11px; font-weight: 950; opacity: 0.88; }
 .camZoomPresetOn {
-  background: linear-gradient(180deg, #ff62ad, #d90f6d);
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(194, 17, 122, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  background-image: linear-gradient(105deg, #ffffff 0%, #ff5aaa 24%, #ffffff 48%, #71e8ff 72%, #ffffff 100%);
+  transform: scale(1.18);
+  filter:
+    drop-shadow(0 2px 0 rgba(5, 14, 46, 0.72))
+    drop-shadow(0 5px 8px rgba(0, 0, 0, 0.68))
+    drop-shadow(0 0 9px rgba(246, 59, 154, 0.72))
+    drop-shadow(0 0 13px rgba(74, 196, 255, 0.48));
 }
 .camZoomPreset:active { transform: scale(0.92); }
+
+@keyframes camZoomTextShader {
+  to { background-position: -260% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .camZoomPreset { animation: none; }
+}
 
 /* poplur logo, kept centered at the top of the camera. */
 /* The wordmark and the ML readout share this spot, so they take turns rather
@@ -1126,9 +1158,13 @@
 }
 
 .cameraFull .camDetectionTitle {
-  /* Fullscreen lifts the wordmark to the safe-area top; the readout follows it
-     down by the same wordmark height. */
-  top: max(58px, calc(env(safe-area-inset-top) + 40px));
+  /* Home owns the universal Poplur wordmark at --header-title-top. Keep every
+     camera status, including TAP TO SCAN, below that full title box instead of
+     using the old 58px shortcut that printed through the wordmark. */
+  top: max(
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 8px),
+    calc(env(safe-area-inset-top) + var(--header-title-height, 40px) + 8px)
+  );
 }
 
 .cameraCommerceOverlay {

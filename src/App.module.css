@@ -303,6 +303,31 @@
   outline-offset: 3px;
 }
 
+.mapWeatherToggle {
+  appearance: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 1px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  filter:
+    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
+  transition: transform 140ms cubic-bezier(0.2, 1.25, 0.4, 1);
+}
+
+.mapWeatherToggle:active { transform: translateY(2px) scale(0.9); }
+.mapWeatherToggle[data-open='true'] { transform: scale(1.08); }
+.mapWeatherToggle:focus-visible {
+  outline: 3px solid #7fe3ff;
+  outline-offset: 3px;
+}
+
 /* One concise line under the wordmark: current place • tuned station. */
 .headerStack {
   position: absolute;

@@ -26,12 +26,15 @@ export default function MapLevelButton({
   // Kept because callers pass the map's render tier, but the glyph is isometric
   // in BOTH modes now — see LayerGlyph. The flat variant read as a hamburger.
   mode = '3d',
+  menuSide = 'left',
 }: {
   level: PopLevel
   onPick: (next: PopLevel) => void
   size?: number
   /** The map's render tier. No longer changes the glyph; see LayerGlyph. */
   mode?: '2d' | '3d'
+  /** Keep the expanded picker inside whichever edge owns the control rail. */
+  menuSide?: 'left' | 'right'
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const holdTimer = useRef<number | null>(null)
@@ -69,7 +72,11 @@ export default function MapLevelButton({
   return (
     <div className={styles.root} ref={rootRef}>
       {menuOpen && (
-        <div className={styles.menu} role="menu" aria-label="Which pops to show">
+        <div
+          className={menuSide === 'right' ? `${styles.menu} ${styles.menuRight}` : styles.menu}
+          role="menu"
+          aria-label="Which pops to show"
+        >
           {POP_LEVELS.map(option => (
             <button
               key={option.id}

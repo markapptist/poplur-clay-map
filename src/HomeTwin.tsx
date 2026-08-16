@@ -1,14 +1,12 @@
 import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
-import CubeTab3D, { DEFAULT_CUBE_MODEL, type CubeTab } from './CubeTab3D'
+import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
-import MapLevelButton from './MapLevelButton'
-import type { PopLevel } from './data'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
@@ -144,8 +142,8 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // ONLY SCREENS YOU CAN ACTUALLY STAND ON appear here. This map is keyed by
   // the subscreen the cube is answering to, and a hold-menu tile carrying an
   // `action`, `mapAction` or `event` never sets one — it fires, calls
-  // onClose() and returns before setActiveScreen (HoldMenuTwin). So SEARCH,
-  // DIRECTIONS, TOUR, 2D MAP, LIVE, CAMERA ROLL, COMMENT and HEY POPLUR have
+  // onClose() and returns before setActiveScreen (HoldMenuTwin). So
+  // DIRECTIONS, TOUR, LIVE, CAMERA ROLL, COMMENT and HEY POPLUR have
   // no entry no matter how good their cube is: those tiles act on the live
   // surface behind the menu, which is the whole point of them.
   // The news screen gets an actual newspaper rather than a cube with a news
@@ -179,6 +177,20 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // VIDEO, AR and DETECT all carry that id for inspectability while acting on
   // the live camera, so nothing can wear a cube there.
   // Still awaiting a model: camera-studio, feed-games.
+}
+
+const IOS_STORE_PRODUCT_BY_CARD_ID: Record<string, string> = {
+  inverted: 'com.apptist.Poplur2025.card.inverted',
+  lens: 'com.apptist.Poplur2025.card.lens',
+  splitDiamond: 'com.apptist.Poplur2025.card.splitdiamond',
+  swoosh: 'com.apptist.Poplur2025.card.swoosh',
+}
+
+const ANDROID_STORE_PRODUCT_BY_CARD_ID: Record<string, string> = {
+  inverted: 'com.apptists.poplur2025.card.inverted',
+  lens: 'com.apptists.poplur2025.card.lens',
+  splitDiamond: 'com.apptists.poplur2025.card.splitdiamond',
+  swoosh: 'com.apptists.poplur2025.card.swoosh',
 }
 
 // The studio's mixing desk is wired now — see 'camera-studio' above. The
@@ -531,6 +543,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // ref instead of capturing the initial tab forever.
   const activeTabRef = useRef(activeTab)
   activeTabRef.current = activeTab
+  const activeStoreCheckoutRequestRef = useRef<string | null>(null)
   const [permissionQueue, setPermissionQueue] = useState<PostLoginPermission[]>(initialPostLoginPermissions)
   const activePermission = permissionQueue[0] ?? null
   const uiRecoveryKey = useUIRecoveryWatchdog()
@@ -1058,10 +1071,116 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (!event.data || typeof event.data !== 'object') return
       if (event.data.type === 'poplur-phone-boot-effects') {
         postNativeEvent({ type: 'phoneBootEffects' })
+        return
+      }
+      if (event.data.type === 'poplur-phone-theme-effects') {
+        playPop()
+        postNativeEvent({ type: 'phoneThemeEffects' })
       }
     }
     window.addEventListener('message', onPhoneMessage)
     return () => window.removeEventListener('message', onPhoneMessage)
+  }, [])
+
+  // The Store lives in HoldMenuTwin's bundled subscreen iframe. That owner
+  // source-checks the child window and raises this internal event; Home is the
+  // single native-shell boundary that validates the cart before forwarding it.
+  // Native results return to Home first, then the hold-menu owner routes them
+  // back into the exact Store iframe. Browser previews fail closed and never
+  // manufacture a paid success.
+  useEffect(() => {
+    const emitResult = (detail: Record<string, unknown>) => {
+      window.dispatchEvent(new CustomEvent('poplur-store-checkout-result', { detail }))
+    }
+
+    const onCheckoutRequest = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail
+      const requestId = typeof detail?.requestId === 'string' && detail.requestId.length <= 160
+        ? detail.requestId
+        : undefined
+      const items = Array.isArray(detail?.items) ? detail.items : []
+      const validatedItems: Array<{
+        cardId: string
+        iosProductId: string
+        androidProductId: string
+        quantity: number
+      }> = []
+      let totalQuantity = 0
+      const itemsAreValid = items.length > 0 && items.every(raw => {
+        if (!raw || typeof raw !== 'object') return false
+        const item = raw as Record<string, unknown>
+        const cardId = typeof item.cardId === 'string' ? item.cardId : ''
+        const iosProductId = typeof item.iosProductId === 'string' ? item.iosProductId : ''
+        const androidProductId = typeof item.androidProductId === 'string' ? item.androidProductId : ''
+        const quantity = Number(item.quantity)
+        const isValid = IOS_STORE_PRODUCT_BY_CARD_ID[cardId] === iosProductId
+          && ANDROID_STORE_PRODUCT_BY_CARD_ID[cardId] === androidProductId
+          && Number.isInteger(quantity)
+          && quantity >= 1
+          && quantity <= 10
+        if (isValid) {
+          totalQuantity += quantity
+          validatedItems.push({ cardId, iosProductId, androidProductId, quantity })
+        }
+        return isValid
+      })
+
+      if (detail?.type !== 'poplurStoreCheckoutRequested'
+        || !requestId
+        || !itemsAreValid
+        || totalQuantity > 20) {
+        emitResult({
+          type: 'poplurStoreCheckoutResult',
+          requestId,
+          status: 'failure',
+          message: 'The bag could not be validated. Please review it and try again.',
+        })
+        return
+      }
+      if (activeStoreCheckoutRequestRef.current) {
+        emitResult({
+          type: 'poplurStoreCheckoutResult',
+          requestId,
+          status: 'failure',
+          message: 'Another secure checkout is already in progress.',
+        })
+        return
+      }
+      const nativeRequest = {
+        type: 'poplurStoreCheckoutRequested',
+        requestId,
+        items: validatedItems,
+      }
+      activeStoreCheckoutRequestRef.current = requestId
+      if (!isNativeShell() || !postNativeEvent(nativeRequest)) {
+        activeStoreCheckoutRequestRef.current = null
+        emitResult({
+          type: 'poplurStoreCheckoutResult',
+          requestId,
+          status: 'failure',
+          message: 'Secure checkout is available in the Poplur app.',
+        })
+      }
+    }
+
+    const onNativeCheckoutResult = (event: MessageEvent) => {
+      const data = event.data
+      if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
+      if (data.type !== 'poplurStoreCheckoutResult') return
+      if (typeof data.requestId !== 'string'
+        || data.requestId !== activeStoreCheckoutRequestRef.current) return
+      const status = String(data.status || '').toLowerCase()
+      if (!['pending', 'success', 'cancelled', 'failure'].includes(status)) return
+      if (status !== 'pending') activeStoreCheckoutRequestRef.current = null
+      emitResult(data as Record<string, unknown>)
+    }
+
+    window.addEventListener('poplur-store-checkout-requested', onCheckoutRequest)
+    window.addEventListener('message', onNativeCheckoutResult)
+    return () => {
+      window.removeEventListener('poplur-store-checkout-requested', onCheckoutRequest)
+      window.removeEventListener('message', onNativeCheckoutResult)
+    }
   }, [])
 
   useEffect(() => {
@@ -1380,9 +1499,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // ghost) so the clip truly owns the screen. FeedTwin resets this on exit and
   // on unmount, so a tab change can never strand the home with no chrome.
   const [feedFullscreen, setFeedFullscreen] = useState(false)
-  // Which pops the map shows. The SHELL owns this because the control lives in
-  // the shell's HUD; the map is told and does the drawing.
-  const [popLevel, setPopLevel] = useState<PopLevel>('mine')
   // Profile media is forwarded to the cross-origin map frame. The still is the
   // selfie video's poster; the pin itself is intentionally not a user photo.
   const [ownPhoto, setOwnPhoto] = useState<string | null>(() => {
@@ -1667,6 +1783,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
   // The camera's own actions, so the cube and the hold menu can fire them.
   const cameraActionsRef = useRef<CameraActions | null>(null)
+  // PHOTO/VIDEO is a capture mode. Selecting VIDEO puts the camcorder in your
+  // hand; recording begins only when that camcorder is tapped, and its next tap
+  // stops. This mirrors the photo camera: choosing it is not itself a shutter.
+  const [cameraCaptureMode, setCameraCaptureMode] = useState<'photo' | 'video'>(() => {
+    const requested = new URLSearchParams(window.location.search).get('camera-mode')
+    if (requested === 'video') return 'video'
+    return readFavourite('post') === 'VIDEO' ? 'video' : 'photo'
+  })
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
   // Who the camera is currently looking at. While a user is detected the radius
@@ -1691,7 +1815,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const profileBackRef = useRef<(() => boolean) | null>(null)
   /** The feed's own layer (the comment box) answering the cube. */
   const feedBackRef = useRef<(() => boolean) | null>(null)
-  // LIKE / COMMENT / CC are performed by the feed itself.
+    // Feed actions are performed by the feed itself. CC now lives directly in
+    // the visible Feed rail rather than in the hold menu.
   const feedActionsRef = useRef<((action: FeedAction) => void) | null>(null)
 
   // One route for every hold-menu action, whether it came from the menu or
@@ -1705,8 +1830,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setCameraStep(current => current + 1)
       return
     }
-    if (action === 'photo' || action === 'video' || action === 'detect'
-      || action === 'ar' || action === 'live') {
+    if (action === 'photo' || action === 'video') {
+      setCameraCaptureMode(action)
+      return
+    }
+    if (action === 'detect' || action === 'ar' || action === 'live') {
       cameraActionsRef.current?.[action]()
       return
     }
@@ -1899,24 +2027,34 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [])
 
-  // VIDEO cannot be keyed by subscreen: PHOTO, VIDEO, AR and DETECT all carry
-  // 'camera-capture' and act on the live camera instead of navigating anywhere,
-  // so none of them can wear a cube via SUBSCREEN_CUBE_MODEL. Recording is the
-  // state that actually distinguishes video, so the cube becomes the camcorder
-  // for exactly as long as the recording runs and pops back to whatever the
-  // screen asks for when it stops — through the same swap as every other
-  // navigator, so it transforms rather than hot-swapping mid-frame.
+  // VIDEO cannot be keyed by subscreen: PHOTO and VIDEO both act on the live
+  // camera instead of navigating anywhere. Capture mode therefore owns the
+  // physical object. Selecting VIDEO arms the camcorder; tapping that object
+  // starts recording and tapping it again stops, without changing it back to
+  // the photo camera.
   //
   // AVATAR's live preview outranks everything below it for the same reason the
   // camcorder outranks the screen: it is what you are doing right now. Under it
   // the order is unchanged — a subscreen's own object, then the cube you made
   // (Profile only), then the tab's object.
-  const requestedCubeModel = recordMs != null
+  const requestedCubeModel = activeTab === 'post' && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
     : (avatarPreview
       ?? cubeModel
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
       ?? tabNavigatorModel(activeTab))
+
+  // Keep one likely destination decoded but detached. The tab ring's forward
+  // neighbour matches a left swipe (Camera -> Feed); the model that was just
+  // visible is retained separately inside CubeTab3D for an immediate reverse.
+  // While a swap is underway, preparing the actual request takes precedence.
+  // A subscreen instead warms its owning tab's main object for a quick exit.
+  const nextTabIndex = (TAB_ORDER.indexOf(activeTab) + 1) % TAB_ORDER.length
+  const cubePreparationModel = requestedCubeModel !== appliedCubeModel
+    ? requestedCubeModel
+    : cubeScreen
+      ? tabNavigatorModel(activeTab)
+      : tabNavigatorModel(TAB_ORDER[nextTabIndex])
 
   const beginCubeSwapEnter = useCallback((withSound: boolean) => {
     if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
@@ -2020,6 +2158,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (cubeModelReadyFrame.current) window.cancelAnimationFrame(cubeModelReadyFrame.current)
   }, [])
 
+  // A cube swipe is also an exit from any hold-menu subscreen. Keeping the old
+  // screen mounted after the semantic tab changed left its model in charge of
+  // the navigator, so Camera -> Feed could remain a camcorder until another
+  // tap happened to trigger cleanup.
+  const cubeOwnerTabRef = useRef(activeTab)
+  useEffect(() => {
+    const previous = cubeOwnerTabRef.current
+    cubeOwnerTabRef.current = activeTab
+    if (previous === activeTab) return
+    setHoldOpen(false)
+  }, [activeTab])
+
   const popCube = () => {
     // Back before anything else: if a subscreen or the hold menu is open, the
     // tap is the way out of it, not a favourite-action trigger.
@@ -2044,24 +2194,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
     playPop()
-    // Tapping the cube runs whatever you pinned in this tab's hold menu.
-    const favourite = readFavourite(activeTab)
     if (activeTab === 'post') {
-      // The camera's default is PHOTO — a camera whose button does nothing
-      // until you have visited a menu is not a camera.
-      const camera: Record<string, Exclude<HomeCameraAction, 'roll'>> = { PHOTO: 'photo', VIDEO: 'video' }
-      const which = camera[favourite ?? 'PHOTO'] ?? 'photo'
+      // Selection changes the object; tapping that object performs its shutter.
+      // VIDEO deliberately remains armed after stopping so tap -> record and
+      // tap again -> stop happen on the same forward-facing camcorder.
+      const which = cameraCaptureMode
       if (which !== 'photo') setPopping(true)
       cameraActionsRef.current?.[which]()
       return
     }
+    // Tapping the cube runs whatever you pinned in this tab's hold menu.
+    const favourite = readFavourite(activeTab)
     setPopping(true)
     if (favourite) {
-      const map: Record<string, 'like' | 'comment' | 'captions' | 'profile'> = {
+      const map: Record<string, 'like' | 'comment' | 'profile'> = {
         LIKE: 'like',
         COMMENT: 'comment',
-        'CC ON': 'captions',
-        'CC OFF': 'captions',
         PROFILE: 'profile',
         'VIEW PROFILE': 'profile',
       }
@@ -2132,7 +2280,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onContentAdvance={reportFeedContentAdvance}
             bindActions={fn => { feedActionsRef.current = fn }}
             bindGoBack={fn => { feedBackRef.current = fn }}
-            suppressed={false}
+            // The native Google card owns the visible Feed slot while open.
+            // Pause/mute the web post underneath it so two ads can never talk
+            // at once, then Feed resumes from its normal lifecycle on close.
+            suppressed={feedAdSlotOpen}
+            frontMost={activeTab === 'feed' && committedTab === 'feed' && mainSurfaceVisible}
             onPlayerModeChange={setFeedFullscreen}
             autoPlayOnMount={feedAutoPlayOnMount}
             onOpenProfile={user => {
@@ -2264,28 +2416,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
-          {/* Whose pops the map is drawing. Map tab only: on the feed or the
-              camera there is no board to filter, and a dead control there
-              would read as broken.
-              Gone while a subscreen is up, for the same reason: over the radio
-              there is no board to filter either. The chrome layer sits ABOVE
-              the subscreen stage (.overSubscreen is 260, the stage is 240), so
-              being covered is not something a subscreen can do for itself —
-              the control has to take itself away. */}
-          {activeTab === 'map' && !overlayOpen && (
-            <div className={styles.levelAbove}>
-            <MapLevelButton
-              level={popLevel}
-              mode={liveMapMode}
-              onPick={next => {
-                setPopLevel(next)
-                mapFrameRef.current?.contentWindow?.postMessage(
-                  { type: 'poplur-map-action', action: 'setPopLevel', level: next }, '*',
-                )
-              }}
-            />
-            </div>
-          )}
           <ClayChannelArrows
             key={`channel-arrows-${uiRecoveryKey}`}
             size={cubeSize}
@@ -2451,10 +2581,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               cameraFlashArmed={cameraFlashArmed}
               cameraFlashPulse={cameraFlashPulse}
               camcorderRecording={recordMs != null}
-              // Decode only the requested destination while the current model
-              // begins its short expansion. One prepared object is retained at
-              // most, avoiding a cold GLB parse at the visible swap point.
-              prepareModelUrl={requestedCubeModel}
+              // One forward destination and one just-retired object form the
+              // bounded navigator pool. Only this current model is rendered.
+              prepareModelUrl={cubePreparationModel}
               onModelReady={url => {
                 if (url !== awaitingCubeModelRef.current) return
                 if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
@@ -2560,6 +2689,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           currentFeedChannelId={CHANNELS[chanIndex]?.id}
           onTuneFeedChannel={tuneFeedChannel}
           onSubscreenChange={handleSubscreenChange}
+          onFavouriteChange={title => {
+            if (activeTab !== 'post') return
+            if (title === 'PHOTO') setCameraCaptureMode('photo')
+            if (title === 'VIDEO') setCameraCaptureMode('video')
+          }}
           bindArrows={bindSubscreenArrows}
           bindGoBack={fn => { goBackRef.current = fn }}
         />

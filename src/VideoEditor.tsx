@@ -830,7 +830,10 @@ export default function VideoEditor({
             onCancel()
           }}
         >{baking ? 'Stop' : 'Cancel'}</button>
-        <span className={styles.headTitle}>EDIT</span>
+        <span className={styles.headTitle}>
+          <img src="logo_icon.png" alt="" />
+          <b>VIDEO EDIT</b>
+        </span>
         <button
           className={`${styles.headBtn} ${styles.headDone}`}
           onClick={() => { void bake() }}
@@ -877,7 +880,7 @@ export default function VideoEditor({
 
       <div className={styles.clock}>
         <span>IN {clockOf(trimStart)}</span>
-        <b>{clockOf(trimEnd - trimStart)} selected · 12-second maximum</b>
+        <b>{clockOf(trimEnd - trimStart)} SELECTED</b>
         <span>SOURCE {clockOf(duration)}</span>
       </div>
 
@@ -960,11 +963,16 @@ export default function VideoEditor({
       </div>
 
       {/* ── the track picker ── */}
+      <div className={styles.tracksHead}>
+        <span>MUSIC</span>
+        <b>{track?.title ?? 'Original audio'}</b>
+      </div>
       <div className={styles.tracks}>
         <button
           className={trackId === null ? `${styles.track} ${styles.trackOn}` : styles.track}
           onClick={() => { playPop(); setTrackId(null) }}
         >
+          <span className={styles.trackGlyph} aria-hidden="true">O</span>
           <span className={styles.trackTitle}>No music</span>
           <span className={styles.trackMeta}>Original audio only</span>
         </button>
@@ -974,19 +982,12 @@ export default function VideoEditor({
             className={trackId === t.id ? `${styles.track} ${styles.trackOn}` : styles.track}
             onClick={() => { playPop(); setTrackId(t.id); setTrackOffset(0) }}
           >
+            <span className={styles.trackGlyph} aria-hidden="true">♪</span>
             <span className={styles.trackTitle}>{t.title}</span>
             <span className={styles.trackMeta}>{t.mood} · {t.bpm} BPM</span>
           </button>
         ))}
       </div>
-
-      {/* The licensing position, stated on the screen rather than buried in a
-          commit message — anyone demoing this needs to know what they are
-          hearing before they publish it anywhere. */}
-      <p className={styles.licenceNote}>
-        Placeholder tracks, generated on device. No licensed music ships yet — these
-        are here so the editor works end to end.
-      </p>
 
       {note && <p className={styles.note} role="alert">{note}</p>}
     </div>

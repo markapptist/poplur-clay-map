@@ -71,6 +71,20 @@ export function clearSelection(): void {
   emit()
 }
 
+export interface PendingEffectTiming {
+  startSeconds: number
+  durationSeconds: number
+  engine: 'none' | 'scene3d' | 'spritekit' | 'scenekit'
+}
+
+export interface PendingEffectAsset {
+  source: 'meshy'
+  prompt: string
+  modelUrl: string
+  taskId: string
+  thumbnailUrl?: string
+}
+
 // ── camera-first map posting ────────────────────────────────────────────────
 // The May '26 CaptureFlow had two directions; the web home rebuilt only
 // map→camera. This is the other half's hand-off: the composer stashes its
@@ -82,6 +96,9 @@ export interface PendingMapPost {
   caption: string
   channelId: string
   filterId: string
+  effectId?: string
+  effectTiming?: PendingEffectTiming
+  effectAsset?: PendingEffectAsset
   usedAI: boolean
 }
 
@@ -116,6 +133,9 @@ export interface PendingAICompose {
   caption: string
   channelId: string
   filterId: string
+  effectId?: string
+  effectTiming?: PendingEffectTiming
+  effectAsset?: PendingEffectAsset
 }
 
 let pendingAICompose: PendingAICompose | null = null

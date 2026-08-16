@@ -7,6 +7,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { primeMotionAudio } from './motionEffectsAudio'
 import { preloadPop, primePopAudio } from './pop'
 import { isNativeShell } from './nativeBridge'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 declare global {
   interface Window {
@@ -34,8 +35,8 @@ type MotionTuning = {
     settle flat, and hard-limited before the spring runs. The limits apply to
     the rendered model too, so spring momentum can never expose a side/back
     face. */
-export const DEFAULT_CUBE_MOTION_SENSITIVITY = 0.58
-export const DEFAULT_CUBE_MOTION_SMOOTHING = 82
+export const DEFAULT_CUBE_MOTION_SENSITIVITY = 0.85
+export const DEFAULT_CUBE_MOTION_SMOOTHING = 94
 const CUBE_MOTION_ROLL_INPUT_LIMIT = THREE.MathUtils.degToRad(45)
 const CUBE_MOTION_PITCH_INPUT_LIMIT = Math.PI / 2
 const CUBE_MOTION_DEAD_ZONE = THREE.MathUtils.degToRad(2)
@@ -154,7 +155,13 @@ async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
     declares the rotation that brings its labelled face square to the camera.
     Applied before the recentre below, so the fix cannot push the object off
     centre. Radians. */
-const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> = {}
+const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> = {
+  // The camcorder shares the cube family's face-up authoring. Rotate its
+  // authored top plane before tipping it toward the viewer: this sends the
+  // lens predominantly into scene depth (away from the operator) while the
+  // remaining third keeps the camcorder body readable.
+  [CAMCORDER_MODEL]: { x: Math.PI / 2, z: (Math.PI * 5) / 12 },
+}
 
 /** The supplied `poplur_cube_*` set is authored face-UP: the coloured pad that
     says what the cube is — the settings gear, the mail flap, the store bag —
@@ -173,7 +180,13 @@ function restingOrientation(url: string) {
   return null
 }
 
-function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string, maxAnisotropy = 1) {
+function fitIntoGroup(
+  model: THREE.Object3D,
+  group: THREE.Group,
+  url: string,
+  maxAnisotropy = 1,
+  shaderPrecision: 'mediump' | 'highp' = 'highp',
+) {
   // GLTF's mipmaps are correct at rest, but an accelerometer tilt makes those
   // textures oblique. Use the GPU's supported anisotropic filter so lettering
   // and clay detail stay crisp while the phone moves.
@@ -194,7 +207,7 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string, ma
       // the small clay models while they tilt. It is effectively free beside
       // a post-process pass and keeps the transparent canvas edge untouched.
       material.dithering = true
-      material.precision = 'highp'
+      material.precision = shaderPrecision
       material.needsUpdate = true
     })
   })
@@ -227,11 +240,10 @@ function fitIntoGroup(model: THREE.Object3D, group: THREE.Group, url: string, ma
     model.scale.set(2 / dims.x, 2 / dims.y, 2 / dims.z)
   } else {
     const largest = Math.max(dims.x, dims.y, dims.z) || 1
-    // The tall phone filled the same square but looked far larger than the
-    // wide TV/Kodak objects. Keep one renderer/viewport while normalising its
-    // visual footprint inside that square.
-    const visualScale = url === 'poplur_clay_phone_lite.glb' ? 0.76 : 1
-    model.scale.setScalar((2 / largest) * visualScale)
+    // Every navigator gets the same full fitted footprint. The phone's former
+    // 0.76 multiplier made it visibly smaller than the TV/camera/profile
+    // objects even though all of them share this exact viewport.
+    model.scale.setScalar(2 / largest)
   }
   const orientation = restingOrientation(url)
   if (orientation) {
@@ -318,9 +330,20 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   // hot-swapped into it by its own effect.
   const groupRef = useRef<THREE.Group | null>(null)
   const navigatorAnisotropyRef = useRef(1)
+  const navigatorPrecisionRef = useRef<'mediump' | 'highp'>('highp')
   const modelNodeRef = useRef<THREE.Object3D | null>(null)
   const loadedUrlRef = useRef<string | null>(null)
-  const preparedModelRef = useRef<{ url: string; model: THREE.Object3D } | null>(null)
+  const preparedModelRef = useRef<{
+    url: string
+    model: THREE.Object3D
+    /** A just-visible model is already fitted; reapplying fit would scale and
+        rotate it twice when a swipe reverses. */
+    fitted: boolean
+  } | null>(null)
+  // Separate from the forward-prepared slot: this is the one model that was
+  // just visible. Keeping both bounded slots makes a reverse swipe immediate
+  // without turning the navigator into an unbounded tab-model cache.
+  const retiredModelRef = useRef<{ url: string; model: THREE.Object3D } | null>(null)
   const preparingModelRef = useRef<{ url: string; generation: number } | null>(null)
   const preparationGenerationRef = useRef(0)
   const [preparedVersion, setPreparedVersion] = useState(0)
@@ -356,29 +379,42 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const canvas = canvasRef.current
     if (!canvas) return
 
+    const nativeShell = isNativeShell()
+    const initialNavigatorPolicy = PoplurPerformanceManager.policy
+    const shaderPrecision: 'mediump' | 'highp' = nativeShell ? 'mediump' : 'highp'
+    navigatorPrecisionRef.current = shaderPrecision
     let renderer: THREE.WebGLRenderer
     try {
       renderer = new THREE.WebGLRenderer({
         canvas,
         alpha: true,
-        antialias: true,
-        powerPreference: 'high-performance',
-        precision: 'highp',
+        antialias: !nativeShell,
+        powerPreference: nativeShell ? 'low-power' : 'default',
+        precision: shaderPrecision,
       })
     } catch {
       setGlFailed(true)
       return
     }
-    // This is the always-visible navigator, not hidden decorative rendering.
-    // Give its small 176px canvas enough backing resolution to remain crisp
-    // while it expands and tilts; the scene still parks completely at rest.
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3))
+    // A 176px control cannot reveal a 3x backing buffer on a phone, but the GPU
+    // still shades all nine pixels for every CSS pixel. Native keeps a crisp
+    // 1.25x ceiling and follows later policy downgrades in the subscription
+    // below; desktop previews may use up to 2x.
+    const maximumNavigatorDPR = nativeShell ? 1.25 : 2
+    renderer.setPixelRatio(Math.min(
+      window.devicePixelRatio || 1,
+      initialNavigatorPolicy.maximumPixelRatio,
+      maximumNavigatorDPR,
+    ))
     renderer.setSize(size, size)
     renderer.setClearColor(0x000000, 0)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.06
-    const navigatorAnisotropy = renderer.capabilities.getMaxAnisotropy()
+    const navigatorAnisotropy = Math.min(
+      renderer.capabilities.getMaxAnisotropy(),
+      nativeShell ? 2 : 4,
+    )
     navigatorAnisotropyRef.current = navigatorAnisotropy
 
     const scene = new THREE.Scene()
@@ -489,17 +525,17 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let rawMotionRoll = 0
     let rawMotionPitch = 0
     let nextGlobeFrameAt = 0
-    const navigatorFPS = 60
-    const navigatorFrameMs = 1000 / navigatorFPS
-    // The managed document clock deliberately slows ambient work. The cube is
-    // the visible tab control, not ambient decoration, so use the native
-    // physical-display clock that the iOS host exposes for this one canvas.
-    // Rendering remains capped at 60fps below; Mapbox, weather and every
-    // inactive surface stay on the governed clock.
-    const requestDisplayFrame = window.__poplurDisplayRAF
-      ?? window.requestAnimationFrame.bind(window)
-    const cancelDisplayFrame = window.__poplurCancelDisplayRAF
-      ?? window.cancelAnimationFrame.bind(window)
+    // The navigator gets direct input priority without owning the display. A
+    // native phone starts at 24fps for live tilt and 12fps for the idle globe;
+    // OS thermal/power policy can pull both lower at runtime. Desktop keeps the
+    // 60fps motion lab for tuning without setting the physical-phone budget.
+    let navigatorFPS = nativeShell
+      ? Math.max(10, Math.min(24, initialNavigatorPolicy.targetFPS))
+      : 60
+    let globeFPS = nativeShell ? Math.min(12, navigatorFPS) : 30
+    let navigatorFrameMs = 1000 / navigatorFPS
+    const requestDisplayFrame = window.requestAnimationFrame.bind(window)
+    const cancelDisplayFrame = window.cancelAnimationFrame.bind(window)
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && (window.__poplurDisplayActive?.() ?? true)
@@ -520,7 +556,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
 
     // Every replacement object shares one controlled response. Inputs are raw
     // attitude radians from Core Motion (or their browser equivalent), so the
-    // simulator's 2° dead zone, 0.58 sensitivity and 8°/6° envelope map here
+    // simulator's 2° dead zone, tuned sensitivity and 8°/6° envelope map here
     // exactly. Both axes oppose the phone tilt for physical clay parallax.
     const applyMotionTarget = (roll: number, devicePitch: number, epsilon: number) => {
       rawMotionRoll = THREE.MathUtils.clamp(roll, -CUBE_MOTION_ROLL_INPUT_LIMIT, CUBE_MOTION_ROLL_INPUT_LIMIT)
@@ -575,7 +611,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
             requestedUrl = modelUrlRef.current
             continue
           }
-          fitIntoGroup(model, group, requestedUrl, navigatorAnisotropy)
+          fitIntoGroup(model, group, requestedUrl, navigatorAnisotropy, shaderPrecision)
           modelNodeRef.current = model
           loadedUrlRef.current = requestedUrl
           setLoadedModel(requestedUrl)
@@ -713,14 +749,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // real foreground edge; otherwise every later motion sample sees `raf`
       // as non-zero and incorrectly assumes a frame is already on its way.
       if (raf) cancelDisplayFrame(raf)
+      if (frameTimer) window.clearTimeout(frameTimer)
       raf = 0
+      frameTimer = 0
       wakeLoopRef.current()
     }
     const onNativeLifecycle = (event: Event) => {
       const active = (event as CustomEvent<{ active?: boolean }>).detail?.active
       if (active !== true) return
       if (raf) cancelDisplayFrame(raf)
+      if (frameTimer) window.clearTimeout(frameTimer)
       raf = 0
+      frameTimer = 0
       wakeLoopRef.current()
     }
     const onDeviceOrientation = (event: DeviceOrientationEvent) => {
@@ -773,19 +813,32 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
     let lastLoopCallbackAt = last
-    let lastDisplayFrame = 0
     let raf = 0
+    let frameTimer = 0
+    let scheduledAt = 0
+    const cancelScheduledFrame = () => {
+      if (raf) cancelDisplayFrame(raf)
+      if (frameTimer) window.clearTimeout(frameTimer)
+      raf = 0
+      frameTimer = 0
+      scheduledAt = 0
+    }
+    const scheduleLoop = (delayMs = 0) => {
+      if (disposed || raf || frameTimer) return
+      scheduledAt = performance.now()
+      const armFrame = () => {
+        frameTimer = 0
+        if (disposed || raf) return
+        raf = requestDisplayFrame(loop)
+      }
+      if (delayMs > 2) frameTimer = window.setTimeout(armFrame, delayMs)
+      else armFrame()
+    }
     const loop = (now: number) => {
       if (disposed) return
+      raf = 0
+      scheduledAt = 0
       lastLoopCallbackAt = now
-      // ProMotion may call the physical display clock at 120Hz. Keep the
-      // navigator visually fluid without drawing the same small scene twice
-      // per 60Hz frame.
-      if (lastDisplayFrame > 0 && now - lastDisplayFrame < navigatorFrameMs - 0.5) {
-        raf = requestDisplayFrame(loop)
-        return
-      }
-      lastDisplayFrame = now
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
 
@@ -843,7 +896,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // every other 3D surface instead of forcing a permanent 60Hz workload.
       if (mapGlobeIsVisible() && now >= nextGlobeFrameAt - 1) {
         yaw = (yaw + 0.5 * dt) % (Math.PI * 2)
-        nextGlobeFrameAt = now + 1000 / navigatorFPS
+        nextGlobeFrameAt = now + 1000 / globeFPS
         needsRender = true
       }
 
@@ -870,35 +923,56 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         || Math.abs(motionPitchVelocity) > 0.00008
         || needsRender
       if (active || mapGlobeIsVisible()) {
-        raf = requestDisplayFrame(loop)
-      } else {
-        raf = 0
+        const targetFPS = active ? navigatorFPS : globeFPS
+        // Arm shortly before the desired presentation edge, then let rAF align
+        // the actual draw. This prevents an Android 60/120Hz display from
+        // invoking a no-op JS callback for every hardware refresh.
+        scheduleLoop(Math.max(0, 1000 / targetFPS - 8))
       }
     }
     const wake = () => {
-      // A callback that has not arrived for 120ms on the visible foreground
-      // document is stale, not merely a low frame rate. Replacing it is bounded
-      // to this one small canvas and lets motion recover without touching the
-      // active page's media, Mapbox, timers, or performance policy.
-      if (raf && performance.now() - lastLoopCallbackAt > 120) {
-        cancelDisplayFrame(raf)
-        raf = 0
+      const now = performance.now()
+      // WebKit may discard a pending callback across app lifecycle changes.
+      // Replace only a genuinely stale request; incoming 30Hz motion samples
+      // otherwise share the already-scheduled frame instead of raising FPS.
+      if ((raf || frameTimer)
+        && now - Math.max(lastLoopCallbackAt, scheduledAt) > Math.max(250, navigatorFrameMs * 4)) {
+        cancelScheduledFrame()
       }
-      if (!raf && !disposed) {
-        last = performance.now()
-        lastDisplayFrame = 0
-        raf = requestDisplayFrame(loop)
+      if (!raf && !frameTimer && !disposed) {
+        last = now
+        scheduleLoop()
       }
     }
     wakeLoopRef.current = () => {
       needsRender = true
       wake()
     }
-    raf = requestDisplayFrame(loop)
+    const stopPerformancePolicy = PoplurPerformanceManager.subscribe(snapshot => {
+      navigatorFPS = nativeShell
+        ? Math.max(5, Math.min(24, snapshot.targetFPS))
+        : snapshot.mode === 'FULL'
+          ? 60
+          : Math.max(10, Math.min(30, snapshot.targetFPS))
+      globeFPS = nativeShell
+        ? Math.max(4, Math.min(12, navigatorFPS))
+        : Math.max(10, Math.min(30, navigatorFPS))
+      navigatorFrameMs = 1000 / navigatorFPS
+      renderer.setPixelRatio(Math.min(
+        window.devicePixelRatio || 1,
+        snapshot.maximumPixelRatio,
+        maximumNavigatorDPR,
+      ))
+      renderer.setSize(size, size, false)
+      needsRender = true
+      wake()
+    })
+    scheduleLoop()
 
     return () => {
       disposed = true
-      cancelDisplayFrame(raf)
+      stopPerformancePolicy()
+      cancelScheduledFrame()
       window.clearTimeout(flashPulseTimer)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)
@@ -929,7 +1003,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   // does not retain all four tab models or create extra renderers/contexts.
   useEffect(() => {
     if (!prepareModelUrl || prepareModelUrl === loadedUrlRef.current || prepareModelUrl === modelUrlRef.current) return
-    if (preparedModelRef.current?.url === prepareModelUrl || preparingModelRef.current?.url === prepareModelUrl) return
+    if (
+      preparedModelRef.current?.url === prepareModelUrl
+      || retiredModelRef.current?.url === prepareModelUrl
+      || preparingModelRef.current?.url === prepareModelUrl
+    ) return
     if (preparedModelRef.current) {
       disposeModel(preparedModelRef.current.model)
       preparedModelRef.current = null
@@ -945,7 +1023,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         return
       }
       preparingModelRef.current = null
-      preparedModelRef.current = { url: prepareModelUrl, model }
+      preparedModelRef.current = { url: prepareModelUrl, model, fitted: false }
       setPreparedVersion(version => version + 1)
     }).catch(err => {
       if (preparingModelRef.current?.generation === generation) preparingModelRef.current = null
@@ -958,6 +1036,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     preparingModelRef.current = null
     if (preparedModelRef.current) disposeModel(preparedModelRef.current.model)
     preparedModelRef.current = null
+    if (retiredModelRef.current) disposeModel(retiredModelRef.current.model)
+    retiredModelRef.current = null
   }, [])
 
   // Hot-swap the model when the screen asks the navigator to become something
@@ -971,10 +1051,30 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     // is still in flight — it reads modelUrlRef, so it will pick this up itself.
     if (!group || loadedUrlRef.current === null || loadedUrlRef.current === modelUrl) return
 
-    const install = (model: THREE.Object3D) => {
+    const install = (model: THREE.Object3D, fitted = false) => {
       const previous = modelNodeRef.current
-      if (previous) { group.remove(previous); disposeModel(previous) }
-      fitIntoGroup(model, group, modelUrl, navigatorAnisotropyRef.current)
+      const previousUrl = loadedUrlRef.current
+      if (previous) {
+        group.remove(previous)
+        if (retiredModelRef.current) disposeModel(retiredModelRef.current.model)
+        if (previousUrl && previousUrl !== modelUrl) {
+          retiredModelRef.current = { url: previousUrl, model: previous }
+        } else {
+          retiredModelRef.current = null
+          disposeModel(previous)
+        }
+      }
+      if (fitted) {
+        group.add(model)
+      } else {
+        fitIntoGroup(
+          model,
+          group,
+          modelUrl,
+          navigatorAnisotropyRef.current,
+          navigatorPrecisionRef.current,
+        )
+      }
       modelNodeRef.current = model
       loadedUrlRef.current = modelUrl
       setLoadedModel(modelUrl)
@@ -988,7 +1088,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const prepared = preparedModelRef.current
     if (prepared?.url === modelUrl) {
       preparedModelRef.current = null
-      install(prepared.model)
+      install(prepared.model, prepared.fitted)
+      return
+    }
+    const retired = retiredModelRef.current
+    if (retired?.url === modelUrl) {
+      retiredModelRef.current = null
+      install(retired.model, true)
       return
     }
     // The preparation effect owns the in-flight decode and will bump

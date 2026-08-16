@@ -311,6 +311,7 @@ export default function FeedTwin({
   onPlayerModeChange,
   bindGoBack,
   autoPlayOnMount = false,
+  frontMost = true,
 }: {
   index?: number
   onIndexChange?: (index: number) => void
@@ -337,6 +338,9 @@ export default function FeedTwin({
   /** A settled user/navigation transition into Feed may start its one visible
       native play-through. Initial cold launch deliberately leaves this false. */
   autoPlayOnMount?: boolean
+  /** Feed may remain mounted during the cube handoff, but it must never keep
+      its media audible after another tab has been selected. */
+  frontMost?: boolean
 } = {}) {
   const controlSide = useControlSide()
   const [ownIndex, setOwnIndex] = useState(0)
@@ -344,6 +348,8 @@ export default function FeedTwin({
   const [muted, setMuted] = useState(isUserMuted)
   const suppressedRef = useRef(suppressed)
   suppressedRef.current = suppressed
+  const frontMostRef = useRef(frontMost)
+  frontMostRef.current = frontMost
   const [commentOpen, setCommentOpen] = useState(false)
   const [commentClosing, setCommentClosing] = useState(false)
   const [shareNote, setShareNote] = useState<string | null>(null)
@@ -435,7 +441,16 @@ export default function FeedTwin({
     mediaTap: boolean
   } | null>(null)
   const wheelLock = useRef(false)
-  const adVideoRef = useRef<HTMLVideoElement>(null)
+  const adVideoRef = useRef<HTMLVideoElement | null>(null)
+  // A keyed React <video> can disappear before WebKit releases its decoder.
+  // Own the node through a callback ref so the outgoing pipeline is muted,
+  // paused and detached synchronously in the same commit that installs its
+  // replacement. This is the hard single-player boundary for rapid swipes.
+  const bindAdVideo = useCallback((next: HTMLVideoElement | null) => {
+    const previous = adVideoRef.current
+    if (previous && previous !== next) retireFeedVideo(previous)
+    adVideoRef.current = next
+  }, [])
   const decoderLeaseRef = useRef<PoplurResourceLease | null>(null)
   const [decoderGranted, setDecoderGranted] = useState(false)
   const settledAdRef = useRef<string | null>(null)
@@ -451,10 +466,26 @@ export default function FeedTwin({
   )
   const audioUnlockedRef = useRef(audioUnlocked)
   const recoveringAdSrcRef = useRef<string | null>(null)
-  const [readyAdSrc, setReadyAdSrc] = useState<string | null>(null)
+  // Include the post identity, not only the URL. Adjacent posts may share a
+  // bundled clip; treating URL equality as readiness briefly exposes the new
+  // decoder before it has painted its own first frame.
+  const [readyPlaybackKey, setReadyPlaybackKey] = useState<string | null>(null)
   const ch = CHANNELS[index]
   const contentIdxRef = useRef<Record<string, number>>({})
   const [contentRevision, forceContentRender] = useState(0)
+
+  // A visual tab transition leaves Feed mounted for a short beat. Treat that
+  // phase as off-screen immediately: pause every video in this surface, mute
+  // them first, and release its focus before Camera/Map can render a frame.
+  const feedRootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (frontMost) return
+    feedRootRef.current?.querySelectorAll('video').forEach(video => {
+      video.muted = true
+      video.pause()
+    })
+    releaseAudioFocus('feed')
+  }, [frontMost])
 
   // One visible Feed owns one decoder. A destination swap releases it before
   // the next heavyweight screen mounts, so WebKit never has to choose between
@@ -465,7 +496,7 @@ export default function FeedTwin({
       onRevoke: () => {
         const video = adVideoRef.current
         if (video) retireFeedVideo(video)
-        setReadyAdSrc(null)
+        setReadyPlaybackKey(null)
         settledAdRef.current = null
         setDecoderGranted(false)
       },
@@ -592,6 +623,9 @@ export default function FeedTwin({
   const change = useCallback((dir: 1 | -1) => {
     const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
     if (next === index) return
+    const currentVideo = adVideoRef.current
+    if (currentVideo) retireFeedVideo(currentVideo)
+    releaseAudioFocus('feed')
     // The pop IS the detent. Horizontal (changeContent) always had one;
     // vertical went silent because the sound lived in the arrows component
     // and a swipe never touches the arrows.
@@ -616,6 +650,9 @@ export default function FeedTwin({
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
     const next = (current + dir + count) % count
+    const currentVideo = adVideoRef.current
+    if (currentVideo) retireFeedVideo(currentVideo)
+    releaseAudioFocus('feed')
     contentIdxRef.current[ch.id] = next
     playPop()
     onContentAdvance?.(ch.id, next)
@@ -714,7 +751,7 @@ export default function FeedTwin({
   useEffect(() => {
     setRecoveryAttempt(0)
     setRecoveringPlayback(true)
-    setReadyAdSrc(null)
+    setReadyPlaybackKey(null)
     settledAdRef.current = null
     completedAdRef.current = null
     setCompletedAdSrc(null)
@@ -731,7 +768,8 @@ export default function FeedTwin({
     const failedSource = expectedSource ?? video?.getAttribute('src') ?? null
     if (failedSource && recoveringAdSrcRef.current === failedSource) return
     recoveringAdSrcRef.current = failedSource
-    setReadyAdSrc(null)
+    setReadyPlaybackKey(null)
+    setRecoveringPlayback(true)
     settledAdRef.current = null
     setRecoveryAttempt(attempt => attempt + 1)
   }, [])
@@ -743,14 +781,63 @@ export default function FeedTwin({
       video.pause()
       return
     }
-    setReadyAdSrc(null)
-    settledAdRef.current = null
+    // Once this exact node has painted, keep its last good frame visible while
+    // WebKit resumes it. Re-arming the static/first-frame latch here created a
+    // circular wait: `waiting` cleared readiness, but an already-playing video
+    // did not owe us a second `playing` event to set it again.
     void video.play().catch(() => {
       if (adVideoRef.current === video && video.getAttribute('src') === source) {
         advanceAdSource(source)
       }
     })
   }, [advanceAdSource])
+
+  // WebKit can discard a visible video's decoded state while the phone is
+  // locked or the app is backgrounded without firing another `waiting` event
+  // when the page returns. The regular stall monitor eventually repairs that,
+  // but until then the buffering card reads as a frozen Feed. Re-arm the one
+  // visible decoder immediately on foreground/pageshow. This is event-driven
+  // (no extra idle timer) and never wakes an off-screen Feed.
+  useEffect(() => {
+    if (!adSrc || !decoderGranted) return
+    const resumeVisibleVideo = () => {
+      if (
+        document.visibilityState === 'hidden'
+        || suppressedRef.current
+        || !frontMostRef.current
+      ) return
+      const video = adVideoRef.current
+      if (!video || completedAdRef.current === adSrc) return
+      const mountedSource = video.getAttribute('src')
+      // A WebKit process restore (and Fast Refresh in the RN review build) can
+      // preserve the element after our old-tree teardown removed its `src`.
+      // React sees the same prop value and may not write it again. Reattach only
+      // an EMPTY source; a different non-empty source belongs to a newer post.
+      if (!mountedSource) video.src = adSrc
+      else if (mountedSource !== adSrc) return
+      if (
+        video.networkState === HTMLMediaElement.NETWORK_EMPTY
+        || video.readyState === HTMLMediaElement.HAVE_NOTHING
+      ) video.load()
+      retryAdPlayback(adSrc, video)
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') resumeVisibleVideo()
+    }
+    const onNativeLifecycle = (event: Event) => {
+      const active = (event as CustomEvent<{ active?: boolean }>).detail?.active
+      if (active !== false) resumeVisibleVideo()
+    }
+    window.addEventListener('pageshow', resumeVisibleVideo)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('poplur-native-app-lifecycle', onNativeLifecycle)
+    resumeVisibleVideo()
+    return () => {
+      window.removeEventListener('pageshow', resumeVisibleVideo)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('poplur-native-app-lifecycle', onNativeLifecycle)
+    }
+  }, [adSrc, decoderGranted, frontMost, retryAdPlayback])
   // read inside the action bridge without re-binding it every post
   const postRef = useRef(post)
   postRef.current = post
@@ -770,7 +857,8 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('static') === '1'
   const forceTransition = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('transition') === '1'
-  const adReady = Boolean(adSrc) && readyAdSrc === adSrc
+  const playbackKey = adSrc ? `${sourceKey}:${adSrc}` : null
+  const adReady = Boolean(playbackKey) && readyPlaybackKey === playbackKey
   useEffect(() => {
     if (adReady || post?.stream) recordPostView(postId)
   }, [adReady, post?.stream, postId])
@@ -898,18 +986,25 @@ export default function FeedTwin({
   // bug because nothing on screen looked wrong.
   //
   // Readiness is a question that only needs answering once per source. The ref
-  // (not `readyAdSrc`) is what covers the in-flight window between arming the
+  // (not `readyPlaybackKey`) is what covers the in-flight window between arming the
   // settle and it finishing; a new source has a different key, so switching
   // clips still re-arms exactly once.
   const markAdReady = useCallback((source: string) => {
-    if (settledAdRef.current === source) return
+    const key = `${sourceKey}:${source}`
+    if (settledAdRef.current === key) return
     const video = adVideoRef.current
     if (!video || video.getAttribute('src') !== source || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
-    settledAdRef.current = source
+    settledAdRef.current = key
     settleAfterFrame(video, () => {
-      if (adVideoRef.current === video && video.getAttribute('src') === source) setReadyAdSrc(source)
+      if (adVideoRef.current === video && video.getAttribute('src') === source) {
+        setReadyPlaybackKey(key)
+        // A decoded/composited frame is stronger evidence than the 900ms
+        // progress poll. Lift the static cover immediately instead of waiting
+        // for a watchdog tick that may be throttled by WKWebView.
+        setRecoveringPlayback(false)
+      }
     })
-  }, [])
+  }, [sourceKey])
 
   const settledStaticRef = useRef<string | null>(null)
   const markStaticReady = useCallback((key: string) => {
@@ -944,6 +1039,7 @@ export default function FeedTwin({
         adVideoRef.current !== video
         || suppressedRef.current
         || document.visibilityState === 'hidden'
+        || playerPausedByUserRef.current
       ) return
       const now = video.currentTime
       const advanced = now > lastTime + 0.03 || now < lastTime - 0.5
@@ -955,7 +1051,10 @@ export default function FeedTwin({
         return
       }
       stalledTicks += 1
-      setRecoveringPlayback(true)
+      // Initial decode stays covered. A clip that already painted keeps its
+      // last real frame while the same decoder is restarted; only an actual
+      // source rotation re-arms static.
+      if (!adReady) setRecoveringPlayback(true)
       if (video.paused || video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
         retryAdPlayback(adSrc, video)
       }
@@ -967,7 +1066,7 @@ export default function FeedTwin({
       if (stalledTicks >= 3) advanceAdSource(adSrc)
     }, 900)
     return () => window.clearInterval(watchdog)
-  }, [adSrc, completedAdSrc, suppressed, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource, retryAdPlayback])
+  }, [adReady, adSrc, completedAdSrc, suppressed, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource, retryAdPlayback])
 
   // Channel audio. The ad creative is the channel's soundtrack, so it plays
   // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
@@ -987,7 +1086,7 @@ export default function FeedTwin({
       // Covered by News / TV Guide / the hold menu: stay silent and stopped,
       // whatever the gate says — this effect used to resume playback the moment
       // it ran, which is why the feed kept going behind the paper.
-      if (suppressedRef.current) {
+      if (suppressedRef.current || !frontMostRef.current) {
         video.muted = true
         video.pause()
         releaseAudioFocus('feed')
@@ -1019,7 +1118,7 @@ export default function FeedTwin({
     const offFocus = onAudioFocusChange(owner => {
       const video = adVideoRef.current
       if (!video) return
-      if (suppressedRef.current) return
+      if (suppressedRef.current || !frontMostRef.current) return
       // AI speech is deliberately temporary and owns the floor even though
       // Feed remains the visible picture. Reclaim as soon as Voice releases;
       // do not steal focus mid-answer and make the assistant appear silent.
@@ -1065,7 +1164,7 @@ export default function FeedTwin({
       unregister()
       releaseAudioFocus('feed')
     }
-  }, [adSrc, sourceKey, audioUnlocked])
+  }, [adSrc, sourceKey, audioUnlocked, frontMost])
 
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
@@ -1215,14 +1314,20 @@ export default function FeedTwin({
 
   const toggleCommentsAtEnd = useCallback(() => {
     playPop()
-    setCommentsAtEnd(current => {
-      const next = writeFeedCommentsAtEnd(!current)
-      commentsAtEndRef.current = next
-      if (next) showCommentRoll()
-      else clearCommentRoll()
-      return next
-    })
+    // Keep the preference, ref and visible roll on one deterministic edge.
+    // Scheduling showCommentRoll from inside a React state updater could leave
+    // the button pressed while no comments mounted (especially in StrictMode).
+    const next = writeFeedCommentsAtEnd(!commentsAtEndRef.current)
+    commentsAtEndRef.current = next
+    setCommentsAtEnd(next)
+    clearCommentRoll()
+    if (next) showCommentRoll({ silent: true })
   }, [clearCommentRoll, showCommentRoll])
+
+  const toggleCaptions = useCallback(() => {
+    playPop()
+    setCaptionsOn(on => !on)
+  }, [])
 
   const sharePost = useCallback(() => {
     playPop()
@@ -1289,11 +1394,7 @@ export default function FeedTwin({
       if (action === 'like') { likeCurrentPost(); return }
       if (action === 'comment') { openComments(); return }
       if (action === 'share') { sharePost(); return }
-      if (action === 'captions') {
-        playPop()
-        setCaptionsOn(on => !on)
-        return
-      }
+      if (action === 'captions') { toggleCaptions(); return }
       if (action === 'profile') {
         // whoever posted the video you are watching
         playPop()
@@ -1302,7 +1403,7 @@ export default function FeedTwin({
       }
     })
     return () => bindActions(null)
-  }, [bindActions, ch.id, ch.user, likeCurrentPost, onOpenProfile, openComments, sharePost])
+  }, [bindActions, ch.id, ch.user, likeCurrentPost, onOpenProfile, openComments, sharePost, toggleCaptions])
 
   // Tapping outside sends the window back up the way it came, then unmounts.
   const closeComments = () => {
@@ -1378,7 +1479,7 @@ export default function FeedTwin({
   useEffect(() => {
     const video = adVideoRef.current
     if (!video) return
-    if (suppressed) {
+    if (suppressed || !frontMost) {
       video.muted = true
       video.pause()
       releaseAudioFocus('feed')
@@ -1389,7 +1490,7 @@ export default function FeedTwin({
         || currentAudioOwner() !== 'feed'
       if (completedAdRef.current !== adSrc) void video.play().catch(() => {})
     }
-  }, [suppressed, adSrc, sourceKey, audioUnlocked])
+  }, [suppressed, adSrc, sourceKey, audioUnlocked, frontMost])
 
   const [c0, c1, c2] = ch.theme
 
@@ -1402,6 +1503,7 @@ export default function FeedTwin({
 
   return (
     <div
+      ref={feedRootRef}
       className={styles.feed}
       data-poplur-screen="feed"
       onWheel={onWheel}
@@ -1479,7 +1581,7 @@ export default function FeedTwin({
           // node is reused by React and remains paused at its final frame.
           key={`${sourceKey}:playing`}
           data-feed-media="true"
-          ref={adVideoRef}
+          ref={bindAdVideo}
           className={adReady ? `${styles.adVideo} ${styles.adVideoReady}` : styles.adVideo}
           src={adSrc}
           poster={posterSrc}
@@ -1509,7 +1611,7 @@ export default function FeedTwin({
             // That both releases the decoder immediately and makes any late
             // stalled/error callback harmless via completedAdRef above.
             retireFeedVideo(event.currentTarget)
-            setReadyAdSrc(null)
+            setReadyPlaybackKey(null)
             settledAdRef.current = null
             releaseAudioFocus('feed')
             advanceCompletedContent()
@@ -1519,13 +1621,9 @@ export default function FeedTwin({
         />
       )}
 
-      {/* A broadcast says so, and says who is watching. */}
-      {post?.live && !playerMode && (
-        <div className={styles.liveTag} aria-label="Live broadcast">
-          <span className={styles.liveDot} aria-hidden="true" />
-          LIVE
-          {post.viewers ? <span className={styles.liveViewers}>{post.viewers.toLocaleString()} watching</span> : null}
-        </div>
+      {/* The LIVE channel mirrors its icon with one plain word at top-right. */}
+      {ch.id === 'live' && !playerMode && (
+        <div className={styles.liveWord} aria-label="Live channel">LIVE</div>
       )}
 
       {/* Static + channel identity while the video buffers or swaps; fades out
@@ -1571,13 +1669,23 @@ export default function FeedTwin({
       )}
 
       {/* The Home shell owns the one Poplur wordmark. Feed contributes only
-          its two same-sized actions in the universal left rail and its channel
+          its same-sized actions in the universal side rail and its channel
           information underneath the title. */}
       {!playerMode && (
       <>
         <TabControlRail side={controlSide} label="Feed controls">
           <ClayMuteButton muted={muted} onToggle={toggleMute} size={44} />
           <ClayCornerButton kind="share" label="Share this post" size={44} still onPress={sharePost} />
+          <button
+            type="button"
+            className={`${styles.ccButton}${captionsOn ? ` ${styles.ccButtonOn}` : ''}`}
+            aria-label={captionsOn ? 'Turn closed captions off' : 'Turn closed captions on'}
+            aria-pressed={captionsOn}
+            onClick={toggleCaptions}
+          >
+            <span>CC</span>
+            <small>{captionsOn ? 'ON' : 'OFF'}</small>
+          </button>
           <ClayCornerButton
             kind="comments"
             active={commentsAtEnd}
@@ -1617,9 +1725,14 @@ export default function FeedTwin({
                   <span aria-hidden="true">{title}</span>
                 </div>
               </div>
-              <div className={styles.feedMetaRow}>
-                <div className={styles.feedHandle}>{post?.user ?? ch.user}</div>
-                <span className={`${styles.reachText} ${styles.feedReach}`}>
+              <div
+                className={styles.feedMetaRow}
+                aria-label={`${post?.user ?? ch.user}, ${reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}`}
+              >
+                <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
+                  {post?.user ?? ch.user}
+                </div>
+                <span className={`${styles.reachText} ${styles.feedReach}`} aria-hidden="true">
                   {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
                 </span>
               </div>

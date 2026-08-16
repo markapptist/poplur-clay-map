@@ -6,16 +6,6 @@
   overflow: hidden;
 }
 
-/* The thermal governor parks generic decorative animation after a short idle.
-   Weather is a live map condition, so keep its small, compositor-only visual
-   layer moving while this screen is visible. Audio and document-hidden timers
-   are still stopped in WeatherFX.tsx. Emergency/low-power modes retain their
-   global pause as a final thermal safety valve. */
-:global(html[data-poplur-surface-front="1"].poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating,
-:global(html[data-poplur-surface-front="1"].poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating * {
-  animation-play-state: running !important;
-}
-
 /* ── Rain: glossy clay droplets streaking down ── */
 .drop {
   position: absolute;

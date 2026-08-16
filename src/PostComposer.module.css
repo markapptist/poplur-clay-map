@@ -158,7 +158,7 @@
 .editFab {
   position: absolute;
   left: 16px;
-  bottom: calc(var(--cube-size, 96px) + 78px);
+  bottom: calc(18px + var(--cube-size, 176px) + 175px + env(safe-area-inset-bottom));
   z-index: 12;
   padding: 12px 16px;
   border: 0;
@@ -326,7 +326,7 @@
 .nextFab {
   position: absolute;
   z-index: 2;
-  bottom: calc(18px + var(--cube-size, 176px) + 12px + env(safe-area-inset-bottom));
+  bottom: calc(18px + var(--cube-size, 176px) + 175px + env(safe-area-inset-bottom));
   right: 14px;
   padding: 12px 18px;
   border: 0;
@@ -340,14 +340,23 @@
 }
 .nextFab:active { transform: scale(0.94); }
 
-/* The current filter's name, floating above the home HUD. Keyed on the filter
-   id so each flick replays the entrance. */
-.filterName {
+/* The current filter's name heads the preview strip. Keyed on the filter id so
+   each arrow flick or thumbnail tap replays the entrance. */
+.filterBrowser {
   position: absolute;
-  z-index: 2;
-  left: 50%;
-  bottom: calc(178px + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  z-index: 11;
+  left: 0;
+  right: 0;
+  bottom: calc(18px + var(--cube-size, 176px) + 12px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.filterName {
+  position: relative;
+  align-self: center;
   font: 950 21px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   letter-spacing: 3px;
   text-transform: uppercase;
@@ -375,8 +384,8 @@
 }
 
 @keyframes filterNameIn {
-  from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.9); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(8px) scale(0.9); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @keyframes filterNameShader {
@@ -388,34 +397,93 @@
   .filterName, .filterNameShader { animation: none; }
 }
 
-/* ── filter rail ──────────────────────────────────────────────────────────── */
-.filterRail {
+/* ── capture-aware filter browser ────────────────────────────────────────── */
+.filterPreviewRail {
   display: flex;
-  gap: 10px;
+  gap: 9px;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding: 4px max(16px, calc(50% - 40px)) 8px;
+  scroll-padding-inline: max(16px, calc(50% - 40px));
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  pointer-events: auto;
   scrollbar-width: none;
 }
-.filterRail::-webkit-scrollbar { display: none; }
+.filterPreviewRail::-webkit-scrollbar { display: none; }
 
-.swatchBtn {
+.filterPreviewButton {
   flex: 0 0 auto;
-  display: flex; flex-direction: column; align-items: center; gap: 5px;
-  border: 0; background: transparent; padding: 0; cursor: pointer;
+  width: 72px;
+  min-width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 4px 5px;
+  border: 1px solid rgba(255, 211, 234, 0.2);
+  border-radius: 8px;
+  color: rgba(255, 246, 251, 0.72);
+  background: linear-gradient(155deg, rgba(48, 38, 48, 0.9), rgba(12, 10, 14, 0.94));
+  box-shadow: 0 4px 0 rgba(8, 5, 10, 0.94), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  scroll-snap-align: center;
+  cursor: pointer;
+  content-visibility: auto;
+  contain: layout paint style;
+  contain-intrinsic-size: 72px 88px;
 }
-.swatch {
+
+.filterPreviewButton:active { transform: translateY(2px); }
+
+.filterPreviewButtonOn {
+  border-color: #ff5cab;
+  color: #fff;
+  background: linear-gradient(155deg, rgba(112, 27, 77, 0.96), rgba(32, 10, 26, 0.98));
+  box-shadow:
+    0 4px 0 #670638,
+    0 0 0 1px rgba(141, 233, 255, 0.72),
+    0 0 17px rgba(246, 59, 154, 0.58),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.filterPreviewImageWrap {
+  position: relative;
   display: block;
-  width: 56px; height: 56px;
-  border-radius: 14px;
-  background-size: cover;
-  background-position: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), inset 0 0 0 2px rgba(255, 255, 255, 0.12);
+  width: 62px;
+  height: 54px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #171117;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
-.swatchOn .swatch {
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.55), inset 0 0 0 2px #f63b9a, 0 0 16px rgba(246, 59, 154, 0.5);
+
+.filterPreviewImage {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  pointer-events: none;
 }
-.swatchLabel { font-size: 10px; font-weight: 800; color: rgba(255, 255, 255, 0.72); }
-.swatchOn .swatchLabel { color: #fff; }
+
+.filterPreviewLabel {
+  width: 100%;
+  overflow: hidden;
+  font: 900 8px/1.1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 0;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+@media (max-height: 700px) {
+  .filterBrowser { gap: 5px; }
+  .filterName { font-size: 18px; }
+  .filterPreviewButton { width: 64px; min-width: 64px; }
+  .filterPreviewImageWrap { width: 54px; height: 45px; }
+  .editFab,
+  .nextFab { bottom: calc(18px + var(--cube-size, 124px) + 170px + env(safe-area-inset-bottom)); }
+}
 
 /* ── ai step ──────────────────────────────────────────────────────────────── */
 .prompt {
@@ -516,3 +584,352 @@
   line-height: 1.5;
   color: rgba(255, 255, 255, 0.66);
 }
+
+/* ── Poplur clay composer system ───────────────────────────────────────────
+   The capture remains full bleed. Controls are one family of recessed dark
+   clay and molded pink/cyan keys, matching the navigator instead of reading
+   like unrelated translucent web cards. */
+.composerChrome {
+  position: absolute;
+  z-index: 4;
+  top: max(18px, env(safe-area-inset-top));
+  left: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.composerChrome img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.62));
+}
+
+.composerChrome span {
+  color: #8de9ff;
+  font: 950 9px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 1.5px;
+  -webkit-text-stroke: .35px rgba(3, 23, 35, 0.9);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.88), 0 0 10px rgba(71, 205, 238, 0.48);
+}
+
+.panel {
+  gap: 11px;
+  border-top: 1px solid rgba(255, 128, 190, 0.42);
+  background:
+    linear-gradient(180deg, transparent 0, rgba(8, 7, 10, 0.9) 24px),
+    linear-gradient(150deg, rgba(50, 18, 40, 0.96), rgba(11, 10, 14, 0.98));
+  box-shadow: 0 -18px 34px rgba(0, 0, 0, 0.42), inset 0 2px 0 rgba(255, 255, 255, 0.07);
+}
+
+.panelCentered {
+  width: min(324px, calc(100% - 44px));
+  padding: 18px;
+  border: 1px solid rgba(255, 135, 195, 0.58);
+  border-radius: 8px;
+  background: linear-gradient(150deg, rgba(55, 21, 44, 0.96), rgba(14, 12, 17, 0.98));
+  box-shadow:
+    0 8px 0 rgba(34, 8, 25, 0.96),
+    0 22px 46px rgba(0, 0, 0, 0.6),
+    inset 0 2px 1px rgba(255, 255, 255, 0.11),
+    inset 0 -8px 13px rgba(0, 0, 0, 0.36);
+}
+
+.choicePanel { align-items: stretch; text-align: center; }
+
+.panelEmblem {
+  width: 68px;
+  height: 68px;
+  align-self: center;
+  object-fit: contain;
+  margin: -2px 0 2px;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.52));
+}
+
+.panelIntro {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.panelEmblemSmall {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.5));
+}
+
+.panelLabel {
+  color: #8de9ff;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  text-shadow: 0 0 10px rgba(69, 205, 239, 0.38);
+}
+
+.choiceHead {
+  margin: 0 0 5px;
+  color: #fff7fb;
+  font-size: 20px;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.primary,
+.secondary {
+  min-height: 50px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 218, 237, 0.22);
+  border-radius: 8px;
+  box-shadow:
+    0 6px 0 #160810,
+    0 12px 22px rgba(0, 0, 0, 0.34),
+    inset 0 2px 1px rgba(255, 255, 255, 0.17),
+    inset 0 -6px 10px rgba(0, 0, 0, 0.32);
+}
+
+.primary {
+  background: linear-gradient(155deg, #fb5aa6 0%, #ce116e 60%, #850a4a 100%);
+}
+
+.secondary {
+  background: linear-gradient(155deg, #36323b 0%, #19171d 68%, #0f0d12 100%);
+}
+
+.primary:active,
+.secondary:active {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 #160810, inset 0 3px 7px rgba(0, 0, 0, 0.46);
+}
+
+.choiceAction {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.choiceAction b {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: #fff;
+  background: rgba(8, 7, 10, 0.48);
+  font: 950 17px/1 system-ui, sans-serif;
+  box-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.22), inset 0 -4px 6px rgba(0, 0, 0, 0.32);
+}
+
+.choiceAction span { font: 950 15px/1 system-ui, sans-serif; }
+
+.aiPanel,
+.channelPanel {
+  padding-top: 34px;
+}
+
+.channelPanel { padding-top: 58px; }
+
+.prompt,
+.caption {
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 209, 233, 0.22);
+  border-radius: 8px;
+  color: #fff9fc;
+  background: rgba(9, 8, 11, 0.82);
+  box-shadow: inset 0 5px 12px rgba(0, 0, 0, 0.62), 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.prompt { min-height: 100px; }
+.prompt:focus,
+.caption:focus { outline: 1px solid #8de9ff; box-shadow: inset 0 5px 12px rgba(0, 0, 0, 0.62), 0 0 12px rgba(69, 205, 239, 0.3); }
+
+.nextFab {
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 173, 213, 0.66);
+  border-radius: 8px;
+  background: linear-gradient(145deg, #fb5aa6, #bd0c65);
+  box-shadow: 0 7px 0 #6f073d, 0 14px 24px rgba(0, 0, 0, 0.5), inset 0 2px 1px rgba(255, 255, 255, 0.3);
+}
+.nextFab span { margin-top: -4px; font: 950 40px/1 system-ui, sans-serif; }
+.nextFab:active { transform: translateY(4px); box-shadow: 0 3px 0 #6f073d, inset 0 3px 7px rgba(0, 0, 0, 0.4); }
+
+.editFab {
+  min-height: 48px;
+  border: 1px solid rgba(141, 233, 255, 0.5);
+  border-radius: 8px;
+  color: #dcf9ff;
+  background: linear-gradient(155deg, rgba(41, 49, 55, 0.95), rgba(10, 12, 15, 0.96));
+  box-shadow: 0 6px 0 #080a0c, 0 12px 22px rgba(0, 0, 0, 0.46), inset 0 2px 1px rgba(255, 255, 255, 0.1);
+}
+
+.filterNameShader {
+  color: #8de9ff;
+  -webkit-text-fill-color: #8de9ff;
+  background: none;
+  -webkit-text-stroke: 1.2px rgba(6, 14, 23, 0.92);
+  paint-order: stroke fill;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.72)) drop-shadow(0 0 10px rgba(78, 210, 240, 0.48));
+}
+
+.radiusRow {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 209, 233, 0.18);
+  border-radius: 8px;
+  background: rgba(9, 8, 11, 0.68);
+  box-shadow: inset 0 4px 9px rgba(0, 0, 0, 0.48);
+}
+.radiusRow b { color: #91f9b1; }
+
+.channels { gap: 9px; padding: 2px 1px 8px; }
+
+.chan {
+  width: 78px;
+  min-height: 94px;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 213, 234, 0.17);
+  border-radius: 8px;
+  background: linear-gradient(155deg, rgba(53, 49, 58, 0.94), rgba(17, 15, 20, 0.96));
+  box-shadow: 0 5px 0 #0d0b0f, inset 0 2px 1px rgba(255, 255, 255, 0.11), inset 0 -5px 8px rgba(0, 0, 0, 0.28);
+}
+
+.chanOn {
+  border-color: #ff66ad;
+  background: linear-gradient(155deg, rgba(142, 29, 91, 0.98), rgba(54, 14, 41, 0.98));
+  box-shadow: 0 5px 0 #54042e, 0 0 15px rgba(246, 59, 154, 0.38), inset 0 2px 1px rgba(255, 255, 255, 0.18);
+}
+
+.chanIcon {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 6px rgba(0, 0, 0, 0.45));
+}
+.chanNum { color: #8ef4ad; }
+.chanName { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.spotButton {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 7px 8px;
+  text-align: left;
+}
+.spotButton img { width: 40px; height: 40px; object-fit: contain; }
+.spotButton span { font: 900 14px/1 system-ui, sans-serif; }
+
+.needSpot {
+  margin-top: 0;
+  color: rgba(219, 248, 255, 0.62);
+  font: 800 10px/1.25 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: .4px;
+}
+
+.uploadProgressCard {
+  border-radius: 8px;
+  background: linear-gradient(155deg, #36162b, #121015);
+  box-shadow: 0 8px 0 #220a19, 0 18px 36px rgba(0, 0, 0, 0.58), inset 0 2px 1px rgba(255, 255, 255, 0.14);
+}
+
+@media (max-width: 360px) {
+  .panelCentered { width: min(300px, calc(100% - 36px)); }
+  .composerChrome { left: 14px; }
+  .chan { width: 72px; }
+}
+
+.doneWrap {
+  background:
+    radial-gradient(circle at 50% 40%, rgba(78, 210, 240, 0.14), transparent 25%),
+    radial-gradient(circle at 50% 43%, rgba(246, 59, 154, 0.2), transparent 42%),
+    #09080b;
+}
+
+.doneEmblem {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  margin-bottom: 8px;
+}
+.doneEmblem img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.55)); }
+.doneTick {
+  position: absolute;
+  right: -3px;
+  bottom: 3px;
+  width: 36px;
+  height: 36px;
+  border: 2px solid #a5ffc1;
+  border-radius: 50%;
+  color: #dfffea;
+  background: #137943;
+  font-size: 20px;
+  box-shadow: 0 5px 0 #084b28, 0 0 16px rgba(91, 255, 151, 0.4);
+}
+.doneEyebrow { color: #8de9ff; font: 900 9px/1 ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: 1.8px; }
+.doneTitle { font-size: 31px; line-height: 1; }
+.doneMeta { color: #ff8fc5; font: 900 11px/1.4 ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: .5px; }
+
+/* Channel proof: show the actual post immediately under the channel rail.
+   A confirmed location adds a lightweight clay-map plate rather than a second
+   live Mapbox renderer, keeping the phone to one WebGL map context. */
+.channelContentPreview,
+.readyPreview {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(255, 128, 190, .35);
+  border-radius: 8px;
+  background: linear-gradient(150deg, #27101f, #0e0c10);
+  box-shadow: 0 5px 0 #160811, inset 0 2px 1px rgba(255,255,255,.08);
+}
+
+.channelPreviewMedia {
+  position: relative;
+  height: 118px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #030304;
+}
+
+.channelPreviewMedia::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 42%, rgba(4,3,5,.78)); pointer-events: none; }
+.channelPreviewMedia img,
+.channelPreviewMedia video { width: 100%; height: 100%; display: block; object-fit: cover; }
+.channelPreviewMedia > span { position: absolute; z-index: 1; top: 7px; right: 7px; padding: 4px 6px; border-radius: 4px; color: #aaffc1; background: rgba(3,20,10,.78); font: 950 8px/1 ui-monospace,monospace; }
+.channelPreviewMedia > strong { position: absolute; z-index: 1; left: 9px; right: 9px; bottom: 8px; overflow: hidden; color: #fff; font: 950 13px/1.05 system-ui,sans-serif; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 8px #000; }
+
+.confirmedMiniMap {
+  position: relative;
+  height: 78px;
+  overflow: hidden;
+  border: 1px solid rgba(141,233,255,.28);
+  border-radius: 6px;
+  background:
+    linear-gradient(155deg, transparent 46%, rgba(82,255,189,.55) 47% 51%, transparent 52%),
+    linear-gradient(25deg, transparent 36%, rgba(255,74,168,.55) 37% 42%, transparent 43%),
+    #d9d7de;
+  perspective: 210px;
+}
+
+.confirmedMiniMap > i { position: absolute; width: 42px; height: 24px; transform: rotate(-18deg) skewY(12deg); background: linear-gradient(145deg,#fff,#bebac4); box-shadow: 4px 5px 0 #9995a0; }
+.confirmedMiniMap > i:nth-child(1) { left: 12px; top: 10px; }
+.confirmedMiniMap > i:nth-child(2) { left: 74px; top: 7px; width: 58px; }
+.confirmedMiniMap > i:nth-child(3) { left: 30px; bottom: 5px; width: 66px; }
+.confirmedMiniMap > i:nth-child(4) { right: 42px; top: 5px; width: 48px; }
+.confirmedMiniMap > i:nth-child(5) { right: 8px; bottom: 4px; width: 58px; }
+.confirmedMiniMap > img { position: absolute; z-index: 2; left: 50%; top: 42%; width: 38px; height: 38px; object-fit: contain; transform: translate(-50%,-50%); filter: drop-shadow(0 6px 5px rgba(80,7,46,.35)); }
+.confirmedMiniMap > span { position: absolute; z-index: 3; left: 8px; bottom: 6px; display: grid; gap: 3px; padding: 4px 6px; border-radius: 4px; color: #fff; background: rgba(17,12,17,.78); }
+.confirmedMiniMap b { color: #8de9ff; font: 900 7px/1 ui-monospace,monospace; letter-spacing: .7px; }
+.confirmedMiniMap small { font: 800 8px/1 ui-monospace,monospace; }
+
+.channelPanel:has(.readyPreview) .channelPreviewMedia { height: 92px; }

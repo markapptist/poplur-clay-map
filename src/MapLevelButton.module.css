@@ -79,6 +79,11 @@
   animation: levelMenuIn 0.16s ease-out both;
 }
 
+.menuRight {
+  left: auto;
+  right: 0;
+}
+
 @keyframes levelMenuIn {
   from { opacity: 0; transform: translateY(6px) scale(0.96); }
   to { opacity: 1; transform: none; }

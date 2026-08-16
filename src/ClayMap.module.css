@@ -1302,14 +1302,6 @@
     drop-shadow(0 7px 10px rgba(0, 0, 0, 0.48));
 }
 
-/* Weather is meaningful, not generic ambience. Let the compact map weather
-   continue to rain/flash during an idle map view; low-power and emergency
-   policy still override this through the shared global thermal gate. */
-:global(html[data-poplur-surface-front="1"].poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating,
-:global(html[data-poplur-surface-front="1"].poplur-ambient-sleep:not([data-poplur-performance-mode="low_power"]):not([data-poplur-performance-mode="emergency"])) .weatherAlwaysAnimating * {
-  animation-play-state: running !important;
-}
-
 .weatherVisualCompact { width: 42px; height: 42px; }
 .weatherVector, .weatherVector svg, .weatherCloudModel { width: 100%; height: 100%; display: block; }
 .weatherCloudModel {
@@ -1548,6 +1540,20 @@
   background: #170a18;
   box-shadow: 0 3px 10px rgba(32, 2, 24, 0.58), 0 0 0 2px rgba(255, 255, 255, 0.88);
   pointer-events: none;
+}
+
+/* One live owner marker in the radius picker. It is not part of the world-pin
+   pool, so it cannot multiply decoders as the camera moves. */
+.radiusPreviewPinMarker {
+  z-index: 12;
+  pointer-events: none;
+}
+.radiusPreviewPinMarker .popPin {
+  filter: drop-shadow(0 0 9px rgba(255, 74, 169, .78));
+}
+.popPinSelfieVideo {
+  overflow: hidden;
+  object-position: 50% 50%;
 }
 
 /* A signed radius gain/loss belongs on the claimed pin, not in another global

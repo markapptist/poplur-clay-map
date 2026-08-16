@@ -65,6 +65,14 @@ export interface MeshyProgress {
 
 export class MeshyUnavailable extends Error {}
 
+export interface MeshyGeneratedObject {
+  taskId: string
+  /** The Poplur proxy should return a durable Firebase Storage URL. During
+   *  staging it may return Meshy's signed GLB URL instead. */
+  modelUrl: string
+  thumbnailUrl?: string
+}
+
 const POLL_MS = 2_500
 const TIMEOUT_MS = 6 * 60_000
 
@@ -120,6 +128,79 @@ export async function generateMeshyCube(options: {
     const model = await fetch(task.glbUrl, { signal: options.signal })
     if (!model.ok) throw new Error(`Could not download the model (${model.status})`)
     return await model.blob()
+  }
+}
+
+/**
+ * Generate a placeable VFX object from text. The Poplur proxy owns Meshy's
+ * two-step preview/refine workflow and persists the final GLB before returning
+ * it, so a composer draft never depends on an API key or a temporary model in
+ * browser memory.
+ *
+ * Proxy contract:
+ *   POST {endpoint}/text-to-3d { prompt, modelType, targetFormats, moderation }
+ *                                -> { taskId }
+ *   GET  {endpoint}/text-to-3d/{taskId}
+ *                                -> { status, progress, assetUrl|glbUrl,
+ *                                     thumbnailUrl?, error? }
+ */
+export async function generateMeshyObject(options: {
+  prompt: string
+  onProgress?: (progress: MeshyProgress) => void
+  signal?: AbortSignal
+}): Promise<MeshyGeneratedObject> {
+  const base = endpoint()
+  if (!base) throw new MeshyUnavailable('No Poplur generator endpoint configured')
+
+  const prompt = options.prompt.trim()
+  if (!prompt) throw new Error('Describe the object first')
+  if (prompt.length > 600) throw new Error('Keep the object description under 600 characters')
+
+  options.onProgress?.({ ratio: .03, stage: 'Sending your idea' })
+  const created = await fetch(`${base}/text-to-3d`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      modelType: 'lowpoly',
+      targetFormats: ['glb'],
+      moderation: true,
+      alphaThumbnail: true,
+    }),
+    signal: options.signal,
+  })
+  if (!created.ok) throw new Error(`Generator refused the job (${created.status})`)
+  const { taskId } = await created.json() as { taskId?: string }
+  if (!taskId) throw new Error('Generator returned no task')
+
+  const deadline = Date.now() + TIMEOUT_MS
+  for (;;) {
+    if (options.signal?.aborted) throw new DOMException('Cancelled', 'AbortError')
+    if (Date.now() > deadline) throw new Error('The generator took too long')
+    await new Promise(resolve => window.setTimeout(resolve, POLL_MS))
+
+    const polled = await fetch(`${base}/text-to-3d/${encodeURIComponent(taskId)}`, { signal: options.signal })
+    if (!polled.ok) throw new Error(`Lost the job (${polled.status})`)
+    const task = await polled.json() as {
+      status?: string
+      progress?: number
+      assetUrl?: string
+      glbUrl?: string
+      thumbnailUrl?: string
+      error?: string
+    }
+    const ratio = Math.max(.05, Math.min(.97, (task.progress ?? 0) / 100))
+    options.onProgress?.({
+      ratio,
+      stage: ratio < .42 ? 'Building the shape' : ratio < .82 ? 'Painting the surface' : 'Preparing the GLB',
+    })
+
+    if (task.status === 'FAILED') throw new Error(task.error || 'Meshy could not build that object')
+    if (task.status !== 'SUCCEEDED') continue
+    const modelUrl = task.assetUrl ?? task.glbUrl
+    if (!modelUrl) throw new Error('Meshy finished without a GLB')
+    options.onProgress?.({ ratio: 1, stage: 'Ready to place' })
+    return { taskId, modelUrl, thumbnailUrl: task.thumbnailUrl }
   }
 }
 

@@ -1,0 +1,44 @@
+.button {
+  display: block;
+  padding: 7px;
+  margin: -7px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 120ms ease;
+}
+
+.button:active { transform: translateY(1px) scale(.93); }
+
+.glyph {
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, .62));
+}
+
+.shadow { fill: rgba(0, 0, 0, .5); filter: blur(1.5px); }
+.side { stroke: rgba(51, 4, 26, .72); stroke-width: 1.4; stroke-linejoin: round; }
+.face { stroke: rgba(255, 220, 239, .68); stroke-width: 1.1; stroke-linejoin: round; }
+.faceInset { opacity: .88; }
+.edge { fill: none; stroke: rgba(255, 202, 231, .92); stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; }
+
+.text {
+  fill: #fff6fb;
+  stroke: #6e123c;
+  stroke-width: .7px;
+  paint-order: stroke;
+  font: 950 9px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: .2px;
+}
+
+.on .faceInset { fill: #b7f8ff; filter: drop-shadow(0 0 3px rgba(95, 234, 255, .98)); }
+.on .glyph {
+  filter:
+    drop-shadow(0 3px 4px rgba(0, 0, 0, .62))
+    drop-shadow(0 0 8px rgba(43, 216, 255, .52));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+}

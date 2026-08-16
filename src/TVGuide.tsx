@@ -57,8 +57,6 @@ const STOCK_CLIPS = [
   'feed/ad-shopping.mp4', 'feed/ad-cartoon.mp4', 'feed/ad-kids.mp4', 'feed/ad-comedy.mp4',
   'feed/ad-spanish-1.mp4', 'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4',
 ]
-const MAX_PIP_PLAY_MS = 12_000
-
 function releasePipMedia(video: HTMLVideoElement): void {
   video.pause()
   video.removeAttribute('src')
@@ -122,27 +120,45 @@ export default function TVGuide({
     .sort((a, b) => scoreFor(b) - scoreFor(a))
   const [previewId, setPreviewId] = useState(currentChannelId ?? channels[0]?.id)
   const pipVideoRef = useRef<HTMLVideoElement>(null)
-  const pipLeaseRef = useRef<number | null>(null)
   const [pipPlaying, setPipPlaying] = useState(() =>
-    !document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
+    !document.hidden && PoplurPerformanceManager.snapshot.isForeground)
   const [muted, setMuted] = useState(isUserMuted)
 
   const preview = channels.find(c => c.id === previewId) ?? channels[0]
 
   const retirePip = useCallback(() => {
-    if (pipLeaseRef.current != null) window.clearTimeout(pipLeaseRef.current)
-    pipLeaseRef.current = null
     if (pipVideoRef.current) releasePipMedia(pipVideoRef.current)
     setPipPlaying(false)
   }, [])
 
   useEffect(() => {
-    setPipPlaying(!document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
+    setPipPlaying(!document.hidden && PoplurPerformanceManager.snapshot.isForeground)
   }, [previewId])
 
-  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
-    if (!snapshot.isForeground || !snapshot.expensiveVideoBackedTexturesAllowed) retirePip()
-  }), [retirePip])
+  // TV Guide is the page the user is actively watching. Keep its one selected
+  // preview playing continuously; retire it only when the app/guide is no
+  // longer visible. This preserves the full experience without retaining a
+  // decoder for every channel row.
+  useEffect(() => {
+    const syncVisibility = () => {
+      if (!document.hidden && PoplurPerformanceManager.snapshot.isForeground) {
+        setPipPlaying(true)
+      } else {
+        retirePip()
+      }
+    }
+    const unsubscribe = PoplurPerformanceManager.subscribe(snapshot => {
+      if (snapshot.isForeground && !document.hidden) setPipPlaying(true)
+      else retirePip()
+    })
+    document.addEventListener('visibilitychange', syncVisibility)
+    window.addEventListener('pagehide', retirePip)
+    return () => {
+      unsubscribe()
+      document.removeEventListener('visibilitychange', syncVisibility)
+      window.removeEventListener('pagehide', retirePip)
+    }
+  }, [retirePip])
 
   useEffect(() => {
     const video = pipVideoRef.current
@@ -152,16 +168,13 @@ export default function TVGuide({
       video.load()
     }
     video.muted = isGateMuted()
-    void video.play().catch(() => retirePip())
-    pipLeaseRef.current = window.setTimeout(retirePip, MAX_PIP_PLAY_MS)
-    const onVisibility = () => { if (document.hidden) retirePip() }
-    document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('pagehide', retirePip)
+    void video.play().catch(() => {
+      // If WebKit has not granted audible autoplay yet, keep the live picture
+      // moving muted. The shared audio gate restores sound after a user gesture.
+      video.muted = true
+      void video.play().catch(() => setPipPlaying(false))
+    })
     return () => {
-      if (pipLeaseRef.current != null) window.clearTimeout(pipLeaseRef.current)
-      pipLeaseRef.current = null
-      document.removeEventListener('visibilitychange', onVisibility)
-      window.removeEventListener('pagehide', retirePip)
       releasePipMedia(video)
     }
   }, [pipPlaying, previewId, retirePip])
@@ -245,10 +258,10 @@ export default function TVGuide({
                 src={clipFor(preview)}
                 autoPlay
                 muted
+                loop
                 playsInline
                 preload="metadata"
                 poster={posterFor(clipFor(preview))}
-                onEnded={retirePip}
               />
             ) : preview ? (
               <img
@@ -266,7 +279,7 @@ export default function TVGuide({
                 onKeyDown={event => event.stopPropagation()}
                 onClick={event => {
                   event.stopPropagation()
-                  if (!document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed) {
+                  if (!document.hidden && PoplurPerformanceManager.snapshot.isForeground) {
                     setPipPlaying(true)
                   }
                 }}

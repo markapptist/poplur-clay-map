@@ -16,6 +16,13 @@ import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 import TabControlRail from './TabControlRail'
 import { useControlSide } from './controlPlacement'
+import {
+  DEFAULT_PROFILE_THEME,
+  applyNativeProfileTheme,
+  onProfileThemeChange,
+  readSelectedProfileTheme,
+  type ProfileTheme,
+} from './profileThemes'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -32,9 +39,21 @@ import { useControlSide } from './controlPlacement'
 // - "Hey Poplur" asks the AI; the reply is shown and spoken (audio-gated).
 
 interface Post {
+  id?: string
   ch: string
   title: string
   video: string
+  poster?: string
+  mediaType?: 'photo' | 'video'
+}
+
+interface NativeProfilePost {
+  id?: string
+  mediaURL?: string
+  posterURL?: string
+  mediaType?: string
+  caption?: string
+  channelId?: string
 }
 
 const POSTS: Post[] = [
@@ -154,6 +173,46 @@ const VISITING_TILE_BY_POP_ID: Record<string, number> = Object.fromEntries(
 // sixteen of them dragged the screen to single-digit fps. Video is for the
 // fullscreen viewer only.
 const posterFor = (video: string) => video.replace('feed/', 'feed/posters/').replace('.mp4', '.jpg')
+const CHANNEL_NUMBER: Record<string, number> = {
+  food: 101, beauty: 103, sports: 104, modelling: 105, fashion: 106,
+  music: 107, tech: 108, news: 109, french: 110, spanish: 111,
+  shopping: 112, cartoon: 113, kids: 114, comedy: 115, live: 117,
+}
+function channelLabel(value: string | undefined): string {
+  const trimmed = value?.trim()
+  if (!trimmed) return 'CH 101'
+  if (/^ch\s+\d+$/i.test(trimmed)) return trimmed.toUpperCase()
+  return `CH ${CHANNEL_NUMBER[trimmed.toLowerCase()] ?? 101}`
+}
+function nativeProfilePost(value: NativeProfilePost): Post | null {
+  const media = value.mediaURL?.trim()
+  if (!media || !/^https:\/\//i.test(media)) return null
+  const declared = value.mediaType?.toLowerCase() ?? ''
+  const mediaType: 'photo' | 'video' = declared.includes('video')
+    || /\.(?:mp4|mov|m4v|webm)(?:[?#]|$)/i.test(media)
+    ? 'video'
+    : 'photo'
+  const poster = value.posterURL?.trim()
+  return {
+    id: value.id?.trim() || media,
+    ch: channelLabel(value.channelId),
+    title: value.caption?.trim() || 'Your pop',
+    video: media,
+    poster: poster && /^https:\/\//i.test(poster) ? poster : undefined,
+    mediaType,
+  }
+}
+function postIsVideo(post: Post): boolean {
+  return post.mediaType === 'video'
+    || (post.mediaType == null && /\.(?:mp4|mov|m4v|webm)(?:[?#]|$)/i.test(post.video))
+}
+function postPoster(post: Post): string {
+  if (post.poster) return post.poster
+  if (!postIsVideo(post)) return post.video
+  if (post.video.startsWith('feed/')) return posterFor(post.video)
+  return 'logo_icon.png'
+}
+const postTileKey = (post: Post, index: number) => `${post.id ?? post.video}-${index}`
 function releaseViewerMedia(video: HTMLVideoElement): void {
   video.pause()
   video.removeAttribute('src')
@@ -528,9 +587,46 @@ export default function ProfileTwin({
   onPostCountChange?: (count: number) => void
 } = {}) {
   const controlSide = useControlSide()
+  const [selectedProfileTheme, setSelectedProfileTheme] = useState<ProfileTheme>(readSelectedProfileTheme)
+  const [failedProfileThemeID, setFailedProfileThemeID] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('media')
   const [activeCall, setActiveCall] = useState<{ who: string; video: boolean } | null>(null)
-  useEffect(() => { onPostCountChange?.(POSTS.length) }, [onPostCountChange])
+  const [uploadedPosts, setUploadedPosts] = useState<Post[]>([])
+  const [uploadedPostsLoaded, setUploadedPostsLoaded] = useState(false)
+  const profilePosts = uploadedPostsLoaded ? uploadedPosts : POSTS
+  const profilePostsRef = useRef(profilePosts)
+  profilePostsRef.current = profilePosts
+  useEffect(() => { onPostCountChange?.(profilePosts.length) }, [onPostCountChange, profilePosts.length])
+
+  useEffect(() => onProfileThemeChange(setSelectedProfileTheme), [])
+
+  // Probe only the selected full-resolution image. The picker uses its own
+  // small JPEGs, so changing ordinary profile state never decodes eight large
+  // backgrounds or remounts the media grid.
+  useEffect(() => {
+    const source = selectedProfileTheme.backgroundSrc
+    if (!source) {
+      setFailedProfileThemeID(null)
+      return
+    }
+    let live = true
+    const probe = new Image()
+    probe.onload = () => { if (live) setFailedProfileThemeID(current => current === selectedProfileTheme.id ? null : current) }
+    probe.onerror = () => { if (live) setFailedProfileThemeID(selectedProfileTheme.id) }
+    probe.src = source
+    return () => { live = false }
+  }, [selectedProfileTheme])
+
+  useEffect(() => {
+    type NativeProfileTheme = { themeID?: string; id?: string }
+    const receive = (event: Event) => {
+      const value = (event as CustomEvent<NativeProfileTheme>).detail
+      setSelectedProfileTheme(applyNativeProfileTheme(value?.themeID ?? value?.id))
+    }
+    window.addEventListener('poplur-native-profile-theme', receive)
+    if (isNativeShell()) postNativeEvent({ type: 'requestProfileTheme' })
+    return () => window.removeEventListener('poplur-native-profile-theme', receive)
+  }, [])
   // Grid tiles lit by the map's "N pops in this area" tap. A few seconds of
   // takeover-pink ring, then the grid goes back to normal.
   const [litTiles, setLitTiles] = useState<Set<number> | null>(null)
@@ -702,6 +798,33 @@ export default function ProfileTwin({
     }
   }, [])
 
+  // The previous web Profile always rendered the seeded POSTS constant, even
+  // though native uploaders had successfully written the owner's real posts to
+  // Firestore. Ask the authenticated shell for a bounded metadata page whenever
+  // this screen mounts; previews stay as <img>s so this does not create a grid
+  // of active video decoders.
+  useEffect(() => {
+    if (!isNativeShell() || viewUser) return
+    type NativeProfilePosts = { posts?: NativeProfilePost[] }
+    const receivePosts = (event: Event) => {
+      const payload = (event as CustomEvent<NativeProfilePosts>).detail
+      const rows = Array.isArray(payload?.posts) ? payload.posts : []
+      const seen = new Set<string>()
+      const normalized = rows.flatMap(row => {
+        const post = nativeProfilePost(row)
+        if (!post || seen.has(post.id ?? post.video)) return []
+        seen.add(post.id ?? post.video)
+        return [post]
+      })
+      setUploadedPosts(normalized)
+      setUploadedPostsLoaded(true)
+      setViewerIdx(null)
+    }
+    window.addEventListener('poplur-native-profile-posts', receivePosts)
+    postNativeEvent({ type: 'requestProfilePosts' })
+    return () => window.removeEventListener('poplur-native-profile-posts', receivePosts)
+  }, [viewUser])
+
   const markTileReady = useCallback((key: string) => {
     setReadyTiles(current => (current.has(key) ? current : new Set(current).add(key)))
   }, [])
@@ -754,7 +877,8 @@ export default function ProfileTwin({
     const video = viewerVideoRef.current
     if (!video || viewerIdx == null || !viewerPlaying || shareOpen) return
     if (!video.getAttribute('src')) {
-      const selected = (mode === 'liked' ? LIKED : POSTS)[viewerIdx % (mode === 'liked' ? LIKED.length : POSTS.length)]
+      const available = mode === 'liked' ? LIKED : profilePostsRef.current
+      const selected = available.length ? available[viewerIdx % available.length] : null
       if (selected) { video.src = selected.video; video.load() }
     }
     // Begin muted so autoplay is deterministic even before WebKit has carried
@@ -875,7 +999,8 @@ export default function ProfileTwin({
         return
       }
       if (viewerIdxRef.current != null) {
-        const posts = modeRef.current === 'liked' ? LIKED : POSTS
+        const posts = modeRef.current === 'liked' ? LIKED : profilePostsRef.current
+        if (!posts.length) return
         setViewerIdx(i => (i == null ? i : ((i + dir) % posts.length + posts.length) % posts.length))
         return
       }
@@ -1475,11 +1600,15 @@ export default function ProfileTwin({
     return onGateChange(apply)
   }, [viewerIdx])
 
-  const posts = mode === 'liked' ? LIKED : POSTS
-  const viewerPost = viewerIdx != null ? posts[viewerIdx % posts.length] : null
+  const posts = mode === 'liked' ? LIKED : profilePosts
+  const viewerPost = viewerIdx != null && posts.length ? posts[viewerIdx % posts.length] : null
+  const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
   // Someone else's profile: their handle, their picture, and none of your own
   // controls (you cannot set another person's photo or read their bell).
   const visiting = Boolean(viewUser)
+  const displayedProfileTheme = visiting || failedProfileThemeID === selectedProfileTheme.id
+    ? DEFAULT_PROFILE_THEME
+    : selectedProfileTheme
   const shownName = viewUser ? viewUser.replace(/^@/, '') : username
   const visitingAvatar = viewUser ? (AVATAR_BY_HANDLE[viewUser] ?? 'mark_talk0.png') : null
 
@@ -1495,6 +1624,28 @@ export default function ProfileTwin({
     }
   }, [capturing, visiting])
 
+  useEffect(() => {
+    if (!isNativeShell() || visiting) return
+    postNativeEvent({
+      type: 'profileThemeChanged',
+      themeID: displayedProfileTheme.id,
+      statusBar: displayedProfileTheme.statusBar,
+    })
+  }, [displayedProfileTheme.id, displayedProfileTheme.statusBar, visiting])
+
+  const profileThemeStyle = {
+    '--profile-theme-foreground': displayedProfileTheme.foreground,
+    '--profile-theme-accent': displayedProfileTheme.primaryAccent,
+    '--profile-theme-accent-secondary': displayedProfileTheme.secondaryAccent,
+  } as React.CSSProperties
+
+  const themeOverlayAlpha = Math.round(displayedProfileTheme.overlayOpacity * 255)
+    .toString(16)
+    .padStart(2, '0')
+  const profileThemeBackground = displayedProfileTheme.backgroundSrc
+    ? `linear-gradient(${displayedProfileTheme.overlayColor}${themeOverlayAlpha}, ${displayedProfileTheme.overlayColor}${themeOverlayAlpha}), url("${displayedProfileTheme.backgroundSrc}")`
+    : undefined
+
   return (
     <>
       {faceAsk && (
@@ -1509,7 +1660,20 @@ export default function ProfileTwin({
           ]}
         />
       )}
-      <section className={styles.profile} data-poplur-screen="profile">
+      <section
+        className={styles.profile}
+        data-poplur-screen="profile"
+        data-profile-theme={displayedProfileTheme.id}
+        data-profile-theme-active={displayedProfileTheme.id === 'default' ? 'false' : 'true'}
+        style={profileThemeStyle}
+      >
+      {profileThemeBackground && (
+        <div
+          className={styles.themeBackdrop}
+          style={{ backgroundImage: profileThemeBackground }}
+          aria-hidden="true"
+        />
+      )}
       <TabControlRail side={controlSide} label="Profile controls">
         {!visiting && (
           <button
@@ -1677,7 +1841,7 @@ export default function ProfileTwin({
             <div className={styles.grid}>
               {posts.map((post, i) => (
                 <button
-                  key={post.video + i}
+                  key={postTileKey(post, i)}
                   className={mode === 'media' && litTiles?.has(i) ? `${styles.tile} ${styles.tileLit}` : styles.tile}
                   onClick={() => { playPop(); setViewerIdx(i) }}
                 >
@@ -1686,23 +1850,23 @@ export default function ProfileTwin({
                     // A cached poster can finish decoding before React attaches
                     // onLoad, so also check `complete` when the node mounts —
                     // otherwise the tile sits empty behind its static forever.
-                    ref={el => { if (el?.complete) markTileReady(`${post.video}-${i}`) }}
-                    className={readyTiles.has(`${post.video}-${i}`) ? `${styles.tilePreview} ${styles.tilePreviewReady}` : styles.tilePreview}
-                    src={posterFor(post.video)}
+                    ref={el => { if (el?.complete) markTileReady(postTileKey(post, i)) }}
+                    className={readyTiles.has(postTileKey(post, i)) ? `${styles.tilePreview} ${styles.tilePreviewReady}` : styles.tilePreview}
+                    src={postPoster(post)}
                     alt=""
                     decoding="async"
                     draggable="false"
-                    onLoad={() => markTileReady(`${post.video}-${i}`)}
+                    onLoad={() => markTileReady(postTileKey(post, i))}
                     // A missing/failed poster must still clear its static, or the
                     // tile stays a black box forever.
-                    onError={() => markTileReady(`${post.video}-${i}`)}
+                    onError={() => markTileReady(postTileKey(post, i))}
                   />
                   {/* …under live TV static, like the feed between signals: a cheap
                       composited CSS noise sweep covers the buffer, fades when the
                       post arrives, then unmounts (no per-tile video decoder). */}
-                  {!staticGone.has(`${post.video}-${i}`) && (
+                  {!staticGone.has(postTileKey(post, i)) && (
                     <span
-                      className={readyTiles.has(`${post.video}-${i}`) ? `${styles.tileStatic} ${styles.tileStaticOut}` : styles.tileStatic}
+                      className={readyTiles.has(postTileKey(post, i)) ? `${styles.tileStatic} ${styles.tileStaticOut}` : styles.tileStatic}
                       aria-hidden="true"
                     />
                   )}
@@ -1821,13 +1985,13 @@ export default function ProfileTwin({
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}
       {viewerPost && (
         <div className={styles.viewer}>
-          {viewerPlaying && !shareOpen ? (
+          {viewerPostIsVideo && viewerPlaying && !shareOpen ? (
             <video
               key={viewerPost.video}
               ref={viewerVideoRef}
               className={styles.viewerVideo}
               src={viewerPost.video}
-              poster={posterFor(viewerPost.video)}
+              poster={postPoster(viewerPost)}
               autoPlay
               muted
               loop
@@ -1837,7 +2001,7 @@ export default function ProfileTwin({
           ) : (
             <img
               className={styles.viewerVideo}
-              src={posterFor(viewerPost.video)}
+              src={viewerPostIsVideo ? postPoster(viewerPost) : viewerPost.video}
               alt=""
               draggable={false}
             />

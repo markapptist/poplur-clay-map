@@ -46,7 +46,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
 import { userUnitsToKm } from './units'
-import ClayMap, { MAP_2D, MAP_LITE, installComposeRadiusPreview, updateComposeRadiusPreview, type PopPin } from './ClayMap'
+import ClayMap, { MAP_2D, MAP_LITE, WeatherMark, installComposeRadiusPreview, updateComposeRadiusPreview, type PopPin } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
@@ -98,6 +98,7 @@ import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
 import ClayMuteButton from './ClayMuteButton'
+import MapLevelButton from './MapLevelButton'
 import styles from './App.module.css'
 
 
@@ -706,6 +707,7 @@ export default function App() {
   const [weather, setWeather] = useState<{ temp: number; code: number } | null>(null)
   const [weatherForecast, setWeatherForecast] = useState<Array<{ date: string; high: number; low: number; code: number }>>([])
   const [weatherOverride, setWeatherOverride] = useState<WeatherMode | null>(null)
+  const [weatherOpen, setWeatherOpen] = useState(false)
   // TEST ONLY: walk day → night → day so both skies can be checked without
   // waiting twelve hours. ?day-cycle=0 turns it off; dev builds only.
   useEffect(() => {
@@ -2717,10 +2719,10 @@ export default function App() {
     return (
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
         <ViewHarness initialView={harnessView} />
-        <VolumeBars />
+        {harnessView !== 'uploadflows' && <VolumeBars />}
         {/* Feed / post / profile get the same centred notices as the map. This
             is the half engagement could never reach as a Mapbox marker. */}
-        <PopupHost />
+        {harnessView !== 'uploadflows' && <PopupHost />}
       </div>
     )
   }
@@ -2734,6 +2736,9 @@ export default function App() {
   }
 
   const weatherMode: WeatherMode = weatherOverride ?? (weather ? modeForCode(weather.code) : 'clear')
+  const weatherIconMarkup = cloudBadge && (weatherMode === 'cloudy' || weatherMode === 'fog')
+    ? `<img src="${cloudBadge}" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain" />`
+    : weatherIconForMode(weatherMode)
 
   return (
     <div className={styles.shell}>
@@ -2761,12 +2766,9 @@ export default function App() {
         dayTime={dayTime}
         weatherMode={weatherMode}
         weatherCloud={cloudBadge}
-        weatherIcon={
-          cloudBadge && (weatherMode === 'cloudy' || weatherMode === 'fog')
-            ? `<img src="${cloudBadge}" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain" />`
-            : weatherIconForMode(weatherMode)
-        }
-        weatherTemp={weather ? `${weather.temp}°${usesFahrenheit() ? 'F' : 'C'}` : null}
+        weatherIcon={weatherIconMarkup}
+        weatherOpen={weatherOpen}
+        onWeatherOpenChange={setWeatherOpen}
         weatherForecast={weatherForecast.map(day => ({
           date: day.date,
           high: day.high,
@@ -2842,6 +2844,22 @@ export default function App() {
           activateOnClick
           onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
         />
+        <MapLevelButton
+          level={popLevel}
+          mode={currentMapMode}
+          menuSide={controlSide}
+          onPick={setPopLevel}
+        />
+        <button
+          type="button"
+          className={styles.mapWeatherToggle}
+          data-open={weatherOpen ? 'true' : 'false'}
+          aria-label={`Current weather: ${weatherMode}${weather ? `, ${weather.temp} degrees ${usesFahrenheit() ? 'Fahrenheit' : 'Celsius'}` : ''}. Show five day forecast`}
+          aria-expanded={weatherOpen}
+          onClick={() => { playPop(0.25); setWeatherOpen(open => !open) }}
+        >
+          <WeatherMark mode={weatherMode} icon={weatherIconMarkup} cloud={cloudBadge} compact />
+        </button>
       </TabControlRail>
       {/* The weather overlay itself: rain, snow, hail, lightning over the map. */}
       <WeatherFX mode={weatherMode} />

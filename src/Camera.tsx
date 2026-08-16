@@ -3,6 +3,7 @@ import CameraRoll from './CameraRoll'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import CameraScanButton from './CameraScanButton'
+import CameraARButton from './CameraARButton'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -142,8 +143,9 @@ type NativeCameraBudget = {
 
 type DeferredCameraAction = 'photo' | 'video' | 'live'
 
-/** The lens preset row above the cube. 0.5× only means glass on iOS (the
- *  dual-wide device); elsewhere it clamps to the range floor. */
+/** The lens preset row above the cube. On a dual-wide iPhone, 0.5× selects
+ *  real ultra-wide glass. Browser cameras expose one sensor, so their 0.5×
+ *  state reveals its uncropped frame instead of silently clamping to 1×. */
 const ZOOM_PRESETS = [0.5, 1, 2] as const
 
 export interface CameraActions {
@@ -181,12 +183,10 @@ type CameraZoomRange = { min: number; max: number; step?: number }
 type ZoomTrackCapabilities = MediaTrackCapabilities & { zoom?: CameraZoomRange }
 type ZoomTrackConstraintSet = MediaTrackConstraintSet & { zoom?: number }
 
-// Native iOS runs the real glass behind the hole, and its dual-wide virtual
-// device can genuinely reach 0.5× — the web must not clamp that away before
-// the bridge sees it. Browser getUserMedia still floors at 1×.
-const FALLBACK_ZOOM_RANGE: CameraZoomRange = NATIVE_CAMERA_PREVIEW
-  ? { min: 0.5, max: 4, step: 0.5 }
-  : { min: 1, max: 4, step: 0.5 }
+// The UI always owns the full preset range. Native iOS maps 0.5× to the
+// dual-wide device; a one-sensor browser uses the uncropped/contained preview
+// fallback. Keeping the UI floor at 0.5 is what makes the preset actionable.
+const FALLBACK_ZOOM_RANGE: CameraZoomRange = { min: 0.5, max: 4, step: 0.5 }
 
 function clampZoom(value: number, range: CameraZoomRange): number {
   return Math.min(range.max, Math.max(range.min, value))
@@ -294,8 +294,18 @@ export default function Camera({
   const [zoom, setZoom] = useState(1)
   const zoomRef = useRef(1)
   const zoomRangeRef = useRef<CameraZoomRange>(FALLBACK_ZOOM_RANGE)
+  // Capability and active path are separate. A browser track may support
+  // hardware zoom from 1× upward while 0.5× still needs the wide-frame CSS
+  // fallback; returning to 1× should re-enable hardware without reacquiring.
+  const hardwareZoomCapabilityRef = useRef(false)
+  const hardwareZoomFloorRef = useRef(1)
   const hardwareZoomRef = useRef(false)
   const [hardwareZoom, setHardwareZoom] = useState(false)
+  // Browsers expose one camera sensor at a time, so they cannot manufacture
+  // the extra scene a physical 0.5x lens sees. Keep a small, static copy of the
+  // current frame behind the contained live feed instead of decoding a second
+  // video stream or leaving black letterboxing.
+  const [wideBackdrop, setWideBackdrop] = useState<string | null>(null)
   // the white bloom of a shutter — and the front camera's flash, which IS the
   // screen going bright
   const [bloom, setBloom] = useState(false)
@@ -544,7 +554,18 @@ export default function Camera({
           stopBroadcast()
         }
         const stream = reusableBroadcastStream ?? await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 1280 } },
+          video: {
+            facingMode: facing,
+            width: { ideal: 1280 },
+            height: { ideal: 1280 },
+            // Preview cadence is the expensive sustained part of capture.
+            // Preserve full frame dimensions while a native shell caps its
+            // sensor/ISP stream at 20fps. Still resolution stays unchanged,
+            // and video remains smooth without paying for unseen 30/60fps.
+            frameRate: NATIVE_SHELL
+              ? { ideal: 20, max: 20 }
+              : { ideal: 30, max: 30 },
+          },
           // Requesting microphone access here made a denied microphone hide an
           // otherwise-authorized camera. Video recording can still proceed
           // with the real camera track when audio is unavailable.
@@ -569,11 +590,13 @@ export default function Camera({
           && Number.isFinite(deviceZoom.max)
           && deviceZoom.max > deviceZoom.min,
         )
-        hardwareZoomRef.current = supportsHardwareZoom
-        setHardwareZoom(supportsHardwareZoom)
+        hardwareZoomCapabilityRef.current = supportsHardwareZoom
+        hardwareZoomFloorRef.current = supportsHardwareZoom && deviceZoom
+          ? Math.max(1, deviceZoom.min)
+          : 1
         zoomRangeRef.current = supportsHardwareZoom && deviceZoom
           ? {
-              min: Math.max(1, deviceZoom.min),
+              min: 0.5,
               max: Math.min(4, deviceZoom.max),
               step: Math.max(0.1, deviceZoom.step ?? 0.5),
             }
@@ -581,10 +604,16 @@ export default function Camera({
         const restoredZoom = clampZoom(zoomRef.current, zoomRangeRef.current)
         zoomRef.current = restoredZoom
         setZoom(restoredZoom)
-        if (supportsHardwareZoom && videoTrack) {
+        const canRestoreHardwareZoom = supportsHardwareZoom
+          && Boolean(videoTrack)
+          && restoredZoom >= hardwareZoomFloorRef.current
+        hardwareZoomRef.current = canRestoreHardwareZoom
+        setHardwareZoom(canRestoreHardwareZoom)
+        if (canRestoreHardwareZoom && videoTrack) {
           void videoTrack.applyConstraints({
             advanced: [{ zoom: restoredZoom } as ZoomTrackConstraintSet],
           }).catch(() => {
+            hardwareZoomCapabilityRef.current = false
             hardwareZoomRef.current = false
             setHardwareZoom(false)
             zoomRangeRef.current = FALLBACK_ZOOM_RANGE
@@ -623,8 +652,11 @@ export default function Camera({
         heldStreamRef.current = null
       }
       streamRef.current = null
+      hardwareZoomCapabilityRef.current = false
+      hardwareZoomFloorRef.current = 1
       hardwareZoomRef.current = false
       setHardwareZoom(false)
+      setWideBackdrop(null)
       setStreamOn(false)
     }
   }, [facing, webCaptureRequired, cameraPermission, streamRequest])
@@ -889,6 +921,20 @@ export default function Camera({
   }, [applyTorch])
   flashOffRef.current = () => setFlashEnabled(false)
 
+  const updateWideBackdrop = useCallback(() => {
+    if (NATIVE_CAMERA_PREVIEW) return
+    const video = videoRef.current
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) return
+    const canvas = document.createElement('canvas')
+    const scale = Math.min(1, 320 / video.videoWidth)
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
+    const context = canvas.getContext('2d')
+    if (!context) return
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+    setWideBackdrop(canvas.toDataURL('image/jpeg', 0.42))
+  }, [])
+
   const applyZoomValue = useCallback((value: number, direction?: 1 | -1) => {
     const range = zoomRangeRef.current
     const next = Math.round(clampZoom(value, range) * 20) / 20
@@ -897,12 +943,22 @@ export default function Camera({
     setZoom(next)
 
     const track = streamRef.current?.getVideoTracks()[0]
-    if (track && hardwareZoomRef.current) {
+    const canUseHardwareZoom = Boolean(
+      track
+      && hardwareZoomCapabilityRef.current
+      && next >= hardwareZoomFloorRef.current,
+    )
+    hardwareZoomRef.current = canUseHardwareZoom
+    setHardwareZoom(canUseHardwareZoom)
+    if (!canUseHardwareZoom && next < 1) updateWideBackdrop()
+    else setWideBackdrop(null)
+    if (track && canUseHardwareZoom) {
       void track.applyConstraints({
         advanced: [{ zoom: next } as ZoomTrackConstraintSet],
       }).catch(() => {
         // Cameras sometimes advertise zoom but reject the constraint. Keep the
         // controls working by switching straight to the crop fallback.
+        hardwareZoomCapabilityRef.current = false
         hardwareZoomRef.current = false
         setHardwareZoom(false)
         zoomRangeRef.current = FALLBACK_ZOOM_RANGE
@@ -914,7 +970,7 @@ export default function Camera({
       value: next,
       direction: direction == null ? undefined : direction > 0 ? 'in' : 'out',
     })
-  }, [])
+  }, [updateWideBackdrop])
 
   const applyZoomStep = useCallback((direction: 1 | -1) => {
     const range = zoomRangeRef.current
@@ -928,6 +984,7 @@ export default function Camera({
     zoomRef.current = 1
     zoomRangeRef.current = FALLBACK_ZOOM_RANGE
     setZoom(1)
+    setWideBackdrop(null)
     setFacing(current => (current === 'user' ? 'environment' : 'user'))
     postNativeEvent({ type: 'cameraControl', control: 'flip' })
     postNativeEvent({ type: 'cameraControl', control: 'zoom', value: 1 })
@@ -1079,7 +1136,10 @@ export default function Camera({
     if (facing === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1) }
     // When the camera cannot perform device zoom, the preview uses a centred
     // crop. Apply the same crop to the saved frame so capture matches framing.
-    const captureZoom = hardwareZoomRef.current ? 1 : zoomRef.current
+    // A fallback 0.5× preview shows the complete source frame; it cannot invent
+    // pixels beyond the sensor. Save that complete frame. Values above 1× keep
+    // using the same centred crop shown in the preview.
+    const captureZoom = hardwareZoomRef.current ? 1 : Math.max(1, zoomRef.current)
     const sourceWidth = video.videoWidth / captureZoom
     const sourceHeight = video.videoHeight / captureZoom
     ctx.drawImage(
@@ -1469,26 +1529,35 @@ export default function Camera({
       style={{ touchAction: real ? 'none' : undefined }}
     >
       {!NATIVE_CAMERA_PREVIEW && real && (
-        <video
-          ref={videoRef}
-          className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
-          style={{
-            objectFit: 'cover',
-            display: streamOn ? '' : 'none',
-            // Device zoom changes the track itself. Unsupported browsers use
-            // this crop fallback; disabling the old drift keeps the requested
-            // zoom stable beneath the HUD.
-            animation: 'none',
-            transform: hardwareZoom
-              ? (facing === 'user' ? 'scaleX(-1)' : undefined)
-              : (facing === 'user' ? `scale(${-zoom}, ${zoom})` : `scale(${zoom})`),
-            transformOrigin: 'center',
-            transition: 'transform 180ms cubic-bezier(.2,.8,.2,1)',
-          }}
-          playsInline
-          muted
-          autoPlay
-        />
+        <>
+          {!hardwareZoom && zoom < 1 && wideBackdrop && (
+            <div
+              className={styles.camWideBackdrop}
+              aria-hidden="true"
+              style={{ backgroundImage: `url(${wideBackdrop})` }}
+            />
+          )}
+          <video
+            ref={videoRef}
+            className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
+            style={{
+              objectFit: !hardwareZoom && zoom < 1 ? 'contain' : 'cover',
+              display: streamOn ? '' : 'none',
+              // Device zoom changes the track itself. Unsupported browsers use
+              // this crop fallback; disabling the old drift keeps the requested
+              // zoom stable beneath the HUD.
+              animation: 'none',
+              transform: hardwareZoom || zoom < 1
+                ? (facing === 'user' ? 'scaleX(-1)' : undefined)
+                : (facing === 'user' ? `scale(${-zoom}, ${zoom})` : `scale(${zoom})`),
+              transformOrigin: 'center',
+              transition: 'transform 180ms cubic-bezier(.2,.8,.2,1)',
+            }}
+            playsInline
+            muted
+            autoPlay
+          />
+        </>
       )}
       {real && (
         <FaceAROverlay
@@ -1563,6 +1632,11 @@ export default function Camera({
           active={detectOn}
           size={44}
           onToggle={() => setDetectOn(!detectOn)}
+        />
+        <CameraARButton
+          active={arOpen}
+          size={44}
+          onToggle={() => setArOpen(open => !open)}
         />
       </TabControlRail>
       {/* ONE persistent AI line. Keep the latest real reading between the

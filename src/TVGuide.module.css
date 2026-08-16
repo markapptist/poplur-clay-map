@@ -12,9 +12,20 @@
   background: #050705;
   color: #fff;
   --guide-green: #4fff40;
+  /* One natural scroll surface. The old nested rows scroller meant a swipe on
+     the large preview area did nothing, which made the guide feel locked. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
 
+.guide::-webkit-scrollbar { display: none; }
+
 .header {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -52,8 +63,8 @@
 
 /* the set owns the whole area above the listings */
 .pipBand {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 0 clamp(250px, 42svh, 430px);
+  min-height: 250px;
   padding: 10px 14px;
   background: rgba(0, 0, 0, 0.5);
 }
@@ -201,6 +212,7 @@
 /* ---- columns ---- */
 
 .columns {
+  flex: none;
   display: flex;
   align-items: center;
   padding: 8px 20px;
@@ -218,16 +230,13 @@
 
 .rows {
   flex: 0 0 auto;
-  max-height: 52%;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   /* The last channels sat behind the cube, which floats above every subscreen.
      Reserve its height so they can scroll clear of it. */
   padding-bottom: calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   background: rgba(0, 0, 0, 0.36);
-  scrollbar-width: none;
 }
-
-.rows::-webkit-scrollbar { display: none; }
 
 .row {
   display: flex;

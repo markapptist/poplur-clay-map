@@ -55,19 +55,28 @@ let raf = 0
 let wakeTimer = 0
 let running = false
 let surfaceFront = true
-let quality: Quality = 3
+// A phone starts one rung below the desktop showcase. Waiting until iOS or
+// Android reports thermal pressure means the enclosure is already warm; the
+// REDUCED policy keeps the authored UI while removing shadows, post-processing
+// and excess framebuffer resolution before heat accumulates.
+const NATIVE_BASELINE_QUALITY: Quality = isNativeShell() ? 2 : 3
+let quality: Quality = NATIVE_BASELINE_QUALITY
 // The JS ladder infers pressure from missed deadlines. Native iOS has the real
 // ProcessInfo thermal state, so it can impose a ceiling before WebKit becomes
 // slow enough for inference to notice. `fair` already means the phone is warm;
 // decorative motion should be gone by then, not after serious throttling.
 let nativeThermalCeiling: Quality = 3
+// Native policy carries thermal, battery-saver and lifecycle decisions from
+// the host. Keep its own baseline as a hard ceiling so the JS comfort ladder
+// cannot silently promote a physical phone back to desktop FULL quality.
+let nativePolicyCeiling: Quality = NATIVE_BASELINE_QUALITY
 let powerSavingCeiling: Quality = 3
 let memoryPressureCeiling: Quality = 3
 let boostUntil = 0
 // This gate does NOT hide or pause the visible screen. It retires only ambient
 // decoration and Mapbox's already-settled renderer, preserving its last frame.
-// The tiny tab navigator owns a separate foreground display clock, so the globe
-// and live tilt remain 60fps while the city/weather/traffic stop burning power.
+// The tab navigator has its own event-driven budget, so it can still react to
+// tilt without keeping the rest of the document awake.
 const AMBIENT_IDLE_MS = isNativeShell() ? 2_000 : 15_000
 let ambientAwakeUntil = typeof performance !== 'undefined'
   ? performance.now() + AMBIENT_IDLE_MS
@@ -100,7 +109,12 @@ let managedOperationUntil = 0
 let managedOperationTimer = 0
 
 function effectiveQualityCeiling(): Quality {
-  return Math.min(nativeThermalCeiling, powerSavingCeiling, memoryPressureCeiling) as Quality
+  return Math.min(
+    nativeThermalCeiling,
+    nativePolicyCeiling,
+    powerSavingCeiling,
+    memoryPressureCeiling,
+  ) as Quality
 }
 
 function interacting(): boolean {
@@ -253,13 +267,11 @@ function median(xs: number[]): number {
 }
 
 function setQuality(next: Quality) {
-  // Never make the page in the user's hand look worse as a heat response. The
-  // active screen has exclusive ownership now, so it keeps its authored FULL
-  // policy; background/covered documents still accept the defensive ceiling
-  // while they tear down and purge caches.
-  const bounded = surfaceFront && (typeof document === 'undefined' || !document.hidden)
-    ? 3
-    : Math.min(next, effectiveQualityCeiling()) as Quality
+  // A ceiling must remain a ceiling while the screen is visible. The previous
+  // foreground exception forced every active phone back to FULL and defeated
+  // native thermal, low-power, memory and missed-frame responses precisely
+  // while the expensive work was on screen.
+  const bounded = Math.min(next, effectiveQualityCeiling()) as Quality
   if (bounded === quality) return
   quality = bounded
   intervals.length = 0
@@ -459,8 +471,47 @@ if (typeof document !== 'undefined') {
       if (surfaceFront && !document.hidden) wakeAmbient()
     }
   }
+  const applyNativePolicy = (raw: unknown) => {
+    const payload = typeof raw === 'object' && raw
+      ? ('policy' in raw && typeof (raw as { policy?: unknown }).policy === 'object'
+          ? (raw as { policy: Record<string, unknown> }).policy
+          : raw as Record<string, unknown>)
+      : null
+    const mode = String(payload?.mode ?? '').toLowerCase().replace('-', '_')
+    if (!mode) return
+
+    const previousCeiling = effectiveQualityCeiling()
+    const active = payload?.active
+    nativePolicyCeiling = active === false
+      ? 0
+      : mode === 'emergency'
+        ? 0
+        : mode === 'low_power' || mode === 'lowpower'
+          ? 0
+          : mode === 'reduced'
+            ? 1
+            : 2
+    document.documentElement.dataset.poplurPerformanceMode = mode
+    const nextCeiling = effectiveQualityCeiling()
+    if (quality > nextCeiling) setQuality(nextCeiling)
+    if (nextCeiling < 2) {
+      sleepAmbient()
+    } else if (previousCeiling < 2) {
+      // Cooling recovery is gradual. Native FULL still means the phone's cool
+      // baseline (quality 2), never the desktop-only quality 3 rung.
+      setQuality(2)
+      if (surfaceFront && !document.hidden) wakeAmbient()
+    }
+    sync()
+  }
   window.addEventListener('poplur-native-thermal', event => {
     applyNativeThermal((event as CustomEvent).detail)
+  })
+  window.addEventListener('poplur-performance-policy', event => {
+    applyNativePolicy((event as CustomEvent).detail)
+  })
+  window.addEventListener('poplur-performance', event => {
+    applyNativePolicy((event as CustomEvent).detail)
   })
   window.addEventListener(MANAGED_RENDERING_OPERATION_EVENT, event => {
     const detail = (event as CustomEvent<{ durationMs?: unknown }>).detail
@@ -468,7 +519,10 @@ if (typeof document !== 'undefined') {
   })
   window.addEventListener('message', event => {
     if (event.data?.type === 'poplur-native-thermal') applyNativeThermal(event.data)
+    if (event.data?.type === 'poplur-native-performance-policy') applyNativePolicy(event.data)
   })
+  const bootMode = document.documentElement.dataset.poplurPerformanceMode
+  if (bootMode) applyNativePolicy({ mode: bootMode })
   document.addEventListener('visibilitychange', onVisibility)
   wakeAmbient()
 }

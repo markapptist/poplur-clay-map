@@ -1,0 +1,509 @@
+.workspace {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  grid-template-columns: 304px minmax(0, 1fr);
+  overflow: hidden;
+  background: #101114;
+  color: #f7f7f8;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+}
+
+.sidebar {
+  min-width: 0;
+  overflow: auto;
+  padding: 22px 16px;
+  border-right: 1px solid #2c2e34;
+  background: #16171b;
+}
+
+.heading span,
+.previewHeader span {
+  color: #f5489e;
+  font: 800 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.heading h1,
+.previewHeader h2 {
+  margin: 5px 0 0;
+  letter-spacing: 0;
+}
+
+.heading h1 { font-size: 24px; }
+
+.flowTabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  margin: 22px 0 14px;
+  padding: 3px;
+  border: 1px solid #34363c;
+  border-radius: 7px;
+  background: #0e0f12;
+}
+
+.flowTabs button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #aeb1ba;
+  font: 750 12px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.flowTabs .flowActive {
+  background: #f5489e;
+  color: #16050d;
+}
+
+.screenList {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.screenList button {
+  width: 100%;
+  min-height: 53px;
+  display: grid;
+  grid-template-columns: 29px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #d8dae0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.screenList button:hover { background: #1d1f24; }
+
+.screenList .screenActive {
+  border-color: #4a4d56;
+  background: #25272d;
+  color: #fff;
+}
+
+.screenList b {
+  color: #777b86;
+  font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.screenList span { min-width: 0; display: grid; gap: 4px; }
+.screenList strong { font-size: 13px; letter-spacing: 0; }
+.screenList small { overflow: hidden; color: #8f939e; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.screenList em { padding: 3px 5px; border-radius: 4px; background: #7b341d; color: #ffd5c5; font: 800 9px/1 ui-monospace, monospace; font-style: normal; }
+
+.previewArea {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 20px 24px 24px;
+  overflow: hidden;
+}
+
+.previewHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 20px;
+  max-width: 740px;
+  width: 100%;
+  margin: 0 auto 14px;
+}
+
+.previewHeader h2 { font-size: 22px; }
+.previewHeader p { margin: 0; color: #9296a0; font-size: 12px; text-align: right; }
+
+.previewTools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.previewTools button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #4a4d56;
+  border-radius: 6px;
+  background: #202228;
+  color: #c6c9d1;
+  font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+
+.previewTools button:hover { border-color: #747985; color: #fff; }
+
+.previewTools .motionLabActive {
+  border-color: #f5489e;
+  background: #f5489e;
+  color: #17060f;
+}
+
+.device {
+  min-height: 0;
+  height: min(100%, 844px);
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: 390 / 844;
+  box-sizing: border-box;
+  align-self: center;
+  justify-self: center;
+  padding: 9px;
+  border: 1px solid #41444d;
+  border-radius: 32px;
+  background: #050506;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.46);
+}
+
+.deviceViewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 24px;
+  background: #050506;
+  --poplur-app-height: 100%;
+}
+
+.deviceViewport > iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #050506;
+}
+
+.captureReview,
+.statusScreen,
+.postedScreen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #fff7fb;
+  background: #08070a;
+}
+
+.captureReview > img,
+.statusScreen > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.captureShade,
+.statusShade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(5, 4, 7, 0.62) 0%, transparent 27%),
+    linear-gradient(0deg, rgba(5, 4, 7, 0.96) 0%, rgba(5, 4, 7, 0.22) 48%, transparent 70%);
+}
+
+.flowBrand {
+  position: absolute;
+  z-index: 2;
+  top: 24px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8de9ff;
+  font: 900 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.4px;
+  text-shadow: 0 0 12px rgba(68, 205, 239, 0.55);
+}
+
+.flowBrand img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.62));
+}
+
+.captureTitle {
+  position: absolute;
+  z-index: 2;
+  left: 20px;
+  right: 20px;
+  bottom: 122px;
+  display: grid;
+  gap: 7px;
+  text-shadow: 0 3px 16px #000;
+}
+
+.captureTitle span {
+  color: #8de9ff;
+  font: 900 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.3px;
+}
+.captureTitle strong { font-size: 27px; line-height: 1; letter-spacing: 0; }
+
+.captureActions {
+  position: absolute;
+  z-index: 2;
+  left: 20px;
+  right: 20px;
+  bottom: 22px;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.captureActions button {
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 202, 229, 0.28);
+  border-radius: 8px;
+  color: #fff9fc;
+  font: 900 13px/1 system-ui, sans-serif;
+  cursor: pointer;
+  box-shadow:
+    0 6px 0 #09070b,
+    0 13px 24px rgba(0, 0, 0, 0.46),
+    inset 0 2px 1px rgba(255, 255, 255, 0.12),
+    inset 0 -5px 9px rgba(0, 0, 0, 0.36);
+}
+
+.captureActions button b {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  font: 950 20px/1 system-ui, sans-serif;
+  box-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.25), inset 0 -3px 5px rgba(0, 0, 0, 0.38);
+}
+
+.captureActions button:active { transform: translateY(4px); box-shadow: 0 2px 0 #09070b, inset 0 2px 6px rgba(0, 0, 0, 0.42); }
+
+.redoButton { background: linear-gradient(155deg, #302b34, #17141b); }
+.redoButton b { background: #17141b; color: #8de9ff; }
+.captureActions .keepButton {
+  border-color: rgba(255, 127, 191, 0.74);
+  background: linear-gradient(155deg, #f84f9f 0%, #c40d68 62%, #7f0b49 100%);
+}
+.keepButton b { background: #a30958; color: #d8ffe3; }
+
+.progressPanel {
+  position: absolute;
+  z-index: 2;
+  left: 22px;
+  right: 22px;
+  bottom: 42px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(255, 127, 191, 0.58);
+  border-radius: 8px;
+  background: linear-gradient(155deg, rgba(51, 21, 42, 0.96), rgba(12, 11, 15, 0.96));
+  box-shadow:
+    0 7px 0 #250b1b,
+    0 18px 36px rgba(0, 0, 0, 0.52),
+    inset 0 2px 1px rgba(255, 255, 255, 0.12),
+    inset 0 -7px 12px rgba(0, 0, 0, 0.34);
+}
+
+.progressHeading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.progressHeading span { color: #ff85c0; font: 900 9px/1 ui-monospace, monospace; letter-spacing: 1px; }
+.progressHeading strong { color: #8de9ff; font: 950 25px/1 system-ui, sans-serif; text-shadow: 0 0 12px rgba(78, 210, 240, 0.48); }
+.progressPanel p { margin: 0; color: rgba(255, 235, 246, 0.7); font: 800 10px/1 ui-monospace, monospace; letter-spacing: .7px; }
+.progressTrack {
+  height: 17px;
+  overflow: hidden;
+  padding: 4px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 216, 235, 0.2);
+  border-radius: 8px;
+  background: #0b090d;
+  box-shadow: inset 0 4px 7px rgba(0, 0, 0, 0.72), 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.progressTrack i {
+  display: block;
+  width: 64%;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #f84f9f, #8de9ff);
+  box-shadow: 0 0 12px rgba(248, 79, 159, 0.62);
+}
+
+.postedScreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 37%, rgba(74, 210, 239, 0.16), transparent 25%),
+    radial-gradient(circle at 50% 43%, rgba(245, 72, 158, 0.2), transparent 42%),
+    #09080b;
+}
+
+.postedEmblem {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  margin-bottom: 18px;
+}
+
+.postedEmblem img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.55));
+}
+
+.postedMark {
+  position: absolute;
+  right: -3px;
+  bottom: 3px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #a5ffc1;
+  border-radius: 50%;
+  color: #dfffea;
+  background: #137943;
+  font-size: 20px;
+  font-weight: 950;
+  box-shadow: 0 5px 0 #084b28, 0 0 16px rgba(91, 255, 151, 0.4);
+}
+
+.postedEyebrow { color: #8de9ff; font: 900 9px/1 ui-monospace, monospace; letter-spacing: 1.8px; }
+.postedScreen h2 { margin: 8px 0 4px; font-size: 31px; line-height: 1; letter-spacing: 0; }
+.postedScreen p { margin: 0; color: #ff8fc5; font: 900 11px/1 ui-monospace, monospace; letter-spacing: 1px; }
+.postedRadius {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 22px;
+  padding: 12px 18px;
+  border: 1px solid rgba(255, 128, 190, 0.45);
+  border-radius: 8px;
+  background: linear-gradient(155deg, #301426, #121015);
+  box-shadow: 0 6px 0 #210a19, inset 0 2px 1px rgba(255, 255, 255, 0.1);
+}
+.postedRadius b { color: #8de9ff; font: 950 27px/1 system-ui, sans-serif; }
+.postedRadius span { color: #fff4fa; font: 850 11px/1 system-ui, sans-serif; }
+.postedScreen small { margin-top: 18px; color: #9da1ab; font-size: 11px; font-weight: 700; }
+
+/* Upload uses the approved real clay globe loader as its base. The completion
+   dialog stays over this scene so success feels like the upload resolving,
+   rather than an unrelated replacement page. */
+.globeUpload {
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(141,233,255,.3), transparent 32%),
+    linear-gradient(180deg, #1f6bff, #7535c6 54%, #f52e92);
+}
+
+.uploadDotMap { position: absolute; inset: 0; z-index: 0; opacity: .48; background: radial-gradient(circle,#d9e7ff 0 2px,transparent 2.5px) 9px 11px/18px 18px; mask-image: radial-gradient(ellipse 44% 26% at 25% 30%,#000 0 72%,transparent 74%),radial-gradient(ellipse 52% 30% at 74% 38%,#000 0 72%,transparent 74%),radial-gradient(ellipse 28% 34% at 55% 67%,#000 0 72%,transparent 74%); }
+.uploadGlobeModel { position: absolute; z-index: 3; left: 50%; top: 42%; width: 246px; height: 300px; transform: translate(-50%,-50%); --poster-color: transparent; filter: drop-shadow(0 18px 24px rgba(10,18,92,.46)); }
+
+.uploadWordmark {
+  position: absolute;
+  z-index: 8;
+  top: 25px;
+  left: 50%;
+  width: 78%;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+}
+
+.uploadWordmark img { width: min(230px, 78%); height: 54px; object-fit: contain; filter: drop-shadow(0 7px 10px rgba(11,24,92,.38)); }
+.uploadWordmark span { color: #fff4fa; font: 950 9px/1 ui-monospace,monospace; letter-spacing: 1.7px; text-shadow: 0 2px 8px rgba(9,18,76,.62); }
+
+.globeProgress {
+  position: absolute;
+  z-index: 8;
+  left: 24px;
+  right: 24px;
+  bottom: 44px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 2px solid rgba(255,215,237,.72);
+  border-radius: 9px;
+  background: linear-gradient(155deg, rgba(93,17,66,.94), rgba(26,12,55,.95));
+  box-shadow: 0 7px 0 #39103b, 0 18px 34px rgba(8,12,67,.4), inset 0 2px 1px rgba(255,255,255,.22), inset 0 -6px 10px rgba(20,4,37,.35);
+}
+
+.globeProgress > p { min-height: 28px; margin: 0; color: #fff5fa; font: 850 13px/1.2 system-ui,sans-serif; text-align: center; animation: uploadCopyIn .35s ease both; }
+.clayProgressTrack { height: 20px; overflow: hidden; padding: 4px; box-sizing: border-box; border: 1px solid rgba(255,224,241,.5); border-radius: 7px; background: #160a29; box-shadow: inset 0 4px 7px rgba(0,0,0,.62), 0 2px 0 rgba(255,255,255,.15); }
+.clayProgressTrack i { display: block; width: 64%; height: 100%; border-radius: 4px; background: repeating-linear-gradient(45deg,#ffe1f1 0 13px,#ff86c4 13px 26px,#f53c99 26px 39px); background-size: 56px 56px; box-shadow: inset 0 2px 2px rgba(255,255,255,.5), 0 0 12px rgba(245,60,153,.55); animation: clayBarber .7s linear infinite; }
+
+.postedOverlay { position: absolute; inset: 0; z-index: 12; display: grid; place-items: center; padding: 22px; background: rgba(8,8,18,.38); backdrop-filter: blur(4px); }
+.postedPopup { position: relative; z-index: 2; width: min(286px, 100%); box-sizing: border-box; display: grid; justify-items: center; padding: 22px 18px 18px; border: 2px solid rgba(255,172,216,.84); border-radius: 10px; color: #fff; text-align: center; background: radial-gradient(circle at 50% 0,rgba(255,117,184,.34),transparent 34%),linear-gradient(155deg,#4f1239,#160d28); box-shadow: 0 9px 0 #490d35, 0 25px 55px rgba(17,7,44,.58), inset 0 2px 1px rgba(255,255,255,.22); animation: postedPop .48s cubic-bezier(.17,.86,.32,1.28) both; }
+.postedPopup > img { width: 92px; height: 92px; object-fit: contain; filter: drop-shadow(0 13px 18px rgba(0,0,0,.42)); }
+.postedPopup h2 { margin: 8px 0 5px; font: 950 27px/1 system-ui,sans-serif; letter-spacing: 0; }
+.postedPopup > p { margin: 0; color: #ff91c8; font: 950 10px/1 ui-monospace,monospace; letter-spacing: 1px; }
+.postedPopup > small { margin-top: 12px; color: #c8c3cf; font: 750 10px/1.2 system-ui,sans-serif; }
+.postedLine { animation: postedLinePop .38s cubic-bezier(.16,.9,.3,1.3) both; }
+.postedPopup > .postedLine:nth-of-type(1) { animation-delay: .24s; }
+.postedPopup > h2.postedLine { animation-delay: .42s; }
+.postedPopup > p.postedLine { animation-delay: .58s; }
+.postedPopup > .postedRadius.postedLine { animation-delay: .74s; }
+.postedPopup > small.postedLine { animation-delay: .9s; }
+
+.resetCube { width: 126px; margin-top: 15px; padding: 0; border: 0; color: #fff; background: none; font: 950 8px/1 ui-monospace,monospace; letter-spacing: .9px; }
+.resetCube img { width: 102px; height: 82px; display: block; margin: 0 auto 4px; object-fit: contain; filter: drop-shadow(0 9px 8px rgba(0,0,0,.45)); transition: transform .22s ease; }
+.resetCube:active img { transform: scale(.88) rotate(-7deg); }
+
+.celebrationConfetti { position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; }
+.celebrationConfetti i { --n: var(--piece); position: absolute; top: -20px; width: 9px; height: 14px; border-radius: 2px; animation-name: celebrateFall; animation-timing-function: linear; animation-iteration-count: infinite; }
+
+/* Angled live map with real terrain takeover paint. Slider changes are sent
+   into Mapbox, where the ground, roads, parks and 3D buildings inside the
+   territory are recoloured. There is deliberately no parent-level circle. */
+.locationRadius { position: absolute; inset: 0; overflow: hidden; background: #d7d6dc; }
+.locationRadius > iframe { width: 100%; height: 100%; border: 0; background: #d7d6dc; }
+.radiusPicker { position: absolute; z-index: 29; left: 50%; right: auto; top: auto; bottom: clamp(126px,20vh,170px); width: min(188px,48vw); transform: translateX(-50%); display: grid; gap: 4px; padding: 0; border: 0; color: #fff; background: transparent; filter: drop-shadow(0 4px 7px rgba(20,4,15,.72)); }
+.radiusPicker > span { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.radiusPicker b { color: var(--radius-fill-b,#ff90c7); font: 950 8px/1 ui-monospace,monospace; letter-spacing: .75px; text-shadow: 0 2px 2px #260316,0 0 7px var(--radius-face,#f63b9a); -webkit-text-stroke: .4px rgba(35,7,30,.88); paint-order: stroke fill; }
+.radiusPicker strong { color: var(--radius-fill-a,#ffe1f1); font: 950 16px/1 system-ui,sans-serif; text-shadow: 0 2px 2px #151119,0 0 9px var(--radius-face,#f63b9a); -webkit-text-stroke: .65px rgba(12,8,14,.92); paint-order: stroke fill; }
+.radiusControl { position: relative; height: 30px; margin: 0 -2px; touch-action: none; cursor: ew-resize; outline: none; -webkit-tap-highlight-color: transparent; }
+.radiusControl:focus-visible .radiusRail { box-shadow: inset 0 2px 2px rgba(255,255,255,.58),inset 0 -2px 4px rgba(140,18,74,.5),inset 0 2px 5px rgba(0,0,0,.82),0 0 0 2px rgba(255,255,255,.92),0 0 18px rgba(244,59,153,.68); }
+.radiusRail { position: absolute; left: 11px; right: 11px; top: 50%; height: 12px; margin-top: -6px; overflow: hidden; border-radius: 8px; background-image: linear-gradient(90deg,transparent 0 var(--radius-progress,0%),#17131a var(--radius-progress,0%) 100%),repeating-linear-gradient(45deg,var(--radius-fill-a,#ffe1f1) 0 12px,var(--radius-fill-b,#ff86c4) 12px 23px,var(--radius-fill-c,#f53c99) 23px 34px); background-size: 100% 100%,48px 48px; background-repeat: no-repeat,repeat; box-shadow: inset 0 2px 2px rgba(255,255,255,.55),inset 0 -2px 3px rgba(45,24,40,.5),inset 0 2px 4px rgba(0,0,0,.85),0 0 0 1px var(--radius-face,#f63b9a),0 0 12px var(--radius-face,#f63b9a); animation: radiusBarber .7s linear 3; pointer-events: none; }
+.radiusOrb { position: absolute; top: 50%; width: 22px; height: 22px; box-sizing: border-box; transform: translate(-50%,-50%); border: 2px solid #fff; border-radius: 50%; background: radial-gradient(circle at 35% 27%,#fff 0 18%,#fafafa 20% 48%,#e3e3e3 68%,#a9a9ad 100%); box-shadow: inset 0 2px 3px rgba(255,255,255,.98),inset -2px -3px 4px rgba(91,91,101,.32),0 2px 0 rgba(60,8,38,.75),0 5px 9px rgba(0,0,0,.48),0 0 10px rgba(255,255,255,.64); pointer-events: none; will-change: left; }
+.radiusControl:active .radiusOrb { transform: translate(-50%,-50%) scale(.92); }
+
+@keyframes uploadCopyIn { from { opacity: 0; transform: translateY(6px); } }
+@keyframes clayBarber { to { background-position: -56px 0; } }
+@keyframes radiusBarber { to { background-position: 0 0,-62px 0; } }
+@keyframes postedPop { from { opacity: 0; transform: scale(.55); } }
+@keyframes postedLinePop { from { opacity: 0; transform: translateY(12px) scale(.86); } }
+@keyframes celebrateFall { to { transform: translate3d(28px,920px,0) rotate(620deg); } }
+
+@media (max-width: 760px) {
+  .workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .sidebar { overflow: hidden; padding: 10px 12px; border-right: 0; border-bottom: 1px solid #2c2e34; }
+  .heading { display: none; }
+  .flowTabs { margin: 0 0 7px; }
+  .screenList { grid-auto-flow: column; grid-auto-columns: minmax(112px, 0.75fr); overflow-x: auto; }
+  .screenList button { min-height: 44px; grid-template-columns: 22px minmax(0, 1fr) auto; padding: 5px 7px; }
+  .screenList small { display: none; }
+  .previewArea { padding: 9px 8px 12px; }
+  .previewHeader { margin-bottom: 7px; }
+  .previewHeader p { display: none; }
+  .previewHeader h2 { font-size: 17px; }
+  .previewTools { gap: 6px; }
+  .previewTools button { min-height: 30px; padding-inline: 8px; font-size: 10px; }
+  .device { width: auto; height: 100%; max-width: 100%; }
+}

@@ -13,6 +13,53 @@
   container-type: size;
 }
 
+/* A selected theme is one fixed layer behind the existing profile UI. It does
+   not live in the scroll/grid tree, so scrolling and tab changes neither
+   duplicate nor re-decode it. The inline background includes the manifest
+   overlay between the image and controls. */
+.themeBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.profile[data-profile-theme-active="true"] .username,
+.profile[data-profile-theme-active="true"] .modeLabel,
+.profile[data-profile-theme-active="true"] .modeOn .modeLabel {
+  color: var(--profile-theme-foreground);
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  -webkit-text-fill-color: currentColor;
+  filter:
+    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.78))
+    drop-shadow(0 0 7px rgba(0, 0, 0, 0.35));
+  animation: none;
+}
+
+.profile[data-profile-theme-active="true"] .mode { color: color-mix(in srgb, var(--profile-theme-foreground) 68%, transparent); }
+.profile[data-profile-theme-active="true"] .modeOn { color: var(--profile-theme-foreground); }
+.profile[data-profile-theme-active="true"] .modeOn i {
+  background: linear-gradient(90deg, var(--profile-theme-accent), var(--profile-theme-accent-secondary));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--profile-theme-accent) 55%, transparent);
+}
+
+.profile[data-profile-theme-active="true"] .avatarFrame {
+  background: linear-gradient(120deg, var(--profile-theme-accent-secondary), var(--profile-theme-accent), #fff8fc, var(--profile-theme-accent));
+  background-size: 320% 320%;
+}
+
+@media (prefers-contrast: more) {
+  .profile[data-profile-theme-active="true"] .username,
+  .profile[data-profile-theme-active="true"] .modeLabel {
+    filter: drop-shadow(0 0 2px #000) drop-shadow(0 0 5px #000);
+  }
+}
+
 .header {
   position: absolute;
   top: 110px;

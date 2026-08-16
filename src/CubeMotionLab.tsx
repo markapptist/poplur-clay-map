@@ -68,19 +68,25 @@ export default function CubeMotionLab() {
 
   const tiltX = (roll / MAX_ROLL_RADIANS) * 38
   const tiltY = (pitch / MAX_PITCH_RADIANS) * 38
+  const rollDegrees = Math.round((roll / Math.PI) * 180)
+  const pitchDegrees = Math.round((pitch / Math.PI) * 180)
 
   return (
     <aside className={styles.lab} aria-label="Cube motion lab">
       <div className={styles.heading}>
-        <span>MOTION LAB</span>
+        <span>ACCELEROMETER</span>
         <button type="button" className={styles.reset} onClick={reset}>Reset</button>
+      </div>
+      <div className={styles.readout} aria-live="polite">
+        <span>ROLL <output>{rollDegrees}°</output></span>
+        <span>PITCH <output>{pitchDegrees}°</output></span>
       </div>
       <div
         ref={padRef}
         className={styles.pad}
         role="slider"
         aria-label="Simulated phone tilt"
-        aria-valuetext={`Roll ${Math.round((roll / Math.PI) * 180)} degrees, pitch ${Math.round((pitch / Math.PI) * 180)} degrees`}
+        aria-valuetext={`Roll ${rollDegrees} degrees, pitch ${pitchDegrees} degrees`}
         tabIndex={0}
         onPointerDown={event => {
           trackingRef.current = event.pointerId

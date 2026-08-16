@@ -1,9 +1,8 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import styles from './HoldMenuTwin.module.css'
 import { playPop, primePopAudio } from './pop'
 import type { CubeTab } from './CubeTab3D'
 import ClayCornerButton from './ClayCornerButton'
-import { isDetectOn, onCameraStore } from './cameraStore'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
@@ -31,12 +30,11 @@ interface Item {
   screen: string
   format?: 'png' | 'svg'
   preview?: boolean
-  toggle?: 'tour' | 'captions' | 'detection'
   activeTitle?: string
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'share' | 'captions' | 'profile' | 'photo' | 'video' | 'roll' | 'detect' | 'ar' | 'live'
+  action?: 'like' | 'comment' | 'share' | 'profile' | 'photo' | 'video' | 'roll' | 'live'
   /** drawn as letters instead of an icon file */
   glyph?: string
   /**
@@ -60,15 +58,12 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   // Rough Copy capture any more — a tile that shows you a picture of search
   // is not search.
   map: [
-    { icon: 'Search', title: 'SEARCH', screen: 'map-search', mapAction: 'search' },
-    { icon: 'Search', title: 'CURRENT LOCATION', screen: 'map-locate', mapAction: 'locate' },
     // The RADIO subscreen is back (station deck, real geo-searched stations) —
     // what stayed removed is the radio woven into the map experience itself
     // (tour beds, stingers, ticker readout). The AI voice remains the map's
     // own narrator; the radio is a destination you tune deliberately.
     { icon: 'Music', title: 'RADIO', screen: 'map-radio', native: true },
     { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true, glyph: '✓' },
-    { icon: 'MapMode', title: '2D MAP', activeTitle: '3D MAP', screen: 'map-mode', mapAction: 'mapMode', glyph: '2D' },
     { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
@@ -78,11 +73,11 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
     { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
-    { icon: 'CC', title: 'CC ON', activeTitle: 'CC OFF', toggle: 'captions', screen: 'feed-cc', format: 'svg', action: 'captions' },
   ],
   post: [
-    // PHOTO and VIDEO act on the camera behind the menu. PHOTO is also the
-    // tab's default favourite, so the cube shoots without visiting the menu.
+    // PHOTO and VIDEO select which physical camera object the navigator wears.
+    // The object itself remains the shutter: tap the photo camera to shoot, or
+    // tap the camcorder to start/stop recording. PHOTO is the default mode.
     { icon: 'Create', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
     // VIDEO has its own cube now. It used to borrow TVGuide's mark, which meant
     // the two tiles were indistinguishable in the wheel — and it also meant the
@@ -94,12 +89,9 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // Going live is an act, not a screen: the broadcast starts on the camera
     // you are already looking through and lands in the feed's LIVE channel.
     { icon: 'YouTube', title: 'LIVE', screen: 'camera-live', action: 'live' },
-    // AR had a borrowed games icon that said nothing about filters. The letters
-    // ARE the icon now — that is what the feature is called on every camera.
-    { icon: 'AR', title: 'AR', screen: 'camera-capture', glyph: 'AR', action: 'ar' },
-    // The tile names what pressing it DOES, like CC does: with the model
-    // running it reads DETECT OFF, and with it stopped, DETECT ON.
-    { icon: 'Search', title: 'DETECT ON', activeTitle: 'DETECT OFF', toggle: 'detection', screen: 'camera-capture', action: 'detect' },
+    // ML scan and AR are persistent camera-side controls. They do not belong
+    // in the hold menu, where they duplicate controls that remain visible on
+    // the live viewfinder.
     // CREATE opens the existing Poplur AI chat. iOS presents the native
     // PoplurAIChatView; browser and Android use its interactive shared twin.
     { icon: 'Create', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
@@ -180,13 +172,6 @@ const FRICTION = 0.955
 const MAX_VELOCITY = 16
 const SNAP_VELOCITY = 0.9
 const CENTER_Y_FRAC = 0.46
-type HoldMenuState = { tour: boolean; captions: boolean; detection: boolean }
-// ML detection ships ON: the native viewfinder has it running from the moment
-// it opens, so the tile's job is to turn it OFF.
-let persistedMenuState: HoldMenuState = {
-  tour: false, captions: true, detection: true,
-}
-
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
 // The favourite is what a plain cube TAP fires for this tab — set it by
@@ -194,7 +179,16 @@ const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), lim
 export function favouriteKey(tab: CubeTab) { return `poplur.holdFavourite.${tab}` }
 
 export function readFavourite(tab: CubeTab): string | null {
-  try { return window.localStorage.getItem(favouriteKey(tab)) } catch { return null }
+  try {
+    const value = window.localStorage.getItem(favouriteKey(tab))
+    // CC moved to Feed's permanent side rail. Clear the retired favourite so
+    // a cube tap never fires an invisible hold-menu action.
+    if (tab === 'feed' && (value === 'CC ON' || value === 'CC OFF')) {
+      window.localStorage.removeItem(favouriteKey(tab))
+      return null
+    }
+    return value
+  } catch { return null }
 }
 
 export default function HoldMenuTwin({
@@ -209,6 +203,7 @@ export default function HoldMenuTwin({
   currentFeedChannelId,
   onTuneFeedChannel,
   onSubscreenChange,
+  onFavouriteChange,
   bindGoBack,
   bindArrows,
 }: {
@@ -228,6 +223,9 @@ export default function HoldMenuTwin({
   onTuneFeedChannel?: (channelId: string) => void
   /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the app */
   onSubscreenChange?: (open: boolean, screen?: string) => void
+  /** Reports a newly pinned cube-tap action so Camera can show the matching
+      physical camera or camcorder before the next tap. */
+  onFavouriteChange?: (title: string) => void
   /** Registers a "back one level" handler: closes an open subscreen, else the
       menu itself. The cube calls it so there is always a way out. */
   bindGoBack?: (fn: (() => boolean) | null) => void
@@ -235,11 +233,7 @@ export default function HoldMenuTwin({
       the tab's subscreens instead of the screen buried underneath them. */
   bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
 }) {
-  // The item set is fixed to the tab the menu was opened from. The three
-  // mutable controls retain their current state while the wheel is open.
-  const [menuState, setMenuState] = useState(persistedMenuState)
-  // The camera owns whether the model is running; the tile only reports it.
-  const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
+  // The item set is fixed to the tab the menu was opened from.
   const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).map(item => {
     if (item.mapAction === 'mapMode') {
       const is3D = mapMode === '3d'
@@ -255,9 +249,7 @@ export default function HoldMenuTwin({
     if (item.mapAction === 'tour' && item.activeTitle) {
       return { ...item, title: tourOn ? item.activeTitle : item.title }
     }
-    if (!item.toggle || !item.activeTitle) return item
-    const on = item.toggle === 'detection' ? detectOn : menuState[item.toggle]
-    return { ...item, title: on ? item.activeTitle : item.title }
+    return item
   })
 
   const [offset, setOffset] = useState(0)      // continuous wheel position, item units
@@ -302,11 +294,10 @@ export default function HoldMenuTwin({
   // would fire it rather than move you, so the arrows skip them.
   useEffect(() => {
     if (!bindArrows) return
-    // Read through a ref: `items` is rebuilt every render (the toggle tiles
-    // re-label themselves), so listing it as a dependency would unbind and
-    // rebind the arrows on every frame of the wheel.
+    // Read through a ref: `items` is rebuilt every render, so listing it as a
+    // dependency would unbind and rebind the arrows on every wheel render.
     const live = itemsRef.current
-    const stops = live.filter(it => !it.action && !it.mapAction && !it.event && !it.toggle)
+    const stops = live.filter(it => !it.action && !it.mapAction && !it.event)
     if (!activeScreen || stops.length < 2) { bindArrows(null); return () => bindArrows(null) }
     bindArrows((dir: 1 | -1) => {
       const here = stops.findIndex(it => it.screen === activeScreen.screen && it.title === activeScreen.title)
@@ -349,6 +340,7 @@ export default function HoldMenuTwin({
   // window long enough for a slow device.
   const [embedMissing, setEmbedMissing] = useState(false)
   const [embedLoaded, setEmbedLoaded] = useState(false)
+  const subscreenFrameRef = useRef<HTMLIFrameElement>(null)
   useEffect(() => {
     if (!activeScreen || activeScreen.native) return
     setEmbedMissing(false)
@@ -359,6 +351,37 @@ export default function HoldMenuTwin({
   useEffect(() => {
     if (embedLoaded) setEmbedMissing(false)
   }, [embedLoaded])
+
+  // STORE is a bundled iframe, while its payment authority is the native
+  // shell. Relay only messages from that exact iframe into Home's validated
+  // native boundary, then route the matching result back to the same frame.
+  useEffect(() => {
+    if (activeScreen?.screen !== 'profile-store') return
+    const frame = subscreenFrameRef.current
+    if (!frame) return
+
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || typeof data !== 'object') return
+      if (event.source === frame.contentWindow && data.type === 'poplurStoreCheckoutRequested') {
+        window.dispatchEvent(new CustomEvent('poplur-store-checkout-requested', { detail: data }))
+      }
+    }
+
+    const onResult = (event: Event) => {
+      const data = (event as CustomEvent<Record<string, unknown>>).detail
+      if (data?.type === 'poplurStoreCheckoutResult') {
+        frame.contentWindow?.postMessage(data, '*')
+      }
+    }
+
+    window.addEventListener('message', onMessage)
+    window.addEventListener('poplur-store-checkout-result', onResult)
+    return () => {
+      window.removeEventListener('message', onMessage)
+      window.removeEventListener('poplur-store-checkout-result', onResult)
+    }
+  }, [activeScreen])
 
   // Physics state lives in refs so the rAF loop reads live values.
   const offsetRef = useRef(0)
@@ -381,6 +404,7 @@ export default function HoldMenuTwin({
   const setAsFavourite = (item: Item) => {
     try { window.localStorage.setItem(favouriteKey(tab), item.title) } catch { /* private mode */ }
     setFavourite(item.title)
+    onFavouriteChange?.(item.title)
     playPop()
     setFavToast(item.title)
     window.setTimeout(() => setFavToast(null), 1800)
@@ -404,16 +428,9 @@ export default function HoldMenuTwin({
   const activateItem = (item: Item) => {
     // a hold set the favourite; don't also fire the item
     if (heldRef.current) { heldRef.current = false; return }
-    // CC / PROFILE happen on the screen behind the menu — they were never
-    // really sub-screens. Engagement is now in Feed's visible clay rail.
+    // PROFILE happens on the screen behind the menu — it was never really a
+    // sub-screen. Feed engagement lives in the visible clay rail.
     if (item.action) {
-      if (item.toggle) {
-        setMenuState(current => {
-          const next = { ...current, [item.toggle!]: !current[item.toggle!] }
-          persistedMenuState = next
-          return next
-        })
-      }
       playPop()
       onAction?.(item.action)
       onClose()
@@ -424,7 +441,7 @@ export default function HoldMenuTwin({
     // it hid the cube, so the one universal back control was gone. The web
     // chat lives in the subscreen stage like everything else; the composer's
     // "Generate in Poplur AI" step still reaches the native generator.
-    // SEARCH / CURRENT LOCATION / DIRECTIONS / TOUR happen on the map behind
+    // DIRECTIONS / TOUR happen on the map behind
     // the menu. Closing is part of the action — you need to see what it did.
     if (item.mapAction) {
       playPop()
@@ -441,13 +458,6 @@ export default function HoldMenuTwin({
       ))
       onClose()
       return
-    }
-    if (item.toggle) {
-      setMenuState(current => {
-        const next = { ...current, [item.toggle!]: !current[item.toggle!] }
-        persistedMenuState = next
-        return next
-      })
     }
     playPop()
     setActiveScreen(item)
@@ -694,6 +704,7 @@ export default function HoldMenuTwin({
             fallback is an overlay instead, and it disappears the moment the
             capture arrives — however late that is. */}
         <iframe
+          ref={subscreenFrameRef}
           className={styles.subscreenFrame}
           src={rclSubscreenUrl(activeScreen)}
           title={`${activeScreen.title} Rough Copy`}

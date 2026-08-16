@@ -297,6 +297,101 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
+/* Profile backgrounds use real, downsampled previews. The full 863×1822
+   source is decoded only by the active Profile screen, never by this grid. */
+.themeGroup {
+  display: grid;
+  gap: 14px;
+  padding: 15px;
+  border-radius: 18px;
+  background: rgba(14, 5, 20, 0.72);
+  border: 1px solid rgba(255, 138, 198, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.themeHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.themeHeading > div { display: grid; gap: 3px; }
+.themeHeading b { color: #fff2f8; font-size: 15px; }
+.themeHeading span { max-width: 230px; color: rgba(255, 226, 242, 0.62); font-size: 11.5px; line-height: 1.35; }
+.themeHeading strong { flex: none; color: #7fe3ff; font-size: 11px; line-height: 1.25; text-align: right; }
+
+.themeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 8px;
+}
+
+.themeTile {
+  min-width: 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 14px;
+  color: rgba(255, 242, 248, 0.7);
+  background: transparent;
+  cursor: pointer;
+}
+
+.themePreview {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 0.68;
+  overflow: hidden;
+  border-radius: 11px;
+  background-position: center;
+  background-size: cover;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 5px 12px rgba(0, 0, 0, 0.28);
+}
+
+.themePreviewDefault {
+  background:
+    radial-gradient(110% 70% at 50% 4%, rgba(246, 59, 154, 0.16), transparent 50%),
+    linear-gradient(180deg, #f7f4ef, #efeae3);
+}
+
+.themePreview i {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border-radius: 50%;
+  color: #fff;
+  background: #f4459c;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.4);
+  font: 950 13px/1 system-ui, sans-serif;
+  font-style: normal;
+}
+
+.themeName {
+  display: block;
+  min-height: 28px;
+  padding: 6px 1px 1px;
+  overflow: hidden;
+  color: inherit;
+  font-size: 10.5px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.themeTileSelected {
+  color: #fff;
+  background: rgba(255, 45, 145, 0.13);
+  box-shadow: inset 0 0 0 2px #ff5fae;
+}
+
+.themeTile:focus-visible { outline: 3px solid #7fe3ff; outline-offset: 2px; }
+.themeFootnote { margin: 0; color: rgba(255, 226, 242, 0.5); font-size: 10.5px; line-height: 1.35; }
+
 .switchRow {
   display: flex;
   align-items: center;

@@ -219,6 +219,17 @@ html.camera-live,
   animation: none !important;
 }
 
+/* The Feed byline intentionally alternates the creator handle and radius, but
+   leaving that swap infinite keeps two style animations alive on every native
+   tab because FeedTwin stays mounted behind Home. Preserve the approved swap
+   for three readable cycles, then settle back on the handle. Desktop keeps the
+   continuously alternating prototype. */
+.tier-ios [class*="feedMetaHandle"],
+.tier-ios [class*="feedReach"] {
+  animation-iteration-count: 3 !important;
+  animation-fill-mode: forwards !important;
+}
+
 /* A document that is actually hidden or no longer front is marked asleep and
    sheds every compositor animation. The visible home document no longer enters
    this state merely because the user stopped touching it. Low-power/emergency
@@ -233,6 +244,8 @@ html.camera-live,
 .poplur-ambient-sleep [class*="cloud"],
 .poplur-ambient-sleep [class*="Cloud"],
 .poplur-ambient-sleep [class*="celestial"],
+.poplur-ambient-sleep [class*="weatherAlwaysAnimating"],
+.poplur-ambient-sleep [class*="weatherAlwaysAnimating"] *,
 .poplur-ambient-sleep [class*="drop_"],
 .poplur-ambient-sleep [class*="flake_"],
 .poplur-ambient-sleep [class*="stone_"],

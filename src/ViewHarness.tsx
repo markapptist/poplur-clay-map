@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
+import UploadFlowReview from './UploadFlowReview'
 import styles from './ViewHarness.module.css'
 
-export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu'
+export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu' | 'uploadflows'
 
 // The four bottom-nav tabs now live INSIDE the home view (its pills switch
 // map/feed/camera/profile inline). The hold menu is a cube-long-press OVERLAY,
 // still routable (?view=holdmenu) but not a tab.
-const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu']
+const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu', 'uploadflows']
 const VIEW_LABELS: Record<HarnessView, string> = {
   home: 'Home',
   map: 'Map',
@@ -17,6 +18,7 @@ const VIEW_LABELS: Record<HarnessView, string> = {
   cameraroll: 'Camera Roll',
   profile: 'Profile',
   holdmenu: 'Hold Menu',
+  uploadflows: 'Upload Flows',
 }
 // Each ?view= simply picks which tab the tabbed home opens on.
 // The home view opens on the FEED tab; the map is one tab over (reachable via
@@ -72,7 +74,11 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   // floats over the live home view behind a semi-transparent scrim, and closing
   // it returns you to that home. So ?view=holdmenu keeps the home (map) mounted
   // underneath rather than swapping it out.
-  const baseView: Exclude<HarnessView, 'holdmenu'> = view === 'holdmenu' ? 'home' : view
+  const baseView: Exclude<HarnessView, 'holdmenu' | 'uploadflows'> = view === 'holdmenu'
+    ? 'home'
+    : view === 'uploadflows'
+      ? 'camera'
+      : view
   const [, setInlineTab] = useState<CubeTab>(VIEW_TO_TAB[baseView])
 
   useEffect(() => { setInlineTab(VIEW_TO_TAB[baseView]) }, [baseView])
@@ -89,6 +95,8 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     ),
     [baseView, view],
   )
+
+  if (view === 'uploadflows') return <UploadFlowReview />
 
   return (
     <div className={styles.stage}>
