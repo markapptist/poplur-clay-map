@@ -556,6 +556,17 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let navigatorFPS = fpsForMode(initialNavigatorPolicy.mode)
     let navigatorFrameMs = 1000 / navigatorFPS
     let globeSpinUntil = performance.now() + 8000
+    /// Keeps the render loop scheduled for a tail after the last motion sample,
+    /// on EVERY tab. Without it the cube parked the instant its smoothing
+    /// converged, so a slow tilt — whose per-sample delta falls under
+    /// applyMotionTarget's epsilon — moved nothing and the cube read as frozen
+    /// while the handset was plainly moving. armGlobeSpin() could not cover
+    /// this: it returns early unless the map globe is on screen.
+    /// This schedules frames, it does NOT force a draw; `needsRender` still
+    /// gates rendering, so a still phone costs no-op callbacks rather than
+    /// renders, and the loop parks entirely once the tail expires.
+    const MOTION_KEEPALIVE_MS = 8000
+    let motionActiveUntil = 0
     const requestDisplayFrame = window.requestAnimationFrame.bind(window)
     const cancelDisplayFrame = window.cancelAnimationFrame.bind(window)
     const mapGlobeIsVisible = () =>
@@ -811,6 +822,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const now = performance.now()
       if (now - lastMotionAt < 33) return
       lastMotionAt = now
+      // Before the epsilon gate below, so a movement too small to shift the
+      // target still proves the phone is in hand and keeps the loop warm.
+      motionActiveUntil = now + MOTION_KEEPALIVE_MS
       // beta runs from the tabletop hold (0°) to upright (90°). The folded
       // pitch response keeps the navigator flat at either end of that range.
       const roll = THREE.MathUtils.degToRad(event.gamma ?? 0)
@@ -830,6 +844,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const next = { roll: roll ?? 0, pitch: devicePitch ?? 0 }
       window.__poplurLatestCubeMotion = next
       if (document.visibilityState !== 'visible') return
+      // Same keepalive as the web deviceorientation path — native Core Motion
+      // is the only motion source inside the app shell.
+      motionActiveUntil = performance.now() + MOTION_KEEPALIVE_MS
       applyMotionTarget(next.roll, next.pitch, THREE.MathUtils.degToRad(0.08))
     }
     const onMotionTuning = (event: Event) => {
@@ -971,7 +988,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         || Math.abs(motionYawVelocity) > 0.00008
         || Math.abs(motionPitchVelocity) > 0.00008
         || needsRender
-      if (active || globeAnimating) {
+      // Motion samples are still arriving (or only just stopped), so stay
+      // scheduled and pick the next one up on the very next frame instead of
+      // parking between samples and stuttering.
+      const motionLive = now < motionActiveUntil
+      if (active || globeAnimating || motionLive) {
         // Arm shortly before the desired presentation edge, then let rAF align
         // the actual draw. This prevents an Android 60/120Hz display from
         // invoking a no-op JS callback for every hardware refresh.

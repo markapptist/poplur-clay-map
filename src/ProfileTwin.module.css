@@ -204,6 +204,22 @@
 /* Profile actions join the same universal 44px left rail as Map, Feed and
    Camera. Container-relative positioning preserves their action ownership and
    lines the rail up with the shell edge without escaping the phone preview. */
+
+/* ...but on Profile the three actions belong to the selfie, so they span
+   exactly its height instead of the rail's generic offset. The avatar runs
+   110px (.header top) to 310px (+200px .avatarWrap), while the shared rail
+   starts at max(154px, safe-area-top + 112px) — about 171px on a notched
+   phone — which left the set sitting ~60px low and ending well above the
+   selfie's bottom edge.
+   Three 44px items in 200px leaves 68px, so space-between yields equal 34px
+   gaps. ONLY the vertical box is touched: .left/.right still own x, so the
+   rail stays on the shell edge exactly where it is. */
+.profile :global([data-poplur-control-rail]) {
+  top: 110px;
+  height: 200px;
+  align-content: space-between;
+  gap: 0;
+}
 .bell {
   position: relative;
   width: 44px;

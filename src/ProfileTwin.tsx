@@ -1365,13 +1365,18 @@ export default function ProfileTwin({
     if (!context) return null
     const sx = (video.videoWidth - sourceEdge) / 2
     const sy = (video.videoHeight - sourceEdge) / 2
-    context.save()
-    if (facingMode === 'user') {
-      context.translate(edge, 0)
-      context.scale(-1, 1)
-    }
+    // Draw the frame exactly as it is. This used to mirror when facingMode was
+    // 'user', which made the poster disagree with everything it sits next to:
+    // MediaRecorder captures the raw stream unmirrored, and .photo carries no
+    // CSS transform, so the video plays unmirrored while its own poster was
+    // flipped. Any moment the poster showed instead of a live frame — including
+    // the frame an OS screenshot catches — the selfie appeared to flip.
+    // The mirror belongs only to the live viewfinder, where it is applied in
+    // CSS so the user sees themselves the familiar way while recording.
+    // previewVideo() also calls this on an ALREADY RECORDED file, where the
+    // live camera's facingMode is unrelated to that file's orientation, so the
+    // old branch could flip a back-camera clip's poster too.
     context.drawImage(video, sx, sy, sourceEdge, sourceEdge, 0, 0, edge, edge)
-    context.restore()
     return canvas.toDataURL('image/jpeg', 0.92)
   }
 
