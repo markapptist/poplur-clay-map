@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './ProfileTwin.module.css'
+import pullStyles from './PullToRefresh.module.css'
+import { usePullToRefresh } from './usePullToRefresh'
 import { OTHER_POPS } from './data'
 import { playPop } from './pop'
 import { isGateMuted, onGateChange } from './audioGate'
@@ -96,6 +98,7 @@ const LIKED: LikedPost[] = [
 // on localStorage access, and a profile picture is never worth a thrown error.
 const PHOTO_KEY = 'poplur.profile.photo'
 const SELFIE_VIDEO_KEY = 'poplur.profile.selfieVideo'
+const SELFIE_MIRROR_KEY = 'poplur.profile.selfieMirrored'
 const SELFIE_DURATION_SECONDS = 10
 const PROFILE_NAME_FALLBACK = 'MARK'
 
@@ -131,6 +134,32 @@ function usableSelfieVideo(value: string | null | undefined): string | null {
 
 function readStoredSelfieVideo(): string | null {
   try { return usableSelfieVideo(window.localStorage.getItem(SELFIE_VIDEO_KEY)) } catch { return null }
+}
+
+/** Was this selfie shot on the front camera, and therefore seen mirrored while
+ *  it was being recorded?
+ *
+ *  The viewfinder mirrors itself (`scaleX(-1)`) so you see yourself the way a
+ *  mirror shows you. MediaRecorder saves the RAW stream, which is the way
+ *  everyone else sees you — so played back untouched, your own selfie looks
+ *  flipped to the one person guaranteed to notice. Every camera app that shoots
+ *  selfies keeps the mirrored version for this reason.
+ *
+ *  Stored as a flag rather than baked into the file: the recording stays true,
+ *  and the flip is a display decision we can revisit without re-encoding
+ *  anyone's video. Absent means "assume front" — this feature is the profile
+ *  SELFIE and its capture opens on `user`, so an unflagged clip (including one
+ *  saved by the native shell, which reports no facing) is overwhelmingly a
+ *  front-camera one. */
+function readSelfieMirrored(): boolean {
+  try {
+    const raw = window.localStorage.getItem(SELFIE_MIRROR_KEY)
+    return raw == null ? true : raw === '1'
+  } catch { return true }
+}
+
+function writeSelfieMirrored(mirrored: boolean): void {
+  try { window.localStorage.setItem(SELFIE_MIRROR_KEY, mirrored ? '1' : '0') } catch { /* embedded shell */ }
 }
 
 function writeStoredSelfieVideo(source: string | null): void {
@@ -698,6 +727,7 @@ export default function ProfileTwin({
   // URI under one key, rehydrated on mount.
   const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
   const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
+  const [selfieMirrored, setSelfieMirrored] = useState<boolean>(() => readSelfieMirrored())
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
   const [captureSource, setCaptureSource] = useState<CaptureSource>('camera')
@@ -726,14 +756,23 @@ export default function ProfileTwin({
   // The avatar loop is a real decoder, not decorative CSS. Keep it only while
   // the avatar itself is the visible experience; fullscreen Profile layers can
   // otherwise leave it decoding underneath a second video or camera stream.
-  const [selfiePolicyAllowsPlayback, setSelfiePolicyAllowsPlayback] = useState(() => {
-    const snapshot = PoplurPerformanceManager.snapshot
-    return snapshot.isForeground && snapshot.expensiveVideoBackedTexturesAllowed
-  })
+  // The avatar is one muted, inline, ten-second loop — it is the CONTENT of
+  // this screen, not decoration on top of it. It was gated on
+  // `expensiveVideoBackedTexturesAllowed`, which is false in both LOW_POWER and
+  // EMERGENCY: a phone that had merely got warm silently fell back to the
+  // poster still, and a profile whose owner recorded a video appeared to have
+  // recorded nothing. That flag is about video-backed TEXTURES feeding 3D
+  // material, which is a different and much heavier thing than a DOM <video>.
+  //
+  // Playback now stops only at EMERGENCY, where every surface is expected to be
+  // visibly reduced and a still avatar is the honest signal.
+  const selfiePlaybackPolicy = (snapshot: PoplurPerformanceSnapshot) =>
+    snapshot.isForeground && snapshot.mode !== 'EMERGENCY'
+  const [selfiePolicyAllowsPlayback, setSelfiePolicyAllowsPlayback] = useState(
+    () => selfiePlaybackPolicy(PoplurPerformanceManager.snapshot),
+  )
   useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
-    setSelfiePolicyAllowsPlayback(
-      snapshot.isForeground && snapshot.expensiveVideoBackedTexturesAllowed,
-    )
+    setSelfiePolicyAllowsPlayback(selfiePlaybackPolicy(snapshot))
   }), [])
   const selfiePlaybackActive = Boolean(
     selfieVideo
@@ -877,8 +916,7 @@ export default function ProfileTwin({
 
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
-  const spinnerRef = useRef<HTMLDivElement>(null)
-  const confettiRef = useRef<HTMLDivElement>(null)
+  const pullMarkRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -1078,99 +1116,26 @@ export default function ProfileTwin({
     return () => bindGoBack(null)
   }, [bindGoBack])
 
-  // Pull-to-refresh on the grid, like the app's PoplurRefreshHeader.
-  useEffect(() => {
-    const content = contentRef.current
-    const inner = pullRef.current
-    const spinner = spinnerRef.current
-    if (!content || !inner || !spinner) return
-    let pulling = false, startY = 0, pull = 0, refreshing = false
-    // Confetti fireworks, fired while you hold the page down. Built in the DOM
-    // rather than React state on purpose: a burst mid-gesture must not re-render
-    // the grid under the finger. Thermal rules, same as every other effect in
-    // this app — transform and opacity only, one-shot keyframes, a hard cap on
-    // how many pieces exist, and the whole burst removes itself.
-    let burstFired = false
-    let burstTimer = 0
-    const CONFETTI = ['#f63b9a', '#ff8ac6', '#67dcff', '#ffd166', '#b06cff', '#48e6a0']
-    // A cap, not a lockout. This used to bail whenever ANY piece was still in
-    // flight, which meant the commit burst below never actually fired: the pull
-    // burst's pieces live 1.5s and you always let go inside that window.
-    const MAX_PIECES = 40
-    const burst = () => {
-      const host = confettiRef.current
-      if (!host || host.childElementCount >= MAX_PIECES) return
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-      const frag = document.createDocumentFragment()
-      for (let i = 0; i < 16; i += 1) {
-        const piece = document.createElement('i')
-        piece.className = styles.confettiPiece
-        piece.style.setProperty('--dx', `${(Math.random() * 2 - 1) * 96}px`)
-        piece.style.setProperty('--rise', `${76 + Math.random() * 66}px`)
-        piece.style.setProperty('--spin', `${(Math.random() * 2 - 1) * 340}deg`)
-        piece.style.setProperty('--delay', `${Math.round(Math.random() * 170)}ms`)
-        piece.style.background = CONFETTI[i % CONFETTI.length]
-        frag.appendChild(piece)
-      }
-      host.appendChild(frag)
-      window.clearTimeout(burstTimer)
-      burstTimer = window.setTimeout(() => host.replaceChildren(), 1500)
-    }
-    const apply = () => {
-      inner.style.transform = `translateY(${pull}px)`
-      spinner.style.opacity = String(Math.min(1, pull / 48))
-      if (!refreshing) spinner.style.transform = `translateX(-50%) rotate(${pull * 6}deg)`
-    }
-    const onDown = (e: PointerEvent) => {
-      if (!refreshing && content.scrollTop <= 0) { pulling = true; startY = e.clientY; burstFired = false }
-    }
-    const onMove = (e: PointerEvent) => {
-      if (!pulling) return
-      const dy = e.clientY - startY
-      pull = dy > 0 ? Math.min(72, dy * 0.5) : 0
-      // The fireworks go off while you are still holding it down — that is the
-      // moment they are for, not the release.
-      if (pull > 30 && !burstFired) { burstFired = true; burst() }
-      apply()
-    }
-    const onUp = () => {
-      if (!pulling) return
-      pulling = false
-      if (pull > 46) {
-        refreshing = true
-        spinner.classList.add(styles.spin)
-        playPop()
-        // One more on the commit, so letting go lands rather than just stops.
-        burst()
-        window.setTimeout(() => {
-          refreshing = false
-          spinner.classList.remove(styles.spin)
-          pull = 0
-          inner.style.transition = 'transform 0.3s ease'
-          apply()
-          window.setTimeout(() => { inner.style.transition = '' }, 320)
-        }, 900)
-      } else {
-        pull = 0
-        inner.style.transition = 'transform 0.24s ease'
-        apply()
-        window.setTimeout(() => { inner.style.transition = '' }, 260)
-      }
-    }
-    content.addEventListener('pointerdown', onDown)
-    content.addEventListener('pointermove', onMove)
-    content.addEventListener('pointerup', onUp)
-    content.addEventListener('pointercancel', onUp)
-    return () => {
-      content.removeEventListener('pointerdown', onDown)
-      content.removeEventListener('pointermove', onMove)
-      content.removeEventListener('pointerup', onUp)
-      content.removeEventListener('pointercancel', onUp)
-      // A burst mid-flight must not outlive the screen that fired it.
-      window.clearTimeout(burstTimer)
-      confettiRef.current?.replaceChildren()
-    }
+  // Pull-to-refresh on the grid — the clay mark bounce, shared with the news
+  // page so both screens refresh with the same object and the same spring.
+  //
+  // The old gesture here was choreography only: it span for 900ms and let go
+  // again without asking anyone for anything, so the grid you were shown after
+  // a pull was always the grid you had before it.
+  const refreshPosts = useCallback(() => {
+    // The grid's posts come from the shell, so refreshing asks for them again.
+    // Nothing answers in the browser preview and the grid keeps what it has —
+    // the gesture stays honest rather than pretending to have reloaded.
+    postNativeEvent({ type: 'requestProfilePosts' })
   }, [])
+
+  usePullToRefresh({
+    scrollRef: contentRef,
+    innerRef: pullRef,
+    markRef: pullMarkRef,
+    spinClass: pullStyles.spin,
+    onRefresh: refreshPosts,
+  })
 
   // ── Camera capture (FULLSCREEN): webcam on open, tidy on close. ──────────
   const stopStream = () => {
@@ -1354,6 +1319,11 @@ export default function ProfileTwin({
     writeStoredPhoto(preview)
     setSelfieVideo(source)
     writeStoredSelfieVideo(source)
+    // Remember which way round it was shot, so playback can show it back the
+    // way you saw it while recording.
+    const shotOnFrontCamera = facingMode === 'user'
+    setSelfieMirrored(shotOnFrontCamera)
+    writeSelfieMirrored(shotOnFrontCamera)
     if (nativePayload) postNativeEvent(nativePayload)
     window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: preview } }))
     window.dispatchEvent(new CustomEvent('poplur-profile-media', { detail: { photo: preview, video: source } }))
@@ -1771,7 +1741,7 @@ export default function ProfileTwin({
               <video
                 key={selfieVideo}
                 ref={selfieVideoRef}
-                className={styles.photo}
+                className={selfieMirrored ? `${styles.photo} ${styles.selfieMirrored}` : styles.photo}
                 src={selfieVideo}
                 poster={photo ?? undefined}
                 autoPlay
@@ -1839,15 +1809,9 @@ export default function ProfileTwin({
       </div>
 
       <div className={styles.content} ref={contentRef}>
-        <div className={styles.refresh} ref={spinnerRef} aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22">
-            <path d="M20 12a8 8 0 1 1-2.3-5.6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
-            <path d="M20 4v4h-4" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+        <div className={pullStyles.mark} ref={pullMarkRef} data-pull-mark aria-hidden="true">
+          <img src="logo_icon.png" alt="" draggable="false" />
         </div>
-        {/* Fireworks rise from here while the page is held down. Empty until a
-            pull fires one, and empty again 1.5s later. */}
-        <div className={styles.confetti} ref={confettiRef} aria-hidden="true" />
 
         <div className={styles.pullInner} ref={pullRef}>
           {mode === 'messages' ? (

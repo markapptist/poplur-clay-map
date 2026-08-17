@@ -66,6 +66,23 @@ export default defineConfig(({ command }) => ({
         entryFileNames: '[name]-[hash].js',
         chunkFileNames: '[name]-[hash].js',
         assetFileNames: '[name]-[hash][extname]',
+        // Split the single app chunk. It had grown to 3.6MB (1.06MB gzipped),
+        // and on a low-tier phone that is seconds of parse-and-compile BEFORE
+        // the first frame — the black screen after login is mostly this, not
+        // the splash markup.
+        //
+        // The win is not smaller bytes, it is that three.js and Mapbox stop
+        // blocking first paint: the map is behind an iframe the home does not
+        // mount until Map is front, and three is only needed once a 3D object
+        // is actually built. Splitting them lets the engine parse the shell
+        // first and the heavy engines while the shell is already on screen.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('mapbox-gl')) return 'mapbox'
+          if (id.includes('three')) return 'three'
+          if (id.includes('react-dom') || id.includes('/react/') || id.includes('scheduler')) return 'react'
+          return undefined
+        },
       },
     },
   },

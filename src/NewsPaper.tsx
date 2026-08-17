@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './NewsPaper.module.css'
+import pullStyles from './PullToRefresh.module.css'
+import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
 import ClayCornerButton from './ClayCornerButton'
 import {
@@ -199,6 +201,9 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
   const [exhausted, setExhausted] = useState(false)
   const [liked, setLiked] = useState<Set<string>>(() => new Set())
   const sentinel = useRef<HTMLDivElement>(null)
+  const scrollHost = useRef<HTMLDivElement>(null)
+  const pullInner = useRef<HTMLDivElement>(null)
+  const pullMark = useRef<HTMLDivElement>(null)
 
   const entries = useMemo(() => {
     // What you dropped leads the edition; the rest of the paper follows.
@@ -243,10 +248,35 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
   const lead = entries[0]
   const rest = entries.slice(1)
 
+  // Pull down for a new edition. Everything the paper prints is derived from
+  // `pages`, `dropped` and `now`, so a refresh is: take whatever the map has
+  // dropped since, throw away the pages already set, and re-stamp the edition
+  // clock. The masthead date and time change under your finger, which is the
+  // proof that it actually reprinted.
+  const refresh = useCallback(() => {
+    setDropped(readNewsMessages())
+    setPages(1)
+    setExhausted(false)
+    setNow(new Date())
+    scrollHost.current?.scrollTo({ top: 0 })
+  }, [])
+
+  usePullToRefresh({
+    scrollRef: scrollHost,
+    innerRef: pullInner,
+    markRef: pullMark,
+    spinClass: pullStyles.spin,
+    onRefresh: refresh,
+  })
+
   return (
     <div className={styles.paper} role="dialog" aria-label="Poplur Times">
       {/* No ✕ — the cube is the back control for every subscreen. */}
-      <div className={styles.scroll}>
+      <div className={styles.scroll} ref={scrollHost}>
+        <div className={pullStyles.mark} ref={pullMark} data-pull-mark aria-hidden="true">
+          <img src="logo_icon.png" alt="" draggable="false" />
+        </div>
+        <div ref={pullInner}>
         <header className={styles.masthead}>
           <div className={styles.mastRule}>
             <span>NO. {1200 + entries.length}</span>
@@ -346,6 +376,7 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
           {exhausted
             ? <span className={styles.endMark}>— NOTHING FURTHER REACHES YOU —</span>
             : <span className={styles.setting}>setting more type…</span>}
+        </div>
         </div>
       </div>
     </div>

@@ -1,0 +1,44 @@
+/* The clay mark that rides the pull. Shared by the profile grid and the news
+   page so both screens refresh with the same object and the same motion. */
+
+.mark {
+  position: absolute;
+  /* INSIDE the scroll container's visible area, not above it. The host clips
+     with overflow-y:auto, and you cannot scroll to a negative offset — a mark
+     parked above the top edge is simply invisible until the pull has already
+     dragged it down past the clip, which is exactly when feedback is too late
+     to be useful. It rests here at zero scale instead and grows into view. */
+  top: 6px;
+  left: 50%;
+  z-index: 5;
+  width: 34px;
+  height: 34px;
+  margin-left: -17px;
+  opacity: 0;
+  pointer-events: none;
+  /* Squash and spin are transform-only, so the gesture never triggers layout. */
+  will-change: transform, opacity;
+}
+
+.mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Runs only while the refresh is actually in flight. The hook writes the
+   squash into the element's inline transform, so the spin lives on a child
+   wrapper instead — otherwise the two would overwrite each other. */
+.spin img {
+  animation: markSpin 0.8s linear infinite;
+}
+
+@keyframes markSpin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin img { animation-duration: 1.6s; }
+}

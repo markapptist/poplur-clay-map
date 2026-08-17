@@ -553,53 +553,9 @@
 
 .content::-webkit-scrollbar { display: none; }
 
-.refresh {
-  position: absolute;
-  top: -34px;
-  left: 50%;
-  transform: translateX(-50%);
-  opacity: 0;
-  color: #f63b9a;
-}
-
-.spin { animation: spin 0.7s linear infinite; }
-
-/* ── Pull-to-refresh fireworks ──────────────────────────────────────────────
-   Confetti rising out of the top of the grid while you hold the page down.
-   One-shot keyframes on transform and opacity only, capped at 16 pieces, and
-   the host is emptied 1.5s after a burst — nothing here survives the gesture
-   that fired it, which is the rule every animated layer in this app follows. */
-.confetti {
-  position: absolute;
-  top: 4px;
-  left: 50%;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-  z-index: 4;
-}
-
-.confettiPiece {
-  position: absolute;
-  width: 7px;
-  height: 11px;
-  margin: -5px 0 0 -3px;
-  border-radius: 2px;
-  opacity: 0;
-  will-change: transform, opacity;
-  animation: confettiRise 1.15s cubic-bezier(0.16, 0.72, 0.3, 1) var(--delay, 0ms) 1 both;
-}
-
-@keyframes confettiRise {
-  0% { transform: translate3d(0, 10px, 0) rotate(0deg) scale(0.6); opacity: 0; }
-  16% { opacity: 1; }
-  100% {
-    transform: translate3d(var(--dx, 0), calc(var(--rise, 90px) * -1), 0) rotate(var(--spin, 180deg)) scale(1);
-    opacity: 0;
-  }
-}
-
-@keyframes spin { to { transform: translateX(-50%) rotate(360deg); } }
+/* The pull-to-refresh indicator is the shared clay mark now — see
+   PullToRefresh.module.css. The old arrow spinner and its confetti burst lived
+   here; both went with the gesture that only pretended to reload. */
 
 .pullInner { will-change: transform; }
 
@@ -1921,3 +1877,10 @@
   margin-left: 2px;
   color: rgba(255, 211, 107, 0.8);
 }
+
+/* A front-camera selfie plays back the way you saw it while recording. The
+   stored file stays unmirrored (true to how others see you); only the display
+   flips. Applied to the <video>, which mirrors its poster frame too, so the
+   still and the moving image can never disagree — the exact mismatch that made
+   the avatar appear to flip whenever the poster showed. */
+.selfieMirrored { transform: scaleX(-1); }

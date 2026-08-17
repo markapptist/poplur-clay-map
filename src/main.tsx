@@ -2,6 +2,8 @@ import './audioGate' // must run before any AudioContext is created
 import './stableViewport' // pins --poplur-app-height before first paint
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+// Bundled rather than pulled from api.mapbox.com at runtime — see index.html.
+import 'mapbox-gl/dist/mapbox-gl.css'
 import './index.css'
 import App from './App'
 import { isNativeShell, isIOSNativeShell } from './nativeBridge'

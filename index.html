@@ -24,7 +24,12 @@
          ABOVE the iframe element's own background, so the parent cannot colour it. -->
     <meta name="color-scheme" content="dark" />
     <title>Poplur — Post-login</title>
-    <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet" />
+    <!-- Mapbox's stylesheet is imported in main.tsx and bundled, NOT fetched
+         from api.mapbox.com. A cross-origin <link> here is render-blocking on
+         every launch: the shell serves from local assets, so this was a DNS +
+         TLS + fetch round trip before first paint, and on a slow or offline
+         phone it blocked until the request gave up. It is 40KB. -->
+
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       html { color-scheme: dark; }
