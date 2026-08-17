@@ -8,7 +8,7 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
-import { listEngagement, onEngagementLogged, engagementAge, type LoggedEngagement } from './engagementLog'
+import { listEngagement, onEngagementLogged, engagementAge, unreadEngagementCount, markEngagementSeen, type LoggedEngagement } from './engagementLog'
 import ClaySwayObject, { primeMotionPermission } from './ClaySwayObject'
 import CameraRoll from './CameraRoll'
 import { radiusStats } from './radiusLedger'
@@ -640,6 +640,9 @@ export default function ProfileTwin({
   // Rows the person cleared. Engagement arrives continuously, and without this
   // a cleared row would reappear the moment the next like landed.
   const dismissedNotifsRef = useRef(new Set<string>())
+  // Drives the bell's dot. The dot used to render unconditionally, so it was on
+  // before anything had happened and opening the list could not clear it.
+  const [unreadNotifs, setUnreadNotifs] = useState(() => unreadEngagementCount())
   useEffect(() => onEngagementLogged(entries => {
     setNotifs(list => {
       const seen = new Set(list.map(n => n.key ?? n.text))
@@ -648,6 +651,9 @@ export default function ProfileTwin({
         .filter(n => !seen.has(n.key!) && !dismissedNotifsRef.current.has(n.key!))
       return fresh.length ? [...fresh, ...list] : list
     })
+    // markEngagementSeen() broadcasts through this same listener, so the count
+    // drops to zero here the moment the list is opened.
+    setUnreadNotifs(unreadEngagementCount())
   }), [])
   const [swipedNotif, setSwipedNotif] = useState<string | null>(null)
   const notifSwipeRef = useRef<{ key: string; x0: number; moved: boolean } | null>(null)
@@ -939,6 +945,10 @@ export default function ProfileTwin({
     }
     setNotifsClosing(false)
     setShowNotifs(true)
+    // Reading the list is what clears the badge. Marked on OPEN rather than on
+    // close so the dot goes out as the panel springs down, and anything that
+    // lands while it is open stays counted for the next visit.
+    markEngagementSeen()
   }
 
   const closeNotifs = () => {
@@ -1716,7 +1726,7 @@ export default function ProfileTwin({
             aria-expanded={showNotifs && !notifsClosing}
           >
             <ClaySwayObject url="poplur_bell.glb" pitch={12} size={256} alt="" />
-            <span className={styles.bellDot} />
+            {unreadNotifs > 0 && <span className={styles.bellDot} />}
           </button>
         )}
         {visiting ? (

@@ -96,6 +96,41 @@ export function onEngagementLogged(fn: (entries: LoggedEngagement[]) => void): (
   return () => { listeners.delete(fn) }
 }
 
+// ── unread ──────────────────────────────────────────────────────────────────
+// The bell's dot used to be a bare <span> with no condition on it, so it was
+// decoration rather than state: it was lit before anything had happened, and
+// opening the notifications could not clear it because it was never reading
+// anything. A badge that is always on tells you nothing and trains you to
+// ignore the real one.
+//
+// "Seen" is a timestamp rather than a per-entry flag so it survives the log's
+// MAX-60 eviction: entries scroll out, the watermark does not. It rides in the
+// same sessionStorage as the log deliberately — a badge outliving the list it
+// counts would be a phantom.
+const SEEN_KEY = 'poplur.engagementSeenAt'
+
+function readSeenAt(): number {
+  try {
+    const raw = Number(sessionStorage.getItem(SEEN_KEY))
+    return Number.isFinite(raw) ? raw : 0
+  } catch { return 0 }
+}
+
+/** How many logged engagements are newer than the last time the list was opened. */
+export function unreadEngagementCount(): number {
+  const seenAt = readSeenAt()
+  return entries.reduce((n, e) => (e.at > seenAt ? n + 1 : n), 0)
+}
+
+/** Opening the notifications marks everything currently logged as read. */
+export function markEngagementSeen(at = Date.now()): void {
+  try { sessionStorage.setItem(SEEN_KEY, String(at)) } catch { /* private mode */ }
+  // Same broadcast the recorder uses, so a bell rendered in another component
+  // re-reads its unread count the moment the list is opened.
+  const snapshot = listEngagement()
+  listeners.forEach(fn => fn(snapshot))
+}
+
 /** "2m", "3h", "now" — the same shorthand the seeded notifications already use. */
 export function engagementAge(at: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - at) / 1000))
