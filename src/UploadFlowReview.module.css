@@ -172,6 +172,19 @@
   border-radius: 24px;
   background: #050506;
   --poplur-app-height: 100%;
+  /* Make this frame a containing block for `position: fixed` descendants, which
+     is what a real phone viewport is.
+     PostComposer's .stage is fixed on purpose (making it absolute anchored it to
+     the camera's vertically paged track on device and pushed the header buttons
+     off-screen). But `fixed` resolves against the LAYOUT VIEWPORT, so inside this
+     review harness every composer screen sized itself to the browser window —
+     measured at 1034px tall against an 824px frame — and spilled 75px past the
+     simulated phone with no way to reach the overflow. That read as "these
+     screens need a scrollview" when the screens were fine and the frame simply
+     was not containing them.
+     `contain` gives us the containing block without `transform`, which would
+     force a compositing layer over the live camera and 3D canvases here. */
+  contain: layout paint;
 }
 
 .deviceViewport > iframe {
