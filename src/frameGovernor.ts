@@ -29,6 +29,15 @@ import { MANAGED_RENDERING_OPERATION_EVENT, isNativeShell } from './nativeBridge
 /** 3 = everything on, 0 = survival. Only ever moves one step at a time. */
 export type Quality = 0 | 1 | 2 | 3
 
+// Master off-switch for every automatic degradation this module performs:
+// the missed-deadline ladder, native thermal/policy ceilings, the phone
+// baseline rung, ambient sleep and the renderer park. Hidden-document and
+// background gating stay — an invisible page still renders nothing. The
+// native shells carry the same switch (PoplurPerformanceManager.
+// governorDisabled); flip both together. ON means the phone heats at the
+// rate the content actually costs.
+const GOVERNOR_DISABLED = true
+
 /** Rate classes. Ambient work is the stuff that heats the phone for no gain. */
 export type Rate = 'interactive' | 'managed' | 'ambient' | 'idle'
 
@@ -59,7 +68,7 @@ let surfaceFront = true
 // Android reports thermal pressure means the enclosure is already warm; the
 // REDUCED policy keeps the authored UI while removing shadows, post-processing
 // and excess framebuffer resolution before heat accumulates.
-const NATIVE_BASELINE_QUALITY: Quality = isNativeShell() ? 2 : 3
+const NATIVE_BASELINE_QUALITY: Quality = GOVERNOR_DISABLED ? 3 : isNativeShell() ? 2 : 3
 let quality: Quality = NATIVE_BASELINE_QUALITY
 // The JS ladder infers pressure from missed deadlines. Native iOS has the real
 // ProcessInfo thermal state, so it can impose a ceiling before WebKit becomes
@@ -109,6 +118,7 @@ let managedOperationUntil = 0
 let managedOperationTimer = 0
 
 function effectiveQualityCeiling(): Quality {
+  if (GOVERNOR_DISABLED) return 3
   return Math.min(
     nativeThermalCeiling,
     nativePolicyCeiling,
@@ -173,6 +183,9 @@ function noteInteraction(): void {
 }
 
 function setAmbientSleeping(sleeping: boolean): void {
+  // With the governor off, decoration and tilt never sleep. Hidden-document
+  // gating lives in shouldRun(), not here, so backgrounding still stops work.
+  if (GOVERNOR_DISABLED && sleeping) return
   if (ambientSleeping === sleeping) return
   ambientSleeping = sleeping
   if (typeof document !== 'undefined') {
@@ -209,6 +222,11 @@ const HZ: Record<Rate, [number, number, number, number]> = {
 /** Interval this subscriber should be called at under the current quality, in ms. */
 function intervalFor(sub: Sub): number {
   if (sub.everyMs !== undefined) return sub.everyMs
+  // Governor off: visible motion runs at display-class rate, no ambient cap.
+  // Ticks keep their named deadlines and idle housekeeping stays slow.
+  if (GOVERNOR_DISABLED && (sub.rate === 'interactive' || sub.rate === 'ambient' || sub.rate === 'managed')) {
+    return 1000 / 60
+  }
   const hz = HZ[sub.rate][quality]
   // A boost promotes ambient work to interactive rate: while a finger is down,
   // parallax and drift should track the gesture, not stutter behind it.
@@ -286,6 +304,7 @@ function setQuality(next: Quality) {
 }
 
 function sampleThermals(dt: number) {
+  if (GOVERNOR_DISABLED) return
   intervals.push(dt)
   if (intervals.length > WINDOW) intervals.shift()
   if (intervals.length < WINDOW) return
@@ -380,6 +399,9 @@ function sync() {
 }
 
 if (typeof document !== 'undefined') {
+  // Declares the switch to anything measuring this build — the thermal gate
+  // reads it to tell "deliberately ungoverned" from "idle machinery broke".
+  if (GOVERNOR_DISABLED) document.documentElement.dataset.poplurGovernor = 'off'
   const sleepAmbient = () => {
     window.clearTimeout(ambientSleepTimer)
     ambientSleepTimer = 0
@@ -451,6 +473,7 @@ if (typeof document !== 'undefined') {
   // and the map parks under the finger.
   document.addEventListener('pointermove', onGestureMove, opts)
   const applyNativeThermal = (raw: unknown) => {
+    if (GOVERNOR_DISABLED) return
     const state = typeof raw === 'string'
       ? raw.toLowerCase()
       : typeof raw === 'object' && raw
@@ -477,6 +500,7 @@ if (typeof document !== 'undefined') {
     }
   }
   const applyNativePolicy = (raw: unknown) => {
+    if (GOVERNOR_DISABLED) return
     const payload = typeof raw === 'object' && raw
       ? ('policy' in raw && typeof (raw as { policy?: unknown }).policy === 'object'
           ? (raw as { policy: Record<string, unknown> }).policy
