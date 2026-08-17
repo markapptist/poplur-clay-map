@@ -150,20 +150,27 @@ function UploadingScreen({ complete = false, flow, onReset }: { complete?: boole
     <section className={`${styles.statusScreen} ${styles.globeUpload}`} aria-label={complete ? 'Posted confirmation review' : 'Upload progress review'}>
       <div className={styles.uploadDotMap} aria-hidden="true" />
       <UploadGlobeModel />
-      <div className={styles.uploadWordmark}>
-        <img src="/logo_text.png" alt="Poplur" />
-        <span>{complete ? 'UPLOAD COMPLETE' : 'UPLOADING YOUR POP'}</span>
-      </div>
-      {!complete && (
-        <div className={styles.globeProgress}>
-          <p key={line}>{UPLOAD_LINES[line]}</p>
-          <div className={styles.progressHeading}>
-            <span>CH 101 · FOOD</span>
-            <strong>64%</strong>
-          </div>
-          <div className={styles.clayProgressTrack}><i /></div>
+      {/* The wordmark and the progress block ride one scrolling column rather
+          than being pinned to opposite edges. Uploading was the only screen in
+          either flow with no scroller at all, so on a short viewport its chrome
+          closed on the globe — and on each other at a larger text size — with
+          nothing to scroll. The globe stays behind, unscrolled. */}
+      <div className={styles.statusScroll}>
+        <div className={styles.uploadWordmark}>
+          <img src="/logo_text.png" alt="Poplur" />
+          <span>{complete ? 'UPLOAD COMPLETE' : 'UPLOADING YOUR POP'}</span>
         </div>
-      )}
+        {!complete && (
+          <div className={styles.globeProgress}>
+            <p key={line}>{UPLOAD_LINES[line]}</p>
+            <div className={styles.progressHeading}>
+              <span>CH 101 · FOOD</span>
+              <strong>64%</strong>
+            </div>
+            <div className={styles.clayProgressTrack}><i /></div>
+          </div>
+        )}
+      </div>
       {complete && (
         <div className={styles.postedOverlay} role="dialog" aria-label="Congratulations, your pop is posted">
           <div className={styles.celebrationConfetti} aria-hidden="true">
