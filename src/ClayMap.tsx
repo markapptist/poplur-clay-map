@@ -9,7 +9,7 @@ import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import { playPop } from './pop'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette } from './mapClaims'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
 import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
 import {
   fetchRoute,
@@ -2136,8 +2136,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // indefinitely, which strands the launch on the globe instead of diving
       // into the 3D-building view.
       let landingCenter: [number, number] = nativeLocationRef.current ?? HOME_CENTER
+      // The dive ends on YOUR BIGGEST POP, not on your GPS fix. Where you are
+      // standing is the one thing the map cannot tell you that you do not
+      // already know; the ground you took is what the surface is a scoreboard
+      // for, so the globe opens onto that. Falls back to the live location, and
+      // then to HOME_CENTER, when nothing is claimed yet — a new account has no
+      // ground to be shown.
+      //
+      // Read at flight time rather than here: claims arrive asynchronously and
+      // are routinely still in the air when this effect runs.
+      const introTarget = (): [number, number] => {
+        const biggest = largestOwnClaim()
+        return biggest ? biggest.center : (nativeLocationRef.current ?? landingCenter)
+      }
       const startIntro = () => later(
-        () => landOn(nativeLocationRef.current ?? landingCenter),
+        () => landOn(introTarget()),
         MAP_2D ? 120 : 1400,
       )
       if (!focusedPostLaunch) {
@@ -2148,7 +2161,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
               // The direct 2D launch may already have painted its cached fallback
               // before Core Location answers. Recenter once, without animating
               // through another set of intermediate tiles.
-              if (MAP_2D && introDone) landOn(landingCenter)
+              // Only recentre on the fix if there was no claim to land on —
+              // otherwise a slow Core Location answer would yank the camera off
+              // your biggest pop moments after it arrived there.
+              if (MAP_2D && introDone && !largestOwnClaim()) landOn(landingCenter)
             },
             () => { /* fallback already scheduled */ },
             { timeout: 1200, maximumAge: 300000 },

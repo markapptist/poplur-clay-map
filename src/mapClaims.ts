@@ -555,6 +555,28 @@ function claimProps(c: Claim): GeoJSON.GeoJsonProperties {
   return props
 }
 
+/** Your biggest takeover — the pop whose radius reaches furthest.
+ *
+ *  The map's globe-to-ground intro lands here rather than on your GPS fix. Where
+ *  you are standing is the least interesting thing the map can show you: you can
+ *  see that out of the window. Your largest claim is the thing the whole surface
+ *  is a scoreboard for, so the dive ends on the ground you actually took.
+ *
+ *  YOURS only — `color` absent means yours, the same test `mine()` uses. Landing
+ *  on somebody else's takeover because it happened to be bigger would open the
+ *  app on a stranger's ground.
+ *
+ *  Returns null when nothing is claimed yet (a new account, or claims that have
+ *  not arrived by the time the intro flies), and the caller falls back to the
+ *  live location. */
+export function largestOwnClaim(): Claim | null {
+  let best: Claim | null = null
+  for (const c of mine()) {
+    if (!best || c.radiusKm > best.radiusKm) best = c
+  }
+  return best
+}
+
 /** Every claimed kilometre, summed — the accumulated reach the HUD reports at
  *  planet zoom. The world view is the scoreboard: how much of Earth is yours. */
 export function totalClaimedKm(): number {

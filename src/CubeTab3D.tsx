@@ -47,6 +47,18 @@ const CUBE_MOTION_DEAD_ZONE = THREE.MathUtils.degToRad(2)
 const CUBE_MOTION_PITCH_PEAK = THREE.MathUtils.degToRad(14)
 const CUBE_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(8)
 const CUBE_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(6)
+/** The camcorder is the one navigator object you are supposed to AIM.
+ *
+ *  Every other object is a mark to be read, so its handset motion is deliberate
+ *  parallax — a few degrees, enough to feel alive without ever showing a side
+ *  face. The camcorder is standing in for the lens you are pointing at
+ *  something, so the same 8° made it feel bolted down rather than aimed. This
+ *  widens its travel so turning the phone visibly swings it toward whatever you
+ *  are pointing at, and lets it pitch up and down as you raise and drop your
+ *  hand. Still hard-limited: past roughly a third of a turn you would be
+ *  looking at its back, which is not a camcorder pointing anywhere. */
+const CAMCORDER_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(26)
+const CAMCORDER_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(18)
 
 // The navigator is a ring, not a list of unrelated destinations. Keep this
 // sequence explicit because it is shared by touch and keyboard navigation:
@@ -164,12 +176,16 @@ async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
     Applied before the recentre below, so the fix cannot push the object off
     centre. Radians. */
 const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> = {
-  // The camcorder shares the cube family's face-up authoring. Its lens points
-  // along the opposite authored side from the other marks, so the in-plane
-  // correction must be negative: positive 75° showed its back/side and made
-  // accelerometer movement steer the wrong end. This keeps a readable
-  // three-quarter body while aiming the lens toward the viewer at rest.
-  [CAMCORDER_MODEL]: { x: Math.PI / 2, z: -(Math.PI * 5) / 12 },
+  // The camcorder is NOT authored face-up like the rest of the family: at
+  // identity it already stands correctly — body level, lens out to the left,
+  // the poplur LCD square to the viewer, grip underneath. Verified by rendering
+  // the GLB in this exact ortho scene rather than by guessing radians.
+  //
+  // It therefore needs an explicit no-op entry, because the poplur_cube_* rule
+  // below would otherwise tip it a quarter turn onto its back. The previous
+  // `{ x: 90°, z: -75° }` did exactly that and then rolled it, which is why it
+  // lay on its side in the camera view.
+  [CAMCORDER_MODEL]: { x: 0, y: 0, z: 0 },
 }
 
 /** The supplied `poplur_cube_*` set is authored face-UP: the coloured pad that
@@ -942,8 +958,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
           motionPitch += motionPitchVelocity * step
           remainingSteps -= step
         }
-        const boundedYaw = THREE.MathUtils.clamp(motionYaw, -CUBE_MOTION_YAW_LIMIT, CUBE_MOTION_YAW_LIMIT)
-        const boundedPitch = THREE.MathUtils.clamp(motionPitch, -CUBE_MOTION_PITCH_LIMIT, CUBE_MOTION_PITCH_LIMIT)
+        // The camcorder aims; everything else parallaxes. See the limits above.
+        const aiming = loadedUrlRef.current === CAMCORDER_MODEL
+        const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
+        const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT
+        const boundedYaw = THREE.MathUtils.clamp(motionYaw, -yawLimit, yawLimit)
+        const boundedPitch = THREE.MathUtils.clamp(motionPitch, -pitchLimit, pitchLimit)
         if (boundedYaw !== motionYaw) motionYawVelocity = 0
         if (boundedPitch !== motionPitch) motionPitchVelocity = 0
         motionYaw = boundedYaw
