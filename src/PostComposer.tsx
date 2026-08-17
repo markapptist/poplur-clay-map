@@ -100,7 +100,6 @@ type UploadProgressUpdate = {
 }
 
 const NATIVE_UPLOAD_TIMEOUT_MS = 90_000
-const MAX_PREVIEW_PLAY_MS = 12_000
 
 function releasePreviewVideo(video: HTMLVideoElement): void {
   video.pause()
@@ -297,26 +296,39 @@ export default function PostComposer({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, retirePreview, step, usedAI])
 
-  // A new capture receives one automatic, muted pass. Subsequent passes are
-  // explicit taps, and every pass has the same hard decoder lease.
   useEffect(() => {
     setPreviewStill(null)
-    setPreviewPlaying(media.kind === 'video'
-      && !document.hidden
-      && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
   }, [media.kind, media.src])
 
   const basePreviewOwnsMedia = !editorOpen && (step === 'edit' || step === 'choice')
 
-  // Defense in depth for non-gesture state changes. User transitions call
-  // goToStep above, which retires synchronously before the child can mount.
+  // A captured video loops for as long as the base preview owns it — no play
+  // button, no timed lease (product call, 16 Aug 2026). The performance
+  // governor stays the guard: leave the foreground, lose the video-texture
+  // allowance, or hand the clip to a child step and the decoder is released
+  // (freezing to the captured still); when the conditions come back, the loop
+  // resumes on its own. User transitions still call goToStep above, which
+  // retires synchronously inside the gesture before a VFX/AI/channel child
+  // can acquire the same clip.
   useEffect(() => {
-    if (!basePreviewOwnsMedia) retirePreview()
-  }, [basePreviewOwnsMedia, retirePreview])
-
-  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
-    if (!snapshot.isForeground || !snapshot.expensiveVideoBackedTexturesAllowed) retirePreview()
-  }), [retirePreview])
+    if (media.kind !== 'video') return
+    const sync = () => {
+      const snapshot = PoplurPerformanceManager.snapshot
+      const allowed = basePreviewOwnsMedia
+        && !document.hidden
+        && snapshot.isForeground
+        && snapshot.expensiveVideoBackedTexturesAllowed
+      if (allowed) setPreviewPlaying(true)
+      else retirePreview()
+    }
+    sync()
+    const unsubscribe = PoplurPerformanceManager.subscribe(sync)
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      unsubscribe()
+      document.removeEventListener('visibilitychange', sync)
+    }
+  }, [basePreviewOwnsMedia, media.kind, media.src, retirePreview])
 
   useEffect(() => {
     const v = previewVideoRef.current
@@ -336,16 +348,11 @@ export default function PostComposer({
     kick()
     v.addEventListener('loadeddata', kick)
     v.addEventListener('canplay', kick)
-    const lease = window.setTimeout(retirePreview, MAX_PREVIEW_PLAY_MS)
-    const onVisibility = () => { if (document.hidden) retirePreview() }
-    document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('pagehide', retirePreview)
     return () => {
       cancelled = true
-      window.clearTimeout(lease)
       v.removeEventListener('loadeddata', kick)
       v.removeEventListener('canplay', kick)
-      document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pagehide', retirePreview)
       releasePreviewVideo(v)
     }
@@ -538,14 +545,12 @@ export default function PostComposer({
               className={styles.media}
               src={media.src}
               style={{ filter: filterCss === 'none' ? undefined : filterCss }}
-              autoPlay muted playsInline preload="metadata"
+              autoPlay muted playsInline loop preload="metadata"
               onLoadedData={event => {
                 if (previewStill) return
                 const still = stillFromVideo(event.currentTarget)
                 if (still) setPreviewStill(still)
               }}
-              onEnded={retirePreview}
-              onClick={retirePreview}
             />
           ) : previewStill ? (
             <img
@@ -555,18 +560,6 @@ export default function PostComposer({
               style={{ filter: filterCss === 'none' ? undefined : filterCss }}
             />
           ) : null}
-          {basePreviewOwnsMedia && !previewPlaying && (
-            <button
-              type="button"
-              className={styles.previewReplay}
-              onClick={() => {
-                if (!document.hidden && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed) {
-                  setPreviewPlaying(true)
-                }
-              }}
-              aria-label="Play video preview"
-            >▶</button>
-          )}
         </>
       ) : (
         <img

@@ -5,20 +5,29 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 9px;
-  padding: 16px 12px 18px;
-  overflow: hidden;
+  box-sizing: border-box;
+  padding: 16px 12px var(--composer-home-clearance, 190px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scroll-padding-block: 12px var(--composer-home-clearance, 190px);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   color: #2e1823;
   background:
     radial-gradient(circle at 50% 18%, rgba(255,255,255,.92), transparent 32%),
     linear-gradient(180deg, #fff8fb, #f6e8ef);
 }
+.chat::-webkit-scrollbar { display: none; }
 
 .chat::after { content: ''; position: absolute; inset: 0; pointer-events: none; border: 1px solid transparent; border-image: conic-gradient(from 0deg,#ff2d96,#8de9ff,#ffcf73,#ff2d96) 1; }
 
 .header {
   min-width: 0;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 36px;
+  grid-template-columns: 42px minmax(0, 1fr) 44px;
   align-items: center;
   gap: 9px;
   padding: 8px 10px;
@@ -34,7 +43,7 @@
 .identity strong b { color: #f42f90; }
 .identity small { color: #b3296c; font: 900 8px/1 ui-monospace,monospace; letter-spacing: .7px; }
 .identity small i { width: 6px; height: 6px; display: inline-block; margin-right: 4px; border-radius: 50%; background: #28c55d; box-shadow: 0 0 7px #28c55d; }
-.header > button { width: 34px; height: 34px; border: 0; border-radius: 8px; color: #fff; background: linear-gradient(145deg,#ff72b4,#d91471); box-shadow: 0 4px 0 #9b0b50; font-weight: 950; }
+.header > button { width: 44px; height: 44px; border: 0; border-radius: 8px; color: #fff; background: linear-gradient(145deg,#ff72b4,#d91471); box-shadow: 0 4px 0 #9b0b50; font-weight: 950; }
 
 .conversation { min-height: 0; overflow: auto; display: grid; align-content: start; gap: 10px; padding: 12px 10px; border: 1px solid rgba(255,255,255,.88); border-radius: 8px; background: rgba(255,255,255,.7); box-shadow: inset 0 0 22px rgba(255,126,187,.07); }
 .assistantMessage { width: fit-content; max-width: 82%; padding: 10px 12px; border: 1px solid rgba(255,45,150,.12); border-radius: 8px 8px 8px 4px; background: #fff0f7; box-shadow: 0 5px 12px rgba(80,28,52,.08); }
@@ -51,14 +60,14 @@
 
 .ideas { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
 .ideas::-webkit-scrollbar { display: none; }
-.ideas button { flex: none; min-height: 34px; padding: 0 10px; border: 1px solid rgba(244,47,144,.2); border-radius: 7px; color: #71394f; background: #fff7fb; font: 850 10px/1 system-ui,sans-serif; }
+.ideas button { flex: none; min-height: 44px; padding: 0 10px; border: 1px solid rgba(244,47,144,.2); border-radius: 7px; color: #71394f; background: #fff7fb; font: 850 10px/1 system-ui,sans-serif; }
 
 .composer { padding: 8px; border: 1px solid rgba(255,255,255,.94); border-radius: 8px; background: rgba(255,255,255,.98); box-shadow: 0 -6px 20px rgba(75,28,49,.1); }
-.inputRow { min-width: 0; display: grid; grid-template-columns: 36px minmax(0,1fr) 36px; align-items: end; gap: 7px; }
+.inputRow { min-width: 0; display: grid; grid-template-columns: 44px minmax(0,1fr) 44px; align-items: end; gap: 7px; }
 .inputRow textarea { width: 100%; min-height: 42px; max-height: 74px; resize: none; box-sizing: border-box; padding: 10px 11px; border: 1px solid rgba(244,47,144,.15); border-radius: 7px; outline: 0; color: #361f2a; background: #f8f1f5; font: 750 12px/1.25 system-ui,sans-serif; }
 .addButton,
-.sendButton { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #fff; background: linear-gradient(145deg,#ff72b4,#d91471); box-shadow: 0 4px 0 #9b0b50; font: 950 20px/1 system-ui,sans-serif; }
+.sendButton { width: 44px; height: 44px; border: 0; border-radius: 8px; color: #fff; background: linear-gradient(145deg,#ff72b4,#d91471); box-shadow: 0 4px 0 #9b0b50; font: 950 20px/1 system-ui,sans-serif; }
 .sendButton:disabled { opacity: .38; box-shadow: none; }
 .modes { display: flex; align-items: center; gap: 7px; margin-top: 8px; }
 .modes span { padding: 4px 6px; border: 1px solid rgba(244,47,144,.18); border-radius: 4px; color: #b3296c; font: 900 7px/1 ui-monospace,monospace; letter-spacing: .7px; }
-.modes button { margin-left: auto; padding: 5px 6px; border: 0; color: #8b6477; background: none; font: 850 9px/1 system-ui,sans-serif; }
+.modes button { min-height: 44px; margin-left: auto; padding: 5px 8px; border: 0; color: #8b6477; background: none; font: 850 9px/1 system-ui,sans-serif; }

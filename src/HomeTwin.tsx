@@ -179,6 +179,16 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // Still awaiting a model: camera-studio, feed-games.
 }
 
+/** Resolve a subscreen object from its screen identity in one place. Keeping
+    the identity and the URL as separate React states allowed their updates and
+    cleanups to cross during rapid subscreen navigation, leaving the previous
+    object visible on the new screen. */
+function subscreenNavigatorModel(screen: string | null): string | undefined {
+  if (!screen) return undefined
+  if (screen === 'feed-games') return STATION_CONSOLE_MODEL
+  return SUBSCREEN_CUBE_MODEL[screen]
+}
+
 const IOS_STORE_PRODUCT_BY_CARD_ID: Record<string, string> = {
   inverted: 'com.apptist.Poplur2025.card.inverted',
   lens: 'com.apptist.Poplur2025.card.lens',
@@ -700,9 +710,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // after an overlay or background lifecycle remount.
     if (committedTab === 'feed' && feedAutoPlayOnMount) setFeedAutoPlayOnMount(false)
   }, [committedTab, feedAutoPlayOnMount])
-  // undefined = the designed cube. Set while a screen takes the navigator over.
-  const [cubeModel, setCubeModel] = useState<string | undefined>(undefined)
-
   // The custom cube you are wearing, if any. Read synchronously (the index is
   // in localStorage) but its MODEL comes out of IndexedDB, so the first call
   // returns null and the change event lands once the blob URL exists.
@@ -736,11 +743,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-profile-capture', onCapture)
     return () => window.removeEventListener('poplur-profile-capture', onCapture)
   }, [])
-  useEffect(() => {
-    if (!profileCapture) return
-    setCubeModel(PROFILE_CAMERA_MODEL)
-    return () => setCubeModel(undefined)
-  }, [profileCapture])
   // The post composer is a full-screen modal, but it lives inside .contentLayer
   // (z-index 4) so it can never stack above the home chrome at 260 — the radius
   // readout, channel arrows and cube drew straight over it, with the cube
@@ -761,6 +763,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     subscreenArrowsRef.current = fn
   }, [])
 
+  const [cubeScreen, setCubeScreen] = useState<string | null>(null)
   const handleSubscreenChange = useCallback((open: boolean, screen?: string) => {
     setOverlayOpen(open)
     // On TV Guide the navigator stops being a cube and becomes the clay TV —
@@ -774,24 +777,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // that share the plain cube — without this, entering News from Home would
     // swap nothing and so pop nothing.
     setCubeScreen(open && screen ? screen : null)
-    setCubeModel(() => {
-      if (!open || !screen) return undefined
-      const wanted = SUBSCREEN_CUBE_MODEL[screen]
-      if (wanted) return wanted
-      // STUDIO wants the mixing desk here for the same reason, and CANNOT have
-      // it yet: poplur_mixer.glb is 38MB against clay_tv.glb's 136KB. The TV
-      // works as a live navigator precisely because it is tiny; handing the
-      // cube a 38MB model would decode it on the main thread every time the
-      // studio opens. The desk is already baked to a 54KB sprite for the
-      // header — the navigator needs a DECIMATED mixer (Draco + simplify, down
-      // near the TV's weight) before this line can come back.
-      // if (screen === 'camera-studio') return STUDIO_MIXER_MODEL
-      if (screen === 'feed-games') return STATION_CONSOLE_MODEL
-      // GAMES wants the same treatment and has no object yet — see the note in
-      // the handoff. Deliberately NOT substituted with a stand-in: inventing
-      // art for a clay surface is the one thing this project never does.
-      return undefined
-    })
     // Opening a real subscreen IS a page change. Radio, TV Guide and Games each
     // bring their own sound, and `activeTab` does not move, so silence the tab
     // just before it unmounts. A `false` report also occurs when the raw wheel
@@ -812,7 +797,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // cube is actually wearing. They differ only for the length of the swap, and
   // the model changes at the expanded peak so the handoff reads as one
   // continuous clay pop rather than a disappearance and reappearance.
-  const [cubeScreen, setCubeScreen] = useState<string | null>(null)
   const [appliedCubeScreen, setAppliedCubeScreen] = useState<string | null>(null)
   const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab))
   const [cubeSwapPhase, setCubeSwapPhase] = useState<'idle' | 'exit' | 'waiting' | 'enter'>('idle')
@@ -2040,7 +2024,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const requestedCubeModel = activeTab === 'post' && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
     : (avatarPreview
-      ?? cubeModel
+      ?? (activeTab === 'profile' && profileCapture ? PROFILE_CAMERA_MODEL : undefined)
+      ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
       ?? tabNavigatorModel(activeTab))
 
@@ -2127,6 +2112,25 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     // Let an active exit/wait/enter finish. On returning to idle this effect
     // starts one more bounded pop only when a newer destination is pending.
+    if (cubeSwapPhase === 'waiting') {
+      const target = pendingCubeSwap.current
+      pendingCubeSwap.current = null
+      if (!target) return
+      // We are already held at the expansion peak, so a newer subscreen can
+      // replace an obsolete in-flight request immediately. Waiting for the old
+      // 1.4s recovery window made fast Stats -> Mail -> Store navigation look
+      // as though the subcube simply ignored the new screen.
+      awaitingCubeModelRef.current = target.model
+      setAppliedCubeModel(target.model)
+      setAppliedCubeScreen(target.screen)
+      if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
+      if (target.model === appliedCubeModel) {
+        beginCubeSwapEnter(true)
+      } else {
+        cubeModelReadyTimer.current = window.setTimeout(() => beginCubeSwapEnter(true), 1_400)
+      }
+      return
+    }
     if (cubeSwapPhase !== 'idle') return
     setCubeSwapPhase('exit')
   }, [requestedCubeModel, appliedCubeModel, cubeScreen, appliedCubeScreen, cubeSwapPhase, beginCubeSwapEnter])
@@ -2167,6 +2171,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const previous = cubeOwnerTabRef.current
     cubeOwnerTabRef.current = activeTab
     if (previous === activeTab) return
+    // The old HoldMenu cleanup is asynchronous relative to the tab request.
+    // Clear its ownership at the semantic edge so a Camera/Profile subscreen
+    // can never lend its object to the next tab for even one transition.
+    setCubeScreen(null)
     setHoldOpen(false)
   }, [activeTab])
 
@@ -2581,6 +2589,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               cameraFlashArmed={cameraFlashArmed}
               cameraFlashPulse={cameraFlashPulse}
               camcorderRecording={recordMs != null}
+              motionContextKey={`${committedTab}:${cubeScreen ?? 'root'}:${appliedCubeModel}`}
               // One forward destination and one just-retired object form the
               // bounded navigator pool. Only this current model is rendered.
               prepareModelUrl={cubePreparationModel}

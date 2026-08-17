@@ -162,10 +162,23 @@ function retireFeedVideo(video: HTMLVideoElement): void {
 }
 
 function shouldUnlockFeedAudioOnMount(explicitNavigation: boolean): boolean {
-  // A cold Feed starts moving immediately, but iOS still requires a user
-  // gesture before sound can be enabled. Home supplies this token when the
-  // mount itself was caused by an explicit cube navigation gesture.
-  return isNativeShell() && explicitNavigation
+  // In a BROWSER a gesture is genuinely required before sound, so the feed waits
+  // for a tap on the video and `explicitNavigation` is the only way a cold mount
+  // can already have one.
+  //
+  // In the native shells it is not required, and insisting on it is why feed
+  // videos were silent: both hosts lift the restriction for us —
+  // Android `settings.mediaPlaybackRequiresUserGesture = false`, iOS
+  // `config.mediaTypesRequiringUserActionForPlayback = []` — but the app usually
+  // OPENS on Feed rather than arriving by a cube gesture, so the token was
+  // absent and the picture ran muted until you happened to tap it. Nothing about
+  // that was discoverable.
+  //
+  // The rest of the decision is unchanged and still governs: `isGateMuted()`
+  // (user mute, backgrounded app) and whether Feed owns the audio floor — the
+  // radio or the AI voice still take the sound when they should.
+  if (isNativeShell()) return true
+  return explicitNavigation
 }
 
 const CHANNEL_USERS: Record<string, string[]> = {

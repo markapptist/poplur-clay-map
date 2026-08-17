@@ -5,10 +5,23 @@
   display: grid;
   grid-template-rows: auto minmax(250px, 1fr) auto auto minmax(112px, auto);
   gap: 0;
-  overflow: hidden;
+  box-sizing: border-box;
+  /* The Home navigator remains the universal back control above this editor.
+     Keep the VFX controls in their own native-feeling scroll viewport so its
+     object rail can move clear of that persistent bottom HUD on every phone. */
+  padding-bottom: var(--composer-home-clearance, 190px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scroll-padding-block: 12px var(--composer-home-clearance, 190px);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   color: #22151e;
   background: #f8edf2;
 }
+.studio::-webkit-scrollbar { display: none; }
 
 .header {
   min-width: 0;
@@ -31,8 +44,8 @@
 .title small { color: #9b5c79; font: 900 7px/1 ui-monospace, monospace; letter-spacing: 1px; }
 
 .headerActions button {
-  width: 30px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 6px;
   color: #6f5261;
@@ -161,14 +174,14 @@
 
 .timeline {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 52px;
+  grid-template-columns: 44px minmax(0, 1fr) 52px;
   align-items: center;
   gap: 7px;
   padding: 9px 10px 8px;
   border-bottom: 1px solid #e2ccd6;
   background: #fff8fb;
 }
-.playButton { width: 30px; height: 30px; border: 0; border-radius: 50%; color: #fff; background: #2b1b24; box-shadow: 0 3px 0 #100a0d; font: 900 10px/1 system-ui, sans-serif; }
+.playButton { width: 44px; height: 44px; border: 0; border-radius: 50%; color: #fff; background: #2b1b24; box-shadow: 0 3px 0 #100a0d; font: 900 10px/1 system-ui, sans-serif; }
 .timeline time { display: grid; gap: 4px; color: #9b0f55; font: 900 8px/1 ui-monospace, monospace; }
 .timeline time small { color: #9b7b8b; font-size: 7px; }
 .timelineTrack { position: relative; height: 57px; overflow: hidden; border: 1px solid #dec4d0; border-radius: 5px; background: #291822; }
@@ -182,7 +195,7 @@
 .emptyCue { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.54); font: 800 6px/1 ui-monospace, monospace; }
 .timelineTrack input { position: absolute; inset: 0; z-index: 4; width: 100%; height: 100%; opacity: 0; cursor: ew-resize; }
 .playhead { position: absolute; z-index: 3; top: 0; bottom: 0; width: 2px; translate: -1px 0; background: #fff; box-shadow: 0 0 0 1px #f5489e, 0 0 6px #f5489e; pointer-events: none; }
-.placeAtPlayhead { grid-column: 2 / 4; justify-self: stretch; min-height: 23px; border: 1px solid #dfbfd0; border-radius: 5px; color: #8c1752; background: #fff; font: 900 7px/1 ui-monospace, monospace; }
+.placeAtPlayhead { grid-column: 2 / 4; justify-self: stretch; min-height: 44px; border: 1px solid #dfbfd0; border-radius: 5px; color: #8c1752; background: #fff; font: 900 7px/1 ui-monospace, monospace; }
 .placeAtPlayhead:disabled { opacity: .42; }
 
 .toolTabs {
@@ -194,7 +207,7 @@
 }
 .toolTabs button {
   min-width: 0;
-  height: 32px;
+  height: 44px;
   overflow: hidden;
   border: 1px solid #ddc4d0;
   border-radius: 6px;

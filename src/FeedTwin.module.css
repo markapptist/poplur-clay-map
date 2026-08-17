@@ -234,6 +234,15 @@
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 8px rgba(246, 59, 154, 0.38));
   animation: feedTitleMarquee 12s linear infinite, feedCenterTextShader 4.8s linear 3;
+  /* WebKit will run this animation and never repaint it. The track paints its
+     text through -webkit-background-clip: text, and on iOS that combination can
+     be rasterised once and then translated as a static tile — getAnimations()
+     reports `running`, the computed transform advances, and the title sits dead
+     still on the device while animating correctly in Chrome. Forcing its own
+     compositing layer makes WebKit repaint per frame. */
+  will-change: transform, background-position;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .feedTitleTrack span { flex: none; }
@@ -586,8 +595,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .commentRollTrack,
-  .feedTitleTrack { animation: none; }
+  /* Motion off, but the title must stay READABLE: with the marquee stopped a
+     long title was simply clipped at the viewport edge, so honouring the setting
+     silently cost you the content. Let it wrap instead of travel. */
+  .feedTitle { overflow: visible; }
+  .feedTitleTrack {
+    animation: none;
+    width: 100%;
+    white-space: normal;
+    transform: none;
+  }
+  .feedTitleTrack span[aria-hidden="true"] { display: none; }
+  .commentRollTrack { animation: none; }
   .video,
   .drift,
   .grain,

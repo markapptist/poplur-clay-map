@@ -2,9 +2,15 @@
    camera / roll / map, dark so the media reads, with a step panel at the base. */
 
 .stage {
-  position: absolute;
+  /* This is a viewport-level modal even though Camera owns its state. Keeping
+     it absolute made WebKit anchor it to the vertically paged camera track on
+     some devices, shifting the whole upload flow above the notch and leaving
+     its header buttons outside the touchable viewport. */
+  position: fixed;
   inset: 0;
   z-index: 48;
+  --composer-home-clearance:
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   background: #07040c;
@@ -49,25 +55,6 @@
    the capture to fit inside it. */
 .media { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-.previewReplay {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  translate: -50% -50%;
-  width: 62px;
-  height: 62px;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.32);
-  border-radius: 50%;
-  background: rgba(7, 4, 12, 0.58);
-  color: #fff;
-  font: 900 24px/1 system-ui, sans-serif;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-}
-.previewReplay:active { transform: scale(0.94); }
-
 /* The bar and the step panel sit above the full-bleed media, with a scrim so
    their text stays legible over a bright capture. */
 .bar, .panel { position: relative; z-index: 1; }
@@ -92,13 +79,22 @@
      standalone/browser case where the variable is absent. */
   padding:
     12px 14px
-    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+    var(--composer-home-clearance);
   /* A tall step (channel: caption + radius + 15 channels + Post) must scroll
      inside the space that is left rather than grow under the chrome. */
   max-height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scroll-padding-block: 14px var(--composer-home-clearance);
+  /* Keep the upload flow finger-scrollable without painting WebKit's thin
+     overlay indicator over the live Camera, where it reads like an invisible
+     Camera slider. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.panel::-webkit-scrollbar { display: none; }
 /* The choice step is a QUESTION, not a bottom sheet.
    Pinned to the base it landed directly under the home chrome — the clay cube
    and the live-presence badge sit at z-index 260, deliberately above subscreens

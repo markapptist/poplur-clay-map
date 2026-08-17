@@ -265,6 +265,12 @@ export default function HoldMenuTwin({
     const all = Object.values(TAB_MENUS).flat() as Item[]
     return all.find(item => item.screen === want) ?? null
   })
+  // Channel-arrow presses can arrive faster than React commits the next
+  // render. Keep the semantic screen current synchronously so two quick
+  // presses advance twice instead of both calculating from the same stale
+  // subscreen and appearing to ignore the second cube change.
+  const activeScreenRef = useRef(activeScreen)
+  activeScreenRef.current = activeScreen
   // The feed keeps playing behind these screens otherwise — you would hear it
   // over the paper. Tell the home so it can silence what it is covering.
   useEffect(() => {
@@ -300,10 +306,13 @@ export default function HoldMenuTwin({
     const stops = live.filter(it => !it.action && !it.mapAction && !it.event)
     if (!activeScreen || stops.length < 2) { bindArrows(null); return () => bindArrows(null) }
     bindArrows((dir: 1 | -1) => {
-      const here = stops.findIndex(it => it.screen === activeScreen.screen && it.title === activeScreen.title)
+      const current = activeScreenRef.current
+      if (!current) return false
+      const here = stops.findIndex(it => it.screen === current.screen && it.title === current.title)
       const next = stops[((here + dir) % stops.length + stops.length) % stops.length]
       if (!next) return false
       playPop()
+      activeScreenRef.current = next
       setActiveScreen(next)
       // Keep the wheel behind in step, so backing out of the subscreen leaves
       // you standing on the tile you actually arrived at.

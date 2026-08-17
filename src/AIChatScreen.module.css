@@ -5,9 +5,14 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
-  /* The composer is the last grid row and the cube floats above it — without
-     this reserve the cube sat on top of the message box. */
-  padding-bottom: calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+  /* The composer is the last grid row and the cube floats above it, so some
+     reserve is needed or the cube sits on the message box. A FULL cube height
+     was far more than that: the cube's lower half is off the composer's line
+     anyway, and reserving all of it left a dead band under the input roughly
+     the height of the input itself. Reserve the part that actually overlaps.
+     The conversation is the 1fr row, so everything reclaimed here goes to the
+     chat — which already scrolls (overflow: auto below). */
+  padding-bottom: calc(10px + var(--cube-size, 176px) * 0.56 + env(safe-area-inset-bottom));
   color: #24141d;
   background:
     linear-gradient(180deg, #fff9fc 0%, #f8edf3 52%, #f4e5ed 100%);

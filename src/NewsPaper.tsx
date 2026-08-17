@@ -203,7 +203,8 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
   const sentinel = useRef<HTMLDivElement>(null)
   const scrollHost = useRef<HTMLDivElement>(null)
   const pullInner = useRef<HTMLDivElement>(null)
-  const pullMark = useRef<HTMLDivElement>(null)
+  const pullPanel = useRef<HTMLDivElement>(null)
+  const pullHead = useRef<HTMLDivElement>(null)
 
   const entries = useMemo(() => {
     // What you dropped leads the edition; the rest of the paper follows.
@@ -264,8 +265,9 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
   usePullToRefresh({
     scrollRef: scrollHost,
     innerRef: pullInner,
-    markRef: pullMark,
-    spinClass: pullStyles.spin,
+    panelRef: pullPanel,
+    headRef: pullHead,
+    busyClass: pullStyles.busy,
     onRefresh: refresh,
   })
 
@@ -273,8 +275,12 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
     <div className={styles.paper} role="dialog" aria-label="Poplur Times">
       {/* No ✕ — the cube is the back control for every subscreen. */}
       <div className={styles.scroll} ref={scrollHost}>
-        <div className={pullStyles.mark} ref={pullMark} data-pull-mark aria-hidden="true">
-          <img src="logo_icon.png" alt="" draggable="false" />
+        <div className={pullStyles.panel} ref={pullPanel} data-pull-panel aria-hidden="true">
+          <div className={pullStyles.head} ref={pullHead}>
+            {/* The supplied mark head, prebaked flat by prerender-sprites —
+                the same object the Profile navigator holds, never new art. */}
+            <img src="sprites/poplur_mark_head_navigator_y0_p0_s640.png" alt="" draggable="false" />
+          </div>
         </div>
         <div ref={pullInner}>
         <header className={styles.masthead}>

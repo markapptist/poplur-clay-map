@@ -916,7 +916,8 @@ export default function ProfileTwin({
 
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
-  const pullMarkRef = useRef<HTMLDivElement>(null)
+  const pullPanelRef = useRef<HTMLDivElement>(null)
+  const pullHeadRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const viewerVideoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -1132,8 +1133,9 @@ export default function ProfileTwin({
   usePullToRefresh({
     scrollRef: contentRef,
     innerRef: pullRef,
-    markRef: pullMarkRef,
-    spinClass: pullStyles.spin,
+    panelRef: pullPanelRef,
+    headRef: pullHeadRef,
+    busyClass: pullStyles.busy,
     onRefresh: refreshPosts,
   })
 
@@ -1704,7 +1706,10 @@ export default function ProfileTwin({
             kind="mail"
             tone="cream"
             label={`Message ${shownName}`}
-            size={44}
+            /* 44 matched the bell, but the bell is a glance and this is the only
+               action you can take on someone else's profile — at 44 it read as a
+               decoration next to a 200px avatar. */
+            size={64}
             activateOnClick
             onPress={() => { playPop(); setMailingUser(true) }}
           />
@@ -1809,8 +1814,12 @@ export default function ProfileTwin({
       </div>
 
       <div className={styles.content} ref={contentRef}>
-        <div className={pullStyles.mark} ref={pullMarkRef} data-pull-mark aria-hidden="true">
-          <img src="logo_icon.png" alt="" draggable="false" />
+        <div className={pullStyles.panel} ref={pullPanelRef} data-pull-panel aria-hidden="true">
+          <div className={pullStyles.head} ref={pullHeadRef}>
+            {/* The supplied mark head, prebaked flat by prerender-sprites —
+                the same object this tab's navigator holds, never new art. */}
+            <img src="sprites/poplur_mark_head_navigator_y0_p0_s640.png" alt="" draggable="false" />
+          </div>
         </div>
 
         <div className={styles.pullInner} ref={pullRef}>

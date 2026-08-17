@@ -89,23 +89,25 @@ function CaptureConfirmation() {
     <section className={styles.captureReview} aria-label="Capture confirmation review">
       <img src={SAMPLE_PHOTO} alt="Captured post preview" />
       <div className={styles.captureShade} />
-      <div className={styles.flowBrand}>
-        <img src="/logo_icon.png" alt="" />
-        <span>CAPTURE READY</span>
-      </div>
-      <div className={styles.captureTitle}>
-        <span>PHOTO · ORIGINAL</span>
-        <strong>Keep this shot?</strong>
-      </div>
-      <div className={styles.captureActions}>
-        <button type="button" className={styles.redoButton}>
-          <b aria-hidden="true">↺</b>
-          <span>Redo</span>
-        </button>
-        <button type="button" className={styles.keepButton}>
-          <b aria-hidden="true">✓</b>
-          <span>Keep photo</span>
-        </button>
+      <div className={styles.captureScroll}>
+        <div className={styles.flowBrand}>
+          <img src="/logo_icon.png" alt="" />
+          <span>CAPTURE READY</span>
+        </div>
+        <div className={styles.captureTitle}>
+          <span>PHOTO · ORIGINAL</span>
+          <strong>Keep this shot?</strong>
+        </div>
+        <div className={styles.captureActions}>
+          <button type="button" className={styles.redoButton}>
+            <b aria-hidden="true">↺</b>
+            <span>Redo</span>
+          </button>
+          <button type="button" className={styles.keepButton}>
+            <b aria-hidden="true">✓</b>
+            <span>Keep photo</span>
+          </button>
+        </div>
       </div>
     </section>
   )

@@ -1,44 +1,71 @@
-/* The clay mark that rides the pull. Shared by the profile grid and the news
-   page so both screens refresh with the same object and the same motion. */
+/* The pull-to-refresh curtain: a clay-pink sheet revealed from under the top
+   edge, with the Poplur mark head peeking over its bottom lip. Shared by the
+   profile grid and the news page so both screens refresh with the same place
+   and the same head.
 
-.mark {
+   The sheet is a FIXED-HEIGHT block parked at translateY(-100%), entirely
+   above the host's scroll clip, and the hook slides it down by the pull —
+   transform only, never an animated height, so the gesture cannot cost a
+   reflow. It rests invisible for the same reason the old mark rested at the
+   top of the content: you cannot scroll to a negative offset, so anything
+   meant to appear "above the page" has to already live inside the clip and
+   move, not exist outside it and wait. */
+
+.panel {
   position: absolute;
-  /* INSIDE the scroll container's visible area, not above it. The host clips
-     with overflow-y:auto, and you cannot scroll to a negative offset — a mark
-     parked above the top edge is simply invisible until the pull has already
-     dragged it down past the clip, which is exactly when feedback is too late
-     to be useful. It rests here at zero scale instead and grows into view. */
-  top: 6px;
-  left: 50%;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 164px;
   z-index: 5;
-  width: 34px;
-  height: 34px;
-  margin-left: -17px;
-  opacity: 0;
+  transform: translate3d(0, -100%, 0);
+  overflow: hidden; /* crops the head to a peek over the bottom lip */
   pointer-events: none;
-  /* Squash and spin are transform-only, so the gesture never triggers layout. */
-  will-change: transform, opacity;
+  will-change: transform;
+  /* The house pink, worn flat like the reference band — one confident colour,
+     a soft sheen at the top-left the way every clay card catches light, and a
+     darker pressed lip along the bottom edge. */
+  background:
+    radial-gradient(circle at 22% 10%, rgba(255, 255, 255, 0.16), transparent 46%),
+    linear-gradient(180deg, #ff5fae 0%, #f4459c 62%, #d92b86 100%);
+  box-shadow:
+    inset 0 -2px 0 rgba(22, 6, 15, 0.28),
+    0 8px 22px rgba(30, 0, 16, 0.35);
 }
 
-.mark img {
+/* The mark head, straddling the bottom lip. The wrapper carries the hook's
+   inline rise/tilt transform; the img inside carries the busy bob, so the two
+   never overwrite each other (same split the old spin used). */
+.head {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 96px;
+  height: 96px;
+  margin-left: -48px;
+  transform: translateY(96%);
+  will-change: transform;
+}
+
+.head img {
   width: 100%;
   height: 100%;
   display: block;
   -webkit-user-drag: none;
   user-select: none;
+  filter: drop-shadow(0 3px 6px rgba(30, 0, 16, 0.35));
 }
 
-/* Runs only while the refresh is actually in flight. The hook writes the
-   squash into the element's inline transform, so the spin lives on a child
-   wrapper instead — otherwise the two would overwrite each other. */
-.spin img {
-  animation: markSpin 0.8s linear infinite;
+/* Runs only while the refresh is actually in flight. */
+.busy img {
+  animation: headBob 0.7s ease-in-out infinite;
 }
 
-@keyframes markSpin {
-  to { transform: rotate(360deg); }
+@keyframes headBob {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50% { transform: translateY(-9%) rotate(3deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spin img { animation-duration: 1.6s; }
+  .busy img { animation-duration: 1.6s; }
 }

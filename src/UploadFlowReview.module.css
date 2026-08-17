@@ -198,6 +198,41 @@
   object-fit: cover;
 }
 
+/* The home clay cube is the universal back control: it floats at bottom 18px,
+   --cube-size (176px) tall, z-index 260, ABOVE these screens — so any button
+   pinned to the bottom edge renders underneath it, untouchable. Same reserve
+   the composer keeps; the formula mirrors --composer-home-clearance in
+   PostComposer.module.css and inherits the real value when a composer ancestor
+   provides it. Keep the two in sync. */
+.captureScroll,
+.postedOverlay {
+  --home-clearance: var(
+    --composer-home-clearance,
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom))
+  );
+}
+
+/* The confirm chrome scrolls as one column over the pinned photo: on a short
+   viewport (or with the cube reserve) Keep/Redo would otherwise sit covered or
+   clipped with no way to reach them. Same finger-scroll treatment as the
+   composer panel, indicator hidden for the same reason. */
+.captureScroll {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 20px var(--home-clearance);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.captureScroll::-webkit-scrollbar { display: none; }
+
 .captureShade,
 .statusShade {
   position: absolute;
@@ -208,10 +243,6 @@
 }
 
 .flowBrand {
-  position: absolute;
-  z-index: 2;
-  top: 24px;
-  left: 20px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -229,11 +260,7 @@
 }
 
 .captureTitle {
-  position: absolute;
-  z-index: 2;
-  left: 20px;
-  right: 20px;
-  bottom: 122px;
+  margin-top: auto;
   display: grid;
   gap: 7px;
   text-shadow: 0 3px 16px #000;
@@ -247,11 +274,7 @@
 .captureTitle strong { font-size: 27px; line-height: 1; letter-spacing: 0; }
 
 .captureActions {
-  position: absolute;
-  z-index: 2;
-  left: 20px;
-  right: 20px;
-  bottom: 22px;
+  margin-top: 38px;
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
   gap: 10px;
@@ -449,8 +472,13 @@
 .clayProgressTrack { height: 20px; overflow: hidden; padding: 4px; box-sizing: border-box; border: 1px solid rgba(255,224,241,.5); border-radius: 7px; background: #160a29; box-shadow: inset 0 4px 7px rgba(0,0,0,.62), 0 2px 0 rgba(255,255,255,.15); }
 .clayProgressTrack i { display: block; width: 64%; height: 100%; border-radius: 4px; background: repeating-linear-gradient(45deg,#ffe1f1 0 13px,#ff86c4 13px 26px,#f53c99 26px 39px); background-size: 56px 56px; box-shadow: inset 0 2px 2px rgba(255,255,255,.5), 0 0 12px rgba(245,60,153,.55); animation: clayBarber .7s linear infinite; }
 
-.postedOverlay { position: absolute; inset: 0; z-index: 12; display: grid; place-items: center; padding: 22px; background: rgba(8,8,18,.38); backdrop-filter: blur(4px); }
-.postedPopup { position: relative; z-index: 2; width: min(286px, 100%); box-sizing: border-box; display: grid; justify-items: center; padding: 22px 18px 18px; border: 2px solid rgba(255,172,216,.84); border-radius: 10px; color: #fff; text-align: center; background: radial-gradient(circle at 50% 0,rgba(255,117,184,.34),transparent 34%),linear-gradient(155deg,#4f1239,#160d28); box-shadow: 0 9px 0 #490d35, 0 25px 55px rgba(17,7,44,.58), inset 0 2px 1px rgba(255,255,255,.22); animation: postedPop .48s cubic-bezier(.17,.86,.32,1.28) both; }
+/* Scrolls so the BACK cube stays reachable: centered-and-clipped was how a
+   short viewport (or the home-cube reserve) ate the popup's ends. margin:auto
+   on the popup keeps it centered while it fits and top-anchors it the moment
+   it scrolls. */
+.postedOverlay { position: absolute; inset: 0; z-index: 12; display: grid; padding: 22px 22px var(--home-clearance); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; scrollbar-width: none; -ms-overflow-style: none; background: rgba(8,8,18,.38); backdrop-filter: blur(4px); }
+.postedOverlay::-webkit-scrollbar { display: none; }
+.postedPopup { position: relative; z-index: 2; width: min(286px, 100%); box-sizing: border-box; display: grid; justify-items: center; margin: auto; padding: 22px 18px 18px; border: 2px solid rgba(255,172,216,.84); border-radius: 10px; color: #fff; text-align: center; background: radial-gradient(circle at 50% 0,rgba(255,117,184,.34),transparent 34%),linear-gradient(155deg,#4f1239,#160d28); box-shadow: 0 9px 0 #490d35, 0 25px 55px rgba(17,7,44,.58), inset 0 2px 1px rgba(255,255,255,.22); animation: postedPop .48s cubic-bezier(.17,.86,.32,1.28) both; }
 .postedPopup > img { width: 92px; height: 92px; object-fit: contain; filter: drop-shadow(0 13px 18px rgba(0,0,0,.42)); }
 .postedPopup h2 { margin: 8px 0 5px; font: 950 27px/1 system-ui,sans-serif; letter-spacing: 0; }
 .postedPopup > p { margin: 0; color: #ff91c8; font: 950 10px/1 ui-monospace,monospace; letter-spacing: 1px; }
