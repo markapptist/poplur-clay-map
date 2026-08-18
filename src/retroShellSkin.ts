@@ -74,6 +74,10 @@ export interface RetroShellSkin {
   /** Null is still legal: rendering must degrade to a plain frame rather than
    *  crash or draw nothing if a future skin is declared before its art lands. */
   art: RetroShellArt | null
+  /** The power LED on the shell's face. Optional: a shell without one simply
+   *  does not flash. Lives here with the rest of the geometry so it tracks the
+   *  art, exactly like the controls. */
+  powerLed?: RetroCircle
   /** Where the emulator canvas goes. The GBA is 240x160 (3:2); a screen opening
    *  that is not 3:2 will letterbox rather than stretch. */
   screen: RetroRect
@@ -109,6 +113,10 @@ const SHARED_LAYOUT: Omit<RetroShellSkin, 'id' | 'name' | 'family' | 'art'> = {
   // art rather than filling it. That is the artwork's shape, not a bug here,
   // but it is the reason the canvas is object-fit: contain.
   screen: { x: 0.242, y: 0.098, w: 0.611, h: 0.352 },
+  // The lit dot beside the POWER legend, left of the bezel. Centre measured off
+  // the art; the radius is still by eye, because the blob detector kept growing
+  // into the POWER legend next to it. NEEDS A VISUAL CHECK.
+  powerLed: { cx: 0.155, cy: 0.196, r: 0.018 },
   controls: {
     dpad: { bounds: { x: 0.090, y: 0.600, w: 0.245, h: 0.160 }, deadZone: 0.22 },
     a: { cx: 0.905, cy: 0.662, r: 0.056 },

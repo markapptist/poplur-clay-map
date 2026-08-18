@@ -9,6 +9,7 @@ import {
   type RetroControlId,
 } from './retroShellSkin'
 import type { RetroButton } from './retroEmulator'
+import { playPop } from './pop'
 import styles from './ArcadeScreen.module.css'
 
 // Poplur Arcade — the shell player.
@@ -129,6 +130,10 @@ export default function ArcadeScreen() {
 
   /** Re-boot when the shell changes: a new handheld powers on. */
   const pickSkin = useCallback((id: string) => {
+    // The house pop: sound plus popHaptic(), which is navigator.vibrate on
+    // Android and the native bridge on iOS (Safari ignores the web API). Same
+    // feedback the rest of Poplur gives for a deliberate pick.
+    playPop()
     setSkinId(id)
     chimeOwed.current = false
     setBoot('drop')
@@ -174,6 +179,10 @@ export default function ArcadeScreen() {
     const hit = buttonsAt(e.clientX, e.clientY)
     if (!hit.length) return
     e.preventDefault()
+    // Button feedback: the house pop, quieter than a menu tap because a player
+    // presses these many times a second. popHaptic() rides along inside it, so
+    // the press also ticks on Android and through the native bridge on iOS.
+    playPop(0.3)
     // Capture so a finger sliding off the button still reports here, and so
     // pointerup is guaranteed — otherwise a direction sticks down after the
     // finger is gone, which is the bug releaseAllButtons exists for. Guarded
@@ -239,6 +248,20 @@ export default function ArcadeScreen() {
         onPointerCancel={onPointerUp}
         onContextMenu={e => e.preventDefault()}
       >
+        {/* Power LED: flashes while the handheld boots, then holds lit. Finite
+            (the element unmounts with the boot), because the thermal gate
+            forbids an animation that runs forever. */}
+        {skin.powerLed && boot !== 'done' && (
+          <span
+            className={styles.powerLed}
+            aria-hidden="true"
+            style={{
+              left: pct(skin.powerLed.cx - skin.powerLed.r),
+              top: pct(skin.powerLed.cy - skin.powerLed.r * (SHELL_W / SHELL_H)),
+              width: pct(skin.powerLed.r * 2),
+            }}
+          />
+        )}
         {hasArt
           ? <img className={styles.shellArt} src={skin.art!.shellAsset} alt={`${skin.name} shell`} draggable={false} />
           : <div className={styles.shellFallback} />}
