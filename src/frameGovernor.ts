@@ -34,9 +34,24 @@ export type Quality = 0 | 1 | 2 | 3
 // baseline rung, ambient sleep and the renderer park. Hidden-document and
 // background gating stay — an invisible page still renders nothing. The
 // native shells carry the same switch (PoplurPerformanceManager.
-// governorDisabled); flip both together. ON means the phone heats at the
-// rate the content actually costs.
-const GOVERNOR_DISABLED = true
+// governorDisabled); flip both together. OFF-governor means the phone heats
+// at the rate the content actually costs.
+//
+// Scoped by device tier, on purpose: ungoverned, an A03-class phone measured
+// map p50 250ms / 100% janky against 57ms governed — on a device with no
+// headroom the governor IS the frame rate, so the 3GB class keeps it. Where
+// there is headroom (iPhones — WebKit never reports deviceMemory — strong
+// Androids, desktop) the caps were the only limiter, and they stay off.
+// Same 3GB-class detection as main.tsx's tier-low.
+const LOW_TIER_DEVICE = (() => {
+  try {
+    const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory
+    return typeof mem === 'number' && mem <= 2
+  } catch {
+    return false
+  }
+})()
+const GOVERNOR_DISABLED = !LOW_TIER_DEVICE
 
 /** Rate classes. Ambient work is the stuff that heats the phone for no gain. */
 export type Rate = 'interactive' | 'managed' | 'ambient' | 'idle'
