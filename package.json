@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/verify-tab-model-quality.mjs && tsc && vite build",
+    "build": "node scripts/verify-tab-model-quality.mjs && node scripts/verify-governed-loops.mjs && tsc && vite build",
     "check:tab-models": "node scripts/verify-tab-model-quality.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:governed-loops": "node scripts/verify-governed-loops.mjs"
   },
   "dependencies": {
     "@google/model-viewer": "^4.3.1",

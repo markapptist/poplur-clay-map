@@ -1,0 +1,70 @@
+{
+  "AIChatScreen.tsx": {
+    "rawRaf": 1
+  },
+  "Camera.tsx": {
+    "rawRaf": 1,
+    "shortInterval": 1
+  },
+  "ClayBuildings3D.ts": {
+    "webglRenderer": 1
+  },
+  "ClayChannelArrows.tsx": {
+    "rawRaf": 2,
+    "webglRenderer": 1
+  },
+  "ClayCornerButton.tsx": {
+    "rawRaf": 2,
+    "webglRenderer": 1
+  },
+  "ClayMap.tsx": {
+    "rawRaf": 4
+  },
+  "ClayMuteButton.tsx": {
+    "rawRaf": 2,
+    "webglRenderer": 1
+  },
+  "ClayNotifIcon.tsx": {
+    "webglRenderer": 1
+  },
+  "ClayPhonePop.tsx": {
+    "webglRenderer": 1
+  },
+  "CubeTab3D.tsx": {
+    "webglRenderer": 1
+  },
+  "FaceAR3D.tsx": {
+    "webglRenderer": 1
+  },
+  "FeedTwin.tsx": {
+    "rawRaf": 3
+  },
+  "HomeTwin.tsx": {
+    "rawRaf": 10
+  },
+  "LoadingGlobe.tsx": {
+    "webglRenderer": 1
+  },
+  "RadioBootScreen.tsx": {
+    "rawRaf": 2,
+    "webglRenderer": 1
+  },
+  "StudioScreen.tsx": {
+    "rawRaf": 3
+  },
+  "VFXParticleSystem.tsx": {
+    "webglRenderer": 1
+  },
+  "VideoEditor.tsx": {
+    "rawRaf": 2
+  },
+  "frameGovernor.ts": {
+    "rawRaf": 3
+  },
+  "modelSprite.ts": {
+    "webglRenderer": 1
+  },
+  "threeCleanup.ts": {
+    "webglRenderer": 1
+  }
+}
