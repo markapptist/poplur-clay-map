@@ -1,5 +1,6 @@
-/* AVATAR — the same dark clay subscreen ground as Settings and SHOW ME, so it
-   reads as one of the native hold-menu screens rather than a new place. */
+/* AVATAR — grounded on the app-wide theme like every native page: the house
+   light ground by default, the chosen theme's backdrop when one is set. The
+   dark clay cards float on it, the way the home HUD floats on cream. */
 
 .screen {
   width: 100%;
@@ -13,11 +14,11 @@
     calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  color: #fff4fa;
-  background:
-    radial-gradient(circle at 22% 8%, rgba(246, 59, 154, 0.32), transparent 31%),
-    radial-gradient(circle at 86% 86%, rgba(104, 57, 191, 0.34), transparent 35%),
-    linear-gradient(165deg, #2b1124 0%, #100813 58%, #09060c 100%);
+  /* App-wide theme ground (light by default, the chosen theme's backdrop when
+     set). The clay cards keep their own dark fill + light text; only text
+     directly on the ground follows --poplur-ink. */
+  color: var(--poplur-ink, #140a04);
+  background: var(--poplur-ground, #efeae3);
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 }
 
@@ -34,16 +35,24 @@
   margin: 0 2px 8px;
   font: 950 11px/1 system-ui, -apple-system, sans-serif;
   letter-spacing: 0.18em;
-  color: #ff80bf;
+  color: var(--poplur-theme-accent, #f63b9a);
 }
 
 .blurb {
   margin: 0;
   font: 600 13px/1.4 system-ui, -apple-system, sans-serif;
+  color: var(--poplur-ink-soft, rgba(20, 10, 4, 0.62));
+}
+
+/* Inside the dark clay cards the blurb keeps its light voice. */
+.wearing .blurb,
+.done .blurb {
   color: rgba(255, 238, 247, 0.78);
 }
 
-.blurb b { color: #fff4fa; }
+.blurb b { color: inherit; }
+.wearing .blurb b,
+.done .blurb b { color: #fff4fa; }
 
 /* ── the wallet ─────────────────────────────────────────────────────────────
    Credits gate the sculptor, so the balance leads the screen. */
@@ -155,14 +164,15 @@
 /* Not enough credits. Still a live button — it goes to the top-up — but it
    must not look like the one that spends. */
 .primaryLocked {
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 0 0 1px rgba(255, 138, 198, 0.45);
-  color: rgba(255, 226, 242, 0.72);
+  /* Sits on the themed ground, so it self-carries like .secondary. */
+  background: rgba(22, 6, 15, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 198, 0.5);
+  color: rgba(255, 226, 242, 0.85);
 }
 
 .secondary {
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  background: rgba(22, 6, 15, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
   color: #fff4fa;
 }
 
@@ -190,7 +200,7 @@
   padding: 11px;
   border: 0;
   background: none;
-  color: rgba(255, 226, 242, 0.58);
+  color: var(--poplur-ink-soft, rgba(20, 10, 4, 0.58));
   font: 800 11px/1 system-ui, -apple-system, sans-serif;
   letter-spacing: 0.14em;
   cursor: pointer;
@@ -249,7 +259,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font: 800 11.5px/1.2 system-ui, -apple-system, sans-serif;
-  color: rgba(255, 242, 248, 0.9);
+  color: var(--poplur-ink, #140a04);
 }
 
 .shelfDelete {
@@ -291,7 +301,7 @@
   margin: 0 2px 6px;
   font: 950 10px/1 system-ui, -apple-system, sans-serif;
   letter-spacing: 0.16em;
-  color: rgba(255, 226, 242, 0.5);
+  color: var(--poplur-ink-soft, rgba(20, 10, 4, 0.55));
 }
 
 .field input {
@@ -299,8 +309,8 @@
   padding: 13px 14px;
   border: 0;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: rgba(22, 6, 15, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
   color: #fff4fa;
   font: 700 14px/1 system-ui, -apple-system, sans-serif;
 }
@@ -327,9 +337,9 @@
 }
 
 .style {
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-  color: rgba(255, 242, 248, 0.66);
+  background: rgba(22, 6, 15, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  color: rgba(255, 242, 248, 0.78);
 }
 
 .styleOn {
@@ -401,19 +411,19 @@
 .error {
   margin: 12px 2px;
   font: 700 12px/1.4 system-ui, -apple-system, sans-serif;
-  color: #ffb3d3;
+  color: #c81d5e;
 }
 
 .note {
   margin: 14px 2px 0;
   font: 800 12px/1.4 system-ui, -apple-system, sans-serif;
-  color: #7fe3ff;
+  color: var(--poplur-theme-accent, #f63b9a);
 }
 
 .footnote {
   margin: 18px 2px 0;
   font: 500 11.5px/1.45 system-ui, -apple-system, sans-serif;
-  color: rgba(255, 226, 242, 0.5);
+  color: var(--poplur-ink-soft, rgba(20, 10, 4, 0.55));
 }
 
 /* The picker itself is never seen — MAKE A CUBE clicks it. */

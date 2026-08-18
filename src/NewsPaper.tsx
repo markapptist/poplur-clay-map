@@ -262,6 +262,22 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
     scrollHost.current?.scrollTo({ top: 0 })
   }, [])
 
+  // The paper is an endless timeline, so give the reader a way back up that
+  // is not a hundred flicks: a side control that appears once the masthead is
+  // well out of sight. Event-driven — the listener costs nothing at idle.
+  const [showTop, setShowTop] = useState(false)
+  useEffect(() => {
+    const host = scrollHost.current
+    if (!host) return
+    const onScroll = () => setShowTop(host.scrollTop > 600)
+    host.addEventListener('scroll', onScroll, { passive: true })
+    return () => host.removeEventListener('scroll', onScroll)
+  }, [])
+  const backToTop = () => {
+    playPop()
+    scrollHost.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   usePullToRefresh({
     scrollRef: scrollHost,
     innerRef: pullInner,
@@ -385,6 +401,18 @@ export default function NewsPaper({ onClose }: { onClose: () => void }) {
         </div>
         </div>
       </div>
+
+      {/* Back to the masthead in one press. Lives outside the scroll so it
+          never travels with the page; appears only once you are deep in. */}
+      <button
+        className={showTop ? styles.toTop : `${styles.toTop} ${styles.toTopHidden}`}
+        onClick={backToTop}
+        aria-label="Back to the top of the paper"
+        aria-hidden={showTop ? undefined : 'true'}
+        tabIndex={showTop ? 0 : -1}
+      >
+        ⌃<span className={styles.toTopText}>TOP</span>
+      </button>
     </div>
   )
 }

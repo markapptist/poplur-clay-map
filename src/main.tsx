@@ -7,6 +7,13 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import './index.css'
 import App from './App'
 import { isNativeShell, isIOSNativeShell } from './nativeBridge'
+import { applyProfileThemeToDocument, readSelectedProfileTheme } from './profileThemes'
+
+// The chosen theme grounds the WHOLE app (every screen sits on
+// --poplur-ground / inks with --poplur-ink), so it must be stamped on the
+// document before first paint — a themed user must never see the default
+// cream flash under Settings or a page.
+applyProfileThemeToDocument(readSelectedProfileTheme())
 
 const params =
   typeof window !== 'undefined'

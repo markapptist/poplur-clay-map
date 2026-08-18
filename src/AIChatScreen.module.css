@@ -14,8 +14,7 @@
      chat — which already scrolls (overflow: auto below). */
   padding-bottom: calc(10px + var(--cube-size, 176px) * 0.56 + env(safe-area-inset-bottom));
   color: #24141d;
-  background:
-    linear-gradient(180deg, #fff9fc 0%, #f8edf3 52%, #f4e5ed 100%);
+  background: var(--poplur-ground, #08040a);
   isolation: isolate;
 }
 

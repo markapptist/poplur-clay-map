@@ -13,10 +13,7 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   color: #fff4fa;
-  background:
-    radial-gradient(circle at 22% 8%, rgba(246, 59, 154, 0.32), transparent 31%),
-    radial-gradient(circle at 86% 86%, rgba(104, 57, 191, 0.34), transparent 35%),
-    linear-gradient(165deg, #2b1124 0%, #100813 58%, #09060c 100%);
+  background: var(--poplur-ground, #08040a);
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 }
 

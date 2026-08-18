@@ -57,6 +57,43 @@ export const DEFAULT_PROFILE_THEME = PROFILE_THEMES[0]
 export const PROFILE_THEME_STORAGE_KEY = 'poplur.profile.theme.v1'
 export const PROFILE_THEME_CHANGE_EVENT = 'poplur-profile-theme-change'
 
+/** The house light ground — Profile's cream, now the DEFAULT ground of every
+    screen (the user-facing rule: screens are white like home unless a theme
+    paints them). Kept here so the default and the themed value flow through
+    one custom property. */
+const DEFAULT_GROUND =
+  'radial-gradient(120% 60% at 50% 6%, rgba(246, 59, 154, 0.08), transparent 46%), ' +
+  'linear-gradient(180deg, #f7f4ef, #efeae3)'
+
+/**
+ * The theme is APP-WIDE: one call stamps the chosen theme onto the document
+ * root, and every screen that grounds itself on `var(--poplur-ground)` (and
+ * inks itself with `var(--poplur-ink)`) follows — Settings, Avatar, the
+ * subscreen stage, the media pages, the pull curtain, all of it. Fired at
+ * boot and on every selection; the profile keeps its own local application
+ * for its flip-side picker preview.
+ */
+export function applyProfileThemeToDocument(theme: ProfileTheme): void {
+  if (typeof document === 'undefined') return
+  const root = document.documentElement
+  root.style.setProperty('--poplur-theme-accent', theme.primaryAccent)
+  root.style.setProperty('--poplur-theme-accent-2', theme.secondaryAccent)
+  // Ink follows the theme's authored foreground on a themed image; on the
+  // default light ground it is the house dark ink.
+  root.style.setProperty('--poplur-ink', theme.backgroundSrc ? theme.foreground : '#140A04')
+  const alpha = Math.round(Math.min(1, Math.max(0, theme.overlayOpacity)) * 255)
+    .toString(16).padStart(2, '0')
+  root.style.setProperty(
+    '--poplur-ground',
+    theme.backgroundSrc
+      ? `linear-gradient(${theme.overlayColor}${alpha}, ${theme.overlayColor}${alpha}), ` +
+        `url("${theme.backgroundSrc}") center / cover no-repeat`
+      : DEFAULT_GROUND,
+  )
+  root.dataset.poplurTheme = theme.id
+  root.dataset.poplurThemeActive = theme.backgroundSrc ? 'true' : 'false'
+}
+
 export function profileThemeForID(value: unknown): ProfileTheme {
   return PROFILE_THEMES.find(theme => theme.id === value) ?? DEFAULT_PROFILE_THEME
 }
@@ -71,6 +108,7 @@ export function readSelectedProfileTheme(): ProfileTheme {
 
 function persist(theme: ProfileTheme): void {
   try { window.localStorage.setItem(PROFILE_THEME_STORAGE_KEY, theme.id) } catch { /* Session state still applies. */ }
+  applyProfileThemeToDocument(theme)
   window.dispatchEvent(new CustomEvent<ProfileTheme>(PROFILE_THEME_CHANGE_EVENT, { detail: theme }))
 }
 

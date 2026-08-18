@@ -353,6 +353,11 @@ export default function AvatarScreen({ onClose: _onClose }: { onClose: () => voi
 
   const wornCube = cubes.find(cube => cube.id === worn) ?? null
   const affordable = credits >= AVATAR_CUBE_COST
+  // Say it on the button, not after the tap: with no generator endpoint in
+  // this build the sculptor CANNOT run, and a lit pink button that "errors"
+  // when pressed reads as broken. The tap still answers (the same honest note
+  // sculpt() shows), but nobody is invited to a door that will not open.
+  const sculptReady = isMeshyConfigured()
 
   return (
     <div className={styles.screen} data-clay-scroll data-poplur-screen="avatar">
@@ -453,15 +458,22 @@ export default function AvatarScreen({ onClose: _onClose }: { onClose: () => voi
 
             {error && <p className={styles.error}>{error}</p>}
 
+            {/* With the sculptor offline, the free bake is the lit primary —
+                the working path gets the working button. */}
             <button
-              className={affordable ? styles.primary : styles.primaryLocked}
-              onClick={affordable ? () => void sculpt() : getCredits}
+              className={!sculptReady ? styles.primaryLocked : affordable ? styles.primary : styles.primaryLocked}
+              onClick={!sculptReady ? () => void sculpt() : affordable ? () => void sculpt() : getCredits}
             >
-              {affordable
-                ? `SCULPT WITH MESHY · ${AVATAR_CUBE_COST} CREDITS`
-                : `NEED ${AVATAR_CUBE_COST - credits} MORE CREDITS`}
+              {!sculptReady
+                ? 'SCULPT WITH MESHY · COMING SOON'
+                : affordable
+                  ? `SCULPT WITH MESHY · ${AVATAR_CUBE_COST} CREDITS`
+                  : `NEED ${AVATAR_CUBE_COST - credits} MORE CREDITS`}
             </button>
-            <button className={styles.secondary} onClick={() => void pressLogo()}>
+            <button
+              className={sculptReady ? styles.secondary : styles.primary}
+              onClick={() => void pressLogo()}
+            >
               PRESS IT ON A CLAY CUBE · FREE
             </button>
             <button className={styles.back} onClick={startOver}>‹ BACK</button>

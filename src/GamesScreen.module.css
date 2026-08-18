@@ -11,9 +11,7 @@
   display: flex;
   flex-direction: column;
   color: #fff;
-  background:
-    radial-gradient(120% 80% at 50% -8%, color-mix(in srgb, var(--accent, #ff2d8b) 40%, transparent), transparent 60%),
-    linear-gradient(180deg, #14101f 0%, #0a0710 60%, #060409 100%);
+  background: var(--poplur-ground, #08040a);
   font-family: system-ui, -apple-system, "SF Pro Rounded", sans-serif;
   transition: background 0.5s ease;
 }

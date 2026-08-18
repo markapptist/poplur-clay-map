@@ -9,7 +9,7 @@
   flex-direction: column;
   /* opaque: the guide covers the feed rather than ghosting over it (iOS draws
      its 0.78 black over an opaque stage, which the web stage does not give us) */
-  background: #050705;
+  background: var(--poplur-ground, #08040a);
   color: #fff;
   --guide-green: #4fff40;
   /* One natural scroll surface. The old nested rows scroller meant a swipe on

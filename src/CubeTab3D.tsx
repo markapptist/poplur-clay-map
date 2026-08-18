@@ -176,16 +176,14 @@ async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
     Applied before the recentre below, so the fix cannot push the object off
     centre. Radians. */
 const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> = {
-  // The camcorder is NOT authored face-up like the rest of the family: at
-  // identity it already stands correctly — body level, lens out to the left,
-  // the poplur LCD square to the viewer, grip underneath. Verified by rendering
-  // the GLB in this exact ortho scene rather than by guessing radians.
-  //
-  // It therefore needs an explicit no-op entry, because the poplur_cube_* rule
-  // below would otherwise tip it a quarter turn onto its back. The previous
-  // `{ x: 90°, z: -75° }` did exactly that and then rolled it, which is why it
-  // lay on its side in the camera view.
-  [CAMCORDER_MODEL]: { x: 0, y: 0, z: 0 },
+  // The camcorder shows you its BACK, the way a camcorder you are filming
+  // with does: lens turned INTO the screen (at the scene you are shooting),
+  // eyepiece and controls toward you. At identity the GLB stands body-level
+  // with the lens out to the LEFT (-X) and the side LCD square to the viewer,
+  // so a quarter turn about Y sends the lens to -Z (into the screen) and
+  // brings the rear face to the camera. The entry also keeps the
+  // poplur_cube_* rule below from tipping it onto its back.
+  [CAMCORDER_MODEL]: { x: 0, y: -Math.PI / 2, z: 0 },
 }
 
 /** The supplied `poplur_cube_*` set is authored face-UP: the coloured pad that

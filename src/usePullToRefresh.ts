@@ -1,6 +1,43 @@
 import { useEffect, type RefObject } from 'react'
 import { playPop } from './pop'
 
+// The peek-a-boo cast: prebaked clay sprites already in the bundle (the same
+// files the map's markers use — supplied art, never invented). One is drawn
+// per PULL, along with the edge it peeks from, so the curtain is a little
+// different every time you tug it.
+const PEEK_SPRITES = [
+  'sprites/poplur_mark_head_navigator_y0_p0_s640.png',
+  'sprites/poplur_mark_head_navigator_y-16_p0_s640.png',
+  'sprites/poplur_mark_head_navigator_y16_p0_s640.png',
+  'sprites/poplur_pin_y0_p0_s256.png',
+  'sprites/poplur_bell_y0_p12_s256.png',
+  'sprites/boat_clay_y35_p6_s320.png',
+  'sprites/poplur_camera_kodak_y0_p14_s320.png',
+  'sprites/poplur_mic_y0_p0_s512.png',
+] as const
+
+// The 16-bit lap: while a refresh is in flight the Poplurgatchi pet sprints
+// the band, two strides from the game's own sheet (cropped, never redrawn —
+// see games/poplurgatchi/assets/sprite-sheet.webp).
+const RUN_FRAMES = [
+  'sprites/poplurgatchi_run_0.png',
+  'sprites/poplurgatchi_run_1.png',
+] as const
+const STRIDE_MS = 150
+// One full crossing fits inside the shortest possible busy window (MIN_BUSY +
+// the closing spring): a quick refresh still reads as "the pet ran the lap",
+// not "something poked out and gave up".
+const LAP_MS = 1000
+
+type PeekEdge = 'bottom' | 'left' | 'right' | 'top'
+// The lip is still the star; the sides are the surprise; hanging upside-down
+// from the top is the rare one that gets a laugh.
+const PEEK_EDGES: PeekEdge[] = [
+  'bottom', 'bottom', 'bottom', 'bottom',
+  'left', 'left', 'right', 'right',
+  'top',
+]
+
 /** Pull-to-refresh, the peeking-mark curtain.
  *
  *  Pulling reveals a solid clay sheet from under the top edge — the further
@@ -44,16 +81,34 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
     // Distance the finger travels vs. distance the page moves. Below 1 so the
     // page feels attached to something rather than dragged freely.
     const RESIST = 0.55
-    // Band depths, sized to the reference: the sheet reads as a real place the
-    // head lives, not a sliver — roughly a sixth of the phone at full stretch.
-    const MAX = 150
-    const COMMIT = 88
-    // Where the band rests while the refresh runs — deep enough for the whole
-    // face, shallow enough that the first row of content stays in sight.
-    const HOLD = 104
+    // Band depths. A shallow lip, not a wall: the head is the event and the
+    // band is just the edge it leans over, so the deepest stretch stays under
+    // a ninth of the phone and the grid never loses its first row.
+    const MAX = 112
+    const COMMIT = 68
+    // Where the band rests while the refresh runs — the face clears the lip,
+    // the band stays a lip.
+    const HOLD = 78
     // A refresh that returns instantly still shows the head bobbing: a flash
     // of band reads as "nothing happened", which is the opposite of the truth.
     const MIN_BUSY = 700
+    // The sprite crests this far into the pull — and that is also the pop:
+    // the sound belongs to the character appearing, not to the finger moving.
+    const CREST = 30
+
+    // The news page's content starts below a wordmark reserve (its scroll
+    // padding), so a band that only ever grows to `pull` left a strip of bare
+    // paper between its lip and the masthead — the "gap when you pull too
+    // much". The curtain OVERDRIVES to swallow that reserve: it slides
+    // slightly faster than the finger and is flush with the content's real
+    // top edge by the commit line. Measured, not configured, so profile (no
+    // reserve) keeps a 1:1 curtain automatically.
+    const reserve = (() => {
+      const padding = parseFloat(getComputedStyle(scroll).paddingTop)
+      return Number.isFinite(padding) ? padding : 0
+    })()
+    const bandDepth = (at: number) =>
+      at <= 0 ? 0 : at + reserve * Math.min(1, at / COMMIT)
 
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     let pulling = false
@@ -61,20 +116,81 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
     let pull = 0
     let busy = false
     let settleTimer = 0
+    let crested = false
+    let edge: PeekEdge = 'bottom'
+
+    const img = head.querySelector('img')
+
+    // The runner lives here rather than in the consumers' markup so both
+    // screens get the lap without their trees changing. Hidden except while
+    // busy; transform-only via WAAPI so the lap stays on the compositor.
+    const runner = document.createElement('img')
+    runner.src = RUN_FRAMES[0]
+    runner.alt = ''
+    Object.assign(runner.style, {
+      position: 'absolute',
+      bottom: '8px',
+      left: '0',
+      height: '48px',
+      width: 'auto',
+      imageRendering: 'pixelated',
+      display: 'none',
+      pointerEvents: 'none',
+      filter: 'drop-shadow(0 3px 6px rgba(30, 0, 16, 0.35))',
+    } satisfies Partial<CSSStyleDeclaration>)
+    panel.appendChild(runner)
+    const strideB = new Image()
+    strideB.src = RUN_FRAMES[1]
+
+    let runAnim: Animation | null = null
+    let strideTimer = 0
+    const startRun = () => {
+      if (reduced) return
+      runner.style.display = 'block'
+      // Enter from past the left edge, exit past the right, loop.
+      const lap = panel.clientWidth + 96
+      runAnim = runner.animate(
+        [{ transform: 'translateX(-64px)' }, { transform: `translateX(${lap}px)` }],
+        { duration: LAP_MS, iterations: Infinity, easing: 'linear' },
+      )
+      let stride = 0
+      strideTimer = window.setInterval(() => {
+        stride ^= 1
+        runner.src = RUN_FRAMES[stride]
+      }, STRIDE_MS)
+    }
+    const stopRun = () => {
+      runAnim?.cancel()
+      runAnim = null
+      window.clearInterval(strideTimer)
+      runner.style.display = 'none'
+      runner.src = RUN_FRAMES[0]
+    }
+
+    /** Where the peeker sits for a given progress t on the chosen edge. The
+        wrapper carries these inline; the img inside carries the busy bob, so
+        the two never fight (same split the spin-era code used). */
+    const peekTransform = (t: number, depth: number) => {
+      const hide = 96 - t * 62 // % of its own size still outside the band
+      switch (edge) {
+        case 'left': return `translate(-${hide.toFixed(1)}%, 0) rotate(${((1 - t) * 10).toFixed(1)}deg)`
+        case 'right': return `translate(${hide.toFixed(1)}%, 0) rotate(${((1 - t) * -10).toFixed(1)}deg)`
+        // Hanging upside-down from the top of the band: ride up the full band
+        // depth (px), then drop back into view by its own height (%).
+        case 'top': return `translateY(calc(${(-depth).toFixed(1)}px + ${(t * 62).toFixed(1)}%)) rotate(176deg)`
+        default: return `translateY(${hide.toFixed(1)}%) rotate(${((1 - t) * -8).toFixed(1)}deg)`
+      }
+    }
 
     const draw = (holding: boolean) => {
       inner.style.transform = `translateY(${pull}px)`
-      // The sheet is its own full height above the clip; sliding it down by
-      // the pull shows exactly `pull` pixels of band. calc() keeps this true
-      // whatever height the stylesheet gives it.
-      panel.style.transform = `translate3d(0, calc(${pull}px - 100%), 0)`
+      // The sheet is its own full height above the clip; sliding it down
+      // shows exactly `bandDepth(pull)` pixels of band — the overdrive keeps
+      // its lip flush with the content's true top edge, reserve and all.
+      const depth = bandDepth(pull)
+      panel.style.transform = `translate3d(0, calc(${depth.toFixed(1)}px - 100%), 0)`
       if (holding) return
-      // The head climbs the band's bottom lip as the pull deepens: scalp
-      // first, whole face by the commit line, with the last of its lean
-      // straightening out as it arrives.
-      const t = Math.min(1, pull / COMMIT)
-      const rise = 96 - t * 62 // % of its own height still hidden below the lip
-      head.style.transform = `translateY(${rise.toFixed(1)}%) rotate(${((1 - t) * -8).toFixed(1)}deg)`
+      head.style.transform = peekTransform(Math.min(1, pull / COMMIT), depth)
     }
 
     const springTo = (value: number, ms: number, done?: () => void) => {
@@ -97,6 +213,12 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       if (busy || scroll.scrollTop > 0) return
       pulling = true
       startY = event.clientY
+      crested = false
+      // Cast the peeker for THIS pull: who shows up, and from which edge of
+      // the curtain, changes every time — that is the whole joke.
+      edge = PEEK_EDGES[Math.floor(Math.random() * PEEK_EDGES.length)]
+      head.dataset.edge = edge
+      if (img) img.src = PEEK_SPRITES[Math.floor(Math.random() * PEEK_SPRITES.length)]
     }
 
     const onMove = (event: PointerEvent) => {
@@ -104,6 +226,11 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       const dy = event.clientY - startY
       pull = dy > 0 ? Math.min(MAX, dy * RESIST) : 0
       draw(false)
+      // The pop belongs to the character cresting the curtain, once per pull.
+      if (!crested && pull >= CREST) {
+        crested = true
+        playPop()
+      }
     }
 
     const onUp = () => {
@@ -116,18 +243,23 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       busy = true
       playPop()
       pull = HOLD
-      // Hold the band; the head keeps the rise it earned and its inner img
-      // takes over with the bob — inline transform and keyframes would fight
-      // on the same element, so they live one level apart.
+      // Hold the band; the peeker keeps the spot it earned on its edge and
+      // its inner img takes over with the bob — inline transform and
+      // keyframes would fight on the same element, so they live one level
+      // apart.
       draw(true)
-      head.style.transform = 'translateY(34%)'
+      head.style.transform = peekTransform(1, bandDepth(HOLD))
       head.classList.add(busyClass)
+      startRun()
       const started = Date.now()
       const finish = () => {
         const wait = Math.max(0, MIN_BUSY - (Date.now() - started))
         window.setTimeout(() => {
           head.classList.remove(busyClass)
+          // The pet finishes its lap as the curtain lets go — cancelling with
+          // the spring keeps the exit tied to the band, not to a lap count.
           springTo(0, 340, () => { busy = false })
+          stopRun()
         }, wait)
       }
       try {
@@ -152,6 +284,8 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       scroll.removeEventListener('pointerup', onUp)
       scroll.removeEventListener('pointercancel', onUp)
       window.clearTimeout(settleTimer)
+      stopRun()
+      runner.remove()
       inner.style.transition = ''
       inner.style.transform = ''
       panel.style.transition = ''

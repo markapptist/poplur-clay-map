@@ -16,9 +16,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background:
-    radial-gradient(120% 60% at 50% -10%, rgba(255, 45, 145, 0.16), transparent 60%),
-    linear-gradient(180deg, #0b0710, #060409 60%);
+  background: var(--poplur-ground, #08040a);
   color: #fff2f8;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   -webkit-user-select: none;

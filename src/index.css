@@ -13,6 +13,22 @@ html, body, #root {
   background-color: #050407;
 }
 
+/* ── the app-wide theme tokens ──────────────────────────────────────────────
+   The profile-chosen theme grounds the ENTIRE app, not just the profile.
+   profileThemes.applyProfileThemeToDocument stamps these at boot and on every
+   selection; the values here are only the pre-boot defaults (the house light
+   ground and dark ink — "screens are white like home" until a theme paints
+   them). Screens opt in by using the tokens, never a hard-coded ground. */
+:root {
+  --poplur-ground:
+    radial-gradient(120% 60% at 50% 6%, rgba(246, 59, 154, 0.08), transparent 46%),
+    linear-gradient(180deg, #f7f4ef, #efeae3);
+  --poplur-ink: #140a04;
+  --poplur-ink-soft: color-mix(in srgb, var(--poplur-ink) 62%, transparent);
+  --poplur-theme-accent: #f63b9a;
+  --poplur-theme-accent-2: #5fe1ea;
+}
+
 /* The declaration above only covers gaps once this stylesheet has loaded. Before
    that, the colour is WebKit's base background for the document, which is white
    unless the document says it is dark — hence the matching `color-scheme` meta in
@@ -214,10 +230,18 @@ html.camera-live,
    arrowPulse are transform/opacity and stay: composited animations are not
    what heats the phone. */
 .tier-ios [class*="statLabel"],
-.tier-ios [class*="feedTitle"],
 .tier-ios [class*="staticLayer"] {
   animation: none !important;
 }
+/* [class*="feedTitle"] used to sit in that group, and the substring also
+   matched feedTitleTrack — which killed the title MARQUEE on every phone, so
+   long titles sat clipped at the viewport edge, unread. The marquee is the
+   title's read path and it is a composited transform crawl (the documented
+   exception above: transform/opacity is not what heats the phone; the track
+   is rasterised once and translated as a tile). The shader sweep that this
+   freeze was actually aimed at is 3-bounded in FeedTwin.module.css now, so
+   it needs no freezing. Feed's maxInfiniteAnimations budget is raised to 1
+   for exactly this animation — .codex/thermal-budgets.json, same change. */
 
 /* The Feed byline intentionally alternates the creator handle and radius, but
    leaving that swap infinite keeps two style animations alive on every native

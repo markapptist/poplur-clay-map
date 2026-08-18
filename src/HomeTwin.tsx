@@ -9,7 +9,7 @@ import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
-import HoldMenuTwin, { readFavourite } from './HoldMenuTwin'
+import HoldMenuTwin from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import TopChrome from './TopChrome'
 import PermissionAlert from './PermissionAlert'
@@ -80,6 +80,28 @@ const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // The cube's recording face. Bundle ROOT, not models/ — same reason as every
 // other navigator here (sync-mobile strips models/ from the phone bundles).
 const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
+
+// ── Last-page memory ─────────────────────────────────────────────────────────
+// One small JSON map, tab → subscreen id, of where each tab was left. Read at
+// boot and on every gesture switch; written when a tab is left. Local to the
+// device on purpose: where you wander is not account state.
+const LAST_SCREEN_KEY = 'poplur.tab.lastScreen.v1'
+
+function readLastScreens(): Partial<Record<CubeTab, string>> {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(LAST_SCREEN_KEY) ?? 'null')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch { return {} }
+}
+
+function writeLastScreen(tab: CubeTab, screen: string | null) {
+  try {
+    const all = readLastScreens()
+    if (screen) all[tab] = screen
+    else delete all[tab]
+    window.localStorage.setItem(LAST_SCREEN_KEY, JSON.stringify(all))
+  } catch { /* private mode — resume simply starts at roots next launch */ }
+}
 
 /** Each main tab owns one recognisable, true 3D clay object. The Profile tab
     always uses its textured head; profile media belongs in the profile frame. */
@@ -630,17 +652,71 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // so that one tab stays mounted and remains the picture behind it. A route
   // opened FROM the wheel reports `overlayOpen` below and then takes sole
   // ownership of the heavyweight screen tree.
-  const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
+  // ── Last-page resume ───────────────────────────────────────────────────────
+  // Each tab REMEMBERS the subscreen you had open when you left it, and a
+  // gesture back to that tab reopens that page — Profile comes back on PHONE
+  // if that is where you were, the map on RADIO, and so on. This replaces the
+  // hold-to-favourite pin: instead of one pinned action per tab, the app
+  // simply starts where you left it. The hold menu's `home` tiles (MAP / TV /
+  // PROFILE / PHOTO) are the deliberate way back to a tab's main page.
+  //
+  // Only GESTURE switches resume (the cube swipe). Programmatic navigations —
+  // view-a-profile from the feed, pick-a-spot returns — aim at a specific
+  // place and must land exactly there.
+  const bootResume = (() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      // The harness's ?holdScreen deep-link owns the boot when present.
+      if (params.get('holdScreen')) return null
+      return readLastScreens()[initialTab] ?? null
+    } catch { return null }
+  })()
+  const [holdOpen, setHoldOpen] = useState(initialHoldOpen || bootResume != null)
+  // The nonce is the menu's REMOUNT key. It must move only when a new resume
+  // (or a deliberate wheel-open over one) needs a fresh instance — keying by
+  // tab remounted the menu in the same render the tab changed, and the fresh
+  // instance's explicit "no subscreen" report erased the record of the page
+  // being left before the effect below could store it.
+  const [resume, setResume] = useState<{ screen: string | null; n: number }>(
+    { screen: bootResume, n: 0 },
+  )
+  /** The page this tab is standing on. Sticky: set when a page opens, carried
+      across the menu's unmounts, swapped per tab on switches, and cleared by
+      exactly one thing — the wheel's home tile. */
+  const lastOpenSubscreenRef = useRef<string | null>(null)
+  const activeTabLiveRef = useRef(activeTab)
+  activeTabLiveRef.current = activeTab
+  /** Set by the cube-swipe handler for the tab it targets; consumed once. */
+  const gestureSwitchRef = useRef<CubeTab | null>(null)
+  const switchTabByGesture = useCallback((tab: CubeTab) => {
+    gestureSwitchRef.current = tab
+    setActiveTab(tab)
+  }, [])
   // The hold menu belongs to the tab it was opened from ("its item set matches
   // that tab"), so a tab change has to dismiss it. It also owns the screens that
   // play their own audio from THIS document — the Radio deck above all — and
   // those only stop when they unmount. Leaving it mounted across a tab change is
   // why the radio kept playing over the feed.
+  //
+  // The same moment is the resume seam: record where the OUTGOING tab was
+  // left, and reopen the INCOMING tab's remembered page on a gesture switch.
   const tabForHoldRef = useRef(activeTab)
   useEffect(() => {
     if (tabForHoldRef.current === activeTab) return
+    const previous = tabForHoldRef.current
     tabForHoldRef.current = activeTab
-    setHoldOpen(false)
+    // The outgoing tab's page was already persisted the moment it opened
+    // (handleSubscreenChange writes storage immediately, so an app kill on a
+    // page loses nothing). Here the ref just swaps to the INCOMING tab's
+    // remembered page, so wheel-dismiss can return to it.
+    void previous
+    lastOpenSubscreenRef.current = readLastScreens()[activeTab] ?? null
+    const wanted = gestureSwitchRef.current === activeTab
+      ? lastOpenSubscreenRef.current
+      : null
+    gestureSwitchRef.current = null
+    setResume(current => ({ screen: wanted, n: current.n + 1 }))
+    setHoldOpen(wanted != null)
   }, [activeTab])
   // The cube floats over every screen, so on a subscreen it is the one control
   // that is always there — it goes back a level. Registered by HoldMenuTwin.
@@ -764,8 +840,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
 
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
-  const handleSubscreenChange = useCallback((open: boolean, screen?: string) => {
+  const handleSubscreenChange = useCallback((open: boolean, screen?: string, _unmounting?: boolean) => {
     setOverlayOpen(open)
+    // Resume bookkeeping — STICKY by design. Standing on a page records it,
+    // for this session (the ref) and past an app kill (storage, written NOW:
+    // minimize-and-reopen has no tab-switch moment to write on). No close
+    // clears it — pages are places the tab lives, and only the home tile
+    // (onClearPage below) forgets one.
+    if (open && screen) {
+      lastOpenSubscreenRef.current = screen
+      writeLastScreen(activeTabLiveRef.current, screen)
+    }
     // On TV Guide the navigator stops being a cube and becomes the clay TV —
     // the screen you are on IS the object in your hand. It still turns, still
     // holds to open the wheel, and is still the way back out.
@@ -1772,8 +1857,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stops. This mirrors the photo camera: choosing it is not itself a shutter.
   const [cameraCaptureMode, setCameraCaptureMode] = useState<'photo' | 'video'>(() => {
     const requested = new URLSearchParams(window.location.search).get('camera-mode')
-    if (requested === 'video') return 'video'
-    return readFavourite('post') === 'VIDEO' ? 'video' : 'photo'
+    return requested === 'video' ? 'video' : 'photo'
   })
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
@@ -2174,8 +2258,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // The old HoldMenu cleanup is asynchronous relative to the tab request.
     // Clear its ownership at the semantic edge so a Camera/Profile subscreen
     // can never lend its object to the next tab for even one transition.
+    //
+    // Deliberately NOT setHoldOpen(false) here any more: the resume effect
+    // above is the single owner of whether the menu survives a tab change —
+    // this late effect runs after it in the same commit and was silently
+    // overwriting every resume with a close. A resumed subscreen re-reports
+    // its cube ownership on mount, so clearing the model here stays correct.
     setCubeScreen(null)
-    setHoldOpen(false)
   }, [activeTab])
 
   const popCube = () => {
@@ -2211,19 +2300,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       cameraActionsRef.current?.[which]()
       return
     }
-    // Tapping the cube runs whatever you pinned in this tab's hold menu.
-    const favourite = readFavourite(activeTab)
+    // No pinned favourite any more — a plain tap on the other tabs is the pop
+    // itself. Where you LAND on a tab is owned by the last-page resume below.
     setPopping(true)
-    if (favourite) {
-      const map: Record<string, 'like' | 'comment' | 'profile'> = {
-        LIKE: 'like',
-        COMMENT: 'comment',
-        PROFILE: 'profile',
-        'VIEW PROFILE': 'profile',
-      }
-      const action = map[favourite]
-      if (action) runMenuAction(action)
-    }
   }
 
   return (
@@ -2610,10 +2689,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               }}
               targetTab={activeTab}
               showFoodFace={false}
-              onFaceChange={setActiveTab}
+              onFaceChange={switchTabByGesture}
               onTap={popCube}
               onHold={() => {
                 playPop()
+                // A deliberate long-press asks for the WHEEL — never a resumed
+                // page. Bumping the nonce remounts the menu, so one opened
+                // over a resumed subscreen starts at the wheel instead of
+                // re-showing that page.
+                setResume(current => ({ screen: null, n: current.n + 1 }))
                 setHoldOpen(true)
               }}
             />
@@ -2678,8 +2762,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           the tab it was opened from. Closes back to that tab. */}
       {holdOpen && (
         <HoldMenuTwin
+          // Keyed by the resume NONCE only — `initialScreen` is initial state
+          // inside the menu, so a new resume needs a fresh instance, but a
+          // tab change must NOT remount (the old instance has to survive
+          // until the effect above records the page being left).
+          key={`hold-${resume.n}`}
           tab={activeTab}
-          onClose={() => setHoldOpen(false)}
+          initialScreen={resume.screen ?? undefined}
+          onClose={reason => {
+            // Waving the wheel away returns to the page this tab stands on —
+            // the wheel was only ever ON TOP of it. Actions and the home tile
+            // close outright (home cleared the record first).
+            if (reason === 'dismiss' && lastOpenSubscreenRef.current) {
+              setResume(current => ({ screen: lastOpenSubscreenRef.current, n: current.n + 1 }))
+              setHoldOpen(true)
+              return
+            }
+            setHoldOpen(false)
+          }}
+          onClearPage={() => {
+            lastOpenSubscreenRef.current = null
+            writeLastScreen(activeTabLiveRef.current, null)
+          }}
           onAction={runMenuAction}
           onMapAction={action => {
             if (holdOpen) {
@@ -2698,11 +2802,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           currentFeedChannelId={CHANNELS[chanIndex]?.id}
           onTuneFeedChannel={tuneFeedChannel}
           onSubscreenChange={handleSubscreenChange}
-          onFavouriteChange={title => {
-            if (activeTab !== 'post') return
-            if (title === 'PHOTO') setCameraCaptureMode('photo')
-            if (title === 'VIDEO') setCameraCaptureMode('video')
-          }}
           bindArrows={bindSubscreenArrows}
           bindGoBack={fn => { goBackRef.current = fn }}
         />

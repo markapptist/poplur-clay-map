@@ -37,12 +37,25 @@ export type Quality = 0 | 1 | 2 | 3
 // governorDisabled); flip both together. OFF-governor means the phone heats
 // at the rate the content actually costs.
 //
-// Scoped by device tier, on purpose: ungoverned, an A03-class phone measured
-// map p50 250ms / 100% janky against 57ms governed — on a device with no
-// headroom the governor IS the frame rate, so the 3GB class keeps it. Where
-// there is headroom (iPhones — WebKit never reports deviceMemory — strong
-// Androids, desktop) the caps were the only limiter, and they stay off.
-// Same 3GB-class detection as main.tsx's tier-low.
+// Recontracted after the 17 Aug thermal audit. The switch used to conflate
+// two different jobs and kept getting flipped off because of the first one:
+//   1. QUALITY MASKING — capping visible animation and dropping texture/DPR
+//      at rest. Removed outright: FULL quality is now the resting state on
+//      every capable device (see NATIVE_BASELINE_QUALITY below), so there is
+//      nothing here to want off.
+//   2. DEMAND SCHEDULING + the safety ladder — the clock sleeping when no
+//      subscriber is dirty, ambient sleep after real idleness, the renderer
+//      park, and thermal/power/memory ceilings entered only on real device
+//      signal. This is what an off-switch used to silently kill: measured
+//      cost of killing it was a 60Hz no-op clock, 75 unstoppable CSS
+//      animations (49% of main-thread time in the 6 Aug device trace), and
+//      the camera losing its pressure brakes.
+// The switch remains for experiments, but understand what it now means:
+// it disables scheduling AND the ladder together, and the publish gate will
+// pass the build unmeasured, loudly. Ship it off only on purpose.
+// 3GB-class detection matches main.tsx's tier-low; those devices also start
+// one quality rung lower because ungoverned they measured map p50 250ms /
+// 100% janky against 57ms governed.
 const LOW_TIER_DEVICE = (() => {
   try {
     const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory
@@ -51,7 +64,7 @@ const LOW_TIER_DEVICE = (() => {
     return false
   }
 })()
-const GOVERNOR_DISABLED = !LOW_TIER_DEVICE
+const GOVERNOR_DISABLED = false
 
 /** Rate classes. Ambient work is the stuff that heats the phone for no gain. */
 export type Rate = 'interactive' | 'managed' | 'ambient' | 'idle'
@@ -79,11 +92,11 @@ let raf = 0
 let wakeTimer = 0
 let running = false
 let surfaceFront = true
-// A phone starts one rung below the desktop showcase. Waiting until iOS or
-// Android reports thermal pressure means the enclosure is already warm; the
-// REDUCED policy keeps the authored UI while removing shadows, post-processing
-// and excess framebuffer resolution before heat accumulates.
-const NATIVE_BASELINE_QUALITY: Quality = GOVERNOR_DISABLED ? 3 : isNativeShell() ? 2 : 3
+// Capable phones start at the full showcase: pre-emptive downgrade at rest
+// was quality masking, and the 17 Aug audit removed it — the thermal and
+// policy ceilings below still demote the moment a real signal arrives. Only
+// the 3GB class keeps the lower baseline, on its own measured numbers.
+const NATIVE_BASELINE_QUALITY: Quality = LOW_TIER_DEVICE ? 2 : 3
 let quality: Quality = NATIVE_BASELINE_QUALITY
 // The JS ladder infers pressure from missed deadlines. Native iOS has the real
 // ProcessInfo thermal state, so it can impose a ceiling before WebKit becomes
@@ -101,7 +114,11 @@ let boostUntil = 0
 // decoration and Mapbox's already-settled renderer, preserving its last frame.
 // The tab navigator has its own event-driven budget, so it can still react to
 // tilt without keeping the rest of the document awake.
-const AMBIENT_IDLE_MS = isNativeShell() ? 2_000 : 15_000
+// One lease everywhere: decoration lives while the user is engaged and for
+// 15s after their last input, then sleeps until the next touch. The old 2s
+// native lease plus the one-showcase kill meant phones lost all ambient
+// motion two seconds after boot, permanently — masking, not scheduling.
+const AMBIENT_IDLE_MS = 15_000
 let ambientAwakeUntil = typeof performance !== 'undefined'
   ? performance.now() + AMBIENT_IDLE_MS
   : Number.POSITIVE_INFINITY
@@ -110,7 +127,6 @@ let ambientSleepTimer = 0
 const qualityListeners = new Set<(q: Quality) => void>()
 const ambientSleepListeners = new Set<(sleeping: boolean) => void>()
 let ambientSleeping = false
-let nativeAmbientShowcaseFinished = false
 
 // Decoration asleep and the map renderer parked are NOT the same decision, and
 // conflating them cost us a frozen map. A parked map has its private
@@ -421,7 +437,6 @@ if (typeof document !== 'undefined') {
     window.clearTimeout(ambientSleepTimer)
     ambientSleepTimer = 0
     ambientAwakeUntil = 0
-    if (isNativeShell()) nativeAmbientShowcaseFinished = true
     setAmbientSleeping(true)
   }
   const ambientLeaseMs = () => {
@@ -432,13 +447,6 @@ if (typeof document !== 'undefined') {
   }
   const wakeAmbient = () => {
     if (document.hidden || !surfaceFront) {
-      sleepAmbient()
-      return
-    }
-    // A physical phone gets one short authored showcase after the screen
-    // appears. Later touches wake only the renderer's direct-gesture window;
-    // they do not restart traffic, weather, boats and every ambient subscriber.
-    if (isNativeShell() && nativeAmbientShowcaseFinished && !managedRenderingOperationActive()) {
       sleepAmbient()
       return
     }
@@ -675,7 +683,6 @@ export function setSurfaceFront(front: boolean): void {
         setAmbientSleeping(false)
         ambientSleepTimer = window.setTimeout(() => {
           ambientAwakeUntil = 0
-          if (isNativeShell()) nativeAmbientShowcaseFinished = true
           setAmbientSleeping(true)
         }, lease)
       }

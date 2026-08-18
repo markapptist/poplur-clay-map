@@ -27,9 +27,7 @@
      what the cube covers is to move the cube, not to shorten the screen. */
   padding-bottom: max(18px, env(safe-area-inset-bottom));
   color: #f4eef5;
-  background:
-    radial-gradient(120% 46% at 50% 0%, rgba(246, 59, 154, 0.16), transparent 60%),
-    linear-gradient(180deg, #14101b 0%, #0c0912 52%, #08060d 100%);
+  background: var(--poplur-ground, #08040a);
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 }
 

@@ -1019,7 +1019,10 @@
 }
 
 @keyframes notifRowDown {
-  from { opacity: 0; transform: translate3d(0, -14px, 0); }
+  /* In from the LEFT, not down. Each row is a message that arrived, and arriving
+     reads as coming in from the edge rather than dropping into place. The stagger
+     below (--i) makes them land one after another. */
+  from { opacity: 0; transform: translate3d(-34px, 0, 0); }
   to { opacity: 1; transform: none; }
 }
 

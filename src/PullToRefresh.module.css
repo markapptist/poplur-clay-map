@@ -1,7 +1,6 @@
-/* The pull-to-refresh curtain: a clay-pink sheet revealed from under the top
-   edge, with the Poplur mark head peeking over its bottom lip. Shared by the
-   profile grid and the news page so both screens refresh with the same place
-   and the same head.
+/* The pull-to-refresh curtain: a clay lip revealed from under the top edge,
+   with the Poplur mark head peeking over it. Shared by the profile grid and
+   the news page so both screens refresh with the same place and the same head.
 
    The sheet is a FIXED-HEIGHT block parked at translateY(-100%), entirely
    above the host's scroll clip, and the hook slides it down by the pull —
@@ -9,33 +8,53 @@
    reflow. It rests invisible for the same reason the old mark rested at the
    top of the content: you cannot scroll to a negative offset, so anything
    meant to appear "above the page" has to already live inside the clip and
-   move, not exist outside it and wait. */
+   move, not exist outside it and wait.
+
+   Colour rides the profile theme: --profile-theme-accent is set on the
+   profile tree and absent on the news page, so the house pink is the
+   fallback, not a second copy of the design. */
 
 .panel {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 164px;
+  /* Must cover the hook's MAX pull PLUS the deepest wordmark reserve the
+     overdrive swallows (news ~100px) — a sheet shorter than the deepest band
+     opens a gap above its own top edge mid-gesture. */
+  height: 280px;
   z-index: 5;
   transform: translate3d(0, -100%, 0);
   overflow: hidden; /* crops the head to a peek over the bottom lip */
   pointer-events: none;
   will-change: transform;
-  /* The house pink, worn flat like the reference band — one confident colour,
-     a soft sheen at the top-left the way every clay card catches light, and a
-     darker pressed lip along the bottom edge. */
+  --pull-clay: var(--profile-theme-accent, #f4459c);
+  /* Pressed clay, not a flat band: a strong top-left sheen the way every clay
+     card catches light, body colour from the theme accent, and a darker
+     pressed lip along the bottom edge. The plain background above is the
+     fallback for engines without color-mix. */
+  background: var(--pull-clay);
   background:
-    radial-gradient(circle at 22% 10%, rgba(255, 255, 255, 0.16), transparent 46%),
-    linear-gradient(180deg, #ff5fae 0%, #f4459c 62%, #d92b86 100%);
+    radial-gradient(120% 90% at 22% 0%, rgba(255, 255, 255, 0.22), transparent 52%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--pull-clay) 78%, #ffffff) 0%,
+      var(--pull-clay) 58%,
+      color-mix(in srgb, var(--pull-clay) 76%, #16060f) 100%
+    );
+  /* The lip: rounded bottom corners so the band reads as a clay edge the head
+     leans over, with a pressed crease above it and air below. */
+  border-radius: 0 0 22px 22px;
   box-shadow:
-    inset 0 -2px 0 rgba(22, 6, 15, 0.28),
-    0 8px 22px rgba(30, 0, 16, 0.35);
+    inset 0 -3px 0 rgba(22, 6, 15, 0.3),
+    inset 0 2px 0 rgba(255, 255, 255, 0.14),
+    0 10px 24px rgba(30, 0, 16, 0.38);
 }
 
-/* The mark head, straddling the bottom lip. The wrapper carries the hook's
-   inline rise/tilt transform; the img inside carries the busy bob, so the two
-   never overwrite each other (same split the old spin used). */
+/* The peeker, straddling whichever edge this pull cast it on (the hook sets
+   data-edge + the sprite per gesture). The wrapper carries the hook's inline
+   rise/tilt transform; the img inside carries the busy bob, so the two never
+   overwrite each other (same split the old spin used). Default = bottom lip. */
 .head {
   position: absolute;
   left: 50%;
@@ -47,6 +66,12 @@
   will-change: transform;
 }
 
+/* Side peeks hug the lip corner of their edge; the top peek hangs anywhere
+   fun — a third across, upside down (the hook adds the 176° turn). */
+.head[data-edge='left'] { left: 4px; margin-left: 0; }
+.head[data-edge='right'] { left: auto; right: 4px; margin-left: 0; }
+.head[data-edge='top'] { left: 30%; margin-left: 0; }
+
 .head img {
   width: 100%;
   height: 100%;
@@ -56,9 +81,20 @@
   filter: drop-shadow(0 3px 6px rgba(30, 0, 16, 0.35));
 }
 
-/* Runs only while the refresh is actually in flight. */
+/* Runs only while the refresh is actually in flight: one squash-and-stretch
+   as the commit lands — clay you let go of — then the bob takes over. The
+   landing keeps the bob's resting tilt so the handoff between the two
+   animations is invisible. */
 .busy img {
-  animation: headBob 0.7s ease-in-out infinite;
+  animation:
+    headLand 0.32s cubic-bezier(0.34, 1.56, 0.64, 1),
+    headBob 0.7s ease-in-out 0.32s infinite;
+}
+
+@keyframes headLand {
+  0% { transform: translateY(4%) rotate(-3deg) scale(1.12, 0.86); }
+  60% { transform: translateY(-4%) rotate(-3deg) scale(0.94, 1.08); }
+  100% { transform: translateY(0) rotate(-3deg) scale(1, 1); }
 }
 
 @keyframes headBob {
@@ -67,5 +103,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .busy img { animation-duration: 1.6s; }
+  .busy img { animation: headBob 1.6s ease-in-out infinite; }
 }

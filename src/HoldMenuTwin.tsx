@@ -49,6 +49,11 @@ interface Item {
    *  the Poplur assistant (skipping the wake phrase); `notifications` springs
    *  down the real notifications dropdown owned by Profile. */
   event?: 'voice' | 'notifications'
+  /** the tab's own main page: dismisses everything back to the live tab.
+   *  Exists because tabs now RESUME the last open subscreen (HomeTwin), so
+   *  the root needs an explicit door of its own — the camera always had one
+   *  in PHOTO, these are that same door for the other three tabs. */
+  home?: boolean
 }
 
 // Per-tab item sets are the confirmed hold-menu inventory. Every tile keeps a
@@ -58,6 +63,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   // Rough Copy capture any more — a tile that shows you a picture of search
   // is not search.
   map: [
+    { icon: 'Map', title: 'MAP', screen: 'map-home', glyph: 'M', home: true },
     // The RADIO subscreen is back (station deck, real geo-searched stations) —
     // what stayed removed is the radio woven into the map experience itself
     // (tour beds, stingers, ticker readout). The AI voice remains the map's
@@ -68,6 +74,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
   feed: [
+    { icon: 'TVGuide', title: 'TV', screen: 'feed-home', glyph: 'TV', home: true },
     // Feed engagement lives in its visible clay rail: share, comment controls,
     // comment composer, and heart must be reachable while watching.
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
@@ -104,6 +111,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Music', title: 'STUDIO', screen: 'camera-studio', native: true },
   ],
   profile: [
+    { icon: 'Home', title: 'PROFILE', screen: 'profile-home', glyph: 'P', home: true },
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages' },
     { icon: 'Store', title: 'STORE', screen: 'profile-store' },
     { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
@@ -174,26 +182,24 @@ const SNAP_VELOCITY = 0.9
 const CENTER_Y_FRAC = 0.46
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
-// The favourite is what a plain cube TAP fires for this tab — set it by
-// holding an item in the menu.
-export function favouriteKey(tab: CubeTab) { return `poplur.holdFavourite.${tab}` }
-
-export function readFavourite(tab: CubeTab): string | null {
+// Hold-to-favourite is GONE. Its replacement lives in HomeTwin: every tab
+// remembers the last subscreen you had open and reopens it when you return,
+// so the app starts where you left it instead of on the same four roots. The
+// `home: true` tiles above are the deliberate way back to a tab's main page
+// (the camera always had one in PHOTO). The retired `poplur.holdFavourite.*`
+// keys are cleaned up on load so no stale pin survives in storage.
+export function clearRetiredFavourites() {
   try {
-    const value = window.localStorage.getItem(favouriteKey(tab))
-    // CC moved to Feed's permanent side rail. Clear the retired favourite so
-    // a cube tap never fires an invisible hold-menu action.
-    if (tab === 'feed' && (value === 'CC ON' || value === 'CC OFF')) {
-      window.localStorage.removeItem(favouriteKey(tab))
-      return null
+    for (const tab of ['map', 'feed', 'post', 'profile']) {
+      window.localStorage.removeItem(`poplur.holdFavourite.${tab}`)
     }
-    return value
-  } catch { return null }
+  } catch { /* private mode */ }
 }
 
 export default function HoldMenuTwin({
   tab,
   onClose,
+  onClearPage,
   onAction,
   onMapAction,
   tourOn,
@@ -203,12 +209,17 @@ export default function HoldMenuTwin({
   currentFeedChannelId,
   onTuneFeedChannel,
   onSubscreenChange,
-  onFavouriteChange,
+  initialScreen,
   bindGoBack,
   bindArrows,
 }: {
   tab: CubeTab
-  onClose: () => void
+  /** `dismiss` = the person waved the wheel away (empty-space tap, cube tap,
+      Escape) — the shell returns them to the page this tab was standing on.
+      `action`/`home` = a tile did its work; the shell closes outright. */
+  onClose: (reason?: 'dismiss' | 'action' | 'home') => void
+  /** The home tile pressed: this tab's remembered page is cleared for good. */
+  onClearPage?: () => void
   onAction?: (action: NonNullable<Item['action']>) => void
   onMapAction?: (action: NonNullable<Item['mapAction']>) => void
   /** live tour state, reported by the map — the tile must not guess at it */
@@ -221,11 +232,14 @@ export default function HoldMenuTwin({
   /** Feed selection shared with TV Guide so a selected row can tune Home. */
   currentFeedChannelId?: string
   onTuneFeedChannel?: (channelId: string) => void
-  /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the app */
-  onSubscreenChange?: (open: boolean, screen?: string) => void
-  /** Reports a newly pinned cube-tap action so Camera can show the matching
-      physical camera or camcorder before the next tap. */
-  onFavouriteChange?: (title: string) => void
+  /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the
+      app. `unmounting` marks the close that comes from the menu itself leaving
+      (a tab switch) rather than from the person closing the page. */
+  onSubscreenChange?: (open: boolean, screen?: string, unmounting?: boolean) => void
+  /** Open directly on this subscreen, wheel skipped — how HomeTwin resumes the
+      page you were on when you left the tab. Backing out of it still lands on
+      the wheel, so the rest of the menu stays one gesture away. */
+  initialScreen?: string
   /** Registers a "back one level" handler: closes an open subscreen, else the
       menu itself. The cube calls it so there is always a way out. */
   bindGoBack?: (fn: (() => boolean) | null) => void
@@ -260,10 +274,14 @@ export default function HoldMenuTwin({
   // is far more brittle than naming the screen you want.
   const [activeScreen, setActiveScreen] = useState<Item | null>(() => {
     if (typeof window === 'undefined') return null
-    const want = new URLSearchParams(window.location.search).get('holdScreen')
+    // The resume prop and the URL parameter share one lookup: a screen id in,
+    // its wheel item out. The prop wins — it is a live navigation, not a
+    // harness convenience.
+    const want = initialScreen
+      ?? new URLSearchParams(window.location.search).get('holdScreen')
     if (!want) return null
     const all = Object.values(TAB_MENUS).flat() as Item[]
-    return all.find(item => item.screen === want) ?? null
+    return all.find(item => item.screen === want && !item.home) ?? null
   })
   // Channel-arrow presses can arrive faster than React commits the next
   // render. Keep the semantic screen current synchronously so two quick
@@ -275,15 +293,22 @@ export default function HoldMenuTwin({
   // over the paper. Tell the home so it can silence what it is covering.
   useEffect(() => {
     onSubscreenChange?.(Boolean(activeScreen), activeScreen?.screen)
-    return () => onSubscreenChange?.(false)
+    // The third argument marks this close as the MENU LEAVING (a tab switch
+    // unmounting it), not the person closing the page — HomeTwin's last-page
+    // resume keeps its record through the former and drops it on the latter.
+    return () => onSubscreenChange?.(false, undefined, true)
   }, [activeScreen, onSubscreenChange])
 
-  // The cube is the app's universal back control (a subscreen that can only be
-  // left by one small clay button at the top-right was too easy to get stuck in).
+  // The cube no longer unwinds an open PAGE — pages are places the tab
+  // stands, not layers to escape (they are remembered and resumed, so
+  // "back to the root" stopped being a meaningful direction). With a page up,
+  // the cube tap falls through to its plain pop; the wheel (long-press) is
+  // the navigation. Only the WHEEL itself still dismisses on tap, and that
+  // dismissal returns to the page this tab was standing on.
   useEffect(() => {
     bindGoBack?.(() => {
-      if (activeScreen) { setActiveScreen(null); return true }
-      onClose()
+      if (activeScreen) return false
+      onClose('dismiss')
       return true
     })
     return () => bindGoBack?.(null)
@@ -405,44 +430,27 @@ export default function HoldMenuTwin({
   const itemsRef = useRef(items)
   itemsRef.current = items
 
-  // Held tile → this tab's favourite (what a plain cube tap fires).
-  const [favourite, setFavourite] = useState<string | null>(() => readFavourite(tab))
-  const [favToast, setFavToast] = useState<string | null>(null)
-  const holdTimer = useRef<number | null>(null)
-
-  const setAsFavourite = (item: Item) => {
-    try { window.localStorage.setItem(favouriteKey(tab), item.title) } catch { /* private mode */ }
-    setFavourite(item.title)
-    onFavouriteChange?.(item.title)
-    playPop()
-    setFavToast(item.title)
-    window.setTimeout(() => setFavToast(null), 1800)
-  }
-
-  const beginHold = (item: Item) => {
-    if (holdTimer.current) window.clearTimeout(holdTimer.current)
-    holdTimer.current = window.setTimeout(() => {
-      holdTimer.current = null
-      heldRef.current = true
-      setAsFavourite(item)
-    }, 550)
-  }
-
-  const endHold = () => {
-    if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null }
-  }
-
-  const heldRef = useRef(false)
+  // Tile HOLDS do nothing any more — hold-to-favourite is retired in favour of
+  // the last-page resume in HomeTwin. Clear any pins an older build left.
+  useEffect(() => { clearRetiredFavourites() }, [])
 
   const activateItem = (item: Item) => {
-    // a hold set the favourite; don't also fire the item
-    if (heldRef.current) { heldRef.current = false; return }
+    // The tab's own main page: the ONE way to clear this tab's remembered
+    // page. Everything else leaves the record standing — pages are places
+    // the tab lives, not layers passing through.
+    if (item.home) {
+      playPop()
+      onClearPage?.()
+      setActiveScreen(null)
+      onClose('home')
+      return
+    }
     // PROFILE happens on the screen behind the menu — it was never really a
     // sub-screen. Feed engagement lives in the visible clay rail.
     if (item.action) {
       playPop()
       onAction?.(item.action)
-      onClose()
+      onClose('action')
       return
     }
     // CREATE opens the bundled AI chat subscreen on every host, iOS included.
@@ -455,7 +463,7 @@ export default function HoldMenuTwin({
     if (item.mapAction) {
       playPop()
       onMapAction?.(item.mapAction)
-      onClose()
+      onClose('action')
       return
     }
     // HEY POPLUR / NOTIFICATIONS fire an app event and dismiss — the result (the
@@ -465,7 +473,7 @@ export default function HoldMenuTwin({
       window.dispatchEvent(new CustomEvent(
         item.event === 'voice' ? 'poplur-voice-request' : 'poplur-open-notifications',
       ))
-      onClose()
+      onClose('action')
       return
     }
     playPop()
@@ -580,7 +588,7 @@ export default function HoldMenuTwin({
         consumedTileTapRef.current = true
         activateItem(items[index])
       }
-      else onClose() // tap on empty space dismisses the overlay
+      else onClose('dismiss') // tap on empty space waves the wheel away
     }
   }
 
@@ -600,7 +608,7 @@ export default function HoldMenuTwin({
       else if (activeScreen) return
       else if (e.key === 'ArrowDown') { spinTo(selected + 1); e.preventDefault() }
       else if (e.key === 'ArrowUp') { spinTo(selected - 1); e.preventDefault() }
-      else if (e.key === 'Escape') { e.preventDefault(); onClose() }
+      else if (e.key === 'Escape') { e.preventDefault(); onClose('dismiss') }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -775,14 +783,11 @@ export default function HoldMenuTwin({
                 }
                 activateItem(it)
               }}
-              onPointerDown={e => { e.preventDefault(); beginHold(it) }}
-              onPointerUp={endHold}
-              onPointerLeave={endHold}
-              onPointerCancel={endHold}
+              onPointerDown={e => e.preventDefault()}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation() }}
               onDragStart={e => e.preventDefault()}
               className={styles.tile}
-              data-favourite={favourite === it.title ? 'true' : undefined}
+              data-home={it.home ? 'true' : undefined}
               style={{
                 top: `${CENTER_Y_FRAC * 100}%`,
                 transform:
@@ -826,13 +831,8 @@ export default function HoldMenuTwin({
         })}
       </div>
 
-      {/* Left edge: how to pin a favourite — mirrors SCRUB on the right. */}
-      <div className={styles.favHint} aria-hidden="true">
-        <span className={styles.favHintStar}>★</span>
-        <span className={styles.favHintText}>HOLD TO FAVOURITE</span>
-      </div>
-
-      {favToast && <div className={styles.favToast}>★ {favToast} is now your cube tap</div>}
+      {/* No favourite hint any more: holding a tile does nothing. The left
+          edge stays clear; SCRUB on the right remains the one gesture hint. */}
 
       {/* SCRUB ↕ hint on the right, like the app */}
       <div className={styles.scrub} aria-hidden="true">
