@@ -98,7 +98,6 @@ const LIKED: LikedPost[] = [
 // on localStorage access, and a profile picture is never worth a thrown error.
 const PHOTO_KEY = 'poplur.profile.photo'
 const SELFIE_VIDEO_KEY = 'poplur.profile.selfieVideo'
-const SELFIE_MIRROR_KEY = 'poplur.profile.selfieMirrored'
 const SELFIE_DURATION_SECONDS = 10
 const PROFILE_NAME_FALLBACK = 'MARK'
 
@@ -145,23 +144,19 @@ function readStoredSelfieVideo(): string | null {
  *  flipped to the one person guaranteed to notice. Every camera app that shoots
  *  selfies keeps the mirrored version for this reason.
  *
- *  Stored as a flag rather than baked into the file: the recording stays true,
- *  and the flip is a display decision we can revisit without re-encoding
- *  anyone's video. Absent means "assume front" — this feature is the profile
- *  SELFIE and its capture opens on `user`, so an unflagged clip (including one
- *  saved by the native shell, which reports no facing) is overwhelmingly a
- *  front-camera one. */
-function readSelfieMirrored(): boolean {
-  try {
-    const raw = window.localStorage.getItem(SELFIE_MIRROR_KEY)
-    return raw == null ? true : raw === '1'
-  } catch { return true }
-}
-
-function writeSelfieMirrored(mirrored: boolean): void {
-  try { window.localStorage.setItem(SELFIE_MIRROR_KEY, mirrored ? '1' : '0') } catch { /* embedded shell */ }
-}
-
+ *  The flip is a display decision, never baked into the file, so the recording
+ *  stays true to how others see you.
+ *
+ *  It is now UNCONDITIONAL, and that is the bug fix. It used to hang on a
+ *  localStorage flag defaulting to true — per-device state describing a video
+ *  that outlives the device. The same clip therefore played mirrored where it
+ *  was recorded and could play unmirrored after a reinstall, a storage clear,
+ *  or on a second device, which is exactly the "profile selfie gets flipped"
+ *  report: not one wrong orientation, but two, disagreeing. Profile-selfie
+ *  capture opens on `user`, and a clip restored from the native shell reports
+ *  no facing at all, so there was never a reliable per-clip answer to store.
+ *  One rule, applied to the <video> — which mirrors its poster frame with it,
+ *  so the still and the moving image cannot disagree either. */
 function writeStoredSelfieVideo(source: string | null): void {
   try {
     if (source) window.localStorage.setItem(SELFIE_VIDEO_KEY, source)
@@ -727,7 +722,6 @@ export default function ProfileTwin({
   // URI under one key, rehydrated on mount.
   const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
   const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
-  const [selfieMirrored, setSelfieMirrored] = useState<boolean>(() => readSelfieMirrored())
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
   const [captureSource, setCaptureSource] = useState<CaptureSource>('camera')
@@ -1321,11 +1315,6 @@ export default function ProfileTwin({
     writeStoredPhoto(preview)
     setSelfieVideo(source)
     writeStoredSelfieVideo(source)
-    // Remember which way round it was shot, so playback can show it back the
-    // way you saw it while recording.
-    const shotOnFrontCamera = facingMode === 'user'
-    setSelfieMirrored(shotOnFrontCamera)
-    writeSelfieMirrored(shotOnFrontCamera)
     if (nativePayload) postNativeEvent(nativePayload)
     window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: preview } }))
     window.dispatchEvent(new CustomEvent('poplur-profile-media', { detail: { photo: preview, video: source } }))
@@ -1746,7 +1735,7 @@ export default function ProfileTwin({
               <video
                 key={selfieVideo}
                 ref={selfieVideoRef}
-                className={selfieMirrored ? `${styles.photo} ${styles.selfieMirrored}` : styles.photo}
+                className={`${styles.photo} ${styles.selfieMirrored}`}
                 src={selfieVideo}
                 poster={photo ?? undefined}
                 autoPlay

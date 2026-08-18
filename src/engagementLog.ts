@@ -17,6 +17,7 @@
 
 import type { EngagementEvent } from './engagement'
 import { playPopAmbient } from './pop'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 
 export interface LoggedEngagement {
   user: string
@@ -125,6 +126,13 @@ export function unreadEngagementCount(): number {
 /** Opening the notifications marks everything currently logged as read. */
 export function markEngagementSeen(at = Date.now()): void {
   try { sessionStorage.setItem(SEEN_KEY, String(at)) } catch { /* private mode */ }
+  // Tell the shell too. The app icon badge is owned by the native notification
+  // centre, and the only thing that used to clear it was markAllRead() in the
+  // NATIVE ProfileView — a screen the web home replaced. So reading your
+  // notifications cleared the in-app dot and left the springboard badge lit,
+  // with nothing in the app still claiming to be unread. A badge that outlives
+  // the thing it counts is worse than no badge: it trains you to ignore it.
+  if (isNativeShell()) postNativeEvent({ type: 'notificationsRead' })
   // Same broadcast the recorder uses, so a bell rendered in another component
   // re-reads its unread count the moment the list is opened.
   const snapshot = listEngagement()
