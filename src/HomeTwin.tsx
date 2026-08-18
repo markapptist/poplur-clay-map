@@ -671,15 +671,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       return readLastScreens()[initialTab] ?? null
     } catch { return null }
   })()
-  const [holdOpen, setHoldOpen] = useState(initialHoldOpen || bootResume != null)
+  // Boot does NOT reopen the remembered page. The rule stated above is that only
+  // GESTURE switches resume, and a launch is not a gesture -- but this line used
+  // to open the hold menu at mount purely because a page had once been visited
+  // on the incoming tab. Arriving at Profile therefore greeted you with the menu
+  // already up, with nothing having been held. The record itself is untouched:
+  // lastOpenSubscreenRef still loads it below, so a cube-swipe back to this tab
+  // resumes exactly as before, and wheel-dismiss still returns to the page.
+  // `initialHoldOpen` stays honoured -- that is the explicit ?holdScreen
+  // deep-link, which is a request rather than an accident.
+  const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
   // The nonce is the menu's REMOUNT key. It must move only when a new resume
   // (or a deliberate wheel-open over one) needs a fresh instance — keying by
   // tab remounted the menu in the same render the tab changed, and the fresh
   // instance's explicit "no subscreen" report erased the record of the page
   // being left before the effect below could store it.
   const [resume, setResume] = useState<{ screen: string | null; n: number }>(
-    { screen: bootResume, n: 0 },
+    { screen: initialHoldOpen ? bootResume : null, n: 0 },
   )
+  /** Bumped by a cube long-press while the menu is already up. Unlike the
+      resume nonce this does NOT remount the menu — it asks the live instance to
+      lay the wheel over whatever page it is showing. */
+  const [wheelOverNonce, setWheelOverNonce] = useState(0)
   /** The page this tab is standing on. Sticky: set when a page opens, carried
       across the menu's unmounts, swapped per tab on switches, and cleared by
       exactly one thing — the wheel's home tile. */
