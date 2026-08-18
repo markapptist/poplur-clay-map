@@ -17,7 +17,9 @@
   position: absolute; inset: 0;
   display: grid; place-items: center;
   overflow: hidden;
-  background: #0b040d;
+  /* No background of its own. The shell PNGs are cut out to transparency, so
+     any colour here would show through as letterbox bars around a device that
+     is meant to sit directly on its own blurred art. */
   /* Declares ITSELF as the container the shell sizes against.
    *
    * Without this, the cqw/cqh below have no container ancestor and fall back to
@@ -41,8 +43,8 @@
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
-  transform: scale(1.35);        /* hides the blur's soft edges */
-  filter: blur(34px) saturate(1.25) brightness(0.62);
+  transform: scale(1.6);         /* overscan so the blur never shows an edge */
+  filter: blur(38px) saturate(1.3) brightness(0.66);
   pointer-events: none;
 }
 
