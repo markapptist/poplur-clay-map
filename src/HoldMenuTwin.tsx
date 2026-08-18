@@ -182,6 +182,16 @@ const SNAP_VELOCITY = 0.9
 const CENTER_Y_FRAC = 0.46
 const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
 
+/** Is this screen id a PAGE this tab can stand on? Doors (`home`) and tiles
+ *  that only fire an action are not. HomeTwin uses this to scrub its saved
+ *  last-page records: the arrow-walk bug briefly wrote door ids like
+ *  `feed-home` into storage, and a phone that saved one would otherwise keep
+ *  trying to resume a door on every visit to that tab. */
+export function isResumablePage(tab: CubeTab, screen: string): boolean {
+  return (TAB_MENUS[tab] ?? []).some(item =>
+    item.screen === screen && !item.home && !item.action && !item.mapAction && !item.event)
+}
+
 // Hold-to-favourite is GONE. Its replacement lives in HomeTwin: every tab
 // remembers the last subscreen you had open and reopens it when you return,
 // so the app starts where you left it instead of on the same four roots. The

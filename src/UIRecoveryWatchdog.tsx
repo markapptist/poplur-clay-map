@@ -78,7 +78,27 @@ export function useUIRecoveryWatchdog(): number {
     // looking at. `onTick` fires immediately when the gate reopens, so the
     // recovery still lands on the first touch, before the user can act on it.
     const stopPolling = onTick(check, 1000)
-    const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(check)
+    // Mutation-driven checks are COALESCED, and that matters more than it
+    // looks: this observer watches `class` and `style` across the whole
+    // document subtree, so every animated class toggle used to run `check` —
+    // a getComputedStyle plus a getBoundingClientRect on up to five nodes,
+    // i.e. a forced synchronous layout — many times per frame on any screen
+    // with motion on it. A 200ms trailing window collapses a burst into one
+    // check while staying far inside the 1s poll's own resolution.
+    //
+    // It also makes the two-consecutive-samples gate below mean what it says:
+    // fired per-mutation, two "samples" could land microseconds apart during a
+    // single transition, which is exactly the false positive that gate exists
+    // to prevent.
+    let coalesceTimer = 0
+    const checkSoon = () => {
+      if (coalesceTimer) return
+      coalesceTimer = window.setTimeout(() => {
+        coalesceTimer = 0
+        check()
+      }, 200)
+    }
+    const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(checkSoon)
     observer?.observe(document.body, {
       subtree: true,
       childList: true,
@@ -94,6 +114,7 @@ export function useUIRecoveryWatchdog(): number {
     check()
     return () => {
       stopPolling()
+      window.clearTimeout(coalesceTimer)
       observer?.disconnect()
     }
   }, [])

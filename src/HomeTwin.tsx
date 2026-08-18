@@ -9,7 +9,7 @@ import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
-import HoldMenuTwin from './HoldMenuTwin'
+import HoldMenuTwin, { isResumablePage } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import TopChrome from './TopChrome'
 import PermissionAlert from './PermissionAlert'
@@ -90,7 +90,20 @@ const LAST_SCREEN_KEY = 'poplur.tab.lastScreen.v1'
 function readLastScreens(): Partial<Record<CubeTab, string>> {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(LAST_SCREEN_KEY) ?? 'null')
-    return parsed && typeof parsed === 'object' ? parsed : {}
+    if (!parsed || typeof parsed !== 'object') return {}
+    // Scrub anything that is not a page this tab can stand on. Phones that ran
+    // the build where the channel arrows could step onto a DOOR have ids like
+    // `feed-home` saved here; resuming one opened a Rough Copy embed for an id
+    // no catalogue has, which answered with its default screen — the mock TV
+    // Guide that kept reappearing on Feed and Profile. Dropping them here also
+    // repairs those devices on the next launch, with no reinstall.
+    const clean: Partial<Record<CubeTab, string>> = {}
+    for (const [tab, screen] of Object.entries(parsed)) {
+      if (typeof screen === 'string' && isResumablePage(tab as CubeTab, screen)) {
+        clean[tab as CubeTab] = screen
+      }
+    }
+    return clean
   } catch { return {} }
 }
 
@@ -668,26 +681,36 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       const params = new URLSearchParams(window.location.search)
       // The harness's ?holdScreen deep-link owns the boot when present.
       if (params.get('holdScreen')) return null
-      return readLastScreens()[initialTab] ?? null
+      const saved = readLastScreens()[initialTab] ?? null
+      // Only a REAL page may reopen at boot. This is the guard that makes
+      // launch-resume safe: an id that no longer names a page resumes NOTHING
+      // instead of mounting the menu with nothing to show.
+      return saved && isResumablePage(initialTab, saved) ? saved : null
     } catch { return null }
   })()
-  // Boot does NOT reopen the remembered page. The rule stated above is that only
-  // GESTURE switches resume, and a launch is not a gesture -- but this line used
-  // to open the hold menu at mount purely because a page had once been visited
-  // on the incoming tab. Arriving at Profile therefore greeted you with the menu
-  // already up, with nothing having been held. The record itself is untouched:
-  // lastOpenSubscreenRef still loads it below, so a cube-swipe back to this tab
-  // resumes exactly as before, and wheel-dismiss still returns to the page.
-  // `initialHoldOpen` stays honoured -- that is the explicit ?holdScreen
-  // deep-link, which is a request rather than an accident.
-  const [holdOpen, setHoldOpen] = useState(initialHoldOpen)
+  // Boot DOES reopen the remembered page: "the screen the tab was on last
+  // should be remembered even after the user closes or minimizes the app and
+  // re-opens it" is the stated requirement, and a relaunch is the main case it
+  // exists for. (A gesture switch is still the other case; see the effect
+  // below.)
+  //
+  // This was briefly disabled because arriving at a tab could greet you with
+  // the WHEEL already up and nothing held. That symptom was not launch-resume
+  // being wrong — it was a poisoned record: the channel arrows could step onto
+  // a `home` DOOR and save `profile-home`/`feed-home` as if it were a page, and
+  // an id that resolves to no page leaves the menu mounted with only the wheel
+  // to show. Both halves are fixed now (arrows skip doors; readLastScreens
+  // scrubs non-page ids), and bootResume above additionally refuses anything
+  // that is not a real page — so the menu can only open at boot onto an actual
+  // screen. Re-disabling this would take the requirement out with the bug.
+  const [holdOpen, setHoldOpen] = useState(initialHoldOpen || bootResume != null)
   // The nonce is the menu's REMOUNT key. It must move only when a new resume
   // (or a deliberate wheel-open over one) needs a fresh instance — keying by
   // tab remounted the menu in the same render the tab changed, and the fresh
   // instance's explicit "no subscreen" report erased the record of the page
   // being left before the effect below could store it.
   const [resume, setResume] = useState<{ screen: string | null; n: number }>(
-    { screen: initialHoldOpen ? bootResume : null, n: 0 },
+    { screen: bootResume, n: 0 },
   )
   /** Bumped by a cube long-press while the menu is already up. Unlike the
       resume nonce this does NOT remount the menu — it asks the live instance to

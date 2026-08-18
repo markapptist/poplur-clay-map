@@ -1211,22 +1211,46 @@ export default function ProfileTwin({
     // never arrived, and the viewfinder sat perfectly still. Priming is
     // once-per-session and a no-op on Android and desktop.
     primeMotionPermission()
-    let raf = 0
     let target = 0, current = 0
-    const onOrient = (e: DeviceOrientationEvent) => {
-      target = Math.max(-2.5, Math.min(2.5, (e.gamma ?? 0) * 0.08))
-    }
-    const tick = () => {
-      current += (target - current) * 0.08
+    // On the shared clock and PARKED when settled, which is the same rule the
+    // clay camera button below follows. This used to be a raw
+    // requestAnimationFrame that re-armed unconditionally: on a phone lying
+    // still it wrote a byte-identical transform every vsync forever — a style
+    // recalc and a composite per frame for no visible change, outside the
+    // governor entirely. The lerp still runs frame-by-frame while the device
+    // is actually moving, so the sway looks exactly as authored.
+    let stopFrames: (() => void) | null = null
+    const write = () => {
       const mirror = facingMode === 'user' ? 'scaleX(-1) ' : ''
       video.style.transform = `${mirror}perspective(900px) rotateY(${(-current).toFixed(2)}deg) translateX(${(-current * 1.2).toFixed(1)}px) scale(1.06)`
-      raf = requestAnimationFrame(tick)
+    }
+    const park = () => {
+      stopFrames?.()
+      stopFrames = null
+    }
+    // 0.005deg is far below one screen pixel of movement at this perspective,
+    // so snapping the remainder is invisible and ends the tail cleanly instead
+    // of lerping toward the target for hundreds of frames.
+    const settle = () => {
+      current += (target - current) * 0.08
+      if (Math.abs(target - current) < 0.005) {
+        current = target
+        write()
+        park()
+        return
+      }
+      write()
+    }
+    const onOrient = (e: DeviceOrientationEvent) => {
+      target = Math.max(-2.5, Math.min(2.5, (e.gamma ?? 0) * 0.08))
+      if (stopFrames || Math.abs(target - current) < 0.005) return
+      stopFrames = onFrame(settle, 'interactive')
     }
     window.addEventListener('deviceorientation', onOrient)
-    tick()
+    write()
     return () => {
       window.removeEventListener('deviceorientation', onOrient)
-      cancelAnimationFrame(raf)
+      park()
     }
   }, [capturing, captureSource, camError, facingMode])
 

@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from 'react'
-import { playPop } from './pop'
+import { playPop, primePopAudio } from './pop'
 
 // The peek-a-boo cast: prebaked clay sprites already in the bundle (the same
 // files the map's markers use — supplied art, never invented). One is drawn
@@ -145,7 +145,7 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
     let runAnim: Animation | null = null
     let strideTimer = 0
     const startRun = () => {
-      if (reduced) return
+      if (reduced || runAnim) return
       runner.style.display = 'block'
       // Enter from past the left edge, exit past the right, loop.
       const lap = panel.clientWidth + 96
@@ -211,6 +211,12 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
 
     const onDown = (event: PointerEvent) => {
       if (busy || scroll.scrollTop > 0) return
+      // iOS keeps a fresh AudioContext suspended until a user gesture touches
+      // it, and playPop's resume is asynchronous — so without this the pop for
+      // this very gesture is dropped. HoldMenuTwin primes on its pointerdown
+      // for exactly this reason; the pull surfaces never did, which is why the
+      // curtain was silent on a phone while sounding fine in a desktop browser.
+      primePopAudio()
       pulling = true
       startY = event.clientY
       crested = false
@@ -230,6 +236,9 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       if (!crested && pull >= CREST) {
         crested = true
         playPop()
+        // Every pull gets the pet, not just a committed one: it crests with
+        // the sound, runs while you decide, and leaves with the curtain.
+        startRun()
       }
     }
 
@@ -237,7 +246,7 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       if (!pulling) return
       pulling = false
       if (pull <= COMMIT) {
-        springTo(0, 300)
+        springTo(0, 300, stopRun)
         return
       }
       busy = true

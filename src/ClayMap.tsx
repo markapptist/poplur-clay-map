@@ -1768,11 +1768,24 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       ;(map as unknown as { __cinematic?: boolean }).__cinematic = false
       boostFrames(600)
     }
+    // pointermove only counts while a finger/button is actually DOWN. Bare
+    // hover movement over the map (trackpad, mouse, or a stylus passing over
+    // the glass) was renewing a 600ms full-rate boost, which clears the
+    // governor's pending wake timer and forces an immediate frame — so simply
+    // moving a cursor across the map drove the shared clock at display rate
+    // with nothing being dragged. The governor's own pointermove handler is
+    // guarded the same way.
+    const boostOnDrag = (event: PointerEvent) => {
+      // `buttons` covers mouse/trackpad; touch and pen report pressure via a
+      // primary button bit too, so this is one test for every input type.
+      if (event.buttons === 0) return
+      boostOnTouch()
+    }
     map.getContainer().addEventListener('pointerdown', boostOnTouch, { passive: true })
-    map.getContainer().addEventListener('pointermove', boostOnTouch, { passive: true })
+    map.getContainer().addEventListener('pointermove', boostOnDrag, { passive: true })
     map.once('remove', () => {
       map.getContainer().removeEventListener('pointerdown', boostOnTouch)
-      map.getContainer().removeEventListener('pointermove', boostOnTouch)
+      map.getContainer().removeEventListener('pointermove', boostOnDrag)
     })
     map.getContainer().addEventListener('pointerdown', stopOrbit)
     map.getContainer().addEventListener('wheel', stopOrbit, { passive: true })
