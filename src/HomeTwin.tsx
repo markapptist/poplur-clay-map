@@ -742,10 +742,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const navSettledRef = useRef<NavLoc | null>(null)
   /** True while a back step is landing, so it is not recorded as a new move. */
   const navPoppingRef = useRef(false)
-  /** Set by a back step that crosses tabs, so the tab-change effect restores
-      that page instead of applying its own resume rule. undefined = not
-      restoring; null = restore the tab's root. */
-  const restoreScreenRef = useRef<string | null | undefined>(undefined)
+  // (No restoreScreenRef: back is per-tab, so it never causes a tab change and
+  // never needs to name the incoming tab's page.)
   const switchTabByGesture = useCallback((tab: CubeTab) => {
     gestureSwitchRef.current = tab
     setActiveTab(tab)
@@ -769,14 +767,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // remembered page, so wheel-dismiss can return to it.
     void previous
     lastOpenSubscreenRef.current = readLastScreens()[activeTab] ?? null
-    // A back step names exactly where to land and outranks both rules below.
-    const restore = restoreScreenRef.current
-    restoreScreenRef.current = undefined
-    const wanted = restore !== undefined
-      ? restore
-      : gestureSwitchRef.current === activeTab
-        ? lastOpenSubscreenRef.current
-        : null
+    // The gesture rule is all that is left: swiping back to a tab reopens the
+    // page you left it on, and arriving any other way opens the tab bare.
+    const wanted = gestureSwitchRef.current === activeTab
+      ? lastOpenSubscreenRef.current
+      : null
     gestureSwitchRef.current = null
     setResume(current => ({ screen: wanted, n: current.n + 1 }))
     setHoldOpen(wanted != null)
@@ -922,6 +917,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
 
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
+  /** cubeScreen for callbacks that must not re-bind on every page change. */
+  const cubeScreenLiveRef = useRef<string | null>(null)
+  cubeScreenLiveRef.current = cubeScreen
   const handleSubscreenChange = useCallback((open: boolean, screen?: string, _unmounting?: boolean) => {
     setOverlayOpen(open)
     // Resume bookkeeping — STICKY by design. Standing on a page records it,
@@ -2053,22 +2051,43 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   /** The cube's back step: return to the previous screen. Returns false when
       there is no history left, so the tap falls through to its plain pop. */
   const goBackOneScreen = useCallback((): boolean => {
-    const target = navStackRef.current.pop()
-    if (!target) return false
-    navPoppingRef.current = true
-    setViewingUser(target.user)
-    if (target.tab !== activeTabLiveRef.current) {
-      // Crossing tabs: name the page first, because the tab-change effect is
-      // what applies it. Not a gesture switch — this lands somewhere exact.
-      restoreScreenRef.current = target.screen
-      setActiveTab(target.tab)
+    // Back is PER TAB by default. The cube walks back through the screens of
+    // the tab you are ON and never sideways into another one: popping the
+    // global top meant that visiting the map, switching to camera and tapping
+    // the cube threw you back to the map, which reads as the cube changing
+    // tabs. Switching tabs is the SWIPE's job, and a tap must not do it.
+    //
+    // Entries for other tabs are SKIPPED, not dropped. Discarding them would
+    // spend the map's history while you happen to be standing in the camera,
+    // and switching back to the map later would find nothing to go back to.
+    //
+    // There is no exception to this. A tap that lands you on a different tab
+    // reads as the cube changing tabs, which is the swipe's job — even when
+    // the jump being undone was one the app performed for you.
+    const stack = navStackRef.current
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if (stack[i].tab !== activeTabLiveRef.current) continue
+      const [target] = stack.splice(i, 1)
+      navPoppingRef.current = true
+      setViewingUser(target.user)
+      // A fresh nonce remounts the menu so it opens ON the page rather than
+      // re-showing the wheel.
+      setResume(current => ({ screen: target.screen, n: current.n + 1 }))
+      setHoldOpen(target.screen != null)
       return true
     }
-    // Same tab: open or close the page directly. A fresh nonce remounts the
-    // menu so it opens ON the page rather than re-showing the wheel.
-    setResume(current => ({ screen: target.screen, n: current.n + 1 }))
-    setHoldOpen(target.screen != null)
-    return true
+    // Nothing recorded for this tab. If a page is open anyway you arrived by
+    // resume (a tab reopens where you left it), and there is still an obvious
+    // way out — the tab's own main screen.
+    if (cubeScreenLiveRef.current != null) {
+      navPoppingRef.current = true
+      setResume(current => ({ screen: null, n: current.n + 1 }))
+      setHoldOpen(false)
+      return true
+    }
+    // Nothing left at all: report no-op so the tap falls through to its plain
+    // behaviour rather than silently doing nothing.
+    return false
   }, [])
 
   // Which of the nearby posts the map arrows are parked on (1-based on screen).
@@ -2568,14 +2587,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             highlightPops={profilePopFlash}
             onPostCountChange={setProfilePostCount}
             onBackToOwn={() => {
-              // Retrace the step that opened this profile, so you land on the
-              // PAGE you came from — VIEW PROFILE from News returns to News,
-              // not to the bare feed. The tab-only return below is the fallback
-              // for a profile opened with no history behind it (a deep link,
-              // or a session that started here).
+              // Closing someone else's profile puts you back on your own, on
+              // the tab you are already standing on. It used to jump to the
+              // tab the profile was opened from, but that is the cube tap
+              // changing tabs — the swipe's job, never the tap's.
               setProfileOrigin(null)
-              if (goBackOneScreen()) return
-              setActiveTab(profileOrigin ?? 'feed')
               setViewingUser(null)
             }}
           />
@@ -2912,14 +2928,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           initialScreen={resume.screen ?? undefined}
           wheelOverNonce={wheelOverNonce}
           onClose={reason => {
-            // Waving the wheel away returns to the page this tab stands on —
-            // the wheel was only ever ON TOP of it. Actions and the home tile
-            // close outright (home cleared the record first).
-            if (reason === 'dismiss' && lastOpenSubscreenRef.current) {
-              setResume(current => ({ screen: lastOpenSubscreenRef.current, n: current.n + 1 }))
-              setHoldOpen(true)
-              return
-            }
+            // Waving the wheel away leaves you exactly where it found you.
+            // A wheel opened OVER a page never reaches here — HoldMenuTwin
+            // lifts itself off and the page is still underneath. A wheel
+            // opened over the tab's main screen therefore closes to that main
+            // screen. It used to reopen whatever page the tab last stood on,
+            // which meant merely opening and closing the menu could put a
+            // screen in front of you that you never asked for.
+            void reason
             setHoldOpen(false)
           }}
           onClearPage={() => {
