@@ -2,14 +2,16 @@ import React, { useEffect, useMemo, useState } from 'react'
 import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import UploadFlowReview from './UploadFlowReview'
+import ArcadeScreen from './ArcadeScreen'
+import GamesScreen from './GamesScreen'
 import styles from './ViewHarness.module.css'
 
-export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu' | 'uploadflows'
+export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu' | 'uploadflows' | 'arcade' | 'games'
 
 // The four bottom-nav tabs now live INSIDE the home view (its pills switch
 // map/feed/camera/profile inline). The hold menu is a cube-long-press OVERLAY,
 // still routable (?view=holdmenu) but not a tab.
-const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu', 'uploadflows']
+const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu', 'uploadflows', 'arcade', 'games']
 const VIEW_LABELS: Record<HarnessView, string> = {
   home: 'Home',
   map: 'Map',
@@ -19,6 +21,8 @@ const VIEW_LABELS: Record<HarnessView, string> = {
   profile: 'Profile',
   holdmenu: 'Hold Menu',
   uploadflows: 'Upload Flows',
+  arcade: 'Arcade',
+  games: 'Games',
 }
 // Each ?view= simply picks which tab the tabbed home opens on.
 // The home view opens on the FEED tab; the map is one tab over (reachable via
@@ -74,11 +78,16 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   // floats over the live home view behind a semi-transparent scrim, and closing
   // it returns you to that home. So ?view=holdmenu keeps the home (map) mounted
   // underneath rather than swapping it out.
-  const baseView: Exclude<HarnessView, 'holdmenu' | 'uploadflows'> = view === 'holdmenu'
+  const baseView: Exclude<HarnessView, 'holdmenu' | 'uploadflows' | 'arcade' | 'games'> = view === 'holdmenu'
     ? 'home'
     : view === 'uploadflows'
       ? 'camera'
-      : view
+      // Arcade returns its own surface below and never reaches HomeTwin, but
+      // baseView is computed before that early return (hooks cannot be
+      // conditional), so it still needs a value the tab map accepts.
+      : view === 'arcade' || view === 'games'
+        ? 'home'
+        : view
   const [, setInlineTab] = useState<CubeTab>(VIEW_TO_TAB[baseView])
 
   useEffect(() => { setInlineTab(VIEW_TO_TAB[baseView]) }, [baseView])
@@ -97,6 +106,12 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   )
 
   if (view === 'uploadflows') return <UploadFlowReview />
+  // Standalone like uploadflows: the Arcade shell is its own surface, not a tab
+  // inside the tabbed home.
+  if (view === 'arcade') return <ArcadeScreen />
+  // The games LIST, reachable without spinning the hold-menu wheel to it (the
+  // wheel culls to five tiles, so GAMES is not always on screen).
+  if (view === 'games') return <GamesScreen onClose={() => setHarnessView('home')} />
 
   return (
     <div className={styles.stage}>

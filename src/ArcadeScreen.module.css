@@ -1,0 +1,168 @@
+/* Poplur Arcade shell player.
+ *
+ * The shell is the SUPPLIED ARTWORK. This file must never paint a shell body or
+ * a button: every control here is an invisible hit target positioned from
+ * RETRO_SHELL_SKINS as a percentage of the shell box. If a coordinate appears
+ * here, the geometry has two owners and the next skin lands its hitboxes
+ * somewhere its art is not.
+ *
+ * No infinite animations: the thermal gate (.codex/thermal-budgets.json) sets
+ * maxInfiniteAnimations: 0, and an arcade screen is exactly the surface that
+ * would quietly burn a phone. The boot runs once and unmounts; press feedback is
+ * a transition on transform and filter, both compositor-only, so holding a
+ * direction runs no layout. */
+
+/* The handheld IS the screen — no chrome, no labels, nothing but the device. */
+.stage {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  overflow: hidden;
+  background: #0b040d;
+  /* Declares ITSELF as the container the shell sizes against.
+   *
+   * Without this, the cqw/cqh below have no container ancestor and fall back to
+   * the viewport. Standalone that happens to look right, because the stage IS
+   * the viewport — but mounted inside GamesScreen's own stage the shell was
+   * sized to the whole window, so it overflowed its parent, sat off-centre and
+   * carried every hit target off with it. The units must resolve against this
+   * box, not whatever happens to be outside it. */
+  container-type: size;
+}
+
+/* The shell's own art, blown up and blurred, filling the view behind it.
+ *
+ * This exists because a true object-fit: cover is not available to us: the shell
+ * is a 0.645 w/h box against a phone's ~0.46, so covering scales to the height
+ * and crops ~78px per side — and A sits at x 0.905, which puts it almost
+ * entirely outside the crop. The handheld would fill the screen and lose its
+ * face buttons. Filling the surround with the skin's own colour gets the
+ * edge-to-edge read without cropping a control off the device. */
+.backdrop {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  transform: scale(1.35);        /* hides the blur's soft edges */
+  filter: blur(34px) saturate(1.25) brightness(0.62);
+  pointer-events: none;
+}
+
+/* Fills the view edge to edge on whichever axis binds first.
+ *
+ * Deliberately NOT object-fit: cover. The shell is a 0.645 w/h box and a phone
+ * is ~0.46, so covering would scale to the height and crop the sides — and the
+ * D-pad sits at x 0.137 with A at 0.905, so the crop would take the controls
+ * with it. Filling one axis keeps every control on screen. */
+.shell {
+  position: relative;
+  width: min(100cqw, 64.5cqh);   /* 307/476 of the height */
+  aspect-ratio: 307 / 476;
+  touch-action: none;            /* or the browser scrolls instead of holding a direction */
+  user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.shellArt {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: fill;              /* the box already carries the art's exact ratio */
+  display: block;
+  pointer-events: none;          /* the SHELL box owns the pointer, not the image */
+}
+/* Only for a skin declared before its art lands. A frame, not an empty box —
+   an empty box reads as broken. */
+.shellFallback {
+  position: absolute; inset: 0;
+  border-radius: 20px 20px 40px 40px;
+  background: linear-gradient(160deg, #6f3a92 0%, #4a2266 100%);
+  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.3), inset 0 -6px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Colour arrows ────────────────────────────────────────────────────────
+   Either side of the device, no labels. Drawn as a chevron from two borders
+   rather than a glyph so there is no text on this screen at all. */
+.arrow {
+  position: absolute; top: 50%; z-index: 4;
+  width: 44px; height: 44px;
+  transform: translateY(-50%);
+  appearance: none; border: 0; padding: 0; background: transparent;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.arrow::before {
+  content: ''; position: absolute; top: 50%; left: 50%;
+  width: 15px; height: 15px;
+  border-top: 3.5px solid rgba(255, 226, 245, 0.92);
+  border-right: 3.5px solid rgba(255, 226, 245, 0.92);
+  border-radius: 2px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+  transition: transform 0.09s ease, opacity 0.15s ease;
+}
+.arrowLeft { left: max(4px, 2cqw); }
+.arrowRight { right: max(4px, 2cqw); }
+.arrowLeft::before { transform: translate(-35%, -50%) rotate(-135deg); }
+.arrowRight::before { transform: translate(-65%, -50%) rotate(45deg); }
+.arrowLeft:active::before { transform: translate(-35%, -50%) rotate(-135deg) scale(0.82); }
+.arrowRight:active::before { transform: translate(-65%, -50%) rotate(45deg) scale(0.82); }
+
+/* ── Screen ───────────────────────────────────────────────────────────────
+   The emulator surface, clipped to the skin's screen opening. Transparent until
+   a core attaches, so the shell's own painted screen reads through rather than
+   sitting behind an empty black rectangle. */
+.screen { position: absolute; overflow: hidden; }
+.screenCanvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  /* contain, not fill: a 240x160 GBA frame in a ~1.15 opening letterboxes.
+     Stretching it would make every generated game look subtly wrong. */
+  object-fit: contain;
+  display: block;
+}
+
+/* ── Boot ─────────────────────────────────────────────────────────────────
+   The panel blacks out, the mark travels down and lands, the chime confirms the
+   landing, then the cover clears to the art's own painted title. Finite: the
+   element unmounts when the boot finishes, so nothing animates at rest. */
+.boot {
+  position: absolute; inset: 0; z-index: 2;
+  background: #07100a;
+  display: grid; place-items: center;
+  overflow: hidden;
+  transition: opacity 0.32s ease 0.42s;
+}
+.bootMark {
+  width: 62%; max-width: 62%;
+  display: block;
+  /* Travels from above the panel to centre and stops. One iteration, `both` so
+     it holds the landed pose instead of snapping back. */
+  animation: bootDrop 1.5s cubic-bezier(0.34, 0.02, 0.3, 1) both;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.55));
+}
+/* Once landed, the cover fades and reveals the painted splash beneath. */
+.bootLanded { opacity: 0; }
+
+@keyframes bootDrop {
+  from { transform: translateY(-190%); }
+  to   { transform: translateY(0); }
+}
+
+/* ── Hit targets ──────────────────────────────────────────────────────────
+   Invisible: the artwork already draws every button. These exist to be touched
+   and to carry the depress transform. */
+.hit {
+  position: absolute;
+  background: transparent;
+  transition: transform 0.06s ease, filter 0.06s ease;
+}
+.hitRound { border-radius: 50%; }
+.hitPill { border-radius: 999px; }
+/* The art ships no pressed-state assets, so the press is a transform on the
+   region of artwork under the finger. */
+.hitDown { transform: scale(0.9); filter: brightness(1.3); }
+/* Debug only, off in normal use: show what the hit-test is actually using, over
+   the art it is meant to match. */
+.hitShown {
+  background: rgba(255, 56, 158, 0.34);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 214, 240, 0.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bootMark { animation-duration: 0.01ms; }
+}

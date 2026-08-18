@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ModelViewerElement } from '@google/model-viewer'
 import styles from './GamesScreen.module.css'
 import PoplurgatchiPlayable from './PoplurgatchiPlayable'
+import ArcadeScreen from './ArcadeScreen'
 import { playPop } from './pop'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 
@@ -11,7 +12,7 @@ import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './popl
 ModelViewerElement.meshoptDecoderLocation = `${import.meta.env.BASE_URL}meshopt_decoder.js`
 
 interface Game {
-  id: 'fps' | 'poplurgatchi'
+  id: 'fps' | 'poplurgatchi' | 'arcade'
   title: string
   subtitle: string
   color: string
@@ -100,6 +101,15 @@ const GAMES: Game[] = [
     preview: 'games/poplurgatchi/assets/device-rainbow.webp',
   },
   {
+    id: 'arcade',
+    title: 'Poplur Boy',
+    subtitle: 'Retro handheld — ten shells, swap any time',
+    color: '#b06cf0',
+    // The shell art doubles as the cover: it IS the product, and a separate
+    // key-art file would be one more thing to keep in step with the skins.
+    preview: 'games/arcade/shells/galaxy_purple.png',
+  },
+  {
     id: 'fps',
     title: 'FPS Shooter',
     subtitle: 'Raycasting first-person shooter',
@@ -185,7 +195,11 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     // it wait for an iframe event it can never emit kept the boot card up until
     // the 12-second emergency ceiling.
     setFrameReady(!g.web)
-    setBooting(g)
+    // Poplur Boy boots ITSELF: the handheld blacks its panel, drops the mark and
+    // chimes. Showing the Station card over that meant two boots racing, and the
+    // card (2.2s) outlasted the handheld's (1.5s + hold), so the one you actually
+    // saw was the card and the shell's boot was over before it lifted.
+    setBooting(g.id === 'arcade' ? null : g)
     if (bootTimer.current) window.clearTimeout(bootTimer.current)
     if (bootCeiling.current) window.clearTimeout(bootCeiling.current)
     // The game mounts NOW, behind the boot screen, so the boot animation is
@@ -359,6 +373,8 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
       <div className={`${styles.stage} ${running.id === 'fps' ? styles.fpsStage : ''}`} style={{ ['--accent' as string]: running.color }}>
         {running.id === 'poplurgatchi' ? (
           <PoplurgatchiPlayable />
+        ) : running.id === 'arcade' ? (
+          <ArcadeScreen />
         ) : running.web && fpsFrameLive ? (
           <iframe
             ref={gameFrameRef}
