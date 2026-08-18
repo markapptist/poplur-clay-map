@@ -82,6 +82,13 @@ const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
 
 // ── Last-page memory ─────────────────────────────────────────────────────────
+/** Where the app is standing: the tab, the hold-menu page on it (null = the
+    tab's own main screen), and the visited profile if one is open. The cube's
+    back step walks a stack of these. */
+type NavLoc = { tab: CubeTab; screen: string | null; user: string | null }
+const sameNavLoc = (a: NavLoc | null, b: NavLoc | null) =>
+  !!a && !!b && a.tab === b.tab && a.screen === b.screen && a.user === b.user
+
 // One small JSON map, tab → subscreen id, of where each tab was left. Read at
 // boot and on every gesture switch; written when a tab is left. Local to the
 // device on purpose: where you wander is not account state.
@@ -724,6 +731,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   activeTabLiveRef.current = activeTab
   /** Set by the cube-swipe handler for the tab it targets; consumed once. */
   const gestureSwitchRef = useRef<CubeTab | null>(null)
+  // ── Screen history: the cube's back step ──────────────────────────────────
+  // Where the app is standing is one triple — which tab, which hold-menu page
+  // on it, and whose profile if a visited one is up. Every change to that
+  // triple is a navigation, so keeping the PREVIOUS one gives the cube a real
+  // back: out of a page to what was under it, and back across a tab jump
+  // (VIEW PROFILE from News returns to News rather than to the feed root).
+  const navStackRef = useRef<NavLoc[]>([])
+  /** The last location that stayed put long enough to count as a destination. */
+  const navSettledRef = useRef<NavLoc | null>(null)
+  /** True while a back step is landing, so it is not recorded as a new move. */
+  const navPoppingRef = useRef(false)
+  /** Set by a back step that crosses tabs, so the tab-change effect restores
+      that page instead of applying its own resume rule. undefined = not
+      restoring; null = restore the tab's root. */
+  const restoreScreenRef = useRef<string | null | undefined>(undefined)
   const switchTabByGesture = useCallback((tab: CubeTab) => {
     gestureSwitchRef.current = tab
     setActiveTab(tab)
@@ -747,9 +769,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // remembered page, so wheel-dismiss can return to it.
     void previous
     lastOpenSubscreenRef.current = readLastScreens()[activeTab] ?? null
-    const wanted = gestureSwitchRef.current === activeTab
-      ? lastOpenSubscreenRef.current
-      : null
+    // A back step names exactly where to land and outranks both rules below.
+    const restore = restoreScreenRef.current
+    restoreScreenRef.current = undefined
+    const wanted = restore !== undefined
+      ? restore
+      : gestureSwitchRef.current === activeTab
+        ? lastOpenSubscreenRef.current
+        : null
     gestureSwitchRef.current = null
     setResume(current => ({ screen: wanted, n: current.n + 1 }))
     setHoldOpen(wanted != null)
@@ -841,6 +868,25 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     window.addEventListener('poplur-avatar-preview', onPreview)
     return () => window.removeEventListener('poplur-avatar-preview', onPreview)
+  }, [])
+
+  // News' hamburger → your profile. The shell owns the TAB half of that
+  // navigation (ProfileTwin owns picking the mode): switch tabs and close the
+  // menu the news page was living in, so you arrive on the profile itself.
+  useEffect(() => {
+    const onProfileMode = (event: Event) => {
+      // WHOSE profile. News names the author it was asked about; the drawer's
+      // own Profile row names nobody and therefore means you. Without this the
+      // handle was carried in the event and dropped on the floor, so opening
+      // someone from News landed on your own profile.
+      const handle = (event as CustomEvent<{ handle?: string }>).detail?.handle ?? null
+      setProfileOrigin(activeTabLiveRef.current)
+      setViewingUser(handle)
+      setActiveTab('profile')
+      setHoldOpen(false)
+    }
+    window.addEventListener('poplur-open-profile-mode', onProfileMode)
+    return () => window.removeEventListener('poplur-open-profile-mode', onProfileMode)
   }, [])
 
   // Taking your profile picture is NOT a subscreen — it is overlay state inside
@@ -1983,6 +2029,48 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Where that profile was opened FROM, so closing it returns you there (the
   // feed you were watching) instead of dropping you on your own profile.
   const [profileOrigin, setProfileOrigin] = useState<CubeTab | null>(null)
+  // Record every settled location so the cube can walk back through them.
+  // SETTLED, not every render: one tap can flick through two or three
+  // intermediate locations — tapping VIEW PROFILE closes the wheel first, which
+  // reads as "the feed root" for a frame before the profile opens — and
+  // recording those would make the cube step back through places nobody
+  // visited. Waiting for the triple to hold still collapses each burst to the
+  // one destination it was heading for.
+  useEffect(() => {
+    const next: NavLoc = { tab: activeTab, screen: cubeScreen, user: viewingUser }
+    if (sameNavLoc(next, navSettledRef.current)) return
+    const timer = window.setTimeout(() => {
+      if (navPoppingRef.current) navPoppingRef.current = false
+      else if (navSettledRef.current) {
+        navStackRef.current.push(navSettledRef.current)
+        if (navStackRef.current.length > 40) navStackRef.current.shift()
+      }
+      navSettledRef.current = next
+    }, 420)
+    return () => window.clearTimeout(timer)
+  }, [activeTab, cubeScreen, viewingUser])
+
+  /** The cube's back step: return to the previous screen. Returns false when
+      there is no history left, so the tap falls through to its plain pop. */
+  const goBackOneScreen = useCallback((): boolean => {
+    const target = navStackRef.current.pop()
+    if (!target) return false
+    navPoppingRef.current = true
+    setViewingUser(target.user)
+    if (target.tab !== activeTabLiveRef.current) {
+      // Crossing tabs: name the page first, because the tab-change effect is
+      // what applies it. Not a gesture switch — this lands somewhere exact.
+      restoreScreenRef.current = target.screen
+      setActiveTab(target.tab)
+      return true
+    }
+    // Same tab: open or close the page directly. A fresh nonce remounts the
+    // menu so it opens ON the page rather than re-showing the wheel.
+    setResume(current => ({ screen: target.screen, n: current.n + 1 }))
+    setHoldOpen(target.screen != null)
+    return true
+  }, [])
+
   // Which of the nearby posts the map arrows are parked on (1-based on screen).
   const [mapPostIdx, setMapPostIdx] = useState(0)
   /** The reach of the video playing in the feed right now. Every video change
@@ -2326,6 +2414,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
+    // Nothing inside the screen claimed the tap, so it is a step back through
+    // the screens themselves: out of a page onto what was under it, or back
+    // across the tab jump that brought you here.
+    if (goBackOneScreen()) { playPop(); return }
     playPop()
     if (activeTab === 'post') {
       // Selection changes the object; tapping that object performs its shutter.
@@ -2476,9 +2568,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             highlightPops={profilePopFlash}
             onPostCountChange={setProfilePostCount}
             onBackToOwn={() => {
+              // Retrace the step that opened this profile, so you land on the
+              // PAGE you came from — VIEW PROFILE from News returns to News,
+              // not to the bare feed. The tab-only return below is the fallback
+              // for a profile opened with no history behind it (a deep link,
+              // or a session that started here).
+              setProfileOrigin(null)
+              if (goBackOneScreen()) return
               setActiveTab(profileOrigin ?? 'feed')
               setViewingUser(null)
-              setProfileOrigin(null)
             }}
           />
         )}

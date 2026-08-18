@@ -314,6 +314,12 @@ export default function HoldMenuTwin({
   // subscreen and appearing to ignore the second cube change.
   const activeScreenRef = useRef(activeScreen)
   activeScreenRef.current = activeScreen
+  // Read through refs for the same reason `items` is: the arrows effect must
+  // not unbind and rebind whenever a caller passes a fresh inline closure.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const onClearPageRef = useRef(onClearPage)
+  onClearPageRef.current = onClearPage
   /** The wheel is up OVER an open page. Long-pressing the cube on a page asks
       for the menu, not for the page to close — so the page stays mounted
       underneath and waving the wheel away puts you straight back on it. */
@@ -353,6 +359,16 @@ export default function HoldMenuTwin({
       // The wheel laid over a page: the tap takes the wheel away and leaves you
       // on the page, which is exactly where the long-press found you.
       if (wheelOverPage) { setWheelOverPage(false); return true }
+      // The page has its own nesting open (a store product, a mail thread, a
+      // stat card). Those screens carry no ‹ any more, so the cube pops them —
+      // one level per tap, innermost first.
+      if (activeScreen && subscreenDepthRef.current > 0) {
+        subscreenFrameRef.current?.contentWindow?.postMessage(
+          { type: 'poplurSubscreenBack' }, '*',
+        )
+        subscreenDepthRef.current -= 1
+        return true
+      }
       if (activeScreen) return false
       onClose('dismiss')
       return true
@@ -374,19 +390,46 @@ export default function HoldMenuTwin({
     // Read through a ref: `items` is rebuilt every render, so listing it as a
     // dependency would unbind and rebind the arrows on every wheel render.
     const live = itemsRef.current
-    // `home` is excluded too: it is a DOOR, not a page. The arrows call
-    // setActiveScreen directly (they bypass activateItem), so stepping onto a
-    // home tile turned it into a "page" and rendered `profile-home`/`feed-home`
-    // as a Rough Copy embed — ids no twins catalogue has, which the artifact
-    // answered with its DEFAULT screen: the mock TV Guide. That is the fake TV
-    // Guide that appeared on Profile and Feed.
-    const stops = live.filter(it => !it.action && !it.mapAction && !it.event && !it.home)
-    if (!activeScreen || stops.length < 2) { bindArrows(null); return () => bindArrows(null) }
+    // Pages the arrows can land on. `home` tiles are filtered out here and
+    // handled as the DOOR below instead: the arrows bypass activateItem, so
+    // stepping onto a home tile as if it were a page rendered
+    // `profile-home`/`feed-home` as a Rough Copy embed — ids no twins
+    // catalogue has, which the artifact answered with its DEFAULT screen: the
+    // mock TV Guide. That is the fake TV Guide that appeared on Profile and
+    // Feed. Action / mapAction / event tiles stay out entirely: stepping onto
+    // one would FIRE it (LIVE starts a broadcast) rather than move you.
+    const pages = live.filter(it => !it.action && !it.mapAction && !it.event && !it.home)
+    // The cycle is [DOOR, ...pages] — index 0 is the tab's own live screen.
+    // Leaving it out is what made the arrows a one-way trip: paging through
+    // the camera's subscreens could never arrive back at the camera, the
+    // feed's back at the feed, the map's back at the map. The door is a stop
+    // like any other, and it exists for every tab — including the camera,
+    // whose door is the live viewfinder rather than a `home` tile.
+    // Landing on it dismisses the subscreen and hands the arrows back to the
+    // tab, where they resume the job they have always had there (feed
+    // channels, map pops, viewfinder <-> roll, profile scroll).
+    if (!activeScreen || pages.length < 1) { bindArrows(null); return () => bindArrows(null) }
     bindArrows((dir: 1 | -1) => {
       const current = activeScreenRef.current
       if (!current) return false
-      const here = stops.findIndex(it => it.screen === current.screen && it.title === current.title)
-      const next = stops[((here + dir) % stops.length + stops.length) % stops.length]
+      const total = pages.length + 1
+      const hereInPages = pages.findIndex(it => it.screen === current.screen && it.title === current.title)
+      // A screen that is not in this tab's page list (arrived some other way)
+      // is treated as standing ON the door, so the arrows walk into the page
+      // list from there rather than doing nothing at all.
+      const here = hereInPages < 0 ? 0 : hereInPages + 1
+      const nextIdx = ((here + dir) % total + total) % total
+      if (nextIdx === 0) {
+        playPop()
+        activeScreenRef.current = null
+        // Same door `home` tiles open in activateItem: clear the tab's
+        // remembered page so it does not resume this subscreen, then dismiss.
+        onClearPageRef.current?.()
+        setActiveScreen(null)
+        onCloseRef.current('home')
+        return true
+      }
+      const next = pages[nextIdx - 1]
       if (!next) return false
       playPop()
       activeScreenRef.current = next
@@ -427,6 +470,22 @@ export default function HoldMenuTwin({
   const [embedMissing, setEmbedMissing] = useState(false)
   const [embedLoaded, setEmbedLoaded] = useState(false)
   const subscreenFrameRef = useRef<HTMLIFrameElement>(null)
+  /** How many nested levels the embedded subscreen has open, as it last
+      reported. Kept in a ref because the cube's back handler has to answer
+      synchronously — a tap cannot wait for a postMessage round trip. */
+  const subscreenDepthRef = useRef(0)
+  useEffect(() => {
+    subscreenDepthRef.current = 0
+    const onDepth = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || typeof data !== 'object') return
+      if (data.type !== 'poplurSubscreenDepth') return
+      if (event.source !== subscreenFrameRef.current?.contentWindow) return
+      subscreenDepthRef.current = Number(data.depth) || 0
+    }
+    window.addEventListener('message', onDepth)
+    return () => window.removeEventListener('message', onDepth)
+  }, [activeScreen])
   useEffect(() => {
     if (!activeScreen || activeScreen.native) return
     setEmbedMissing(false)
