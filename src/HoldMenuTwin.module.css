@@ -15,6 +15,13 @@
   user-select: none;
 }
 
+/* The wheel opened ON TOP of a live page (a long-press while standing on one).
+   The page stays mounted below at 240, so the wheel has to clear it — at its
+   usual 200 it would open behind the page and read as nothing happening. */
+.stageOverPage {
+  z-index: 260;
+}
+
 .subscreenStage {
   position: absolute;
   inset: 0;

@@ -2706,10 +2706,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               onTap={popCube}
               onHold={() => {
                 playPop()
-                // A deliberate long-press asks for the WHEEL — never a resumed
-                // page. Bumping the nonce remounts the menu, so one opened
-                // over a resumed subscreen starts at the wheel instead of
-                // re-showing that page.
+                // A deliberate long-press asks for the WHEEL. With the menu
+                // already up — standing on a page, or on the wheel itself —
+                // the live instance lays the wheel over what is there. It must
+                // NOT remount: a fresh instance with no screen destroys the
+                // page you were on, which is why holding the cube on Chat used
+                // to leave you looking at the live camera.
+                if (holdOpen) {
+                  setWheelOverNonce(n => n + 1)
+                  return
+                }
+                // Nothing open: the wheel is the whole menu, over the live tab.
                 setResume(current => ({ screen: null, n: current.n + 1 }))
                 setHoldOpen(true)
               }}
@@ -2782,6 +2789,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           key={`hold-${resume.n}`}
           tab={activeTab}
           initialScreen={resume.screen ?? undefined}
+          wheelOverNonce={wheelOverNonce}
           onClose={reason => {
             // Waving the wheel away returns to the page this tab stands on —
             // the wheel was only ever ON TOP of it. Actions and the home tile

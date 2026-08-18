@@ -210,6 +210,7 @@ export default function HoldMenuTwin({
   onTuneFeedChannel,
   onSubscreenChange,
   initialScreen,
+  wheelOverNonce = 0,
   bindGoBack,
   bindArrows,
 }: {
@@ -240,6 +241,11 @@ export default function HoldMenuTwin({
       page you were on when you left the tab. Backing out of it still lands on
       the wheel, so the rest of the menu stays one gesture away. */
   initialScreen?: string
+  /** Bumped by a cube long-press. With a page up, the wheel opens ON TOP of it
+      rather than replacing it — the page is where the tab is standing, and
+      asking for the menu is not asking to leave it. Ignored on mount so a
+      resumed page opens as a plain page. */
+  wheelOverNonce?: number
   /** Registers a "back one level" handler: closes an open subscreen, else the
       menu itself. The cube calls it so there is always a way out. */
   bindGoBack?: (fn: (() => boolean) | null) => void
@@ -280,8 +286,17 @@ export default function HoldMenuTwin({
     const want = initialScreen
       ?? new URLSearchParams(window.location.search).get('holdScreen')
     if (!want) return null
-    const all = Object.values(TAB_MENUS).flat() as Item[]
-    return all.find(item => item.screen === want && !item.home) ?? null
+    // THIS tab's items first. Screen ids repeat across tabs — Feed's VIEW
+    // PROFILE carries `profile-stats` as an ACTION — so a flat search could
+    // resume Profile's STATS as Feed's action item, which is not a page at all
+    // and renders as a bare embed. The flat search stays as the fallback for
+    // the ?holdScreen harness link, which names a screen without a tab.
+    const mine = (TAB_MENUS[tab] ?? []) as Item[]
+    const openable = (item: Item) => item.screen === want && !item.home
+      && !item.action && !item.mapAction && !item.event
+    return mine.find(openable)
+      ?? (Object.values(TAB_MENUS).flat() as Item[]).find(openable)
+      ?? null
   })
   // Channel-arrow presses can arrive faster than React commits the next
   // render. Keep the semantic screen current synchronously so two quick
@@ -289,6 +304,24 @@ export default function HoldMenuTwin({
   // subscreen and appearing to ignore the second cube change.
   const activeScreenRef = useRef(activeScreen)
   activeScreenRef.current = activeScreen
+  /** The wheel is up OVER an open page. Long-pressing the cube on a page asks
+      for the menu, not for the page to close — so the page stays mounted
+      underneath and waving the wheel away puts you straight back on it. */
+  const [wheelOverPage, setWheelOverPage] = useState(false)
+  // Only a CHANGE counts. The nonce arrives already non-zero on a remount (a
+  // tab switch into a resumed page), and reacting to that value would drop the
+  // wheel on top of a page nobody asked to cover.
+  const seenWheelNonce = useRef(wheelOverNonce)
+  useEffect(() => {
+    if (wheelOverNonce === seenWheelNonce.current) return
+    seenWheelNonce.current = wheelOverNonce
+    if (activeScreenRef.current) setWheelOverPage(true)
+  }, [wheelOverNonce])
+  // With no page under it there is nothing to be "over" — the wheel is just the
+  // wheel again.
+  useEffect(() => {
+    if (!activeScreen) setWheelOverPage(false)
+  }, [activeScreen])
   // The feed keeps playing behind these screens otherwise — you would hear it
   // over the paper. Tell the home so it can silence what it is covering.
   useEffect(() => {
@@ -307,12 +340,15 @@ export default function HoldMenuTwin({
   // dismissal returns to the page this tab was standing on.
   useEffect(() => {
     bindGoBack?.(() => {
+      // The wheel laid over a page: the tap takes the wheel away and leaves you
+      // on the page, which is exactly where the long-press found you.
+      if (wheelOverPage) { setWheelOverPage(false); return true }
       if (activeScreen) return false
       onClose('dismiss')
       return true
     })
     return () => bindGoBack?.(null)
-  }, [activeScreen, bindGoBack, onClose])
+  }, [activeScreen, wheelOverPage, bindGoBack, onClose])
 
   // The channel arrows belong to whatever is IN FRONT. With TV Guide or Mail
   // covering the app they were still driving the feed or flying the map
@@ -328,7 +364,13 @@ export default function HoldMenuTwin({
     // Read through a ref: `items` is rebuilt every render, so listing it as a
     // dependency would unbind and rebind the arrows on every wheel render.
     const live = itemsRef.current
-    const stops = live.filter(it => !it.action && !it.mapAction && !it.event)
+    // `home` is excluded too: it is a DOOR, not a page. The arrows call
+    // setActiveScreen directly (they bypass activateItem), so stepping onto a
+    // home tile turned it into a "page" and rendered `profile-home`/`feed-home`
+    // as a Rough Copy embed — ids no twins catalogue has, which the artifact
+    // answered with its DEFAULT screen: the mock TV Guide. That is the fake TV
+    // Guide that appeared on Profile and Feed.
+    const stops = live.filter(it => !it.action && !it.mapAction && !it.event && !it.home)
     if (!activeScreen || stops.length < 2) { bindArrows(null); return () => bindArrows(null) }
     bindArrows((dir: 1 | -1) => {
       const current = activeScreenRef.current
@@ -435,6 +477,8 @@ export default function HoldMenuTwin({
   useEffect(() => { clearRetiredFavourites() }, [])
 
   const activateItem = (item: Item) => {
+    // Whatever the tile does, the wheel has finished its turn on top.
+    setWheelOverPage(false)
     // The tab's own main page: the ONE way to clear this tab's remembered
     // page. Everything else leaves the record standing — pages are places
     // the tab lives, not layers passing through.
@@ -588,7 +632,10 @@ export default function HoldMenuTwin({
         consumedTileTapRef.current = true
         activateItem(items[index])
       }
-      else onClose('dismiss') // tap on empty space waves the wheel away
+      // Tap on empty space waves the wheel away — back to the page it was
+      // covering, or out of the menu entirely when it was standing alone.
+      else if (wheelOverPage) setWheelOverPage(false)
+      else onClose('dismiss')
     }
   }
 
@@ -601,7 +648,11 @@ export default function HoldMenuTwin({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (activeScreen && e.key === 'Escape') {
+      if (wheelOverPage && e.key === 'Escape') {
+        setWheelOverPage(false)
+        e.preventDefault()
+      }
+      else if (activeScreen && e.key === 'Escape') {
         setActiveScreen(null)
         e.preventDefault()
       }
@@ -633,7 +684,9 @@ export default function HoldMenuTwin({
     return c
   }
 
-  if (activeScreen) {
+  // `activeScreen` is a const, so its narrowing survives into this closure.
+  const renderSubscreen = () => {
+    if (!activeScreen) return null
     if (activeScreen.native && activeScreen.screen === 'map-show-me') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Choose map tour places">
@@ -750,8 +803,14 @@ export default function HoldMenuTwin({
     )
   }
 
-  return (
-    <div className={styles.stage} data-poplur-screen="hold" role="dialog" aria-label="Cube hold menu">
+  const renderWheel = (overPage: boolean) => (
+    <div
+      className={overPage ? `${styles.stage} ${styles.stageOverPage}` : styles.stage}
+      data-poplur-screen="hold"
+      data-over-page={overPage ? 'true' : undefined}
+      role="dialog"
+      aria-label="Cube hold menu"
+    >
       <div
         className={styles.wheel}
         onPointerDown={onPointerDown}
@@ -843,4 +902,21 @@ export default function HoldMenuTwin({
 
     </div>
   )
+
+  // A page is up. Long-pressing the cube lays the wheel OVER it — the page
+  // keeps running underneath (its scroll, its video, its chat) and waving the
+  // wheel away returns to it. Replacing the page with the wheel is what used to
+  // drop you back on the tab's main screen: holding the cube on Chat left you
+  // looking at the live camera.
+  if (activeScreen) {
+    if (!wheelOverPage) return renderSubscreen()
+    return (
+      <>
+        {renderSubscreen()}
+        {renderWheel(true)}
+      </>
+    )
+  }
+
+  return renderWheel(false)
 }
