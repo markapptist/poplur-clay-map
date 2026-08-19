@@ -991,6 +991,11 @@
   display: flex;
   gap: 8px;
   align-items: center;
+  /* The rows never declared a family, so they inherited the DOCUMENT default --
+     a serif -- on a screen where the title directly above them and every other
+     surface in the app are the rounded face. Same stack as .notifTitle, minus
+     its 950 weight, so the panel reads as one thing. */
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, sans-serif;
   padding: 5px 9px;
   border: 0;
   border-radius: 16px;

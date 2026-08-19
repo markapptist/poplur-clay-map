@@ -177,7 +177,11 @@ export default function ClayChannelArrows({
     // same world height across half the pixels and the arrows would render at
     // half their usual size. Scaling the pair up restores the apparent size
     // without moving the camera and changing how the perspective reads.
-    const SPREAD = horizontal ? 1.92 : 1.28
+    // Horizontal sits wider than the vertical pair. The vertical one frames a
+    // two-digit channel number; this one frames "4/5" AND has to read as two
+    // separate targets under a thumb on a moving map, where a tight pair looks
+    // like one control.
+    const SPREAD = horizontal ? 2.95 : 1.28
     const up = new THREE.Mesh(geo, matUp)
     const down = new THREE.Mesh(geo, matDown)
     if (horizontal) {

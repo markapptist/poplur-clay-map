@@ -7,6 +7,7 @@ import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
+import { startEngagementChips } from './engagement'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
@@ -1112,6 +1113,32 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stays absent so Profile / Feed / Camera keep their full frame budget. It is
   // torn down once the user leaves the map (after MAP_GRACE_MS, default 0).
   const [mapMounted, setMapMounted] = useState(initialTab === 'map')
+
+  // ── Engagement must not depend on the map being mounted ───────────────────
+  //
+  // The generator has always lived in the map document, on the stated
+  // assumption that the map "runs in an always-mounted iframe behind Feed and
+  // Profile". That stopped being true when the iframe began unmounting the
+  // moment you leave the Map tab — a deliberate thermal fix (profile measured
+  // 5.5 -> 59.9fps once the map was gone) which took engagement with it. No
+  // iframe, no generator: no likes on the feed, nothing written to the
+  // notifications log, and the outside-app notification stuck on whatever it
+  // last had.
+  //
+  // So the SHELL owns it whenever the map is not mounted. Only one document
+  // generates at a time, which is what keeps notices from doubling: with the
+  // map front the embed generates and forwards (and keeps its camera traversal
+  // and radius reward, which are map concerns); everywhere else this runs.
+  //
+  // demo is ON here even on a phone. The embed disables it on device because a
+  // fake arrival could wake a CAMERA TRAVERSAL while the ambient lease was
+  // trying to park — a map problem. Nothing here moves a camera; it draws a
+  // notice and writes a row. With no live backend yet, demo off would mean a
+  // notifications screen that never changes, which is the reported symptom.
+  useEffect(() => {
+    if (mapMounted) return
+    return startEngagementChips({ demo: true })
+  }, [mapMounted])
   // Camera uploads use the Map as a focused location picker, not as a normal
   // destination. Keep that intent on the iframe URL for this mount so ClayMap
   // can skip its globe launch before the first frame is drawn. An empty object

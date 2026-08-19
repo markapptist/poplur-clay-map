@@ -26,7 +26,6 @@ import {
   type ProfileTheme,
 } from './profileThemes'
 import { takeProfileMode } from './profileMode'
-import NotifConfetti from './NotifConfetti'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -985,11 +984,35 @@ export default function ProfileTwin({
     // close so the dot goes out as the panel springs down, and anything that
     // lands while it is open stays counted for the next visit.
     markEngagementSeen()
+    // One pop per notification, staggered with the rows rather than a single
+    // chime for the sheet: the count is the information, so hearing five is
+    // hearing "five". The house pop carries popHaptic() inside it, so each one
+    // ticks as well as sounds.
+    //
+    // Capped and spaced deliberately -- a long backlog firing every row would
+    // be a burst of noise, and playPop() builds a WebAudio node per call.
+    const POP_STEP_MS = 90
+    const POP_MAX = 6
+    notifPopTimersRef.current.forEach(window.clearTimeout)
+    notifPopTimersRef.current = []
+    const rows = Math.min(notifs.length, POP_MAX)
+    for (let i = 0; i < rows; i += 1) {
+      notifPopTimersRef.current.push(
+        window.setTimeout(() => playPop(i === 0 ? 0.5 : 0.34), i * POP_STEP_MS),
+      )
+    }
   }
+
+  // Cleared on close and on unmount: a sheet dismissed mid-stagger must not
+  // keep popping at a screen that is no longer showing the list.
+  const notifPopTimersRef = useRef<number[]>([])
+  useEffect(() => () => { notifPopTimersRef.current.forEach(window.clearTimeout) }, [])
 
   const closeNotifs = () => {
     if (!showNotifs || notifsClosing) return
     setNotifsClosing(true)
+    notifPopTimersRef.current.forEach(window.clearTimeout)
+    notifPopTimersRef.current = []
     // Matches the slide-up in ProfileTwin.module.css (.notifMotionShellClosing).
     // The old value was 840ms for a spring that no longer exists; leaving it
     // would hold an invisible full-page layer over the profile for half a
@@ -1961,7 +1984,6 @@ export default function ProfileTwin({
             >
               {NOTIF_SKIN === 'clay' && <NotificationDotMap />}
               {/* The welcome screen's confetti, falling behind the rows. */}
-              <NotifConfetti />
               <div className={styles.notifTitle}>Notifications</div>
               {/* The sheet covers the page, so there is no "outside" left to
                   tap. Anything that is NOT a notification closes it (and the
