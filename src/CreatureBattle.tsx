@@ -33,9 +33,13 @@ interface Effect { art: string; at: number }
 /** Frames of the ball animation, plus how many wobbles are left to show. */
 interface BallThrow { frame: number; wobbles: number; caught: boolean }
 
-interface Props { specUrl: string }
+interface Props {
+  specUrl: string
+  /** Called when the encounter ends, so the game can return to the overworld. */
+  onFinished?: () => void
+}
 
-export default function CreatureBattle({ specUrl }: Props) {
+export default function CreatureBattle({ specUrl, onFinished }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const artRef = useRef(new Map<string, HTMLImageElement>())
 
@@ -279,7 +283,7 @@ export default function CreatureBattle({ specUrl }: Props) {
   const advance = useCallback(() => {
     if (!spec || !mine || !wild) return
     if (phase === 'message') { setPhase(wild.hp <= 0 || mine.hp <= 0 ? 'over' : 'action'); return }
-    if (phase === 'over') return
+    if (phase === 'over') { onFinished?.(); return }
     if (phase === 'action') {
       // FIGHT opens the move list; the others resolve straight away.
       const chosen: Action = ACTIONS[action]
@@ -329,7 +333,7 @@ export default function CreatureBattle({ specUrl }: Props) {
     setMessage(`${text} ${after.spec.displayName} used ${reply.displayName}!` +
       (mineAfter.hp <= 0 ? ` ${mine.spec.displayName} fainted!` : ''))
     setPhase('message')
-  }, [spec, mine, wild, phase, cursor, action])
+  }, [spec, mine, wild, phase, cursor, action, onFinished])
 
   const throwBall = useCallback(() => {
     if (!wild || balls <= 0) return

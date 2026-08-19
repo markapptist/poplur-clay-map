@@ -11,7 +11,7 @@ import {
 import type { RetroButton, RetroEmulatorEngine } from './retroEmulator'
 import { MgbaEngine } from './retroEngineMgba'
 import { playPop } from './pop'
-import CreatureBattle from './CreatureBattle'
+import PoplurGame from './PoplurGame'
 import { sfxBoot, sfxButton } from './retroAudio'
 import styles from './ArcadeScreen.module.css'
 
@@ -392,7 +392,7 @@ export default function ArcadeScreen() {
           {/* The emulator canvas stays mounted for .gba cartridges; the canvas
               game draws over it. Both are fed by the same painted buttons. */}
           <canvas ref={canvasRef} className={styles.screenCanvas} width={240} height={160} aria-label="Emulator output" />
-          <CreatureBattle specUrl={`${import.meta.env.BASE_URL}games/arcade/cinder-isles.json`} />
+          <PoplurGame specUrl={`${import.meta.env.BASE_URL}games/arcade/cinder-isles.json`} />
 
           {/* Boot. The shell's OWN painted splash is what animates -- this is
               not a panel that replaces the art and then gets out of the way.

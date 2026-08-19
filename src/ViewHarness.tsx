@@ -3,7 +3,7 @@ import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import UploadFlowReview from './UploadFlowReview'
 import ArcadeScreen from './ArcadeScreen'
-import CreatureBattle from './CreatureBattle'
+import PoplurGame from './PoplurGame'
 import GamesScreen from './GamesScreen'
 import styles from './ViewHarness.module.css'
 
@@ -113,7 +113,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   if (view === 'arcade') return <ArcadeScreen />
   if (view === 'battle') return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh', background: '#101828' }}>
-      <CreatureBattle specUrl={`${import.meta.env.BASE_URL}games/arcade/cinder-isles.json`} />
+      <PoplurGame specUrl={`${import.meta.env.BASE_URL}games/arcade/cinder-isles.json`} />
     </div>
   )
   // The games LIST, reachable without spinning the hold-menu wheel to it (the
