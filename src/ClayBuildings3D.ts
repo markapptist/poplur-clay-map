@@ -10,6 +10,7 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { playPop } from './pop'
+import { syncClayLandmarks } from './ClayLandmarks'
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurPerformancePolicy } from './poplurPerformanceManager'
 
@@ -72,6 +73,9 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
   const scene = new THREE.Scene()
   const camera = new THREE.Camera()
   let buildingsGroup: THREE.Group | null = null
+  // Real landmark models, placed in this same scene: no second context, no
+  // second clock. Anchor-relative like the buildings, so it re-places with them.
+  let landmarksGroup: THREE.Group | null = null
 
   // Fixed mercator anchor: geometry is built in metres relative to this point.
   let anchor: mapboxgl.MercatorCoordinate | null = null
@@ -301,6 +305,15 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
     }
     buildingsGroup = new THREE.Group()
 
+    // Landmarks ride the same rebuild: their coordinates are anchor-relative,
+    // so a re-anchor invalidates them exactly as it does the building recipes.
+    landmarksGroup = syncClayLandmarks({
+      scene,
+      project: toLocal,
+      material: materials[0],
+      previous: landmarksGroup,
+    })
+
     buckets.forEach((geoms, i) => {
       if (!geoms.length) return
       const merged = mergeGeometries(geoms, false)
@@ -496,6 +509,17 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
         })
         scene.remove(buildingsGroup)
         buildingsGroup = null
+      }
+      if (landmarksGroup) {
+        // Cloned instances own their geometry; the shared source model stays
+        // cached for the life of the document by design (several landmarks can
+        // use one model, and a map re-anchor must not re-download it).
+        landmarksGroup.traverse(object => {
+          const mesh = object as THREE.Mesh
+          mesh.geometry?.dispose()
+        })
+        scene.remove(landmarksGroup)
+        landmarksGroup = null
       }
       photoMaterial?.map?.dispose()
       photoMaterial?.dispose()
