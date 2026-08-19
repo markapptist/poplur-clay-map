@@ -344,6 +344,11 @@ export default function ArcadeScreen() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        /* Losing capture must release too. Without this a pointer that ends
+           outside the shell — or is stolen by the browser — leaves the button
+           held forever, and a ROM that waits for release simply stops
+           responding. It reads exactly like a frozen game. */
+        onLostPointerCapture={onPointerUp}
         onContextMenu={e => e.preventDefault()}
       >
         {/* Power LED: flashes while the handheld boots, then holds lit. Finite
