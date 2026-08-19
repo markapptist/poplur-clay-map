@@ -7,6 +7,7 @@ import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
+import { screenTransition } from './cubeTransitions'
 import { startEngagementChips } from './engagement'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
@@ -2273,7 +2274,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // belongs to gestures on the surface itself: feed channels are a vertical
   // swipe, feed content and map pops are edge taps, the profile grid scrolls
   // under your finger, and the camera's roll is a button on the camera.
+  // Direction of the current push, or 0. Cleared when the animation ends so a
+  // re-press retriggers it rather than being swallowed by an identical class.
+  const [pushDir, setPushDir] = useState<0 | 1 | -1>(0)
+  const pushTimer = useRef<number | null>(null)
+  const pushScreen = (dir: 1 | -1) => {
+    if (screenTransition() !== 'push') return
+    if (pushTimer.current !== null) window.clearTimeout(pushTimer.current)
+    setPushDir(0)
+    // A frame between clear and set, or React coalesces them and the animation
+    // never restarts on a repeated press in the same direction.
+    requestAnimationFrame(() => {
+      setPushDir(dir)
+      pushTimer.current = window.setTimeout(() => { setPushDir(0); pushTimer.current = null }, 300)
+    })
+  }
+
   const changeChannel = (dir: 1 | -1) => {
+    pushScreen(dir)
     // A transient layer INSIDE the tab answers first — it covers the screen,
     // so cycling screens behind it would be invisible. The camera's capture
     // preview flips filters; the profile's fullscreen post viewer browses
@@ -2600,7 +2618,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         </>
       )}
 
-      <div className={styles.contentLayer}>
+      <div
+        className={[
+          styles.contentLayer,
+          pushDir === 1 ? styles.pushUp : pushDir === -1 ? styles.pushDown : '',
+        ].filter(Boolean).join(' ')}
+      >
         {mainSurfaceVisible && committedTab === 'feed' && (
           <FeedTwin
             index={chanIndex}

@@ -1,4 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
+import {
+  cubeTransition, screenTransition, setCubeTransition, setScreenTransition,
+  type CubeTransition, type ScreenTransition,
+} from './cubeTransitions'
 import styles from './SettingsScreen.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
@@ -95,6 +99,8 @@ export default function SettingsScreen({ bindBack }: {
   const [aiVoice, setAiVoice] = useState(readCameraAiVoice)
   const [detectDefault, setDetectDefault] = useState(readCameraDetectDefault)
   const [radioScope, setRadioScopeState] = useState<RadioScope>(readRadioScope)
+  const [screenMode, setScreenMode] = useState<ScreenTransition>(() => screenTransition())
+  const [cubeMode, setCubeMode] = useState<CubeTransition>(() => cubeTransition())
   const [controlSide, setControlSideState] = useState<ControlSide>(readControlSide)
   const [profileTheme, setProfileThemeState] = useState<ProfileTheme>(readSelectedProfileTheme)
   const [appIcon, setAppIcon] = useState<AppIconOption>(readSelectedAppIcon)
@@ -249,6 +255,41 @@ export default function SettingsScreen({ bindBack }: {
         {page === null && (
           <>
             <div className={styles.list}>
+              {/* Transitions are taste, not correctness — the original and the
+                  alternatives are all defensible, so they are chosen here
+                  rather than settled in code. Both apply immediately. */}
+              <button
+                type="button"
+                className={styles.row}
+                onClick={() => {
+                  const next: ScreenTransition = screenTransition() === 'push' ? 'fade' : 'push'
+                  setScreenTransition(next)
+                  setScreenMode(next)
+                }}
+              >
+                <span className={styles.rowText}>
+                  <b>Screen change</b>
+                  <i>How a screen arrives when you press a channel button.</i>
+                </span>
+                <span className={styles.rowValue}>{screenMode === 'push' ? 'Push' : 'Fade'}</span>
+              </button>
+
+              <button
+                type="button"
+                className={styles.row}
+                onClick={() => {
+                  const next: CubeTransition = cubeTransition() === 'slide' ? 'roll' : 'slide'
+                  setCubeTransition(next)
+                  setCubeMode(next)
+                }}
+              >
+                <span className={styles.rowText}>
+                  <b>Cube change</b>
+                  <i>How the navigator swaps when you swipe between tabs.</i>
+                </span>
+                <span className={styles.rowValue}>{cubeMode === 'slide' ? 'Slide' : 'Roll'}</span>
+              </button>
+
               <button type="button" className={styles.row} onClick={() => openPage('home')}>
                 <span className={styles.rowText}>
                   <b>Home</b>

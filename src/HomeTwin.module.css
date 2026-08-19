@@ -1185,3 +1185,30 @@
     transform: none;
   }
 }
+
+/* ── Screen push ──────────────────────────────────────────────────────────
+   The alternative to the default cross-fade: a channel press shoves the
+   current screen out the way the button points and brings the next one in
+   behind it, so the direction of travel is legible. Opt-in from Settings,
+   because which of the two reads better is a matter of taste rather than
+   correctness.
+
+   Transform and opacity only — both composited, so this never costs a layout
+   on a surface that may be running a WebGL scene underneath. */
+.pushUp   { animation: poplurPushUp 260ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
+.pushDown { animation: poplurPushDown 260ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
+
+@keyframes poplurPushUp {
+  0%   { transform: translate3d(0, 14%, 0); opacity: 0; }
+  100% { transform: translate3d(0, 0, 0);   opacity: 1; }
+}
+@keyframes poplurPushDown {
+  0%   { transform: translate3d(0, -14%, 0); opacity: 0; }
+  100% { transform: translate3d(0, 0, 0);    opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Honour the setting without losing the cue: the screen still arrives, it
+     just does not travel. */
+  .pushUp, .pushDown { animation-duration: 1ms; }
+}
