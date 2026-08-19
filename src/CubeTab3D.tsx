@@ -1097,8 +1097,22 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       if (document.visibilityState !== 'visible') return
       // Same keepalive as the web deviceorientation path — native Core Motion
       // is the only motion source inside the app shell.
-      motionActiveUntil = performance.now() + MOTION_KEEPALIVE_MS
-      applyMotionTarget(next.roll, next.pitch, THREE.MathUtils.degToRad(0.08))
+      const nativeNow = performance.now()
+      motionActiveUntil = nativeNow + MOTION_KEEPALIVE_MS
+      // …and the same 30Hz throttle, which this path did not have. Core Motion
+      // sets its own rate and the cube redrew on EVERY sample: a phone merely
+      // held in the hand tremors well past the epsilon below, so the navigator
+      // ran a continuous ~53fps WebGL render on every tab for as long as the
+      // handset was in a hand. Measured on the built surface, not reasoned:
+      // 0.4° of tremor at 60Hz drew 319 frames in 6s where a resting phone
+      // drew 0. The reasoning for 30Hz is the web path's, one screen up, and
+      // applies here identically — the aiming carve-out included.
+      if (nativeNow - lastMotionAt < (isAiming() ? 16 : 33)) return
+      lastMotionAt = nativeNow
+      // 0.2°, matching the web path. At the navigator's ~176px size a degree
+      // of yaw moves the silhouette about 1.5px, so 0.08° was a fifth of a
+      // pixel — below anything a person can see, and it was forcing a draw.
+      applyMotionTarget(next.roll, next.pitch, THREE.MathUtils.degToRad(0.2))
     }
     const onMotionTuning = (event: Event) => {
       const detail = (event as CustomEvent<MotionTuning>).detail
@@ -1283,10 +1297,32 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // parking between samples and stuttering.
       const motionLive = now < motionActiveUntil
       if (active || globeAnimating || motionLive) {
+        // Parallax gets 30Hz; a gesture keeps the full rate.
+        //
+        // The loop parks correctly when a phone is PUT DOWN, but a phone in a
+        // hand never stops sending motion, so `motionLive` stays true and the
+        // spring chases a target that keeps moving — a continuous display-rate
+        // render of the cube, on every tab, for as long as it is held. That is
+        // the sustained load behind the heat, and it is invisible to the
+        // thermal gate, which measures a page nobody is holding.
+        //
+        // 30Hz is not a compromise here: it is the rate the deviceorientation
+        // path above already calls "plenty for a clay object leaning against
+        // the light", with the same carve-out for the aimed camcorder. A drag
+        // is a direct gesture and keeps whatever the policy allows.
+        // NOT `!active`: the spring counts as active for as long as it is
+        // settling, and under continuous hand motion it always is — so that
+        // test never fired. What matters is WHY the loop is running: a tab
+        // change (pitchTarget), a drag, or the globe keep the full rate; hand
+        // motion and the spring chasing it are parallax.
+        const parallaxOnly = motionLive && pitchTarget === null && !globeAnimating && !dragging
+        const loopFPS = parallaxOnly && !isAiming()
+          ? Math.min(navigatorFPS, 30)
+          : navigatorFPS
         // Arm shortly before the desired presentation edge, then let rAF align
         // the actual draw. This prevents an Android 60/120Hz display from
         // invoking a no-op JS callback for every hardware refresh.
-        scheduleLoop(Math.max(0, 1000 / navigatorFPS - 8))
+        scheduleLoop(Math.max(0, 1000 / loopFPS - 8))
       }
     }
     const wake = () => {
