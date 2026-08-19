@@ -51,6 +51,7 @@ import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import ClayCornerButton from './ClayCornerButton'
+import ClayChannelArrows from './ClayChannelArrows'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
@@ -2290,6 +2291,10 @@ export default function App() {
   // Directions/Street View/Locate buttons moved there to declutter the map.
   const [directionsSignal, setDirectionsSignal] = useState(0)
   const popCycleRef = useRef(-1)
+  // Where the walk currently stands, shown between the on-map arrows exactly as
+  // the channel number sits between the vertical pair. Without it the two
+  // chevrons frame an empty gap and give no sense of how far the route runs.
+  const [popPosition, setPopPosition] = useState<{ n: number; of: number } | null>(null)
 
   /**
    * The pops the channel arrows walk, for the level currently on screen.
@@ -2385,6 +2390,9 @@ export default function App() {
       // the list.
       const route = traversalPops()
       popCycleRef.current = route.findIndex(p => p.id === poi.id)
+      // Arriving by tap, tour or engagement moves the walk too — the readout
+      // has to follow the camera, not just the arrows.
+      if (popCycleRef.current >= 0) setPopPosition({ n: popCycleRef.current + 1, of: route.length })
       const nearby = popsNearby(poi, route)
       setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
       try {
@@ -2566,6 +2574,7 @@ export default function App() {
           const poi = route[next]
           if (poi) {
             setTourLine(`Pop ${next + 1} of ${route.length}: ${poi.name}`)
+            setPopPosition({ n: next + 1, of: route.length })
             const nearby = popsNearby(poi, route)
             setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
             const renderedPin = mapPinsRef.current.find(pin =>
@@ -2968,6 +2977,34 @@ export default function App() {
 
       {/* Locate + Street View moved into the HOLD MENU (declutter): they now
           arrive as poplur-map-action messages — see the listener effect. */}
+
+      {/* Pop traversal, ON the map and under the pin.
+          Tapping a pop directly is unreliable: a pin is a small target on a
+          pitched 3D surface, it moves while the camera settles, and a miss
+          reads as the map ignoring you. These sit within thumb reach of where
+          you are already looking and always hit.
+
+          Same clay component as the channel buttons, laid on its side -- they
+          ARE those buttons, not a lookalike, which is why a new orientation was
+          added there rather than a second arrow widget invented here.
+
+          They post the map's OWN cyclePop action instead of calling the
+          traversal directly, so there stays exactly one implementation of "step
+          to the next pop" and these cannot drift from what the shell's channel
+          arrows already do (level-aware route, tour paused, camera handed to
+          the pop-to-pop trip). */}
+      <div className={styles.popStepper}>
+        <ClayChannelArrows
+          orientation="horizontal"
+          size={150}
+          number={popPosition ? popPosition.n : 0}
+          label={popPosition ? `${popPosition.n}/${popPosition.of}` : ''}
+          upLabel="Previous pop"
+          downLabel="Next pop"
+          onUp={() => window.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir: -1 }, '*')}
+          onDown={() => window.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir: 1 }, '*')}
+        />
+      </div>
 
       {/* The home cube lives in the app shell now (it's the post-login cube),
           so the map no longer renders one of its own. */}

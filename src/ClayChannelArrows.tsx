@@ -38,6 +38,7 @@ export default function ClayChannelArrows({
   upLabel = 'Channel up',
   downLabel = 'Channel down',
   size = 176,
+  orientation = 'vertical',
 }: {
   number: number
   /** replaces the channel number outright — the camera pages are not channels,
@@ -51,10 +52,19 @@ export default function ClayChannelArrows({
   upLabel?: string
   downLabel?: string
   size?: number
+  /** 'vertical' is the channel pair beside the cube. 'horizontal' is the same
+   *  clay, turned on its side: the map uses it UNDER the pop to step between
+   *  pops, where up/down would read as altitude rather than "next one". */
+  orientation?: 'vertical' | 'horizontal'
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [rendererState, setRendererState] = useState<'mounting' | 'ready' | 'failed'>('mounting')
-  const width = Math.round(size / 2)
+  const horizontal = orientation === 'horizontal'
+  // The box is the same clay either way, just laid the other way round: the
+  // long side follows the direction the arrows point.
+  const boxW = horizontal ? size : Math.round(size / 2)
+  const boxH = horizontal ? Math.round(size / 2) : size
+  const width = boxW
   // pressed pulse targets per arrow, read by the render loop
   const pulse = useRef({ up: 0, down: 0 })
   // Wakes the render loop when a press pulse needs animating. Set by the effect.
@@ -155,15 +165,28 @@ export default function ClayChannelArrows({
     const restEmissive = new THREE.Color(0x2a0616)
     const litEmissive = new THREE.Color(0xff2d96) // feed's press-glow pink
 
+    // Horizontal reuses the SAME chevron, rolled a quarter turn: 'up' becomes
+    // the left/previous arrow and 'down' the right/next one, so every press,
+    // pulse and material path below is untouched.
+    //
+    // The camera's field of view is vertical, so a short wide box shows the
+    // same world height across half the pixels and the arrows would render at
+    // half their usual size. Scaling the pair up restores the apparent size
+    // without moving the camera and changing how the perspective reads.
+    const SPREAD = horizontal ? 1.92 : 1.28
     const up = new THREE.Mesh(geo, matUp)
-    up.position.set(0, 1.28, 0)
     const down = new THREE.Mesh(geo, matDown)
-    down.position.set(0, -1.28, 0)
-    down.rotation.z = Math.PI // point down
+    if (horizontal) {
+      up.position.set(-SPREAD, 0, 0)
+      down.position.set(SPREAD, 0, 0)
+    } else {
+      up.position.set(0, SPREAD, 0)
+      down.position.set(0, -SPREAD, 0)
+    }
     scene.add(up, down)
 
     let raf = 0
-    const baseScale = 1
+    const baseScale = horizontal ? 1.9 : 1
 
     // A fixed 3/4 pose: a downward tilt reveals the top faces and a steady yaw
     // swings the extruded sides into the light, so the depth reads as 3D
@@ -172,8 +195,11 @@ export default function ClayChannelArrows({
     // burning a full three.js render every frame forever.
     const IDLE_YAW = 0.42
     const IDLE_TILT = -0.16
-    up.rotation.set(IDLE_TILT, IDLE_YAW, 0)
-    down.rotation.set(IDLE_TILT, IDLE_YAW, Math.PI)
+    // z-roll aims the chevron: 0 = up, PI = down, +PI/2 = left, -PI/2 = right.
+    const ROLL_A = horizontal ? Math.PI / 2 : 0
+    const ROLL_B = horizontal ? -Math.PI / 2 : Math.PI
+    up.rotation.set(IDLE_TILT, IDLE_YAW, ROLL_A)
+    down.rotation.set(IDLE_TILT, IDLE_YAW, ROLL_B)
 
     const draw = () => {
       // ease the pulses back toward rest
@@ -183,8 +209,8 @@ export default function ClayChannelArrows({
       // Feed-style light-up: the pressed chevron pops to ~1.12× and flashes
       // BRIGHT pink (emissive sweeps to the feed's press-glow colour), easing
       // back to matte clay as the pulse decays.
-      const su = baseScale + pulse.current.up * 0.12
-      const sd = baseScale + pulse.current.down * 0.12
+      const su = baseScale * (1 + pulse.current.up * 0.12)
+      const sd = baseScale * (1 + pulse.current.down * 0.12)
       up.scale.setScalar(su)
       down.scale.setScalar(sd)
       matUp.emissive.copy(restEmissive).lerp(litEmissive, pulse.current.up)
@@ -223,7 +249,7 @@ export default function ClayChannelArrows({
       matDown.dispose()
       releaseWebGL(renderer)
     }
-  }, [size, width])
+  }, [size, width, horizontal])
 
   const press = (dir: 'up' | 'down', handler: () => void) => {
     // The clay arrows ALWAYS pop on press, whatever the press does
@@ -235,13 +261,13 @@ export default function ClayChannelArrows({
   }
 
   return (
-    <div style={{ position: 'relative', width, height: size, pointerEvents: 'auto' }}>
+    <div style={{ position: 'relative', width: boxW, height: boxH, pointerEvents: 'auto' }}>
       <canvas
         ref={canvasRef}
         data-poplur-channel-renderer={rendererState}
-        width={width}
-        height={size}
-        style={{ width, height: size, display: 'block', pointerEvents: 'none' }}
+        width={boxW}
+        height={boxH}
+        style={{ width: boxW, height: boxH, display: 'block', pointerEvents: 'none' }}
       />
       {/* No drawn stand-in here. A hand-built SVG of the arrows is invented
           art, not the approved clay, and shipping it meant a hot phone
@@ -294,14 +320,18 @@ export default function ClayChannelArrows({
         data-poplur-channel-control="up"
         onPointerDown={() => press('up', onUp)}
         aria-label={upLabel}
-        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
+        style={horizontal
+          ? { position: 'absolute', top: 0, left: 0, height: '100%', width: '42%', background: 'transparent', border: 0, cursor: 'pointer' }
+          : { position: 'absolute', top: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
       />
       <button
         type="button"
         data-poplur-channel-control="down"
         onPointerDown={() => press('down', onDown)}
         aria-label={downLabel}
-        style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
+        style={horizontal
+          ? { position: 'absolute', top: 0, right: 0, height: '100%', width: '42%', background: 'transparent', border: 0, cursor: 'pointer' }
+          : { position: 'absolute', bottom: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
       />
     </div>
   )

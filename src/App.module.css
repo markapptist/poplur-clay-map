@@ -976,3 +976,18 @@
   cursor: pointer;
 }
 .smartCardLink:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(110, 4, 54, 0.55); }
+
+/* Pop traversal arrows, sitting under the pin the camera has centred.
+   Centred horizontally and pushed below the middle so they clear the pop's
+   avatar and pin without reaching the bottom chrome. pointer-events is on the
+   control itself (the component sets it), so this wrapper never eats a drag
+   meant for the map. */
+.popStepper {
+  position: absolute;
+  left: 50%;
+  top: 60%;
+  transform: translateX(-50%);
+  z-index: 24;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 14px rgba(60, 0, 30, 0.45));
+}
