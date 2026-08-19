@@ -9,7 +9,7 @@ import {
   type RetroControlId,
 } from './retroShellSkin'
 import type { RetroButton, RetroEmulatorEngine } from './retroEmulator'
-import { MgbaEngine, isolationBlocked } from './retroEngineMgba'
+import { MgbaEngine } from './retroEngineMgba'
 import { playPop } from './pop'
 import styles from './ArcadeScreen.module.css'
 
@@ -37,10 +37,10 @@ import styles from './ArcadeScreen.module.css'
 // What is still NOT here is a GAME. No ROM is loaded, so the core idles and the
 // screen area shows the shell's own painted title. That is deliberate: the brief
 // forbids a mock that claims to work, so this must never look like it is
-// emulating when it is not. Two things gate a real ROM, both recorded in
-// retroEngineMgba.ts rather than worked around: the vendored core is a THREADED
-// build and needs cross-origin isolation the app does not yet have, and no
-// Butano-built .gba exists to load.
+// emulating when it is not. The one thing left before a real game runs is a
+// Butano-built .gba to load — the core itself now starts in an ordinary Poplur
+// document, which it could not do while it was a threaded build (see the note
+// at the top of retroEngineMgba.ts for why the pinned version is 1.1.1).
 
 /** Controls that map 1:1 to an engine button. The D-pad is absent on purpose:
  *  it is one control but four buttons, so it resolves through
@@ -179,15 +179,6 @@ export default function ArcadeScreen() {
     const engine = new MgbaEngine()
     engineRef.current = engine
     if (canvasRef.current) engine.attach(canvasRef.current)
-    // Say it out loud in dev. Without isolation the core cannot start at all,
-    // and the failure would otherwise arrive much later as an opaque abort
-    // inside wasm — this is the single sentence that saves that afternoon.
-    if (import.meta.env.DEV && isolationBlocked()) {
-      console.warn(
-        '[arcade] crossOriginIsolated=false — the vendored mGBA build imports shared ' +
-        'memory and will refuse to start. Run the dev server as: POPLUR_COI=1 npm run dev',
-      )
-    }
     return () => {
       engine.dispose()
       engineRef.current = null
