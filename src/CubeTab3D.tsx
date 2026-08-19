@@ -39,24 +39,33 @@ type MotionTuning = {
     settle flat, and hard-limited before the spring runs. The limits apply to
     the rendered model too, so spring momentum can never expose a side/back
     face. */
-export const DEFAULT_CUBE_MOTION_SENSITIVITY = 0.85
+// 0.85 read as "the accelerometer barely moves the cubes" even after the
+// envelope was widened. The object should answer the smallest wrist movement,
+// so the gain now exceeds 1: a tilt produces more rotation than it would if the
+// object were simply sitting still behind glass.
+export const DEFAULT_CUBE_MOTION_SENSITIVITY = 1.6
 // Was 94. At that retain the spring's stiffness works out to 0.043 with 0.889
 // damping — so soft that a normal wrist tilt was over before the object had
 // travelled much of the way to its target, which reads as "the accelerometer
 // barely moves the cubes". 84 keeps the clay weight and still arrives inside
 // the gesture. The motion lab's slider covers 55-94, so this stays tunable.
-export const DEFAULT_CUBE_MOTION_SMOOTHING = 84
+// Lower than 84: the spring now has to arrive inside a much smaller gesture
+// than a deliberate wrist turn, and any softer reads as lag rather than weight.
+export const DEFAULT_CUBE_MOTION_SMOOTHING = 72
 const CUBE_MOTION_ROLL_INPUT_LIMIT = THREE.MathUtils.degToRad(45)
 const CUBE_MOTION_PITCH_INPUT_LIMIT = Math.PI / 2
 // 2° swallowed the slow tilts outright — the ones where you turn the handset
 // deliberately to look at the object. 1° is still past the sensor's noise.
-const CUBE_MOTION_DEAD_ZONE = THREE.MathUtils.degToRad(1)
+// A third of a degree: barely above sensor noise, so the object answers a
+// movement you did not think of as a movement. That responsiveness is the
+// whole effect — a cube that only reacts to deliberate tilts reads as inert.
+const CUBE_MOTION_DEAD_ZONE = THREE.MathUtils.degToRad(0.3)
 // The parallax envelope for every clay object. These were 8°/6°, which the
 // 0.85 gain saturated after about 9° of wrist — the objects were reaching
 // their limit almost immediately and then sitting there, so the handset kept
 // moving and they did not. The travel is what was missing, not the gain.
-const CUBE_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(16)
-const CUBE_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(12)
+const CUBE_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(26)
+const CUBE_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(20)
 /** The camcorder is the one navigator object you are supposed to AIM.
  *
  *  Every other object is a mark to be read, so its handset motion is deliberate
@@ -662,11 +671,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // this is where the target is bounded, so a target built against the cube
       // envelope can never reach the camcorder's, however wide that is.
       const aiming = isAiming()
-      // An aimed instrument FOLLOWS the hand — turn the handset right and the
-      // camcorder swings right, which is what "points where I point" means. A
-      // clay object OPPOSES it, which is what makes it read as sitting behind
-      // the glass instead of glued to it. Same machinery, opposite sign.
-      const direction = aiming ? 1 : -1
+      // Both FOLLOW the hand now. The clay objects used to oppose it, which
+      // reads as sitting behind glass — correct as parallax, but it makes the
+      // object feel like scenery rather than something you are holding. Turning
+      // the handset right now turns the cube right, so it tracks the wrist the
+      // way an object in your palm would.
+      const direction = 1
       const gain = motionSensitivity * (aiming ? CAMCORDER_MOTION_GAIN : 1)
       const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
       const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT

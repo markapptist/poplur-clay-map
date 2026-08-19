@@ -1,0 +1,42 @@
+/**
+ * Which transition the navigator uses, and which one screens use.
+ *
+ * Stored rather than hard-coded because these are feel decisions: the original
+ * roll and the alternatives below are all defensible, and the only way to know
+ * which is right is to live with each one.
+ */
+
+export type CubeTransition = 'roll' | 'slide'
+export type ScreenTransition = 'fade' | 'push'
+
+const CUBE_KEY = 'poplur.transition.cube.v1'
+const SCREEN_KEY = 'poplur.transition.screen.v1'
+
+const read = <T extends string>(key: string, fallback: T, allowed: readonly T[]): T => {
+  try {
+    const v = localStorage.getItem(key) as T | null
+    return v && allowed.includes(v) ? v : fallback
+  } catch {
+    return fallback          // private mode: the default is still correct
+  }
+}
+
+export const cubeTransition = () => read<CubeTransition>(CUBE_KEY, 'roll', ['roll', 'slide'])
+export const screenTransition = () => read<ScreenTransition>(SCREEN_KEY, 'fade', ['fade', 'push'])
+
+/** Setting one notifies live listeners, so a change is felt without a reload. */
+export function setCubeTransition(v: CubeTransition): void {
+  try { localStorage.setItem(CUBE_KEY, v) } catch { /* nothing to persist */ }
+  window.dispatchEvent(new CustomEvent('poplur-transition-changed', { detail: { cube: v } }))
+}
+
+export function setScreenTransition(v: ScreenTransition): void {
+  try { localStorage.setItem(SCREEN_KEY, v) } catch { /* nothing to persist */ }
+  window.dispatchEvent(new CustomEvent('poplur-transition-changed', { detail: { screen: v } }))
+}
+
+export function onTransitionChanged(cb: () => void): () => void {
+  const handler = () => cb()
+  window.addEventListener('poplur-transition-changed', handler)
+  return () => window.removeEventListener('poplur-transition-changed', handler)
+}
