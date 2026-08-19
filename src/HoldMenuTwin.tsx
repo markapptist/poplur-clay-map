@@ -90,12 +90,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // the two tiles were indistinguishable in the wheel — and it also meant the
     // VIDEO cube could not be dropped in without silently restyling TV GUIDE.
     { icon: 'Video', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
-    // Camera Roll no longer shares the zoom/channel buttons. This explicit
-    // hold-menu destination is its only entry point from the live camera.
-    { icon: 'CameraRoll', title: 'CAMERA ROLL', screen: 'camera-roll', action: 'roll' },
-    // Going live is an act, not a screen: the broadcast starts on the camera
-    // you are already looking through and lands in the feed's LIVE channel.
-    { icon: 'YouTube', title: 'LIVE', screen: 'camera-live', action: 'live' },
+    // CAMERA ROLL and LIVE are gone from the wheel: both are now side buttons
+    // on the camera itself, visible while you are looking through the lens.
+    // The roll still rises from the bottom of the page, and LIVE still starts
+    // the broadcast on the camera you are already pointing.
     // ML scan and AR are persistent camera-side controls. They do not belong
     // in the hold menu, where they duplicate controls that remain visible on
     // the live viewfinder.
@@ -190,6 +188,19 @@ const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), lim
 export function isResumablePage(tab: CubeTab, screen: string): boolean {
   return (TAB_MENUS[tab] ?? []).some(item =>
     item.screen === screen && !item.home && !item.action && !item.mapAction && !item.event)
+}
+
+/** The screens the channel arrows cycle through on a tab, in wheel order.
+ *  The tab's own live screen is the DOOR at index 0 of that cycle and is not
+ *  listed here — only the pages the arrows can land on. Tiles that ACT on the
+ *  live screen (PHOTO, the map tools) or fire an event are not screens, so
+ *  stepping onto one would fire it rather than move you. Exported because the
+ *  shell drives the same cycle from the tab's own screen, where this menu is
+ *  not mounted at all. */
+export function tabPageScreens(tab: CubeTab): string[] {
+  return (TAB_MENUS[tab] ?? [])
+    .filter(item => !item.home && !item.action && !item.mapAction && !item.event)
+    .map(item => item.screen)
 }
 
 // Hold-to-favourite is GONE. Its replacement lives in HomeTwin: every tab
@@ -369,6 +380,9 @@ export default function HoldMenuTwin({
         subscreenDepthRef.current -= 1
         return true
       }
+      // The native pages nest too, and they answer for themselves. One level
+      // per tap, innermost first, exactly like the embeds above.
+      if (activeScreen && nativeBackRef.current?.()) return true
       if (activeScreen) return false
       onClose('dismiss')
       return true
@@ -408,12 +422,17 @@ export default function HoldMenuTwin({
     // Landing on it dismisses the subscreen and hands the arrows back to the
     // tab, where they resume the job they have always had there (feed
     // channels, map pops, viewfinder <-> roll, profile scroll).
-    if (!activeScreen || pages.length < 1) { bindArrows(null); return () => bindArrows(null) }
+    if (pages.length < 1) { bindArrows(null); return () => bindArrows(null) }
     bindArrows((dir: 1 | -1) => {
       const current = activeScreenRef.current
-      if (!current) return false
       const total = pages.length + 1
-      const hereInPages = pages.findIndex(it => it.screen === current.screen && it.title === current.title)
+      // No page open = standing ON the door, which is a stop in the cycle
+      // like any other. The arrows used to refuse the press entirely here,
+      // so from the tab's own screen they fell through to whatever that tab
+      // did with them; now they walk into the tab's page list from the door.
+      const hereInPages = current
+        ? pages.findIndex(it => it.screen === current.screen && it.title === current.title)
+        : -1
       // A screen that is not in this tab's page list (arrived some other way)
       // is treated as standing ON the door, so the arrows walk into the page
       // list from there rather than doing nothing at all.
@@ -474,6 +493,21 @@ export default function HoldMenuTwin({
       reported. Kept in a ref because the cube's back handler has to answer
       synchronously — a tap cannot wait for a postMessage round trip. */
   const subscreenDepthRef = useRef(0)
+  /** A NATIVE page's own step-back, handed up by the screen itself. The Times'
+      story pages, Avatar's stages and Settings' sub-pages nest inside a single
+      subscreen, and none of them carries a "‹ BACK" any more — the cube is the
+      back button, so the screen lends its one-level-back here and the cube
+      performs it. Same contract as the embed's depth protocol above: answer
+      synchronously, return false when there is nothing left to unwind. */
+  const nativeBackRef = useRef<(() => boolean) | null>(null)
+  const bindNativeBack = useRef((fn: (() => boolean) | null) => {
+    // Deliberately the ONLY writer. Clearing happens in the screen's own effect
+    // cleanup, which React runs before the next screen's create — so a swap
+    // never erases the incoming binding. Resetting this from a parent
+    // [activeScreen] effect instead would: parent effects run AFTER child
+    // effects, so it would wipe the binding the new screen had just made.
+    nativeBackRef.current = fn
+  }).current
   useEffect(() => {
     subscreenDepthRef.current = 0
     const onDepth = (event: MessageEvent) => {
@@ -778,7 +812,7 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'feed-news') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Times">
-          <NewsPaper onClose={() => { playPop(); onClose() }} />
+          <NewsPaper onClose={() => { playPop(); onClose() }} bindBack={bindNativeBack} />
         </div>
       )
     }
@@ -810,14 +844,14 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'profile-avatar') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Avatar cube">
-          <AvatarScreen onClose={() => { playPop(); onClose() }} />
+          <AvatarScreen onClose={() => { playPop(); onClose() }} bindBack={bindNativeBack} />
         </div>
       )
     }
     if (activeScreen.native && activeScreen.screen === 'profile-settings') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Settings">
-          <SettingsScreen />
+          <SettingsScreen bindBack={bindNativeBack} />
         </div>
       )
     }

@@ -207,16 +207,56 @@ export function clearPopups(kind?: PopupKind): void {
 export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBackdrop?: boolean }) {
   const [live, setLive] = useState<PopupItem[]>(items)
   useEffect(() => subscribe(setLive), [])
+
+  // Tap-anywhere dismissal, watched at the document instead of by making the
+  // full-screen layer a pointer target. The layer covers the whole map, so
+  // `pointer-events: auto` on it consumed every gesture underneath: Mapbox's
+  // dragPan stayed enabled but never received a touch, and the map could not
+  // be panned until something else cleared the popup (pressing a channel
+  // button, which changes the pop, was the accidental cure).
+  //
+  // A TAP dismisses; a DRAG is left alone so it reaches the map as usual. The
+  // tap's click is swallowed once so dismissing an ad does not also act on
+  // whatever sits under it.
+  const dismissible = dismissOnBackdrop && live.length > 0
+  useEffect(() => {
+    if (!dismissible) return
+    let startX = 0, startY = 0, startT = 0, tracking = false
+    const TAP_SLOP_PX = 10
+    const TAP_MS = 600
+    const onDown = (event: PointerEvent) => {
+      // Taps that land on the popup's own card are its business, not ours.
+      if ((event.target as Element | null)?.closest?.(`.${styles.host}`)) { tracking = false; return }
+      tracking = true
+      startX = event.clientX; startY = event.clientY; startT = event.timeStamp
+    }
+    const onUp = (event: PointerEvent) => {
+      if (!tracking) return
+      tracking = false
+      const moved = Math.hypot(event.clientX - startX, event.clientY - startY)
+      if (moved > TAP_SLOP_PX || event.timeStamp - startT > TAP_MS) return
+      playPop()
+      clearPopups()
+      // Swallow only the click this tap is about to produce.
+      const swallow = (click: Event) => { click.stopPropagation(); click.preventDefault() }
+      document.addEventListener('click', swallow, { capture: true, once: true })
+      window.setTimeout(() => document.removeEventListener('click', swallow, true), 400)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('pointerup', onUp, true)
+    document.addEventListener('pointercancel', () => { tracking = false }, true)
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('pointerup', onUp, true)
+    }
+  }, [dismissible])
+
   if (!live.length) return null
 
   return (
     <div
       className={dismissOnBackdrop ? `${styles.host} ${styles.hostDismissible}` : styles.host}
       aria-live="polite"
-      onClick={dismissOnBackdrop ? () => {
-        playPop()
-        clearPopups()
-      } : undefined}
     >
       {live.map(item => (
         <div

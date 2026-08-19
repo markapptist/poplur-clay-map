@@ -41,9 +41,24 @@
   will-change: transform, opacity;
 }
 
-/* Map-only opt-in: the layer itself becomes a transparent dismissal target.
-   Other surfaces keep the historical pointer-through behavior. */
-.hostDismissible { pointer-events: auto; }
+/* Map-only opt-in: a tap anywhere dismisses. This must NOT be
+   `pointer-events: auto` — the layer is full-screen, so making it a pointer
+   target handed it every gesture on the map, and Mapbox (whose dragPan stayed
+   enabled and simply never saw a touch) could not pan until something else
+   cleared the popup. The tap is detected at the document instead
+   (PopupHost), which leaves the map's own gestures untouched. */
+.hostDismissible { pointer-events: none; }
+
+/* …and neither may the full-screen WRAPPERS inside it. `.host > *` turns every
+   direct child into a pointer target, and both wrappers are `inset: 0`, so the
+   scrim — not just the card — was hit-testing the whole map. The card keeps its
+   own pointer target; everything around it passes the gesture through, which is
+   what lets you pan the map while a notice is up. Scoped to the dismissible
+   (map) host so other surfaces keep their historical behavior. */
+.hostDismissible .suggestWrap,
+.hostDismissible .mapContentWrap { pointer-events: none; }
+.hostDismissible .suggestWrap > *,
+.hostDismissible .mapContentWrap > * { pointer-events: auto; }
 
 .suggestWrap {
   position: absolute;
