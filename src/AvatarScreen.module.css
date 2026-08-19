@@ -193,18 +193,7 @@
 
 .ghost:active { transform: scale(0.97); }
 
-.back {
-  display: block;
-  width: 100%;
-  margin-top: 10px;
-  padding: 11px;
-  border: 0;
-  background: none;
-  color: var(--poplur-ink-soft, rgba(20, 10, 4, 0.58));
-  font: 800 11px/1 system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.14em;
-  cursor: pointer;
-}
+/* The "‹ BACK" row is gone — the cube steps back to the shelf. */
 
 /* ── the shelf of cubes you have made ───────────────────────────────────── */
 .shelf { margin-top: 22px; }

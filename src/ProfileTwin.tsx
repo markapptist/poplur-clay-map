@@ -25,6 +25,8 @@ import {
   readSelectedProfileTheme,
   type ProfileTheme,
 } from './profileThemes'
+import { takeProfileMode } from './profileMode'
+import NotifConfetti from './NotifConfetti'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -322,14 +324,14 @@ const NOTIFICATION_DOT_MAP_LAND: Array<Array<[number, number]>> = [
  *  screen and read as a wall. ?notif=clay|frost|glass still loads the rejected
  *  alternatives for comparison. */
 type NotifSkin = 'clay' | 'frost' | 'glass' | 'cards'
-// GLASS is the sheet: a full-page frosted panel over a blurred app. The other
-// three stay reachable with ?notif=frost|cards|clay for comparison — `cards`
-// was the previous default and read as a grey slab floating over a profile
-// you could still see through, which is the look this replaces.
+// FROST is the sheet: white and see-through, the profile still legible through
+// it. It already existed as an alternate — no fifth skin was needed, the white
+// one simply was not the default. The other three stay reachable with
+// ?notif=glass|cards|clay for comparison.
 const NOTIF_SKIN: NotifSkin = (() => {
-  if (typeof window === 'undefined') return 'glass'
+  if (typeof window === 'undefined') return 'frost'
   const v = new URLSearchParams(window.location.search).get('notif')
-  return v === 'frost' || v === 'cards' || v === 'clay' ? v : 'glass'
+  return v === 'glass' || v === 'cards' || v === 'clay' ? v : 'frost'
 })()
 
 function insideDotMapLand(x: number, y: number, polygon: Array<[number, number]>) {
@@ -477,7 +479,8 @@ function NotificationIcon({ kind }: { kind: NotificationKind }) {
   )
 }
 
-type Mode = 'media' | 'messages' | 'liked'
+export type ProfileMode = 'media' | 'messages' | 'liked'
+type Mode = ProfileMode
 type CaptureFacing = 'user' | 'environment'
 type CaptureSource = 'camera' | 'library'
 
@@ -1051,6 +1054,29 @@ export default function ProfileTwin({
     const onOpen = () => openNotifsRef.current()
     window.addEventListener('poplur-open-notifications', onOpen)
     return () => window.removeEventListener('poplur-open-notifications', onOpen)
+  }, [])
+
+  // A hand-off from another screen (News' hamburger asks for Messages) chooses
+  // the opening page. Consumed in an EFFECT, never in the useState initializer:
+  // StrictMode double-invokes initializers in dev, so the first call took the
+  // request and the second got nothing — the screen opened on Media and the
+  // hand-off looked broken. An effect is safe either way: the second run finds
+  // the store already empty and leaves the mode it just set.
+  useEffect(() => {
+    const wanted = takeProfileMode()
+    if (wanted) setMode(wanted)
+  }, [])
+
+  // News' hamburger sends you here on its Profile row, and it asks for a
+  // specific mode — the drawer is where you go to read, so it opens Messages.
+  // Same window-event route as the notifications tile above.
+  useEffect(() => {
+    const onMode = (event: Event) => {
+      const wanted = (event as CustomEvent<{ mode?: Mode }>).detail?.mode
+      if (wanted === 'media' || wanted === 'messages' || wanted === 'liked') setMode(wanted)
+    }
+    window.addEventListener('poplur-open-profile-mode', onMode)
+    return () => window.removeEventListener('poplur-open-profile-mode', onMode)
   }, [])
 
   // ── Clay channel arrows: browse posts in the viewer, else scroll the grid.
@@ -1934,6 +1960,8 @@ export default function ProfileTwin({
               aria-label="Notifications"
             >
               {NOTIF_SKIN === 'clay' && <NotificationDotMap />}
+              {/* The welcome screen's confetti, falling behind the rows. */}
+              <NotifConfetti />
               <div className={styles.notifTitle}>Notifications</div>
               {/* The sheet covers the page, so there is no "outside" left to
                   tap. Anything that is NOT a notification closes it (and the

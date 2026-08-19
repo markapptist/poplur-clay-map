@@ -1,0 +1,27 @@
+/* The pre-login confetti, over the notifications sheet. Sits above the sheet's
+   own surface but below its rows, and never takes a tap. */
+.confetti {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Clay sprinkle: lifted off the slab with a pressed highlight — the same
+   recipe as pre-login's .cf, kept byte-for-byte so the two match. */
+.piece {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  opacity: 0.85;
+  will-change: transform, opacity;
+  box-shadow:
+    0 2px 3px rgba(110, 4, 54, 0.45),
+    inset 0 1px 1px rgba(255, 255, 255, 0.55),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.18);
+}

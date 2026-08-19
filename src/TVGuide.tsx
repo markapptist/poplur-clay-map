@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
+import ScreenCoach from './ScreenCoach'
 import styles from './TVGuide.module.css'
 import { CHANNELS } from './FeedTwin'
 import { playPop } from './pop'
@@ -262,6 +263,16 @@ export default function TVGuide({
 
   return (
     <div className={styles.guide} role="dialog" aria-label="TV Guide" ref={guideRef}>
+      <ScreenCoach
+        id="tvguide"
+        title="TV GUIDE"
+        lines={[
+          'Tap a channel to preview what is on now.',
+          'Tap it again to tune the feed to it.',
+          'Pull down to re-check the listings.',
+        ]}
+      />
+
       <div className={pullStyles.panel} ref={pullPanel} data-pull-panel aria-hidden="true">
         <div className={pullStyles.head} ref={pullHead}>
           <img src="sprites/poplur_mark_head_navigator_y0_p0_s640.png" alt="" draggable={false} />

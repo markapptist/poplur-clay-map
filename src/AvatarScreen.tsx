@@ -113,7 +113,14 @@ function previewCube(url: string | null) {
 // No onClose prop is used to dismiss: the cube is the universal back control
 // for every hold-menu subscreen. It stays in the signature for hosts that
 // raise this screen themselves.
-export default function AvatarScreen({ onClose: _onClose }: { onClose: () => void }) {
+export default function AvatarScreen({ onClose: _onClose, bindBack }: {
+  onClose: () => void
+  /** The cube's back button, lent down from the hold menu. The screen has
+      STAGES, so it hands its step-back-to-the-shelf up rather than printing a
+      "‹ BACK" of its own. See HoldMenuTwin's nativeBackRef. */
+  bindBack?: (fn: (() => boolean) | null) => void
+}) {
+  const stepBackRef = useRef<() => boolean>(() => false)
   const [stage, setStage] = useState<Stage>('shelf')
   const [cubes, setCubes] = useState<AvatarCube[]>(() => avatarCubes())
   const [worn, setWorn] = useState<string | null>(() => wornCubeId())
@@ -351,6 +358,21 @@ export default function AvatarScreen({ onClose: _onClose }: { onClose: () => voi
     setStage('shelf')
   }
 
+  // Any stage past the shelf steps back to it; the shelf itself is the root,
+  // so the cube falls through there and closes the screen as it always did.
+  // 'working' is deliberately NOT a stop: a sculpt in flight has nothing to
+  // return to, and startOver would strand the job it is watching.
+  stepBackRef.current = () => {
+    if (stage === 'shelf' || stage === 'working') return false
+    startOver()
+    return true
+  }
+  useEffect(() => {
+    if (!bindBack) return
+    bindBack(() => stepBackRef.current())
+    return () => bindBack(null)
+  }, [bindBack])
+
   const wornCube = cubes.find(cube => cube.id === worn) ?? null
   const affordable = credits >= AVATAR_CUBE_COST
   // Say it on the button, not after the tap: with no generator endpoint in
@@ -476,7 +498,8 @@ export default function AvatarScreen({ onClose: _onClose }: { onClose: () => voi
             >
               PRESS IT ON A CLAY CUBE · FREE
             </button>
-            <button className={styles.back} onClick={startOver}>‹ BACK</button>
+            {/* No "‹ BACK" — the cube under the screen steps back to the
+                shelf, the same control that closes the screen from there. */}
 
             <p className={styles.footnote}>
               Sculpting builds real geometry from your photo and takes a couple of

@@ -145,8 +145,18 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
     let runAnim: Animation | null = null
     let strideTimer = 0
     const startRun = () => {
-      if (reduced || runAnim) return
+      // The pet appears on EVERY pull. Reduce Motion used to skip this whole
+      // function, so on a phone with that setting the character simply never
+      // existed — the gesture looked broken rather than considerate. Honour the
+      // setting the way it is meant to be honoured: show the character, drop
+      // the MOTION (no sprint across the band, no stride flipping).
+      if (runAnim) return
       runner.style.display = 'block'
+      if (reduced) {
+        // Parked mid-band, facing the reader. Still the pet, still every pull.
+        runner.style.transform = `translateX(${Math.round(panel.clientWidth / 2 - 24)}px)`
+        return
+      }
       // Enter from past the left edge, exit past the right, loop.
       const lap = panel.clientWidth + 96
       runAnim = runner.animate(
@@ -164,6 +174,7 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       runAnim = null
       window.clearInterval(strideTimer)
       runner.style.display = 'none'
+      runner.style.transform = ''
       runner.src = RUN_FRAMES[0]
     }
 
@@ -283,15 +294,36 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       }
     }
 
+    // iOS ONLY LOOKS BROKEN HERE — and it looks like "the refresh does nothing".
+    //
+    // WebKit's own scroller claims a downward drag that starts at the top and
+    // fires `pointercancel`, which this hook (correctly) treats as a release.
+    // With almost no travel recorded, that release lands under COMMIT: the
+    // curtain springs shut, onRefresh is never called, and the page reprints
+    // nothing. A desktop browser never does this, so every headless check
+    // passes while the phone refuses to refresh.
+    //
+    // Claiming the gesture is the fix: while a pull is genuinely in progress,
+    // preventDefault the touchmove so the native scroller stands down and the
+    // pointer stream survives to pointerup. Registered non-passive, because a
+    // passive listener is forbidden from calling preventDefault at all — the
+    // default for touchmove on many engines, which is exactly why this needs
+    // saying out loud.
+    const onTouchMove = (event: TouchEvent) => {
+      if (pulling && pull > 0 && event.cancelable) event.preventDefault()
+    }
+
     scroll.addEventListener('pointerdown', onDown)
     scroll.addEventListener('pointermove', onMove)
     scroll.addEventListener('pointerup', onUp)
     scroll.addEventListener('pointercancel', onUp)
+    scroll.addEventListener('touchmove', onTouchMove, { passive: false })
     return () => {
       scroll.removeEventListener('pointerdown', onDown)
       scroll.removeEventListener('pointermove', onMove)
       scroll.removeEventListener('pointerup', onUp)
       scroll.removeEventListener('pointercancel', onUp)
+      scroll.removeEventListener('touchmove', onTouchMove)
       window.clearTimeout(settleTimer)
       stopRun()
       runner.remove()

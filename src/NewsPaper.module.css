@@ -331,3 +331,484 @@
   transform: translateY(8px);
   pointer-events: none;
 }
+
+/* ── The hamburger, its drawer, and search ──────────────────────────────────
+   Timeline furniture on a newsprint surface: the paper reads like a broadsheet
+   but behaves like a feed, so the menu is the one a feed carries. Clay pill and
+   clay drawer, so it belongs to Poplur rather than to a generic app shell. */
+.burger {
+  position: absolute;
+  left: 12px;
+  top: max(14px, env(safe-area-inset-top));
+  z-index: 6;
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ff5fae, #f4459c 46%, #b81566);
+  box-shadow: 0 5px 14px rgba(244, 69, 156, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+}
+
+.burger i {
+  display: block;
+  width: 18px;
+  height: 2.5px;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.burger:active { transform: scale(0.94); }
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  background: rgba(12, 6, 14, 0.5);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: newsScrimIn 0.18s ease both;
+}
+
+.drawer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 8;
+  width: min(78%, 300px);
+  /* Start BELOW the Poplur wordmark. It belongs to the home view and floats
+     over every subscreen at z-index 270, so a drawer that starts at the top
+     puts its title and search field underneath it — the same reserve Settings,
+     Avatar and the feed chrome all take. */
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px) 16px
+    calc(18px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(255, 255, 255, 0.1), transparent 52%),
+    linear-gradient(180deg, #3a2027 0%, #2a151c 58%, #1a0b11 100%);
+  box-shadow: 6px 0 26px rgba(30, 0, 16, 0.45);
+  animation: newsDrawerIn 0.24s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+}
+
+.drawerTitle {
+  margin: 0 0 2px;
+  font: 950 10.5px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.18em;
+  color: #ff80bf;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  color: rgba(255, 238, 247, 0.6);
+  font-size: 15px;
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: #fff4fa;
+  font: 700 14px/1 system-ui, -apple-system, sans-serif;
+}
+
+.search input::placeholder { color: rgba(255, 238, 247, 0.4); }
+.search input:focus { outline: none; }
+
+.searchClear {
+  border: 0;
+  background: none;
+  color: rgba(255, 238, 247, 0.6);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.searchCount {
+  margin: -4px 2px 0;
+  font: 800 11px/1 system-ui, -apple-system, sans-serif;
+  color: #7fe3ff;
+}
+
+.drawerRow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drawerRow:active { transform: scale(0.98); }
+
+.drawerRow img {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.drawerRow span { display: flex; flex-direction: column; gap: 2px; }
+.drawerRow b { font: 800 14px/1.1 system-ui, -apple-system, sans-serif; color: #fff2f8; }
+.drawerRow i {
+  font: 500 11.5px/1 system-ui, -apple-system, sans-serif;
+  font-style: normal;
+  color: rgba(255, 226, 242, 0.6);
+}
+
+.drawerClose {
+  margin-top: auto;
+  padding: 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  color: #fff4fa;
+  font: 950 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+
+/* A search with no hits says so, rather than leaving a masthead over nothing. */
+.noHits {
+  margin: 18px 2px;
+  font: 600 14px/1.4 "Iowan Old Style", Palatino, Georgia, serif;
+  color: rgba(22, 18, 12, 0.62);
+}
+
+@keyframes newsScrimIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes newsDrawerIn { from { transform: translateX(-100%) } to { transform: translateX(0) } }
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim, .drawer { animation-duration: 0.01ms; }
+}
+
+/* ── Night edition ──────────────────────────────────────────────────────────
+   The paper follows the same daylight model as the map's sky (skyCycle), so
+   the app agrees with itself about what time it is. Newsprint by day; after
+   dark the stock goes to ink and the type inverts. Only the SURFACE changes —
+   the layout, the columns and the plates are identical, because this is the
+   same paper read under a different lamp. */
+.paperNight {
+  color: #ece5da;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 250, 240, 0.022) 0 1px, transparent 1px 3px),
+    radial-gradient(120% 60% at 50% 0%, #17131b, transparent 60%),
+    #0f0d12;
+}
+
+.paperNight .mastRule,
+.paperNight .mastRuleThin { border-color: rgba(236, 229, 218, 0.28); }
+.paperNight .mastRule span,
+.paperNight .mastRuleThin span { color: rgba(236, 229, 218, 0.62); }
+.paperNight .title,
+.paperNight .leadHead,
+.paperNight .who { color: #f6f1e8; }
+.paperNight .body,
+.paperNight .leadBody { color: rgba(236, 229, 218, 0.86); }
+.paperNight .handle,
+.paperNight .when,
+.paperNight .dot,
+.paperNight .byline,
+.paperNight .plateCap,
+.paperNight .noHits { color: rgba(236, 229, 218, 0.55); }
+.paperNight .entry { border-color: rgba(236, 229, 218, 0.16); }
+.paperNight .columnsRule { border-color: rgba(236, 229, 218, 0.24); }
+.paperNight .inkShader { -webkit-text-fill-color: #f6f1e8; }
+
+/* ── "N new posts" after a pull ─────────────────────────────────────────── */
+.freshBanner {
+  margin: 0 auto 10px;
+  width: fit-content;
+  padding: 7px 16px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff5fae, #f4459c 46%, #b81566);
+  box-shadow: 0 5px 14px rgba(244, 69, 156, 0.38);
+  color: #fff;
+  font: 950 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.14em;
+  animation: freshIn 0.3s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+
+@keyframes freshIn { from { opacity: 0; transform: translateY(-8px) } to { opacity: 1; transform: none } }
+
+/* ── the narrowed-to-one-author chip ───────────────────────────────────── */
+.filterChip {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(244, 69, 156, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(244, 69, 156, 0.4);
+  color: #c81d5e;
+  font: 800 11.5px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.paperNight .filterChip { color: #ff9ccd; }
+
+/* ── search scopes ─────────────────────────────────────────────────────── */
+.scopes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.scope, .scopeOn {
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 242, 248, 0.6);
+  font: 900 10.5px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.scopeOn {
+  color: #160812;
+  background: #ff8ac6;
+  box-shadow: 0 3px 10px rgba(246, 59, 154, 0.3);
+}
+
+/* ── the people list ───────────────────────────────────────────────────── */
+.people { display: flex; flex-direction: column; gap: 6px; }
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+}
+
+.personPick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.personPick img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.personPick span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.personPick b {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 800 13px/1.1 system-ui, -apple-system, sans-serif; color: #fff2f8;
+}
+.personPick i {
+  font: 500 10.5px/1 system-ui, -apple-system, sans-serif; font-style: normal;
+  color: rgba(255, 226, 242, 0.55);
+}
+
+.personProfile {
+  flex: none;
+  width: 34px;
+  align-self: stretch;
+  border: 0;
+  background: none;
+  color: rgba(255, 138, 198, 0.8);
+  font-size: 19px;
+  cursor: pointer;
+}
+
+/* ── the post detail, opened like a tweet ──────────────────────────────── */
+.detail {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  background: inherit;
+  animation: detailIn 0.24s ease both;
+}
+
+/* The sheet inherits the paper's own surface, so it is newsprint by day and
+   the evening edition after dark without a second palette to maintain. */
+.paper .detail { background: #f4efe1; }
+.paperNight .detail { background: #0f0d12; }
+
+@keyframes detailIn { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+
+.detailBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* 29px is the height the "‹ BACK" pill used to hold open (9px padding, an
+     11px cap line, 9px padding). Keeping it means removing the button did not
+     shorten the bar, so the story's body starts where it always did. */
+  min-height: 29px;
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 10px)
+    16px 10px;
+}
+
+/* The story's "‹ BACK" pill is gone — the cube is the back button. The bar
+   keeps its height and left inset so the kicker sits where the pill's baseline
+   used to, and the page does not jump when you open a story. */
+
+.detailKicker {
+  font: 900 10px/1 ui-monospace, Menlo, monospace;
+  letter-spacing: 0.18em;
+  color: #c81d5e;
+}
+
+.paperNight .detailKicker { color: #ff9ccd; }
+
+.detailScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 18px calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+}
+
+.detailWho {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 0 0 14px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detailWho img {
+  width: 48px; height: 48px; border-radius: 50%; object-fit: cover;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.detailWho span { display: flex; flex-direction: column; gap: 2px; }
+.detailWho b { font: 800 16px/1.1 system-ui, -apple-system, sans-serif; }
+.detailWho i {
+  font: 500 12px/1 system-ui, -apple-system, sans-serif; font-style: normal;
+  color: rgba(22, 18, 12, 0.55);
+}
+.paperNight .detailWho i { color: rgba(236, 229, 218, 0.55); }
+
+.detailBody {
+  margin: 0 0 10px;
+  font: 400 21px/1.42 "Iowan Old Style", Palatino, Georgia, serif;
+}
+
+.detailWhen {
+  margin: 0 0 16px;
+  font: 500 12px/1 ui-monospace, Menlo, monospace;
+  color: rgba(22, 18, 12, 0.5);
+}
+.paperNight .detailWhen { color: rgba(236, 229, 218, 0.5); }
+
+/* radius / distance / the coordinate it was actually dropped on */
+.detailFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(22, 18, 12, 0.18);
+  border-bottom: 1px solid rgba(22, 18, 12, 0.18);
+}
+
+.paperNight .detailFacts { border-color: rgba(236, 229, 218, 0.2); }
+
+.detailFacts dt {
+  font: 900 9px/1 ui-monospace, Menlo, monospace;
+  letter-spacing: 0.14em;
+  color: #c81d5e;
+}
+.paperNight .detailFacts dt { color: #ff9ccd; }
+
+.detailFacts dd {
+  margin: 5px 0 0;
+  font: 800 15px/1 system-ui, -apple-system, sans-serif;
+}
+
+.detailCoords { font: 700 11.5px/1.3 ui-monospace, Menlo, monospace !important; }
+
+.detailPlate { margin: 0 0 14px; }
+.detailPlate img {
+  width: 100%;
+  border-radius: 14px;
+  display: block;
+  background: rgba(0, 0, 0, 0.25);
+}
+.detailPlate figcaption {
+  margin-top: 7px;
+  font: 700 9.5px/1.3 ui-monospace, Menlo, monospace;
+  letter-spacing: 0.1em;
+  color: rgba(22, 18, 12, 0.5);
+}
+.paperNight .detailPlate figcaption { color: rgba(236, 229, 218, 0.5); }
+
+.detailNoPlate {
+  margin: 0 0 14px;
+  font: 500 12.5px/1.4 system-ui, sans-serif;
+  color: rgba(22, 18, 12, 0.5);
+}
+
+.detailStats {
+  display: flex;
+  gap: 18px;
+  padding: 12px 0;
+  font: 700 13px/1 system-ui, -apple-system, sans-serif;
+  color: rgba(22, 18, 12, 0.6);
+}
+.paperNight .detailStats { color: rgba(236, 229, 218, 0.6); }
+
+.detailProfile {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 14px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff5fae, #f4459c 46%, #b81566);
+  box-shadow: 0 6px 16px rgba(244, 69, 156, 0.36);
+  color: #fff;
+  font: 950 12.5px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+/* Posts are openable, so they should feel it. */
+.entry[role="button"] { cursor: pointer; }
+.entry[role="button"]:active { background: rgba(244, 69, 156, 0.06); }

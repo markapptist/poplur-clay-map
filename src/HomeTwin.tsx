@@ -3,6 +3,7 @@ import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
+import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
@@ -130,6 +131,45 @@ function tabNavigatorModel(tab: CubeTab): string {
   if (tab === 'feed') return CLAY_TV_MODEL
   if (tab === 'post') return PROFILE_CAMERA_MODEL
   return PROFILE_MARK_MODEL
+}
+
+/** What each tab teaches the first time you land on it. Gestures only — the
+ *  things that have nowhere to put a label. */
+const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boolean; pinArrows?: boolean }> = {
+  map: {
+    title: 'THE MAP',
+    lines: [
+      'Tap the LEFT half for the previous pop.',
+      'Tap the RIGHT half for the next pop.',
+      'Hold anywhere on the map to drop a pop there.',
+    ],
+    split: true,
+    pinArrows: true,
+  },
+  feed: {
+    title: 'THE FEED',
+    lines: [
+      'Swipe up and down for the next pop in your radius.',
+      'Use the arrows to change channel.',
+      'Hold the cube for News, the TV Guide and more.',
+    ],
+  },
+  post: {
+    title: 'THE CAMERA',
+    lines: [
+      'Tap the camera in your hand to shoot.',
+      'Hold the cube to switch to video, the roll, or go live.',
+      'Everything you post lands in your radius.',
+    ],
+  },
+  profile: {
+    title: 'YOUR PROFILE',
+    lines: [
+      'Tap the bell for notifications.',
+      'Pull down to refresh your grid.',
+      'Hold the cube for mail, phone, stats and your avatar cube.',
+    ],
+  },
 }
 
 /**
@@ -2862,6 +2902,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           </div>
         </div>
       </div>
+
+      {/* First-open coaching for the settled tab. Keyed by tab so each one
+          teaches itself once; it removes itself after 15s or on first touch. */}
+      {mainSurfaceVisible && !overlayOpen && !holdOpen && (
+        <ScreenCoach
+          key={`coach-${committedTab}`}
+          id={`tab-${committedTab}`}
+          title={TAB_COACH[committedTab].title}
+          lines={TAB_COACH[committedTab].lines}
+          split={TAB_COACH[committedTab].split}
+          pinArrows={TAB_COACH[committedTab].pinArrows}
+        />
+      )}
 
       <CubeMotionLab />
 

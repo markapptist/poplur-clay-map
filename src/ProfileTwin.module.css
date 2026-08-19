@@ -1722,6 +1722,11 @@
 /* A ── FROST: a light frosted sheet, hairline-separated. The quietest option:
    no cards, no colour, the profile blurring through. */
 .notifSkin_frost {
+  /* The banner's own rule paints the pre-login PINK slab: a background-color
+     plus two gradient background-images. Overriding the colour alone left both
+     gradients on top, so "white" still read pink. A skin owns the whole
+     surface, so clear the image too. */
+  background-image: none;
   background-color: rgba(255, 255, 255, 0.62);
   backdrop-filter: blur(26px) saturate(1.5);
   -webkit-backdrop-filter: blur(26px) saturate(1.5);
@@ -1887,3 +1892,9 @@
    still and the moving image can never disagree — the exact mismatch that made
    the avatar appear to flip whenever the poster showed. */
 .selfieMirrored { transform: scaleX(-1); }
+
+/* The confetti falls INSIDE the sheet, behind its content: the title and the
+   rows keep their own stacking so nothing lands on top of text you are
+   reading. (NotifConfetti is z-index 1 within .notifBanner.) */
+.notifBanner .notifTitle,
+.notifBanner .notifSwipe { position: relative; z-index: 2; }
