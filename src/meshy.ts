@@ -25,9 +25,9 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 // (poplurAiApi, a Cloud Function behind the signed-in Firebase token).
 //
 // The endpoint takes:
-//   POST  {endpoint}/image-to-3d   { image: <data URI>, style, name }
+//   POST  {endpoint}/meshyGenerate  { image: <data URI>, style, name, kind }
 //                                  → { taskId }
-//   GET   {endpoint}/image-to-3d/{taskId}
+//   GET   {endpoint}/meshyStatus/{taskId}
 //                                  → { status, progress, glbUrl?, error? }
 //
 // and on Meshy's side that is `POST https://api.meshy.ai/openapi/v1/image-to-3d`
@@ -105,7 +105,7 @@ export async function generateMeshyCube(options: {
     throw new MeshyUnavailable('Sign in on the device before generating a model.')
   }
 
-  const created = await fetch(`${base}/image-to-3d`, {
+  const created = await fetch(`${base}/meshyGenerate`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify({ image: options.image, style: options.style, name: options.name }),
@@ -121,7 +121,7 @@ export async function generateMeshyCube(options: {
     if (Date.now() > deadline) throw new Error('The generator took too long')
     await new Promise(resolve => window.setTimeout(resolve, POLL_MS))
 
-    const polled = await fetch(`${base}/image-to-3d/${encodeURIComponent(taskId)}`, {
+    const polled = await fetch(`${base}/meshyStatus/${encodeURIComponent(taskId)}`, {
       headers: { authorization: `Bearer ${authToken() ?? token}` },
       signal: options.signal,
     })
