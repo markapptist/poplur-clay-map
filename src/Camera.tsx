@@ -1250,6 +1250,29 @@ export default function Camera({
     setDeferredCameraActionToken(token => token + 1)
   }, [])
 
+  // Going live hands the LIVE channel this camera's own stream — the feed
+  // plays the broadcast itself, not a recording of it. One implementation for
+  // the LIVE button sitting on the camera and for the bound action, so the two
+  // can never drift.
+  const toggleLive = useCallback(() => {
+    playPop()
+    if (isLive()) {
+      deferredCameraActionRef.current = null
+      stopBroadcast()
+      if (liveSurfaceVisible && !NATIVE_CAMERA_PREVIEW) {
+        setStreamRequest(value => value + 1)
+      }
+      return
+    }
+    if (!liveSurfaceVisible
+      || nativeCameraBudget?.state === 'parked'
+      || (!NATIVE_CAMERA_PREVIEW && !streamRef.current)) {
+      deferCameraAction('live')
+      return
+    }
+    startBroadcast(streamRef.current ?? undefined)
+  }, [deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state])
+
   // Camera actions selected from the hold menu arrive just before that menu's
   // close state commits. The lens is correctly parked at that instant, so keep
   // the deliberate action and run it once the visible surface (and, on web,
@@ -1376,35 +1399,15 @@ export default function Camera({
         // refuses to activate ML on roll/composer pages.
       },
       ar: () => setArOpen(v => !v),
-      // Going live hands the LIVE channel this camera's own stream — the feed
-      // plays the broadcast itself, not a recording of it.
-      live: () => {
-        playPop()
-        if (isLive()) {
-          deferredCameraActionRef.current = null
-          stopBroadcast()
-          if (liveSurfaceVisible && !NATIVE_CAMERA_PREVIEW) {
-            setStreamRequest(value => value + 1)
-          }
-          return
-        }
-        if (!liveSurfaceVisible
-          || nativeCameraBudget?.state === 'parked'
-          || (!NATIVE_CAMERA_PREVIEW && !streamRef.current)) {
-          deferCameraAction('live')
-          return
-        }
-        startBroadcast(streamRef.current ?? undefined)
-      },
+      live: toggleLive,
       roll: () => onOpenRoll?.(),
-      // Offer the arrows to the composer first. On the live camera they page
-      // between the viewfinder and the Camera Roll, which is what the channel
-      // buttons have always meant here — the roll is one press away rather
-      // than buried in the hold menu. (Zoom has its own slider.)
+      // The capture preview owns the arrows while it is up (filter flipping).
+      // Anywhere else on the camera they belong to the shell, which cycles the
+      // tab's screens with them — the Camera Roll is reached by its own button
+      // on the camera now, not by paging.
       arrow: dir => {
         const handler = composerArrowsRef.current
         if (handler) { handler(dir); return true }
-        // Unhandled: the home shell pages live <-> roll with it.
         return false
       },
       composerBack: () => {
@@ -1416,7 +1419,7 @@ export default function Camera({
       },
     })
     return () => bindActions?.(null)
-  }, [applyZoomStep, bindActions, capturePhoto, deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state, onOpenRoll, toggleVideo])
+  }, [applyZoomStep, bindActions, capturePhoto, deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state, onOpenRoll, toggleLive, toggleVideo])
 
   const [pos, setPos] = useState(page === 'live' ? 1 : 2)
   const [animated, setAnimated] = useState(true)
@@ -1657,6 +1660,25 @@ export default function Camera({
           active={arOpen}
           size={44}
           onToggle={() => setArOpen(open => !open)}
+        />
+        {/* The camera roll, on the camera. It used to be a hold-menu tile two
+            gestures away; it is a side button now, and it still rises from the
+            bottom of the page rather than opening as a screen of its own. */}
+        <ClayCornerButton
+          kind="roll"
+          size={44}
+          label="Camera roll"
+          onPress={() => onOpenRoll?.()}
+        />
+        {/* …and going live, which is an act performed on the camera you are
+            already pointing. Lit red for as long as you are on air; pressing
+            it again ends the broadcast. */}
+        <ClayCornerButton
+          kind="live"
+          size={44}
+          active={onAir}
+          label={onAir ? 'End live broadcast' : 'Go live'}
+          onPress={toggleLive}
         />
       </TabControlRail>
       {/* ONE persistent AI line. Keep the latest real reading between the

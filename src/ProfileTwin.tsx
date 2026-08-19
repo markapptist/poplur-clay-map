@@ -595,7 +595,7 @@ export default function ProfileTwin({
   highlightPops = null,
   onPostCountChange,
 }: {
-  bindArrows?: (fn: ((dir: 1 | -1) => void) | null) => void
+  bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
   /** a handle when you opened someone else's profile from the feed */
   viewUser?: string | null
   onBackToOwn?: () => void
@@ -1069,16 +1069,18 @@ export default function ProfileTwin({
         const next: CaptureSource = captureSourceRef.current === 'camera' ? 'library' : 'camera'
         setCaptureSource(next)
         playPop()
-        return
+        return true
       }
       if (viewerIdxRef.current != null) {
         const posts = modeRef.current === 'liked' ? LIKED : profilePostsRef.current
-        if (!posts.length) return
+        if (!posts.length) return true
         setViewerIdx(i => (i == null ? i : ((i + dir) % posts.length + posts.length) % posts.length))
-        return
+        return true
       }
-      // dir -1 = up arrow → scroll up; +1 = down arrow → scroll down.
-      contentRef.current?.scrollBy({ top: dir * contentRef.current.clientHeight * 0.6, behavior: 'smooth' })
+      // Nothing covering the profile: the press is not ours. The arrows are
+      // the app's screen changer now, and the grid scrolls under your finger
+      // rather than a button press at a time.
+      return false
     })
     return () => bindArrows(null)
   }, [bindArrows])

@@ -97,6 +97,7 @@ export default function ClayCornerButton({
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
     | 'heart' | 'thumbUp' | 'thumbDown' | 'comment' | 'comments' | 'play' | 'seekBack' | 'seekFwd'
+    | 'roll' | 'live'
   active?: boolean
   label: string
   onPress: () => void
@@ -186,6 +187,7 @@ export default function ClayCornerButton({
     const clayColor = new THREE.Color(CLAY)
     const goldColor = new THREE.Color(GOLD)
     const litHeart = new THREE.Color(0xff2d96)   // favourited: hot pink clay
+    const litLive = new THREE.Color(0xff2d4b)   // on air: the recording red
 
     const bodyMat = tone === 'cream' ? creamMat : mat
 
@@ -320,6 +322,31 @@ export default function ClayCornerButton({
       const glass = mesh(discShape(0.22))
       glass.position.set(0.25, 0, 0.42)
       root.add(body, finder, lens, glass)
+    } else if (kind === 'roll') {
+      // Camera roll: two moulded photo frames, the back one peeking out from
+      // behind the front — a stack of pictures you can reach into. The front
+      // frame carries a picture (sun over a hill) so it cannot be mistaken for
+      // the chain link or a plain window.
+      const back = mesh(ringShape(1.42, 1.12, 0.17, 0.26))
+      back.position.set(0.3, 0.26, -0.16)
+      const front = mesh(ringShape(1.56, 1.24, 0.19, 0.28))
+      front.position.set(-0.16, -0.16, 0.06)
+      const sun = mesh(discShape(0.17), creamMat)
+      sun.position.set(-0.5, 0.06, 0.2)
+      const hill = mesh(arcShape(0, 0.44, 0, Math.PI), creamMat)
+      hill.position.set(-0.08, -0.52, 0.2)
+      root.add(back, front, sun, hill)
+    } else if (kind === 'live') {
+      // Going live: the broadcast dot with waves leaving it both ways. Lit
+      // red while you are actually on air (see the tick loop below).
+      const dot = mesh(discShape(0.4))
+      const waves = [
+        arcShape(0.6, 0.78, -0.62, 0.62),
+        arcShape(0.92, 1.1, -0.54, 0.54),
+        arcShape(0.6, 0.78, Math.PI - 0.62, Math.PI + 0.62),
+        arcShape(0.92, 1.1, Math.PI - 0.54, Math.PI + 0.54),
+      ].map(shape => mesh(shape))
+      root.add(dot, ...waves)
     } else {
       // Flip-camera: two opposing arcs with arrowheads at their leading ends.
       const arcTop = mesh(arcShape(0.6, 0.9, Math.PI * 0.83, Math.PI * 0.17, true))
@@ -339,15 +366,20 @@ export default function ClayCornerButton({
       const t = still ? 0.7 : clock.getElapsedTime()
       root.rotation.set(-0.14 + Math.sin(t * 0.9) * 0.07, Math.sin(t * 1.15) * 0.45, 0)
       if (tone !== 'cream') {
-        const lit = activeRef.current && (kind === 'flash' || kind === 'heart' || kind === 'comments')
-        mat.color.copy(lit ? (kind === 'heart' || kind === 'comments' ? litHeart : goldColor) : clayColor)
+        const lit = activeRef.current
+          && (kind === 'flash' || kind === 'heart' || kind === 'comments' || kind === 'live')
+        const litColor = kind === 'heart' || kind === 'comments'
+          ? litHeart
+          : kind === 'live' ? litLive : goldColor
+        mat.color.copy(lit ? litColor : clayColor)
       }
       pulse.current += (0 - pulse.current) * 0.12
       const restScale = kind === 'capture' ? 1.32 : kind === 'close' ? 1.18 : 0.9
       root.scale.setScalar(restScale + pulse.current * 0.1)
       bodyMat.emissive.copy(restEmissive).lerp(litEmissive, pulse.current)
       bodyMat.emissiveIntensity =
-        ((kind === 'flash' || kind === 'heart' || kind === 'comments') && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
+        ((kind === 'flash' || kind === 'heart' || kind === 'comments' || kind === 'live')
+          && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
       renderer.render(scene, camera)
       // Still buttons hold their pose: keep drawing only while a press pulse is
       // still decaying, otherwise stop the loop entirely.
@@ -380,6 +412,7 @@ export default function ClayCornerButton({
     close: '✕', flash: '⚡', flip: '⟳', share: '↑', link: '🔗',
     send: '➤', capture: '◉', mail: '✉', search: '⌕', locate: '◎',
     comment: '◌', comments: '•••', heart: '♥', thumbUp: '👍', thumbDown: '👎',
+    roll: '▤', live: '⦿',
   }
 
   if (cssOnly) {
@@ -489,7 +522,7 @@ export default function ClayCornerButton({
       <button
         type="button"
         aria-label={label}
-        aria-pressed={kind === 'flash' || kind === 'heart' || kind === 'comments' ? active : undefined}
+        aria-pressed={kind === 'flash' || kind === 'heart' || kind === 'comments' || kind === 'live' ? active : undefined}
         onPointerDown={() => {
           pulse.current = 1
           if (!activateOnClick) onPress()

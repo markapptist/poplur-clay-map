@@ -34,6 +34,7 @@ import {
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
+// tapping the left/right edge steps through the posts in the channel you are on;
 // each channel is a full-bleed video with the TV overlay that auto-cycles
 // username↔"CH 101" and coordinates↔CATEGORY in green monospace, a flag +
 // channel icon, a bottom AI caption, and a clean channel change with no static.
@@ -1258,8 +1259,9 @@ export default function FeedTwin({
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
   // dominant axis wins: vertical changes channel; horizontal steps through
-  // the current channel's content. A HELD press (550ms, still) is neither —
-  // it toggles the fullscreen player.
+  // the current channel's content. A clean TAP in either side lane steps the
+  // content too. A HELD press (550ms, still) is neither — it toggles the
+  // fullscreen player.
   const lastTap = useRef(0)
   const cancelLongPress = () => {
     longPressAnchorRef.current = null

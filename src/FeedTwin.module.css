@@ -879,13 +879,17 @@
   box-shadow: 0 10px 26px rgba(57, 0, 30, 0.4), inset 0 1px 0 #fff;
 }
 
-/* Edge tap zones: step between the users posting on this channel. Narrow, so
-   the middle of the frame stays free for double-tap-to-like. */
+/* Edge tap zones: step between the users posting on this channel. A tall
+   column down each edge — tapping the side of the picture is the feed's own
+   way to change post, so it has to be hittable with a thumb without aiming.
+   The middle of the frame stays free for double-tap-to-like, and the lanes
+   stop short of the top chrome and the bottom control cluster, which own
+   their own taps. */
 .userStep {
   position: absolute;
-  top: 22%;
-  bottom: 26%;
-  width: 17%;
+  top: 14%;
+  bottom: 19%;
+  width: 24%;
   z-index: 22;
   border: 0;
   padding: 0;

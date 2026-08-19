@@ -707,6 +707,28 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let downTime = 0
     let holdTimer: ReturnType<typeof setTimeout> | null = null
     let holdFired = false
+    // The screen behind the navigator, when it is something that scrolls.
+    // The cube floats over the bottom of every tab, and its canvas is a good
+    // deal larger than the object drawn in it — so on Profile it covered the
+    // lower half of the post grid and swallowed every swipe that started
+    // there. A vertical drag on the cube did nothing at all (the swipe below
+    // wants a HORIZONTAL one), so the gesture was simply lost. It now scrolls
+    // the screen underneath, which is what a finger dragging up the grid
+    // means whether or not the cube happens to be in the way.
+    let scrollBehind: Element | null = null
+    let scrolling = false
+
+    /** The nearest thing under the pointer that actually scrolls and is not
+     *  an ancestor of the cube's own canvas. */
+    const scrollableUnder = (x: number, y: number): Element | null => {
+      for (const el of document.elementsFromPoint(x, y)) {
+        if (el === canvas || el.contains(canvas)) continue
+        if (el.scrollHeight - el.clientHeight <= 8) continue
+        const overflow = getComputedStyle(el).overflowY
+        if (overflow === 'auto' || overflow === 'scroll') return el
+      }
+      return null
+    }
 
     const cancelHold = () => {
       if (holdTimer) { clearTimeout(holdTimer); holdTimer = null }
@@ -729,6 +751,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         void orientation.requestPermission?.().catch(() => {})
       }
       try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
+      // Read it now, while the pointer is still where it went down: the cube
+      // captures the pointer, so elementsFromPoint later in the drag would
+      // answer for wherever the finger has travelled to.
+      scrollBehind = scrollableUnder(e.clientX, e.clientY)
+      scrolling = false
       dragging = true
       moved = false
       holdFired = false
@@ -747,11 +774,22 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       if (!dragging) return
       const dx = e.clientX - startX
       const dy = e.clientY - startY
+      const stepY = e.clientY - lastY
       lastX = e.clientX
       lastY = e.clientY
       if (Math.hypot(dx, dy) > 8 && !moved) {
         moved = true
         cancelHold()
+      }
+      // Dominantly vertical, and something behind scrolls: this is a scroll of
+      // that screen, not a cube gesture. Once claimed it stays claimed for the
+      // rest of the drag, so a wobble cannot hand it back mid-swipe.
+      if (scrollBehind && !scrolling && moved && Math.abs(dy) > Math.abs(dx)) {
+        scrolling = true
+      }
+      if (scrolling && scrollBehind) {
+        // The content follows the finger: drag up, the page moves up.
+        scrollBehind.scrollTop -= stepY
       }
     }
 
@@ -759,6 +797,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       cancelHold()
       if (!dragging) return
       dragging = false
+      // A scroll is not a tap and not a tab swipe.
+      if (scrolling) { scrolling = false; scrollBehind = null; return }
+      scrollBehind = null
       if (holdFired) return
       // Use the release coordinate as well as pointermove. A fast flick can
       // produce down→up with no intermediate move event, especially in WKWebView.
@@ -783,6 +824,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       cancelHold()
       dragging = false
       moved = false
+      scrolling = false
+      scrollBehind = null
     }
 
     const onKeyDown = (event: KeyboardEvent) => {

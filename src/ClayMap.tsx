@@ -170,6 +170,14 @@ const CLAY_LABEL_HALO_WIDTH = 1.35
 const CLAY_LABEL_HALO_BLUR = 0.6
 const CLAY_LABEL_EMISSIVE = 0.8
 
+// A press held this long on one coordinate is a request to post there. Close
+// to the feed's own hold (550ms) so one gesture means one thing app-wide.
+const HOLD_TO_POST_MS = 520
+// The outer quarter of each side of the map is a "walk to the next pop" tap
+// lane. The middle half stays free — most of the time the map is for looking
+// at, and a stray tap must not fly the camera somewhere else.
+const MAP_TAP_LANE = 0.25
+
 // Sky follows the real time of day. Keep the globe's atmosphere luminous even
 // at night: a black "space" pass reads as a missing lower hemisphere in the
 // constrained Mapbox globe view used by the app.
@@ -1092,6 +1100,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const composeOpenRef = useRef(false)
   composeOpenRef.current = composeAt !== null
   const [composeRadiusKm, setComposeRadiusKm] = useState(2)
+  /** A hold has just opened the composer, so the click that same press also
+   *  produces must not be read as an edge tap. */
+  const holdFiredRef = useRef(false)
   const composeRadiusKmRef = useRef(composeRadiusKm)
   composeRadiusKmRef.current = composeRadiusKm
   const themeRef = useRef(theme)
@@ -3185,6 +3196,62 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         }
       }
       if (prototypeComposer) {
+        // Drop a pop by HOLDING the ground you want it on. It used to be a
+        // plain tap, which left the map with no tap of its own — and the map
+        // needs one, because stepping pop-to-pop moved off the channel
+        // buttons and onto the edges of the screen (below).
+        const openComposerAt = (lngLat: mapboxgl.LngLat, at: mapboxgl.Point) => {
+          if (focusedPostLaunch) {
+            focusedPostManualSelectionRef.current = true
+            setFocusedPostLocationStatus('ready')
+          }
+          composeOpenRef.current = true
+          const point = composeScreenPoint(map, at)
+          setComposeAt({ lng: lngLat.lng, lat: lngLat.lat, x: point.x, y: point.y })
+          playPop(.24)
+        }
+
+        let holdTimer = 0
+        let holdAnchor: { x: number; y: number } | null = null
+        const cancelHold = () => {
+          if (holdTimer) { window.clearTimeout(holdTimer); holdTimer = 0 }
+          holdAnchor = null
+        }
+        const armHold = (e: mapboxgl.MapMouseEvent | mapboxgl.MapTouchEvent) => {
+          cancelHold()
+          // The picking modes below are already a deliberate "choose a spot"
+          // flow entered from the composer, and they answer a plain tap. A
+          // hold would be a second, hidden way to do the same thing.
+          if (radiusPreviewLaunch) return
+          const target = e.originalEvent?.target
+          if (target instanceof Element && target.closest('.mapboxgl-marker')) return
+          const anchor = { x: e.point.x, y: e.point.y }
+          holdAnchor = anchor
+          holdTimer = window.setTimeout(() => {
+            holdTimer = 0
+            holdAnchor = null
+            // Swallow the click this press will also produce, so releasing
+            // over an edge lane cannot ALSO step to the next pop.
+            holdFiredRef.current = true
+            openComposerAt(map.unproject([anchor.x, anchor.y]), new mapboxgl.Point(anchor.x, anchor.y))
+          }, HOLD_TO_POST_MS)
+        }
+        // A press that travels is a pan being born, not a hold.
+        const holdMove = (e: mapboxgl.MapMouseEvent | mapboxgl.MapTouchEvent) => {
+          if (!holdAnchor) return
+          if (Math.hypot(e.point.x - holdAnchor.x, e.point.y - holdAnchor.y) > 12) cancelHold()
+        }
+        map.on('mousedown', armHold)
+        map.on('touchstart', armHold)
+        map.on('mousemove', holdMove)
+        map.on('touchmove', holdMove)
+        map.on('mouseup', cancelHold)
+        map.on('touchend', cancelHold)
+        map.on('touchcancel', cancelHold)
+        // Any camera movement at all — a pan, a fly-to, the tour — is not a
+        // press held on one coordinate.
+        map.on('movestart', cancelHold)
+
         map.on('click', (e) => {
           // Mapbox synthesizes its map click from the pointer sequence before
           // every marker's DOM click has fully settled. Without this guard,
@@ -3192,6 +3259,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // ground composer underneath it. Marker taps belong to the marker.
           const target = e.originalEvent?.target
           if (target instanceof Element && target.closest('.mapboxgl-marker')) return
+          // The hold already acted on this press.
+          if (holdFiredRef.current) { holdFiredRef.current = false; return }
           if (radiusPreviewLaunch) {
             focusedPostManualSelectionRef.current = true
             setFocusedPostLocationStatus('ready')
@@ -3220,15 +3289,24 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
             setComposeAt(null)
             return
           }
-          // A tap on open ground starts a pop there: pick a radius, drop it.
-          // Taps that land on a POI/venue marker are handled by those layers.
+          // The focused-post flow is a picking mode: it is asking you for a
+          // coordinate, so a tap still answers it.
           if (focusedPostLaunch) {
-            focusedPostManualSelectionRef.current = true
-            setFocusedPostLocationStatus('ready')
+            openComposerAt(e.lngLat, e.point)
+            return
           }
-          composeOpenRef.current = true
-          const point = composeScreenPoint(map, e.point)
-          setComposeAt({ lng: e.lngLat.lng, lat: e.lngLat.lat, x: point.x, y: point.y })
+          // Plain map: tap the left or right EDGE to walk the pops around you,
+          // the same step the channel buttons used to make here. The middle of
+          // the map stays free for looking at it.
+          const width = map.getContainer().clientWidth
+          if (!width) return
+          const lane = e.point.x / width
+          const dir = lane <= MAP_TAP_LANE ? -1 : lane >= 1 - MAP_TAP_LANE ? 1 : 0
+          if (!dir) return
+          // Straight to this document's own map-action handler (App.tsx),
+          // which owns which pops the walk visits and answers the shell with
+          // the index it landed on.
+          window.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir }, '*')
         })
       }
       // Keep the composer bubble pinned to its ground point as the camera moves.

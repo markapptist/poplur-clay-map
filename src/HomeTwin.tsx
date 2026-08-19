@@ -9,7 +9,7 @@ import ClayChannelArrows from './ClayChannelArrows'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
-import HoldMenuTwin, { isResumablePage } from './HoldMenuTwin'
+import HoldMenuTwin, { isResumablePage, tabPageScreens } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import TopChrome from './TopChrome'
 import PermissionAlert from './PermissionAlert'
@@ -1066,7 +1066,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(false)
-  const pendingMapCyclesRef = useRef<Array<1 | -1>>([])
   const droppedClaimsRef = useRef<Array<Record<string, unknown>>>([])
   // The map iframe mounts only while the Map tab is front (the Android trade):
   // it starts mounted only when Home opens directly on the map, and otherwise
@@ -1456,14 +1455,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapReady(true)
         droppedClaimsRef.current.forEach(claim => {
           mapFrameRef.current?.contentWindow?.postMessage({ ...claim, replay: true }, '*')
-        })
-        const pending = pendingMapCyclesRef.current.splice(0)
-        pending.forEach((dir, index) => {
-          window.setTimeout(() => {
-            mapFrameRef.current?.contentWindow?.postMessage(
-              { type: 'poplur-map-action', action: 'cyclePop', dir }, '*',
-            )
-          }, index * 180)
         })
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
         postNativeEvent({ type: 'homeReady' })
@@ -1956,9 +1947,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (activeTab !== 'profile') { setViewingUser(null); setProfileOrigin(null) }
   }, [activeTab])
 
-  // Profile tab: the clay arrows scroll the grid / browse the open post —
-  // ProfileTwin registers its handler here.
-  const profileArrowsRef = useRef<((dir: 1 | -1) => void) | null>(null)
+  // Profile tab: the clay arrows browse an OPEN post (or flip the capture
+  // source) — the layers that cover the screen. Reports true when it took the
+  // press; false hands it back to the screen cycler. Scrolling the grid is no
+  // longer its job: the grid scrolls under your finger.
+  const profileArrowsRef = useRef<((dir: 1 | -1) => boolean) | null>(null)
   // ProfileTwin's "close the top open layer", for the cube.
   const profileBackRef = useRef<(() => boolean) | null>(null)
   /** The feed's own layer (the comment box) answering the cube. */
@@ -2175,41 +2168,32 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [activeTab])
 
   // (The pop lives in ClayChannelArrows itself now — every press pops.)
+  //
+  // The channel buttons are the app's SCREEN changer: they cycle the screens
+  // belonging to the tab you are on — the tab's own live screen (the door),
+  // then each of its pages, and back around. What they used to do per tab now
+  // belongs to gestures on the surface itself: feed channels are a vertical
+  // swipe, feed content and map pops are edge taps, the profile grid scrolls
+  // under your finger, and the camera's roll is a button on the camera.
   const changeChannel = (dir: 1 | -1) => {
-    // A subscreen covering the app owns the arrows. Otherwise they reached
-    // straight past it to the tab underneath, so pressing up on TV Guide tuned
-    // a feed you could not see. Registered by the hold menu, and null whenever
-    // no subscreen is up.
+    // A transient layer INSIDE the tab answers first — it covers the screen,
+    // so cycling screens behind it would be invisible. The camera's capture
+    // preview flips filters; the profile's fullscreen post viewer browses
+    // posts. Both report whether they took the press.
+    if (activeTab === 'post' && cameraActionsRef.current?.arrow(dir)) return
+    if (activeTab === 'profile' && profileArrowsRef.current?.(dir)) return
+    // With the hold menu mounted (a page is open, or the wheel is up) it owns
+    // the cycle: it walks its own tab's pages and the door back out.
     if (subscreenArrowsRef.current?.(dir)) return
-    // On the camera tab a capture preview takes the arrows first (filter
-    // flipping). Otherwise they page the camera itself: viewfinder <-> Camera
-    // Roll, which is what the channel buttons have always meant here. Zoom
-    // has its own slider and does not need them.
-    if (activeTab === 'post') {
-      if (!cameraActionsRef.current?.arrow(dir)) {
-        setCameraStep(s => s + (dir === -1 ? 1 : -1))
-      }
-      return
-    }
-    if (activeTab === 'profile') {
-      profileArrowsRef.current?.(dir)
-      return
-    }
-    if (activeTab === 'map') {
-      // On the map the arrows walk the posts around you: the map flies
-      // pop-to-pop and the number between the arrows is which post you are on.
-      // Do NOT advance a local counter here. It walked 0..POST_COUNT-1 (128)
-      // while the map walked its own pop list, so the two drifted apart
-      // immediately. Ask the map to move; it answers with the index it landed
-      // on (poplur-map-pop above), and that is what the arrows display.
-      if (!mapReady) {
-        pendingMapCyclesRef.current.push(dir)
-      } else {
-        mapFrameRef.current?.contentWindow?.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir }, '*')
-      }
-      return
-    }
-    setChanIndex(i => (i + dir + CHANNELS.length) % CHANNELS.length)
+    // Standing on the tab's own screen with nothing mounted to answer — this
+    // IS the door, so step into the tab's page list. The menu is not mounted
+    // here at all, which is why the walk above cannot do it: opening the page
+    // is what mounts it. Down enters at the first page, up at the last.
+    const pages = tabPageScreens(activeTab)
+    if (!pages.length) return
+    const screen = dir === 1 ? pages[0] : pages[pages.length - 1]
+    setResume(current => ({ screen, n: current.n + 1 }))
+    setHoldOpen(true)
   }
 
   useEffect(() => {
@@ -2551,6 +2535,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             }}
             onFlashChange={setCameraFlashArmed}
             step={cameraStep}
+            // The roll is a PAGE of the camera, pushed up from the bottom —
+            // one step of the same pager the close below steps back down. The
+            // camera's own roll button asks for it through here; so does a
+            // native host firing the `roll` action. This prop had never been
+            // passed, so the camera's bound roll action was a dead end: the
+            // only thing that could open the roll was the hold-menu tile,
+            // which is exactly the tile that is now a button on the camera.
+            onOpenRoll={() => setCameraStep(s => s + 1)}
             onCloseRoll={() => setCameraStep(s => s - 1)}
             bindActions={actions => { cameraActionsRef.current = actions }}
             onRecordingChange={setRecordMs}
