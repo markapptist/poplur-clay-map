@@ -50,9 +50,16 @@ export function drawFaceAREffect(
 }
 
 function FaceEffect({ filter }: { filter: string }) {
+  // The per-filter skin tints below are keyed by id, and the rail's ids were
+  // all replaced — so every lookup missed and the bare `.skinMask` rendered on
+  // its own: a generic blur-and-pink blob on the face, identical for all
+  // fifteen filters and plain wrong under the ones that sharpen (Comic Pop,
+  // Chrome Shine). No tint of its own means no mask at all; the filter's grade
+  // still covers the whole frame either way.
+  const skin = styles[`skin_${filter}`]
   return (
     <>
-      <span className={`${styles.skinMask} ${styles[`skin_${filter}`] ?? ''}`} />
+      {skin && <span className={`${styles.skinMask} ${skin}`} />}
       {filter === 'puppy-love' && (
         <>
           <span className={`${styles.blush} ${styles.blushLeft}`} />

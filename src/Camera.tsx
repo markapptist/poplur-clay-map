@@ -1566,6 +1566,14 @@ export default function Camera({
             style={{
               objectFit: !hardwareZoom && zoom < 1 ? 'contain' : 'cover',
               display: streamOn ? '' : 'none',
+              // THE AR FILTER. `filterCss` was computed above and then only
+              // ever handed to the capture canvas, so picking a filter graded
+              // the photo you took and left the viewfinder untouched — the rail
+              // looked dead because nothing on screen answered it. (iOS never
+              // reaches this element at all: its preview is a native layer
+              // behind a transparent WebView, which is why the same choice also
+              // has to travel over the bridge — see applyARFilter.)
+              filter: filterCss,
               // Device zoom changes the track itself. Unsupported browsers use
               // this crop fallback; disabling the old drift keeps the requested
               // zoom stable beneath the HUD.
