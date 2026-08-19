@@ -27,7 +27,17 @@
      what the cube covers is to move the cube, not to shorten the screen. */
   padding-bottom: max(18px, env(safe-area-inset-bottom));
   color: #f4eef5;
-  background: var(--poplur-ground, #08040a);
+  /* The radio keeps its OWN ground, deliberately not the app theme.
+     It is a lit deck in a dark room — the dial glow, the station cards and
+     the light ink above all read against this, and a theme that paints the
+     app cream or gold put light text on a light ground. The app-wide
+     --poplur-ground was applied here in b8203bb along with every other
+     screen; this is the background the screen was designed with, restored.
+     (The flat #08040a that stood as the variable's fallback was never the
+     original either — the original is these two layers.) */
+  background:
+    radial-gradient(120% 46% at 50% 0%, rgba(246, 59, 154, 0.16), transparent 60%),
+    linear-gradient(180deg, #14101b 0%, #0c0912 52%, #08060d 100%);
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 }
 
