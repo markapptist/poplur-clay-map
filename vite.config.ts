@@ -1,7 +1,40 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { cp } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// Where the asset packs are published, read from the manifest AT BUILD TIME.
+//
+// The running app also fetches that manifest, but it cannot wait for it: the
+// theme URLs are module-level constants (PROFILE_THEMES), so packBase() runs
+// during import — before loadManifest() is even called — and the hold menu
+// builds its subscreen iframe src as a plain string too. Both would take the
+// in-bundle fallback path. Baking the base in makes that resolution correct
+// from the first tick, which is the precondition for shipping the packs out
+// of the bundle at all (see PUBLISHED_PACK_DIRS below).
+const ASSET_PACK_BASE: string = (() => {
+  try {
+    const manifestPath = fileURLToPath(new URL('./public/asset-manifest.json', import.meta.url))
+    const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      baseUrl?: string
+      localPaths?: Record<string, string>
+    }
+    // localPaths wins in the manifest too, and means "these are not published
+    // anywhere yet" — so it must not switch on the exclusion below.
+    if (parsed.localPaths && Object.keys(parsed.localPaths).length) return ''
+    return typeof parsed.baseUrl === 'string' ? parsed.baseUrl : ''
+  } catch {
+    return ''
+  }
+})()
+
+// Directories whose contents the manifest publishes. They are dropped from the
+// build ONLY while ASSET_PACK_BASE is set: with no published base the bundled
+// copy IS the pack, so the build keeps shipping it. Point the manifest back at
+// localPaths and these return to the bundle on the next build, no config edit.
+const PUBLISHED_PACK_DIRS = ['subscreens', 'profile-themes', 'games/arcade/art']
 
 // Source-quality meshes retained for authoring/prerender regeneration. The
 // running app uses the checked-in sprites or decimated `*_lite.glb` variants;
@@ -45,7 +78,15 @@ function boundedPublicAssets() {
         filter: sourcePath => {
           const path = relative(source, sourcePath).split(sep).join('/')
           if (!path) return true
-          return !SOURCE_ONLY_PUBLIC_PATHS.has(path)
+          if (SOURCE_ONLY_PUBLIC_PATHS.has(path)) return false
+          // 82MB of the shipped bundle is pack content the app now fetches
+          // from the bucket. Copying it as well means a phone carries the
+          // bytes AND can download them again.
+          if (ASSET_PACK_BASE
+            && PUBLISHED_PACK_DIRS.some(dir => path === dir || path.startsWith(`${dir}/`))) {
+            return false
+          }
+          return true
         },
       })
     },
@@ -54,6 +95,9 @@ function boundedPublicAssets() {
 
 export default defineConfig(({ command }) => ({
   plugins: [react(), boundedPublicAssets()],
+  // Read by assetPacks.packBase() so a pack path is right on the first tick,
+  // before the fetched manifest exists.
+  define: { __POPLUR_ASSET_BASE__: JSON.stringify(ASSET_PACK_BASE) },
   // NOTE: no COOP/COEP here on purpose. The Arcade's emulator core is pinned to
   // a SINGLE-THREADED mGBA build precisely so this app never needs cross-origin
   // isolation — turning it on would force a CORP/CORS opt-in on Mapbox, Firebase

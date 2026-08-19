@@ -49,6 +49,12 @@ const cachesAvailable = () => typeof caches !== 'undefined'
  *  to another host or a CDN by republishing the manifest alone. */
 export const MANIFEST_URL = 'asset-manifest.json'
 
+/** Injected by vite.config from the manifest's own baseUrl. Empty in tests and
+ *  in any host that does not define it, where `fallback` remains correct. */
+declare const __POPLUR_ASSET_BASE__: string | undefined
+const BUILT_IN_PACK_BASE =
+  typeof __POPLUR_ASSET_BASE__ === 'string' ? __POPLUR_ASSET_BASE__ : ''
+
 let manifest: AssetManifest | null = null
 const states = new Map<string, PackState>()
 const inflight = new Map<string, Promise<boolean>>()
@@ -142,7 +148,14 @@ export async function ensurePack(pack: AssetPack): Promise<boolean> {
 export function packBase(packId: string, fallback: string): string {
   const local = manifest?.localPaths?.[packId]
   if (local) return local
-  if (manifest?.baseUrl) return `${manifest.baseUrl}/${packId}`
+  // The fetched manifest first, then the base baked in at build time. That
+  // second step is what makes this honest for callers that resolve before any
+  // fetch can land — PROFILE_THEMES builds its urls during module import, so
+  // it never saw a fetched manifest at all and silently used `fallback` for
+  // the whole session. The fallback now means what it says: no published base
+  // is known, so the bundled copy is the pack.
+  const base = manifest?.baseUrl || BUILT_IN_PACK_BASE
+  if (base) return `${base}/${packId}`
   return fallback
 }
 
