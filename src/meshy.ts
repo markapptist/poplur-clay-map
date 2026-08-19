@@ -63,6 +63,8 @@ export interface MeshyProgress {
   stage: string
 }
 
+import { authToken, requestAuthToken } from './nativeAuth'
+
 export class MeshyUnavailable extends Error {}
 
 export interface MeshyGeneratedObject {
@@ -93,9 +95,19 @@ export async function generateMeshyCube(options: {
   if (!base) throw new MeshyUnavailable('No Poplur generator endpoint configured')
 
   options.onProgress?.({ ratio: 0.04, stage: 'Sending your image' })
+  // The endpoint authorizes by role (admin -> landmarks, business -> its own
+  // model), so it needs to know who is asking. No token means the shell has not
+  // signed in yet, and the server would reject us anyway — fail here with a
+  // sentence a human can act on rather than a bare 401.
+  const token = authToken()
+  if (!token) {
+    requestAuthToken()
+    throw new MeshyUnavailable('Sign in on the device before generating a model.')
+  }
+
   const created = await fetch(`${base}/image-to-3d`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify({ image: options.image, style: options.style, name: options.name }),
     signal: options.signal,
   })
@@ -109,7 +121,10 @@ export async function generateMeshyCube(options: {
     if (Date.now() > deadline) throw new Error('The generator took too long')
     await new Promise(resolve => window.setTimeout(resolve, POLL_MS))
 
-    const polled = await fetch(`${base}/image-to-3d/${encodeURIComponent(taskId)}`, { signal: options.signal })
+    const polled = await fetch(`${base}/image-to-3d/${encodeURIComponent(taskId)}`, {
+      headers: { authorization: `Bearer ${authToken() ?? token}` },
+      signal: options.signal,
+    })
     if (!polled.ok) throw new Error(`Lost the job (${polled.status})`)
     const task = await polled.json() as {
       status?: string
