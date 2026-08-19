@@ -1,4 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import pullStyles from './PullToRefresh.module.css'
+import { usePullToRefresh } from './usePullToRefresh'
 import styles from './TVGuide.module.css'
 import { CHANNELS } from './FeedTwin'
 import { playPop } from './pop'
@@ -116,15 +118,52 @@ export default function TVGuide({
   onClose: () => void
 }) {
   // Ranked best-performing first — position 1 at the top.
-  const channels = [...(CHANNELS as unknown as TVGuideChannel[])]
-    .sort((a, b) => scoreFor(b) - scoreFor(a))
+  //
+  // MEMOISED, and that is load-bearing, not tidiness: this array used to be
+  // rebuilt (and re-sorted) on every render, so anything depending on it got a
+  // new identity every time. The pull-to-refresh callback does — and a changing
+  // onRefresh re-runs the gesture's effect, whose cleanup wipes the in-flight
+  // transform. The curtain visibly started and collapsed two moves in. The
+  // source is a static import, so one sort is also simply correct.
+  const channels = useMemo(
+    () => [...(CHANNELS as unknown as TVGuideChannel[])].sort((a, b) => scoreFor(b) - scoreFor(a)),
+    [],
+  )
   const [previewId, setPreviewId] = useState(currentChannelId ?? channels[0]?.id)
   const pipVideoRef = useRef<HTMLVideoElement>(null)
   const [pipPlaying, setPipPlaying] = useState(() =>
     !document.hidden && PoplurPerformanceManager.snapshot.isForeground)
   const [muted, setMuted] = useState(isUserMuted)
+  // Pull-to-refresh, the same curtain Profile and News use — the guide is a
+  // scroll surface like they are, so the gesture belongs here too.
+  const guideRef = useRef<HTMLDivElement>(null)
+  const pullInner = useRef<HTMLDivElement>(null)
+  const pullPanel = useRef<HTMLDivElement>(null)
+  const pullHead = useRef<HTMLDivElement>(null)
+  /** Re-read what is on now. The ranking itself is derived from seeded, static
+      channel data (leadersFor), so this deliberately does NOT re-sort and
+      pretend something moved — it re-reads the live bits that CAN change: the
+      channel the feed is tuned to, and the mute state, then restarts the
+      preview so "on now" is actually showing again. Ranking becomes a real
+      refresh the moment live channel data lands. */
+  const refresh = useCallback(() => {
+    setMuted(isUserMuted())
+    setPreviewId(currentChannelId ?? channels[0]?.id)
+    guideRef.current?.scrollTo({ top: 0 })
+    const video = pipVideoRef.current
+    if (video) { try { video.currentTime = 0; void video.play() } catch { /* decoder busy */ } }
+  }, [currentChannelId, channels])
 
   const preview = channels.find(c => c.id === previewId) ?? channels[0]
+
+  usePullToRefresh({
+    scrollRef: guideRef,
+    innerRef: pullInner,
+    panelRef: pullPanel,
+    headRef: pullHead,
+    busyClass: pullStyles.busy,
+    onRefresh: refresh,
+  })
 
   const retirePip = useCallback(() => {
     if (pipVideoRef.current) releasePipMedia(pipVideoRef.current)
@@ -168,13 +207,25 @@ export default function TVGuide({
       video.load()
     }
     video.muted = isGateMuted()
-    void video.play().catch(() => {
-      // If WebKit has not granted audible autoplay yet, keep the live picture
-      // moving muted. The shared audio gate restores sound after a user gesture.
-      video.muted = true
-      void video.play().catch(() => setPipPlaying(false))
-    })
+    // Never latch "not playing" on a failed start. WebKit declines an
+    // unattended play() routinely — a source still arriving, a decoder briefly
+    // busy — and the old path surrendered to a manual replay button on a screen
+    // whose whole point is that the selected channel is already running. Fall
+    // back to muted, then keep retrying as the element becomes ready.
+    const kick = () => {
+      void video.play().catch(() => {
+        // The shared audio gate restores sound after a user gesture; until
+        // then a muted picture is still the live picture.
+        video.muted = true
+        void video.play().catch(() => { /* a later readiness event retries */ })
+      })
+    }
+    kick()
+    video.addEventListener('loadeddata', kick)
+    video.addEventListener('canplay', kick)
     return () => {
+      video.removeEventListener('loadeddata', kick)
+      video.removeEventListener('canplay', kick)
       releasePipMedia(video)
     }
   }, [pipPlaying, previewId, retirePip])
@@ -210,7 +261,13 @@ export default function TVGuide({
   }
 
   return (
-    <div className={styles.guide} role="dialog" aria-label="TV Guide">
+    <div className={styles.guide} role="dialog" aria-label="TV Guide" ref={guideRef}>
+      <div className={pullStyles.panel} ref={pullPanel} data-pull-panel aria-hidden="true">
+        <div className={pullStyles.head} ref={pullHead}>
+          <img src="sprites/poplur_mark_head_navigator_y0_p0_s640.png" alt="" draggable={false} />
+        </div>
+      </div>
+      <div className={styles.pullInner} ref={pullInner}>
       <header className={styles.header}>
         {/* No TV GUIDE heading — the Poplur wordmark above is the title of every
             subscreen. What the screen is showing you stays. */}
@@ -271,20 +328,6 @@ export default function TVGuide({
                 draggable={false}
               />
             ) : null}
-            {preview && !pipPlaying && (
-              <button
-                type="button"
-                className={styles.pipReplay}
-                aria-label={`Replay ${preview.name} preview`}
-                onKeyDown={event => event.stopPropagation()}
-                onClick={event => {
-                  event.stopPropagation()
-                  if (!document.hidden && PoplurPerformanceManager.snapshot.isForeground) {
-                    setPipPlaying(true)
-                  }
-                }}
-              >▶</button>
-            )}
             <span className={styles.pipScan} aria-hidden="true" />
             {/* channel plate rides inside the screen, like an on-air bug */}
             <div className={styles.pipMeta}>
@@ -366,6 +409,7 @@ export default function TVGuide({
             </button>
           )
         })}
+      </div>
       </div>
     </div>
   )

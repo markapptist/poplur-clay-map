@@ -9,7 +9,11 @@
   flex-direction: column;
   /* opaque: the guide covers the feed rather than ghosting over it (iOS draws
      its 0.78 black over an opaque stage, which the web stage does not give us) */
-  background: var(--poplur-ground, #08040a);
+  /* Deliberately NOT var(--poplur-ground): the guide is a fixed design, a
+     phosphor-green grid on black modelled on FeedTVGuideView.swift. When it
+     followed the app-wide theme, a light ground washed the whole screen out
+     and the green stopped reading as phosphor. This screen does not re-theme. */
+  background: #08040a;
   color: #fff;
   --guide-green: #4fff40;
   /* One natural scroll surface. The old nested rows scroller meant a swipe on
@@ -73,7 +77,11 @@
    television built into the guide rather than a thumbnail floating on it. */
 .pipSet {
   position: relative;
-  width: 100%;
+  /* Inset from the edges rather than full-bleed — at 100% the screen ran
+     nearly edge to edge and read as a video header instead of a set. */
+  width: 86%;
+  max-width: 560px;
+  margin-inline: auto;
   height: 100%;
   padding: 11px;
   border-radius: 20px;
@@ -112,26 +120,6 @@
   height: 100%;
   object-fit: cover;
 }
-
-.pipReplay {
-  position: absolute;
-  z-index: 3;
-  top: 50%;
-  left: 50%;
-  translate: -50% -50%;
-  width: 58px;
-  height: 58px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.34);
-  border-radius: 50%;
-  background: rgba(3, 10, 6, 0.64);
-  color: #fff;
-  font: 900 22px/1 system-ui, sans-serif;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-}
-.pipReplay:active { transform: scale(0.94); }
 
 .pipLogo {
   object-fit: contain;
@@ -498,4 +486,15 @@
 
 @media (prefers-reduced-motion: reduce) {
   .marqueeTrack { animation: none; }
+}
+
+/* The pull-to-refresh content wrapper. `.guide` is the scroll surface AND a
+   flex column, so the wrapper that travels with the pull has to carry that
+   column itself — otherwise every child collapses into one flex item and the
+   guide loses its layout. Transform-only, like the curtain it moves under. */
+.pullInner {
+  display: flex;
+  flex-direction: column;
+  min-height: min-content;
+  will-change: transform;
 }
