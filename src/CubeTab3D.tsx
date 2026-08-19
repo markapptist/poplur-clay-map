@@ -446,11 +446,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       renderer = new THREE.WebGLRenderer({
         canvas,
         alpha: true,
-        // MSAA on native too. The ~26 clay buttons keep it off because each is
-        // its own context and its own multisampled framebuffer, but this is a
-        // SINGLE 176px surface and the most-looked-at 3D object in the app --
-        // one small multisample resolve is a fair price for its silhouette.
-        antialias: true,
+        // MSAA off on native again. It is a fair price for the silhouette on a
+        // cool device, and this one is not: the multisample resolve is pure
+        // extra fill on the surface the device log blames for the heat.
+        antialias: !nativeShell,
         powerPreference: nativeShell ? 'low-power' : 'default',
         precision: shaderPrecision,
       })
@@ -470,11 +469,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     // does not cost the viewport. Take the ladder's SHAPE instead -- thermal
     // pressure still steps this down proportionally -- at a ceiling suited to
     // the size: 3 / 2.25 / 1.5 / 1.5 across FULL / REDUCED / LOW_POWER / EMERGENCY.
-    const SMALL_SURFACE_DPR_HEADROOM = 1.5
-    const maximumNavigatorDPR = 3
+    const maximumNavigatorDPR = nativeShell ? 1.25 : 2
     renderer.setPixelRatio(Math.min(
       window.devicePixelRatio || 1,
-      initialNavigatorPolicy.maximumPixelRatio * SMALL_SURFACE_DPR_HEADROOM,
+      initialNavigatorPolicy.maximumPixelRatio,
       maximumNavigatorDPR,
     ))
     renderer.setSize(size, size)
@@ -1167,7 +1165,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       navigatorFrameMs = 1000 / navigatorFPS
       renderer.setPixelRatio(Math.min(
         window.devicePixelRatio || 1,
-        snapshot.maximumPixelRatio * SMALL_SURFACE_DPR_HEADROOM,
+        snapshot.maximumPixelRatio,
         maximumNavigatorDPR,
       ))
       renderer.setSize(size, size, false)

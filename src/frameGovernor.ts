@@ -241,13 +241,25 @@ function setAmbientSleeping(sleeping: boolean): void {
 }
 
 // ── rate table ───────────────────────────────────────────────────────────────
-// Hz per rate class at each quality level. Interactive stays at 60 until the
-// device is genuinely struggling: dropping gesture tracking is the most visible
-// possible regression, so it is the last thing to go. Ambient is capped at 30
-// even at full quality — that is the whole point of the module.
+// Hz per rate class at each quality level.
+//
+// Interactive used to top out at 60, on the reasoning that dropping gesture
+// tracking is the most visible possible regression so it should be the last
+// thing to go. That reasoning is sound and it still lost: on a real iPhone,
+// unplugged, this app reached `fair` after ~33 minutes of ordinary use and the
+// owner was the post-login web surface. 60Hz is simply twice the per-second
+// work of 30 for every gesture, on a device already carrying a 3D map, four
+// WebGL widgets and video decoders.
+//
+// The ladder is kept — pressure must still be able to step down — but the
+// ceiling is now 30. This is a deliberate trade of drag smoothness for heat,
+// asked for explicitly after the phone stayed warm through every structural
+// fix. Raising it back is one line, and should be done against a device soak
+// rather than a gate pass: the gate measures an idle census and cannot see
+// what a gesture costs.
 const HZ: Record<Rate, [number, number, number, number]> = {
   //           q0  q1  q2  q3
-  interactive: [30, 45, 60, 60],
+  interactive: [20, 24, 30, 30],
   // Finite, explicitly requested media/VFX work. It is permitted through the
   // native ambient gate only while wakeManagedRendering owns a bounded lease,
   // and follows the public 10/15/24/30 policy rather than display refresh.

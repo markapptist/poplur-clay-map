@@ -147,7 +147,11 @@ export default function ClayCornerButton({
     // the visible jaggedness at a fraction of MSAA's cost. qualityPixelRatio
     // still follows the governor's ladder ([1, 1.25, 1.5, max]), so thermal
     // pressure steps this straight back down.
-    renderer.setPixelRatio(qualityPixelRatio(3))
+        // Back to 1.5 after the device stayed warm. Raised to 3 earlier tonight on
+    // the reasoning that these are render-on-demand and park at rest — true,
+    // but the heat is felt DURING use, and during use the extra fill is real.
+    // Heat beat sharpness; this is one line to put back once a soak shows room.
+    renderer.setPixelRatio(qualityPixelRatio(1.5))
     renderer.setSize(size, size, false)
     renderer.setClearColor(0x000000, 0)
     // The context can also be taken away later, under memory pressure.
