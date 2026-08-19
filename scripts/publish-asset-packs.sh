@@ -6,7 +6,7 @@
 # than as a side effect of building.
 set -euo pipefail
 
-BUCKET="${POPLUR_PACK_BUCKET:-poplur2025.firebasestorage.app}"
+BUCKET="${POPLUR_PACK_BUCKET:-poplur2025-assets}"
 PREFIX="asset-packs"
 
 [ -d dist-packs ] || { echo "dist-packs/ missing — run: npm run build-packs"; exit 1; }
@@ -23,5 +23,11 @@ gsutil -m -h "Cache-Control:public, max-age=31536000, immutable" \
   cp -r dist-packs/* "gs://$BUCKET/$PREFIX/"
 
 echo
-echo "Published. The bucket must allow public reads for the app to fetch them:"
+echo "Published."
+echo
+echo "This bucket must allow public reads. It is deliberately NOT the app's"
+echo "default bucket: that one holds user profile pictures and selfie videos,"
+echo "and opening it to serve game art would expose all of them."
+echo
+echo "  gsutil mb -l us-central1 gs://$BUCKET          # once, if it does not exist"
 echo "  gsutil iam ch allUsers:objectViewer gs://$BUCKET"

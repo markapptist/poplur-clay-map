@@ -1,3 +1,4 @@
+import { MANIFEST_URL, loadManifest } from './assetPacks'
 import './audioGate' // must run before any AudioContext is created
 import './stableViewport' // pins --poplur-app-height before first paint
 import { StrictMode } from 'react'
@@ -8,6 +9,13 @@ import './index.css'
 import App from './App'
 import { isNativeShell, isIOSNativeShell } from './nativeBridge'
 import { applyProfileThemeToDocument, readSelectedProfileTheme } from './profileThemes'
+
+// Resolve the asset manifest before first paint. Anything that builds a pack
+// path synchronously falls back to the in-bundle copy until this lands, so a
+// slow fetch degrades to today's behaviour rather than to a broken screen.
+void loadManifest(`${import.meta.env.BASE_URL}${MANIFEST_URL}`).catch(() => {
+  /* offline or not yet published: the bundled copies are still correct */
+})
 
 // The chosen theme grounds the WHOLE app (every screen sits on
 // --poplur-ground / inks with --poplur-ink), so it must be stamped on the

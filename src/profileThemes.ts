@@ -1,3 +1,4 @@
+import { packBase } from './assetPacks'
 import { postNativeEvent } from './nativeBridge'
 
 export type ProfileThemeID =
@@ -26,8 +27,12 @@ export interface ProfileTheme {
   entitlement: 'included' | 'premium'
 }
 
-const asset = (name: string) => `profile-themes/${name}.png`
-const thumbnail = (name: string) => `profile-themes/thumbs/${name}.jpg`
+// Themes are an optional pack: resolved through the manifest so they can move
+// to the bucket without touching this file. Falls back to the bundled copy,
+// which is where they live until the packs are published.
+const themeBase = () => packBase('profile-themes', 'profile-themes')
+const asset = (name: string) => `${themeBase()}/${name}.png`
+const thumbnail = (name: string) => `${themeBase()}/thumbs/${name}.jpg`
 
 export const PROFILE_THEMES: readonly ProfileTheme[] = [
   {

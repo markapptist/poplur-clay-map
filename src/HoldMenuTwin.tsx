@@ -13,7 +13,8 @@ import StudioScreen from './StudioScreen'
 import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
-import { onFrame } from './frameGovernor'
+import { packBase } from './assetPacks'
+import { boostFrames, onFrame } from './frameGovernor'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -150,7 +151,7 @@ function rclSubscreenUrl(item: Item): string {
   // there). Dev keeps pointing at :8945 so Rough Copy edits show immediately.
   if (!item.preview) {
     return new URL(
-      `subscreens/index.html?embed=${encodeURIComponent(item.screen)}&rcl=1`,
+      `${packBase('subscreens', 'subscreens')}/index.html?embed=${encodeURIComponent(item.screen)}&rcl=1`,
       window.location.href,
     ).href
   }
@@ -660,6 +661,14 @@ export default function HoldMenuTwin({
   // Momentum loop — wheel-of-fortune inertia + snap-to-nearest. It shares the
   // capped frame governor and therefore stops with the hidden/background
   // surface instead of keeping an independent 60 Hz timer alive.
+  //
+  // The loop is registered ambient, which is 5-20fps depending on thermal tier.
+  // While a finger is down the governor boosts ambient work to interactive, so
+  // a drag tracks smoothly — but the boost ends on release, which is exactly
+  // when the wheel starts coasting. The result was a visible stagger through
+  // the one part of the gesture the player is watching most closely. So the
+  // boost is held for as long as the wheel is actually moving, and dropped the
+  // moment it settles: smooth where it matters, and nothing burned at rest.
   useEffect(() => {
     const stop = onFrame((elapsedMs, t) => {
       const dt = Math.min(elapsedMs / 1000, 1 / 30)
@@ -669,6 +678,7 @@ export default function HoldMenuTwin({
 
       // Tap-to-spin: ease the wheel to the tapped item along the shortest arc.
       if (snapIndexRef.current !== null) {
+        boostFrames(160)
         const o = offsetRef.current
         let d = (snapIndexRef.current - o) % count
         if (d > count / 2) d -= count
@@ -683,6 +693,9 @@ export default function HoldMenuTwin({
       if (!idle) return
       const v = velocityRef.current
       if (Math.abs(v) > SNAP_VELOCITY) {
+        // Still coasting: keep the frame rate up. The window is short and
+        // refreshed each frame, so it lapses on its own once motion stops.
+        boostFrames(160)
         applyOffsetDelta(v * dt)
         velocityRef.current = v * Math.pow(FRICTION, dt * 60)
       } else {
@@ -691,6 +704,9 @@ export default function HoldMenuTwin({
         if (v !== 0 || o !== target) {
           velocityRef.current = 0
           const remaining = target - o
+          // The settle into the notch is the most visible part of the whole
+          // gesture, so it is boosted too rather than easing at ambient rate.
+          if (Math.abs(remaining) >= 0.001) boostFrames(160)
           applyOffsetDelta(Math.abs(remaining) < 0.001 ? remaining : remaining * 0.22)
         }
       }

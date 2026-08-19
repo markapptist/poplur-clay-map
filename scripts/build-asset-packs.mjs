@@ -63,7 +63,12 @@ for (const pack of PACKS) {
  * Plain storage.googleapis.com URLs rather than the firebasestorage form,
  * which percent-encodes every slash and would make path joining a special case.
  */
-const BUCKET = 'https://storage.googleapis.com/poplur2025.firebasestorage.app/asset-packs'
+// A SEPARATE bucket, not the app's default one. The default bucket holds user
+// uploads — profile pictures and selfie videos — and making it publicly
+// readable to serve game art would expose every one of them. Packs contain
+// nothing user-generated, so a dedicated public bucket is safe and keeps the
+// two blast radii apart.
+const BUCKET = 'https://storage.googleapis.com/poplur2025-assets/asset-packs'
 const LOCAL = { 'arcade-art': 'games/arcade/art', subscreens: 'subscreens', 'profile-themes': 'profile-themes' }
 const useBucket = process.env.POPLUR_PACK_BASE === 'bucket'
 

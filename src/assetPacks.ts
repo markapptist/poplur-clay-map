@@ -55,7 +55,10 @@ const inflight = new Map<string, Promise<boolean>>()
 
 export async function loadManifest(url: string): Promise<AssetManifest> {
   if (manifest) return manifest
-  const response = await fetch(url)
+  // Never served from cache: a stale manifest points at a base that may no
+  // longer exist, and every pack path is derived from it. The packs themselves
+  // are versioned and cached hard; the index that describes them is not.
+  const response = await fetch(url, { cache: 'no-cache' })
   if (!response.ok) throw new Error(`asset manifest ${response.status}`)
   manifest = (await response.json()) as AssetManifest
   return manifest
@@ -114,6 +117,22 @@ export async function ensurePack(pack: AssetPack): Promise<boolean> {
 
   inflight.set(pack.id, run)
   return run
+}
+
+/**
+ * Where a pack's files live, resolved synchronously.
+ *
+ * Callers that build paths as plain strings — a theme image, an iframe src —
+ * cannot await the manifest, so this answers immediately and falls back to the
+ * in-bundle copy. That fallback is correct rather than merely safe: until the
+ * packs are published the bundled copy IS the pack, so a caller that resolves
+ * before the manifest arrives still gets a working file.
+ */
+export function packBase(packId: string, fallback: string): string {
+  const local = manifest?.localPaths?.[packId]
+  if (local) return local
+  if (manifest?.baseUrl) return `${manifest.baseUrl}/${packId}`
+  return fallback
 }
 
 /** Resolve a file inside a pack to a URL the app can use, cached or not. */

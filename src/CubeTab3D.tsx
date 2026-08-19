@@ -51,7 +51,6 @@ const CUBE_MOTION_PITCH_INPUT_LIMIT = Math.PI / 2
 // 2° swallowed the slow tilts outright — the ones where you turn the handset
 // deliberately to look at the object. 1° is still past the sensor's noise.
 const CUBE_MOTION_DEAD_ZONE = THREE.MathUtils.degToRad(1)
-const CUBE_MOTION_PITCH_PEAK = THREE.MathUtils.degToRad(22)
 // The parallax envelope for every clay object. These were 8°/6°, which the
 // 0.85 gain saturated after about 9° of wrist — the objects were reaching
 // their limit almost immediately and then sitting there, so the handset kept
@@ -645,11 +644,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     }
 
     // A phone can rest face-up on a table or be held upright. Neither position
-    // should leave the navigator leaning. Folding physical pitch gives the
-    // middle of that travel a gentle parallax response and returns it to flat
-    // at both endpoints. Roll remains independent: coupling it to pitch made
-    // side-to-side motion disappear completely at common holding angles.
-    const foldedPitch = (angle: number) => Math.sin(angle * 2)
+    // should leave the navigator leaning. The pitch response used to FOLD here
+    // (sin(pitch * 2)) so the object returned to level at both a flat and an
+    // upright hold; that is what made the cube stop answering the hand at
+    // either end, and it is gone. Roll remains independent: coupling it to
+    // pitch made side-to-side motion disappear at common holding angles.
 
     // Every replacement object shares one controlled response. Inputs are raw
     // attitude radians from Core Motion (or their browser equivalent), so the
@@ -671,15 +670,34 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const gain = motionSensitivity * (aiming ? CAMCORDER_MOTION_GAIN : 1)
       const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
       const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT
-      // The fold is a parallax trick: it returns the object to level at both a
-      // flat and an upright hold. On a camcorder it is actively wrong — past
-      // 45° it starts aiming BACK toward level while you are still tipping the
-      // phone further up. Aiming measures real travel from the filming grip.
+      // MONOTONIC, not folded.
+      //
+      // The fold was sin(pitch * 2): zero at a flat hold, zero at an upright
+      // hold, peaking in between. That is a real parallax trick, but it means
+      // the object goes DEAD at both ends of the range — hold the phone
+      // straight up or lay it straight down and the cube stopped answering the
+      // hand entirely. That was the reported problem, and it was the fold, not
+      // the sensor.
+      //
+      // Proportional across the whole hold range rather than a gain on raw
+      // radians: a raw gain saturated the 12° envelope after about 14° of wrist
+      // and then sat there, which is the same "it does not track me" complaint
+      // arriving from the other end. Normalising by the INPUT limit maps the
+      // full physical range onto the full envelope, so there is travel
+      // everywhere and the bounds are still the bounds.
+      //
+      // Aiming is unchanged: a camcorder measures real travel from the filming
+      // grip and never wanted the fold in the first place.
       const pitchResponse = aiming
         ? rawMotionPitch - CAMCORDER_NEUTRAL_PITCH
-        : foldedPitch(rawMotionPitch) * CUBE_MOTION_PITCH_PEAK
+        : (rawMotionPitch / CUBE_MOTION_PITCH_INPUT_LIMIT) * CUBE_MOTION_PITCH_LIMIT
+      // Roll gets the same treatment for the same reason — it saturated at
+      // ~19° of a 45° range, so half a deliberate wrist turn did nothing.
+      const rollResponse = aiming
+        ? rawMotionRoll
+        : (rawMotionRoll / CUBE_MOTION_ROLL_INPUT_LIMIT) * CUBE_MOTION_YAW_LIMIT
       const nextYaw = THREE.MathUtils.clamp(
-        direction * applyMotionDeadZone(rawMotionRoll) * gain,
+        direction * applyMotionDeadZone(rollResponse) * gain,
         -yawLimit,
         yawLimit,
       )
