@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import styles from './SettingsScreen.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
@@ -74,7 +74,13 @@ const SIDE_LABEL: Record<ControlSide, string> = {
 
 // No onClose prop: with DONE gone, the cube is the only way out of this screen,
 // and the cube is the shell's own handler — nothing here needs to call it.
-export default function SettingsScreen() {
+export default function SettingsScreen({ bindBack }: {
+  /** The cube's back button, lent down from the hold menu. Settings nests one
+      level (the root list -> a sub-page), so it hands that step up rather than
+      printing a "‹ SETTINGS" of its own. See HoldMenuTwin's nativeBackRef. */
+  bindBack?: (fn: (() => boolean) | null) => void
+} = {}) {
+  const stepBackRef = useRef<() => boolean>(() => false)
   const code = referralCode()
   const link = referralLink(code)
   const [active, setActive] = useState(isWorldRadiusActive)
@@ -137,7 +143,20 @@ export default function SettingsScreen() {
   }
 
   const openPage = (next: Page) => { playPop(); setPage(next) }
-  const backToList = () => { playPop(); setPage(null) }
+  // On a sub-page the cube walks back to the list; on the list it falls
+  // through and closes Settings, which is what it already did. This replaced
+  // the "‹ SETTINGS" button, so the pop it used to play moves here.
+  stepBackRef.current = () => {
+    if (page === null) return false
+    playPop()
+    setPage(null)
+    return true
+  }
+  useEffect(() => {
+    if (!bindBack) return
+    bindBack(() => stepBackRef.current())
+    return () => bindBack(null)
+  }, [bindBack])
 
   // The countdown, and only while this screen is open. Half a minute is fine
   // for a readout in hours and minutes — a per-second tick would be a timer
@@ -298,9 +317,8 @@ export default function SettingsScreen() {
 
         {page !== null && (
           <div className={styles.navBar}>
-            <button type="button" className={styles.back} onClick={backToList}>
-              <span aria-hidden="true">‹</span> SETTINGS
-            </button>
+            {/* No "‹ SETTINGS" button — the cube is the back control, here as
+                everywhere. The page just says where you are. */}
             <h2 className={styles.pageTitle}>{PAGE_TITLE[page]}</h2>
           </div>
         )}

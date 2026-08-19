@@ -577,13 +577,14 @@ export default function Camera({
             facingMode: facing,
             width: { ideal: 1280 },
             height: { ideal: 1280 },
-            // Preview cadence is the expensive sustained part of capture.
-            // Preserve full frame dimensions while a native shell caps its
-            // sensor/ISP stream at 20fps. Still resolution stays unchanged,
-            // and video remains smooth without paying for unseen 30/60fps.
-            frameRate: NATIVE_SHELL
-              ? { ideal: 20, max: 20 }
-              : { ideal: 30, max: 30 },
+            // Full rate everywhere. The shell used to cap its own stream at
+            // 20fps to spare the sensor/ISP, and that cap was visible — a
+            // viewfinder that steps reads as a broken one. `ideal` without a
+            // `max` lets the hardware give what it has (60 where the sensor
+            // offers it, 30 on a laptop webcam) instead of holding it down.
+            // Thermal protection stays where it can measure: the native
+            // pressure ladder on iOS, the shell's own park at serious.
+            frameRate: { ideal: 60 },
           },
           // Requesting microphone access here made a denied microphone hide an
           // otherwise-authorized camera. Video recording can still proceed

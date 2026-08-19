@@ -113,23 +113,7 @@
   margin-bottom: 14px;
 }
 
-.back {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px 8px 11px;
-  border: 0;
-  border-radius: 999px;
-  /* Sits on the themed ground, so it self-carries: dark clay pill, light text. */
-  background: rgba(22, 6, 15, 0.55);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
-  color: #fff4fa;
-  font: 950 11px/1 system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.14em;
-  cursor: pointer;
-}
-
-.back:active { transform: scale(0.97); }
+/* The "‹ SETTINGS" back button is gone — the cube is the back control. */
 
 /* A page that has a settings screen but nothing on it yet. */
 .empty {
