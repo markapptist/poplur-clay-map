@@ -98,8 +98,19 @@ export async function ensurePack(pack: AssetPack): Promise<boolean> {
       const cache = await caches.open(cacheNameFor(pack))
       await Promise.all(pack.files.map(async file => {
         const url = packUrl(pack, file)
-        const response = await fetch(url)
-        if (!response.ok) throw new Error(`${file} ${response.status}`)
+        let response: Response
+        try {
+          response = await fetch(url)
+          if (!response.ok) throw new Error(`${file} ${response.status}`)
+        } catch (first) {
+          // Retry bypassing the HTTP cache. Packs are served immutable for a
+          // year, so a response cached before a header change — a CORS rule
+          // added after the first upload, say — is never revalidated and the
+          // pack stays broken forever. One reload turns a permanent failure
+          // into a transient one.
+          response = await fetch(url, { cache: 'reload' })
+          if (!response.ok) throw first
+        }
         await cache.put(url, response)
       }))
       states.set(pack.id, 'ready')

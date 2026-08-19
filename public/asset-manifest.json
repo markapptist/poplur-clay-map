@@ -1,5 +1,10 @@
 {
-  "baseUrl": "https://storage.googleapis.com/poplur2025-assets/asset-packs",
+  "baseUrl": "",
+  "localPaths": {
+    "arcade-art": "games/arcade/art",
+    "subscreens": "subscreens",
+    "profile-themes": "profile-themes"
+  },
   "packs": [
     {
       "id": "arcade-art",
@@ -187,8 +192,8 @@
     {
       "id": "subscreens",
       "version": 1,
-      "bytes": 69137975,
-      "digest": "7ede8f226aed",
+      "bytes": 69138553,
+      "digest": "f19d7b37ccbb",
       "files": [
         "assets/HoldMenu_CameraRoll.imageset/HoldMenu_CameraRoll.png",
         "assets/HoldMenu_Chat.imageset/chat_messages.png",
