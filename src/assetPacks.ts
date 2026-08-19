@@ -28,6 +28,9 @@ export interface AssetPack {
 export interface AssetManifest {
   /** Where packs are served from. Absolute, so it can move to a CDN without an app change. */
   baseUrl: string
+  /** Set only before packs are uploaded: serve each from where it already sits
+   *  in public/, so the app works unchanged until publishing happens. */
+  localPaths?: Record<string, string>
   packs: AssetPack[]
 }
 
@@ -80,6 +83,9 @@ export async function ensurePack(pack: AssetPack): Promise<boolean> {
   if (existing) return existing
 
   const run = (async () => {
+    // Served from public/ until packs are uploaded: already on the device, so
+    // there is nothing to fetch or cache.
+    if (manifest?.localPaths?.[pack.id]) { states.set(pack.id, 'ready'); return true }
     if (await isPackReady(pack)) { states.set(pack.id, 'ready'); return true }
     if (!cachesAvailable()) { states.set(pack.id, 'ready'); return true }  // uncached, still usable
 
@@ -87,9 +93,8 @@ export async function ensurePack(pack: AssetPack): Promise<boolean> {
     try {
       await evictUntilRoomFor(pack)
       const cache = await caches.open(cacheNameFor(pack))
-      const base = manifest?.baseUrl ?? ''
       await Promise.all(pack.files.map(async file => {
-        const url = `${base}/${pack.id}/${file}`
+        const url = packUrl(pack, file)
         const response = await fetch(url)
         if (!response.ok) throw new Error(`${file} ${response.status}`)
         await cache.put(url, response)
@@ -113,8 +118,9 @@ export async function ensurePack(pack: AssetPack): Promise<boolean> {
 
 /** Resolve a file inside a pack to a URL the app can use, cached or not. */
 export function packUrl(pack: AssetPack, file: string): string {
-  const base = manifest?.baseUrl ?? ''
-  return `${base}/${pack.id}/${file}`
+  const local = manifest?.localPaths?.[pack.id]
+  if (local) return `${local}/${file}`
+  return `${manifest?.baseUrl ?? ''}/${pack.id}/${file}`
 }
 
 // ---- eviction ---------------------------------------------------------------

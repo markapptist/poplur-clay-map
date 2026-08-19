@@ -35,11 +35,13 @@ interface BallThrow { frame: number; wobbles: number; caught: boolean }
 
 interface Props {
   specUrl: string
+  /** Where the art pack resolved to; the manifest decides local or bucket. */
+  artBase: string
   /** Called when the encounter ends, so the game can return to the overworld. */
   onFinished?: () => void
 }
 
-export default function CreatureBattle({ specUrl, onFinished }: Props) {
+export default function CreatureBattle({ specUrl, artBase, onFinished }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const artRef = useRef(new Map<string, HTMLImageElement>())
 
@@ -75,7 +77,7 @@ export default function CreatureBattle({ specUrl, onFinished }: Props) {
         const img = new Image()
         img.onload = () => { artRef.current.set(key, img); resolve() }
         img.onerror = () => resolve()
-        img.src = `${import.meta.env.BASE_URL}games/arcade/art/${path}`
+        img.src = `${import.meta.env.BASE_URL}${artBase}/${path}`
       })))
 
       await Promise.all([...wanted].flatMap(name => ['front', 'back'].map(side =>
@@ -83,7 +85,7 @@ export default function CreatureBattle({ specUrl, onFinished }: Props) {
           const img = new Image()
           img.onload = () => { artRef.current.set(`${name}_${side}`, img); resolve() }
           img.onerror = () => resolve()          // a missing sprite must not stall the battle
-          img.src = `${import.meta.env.BASE_URL}games/arcade/art/creatures/${side}/${name}_${side}.png`
+          img.src = `${import.meta.env.BASE_URL}${artBase}/creatures/${side}/${name}_${side}.png`
         }),
       )))
       if (cancelled) return
@@ -97,7 +99,7 @@ export default function CreatureBattle({ specUrl, onFinished }: Props) {
       sfxEncounter()
     })()
     return () => { cancelled = true }
-  }, [specUrl])
+  }, [specUrl, artBase])
 
   // ---- drawing ------------------------------------------------------------
   const draw = useCallback(() => {

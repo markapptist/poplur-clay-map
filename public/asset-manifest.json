@@ -1,5 +1,10 @@
 {
-  "baseUrl": "https://storage.googleapis.com/poplur2025.firebasestorage.app/asset-packs",
+  "baseUrl": "",
+  "localPaths": {
+    "arcade-art": "games/arcade/art",
+    "subscreens": "subscreens",
+    "profile-themes": "profile-themes"
+  },
   "packs": [
     {
       "id": "arcade-art",

@@ -53,11 +53,25 @@ for (const pack of PACKS) {
   console.error(`  ${pack.id.padEnd(16)} ${files.length} files, ${(bytes / 1048576).toFixed(1)}MB  ${digest}`)
 }
 
+/**
+ * Where the app fetches packs from.
+ *
+ * Defaults to the copies still sitting in public/, so the app keeps working
+ * before anything is uploaded. Publishing flips it to the bucket:
+ *   POPLUR_PACK_BASE=bucket node scripts/build-asset-packs.mjs
+ *
+ * Plain storage.googleapis.com URLs rather than the firebasestorage form,
+ * which percent-encodes every slash and would make path joining a special case.
+ */
+const BUCKET = 'https://storage.googleapis.com/poplur2025.firebasestorage.app/asset-packs'
+const LOCAL = { 'arcade-art': 'games/arcade/art', subscreens: 'subscreens', 'profile-themes': 'profile-themes' }
+const useBucket = process.env.POPLUR_PACK_BASE === 'bucket'
+
 const manifest = {
-  // Plain object-storage URLs rather than the firebasestorage.googleapis.com
-  // form, which percent-encodes every slash in the path and would make the
-  // loader's path joining a special case.
-  baseUrl: 'https://storage.googleapis.com/poplur2025.firebasestorage.app/asset-packs',
+  baseUrl: useBucket ? BUCKET : '',
+  // Local mode serves each pack from where it already lives in public/, so
+  // nothing has to move before the upload happens.
+  localPaths: useBucket ? undefined : LOCAL,
   packs,
 }
 writeFileSync(join(PUBLIC, 'asset-manifest.json'), JSON.stringify(manifest, null, 2))

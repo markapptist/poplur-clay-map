@@ -61,12 +61,14 @@ const isSolid = (col: number, row: number) => {
 
 interface Props {
   spec: GameSpec
+  /** Where the art pack resolved to. */
+  artBase: string
   zone: ZoneSpec
   /** Called when the grass produces something. */
   onEncounter: () => void
 }
 
-export default function Overworld({ spec, zone, onEncounter }: Props) {
+export default function Overworld({ spec, zone, artBase, onEncounter }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const art = useRef(new Map<string, HTMLImageElement>())
   const [pos, setPos] = useState({ col: 7, row: 5 })
@@ -88,10 +90,10 @@ export default function Overworld({ spec, zone, onEncounter }: Props) {
       const img = new Image()
       img.onload = () => { art.current.set(key, img); resolve() }
       img.onerror = () => resolve()
-      img.src = `${import.meta.env.BASE_URL}games/arcade/art/${path}`
+      img.src = `${import.meta.env.BASE_URL}${artBase}/${path}`
     }))).then(() => { if (!cancelled) setReady(true) })
     return () => { cancelled = true }
-  }, [])
+  }, [artBase])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
