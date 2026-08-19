@@ -97,7 +97,14 @@ export default function ClayNotifIcon({ kind, size = 40 }: { kind: NotifKind; si
     // for pixels that will never differ. The visible canvas ends up as plain
     // 2D bitmap — the same trade modelSprite makes for static map objects.
     const scratch = document.createElement('canvas')
-    const dpr = qualityPixelRatio(1.5)
+    // Pixel ratio, not MSAA. These are physically small surfaces, so the cost of
+    // rendering them at the device's real ratio is bounded by their own size
+    // rather than the viewport -- but MSAA would add a multisampled framebuffer
+    // per instance, and there are ~26 of these. Raising the ceiling to 3 fixes
+    // the visible jaggedness at a fraction of MSAA's cost. qualityPixelRatio
+    // still follows the governor's ladder ([1, 1.25, 1.5, max]), so thermal
+    // pressure steps this straight back down.
+    const dpr = qualityPixelRatio(3)
     scratch.width = Math.round(size * dpr)
     scratch.height = Math.round(size * dpr)
     const renderer = new THREE.WebGLRenderer({

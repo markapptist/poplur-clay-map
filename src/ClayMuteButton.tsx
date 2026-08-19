@@ -59,7 +59,14 @@ export default function ClayMuteButton({
     const renderer = new THREE.WebGLRenderer({
       canvas, alpha: true, antialias: false, powerPreference: 'low-power',
     })
-    renderer.setPixelRatio(qualityPixelRatio(1.5))
+        // Pixel ratio, not MSAA. These are physically small surfaces, so the cost of
+    // rendering them at the device's real ratio is bounded by their own size
+    // rather than the viewport -- but MSAA would add a multisampled framebuffer
+    // per instance, and there are ~26 of these. Raising the ceiling to 3 fixes
+    // the visible jaggedness at a fraction of MSAA's cost. qualityPixelRatio
+    // still follows the governor's ladder ([1, 1.25, 1.5, max]), so thermal
+    // pressure steps this straight back down.
+    renderer.setPixelRatio(qualityPixelRatio(3))
     renderer.setSize(size, size, false)
     renderer.setClearColor(0x000000, 0)
 

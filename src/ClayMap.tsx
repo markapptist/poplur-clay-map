@@ -1408,10 +1408,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // window.devicePixelRatio at construction/resize:
     //  - lite (low-mem Android): pin 1x — quarters the GL pixel count.
     //  - every other NATIVE shell (iPhones report no deviceMemory, so they
-    //    never qualify as lite): cap at 2x — a 3x phone was pushing 2.25×
-    //    the pixels of a 2x screen for no visible gain on a 6" display.
+    //    never qualify as lite): cap at 2x.
+    //
+    // iOS was at 1.5x, which on a 3x panel is a QUARTER of the screen's pixels —
+    // far enough that the "no visible gain" claim above stopped being true and
+    // the map read as pixelated. Raised to 2x to match the other native shells.
+    // Deliberately NOT 3x: unlike the small clay surfaces, this one is
+    // full-screen, so its cost scales with the viewport and 3x would be ~4× the
+    // current fill. MSAA stays off here for the same reason — at 2x the extra
+    // resolution is already attacking the aliasing, and multisampling
+    // full-screen fill-extrusions is the one genuinely expensive AA in the app.
     const iosNativeMap = isIOSNativeShell()
-    const dprCap = MAP_2D || MAP_LITE ? 1 : iosNativeMap ? 1.5 : isNativeShell() ? 2 : Infinity
+    const dprCap = MAP_2D || MAP_LITE ? 1 : isNativeShell() ? 2 : Infinity
     if (window.devicePixelRatio > dprCap) {
       try {
         Object.defineProperty(window, 'devicePixelRatio', { value: dprCap, configurable: true })

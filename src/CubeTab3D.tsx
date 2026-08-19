@@ -40,13 +40,24 @@ type MotionTuning = {
     the rendered model too, so spring momentum can never expose a side/back
     face. */
 export const DEFAULT_CUBE_MOTION_SENSITIVITY = 0.85
-export const DEFAULT_CUBE_MOTION_SMOOTHING = 94
+// Was 94. At that retain the spring's stiffness works out to 0.043 with 0.889
+// damping — so soft that a normal wrist tilt was over before the object had
+// travelled much of the way to its target, which reads as "the accelerometer
+// barely moves the cubes". 84 keeps the clay weight and still arrives inside
+// the gesture. The motion lab's slider covers 55-94, so this stays tunable.
+export const DEFAULT_CUBE_MOTION_SMOOTHING = 84
 const CUBE_MOTION_ROLL_INPUT_LIMIT = THREE.MathUtils.degToRad(45)
 const CUBE_MOTION_PITCH_INPUT_LIMIT = Math.PI / 2
-const CUBE_MOTION_DEAD_ZONE = THREE.MathUtils.degToRad(2)
-const CUBE_MOTION_PITCH_PEAK = THREE.MathUtils.degToRad(14)
-const CUBE_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(8)
-const CUBE_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(6)
+// 2° swallowed the slow tilts outright — the ones where you turn the handset
+// deliberately to look at the object. 1° is still past the sensor's noise.
+const CUBE_MOTION_DEAD_ZONE = THREE.MathUtils.degToRad(1)
+const CUBE_MOTION_PITCH_PEAK = THREE.MathUtils.degToRad(22)
+// The parallax envelope for every clay object. These were 8°/6°, which the
+// 0.85 gain saturated after about 9° of wrist — the objects were reaching
+// their limit almost immediately and then sitting there, so the handset kept
+// moving and they did not. The travel is what was missing, not the gain.
+const CUBE_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(16)
+const CUBE_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(12)
 /** The camcorder is the one navigator object you are supposed to AIM.
  *
  *  Every other object is a mark to be read, so its handset motion is deliberate
@@ -57,8 +68,24 @@ const CUBE_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(6)
  *  are pointing at, and lets it pitch up and down as you raise and drop your
  *  hand. Still hard-limited: past roughly a third of a turn you would be
  *  looking at its back, which is not a camcorder pointing anywhere. */
-const CAMCORDER_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(26)
-const CAMCORDER_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(18)
+// The camcorder is not a clay ornament — it is a camera in your hand, so it
+// AIMS: it turns the way you turn, through a much wider envelope than the
+// parallax objects, and its pitch tracks the real hold angle rather than the
+// folded table/upright curve. These limits already existed but could never be
+// reached: applyMotionTarget clamped the TARGET to the 8°/6° cube envelope
+// before the spring ever saw it, so the wider clamp downstream was dead code.
+const CAMCORDER_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(34)
+const CAMCORDER_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(26)
+/** The grip the camcorder reads as level. A handset held to film sits around
+    60° off the tabletop, not flat and not upright, so that is the pose that
+    should aim straight ahead; tipping up or down from it aims up or down. */
+const CAMCORDER_NEUTRAL_PITCH = THREE.MathUtils.degToRad(60)
+/** An aimed instrument follows the hand closely — this lands the response near
+    1:1 inside the envelope above, where 0.85 alone left it lagging the wrist. */
+const CAMCORDER_MOTION_GAIN = 1.15
+/** …and it arrives while you are still moving. The parallax spring's weight is
+    the whole point on a clay cube and completely wrong on a viewfinder. */
+const CAMCORDER_MOTION_SMOOTHING = 62
 
 // The navigator is a ring, not a list of unrelated destinations. Keep this
 // sequence explicit because it is shared by touch and keyboard navigation:
@@ -419,7 +446,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       renderer = new THREE.WebGLRenderer({
         canvas,
         alpha: true,
-        antialias: !nativeShell,
+        // MSAA on native too. The ~26 clay buttons keep it off because each is
+        // its own context and its own multisampled framebuffer, but this is a
+        // SINGLE 176px surface and the most-looked-at 3D object in the app --
+        // one small multisample resolve is a fair price for its silhouette.
+        antialias: true,
         powerPreference: nativeShell ? 'low-power' : 'default',
         precision: shaderPrecision,
       })
@@ -427,14 +458,23 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       setGlFailed(true)
       return
     }
-    // A 176px control cannot reveal a 3x backing buffer on a phone, but the GPU
-    // still shades all nine pixels for every CSS pixel. Native keeps a crisp
-    // 1.25x ceiling and follows later policy downgrades in the subscription
-    // below; desktop previews may use up to 2x.
-    const maximumNavigatorDPR = nativeShell ? 1.25 : 2
+    // The 1.25x ceiling this used to carry was too aggressive: on a 3x phone it
+    // rendered the cube at 17% of the panel's pixels, which reads as jagged and
+    // pixelated rather than "crisp". The old reasoning -- that the GPU shades
+    // nine pixels per CSS pixel -- is true but prices the wrong thing: cost here
+    // is bounded by a FIXED 176px surface, not the viewport, so 1.25x -> 3x adds
+    // roughly 231k pixels once. That is nothing next to a full-screen map.
+    //
+    // policy.maximumPixelRatio is a full-screen FILL budget (2 even at FULL), so
+    // applying it raw would re-impose the viewport's ceiling on a surface that
+    // does not cost the viewport. Take the ladder's SHAPE instead -- thermal
+    // pressure still steps this down proportionally -- at a ceiling suited to
+    // the size: 3 / 2.25 / 1.5 / 1.5 across FULL / REDUCED / LOW_POWER / EMERGENCY.
+    const SMALL_SURFACE_DPR_HEADROOM = 1.5
+    const maximumNavigatorDPR = 3
     renderer.setPixelRatio(Math.min(
       window.devicePixelRatio || 1,
-      initialNavigatorPolicy.maximumPixelRatio,
+      initialNavigatorPolicy.maximumPixelRatio * SMALL_SURFACE_DPR_HEADROOM,
       maximumNavigatorDPR,
     ))
     renderer.setSize(size, size)
@@ -595,6 +635,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     }
     armGlobeSpinRef.current = armGlobeSpin
 
+    /** The camcorder is the one object that aims rather than parallaxes. One
+        reader for it, so the target-building and the spring below can never
+        disagree about which response is in force — which is exactly how the
+        wider camcorder envelope ended up unreachable. */
+    const isAiming = () => loadedUrlRef.current === CAMCORDER_MODEL
+
     const applyMotionDeadZone = (angle: number) => {
       if (Math.abs(angle) <= CUBE_MOTION_DEAD_ZONE) return 0
       return angle - Math.sign(angle) * CUBE_MOTION_DEAD_ZONE
@@ -614,16 +660,35 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const applyMotionTarget = (roll: number, devicePitch: number, epsilon: number) => {
       rawMotionRoll = THREE.MathUtils.clamp(roll, -CUBE_MOTION_ROLL_INPUT_LIMIT, CUBE_MOTION_ROLL_INPUT_LIMIT)
       rawMotionPitch = THREE.MathUtils.clamp(devicePitch, -CUBE_MOTION_PITCH_INPUT_LIMIT, CUBE_MOTION_PITCH_INPUT_LIMIT)
-      const pitchResponse = foldedPitch(rawMotionPitch)
+      // Which object is on the navigator decides the whole response, and it has
+      // to be decided HERE rather than only at the clamp in the render loop:
+      // this is where the target is bounded, so a target built against the cube
+      // envelope can never reach the camcorder's, however wide that is.
+      const aiming = isAiming()
+      // An aimed instrument FOLLOWS the hand — turn the handset right and the
+      // camcorder swings right, which is what "points where I point" means. A
+      // clay object OPPOSES it, which is what makes it read as sitting behind
+      // the glass instead of glued to it. Same machinery, opposite sign.
+      const direction = aiming ? 1 : -1
+      const gain = motionSensitivity * (aiming ? CAMCORDER_MOTION_GAIN : 1)
+      const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
+      const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT
+      // The fold is a parallax trick: it returns the object to level at both a
+      // flat and an upright hold. On a camcorder it is actively wrong — past
+      // 45° it starts aiming BACK toward level while you are still tipping the
+      // phone further up. Aiming measures real travel from the filming grip.
+      const pitchResponse = aiming
+        ? rawMotionPitch - CAMCORDER_NEUTRAL_PITCH
+        : foldedPitch(rawMotionPitch) * CUBE_MOTION_PITCH_PEAK
       const nextYaw = THREE.MathUtils.clamp(
-        -applyMotionDeadZone(rawMotionRoll) * motionSensitivity,
-        -CUBE_MOTION_YAW_LIMIT,
-        CUBE_MOTION_YAW_LIMIT,
+        direction * applyMotionDeadZone(rawMotionRoll) * gain,
+        -yawLimit,
+        yawLimit,
       )
       const nextPitch = THREE.MathUtils.clamp(
-        -applyMotionDeadZone(pitchResponse * CUBE_MOTION_PITCH_PEAK) * motionSensitivity,
-        -CUBE_MOTION_PITCH_LIMIT,
-        CUBE_MOTION_PITCH_LIMIT,
+        direction * applyMotionDeadZone(pitchResponse) * gain,
+        -pitchLimit,
+        pitchLimit,
       )
       if (Math.abs(nextYaw - motionTargetYaw) < epsilon
         && Math.abs(nextPitch - motionTargetPitch) < epsilon) return false
@@ -877,7 +942,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const onDeviceOrientation = (event: DeviceOrientationEvent) => {
       if (document.visibilityState !== 'visible' || (event.gamma == null && event.beta == null)) return
       const now = performance.now()
-      if (now - lastMotionAt < 33) return
+      // 30Hz is plenty for a clay object leaning against the light. A
+      // viewfinder is aimed, and at 30Hz the lag between the handset turning
+      // and the camcorder following is visible, so it samples every frame.
+      // (The native shell posts through onNativeMotion below and is not
+      // throttled here at all — Core Motion sets its own rate.)
+      if (now - lastMotionAt < (isAiming() ? 16 : 33)) return
       lastMotionAt = now
       // Before the epsilon gate below, so a movement too small to shift the
       // target still proves the phone is in hand and keeps the loop warm.
@@ -985,7 +1055,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         // Match the selected Balanced simulator spring at a 60Hz reference
         // rate. Substeps make the feel frame-rate independent after an
         // occasional long WebKit frame without increasing the 60fps draw cap.
-        const retain = motionSmoothing / 100
+        // The camcorder runs its own, much snappier spring: the clay weight
+        // that makes a cube feel like an object in a case makes a viewfinder
+        // feel broken. The lab's slider still owns every other object.
+        const aiming = isAiming()
+        const retain = (aiming ? CAMCORDER_MOTION_SMOOTHING : motionSmoothing) / 100
         const stiffness = Math.max(0.035, (1 - retain) * 0.72)
         const damping = 0.72 + retain * 0.18
         let remainingSteps = Math.min(3, dt * navigatorFPS)
@@ -1000,7 +1074,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
           remainingSteps -= step
         }
         // The camcorder aims; everything else parallaxes. See the limits above.
-        const aiming = loadedUrlRef.current === CAMCORDER_MODEL
+        // These bound the SPRING's overshoot; applyMotionTarget bounds the
+        // target it is chasing with the same pair.
         const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
         const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT
         const boundedYaw = THREE.MathUtils.clamp(motionYaw, -yawLimit, yawLimit)
@@ -1018,10 +1093,19 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         needsRender = true
       }
 
-      const globeAnimating = mapGlobeIsVisible() && now < globeSpinUntil
-      // A globe entrance and live handset interaction stay fluid. Once the
-      // viewer and object are still, this branch stops mutating the scene and
-      // the scheduler below reaches zero callbacks.
+      // ALWAYS turning while you can see it (user-ordered, 18 Aug). This used
+      // to expire — armed for 8s at boot and re-armed by interaction — so the
+      // globe stopped on its own and read as broken: "why does this turn off
+      // by itself". The spin is the object's character, not an entrance
+      // flourish, so it no longer has a deadline.
+      //
+      // `mapGlobeIsVisible()` is still the gate, and it is the one that
+      // matters: the globe turns only while the document is visible, the
+      // display is active, the MAP tab is the one on screen, and the loaded
+      // object is actually the globe. Leave the tab, background the app or
+      // lock the phone and it stops — so "always" costs frames only while
+      // someone is looking at it.
+      const globeAnimating = mapGlobeIsVisible()
       if (globeAnimating) {
         yaw = (yaw + 0.5 * dt) % (Math.PI * 2)
         needsRender = true
@@ -1083,7 +1167,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       navigatorFrameMs = 1000 / navigatorFPS
       renderer.setPixelRatio(Math.min(
         window.devicePixelRatio || 1,
-        snapshot.maximumPixelRatio,
+        snapshot.maximumPixelRatio * SMALL_SURFACE_DPR_HEADROOM,
         maximumNavigatorDPR,
       ))
       renderer.setSize(size, size, false)
