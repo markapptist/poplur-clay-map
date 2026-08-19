@@ -15,7 +15,20 @@ command -v gsutil >/dev/null || { echo "gsutil not found. Install the Google Clo
 echo "Publishing to gs://$BUCKET/$PREFIX"
 du -sh dist-packs | sed 's/^/  /'
 read -r -p "Continue? [y/N] " reply
-[ "$reply" = "y" ] || { echo "cancelled"; exit 0; }
+case "$reply" in
+  [yY]|[yY][eE][sS]) ;;
+  *) echo "cancelled"; exit 1 ;;      # non-zero, so a && chain stops here
+esac
+
+# Create the bucket on first publish rather than failing with a raw gsutil error.
+if ! gsutil ls -b "gs://$BUCKET" >/dev/null 2>&1; then
+  echo "Bucket gs://$BUCKET does not exist."
+  read -r -p "Create it in us-central1? [y/N] " mk
+  case "$mk" in
+    [yY]|[yY][eE][sS]) gsutil mb -l us-central1 "gs://$BUCKET" ;;
+    *) echo "cancelled"; exit 1 ;;
+  esac
+fi
 
 # -m parallelises; -r recurses. Cache headers matter: packs are versioned in the
 # manifest, so a long max-age is safe and keeps repeat installs off the network.
