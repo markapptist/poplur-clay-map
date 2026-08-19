@@ -114,11 +114,19 @@ let boostUntil = 0
 // decoration and Mapbox's already-settled renderer, preserving its last frame.
 // The tab navigator has its own event-driven budget, so it can still react to
 // tilt without keeping the rest of the document awake.
-// One lease everywhere: decoration lives while the user is engaged and for
-// 15s after their last input, then sleeps until the next touch. The old 2s
-// native lease plus the one-showcase kill meant phones lost all ambient
-// motion two seconds after boot, permanently — masking, not scheduling.
-const AMBIENT_IDLE_MS = 15_000
+// Capable devices get a real lease: decoration lives while the user is engaged
+// and for 15s after their last input, then sleeps until the next touch. The old
+// 2s native lease plus a one-showcase kill meant phones lost all ambient motion
+// two seconds after boot, permanently — masking, not scheduling.
+//
+// The 3GB class is different, and this was measured, not assumed: on an A03 the
+// ambient subscribers ARE the frame budget (map p50 57ms governed vs 250ms with
+// decoration running, 100% janky). Flattening this to one lease for everyone
+// regressed that device's map straight back to 250ms. So no-headroom hardware
+// keeps the short lease AND the one-showcase kill: it gets the authored
+// showcase once, then decoration stays parked and the frame budget goes to
+// gestures. Everything else keeps the full lease.
+const AMBIENT_IDLE_MS = LOW_TIER_DEVICE ? 2_000 : 15_000
 let ambientAwakeUntil = typeof performance !== 'undefined'
   ? performance.now() + AMBIENT_IDLE_MS
   : Number.POSITIVE_INFINITY
@@ -127,6 +135,8 @@ let ambientSleepTimer = 0
 const qualityListeners = new Set<(q: Quality) => void>()
 const ambientSleepListeners = new Set<(sleeping: boolean) => void>()
 let ambientSleeping = false
+// Set the first time ambient decoration sleeps; only consulted on LOW_TIER.
+let ambientShowcaseFinished = false
 
 // Decoration asleep and the map renderer parked are NOT the same decision, and
 // conflating them cost us a frozen map. A parked map has its private
@@ -437,6 +447,7 @@ if (typeof document !== 'undefined') {
     window.clearTimeout(ambientSleepTimer)
     ambientSleepTimer = 0
     ambientAwakeUntil = 0
+    ambientShowcaseFinished = true
     setAmbientSleeping(true)
   }
   const ambientLeaseMs = () => {
@@ -447,6 +458,13 @@ if (typeof document !== 'undefined') {
   }
   const wakeAmbient = () => {
     if (document.hidden || !surfaceFront) {
+      sleepAmbient()
+      return
+    }
+    // No-headroom hardware gets the authored showcase once and then keeps its
+    // frames for gestures; later touches wake the renderer's direct-gesture
+    // window, not traffic, weather, boats and every other ambient subscriber.
+    if (LOW_TIER_DEVICE && ambientShowcaseFinished && !managedRenderingOperationActive()) {
       sleepAmbient()
       return
     }
