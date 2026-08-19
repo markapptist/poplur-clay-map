@@ -2248,7 +2248,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // camcorder outranks the screen: it is what you are doing right now. Under it
   // the order is unchanged — a subscreen's own object, then the cube you made
   // (Profile only), then the tab's object.
-  const requestedCubeModel = activeTab === 'post' && (cameraCaptureMode === 'video' || recordMs != null)
+  //
+  // "What you are doing right now" is only true ON THE LIVE CAMERA. Selecting
+  // VIDEO leaves `cameraCaptureMode` set for the rest of the session, so
+  // opening a camera-tab subscreen afterwards — STUDIO, CREATE, GAMES — kept
+  // handing the camcorder back and short-circuiting the screen's own object:
+  // STUDIO showed a camcorder instead of its mixing desk. The navigator has to
+  // name the screen you are standing on, so the override now applies only when
+  // there is no subscreen open.
+  const requestedCubeModel = activeTab === 'post' && cubeScreen == null
+    && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
     : (avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? PROFILE_CAMERA_MODEL : undefined)
