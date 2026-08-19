@@ -24,6 +24,18 @@ export const TYPE_CHART: Record<CreatureType, { strong: CreatureType[]; weak: Cr
 /** Each element is drawn by the creature on Poplur's sheet that already looks
  *  like it: the rock golem is stone, the cloud is gale, the bat is shade. The
  *  art tells a player the matchup before the type name does. */
+/** The effect sprite a move of each element throws. */
+export const TYPE_FX: Record<CreatureType, string> = {
+  ember: 'fire_burst',
+  tide:  'water_orb_large',
+  bloom: 'leaf_slash',
+  spark: 'electric_dash',
+  stone: 'ice_shard',
+  gale:  'psychic_ring',
+  shade: 'shadow_swipe',
+  beast: 'fairy_flare',
+}
+
 export const TYPE_ART: Record<CreatureType, string> = {
   ember: 'galaxy_slug',    // fire and stars
   tide:  'blue_elephant',

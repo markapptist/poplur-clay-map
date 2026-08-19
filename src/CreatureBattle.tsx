@@ -9,12 +9,12 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  TYPE_ART, catchOdds, makeMon, movesOf, resolveHit, rollEncounter,
+  TYPE_ART, TYPE_FX, catchOdds, makeMon, movesOf, resolveHit, rollEncounter,
   type GameSpec, type Mon, type MoveSpec,
 } from './battleRules'
 import {
   sfxBallBreak, sfxBallWobble, sfxCaught, sfxConfirm, sfxCursor,
-  sfxEncounter, sfxFaint, sfxHit, sfxMiss,
+  sfxCancel, sfxEncounter, sfxFaint, sfxHit, sfxMiss,
 } from './retroAudio'
 import styles from './CreatureBattle.module.css'
 
@@ -22,7 +22,16 @@ import styles from './CreatureBattle.module.css'
 const W = 384
 const H = 344
 
-type Phase = 'menu' | 'message' | 'over'
+/** FIGHT opens the move list; the rest act immediately. */
+const ACTIONS = ['FIGHT', 'BAG', 'CREATURE', 'RUN'] as const
+type Action = (typeof ACTIONS)[number]
+
+type Phase = 'action' | 'moves' | 'message' | 'over'
+
+/** A sprite thrown at the target for a few frames when a move lands. */
+interface Effect { art: string; at: number }
+/** Frames of the ball animation, plus how many wobbles are left to show. */
+interface BallThrow { frame: number; wobbles: number; caught: boolean }
 
 interface Props { specUrl: string }
 
@@ -33,8 +42,11 @@ export default function CreatureBattle({ specUrl }: Props) {
   const [spec, setSpec] = useState<GameSpec | null>(null)
   const [mine, setMine] = useState<Mon | null>(null)
   const [wild, setWild] = useState<Mon | null>(null)
-  const [phase, setPhase] = useState<Phase>('menu')
+  const [phase, setPhase] = useState<Phase>('action')
   const [cursor, setCursor] = useState(0)
+  const [action, setAction] = useState(0)
+  const [effect, setEffect] = useState<Effect | null>(null)
+  const [ball, setBall] = useState<BallThrow | null>(null)
   const [message, setMessage] = useState('')
   const [balls, setBalls] = useState(15)
   const [flash, setFlash] = useState(0)          // frames of hit flash on the target
@@ -49,6 +61,19 @@ export default function CreatureBattle({ specUrl }: Props) {
       // Only the art this game actually needs.
       const wanted = new Set<string>()
       for (const c of loaded.creatures) wanted.add(TYPE_ART[c.type])
+      const extras: Array<[string, string]> = []
+      for (const c of loaded.creatures) extras.push([`fx_${TYPE_FX[c.type]}`, `effects/${TYPE_FX[c.type]}.png`])
+      for (let i = 1; i <= 6; i++) {
+        const names = ['closed', 'opening', 'center', 'opened', 'sparkle', 'closed_alt']
+        extras.push([`ball_${i}`, `animations/poplur_ball_open_close/frame_0${i}_${names[i - 1]}.png`])
+      }
+      await Promise.all(extras.map(([key, path]) => new Promise<void>(resolve => {
+        const img = new Image()
+        img.onload = () => { artRef.current.set(key, img); resolve() }
+        img.onerror = () => resolve()
+        img.src = `${import.meta.env.BASE_URL}games/arcade/art/${path}`
+      })))
+
       await Promise.all([...wanted].flatMap(name => ['front', 'back'].map(side =>
         new Promise<void>(resolve => {
           const img = new Image()
@@ -107,6 +132,36 @@ export default function CreatureBattle({ specUrl }: Props) {
     sprite(TYPE_ART[wild.spec.type], 'front', 272, 158, 104, flash > 0 && flash % 6 < 3)
     sprite(TYPE_ART[mine.spec.type], 'back', 108, 262, 128, false)
 
+    // A landed move throws its element at the target for a few frames.
+    if (effect) {
+      const img = artRef.current.get(`fx_${effect.art}`)
+      if (img) {
+        const life = 1 - effect.at / 18
+        g.save()
+        g.globalAlpha = Math.max(0, Math.min(1, life * 1.4))
+        const size = 68 + (1 - life) * 30
+        g.drawImage(img, 272 - size / 2, 122 - size / 2, size, size)
+        g.restore()
+      }
+    }
+
+    // The ball: arcs from your side to theirs, then rocks where it lands.
+    if (ball) {
+      const img = artRef.current.get(`ball_${Math.min(6, Math.max(1, ball.frame))}`)
+      if (img) {
+        const flying = ball.wobbles > 3
+        const t = flying ? (6 - ball.wobbles) / 3 : 1
+        const x = 108 + (272 - 108) * Math.min(1, t)
+        const y = 250 - Math.sin(Math.min(1, t) * Math.PI) * 90 - (flying ? 0 : 90)
+        const tilt = flying ? 0 : Math.sin(ball.wobbles * 2.1) * 0.4
+        g.save()
+        g.translate(x, flying ? y : 150)
+        g.rotate(tilt)
+        g.drawImage(img, -18, -18, 36, 36)
+        g.restore()
+      }
+    }
+
     // Status plates, in the corners each combatant is not standing in.
     const plate = (x: number, y: number, w: number, mon: Mon, showNumbers: boolean) => {
       const h = 46
@@ -150,7 +205,15 @@ export default function CreatureBattle({ specUrl }: Props) {
 
     g.fillStyle = '#ffffff'
     g.font = 'bold 14px ui-monospace, monospace'
-    if (phase === 'menu') {
+    if (phase === 'action') {
+      // Two columns of two, the arrangement the genre settled on.
+      ACTIONS.forEach((label, i) => {
+        const col = i % 2, row = Math.floor(i / 2)
+        const x = 40 + col * 168, y = boxY + 20 + row * 28
+        g.fillStyle = i === action ? '#ffd84d' : '#ffffff'
+        g.fillText(`${i === action ? '▸' : ' '} ${label}`, x, y)
+      })
+    } else if (phase === 'moves') {
       const moves = movesOf(spec, mine)
       moves.forEach((m, i) => {
         const col = i % 2, row = Math.floor(i / 2)
@@ -160,7 +223,7 @@ export default function CreatureBattle({ specUrl }: Props) {
       })
       g.fillStyle = '#9fb0d0'
       g.font = '11px ui-monospace, monospace'
-      g.fillText(`B: ball (${balls})    START: run`, 26, boxY + 64)
+      g.fillText('B: back', 26, boxY + 64)
     } else {
       // Wrap the message rather than letting it run off the box.
       const words = message.split(' ')
@@ -176,9 +239,30 @@ export default function CreatureBattle({ specUrl }: Props) {
       g.font = '11px ui-monospace, monospace'
       g.fillText('A to continue', 26, boxY + 64)
     }
-  }, [spec, mine, wild, phase, cursor, message, balls, flash])
+  }, [spec, mine, wild, phase, cursor, action, message, balls, flash, effect, ball])
 
   useEffect(() => { draw() }, [draw])
+
+  // The effect sprite lives for a fixed number of frames, then clears itself.
+  useEffect(() => {
+    if (!effect) return
+    const id = requestAnimationFrame(() =>
+      setEffect(e => (e && e.at < 18 ? { ...e, at: e.at + 1 } : null)))
+    return () => cancelAnimationFrame(id)
+  }, [effect])
+
+  // The ball: three flight steps, then three wobbles, then the verdict.
+  useEffect(() => {
+    if (!ball) return
+    const id = window.setTimeout(() => {
+      setBall(b => {
+        if (!b) return null
+        if (b.wobbles <= 1) return null
+        return { ...b, frame: b.wobbles > 3 ? 2 : (b.frame % 3) + 3, wobbles: b.wobbles - 1 }
+      })
+    }, 240)
+    return () => window.clearTimeout(id)
+  }, [ball])
 
   // Hit flash: a few frames of blinking so a landed attack is felt, not just read.
   useEffect(() => {
@@ -188,10 +272,30 @@ export default function CreatureBattle({ specUrl }: Props) {
   }, [flash])
 
   // ---- input --------------------------------------------------------------
+  // advance() is declared before throwBall, so it reaches it through a ref
+  // rather than forcing a reorder that would break the hook order.
+  const throwBallRef = useRef<(() => void) | null>(null)
+
   const advance = useCallback(() => {
     if (!spec || !mine || !wild) return
-    if (phase === 'message') { setPhase(wild.hp <= 0 || mine.hp <= 0 ? 'over' : 'menu'); return }
+    if (phase === 'message') { setPhase(wild.hp <= 0 || mine.hp <= 0 ? 'over' : 'action'); return }
     if (phase === 'over') return
+    if (phase === 'action') {
+      // FIGHT opens the move list; the others resolve straight away.
+      const chosen: Action = ACTIONS[action]
+      if (chosen === 'FIGHT') { sfxConfirm(); setPhase('moves'); return }
+      if (chosen === 'BAG') { throwBallRef.current?.(); return }
+      if (chosen === 'CREATURE') {
+        sfxCancel()
+        setMessage(`${mine.spec.displayName} is your only creature right now.`)
+        setPhase('message')
+        return
+      }
+      sfxCancel()
+      setMessage('You got away safely!')
+      setPhase('over')
+      return
+    }
 
     const move = movesOf(spec, mine)[cursor]
     sfxConfirm()
@@ -201,7 +305,10 @@ export default function CreatureBattle({ specUrl }: Props) {
     setFlash(18)
 
     if (hit.missed) sfxMiss()
-    else sfxHit(hit.effectiveness)
+    else {
+      sfxHit(hit.effectiveness)
+      setEffect({ art: TYPE_FX[move.type], at: 0 })
+    }
 
     let text = `${mine.spec.displayName} used ${move.displayName}!`
     if (hit.missed) text += ' It missed!'
@@ -222,41 +329,56 @@ export default function CreatureBattle({ specUrl }: Props) {
     setMessage(`${text} ${after.spec.displayName} used ${reply.displayName}!` +
       (mineAfter.hp <= 0 ? ` ${mine.spec.displayName} fainted!` : ''))
     setPhase('message')
-  }, [spec, mine, wild, phase, cursor])
+  }, [spec, mine, wild, phase, cursor, action])
 
   const throwBall = useCallback(() => {
-    if (!wild || phase !== 'menu' || balls <= 0) return
+    if (!wild || balls <= 0) return
     setBalls(b => b - 1)
     const caught = Math.random() * 100 < catchOdds(wild)
     // Three rocks before the verdict — the pause is most of why a catch lands.
-    ;[0, 1, 2].forEach(i => window.setTimeout(sfxBallWobble, 180 + i * 260))
-    window.setTimeout(caught ? sfxCaught : sfxBallBreak, 980)
+    setBall({ frame: 1, wobbles: 6, caught })          // 3 flight steps, then 3 rocks
+    ;[0, 1, 2].forEach(i => window.setTimeout(sfxBallWobble, 780 + i * 240))
+    window.setTimeout(caught ? sfxCaught : sfxBallBreak, 1520)
     setMessage(caught
       ? `Gotcha! ${wild.spec.displayName} was caught!`
       : `${wild.spec.displayName} broke free!`)
     setPhase(caught ? 'over' : 'message')
-  }, [wild, phase, balls])
+  }, [wild, balls])
+
+  useEffect(() => { throwBallRef.current = throwBall }, [throwBall])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!spec || !mine) return
       const moves = movesOf(spec, mine)
-      if (e.key === 'ArrowDown') { sfxCursor(); setCursor(c => Math.min(moves.length - 1, c + 1)) }
-      else if (e.key === 'ArrowUp') setCursor(c => Math.max(0, c - 1))
-      else if (e.key === 'ArrowRight') setCursor(c => Math.min(moves.length - 1, c + 1))
-      else if (e.key === 'ArrowLeft') setCursor(c => Math.max(0, c - 1))
+      const step = (d: number) => {
+        sfxCursor()
+        if (phase === 'action') setAction(a => Math.max(0, Math.min(ACTIONS.length - 1, a + d)))
+        else if (phase === 'moves') setCursor(c => Math.max(0, Math.min(moves.length - 1, c + d)))
+      }
+      if (e.key === 'ArrowDown') step(2)
+      else if (e.key === 'ArrowUp') step(-2)
+      else if (e.key === 'ArrowRight') step(1)
+      else if (e.key === 'ArrowLeft') step(-1)
       else if (e.key === 'z' || e.key === 'Enter') advance()
-      else if (e.key === 'x') throwBall()
+      else if (e.key === 'x' && phase === 'moves') { sfxCancel(); setPhase('action') }
     }
     // The shell's painted buttons dispatch this; the keyboard is for desktop.
     const onShell = (e: Event) => {
       const b = (e as CustomEvent<{ button: string }>).detail?.button
       if (!spec || !mine || !b) return
       const moves = movesOf(spec, mine)
-      if (b === 'down' || b === 'right') { sfxCursor(); setCursor(c => Math.min(moves.length - 1, c + 1)) }
-      else if (b === 'up' || b === 'left') { sfxCursor(); setCursor(c => Math.max(0, c - 1)) }
+      const step = (d: number) => {
+        sfxCursor()
+        if (phase === 'action') setAction(a => Math.max(0, Math.min(ACTIONS.length - 1, a + d)))
+        else if (phase === 'moves') setCursor(c => Math.max(0, Math.min(moves.length - 1, c + d)))
+      }
+      if (b === 'down') step(2)          // the menu is two wide, so down is +2
+      else if (b === 'up') step(-2)
+      else if (b === 'right') step(1)
+      else if (b === 'left') step(-1)
       else if (b === 'a') advance()
-      else if (b === 'b') throwBall()
+      else if (b === 'b') { if (phase === 'moves') { sfxCancel(); setPhase('action') } }
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('poplur-retro-button', onShell as EventListener)
@@ -264,7 +386,7 @@ export default function CreatureBattle({ specUrl }: Props) {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('poplur-retro-button', onShell as EventListener)
     }
-  }, [spec, mine, advance, throwBall])
+  }, [spec, mine, phase, advance, throwBall])
 
   return (
     <canvas
