@@ -12,6 +12,10 @@ import {
   TYPE_ART, catchOdds, makeMon, movesOf, resolveHit, rollEncounter,
   type GameSpec, type Mon, type MoveSpec,
 } from './battleRules'
+import {
+  sfxBallBreak, sfxBallWobble, sfxCaught, sfxConfirm, sfxCursor,
+  sfxEncounter, sfxFaint, sfxHit, sfxMiss,
+} from './retroAudio'
 import styles from './CreatureBattle.module.css'
 
 /** Drawn at this size and scaled to the shell, so layout maths stays integer. */
@@ -61,6 +65,7 @@ export default function CreatureBattle({ specUrl }: Props) {
       setWild(rollEncounter(loaded, loaded.zones[0]))
       setMessage(`A wild creature appeared!`)
       setPhase('message')
+      sfxEncounter()
     })()
     return () => { cancelled = true }
   }, [specUrl])
@@ -189,10 +194,14 @@ export default function CreatureBattle({ specUrl }: Props) {
     if (phase === 'over') return
 
     const move = movesOf(spec, mine)[cursor]
+    sfxConfirm()
     const hit = resolveHit(mine, wild, move)
     const after = { ...wild, hp: wild.hp - hit.damage }
     setWild(after)
     setFlash(18)
+
+    if (hit.missed) sfxMiss()
+    else sfxHit(hit.effectiveness)
 
     let text = `${mine.spec.displayName} used ${move.displayName}!`
     if (hit.missed) text += ' It missed!'
@@ -202,6 +211,7 @@ export default function CreatureBattle({ specUrl }: Props) {
     if (after.hp <= 0) {
       setMessage(`${text} ${after.spec.displayName} fainted!`)
       setPhase('message')
+      sfxFaint()
       return
     }
 
@@ -218,6 +228,9 @@ export default function CreatureBattle({ specUrl }: Props) {
     if (!wild || phase !== 'menu' || balls <= 0) return
     setBalls(b => b - 1)
     const caught = Math.random() * 100 < catchOdds(wild)
+    // Three rocks before the verdict — the pause is most of why a catch lands.
+    ;[0, 1, 2].forEach(i => window.setTimeout(sfxBallWobble, 180 + i * 260))
+    window.setTimeout(caught ? sfxCaught : sfxBallBreak, 980)
     setMessage(caught
       ? `Gotcha! ${wild.spec.displayName} was caught!`
       : `${wild.spec.displayName} broke free!`)
@@ -228,7 +241,7 @@ export default function CreatureBattle({ specUrl }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (!spec || !mine) return
       const moves = movesOf(spec, mine)
-      if (e.key === 'ArrowDown') setCursor(c => Math.min(moves.length - 1, c + 1))
+      if (e.key === 'ArrowDown') { sfxCursor(); setCursor(c => Math.min(moves.length - 1, c + 1)) }
       else if (e.key === 'ArrowUp') setCursor(c => Math.max(0, c - 1))
       else if (e.key === 'ArrowRight') setCursor(c => Math.min(moves.length - 1, c + 1))
       else if (e.key === 'ArrowLeft') setCursor(c => Math.max(0, c - 1))
@@ -240,8 +253,8 @@ export default function CreatureBattle({ specUrl }: Props) {
       const b = (e as CustomEvent<{ button: string }>).detail?.button
       if (!spec || !mine || !b) return
       const moves = movesOf(spec, mine)
-      if (b === 'down' || b === 'right') setCursor(c => Math.min(moves.length - 1, c + 1))
-      else if (b === 'up' || b === 'left') setCursor(c => Math.max(0, c - 1))
+      if (b === 'down' || b === 'right') { sfxCursor(); setCursor(c => Math.min(moves.length - 1, c + 1)) }
+      else if (b === 'up' || b === 'left') { sfxCursor(); setCursor(c => Math.max(0, c - 1)) }
       else if (b === 'a') advance()
       else if (b === 'b') throwBall()
     }
