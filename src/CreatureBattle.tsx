@@ -54,7 +54,7 @@ export default function CreatureBattle({ specUrl }: Props) {
           const img = new Image()
           img.onload = () => { artRef.current.set(`${name}_${side}`, img); resolve() }
           img.onerror = () => resolve()          // a missing sprite must not stall the battle
-          img.src = `${import.meta.env.BASE_URL}games/arcade/mons/${name}_${side}.png`
+          img.src = `${import.meta.env.BASE_URL}games/arcade/art/creatures/${side}/${name}_${side}.png`
         }),
       )))
       if (cancelled) return

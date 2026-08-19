@@ -21,10 +21,18 @@ export const TYPE_CHART: Record<CreatureType, { strong: CreatureType[]; weak: Cr
   beast: { strong: ['shade', 'stone'],  weak: ['gale', 'shade'] },
 }
 
-/** Each element is drawn by one creature on Poplur's sheet. */
+/** Each element is drawn by the creature on Poplur's sheet that already looks
+ *  like it: the rock golem is stone, the cloud is gale, the bat is shade. The
+ *  art tells a player the matchup before the type name does. */
 export const TYPE_ART: Record<CreatureType, string> = {
-  ember: 'cosmic', tide: 'blue_tusk', bloom: 'leaf_fox', spark: 'yellow_fox',
-  stone: 'rock_brute', gale: 'cloud_ram', shade: 'bat', beast: 'pink_cat',
+  ember: 'galaxy_slug',    // fire and stars
+  tide:  'blue_elephant',
+  bloom: 'leaf_fox',
+  spark: 'golden_bunny',
+  stone: 'lava_golem',     // a rock brute
+  gale:  'cloud_sheep',
+  shade: 'shadow_bat',
+  beast: 'pink_cat',
 }
 
 export interface MoveSpec {
