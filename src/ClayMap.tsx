@@ -892,8 +892,16 @@ const ZOOM_MIN = 1
 // Slider top end. Zoom 16.x still reads like a satellite overview; 18.x gets
 // close enough for Mapbox Standard's 3D building massing to be obvious.
 const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doorstep
-// The intro should land at neighborhood scale, not on the user's doorstep.
-const INTRO_LANDING_ZOOM = 16.2
+// Where the launch dive ends, and the closeness the map is meant to READ at.
+//
+// Was 16.2, which this file's own ZOOM_MAX note calls out as still reading like
+// a satellite overview -- and it did: the clay buildings were there but small
+// enough that the surface looked like a map with pins on it rather than the
+// street you are standing in. 17.6 sits in the band the same note describes as
+// close enough for Mapbox Standard's 3D massing to be obvious, and matches the
+// 17.4 floor the street-reveal ease already uses, so the two agree instead of
+// fighting. Well under ZOOM_MAX, so pinching further is still available.
+const INTRO_LANDING_ZOOM = 17.6
 // Journey mode intentionally drops below the manual diorama ceiling so the
 // clay roads and buildings read from an eye-level chase camera.
 const STREET_VIEW_MAX_ZOOM = 19

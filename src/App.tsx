@@ -507,8 +507,15 @@ const RECOMMENDATIONS: ((destination: TourDestination) => string)[] = [
 
 /** All modes, in the order you asked to browse them. */
 
-// Keep every app-driven street flight close enough that 3D buildings are visible.
-const BUILDING_REVEAL_ZOOM = 16.2 // matches ClayMap ZOOM_MAX cap
+// Where every app-driven street flight lands -- including the pop-to-pop trip,
+// so cycling pops arrives at the same closeness the launch dive ends on.
+//
+// Kept in step with ClayMap's INTRO_LANDING_ZOOM deliberately: arriving at a
+// pop and launching onto one are the same shot, and when these drifted apart
+// the map appeared to zoom out every time you stepped to the next pop. (The
+// old comment here claimed 16.2 "matches ClayMap ZOOM_MAX cap"; ZOOM_MAX is
+// 19.5 and always was, so that note was describing a constant that had moved.)
+const BUILDING_REVEAL_ZOOM = 17.6
 const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
 // Mapbox resolves its final camera frame just after the advertised duration.
 // Keep that small settle tail inside the finite lease instead of reopening the
