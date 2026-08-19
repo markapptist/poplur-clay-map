@@ -6,6 +6,7 @@ import ClayCornerButton from './ClayCornerButton'
 import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
+import MapIpod from './MapIpod'
 import GamesScreen from './GamesScreen'
 import MapShowMe from './MapShowMe'
 import AIChatScreen from './AIChatScreen'
@@ -70,6 +71,9 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // (tour beds, stingers, ticker readout). The AI voice remains the map's
     // own narrator; the radio is a destination you tune deliberately.
     { icon: 'Music', title: 'RADIO', screen: 'map-radio', native: true },
+    // The music the map is carrying: Poplur's own tracks, left on the ground
+    // like any other pop, and pickable only where your radius reaches them.
+    { icon: 'Music', title: 'IPOD', screen: 'map-ipod', native: true, glyph: '♪' },
     { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true, glyph: '✓' },
     { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
@@ -824,6 +828,13 @@ export default function HoldMenuTwin({
       )
     }
     // TV GUIDE is a real screen in the app, not a Rough Copy capture.
+    if (activeScreen.native && activeScreen.screen === 'map-ipod') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur iPod">
+          <MapIpod onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
     if (activeScreen.native && activeScreen.screen === 'map-radio') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Radio">

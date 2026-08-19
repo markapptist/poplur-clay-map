@@ -1,0 +1,318 @@
+/* The Poplur iPod: a translucent glitter handheld that holds the music your
+   radius can reach.
+
+   Everything here is drawn in CSS — shell, sparkle, wheel. No art files: the
+   glitter is layered radial-gradients on a translucent body, which is also why
+   a skin is six custom properties rather than ten images. */
+
+.deck {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  /* Its own ground, like the radio's: a lit object in a dark room. The app
+     theme paints the app, not the inside of this handheld. */
+  background:
+    radial-gradient(120% 46% at 50% 0%, rgba(246, 59, 154, 0.16), transparent 60%),
+    linear-gradient(180deg, #14101b 0%, #0c0912 52%, #08060d 100%);
+  color: #f4eef5;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  overflow: hidden;
+}
+
+/* ── the handheld ─────────────────────────────────────────────────────────── */
+
+.body {
+  --skin: #7b3bd6;
+  --skin-lit: #c08cff;
+  --skin-deep: #2a0f4d;
+  --spark-a: #ffd9f2;
+  --spark-b: #9ee7ff;
+  --ink: #ffffff;
+
+  position: relative;
+  width: min(300px, 82vw);
+  aspect-ratio: 300 / 500;
+  max-height: 100%;
+  border-radius: 26px;
+  padding: 14px 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  isolation: isolate;
+  /* Translucent shell: a tinted body over a bright inner rim. */
+  background:
+    linear-gradient(155deg, color-mix(in srgb, var(--skin-lit) 34%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--skin) 62%, transparent), color-mix(in srgb, var(--skin-deep) 78%, transparent));
+  border: 1px solid color-mix(in srgb, var(--skin-lit) 55%, transparent);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -14px 26px color-mix(in srgb, var(--skin-deep) 60%, transparent),
+    0 22px 40px rgba(0, 0, 0, 0.55),
+    0 0 34px color-mix(in srgb, var(--skin) 30%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+/* The sparkle. Two stacked gradient fields at different scales so it reads as
+   suspended flecks rather than a repeating texture. Pointer-transparent. */
+.body::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.9;
+  background-image:
+    radial-gradient(1.6px 1.6px at 14% 12%, var(--spark-a), transparent 60%),
+    radial-gradient(1.2px 1.2px at 68% 8%, var(--spark-b), transparent 60%),
+    radial-gradient(1.8px 1.8px at 32% 34%, var(--spark-a), transparent 60%),
+    radial-gradient(1.1px 1.1px at 84% 28%, #fff, transparent 60%),
+    radial-gradient(1.5px 1.5px at 22% 62%, var(--spark-b), transparent 60%),
+    radial-gradient(1.3px 1.3px at 74% 58%, var(--spark-a), transparent 60%),
+    radial-gradient(1.7px 1.7px at 48% 78%, #fff, transparent 60%),
+    radial-gradient(1.2px 1.2px at 88% 84%, var(--spark-b), transparent 60%),
+    radial-gradient(1.4px 1.4px at 8% 88%, var(--spark-a), transparent 60%),
+    radial-gradient(1.1px 1.1px at 58% 94%, #fff, transparent 60%);
+}
+
+/* ── screen ───────────────────────────────────────────────────────────────── */
+
+.screen {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  overflow: hidden;
+  background: linear-gradient(180deg, #1a1030, #0a0616);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 2px 10px rgba(0, 0, 0, 0.5);
+  font-size: 11px;
+}
+
+.menu {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  overflow: hidden;
+}
+
+.menuHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px;
+  font-weight: 800;
+  color: color-mix(in srgb, var(--skin-lit) 80%, #fff);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.battery {
+  width: 16px;
+  height: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 2px;
+  position: relative;
+}
+
+.battery::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 6px;
+  color: rgba(255, 255, 255, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Selected row: the iPod's blue-white bar, in the skin's own colour. */
+.rowOn {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--skin-lit) 92%, #fff),
+    color-mix(in srgb, var(--skin) 88%, #000));
+  color: #fff;
+  font-weight: 700;
+}
+
+/* Rows the handheld does not answer for. Dimmed rather than hidden: the list
+   IS the iPod, but nothing here pretends to hold photos. */
+.rowInert { color: rgba(255, 255, 255, 0.32); }
+
+/* A track your radius has not reached. Legible, but plainly out of reach. */
+.rowLocked { color: rgba(255, 255, 255, 0.42); }
+
+.rowMeta {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+  flex: 0 0 auto;
+}
+
+.art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(90% 70% at 50% 20%, color-mix(in srgb, var(--skin) 55%, transparent), transparent 70%),
+    linear-gradient(180deg, #170e2b, #090514);
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  padding: 6px;
+  text-align: center;
+}
+
+.artMark {
+  font-size: 46px;
+  font-weight: 900;
+  line-height: 1;
+  color: color-mix(in srgb, var(--skin-lit) 85%, #fff);
+  text-shadow:
+    0 0 12px color-mix(in srgb, var(--skin) 80%, transparent),
+    0 2px 0 color-mix(in srgb, var(--skin-deep) 90%, transparent);
+}
+
+.artTitle {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.artSub {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* now-playing scrubber */
+.bar {
+  margin-top: 6px;
+  width: 84%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--skin-lit) 90%, #fff);
+}
+
+/* ── wordmark + wheel ─────────────────────────────────────────────────────── */
+
+.wordmark {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  font-size: 19px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  color: color-mix(in srgb, var(--skin-lit) 70%, #fff);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--skin) 70%, transparent);
+}
+
+.wheelWrap {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  padding-bottom: 12px;
+  min-height: 0;
+}
+
+.wheel {
+  position: relative;
+  width: min(190px, 62%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 28%, rgba(255, 255, 255, 0.10), transparent 46%),
+    #0d0b10;
+  border: 1px solid color-mix(in srgb, var(--skin-lit) 40%, transparent);
+  box-shadow:
+    inset 0 2px 6px rgba(255, 255, 255, 0.12),
+    inset 0 -8px 18px rgba(0, 0, 0, 0.8),
+    0 10px 22px rgba(0, 0, 0, 0.5);
+  display: grid;
+  place-items: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The four labelled zones. Transparent buttons over the ring, so the wheel
+   stays one object and every press has a real hit target and a real name. */
+.zone {
+  position: absolute;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: color-mix(in srgb, var(--skin-lit) 78%, #fff);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  display: grid;
+  place-items: center;
+}
+
+.zoneTop { top: 4%; left: 26%; width: 48%; height: 26%; }
+.zoneBottom { bottom: 4%; left: 26%; width: 48%; height: 26%; }
+.zoneLeft { left: 3%; top: 26%; width: 26%; height: 48%; }
+.zoneRight { right: 3%; top: 26%; width: 26%; height: 48%; }
+
+.zone:active { transform: scale(0.94); }
+
+.center {
+  width: 38%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background:
+    radial-gradient(circle at 38% 30%, color-mix(in srgb, var(--skin-lit) 80%, #fff), transparent 58%),
+    color-mix(in srgb, var(--skin) 85%, #000);
+  box-shadow:
+    inset 0 2px 5px rgba(255, 255, 255, 0.5),
+    inset 0 -6px 12px rgba(0, 0, 0, 0.5),
+    0 3px 8px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.center:active { transform: scale(0.95); }
+
+/* A short status line under the wheel — what the last press did, and why a
+   locked track is locked. */
+.status {
+  position: relative;
+  z-index: 1;
+  min-height: 14px;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.72);
+  padding-bottom: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zone:active, .center:active { transform: none; }
+}
