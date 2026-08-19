@@ -175,6 +175,28 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   const gameFrameRef = useRef<HTMLIFrameElement>(null)
   const game = GAMES[selected]
 
+  // Games run full-bleed (GamesScreen.module.css .stage), but HomeTwin's
+  // wordmark and bottom stat row still sit above every subscreen so the cube
+  // stays a reachable way out — which meant they sat on top of the console art
+  // for as long as this screen was open. Ask HomeTwin to clear them for the
+  // whole time GamesScreen is mounted (list and running alike); the cube
+  // itself is untouched by this event, so it is never lost. The cleanup ALWAYS
+  // fires, or leaving via a route other than onClose would strand home with a
+  // muted HUD.
+  useEffect(() => {
+    // Deferred: mount effects run child-before-parent, so a same-commit mount
+    // (GamesScreen resumed at boot, inside HomeTwin's own first render) would
+    // dispatch this before HomeTwin's listener exists otherwise. A macrotask
+    // lands after that first commit's effects, listener included, every time.
+    const id = window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('poplur-games-chrome-mute', { detail: { on: true } }))
+    }, 0)
+    return () => {
+      window.clearTimeout(id)
+      window.dispatchEvent(new CustomEvent('poplur-games-chrome-mute', { detail: { on: false } }))
+    }
+  }, [])
+
   const focus = (index: number) => {
     setSelected((index + GAMES.length) % GAMES.length)
     playPop()

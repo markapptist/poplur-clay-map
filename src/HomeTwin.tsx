@@ -1789,6 +1789,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
   /** Chrome fully away — the feed's player mode, a subscreen, or an ad slot. */
   const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen
+  // Games run full-bleed under the HUD (GamesScreen.module.css), so the
+  // wordmark and the bottom stat row sat on top of the console art the whole
+  // time a game was open. Unlike subscreenFullscreen this does NOT take the
+  // cube too — the cube stays the reachable way out; only the title and the
+  // ticker/arrows next to it clear out of the console's way.
+  const [gamesChromeMuted, setGamesChromeMuted] = useState(false)
+  useEffect(() => {
+    const onGamesChrome = (event: Event) => {
+      setGamesChromeMuted(Boolean((event as CustomEvent<{ on?: boolean }>).detail?.on))
+    }
+    window.addEventListener('poplur-games-chrome-mute', onGamesChrome)
+    return () => window.removeEventListener('poplur-games-chrome-mute', onGamesChrome)
+  }, [])
   const [mapTourOn, setMapTourOn] = useState(false)
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
@@ -2577,7 +2590,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* The wordmark stays up on EVERY subscreen, Settings included: it belongs
           to the home view. Settings reserves room for it in its own top padding
           rather than hiding it. */}
-      <div className={styles.universalTitle}>
+      <div className={`${styles.universalTitle}${gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}>
         <TopChrome />
       </div>
       {/* The map iframe mounts only while the Map tab is front. CSS cannot make
@@ -2775,7 +2788,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           floated and the arrows and radius label it sits between vanished
           underneath. The whole HUD is one piece of home chrome. */}
       <div
-        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone || gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>

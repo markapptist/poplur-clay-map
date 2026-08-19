@@ -150,7 +150,16 @@ export function packBase(packId: string, fallback: string): string {
 export function packUrl(pack: AssetPack, file: string): string {
   const local = manifest?.localPaths?.[pack.id]
   if (local) return `${local}/${file}`
-  return `${manifest?.baseUrl ?? ''}/${pack.id}/${file}`
+  // The digest (falling back to the version) rides along as a query param so a
+  // published pack update is a genuinely NEW url. Without it, a header fix —
+  // the CORS rule this pack needed — cannot reach a client that already has an
+  // edge- or browser-cached response for the old, header-less url: GCS's edge
+  // cache does not revalidate on origin metadata changes, `cache: 'reload'`
+  // only bypasses the browser's own cache, and the object is served
+  // `immutable, max-age=31536000`, so a response cached before the fix is
+  // never revisited by either layer. A changed url has no stale entry to hit.
+  const rev = pack.digest ?? String(pack.version)
+  return `${manifest?.baseUrl ?? ''}/${pack.id}/${file}?v=${rev}`
 }
 
 // ---- eviction ---------------------------------------------------------------
