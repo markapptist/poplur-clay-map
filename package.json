@@ -8,7 +8,9 @@
     "build": "node scripts/verify-tab-model-quality.mjs && node scripts/verify-governed-loops.mjs && tsc && vite build",
     "check:tab-models": "node scripts/verify-tab-model-quality.mjs",
     "preview": "vite preview",
-    "check:governed-loops": "node scripts/verify-governed-loops.mjs"
+    "check:governed-loops": "node scripts/verify-governed-loops.mjs",
+    "build-packs": "node scripts/build-asset-packs.mjs",
+    "publish-packs": "bash scripts/publish-asset-packs.sh"
   },
   "dependencies": {
     "@google/model-viewer": "^4.3.1",

@@ -15,6 +15,9 @@
 
 export interface AssetPack {
   id: string
+  /** Digest of the file list, so a changed pack is detectable without hashing
+   *  every byte of a 66MB directory. */
+  digest?: string
   /** Bumped when contents change; part of the cache key so a stale pack is never served. */
   version: number
   bytes: number
@@ -38,6 +41,10 @@ const cacheNameFor = (pack: AssetPack) => `${CACHE_PREFIX}-${pack.id}-v${pack.ve
 
 /** Cache Storage is absent in some webviews and in Node; callers still work, just uncached. */
 const cachesAvailable = () => typeof caches !== 'undefined'
+
+/** Shipped with the app; its baseUrl points at the bucket, so packs can move
+ *  to another host or a CDN by republishing the manifest alone. */
+export const MANIFEST_URL = 'asset-manifest.json'
 
 let manifest: AssetManifest | null = null
 const states = new Map<string, PackState>()
