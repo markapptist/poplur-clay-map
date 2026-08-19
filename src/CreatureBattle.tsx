@@ -36,12 +36,25 @@ interface BallThrow { frame: number; wobbles: number; caught: boolean }
 interface Props {
   specUrl: string
   /** Where the art pack resolved to; the manifest decides local or bucket. */
-  artBase: string
+  /** Resolve one file inside the art pack to a URL.
+   *
+   *  A RESOLVER, not a base string, and that distinction is the bug this fixes.
+   *  Packs used to be local relative paths, so callers could build a URL by
+   *  concatenation. They now live in a remote bucket and packUrl appends a
+   *  `?v=<digest>` cache-buster, so `${base}/${file}` puts the query in the
+   *  MIDDLE of the path and prefixing BASE_URL puts "./" in front of an
+   *  absolute URL. Every request 404'd, img.onerror swallowed it, and the
+   *  battle drew no creatures at all. */
+  artUrl: (file: string) => string
   /** Called when the encounter ends, so the game can return to the overworld. */
   onFinished?: () => void
 }
 
-export default function CreatureBattle({ specUrl, artBase, onFinished }: Props) {
+export default function CreatureBattle({ specUrl, artUrl, onFinished }: Props) {
+  // Held in a ref: the resolver is rebuilt on every render of the parent, so
+  // depending on it directly would reload every sprite each frame.
+  const artUrlRef = useRef(artUrl)
+  artUrlRef.current = artUrl
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const artRef = useRef(new Map<string, HTMLImageElement>())
 
@@ -77,7 +90,7 @@ export default function CreatureBattle({ specUrl, artBase, onFinished }: Props) 
         const img = new Image()
         img.onload = () => { artRef.current.set(key, img); resolve() }
         img.onerror = () => resolve()
-        img.src = `${import.meta.env.BASE_URL}${artBase}/${path}`
+        img.src = artUrlRef.current(path)
       })))
 
       await Promise.all([...wanted].flatMap(name => ['front', 'back'].map(side =>
@@ -85,7 +98,7 @@ export default function CreatureBattle({ specUrl, artBase, onFinished }: Props) 
           const img = new Image()
           img.onload = () => { artRef.current.set(`${name}_${side}`, img); resolve() }
           img.onerror = () => resolve()          // a missing sprite must not stall the battle
-          img.src = `${import.meta.env.BASE_URL}${artBase}/creatures/${side}/${name}_${side}.png`
+          img.src = artUrlRef.current(`creatures/${side}/${name}_${side}.png`)
         }),
       )))
       if (cancelled) return
@@ -99,7 +112,7 @@ export default function CreatureBattle({ specUrl, artBase, onFinished }: Props) 
       sfxEncounter()
     })()
     return () => { cancelled = true }
-  }, [specUrl, artBase])
+  }, [specUrl])
 
   // ---- drawing ------------------------------------------------------------
   const draw = useCallback(() => {

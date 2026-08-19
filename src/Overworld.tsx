@@ -62,13 +62,24 @@ const isSolid = (col: number, row: number) => {
 interface Props {
   spec: GameSpec
   /** Where the art pack resolved to. */
-  artBase: string
+  /** Resolve one file inside the art pack to a URL.
+   *
+   *  A RESOLVER, not a base string, and that distinction is the bug this fixes.
+   *  Packs used to be local relative paths, so callers could build a URL by
+   *  concatenation. They now live in a remote bucket and packUrl appends a
+   *  `?v=<digest>` cache-buster, so `${base}/${file}` puts the query in the
+   *  MIDDLE of the path and prefixing BASE_URL puts "./" in front of an
+   *  absolute URL. Every request 404'd, img.onerror swallowed it, and the
+   *  battle drew no creatures at all. */
+  artUrl: (file: string) => string
   zone: ZoneSpec
   /** Called when the grass produces something. */
   onEncounter: () => void
 }
 
-export default function Overworld({ spec, zone, artBase, onEncounter }: Props) {
+export default function Overworld({ spec, zone, artUrl, onEncounter }: Props) {
+  const artUrlRef = useRef(artUrl)
+  artUrlRef.current = artUrl
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const art = useRef(new Map<string, HTMLImageElement>())
   const [pos, setPos] = useState({ col: 7, row: 5 })
@@ -90,10 +101,10 @@ export default function Overworld({ spec, zone, artBase, onEncounter }: Props) {
       const img = new Image()
       img.onload = () => { art.current.set(key, img); resolve() }
       img.onerror = () => resolve()
-      img.src = `${import.meta.env.BASE_URL}${artBase}/${path}`
+      img.src = artUrlRef.current(path)
     }))).then(() => { if (!cancelled) setReady(true) })
     return () => { cancelled = true }
-  }, [artBase])
+  }, [])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current

@@ -50,7 +50,7 @@ export default function PoplurGame({ specUrl }: Props) {
       <CreatureBattle
         key={round}
         specUrl={specUrl}
-        artBase={art.url('').replace(/\/$/, '')}
+        artUrl={art.url}
         onFinished={() => { setInBattle(false); setRound(r => r + 1) }}
       />
     )
@@ -60,7 +60,7 @@ export default function PoplurGame({ specUrl }: Props) {
     <Overworld
       spec={spec}
       zone={spec.zones[0]}
-      artBase={art.url('').replace(/\/$/, '')}
+      artUrl={art.url}
       onEncounter={() => setInBattle(true)}
     />
   )
