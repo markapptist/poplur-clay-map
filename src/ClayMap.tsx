@@ -1418,16 +1418,26 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     //  - every other NATIVE shell (iPhones report no deviceMemory, so they
     //    never qualify as lite): cap at 2x.
     //
-    // iOS was at 1.5x, which on a 3x panel is a QUARTER of the screen's pixels —
-    // far enough that the "no visible gain" claim above stopped being true and
-    // the map read as pixelated. Raised to 2x to match the other native shells.
-    // Deliberately NOT 3x: unlike the small clay surfaces, this one is
-    // full-screen, so its cost scales with the viewport and 3x would be ~4× the
-    // current fill. MSAA stays off here for the same reason — at 2x the extra
-    // resolution is already attacking the aliasing, and multisampling
-    // full-screen fill-extrusions is the one genuinely expensive AA in the app.
+    // iOS is BACK at 1.5x, and the reason is worth keeping written down.
+    //
+    // It was briefly raised to 2x to fix the map reading as pixelated — a
+    // quarter of a 3x panel's pixels is genuinely soft. The thermal gate passed
+    // that change, and the device still got warm, because the gate CANNOT SEE
+    // THIS: it measures renderer-thread CPU over an idle census plus counts of
+    // animations, WebGL contexts, audio and video. Pixel ratio is pure GPU fill
+    // rate on a surface that is already parked when idle, so a 78% fill
+    // increase is invisible to every number that gate reports.
+    //
+    // The small clay surfaces kept their raise because they are
+    // render-on-demand and park; their cost at rest is zero. This one is
+    // full-screen Mapbox with 3D fill-extrusions, drawing continuously while
+    // the map is being used, and it is the surface with the documented
+    // overheating history. iOS was singled out at 1.5 before this, and that
+    // singling out was load-bearing.
+    //
+    // Raising it again needs an on-device soak, not a gate pass.
     const iosNativeMap = isIOSNativeShell()
-    const dprCap = MAP_2D || MAP_LITE ? 1 : isNativeShell() ? 2 : Infinity
+    const dprCap = MAP_2D || MAP_LITE ? 1 : iosNativeMap ? 1.5 : isNativeShell() ? 2 : Infinity
     if (window.devicePixelRatio > dprCap) {
       try {
         Object.defineProperty(window, 'devicePixelRatio', { value: dprCap, configurable: true })
