@@ -3,15 +3,16 @@ import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import UploadFlowReview from './UploadFlowReview'
 import ArcadeScreen from './ArcadeScreen'
+import CreatureBattle from './CreatureBattle'
 import GamesScreen from './GamesScreen'
 import styles from './ViewHarness.module.css'
 
-export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu' | 'uploadflows' | 'arcade' | 'games'
+export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle'
 
 // The four bottom-nav tabs now live INSIDE the home view (its pills switch
 // map/feed/camera/profile inline). The hold menu is a cube-long-press OVERLAY,
 // still routable (?view=holdmenu) but not a tab.
-const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu', 'uploadflows', 'arcade', 'games']
+const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu', 'uploadflows', 'arcade', 'games', 'battle']
 const VIEW_LABELS: Record<HarnessView, string> = {
   home: 'Home',
   map: 'Map',
@@ -22,6 +23,7 @@ const VIEW_LABELS: Record<HarnessView, string> = {
   holdmenu: 'Hold Menu',
   uploadflows: 'Upload Flows',
   arcade: 'Arcade',
+  battle: 'Battle',
   games: 'Games',
 }
 // Each ?view= simply picks which tab the tabbed home opens on.
@@ -78,14 +80,14 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   // floats over the live home view behind a semi-transparent scrim, and closing
   // it returns you to that home. So ?view=holdmenu keeps the home (map) mounted
   // underneath rather than swapping it out.
-  const baseView: Exclude<HarnessView, 'holdmenu' | 'uploadflows' | 'arcade' | 'games'> = view === 'holdmenu'
+  const baseView: Exclude<HarnessView, 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle'> = view === 'holdmenu'
     ? 'home'
     : view === 'uploadflows'
       ? 'camera'
       // Arcade returns its own surface below and never reaches HomeTwin, but
       // baseView is computed before that early return (hooks cannot be
       // conditional), so it still needs a value the tab map accepts.
-      : view === 'arcade' || view === 'games'
+      : view === 'arcade' || view === 'games' || view === 'battle'
         ? 'home'
         : view
   const [, setInlineTab] = useState<CubeTab>(VIEW_TO_TAB[baseView])
@@ -109,6 +111,11 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   // Standalone like uploadflows: the Arcade shell is its own surface, not a tab
   // inside the tabbed home.
   if (view === 'arcade') return <ArcadeScreen />
+  if (view === 'battle') return (
+    <div style={{ position: 'relative', width: '100vw', height: '100vh', background: '#101828' }}>
+      <CreatureBattle specUrl={`${import.meta.env.BASE_URL}games/arcade/cinder-isles.json`} />
+    </div>
+  )
   // The games LIST, reachable without spinning the hold-menu wheel to it (the
   // wheel culls to five tiles, so GAMES is not always on screen).
   if (view === 'games') return <GamesScreen onClose={() => setHarnessView('home')} />

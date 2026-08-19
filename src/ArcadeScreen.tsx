@@ -11,6 +11,7 @@ import {
 import type { RetroButton, RetroEmulatorEngine } from './retroEmulator'
 import { MgbaEngine } from './retroEngineMgba'
 import { playPop } from './pop'
+import CreatureBattle from './CreatureBattle'
 import styles from './ArcadeScreen.module.css'
 
 // Poplur Arcade — the shell player.
@@ -34,11 +35,10 @@ import styles from './ArcadeScreen.module.css'
 // Nothing else in this file changed to make that true — that was the point of
 // the seam.
 //
-// What is still NOT here is a GAME. No ROM is loaded, so the core idles and the
-// screen area shows the shell's own painted title. That is deliberate: the brief
-// forbids a mock that claims to work, so this must never look like it is
-// emulating when it is not. The one thing left before a real game runs is a
-// Butano-built .gba to load — the core itself now starts in an ordinary Poplur
+// A GAME now runs here. Generated creature-collector games are drawn on a
+// canvas from a JSON specification — no ROM, no cross-compiler — while the
+// emulator seam stays for real .gba cartridges. Both read the same buttons.
+// The core itself starts in an ordinary Poplur
 // document, which it could not do while it was a threaded build (see the note
 // at the top of retroEngineMgba.ts for why the pinned version is 1.1.1).
 
@@ -245,7 +245,13 @@ export default function ArcadeScreen() {
     const engine = engineRef.current
     if (engine) {
       enginePressed.current.forEach(b => { if (!all.has(b)) engine.setButtonReleased(b) })
-      all.forEach(b => { if (!enginePressed.current.has(b)) engine.setButtonPressed(b) })
+      all.forEach(b => {
+        if (enginePressed.current.has(b)) return
+        engine.setButtonPressed(b)
+        // Canvas games read the same buttons the emulator does, so one shell
+        // drives either kind of cartridge without knowing which is loaded.
+        window.dispatchEvent(new CustomEvent('poplur-retro-button', { detail: { button: b } }))
+      })
       enginePressed.current = all
     }
     setPressed(all)
@@ -380,7 +386,10 @@ export default function ArcadeScreen() {
           className={styles.screen}
           style={{ left: pct(skin.screen.x), top: pct(skin.screen.y), width: pct(skin.screen.w), height: pct(skin.screen.h) }}
         >
+          {/* The emulator canvas stays mounted for .gba cartridges; the canvas
+              game draws over it. Both are fed by the same painted buttons. */}
           <canvas ref={canvasRef} className={styles.screenCanvas} width={240} height={160} aria-label="Emulator output" />
+          <CreatureBattle specUrl={`${import.meta.env.BASE_URL}games/arcade/cinder-isles.json`} />
 
           {/* Boot. The shell's OWN painted splash is what animates -- this is
               not a panel that replaces the art and then gets out of the way.

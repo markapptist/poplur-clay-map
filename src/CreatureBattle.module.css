@@ -1,0 +1,11 @@
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Drawn at 384x344, which is very close to the shell opening's 1.12, so
+     filling costs almost no distortion — unlike the GBA's 1.5 frame. */
+  object-fit: fill;
+  image-rendering: pixelated;
+}
