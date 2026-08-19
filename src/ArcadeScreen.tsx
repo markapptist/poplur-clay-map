@@ -8,7 +8,8 @@ import {
   dpadDirectionsAtPoint,
   type RetroControlId,
 } from './retroShellSkin'
-import type { RetroButton } from './retroEmulator'
+import type { RetroButton, RetroEmulatorEngine } from './retroEmulator'
+import { MgbaEngine, isolationBlocked } from './retroEngineMgba'
 import { playPop } from './pop'
 import styles from './ArcadeScreen.module.css'
 
@@ -27,15 +28,19 @@ import styles from './ArcadeScreen.module.css'
 // brief's "hitboxes and screen positioning remain correct across different
 // shells" is demonstrated rather than asserted.
 //
-// What is NOT here: a game. No emulator core is vendored (see
-// poplur-arcade-emulator-cores.md — mGBA/MPL-2.0 is the recommendation, nothing
-// is pinned), so the screen area shows the shell's own painted title and says
-// plainly that no core is loaded. The brief forbids a mock that claims to work,
-// so the one thing this must never do is look like it is emulating.
+// The core is now wired: mGBA/MPL-2.0 (poplur-arcade-emulator-cores.md) sits
+// behind RetroEmulatorEngine, is attached to the <canvas> in the screen opening,
+// and every control below drives it through setButtonPressed/setButtonReleased.
+// Nothing else in this file changed to make that true — that was the point of
+// the seam.
 //
-// When a core lands it attaches to the <canvas> in the screen opening and the
-// handlers below start calling setButtonPressed/setButtonReleased. Nothing else
-// changes — that is the point of the seam.
+// What is still NOT here is a GAME. No ROM is loaded, so the core idles and the
+// screen area shows the shell's own painted title. That is deliberate: the brief
+// forbids a mock that claims to work, so this must never look like it is
+// emulating when it is not. Two things gate a real ROM, both recorded in
+// retroEngineMgba.ts rather than worked around: the vendored core is a THREADED
+// build and needs cross-origin isolation the app does not yet have, and no
+// Butano-built .gba exists to load.
 
 /** Controls that map 1:1 to an engine button. The D-pad is absent on purpose:
  *  it is one control but four buttons, so it resolves through
@@ -49,9 +54,10 @@ const CONTROL_TO_BUTTON: Partial<Record<RetroControlId, RetroButton>> = {
 const SHELL_W = 307
 const SHELL_H = 476
 
-/** Boot timing, in ms. The handheld's own boot is the reference: the mark
- *  travels down the screen, lands, and only then does the chime hit — the sound
- *  confirms the landing rather than accompanying the fall. */
+/** Boot timing, in ms. The handheld's own boot is the reference: the panel
+ *  comes up, the shell's painted splash resolves, and only then does the chime
+ *  hit — the sound confirms the screen has settled rather than accompanying the
+ *  ramp. BOOT_DROP_MS must stay in step with the bootPowerOn keyframes. */
 const BOOT_DROP_MS = 1500
 const BOOT_HOLD_MS = 900
 
@@ -97,6 +103,21 @@ function playBootChime(): boolean {
   } catch {
     return false
   }
+}
+
+/** The LED's own colour, expanded into the three values the stylesheet needs.
+ *  Built here rather than with color-mix() in CSS because this ships inside an
+ *  Android WebView old enough to lack it, and an unsupported colour function
+ *  would drop the declaration entirely rather than merely fail to blend. */
+function ledVars(hex?: string): React.CSSProperties {
+  if (!hex) return {}
+  const n = parseInt(hex.slice(1), 16)
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
+  return {
+    '--led': `rgb(${r}, ${g}, ${b})`,
+    '--led-glow': `rgba(${r}, ${g}, ${b}, 0.85)`,
+    '--led-halo': `rgba(${r}, ${g}, ${b}, 0.45)`,
+  } as React.CSSProperties
 }
 
 export default function ArcadeScreen() {
@@ -146,10 +167,63 @@ export default function ArcadeScreen() {
   // hold different controls, and lifting one must not release the other's.
   const pointers = useRef(new Map<number, RetroButton[]>())
   const shellRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const engineRef = useRef<RetroEmulatorEngine | null>(null)
+  // What the engine currently believes is held, so recompute can send it the
+  // DIFFERENCE rather than re-pressing every held button on every pointermove.
+  const enginePressed = useRef<Set<RetroButton>>(new Set())
+
+  // One engine per mount. Constructing it is cheap — it does not boot the core;
+  // see the note on attach() — so this costs nothing when nobody plays.
+  useEffect(() => {
+    const engine = new MgbaEngine()
+    engineRef.current = engine
+    if (canvasRef.current) engine.attach(canvasRef.current)
+    // Say it out loud in dev. Without isolation the core cannot start at all,
+    // and the failure would otherwise arrive much later as an opaque abort
+    // inside wasm — this is the single sentence that saves that afternoon.
+    if (import.meta.env.DEV && isolationBlocked()) {
+      console.warn(
+        '[arcade] crossOriginIsolated=false — the vendored mGBA build imports shared ' +
+        'memory and will refuse to start. Run the dev server as: POPLUR_COI=1 npm run dev',
+      )
+    }
+    return () => {
+      engine.dispose()
+      engineRef.current = null
+      enginePressed.current = new Set()
+    }
+  }, [])
+
+  // The brief is explicit that the emulator must not keep running at full speed
+  // when Poplur is backgrounded, and it is the HOST's job to know that — the
+  // engine cannot see the app. Same lever the rest of the web embed already
+  // uses, for the same reason.
+  useEffect(() => {
+    const onVisibility = () => {
+      const engine = engineRef.current
+      if (!engine || !document.hidden) return
+      // Release first: a direction held when the app went away must not still
+      // be held when it comes back.
+      engine.releaseAllButtons()
+      enginePressed.current = new Set()
+      engine.pause()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
   const recompute = useCallback(() => {
     const all = new Set<RetroButton>()
     pointers.current.forEach(list => list.forEach(b => all.add(b)))
+    // Drive the engine off the SAME set the art draws its press states from, so
+    // a button can never look pressed without being pressed.
+    const engine = engineRef.current
+    if (engine) {
+      enginePressed.current.forEach(b => { if (!all.has(b)) engine.setButtonReleased(b) })
+      all.forEach(b => { if (!enginePressed.current.has(b)) engine.setButtonPressed(b) })
+      enginePressed.current = all
+    }
     setPressed(all)
   }, [])
 
@@ -250,7 +324,9 @@ export default function ArcadeScreen() {
       >
         {/* Power LED: flashes while the handheld boots, then holds lit. Finite
             (the element unmounts with the boot), because the thermal gate
-            forbids an animation that runs forever. */}
+            forbids an animation that runs forever. It lights the dot the ART
+            already paints, in that shell's own colour, so it reads as the
+            painted dot coming on rather than a sticker landing next to it. */}
         {skin.powerLed && boot !== 'done' && (
           <span
             className={styles.powerLed}
@@ -259,6 +335,7 @@ export default function ArcadeScreen() {
               left: pct(skin.powerLed.cx - skin.powerLed.r),
               top: pct(skin.powerLed.cy - skin.powerLed.r * (SHELL_W / SHELL_H)),
               width: pct(skin.powerLed.r * 2),
+              ...ledVars(skin.led),
             }}
           />
         )}
@@ -274,15 +351,38 @@ export default function ArcadeScreen() {
           className={styles.screen}
           style={{ left: pct(skin.screen.x), top: pct(skin.screen.y), width: pct(skin.screen.w), height: pct(skin.screen.h) }}
         >
-          <canvas className={styles.screenCanvas} width={240} height={160} aria-label="Emulator output" />
+          <canvas ref={canvasRef} className={styles.screenCanvas} width={240} height={160} aria-label="Emulator output" />
 
-          {/* Boot. The shell's painted splash is the END of this, not a still:
-              the panel blacks out, the mark travels down, lands, chimes, then
-              the cover clears and the art's own title is what you are left
-              looking at. Unmounted once done so nothing animates at rest. */}
-          {boot !== 'done' && (
+          {/* Boot. The shell's OWN painted splash is what animates -- this is
+              not a panel that replaces the art and then gets out of the way.
+              The image below is the SAME shell PNG as the one underneath,
+              scaled by 1/screen.w and offset by -screen.x/screen.w so its
+              painted screen lands exactly over the painted screen beneath it.
+              The panel therefore powers ON into the artwork: the last frame of
+              the animation and the art are the same pixels, so unmounting is
+              invisible. A skin with no art has no splash to animate and simply
+              does not boot. Unmounted once done so nothing animates at rest. */}
+          {boot !== 'done' && hasArt && (
             <div className={`${styles.boot} ${boot === 'land' ? styles.bootLanded : ''}`} aria-hidden="true">
-              <img className={styles.bootMark} src="games/arcade/poplur_wordmark.png" alt="" draggable={false} />
+              <img
+                className={styles.bootSplash}
+                src={skin.art!.shellAsset}
+                alt=""
+                draggable={false}
+                style={{
+                  width: pct(1 / skin.screen.w),
+                  height: pct(1 / skin.screen.h),
+                  left: pct(-skin.screen.x / skin.screen.w),
+                  top: pct(-skin.screen.y / skin.screen.h),
+                  // The hairline must open from the middle of the SCREEN, and
+                  // this element is the whole shell -- whose centre is below the
+                  // opening's bottom edge. Percentages here are of the image's
+                  // own box, and screen.* are already fractions of it, so the
+                  // opening's centre lands straight in. Derived from the skin
+                  // rather than hard-coded, like every other measurement here.
+                  transformOrigin: `${(skin.screen.x + skin.screen.w / 2) * 100}% ${(skin.screen.y + skin.screen.h / 2) * 100}%`,
+                }}
+              />
             </div>
           )}
         </div>

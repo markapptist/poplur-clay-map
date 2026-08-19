@@ -78,6 +78,11 @@ export interface RetroShellSkin {
    *  does not flash. Lives here with the rest of the geometry so it tracks the
    *  art, exactly like the controls. */
   powerLed?: RetroCircle
+  /** The colour that shell's POWER dot is actually painted, sampled from its own
+   *  art (the brightest pixels of the dot). Per skin, not shared: the dot is
+   *  cyan on ice_blue, lime on camo_green and amber on chocolate, so the single
+   *  hard-coded pink this replaces was wrong on eight of the ten. */
+  led?: string
   /** Where the emulator canvas goes. The GBA is 240x160 (3:2); a screen opening
    *  that is not 3:2 will letterbox rather than stretch. */
   screen: RetroRect
@@ -113,10 +118,24 @@ const SHARED_LAYOUT: Omit<RetroShellSkin, 'id' | 'name' | 'family' | 'art'> = {
   // art rather than filling it. That is the artwork's shape, not a bug here,
   // but it is the reason the canvas is object-fit: contain.
   screen: { x: 0.242, y: 0.098, w: 0.611, h: 0.352 },
-  // The lit dot beside the POWER legend, left of the bezel. Centre measured off
-  // the art; the radius is still by eye, because the blob detector kept growing
-  // into the POWER legend next to it. NEEDS A VISUAL CHECK.
-  powerLed: { cx: 0.155, cy: 0.196, r: 0.018 },
+  // The lit dot beside the POWER legend, left of the bezel.
+  //
+  // MEASURED, not eyeballed. The window is x28..44 / y78..98, which deliberately
+  // excludes two things that wrecked the earlier attempt: the ")))" arcs, which
+  // start at x~45 and are BRIGHTER than the dot on several shells, and the POWER
+  // legend below at y~99. Grown from the dot's own peak pixel and constrained to
+  // stay connected to it, so a bright neighbour cannot join the blob -- which is
+  // what "the detector kept growing into the POWER legend" actually was.
+  //
+  // Two independent estimators agree across all ten shells: a 55%-of-peak
+  // connected region gives (35.13, 87.95)px, an intensity-weighted centroid
+  // gives (35.05, 87.97)px. The old cx of 0.155 was 12px right of that -- it sat
+  // on the first arc, not the dot, which is why the LED never looked attached.
+  //
+  // r is the SOLID CORE (3.4px), not the painted halo (4.5px): the element
+  // carries its own box-shadow bloom, so sizing it to the halo would flatten the
+  // art's glow under a flat disc instead of making the painted dot light up.
+  powerLed: { cx: 0.1143, cy: 0.1848, r: 0.0112 },
   controls: {
     dpad: { bounds: { x: 0.090, y: 0.600, w: 0.245, h: 0.160 }, deadZone: 0.22 },
     a: { cx: 0.905, cy: 0.662, r: 0.056 },
@@ -139,16 +158,16 @@ const shellArt = (id: string): RetroShellArt => ({
  *  Poplur, so the arcade shells read as the same product as the cube skins and
  *  phone bootups rather than a parallel set of names for the same colours. */
 export const RETRO_SHELL_SKINS: RetroShellSkin[] = [
-  { id: 'galaxy_purple',      name: 'Galaxy Purple',      family: 'amethyst_purple',        art: shellArt('galaxy_purple'), ...SHARED_LAYOUT },
-  { id: 'bubblegum_pink',     name: 'Bubblegum Pink',     family: 'rose_gold_pink',         art: shellArt('bubblegum_pink'), ...SHARED_LAYOUT },
-  { id: 'ocean_teal',         name: 'Ocean Teal',         family: 'icy_aqua_turquoise',     art: shellArt('ocean_teal'), ...SHARED_LAYOUT },
-  { id: 'gold_glitter',       name: 'Gold Glitter',       family: 'champagne_gold',         art: shellArt('gold_glitter'), ...SHARED_LAYOUT },
-  { id: 'retro_neon',         name: 'Retro Neon',         family: 'dark_rubber_neon',       art: shellArt('retro_neon'), ...SHARED_LAYOUT },
-  { id: 'camo_green',         name: 'Camo Green',         family: 'military_camo',          art: shellArt('camo_green'), ...SHARED_LAYOUT },
-  { id: 'ice_blue',           name: 'Ice Blue',           family: 'frozen_ice',             art: shellArt('ice_blue'), ...SHARED_LAYOUT },
-  { id: 'rainbow',            name: 'Rainbow',            family: 'rainbow_neon',           art: shellArt('rainbow'), ...SHARED_LAYOUT },
-  { id: 'chocolate',          name: 'Chocolate',          family: 'dark_chocolate',         art: shellArt('chocolate'), ...SHARED_LAYOUT },
-  { id: 'holographic_silver', name: 'Holographic Silver', family: 'holographic_iridescent', art: shellArt('holographic_silver'), ...SHARED_LAYOUT },
+  { id: 'galaxy_purple',      name: 'Galaxy Purple',      family: 'amethyst_purple',        led: '#b740d3', art: shellArt('galaxy_purple'), ...SHARED_LAYOUT },
+  { id: 'bubblegum_pink',     name: 'Bubblegum Pink',     family: 'rose_gold_pink',         led: '#fb94f5', art: shellArt('bubblegum_pink'), ...SHARED_LAYOUT },
+  { id: 'ocean_teal',         name: 'Ocean Teal',         family: 'icy_aqua_turquoise',     led: '#50f8f7', art: shellArt('ocean_teal'), ...SHARED_LAYOUT },
+  { id: 'gold_glitter',       name: 'Gold Glitter',       family: 'champagne_gold',         led: '#faf533', art: shellArt('gold_glitter'), ...SHARED_LAYOUT },
+  { id: 'retro_neon',         name: 'Retro Neon',         family: 'dark_rubber_neon',       led: '#bb51d0', art: shellArt('retro_neon'), ...SHARED_LAYOUT },
+  { id: 'camo_green',         name: 'Camo Green',         family: 'military_camo',          led: '#d4fa4b', art: shellArt('camo_green'), ...SHARED_LAYOUT },
+  { id: 'ice_blue',           name: 'Ice Blue',           family: 'frozen_ice',             led: '#83f1f6', art: shellArt('ice_blue'), ...SHARED_LAYOUT },
+  { id: 'rainbow',            name: 'Rainbow',            family: 'rainbow_neon',           led: '#e0facf', art: shellArt('rainbow'), ...SHARED_LAYOUT },
+  { id: 'chocolate',          name: 'Chocolate',          family: 'dark_chocolate',         led: '#cd8d39', art: shellArt('chocolate'), ...SHARED_LAYOUT },
+  { id: 'holographic_silver', name: 'Holographic Silver', family: 'holographic_iridescent', led: '#f5f8fb', art: shellArt('holographic_silver'), ...SHARED_LAYOUT },
 ]
 
 export const DEFAULT_SHELL_SKIN_ID = 'galaxy_purple'

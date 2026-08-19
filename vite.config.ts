@@ -54,6 +54,33 @@ function boundedPublicAssets() {
 
 export default defineConfig(({ command }) => ({
   plugins: [react(), boundedPublicAssets()],
+  // Cross-origin isolation for the Arcade's emulator core -- DEV ONLY, and OFF
+  // unless asked for. The vendored mGBA build imports SHARED wasm memory, so it
+  // cannot start unless the document is crossOriginIsolated. But isolation is
+  // document-wide: with COEP: require-corp on, every cross-origin subresource
+  // (Mapbox tiles, Firebase, remote avatars) must carry its own CORP/CORS
+  // opt-in or it simply stops loading. Turning that on for the whole persistent
+  // workbench would break the map for every session that is not working on the
+  // Arcade, so it is opt-in per shell:  POPLUR_COI=1 npm run dev
+  //
+  // This does NOT by itself help the shipped apps, but they are better placed
+  // than `base: './'` suggests: neither WebView loads the clay bundle over
+  // file:// any more. iOS serves it from a WKURLSchemeHandler on
+  // poplur-clay://app and Android from a WebViewAssetLoader, and BOTH build
+  // their own responses, so both can attach these two headers. Whether WebKit
+  // then actually grants crossOriginIsolated on a CUSTOM scheme is the open
+  // question -- that handler's own notes record WebKit ignoring its
+  // Cache-Control, so header handling there is already not uniform. Verify on
+  // a device before committing to a threaded core; the fallback is a
+  // single-threaded mGBA build, which needs no isolation at all.
+  server: process.env.POPLUR_COI === '1'
+    ? {
+        headers: {
+          'Cross-Origin-Opener-Policy': 'same-origin',
+          'Cross-Origin-Embedder-Policy': 'require-corp',
+        },
+      }
+    : undefined,
   // Dev still serves authoring meshes so a missing sprite can be generated.
   // Builds copy a filtered public tree through the plugin above.
   publicDir: command === 'build' ? false : 'public',

@@ -119,30 +119,44 @@
 }
 
 /* ── Boot ─────────────────────────────────────────────────────────────────
-   The panel blacks out, the mark travels down and lands, the chime confirms the
-   landing, then the cover clears to the art's own painted title. Finite: the
-   element unmounts when the boot finishes, so nothing animates at rest. */
+   The SHELL'S OWN painted splash comes on. This is not a cover that replaces
+   the art and then clears: the animated element IS the shell art, aligned so
+   its painted screen sits over the painted screen underneath, so the boot
+   resolves INTO the artwork instead of revealing it. Finite: the element
+   unmounts when the boot finishes, so nothing animates at rest. */
 .boot {
   position: absolute; inset: 0; z-index: 2;
-  background: #07100a;
-  display: grid; place-items: center;
+  /* The dead panel behind the splash, seen only while the screen is still
+     coming up. Once bootPowerOn reaches full height the splash covers it, so
+     this is never what the boot resolves TO. */
+  background: #05070a;
   overflow: hidden;
+  pointer-events: none;
   transition: opacity 0.32s ease 0.42s;
 }
-.bootMark {
-  width: 62%; max-width: 62%;
+/* A second copy of the shell art, deliberately larger than this container:
+   width 1/screen.w and offset -screen.x/screen.w put its painted screen exactly
+   over the one beneath, and .screen's clip crops it back to the opening. */
+.bootSplash {
+  position: absolute;
   display: block;
-  /* Travels from above the panel to centre and stops. One iteration, `both` so
-     it holds the landed pose instead of snapping back. */
-  animation: bootDrop 1.5s cubic-bezier(0.34, 0.02, 0.3, 1) both;
-  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.55));
+  max-width: none;
+  animation: bootPowerOn 1.5s cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
-/* Once landed, the cover fades and reveals the painted splash beneath. */
+/* Landed. The splash and the art beneath are now the same pixels, so this fade
+   has nothing to cross — it only retires the dead-panel backing. */
 .bootLanded { opacity: 0; }
 
-@keyframes bootDrop {
-  from { transform: translateY(-190%); }
-  to   { transform: translateY(0); }
+/* A panel coming up, not a mark falling in: a bright hairline opens vertically
+   into the full screen, overshoots dark, and settles at exactly scaleY(1) and
+   brightness(1) — which is the artwork underneath, pixel for pixel. */
+@keyframes bootPowerOn {
+  0%   { opacity: 0; transform: scaleY(0.014); filter: brightness(3.4) saturate(0.25); }
+  7%   { opacity: 1; transform: scaleY(0.014); filter: brightness(3.4) saturate(0.25); }
+  40%  { opacity: 1; transform: scaleY(0.075); filter: brightness(2.5) saturate(0.55); }
+  72%  { opacity: 1; transform: scaleY(1);     filter: brightness(1.6) saturate(1); }
+  88%  { opacity: 1; transform: scaleY(1);     filter: brightness(0.88) saturate(1); }
+  100% { opacity: 1; transform: scaleY(1);     filter: brightness(1) saturate(1); }
 }
 
 /* ── Hit targets ──────────────────────────────────────────────────────────
@@ -166,7 +180,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bootMark { animation-duration: 0.01ms; }
+  /* Land on the settled pose immediately: the splash is the artwork, so
+     skipping the ramp costs nothing but the theatre. */
+  .bootSplash { animation-duration: 0.01ms; }
 }
 
 /* Power LED. Sits over the shell's own painted dot and pulses while the
@@ -176,8 +192,10 @@
 .powerLed {
   position: absolute; z-index: 3;
   aspect-ratio: 1; border-radius: 50%;
-  background: #ff5ce0;
-  box-shadow: 0 0 6px 2px rgba(255, 92, 224, 0.85), 0 0 14px 5px rgba(255, 92, 224, 0.45);
+  /* Fallbacks are the old pink, so a skin that declares no led still lights. */
+  background: var(--led, #ff5ce0);
+  box-shadow: 0 0 6px 2px var(--led-glow, rgba(255, 92, 224, 0.85)),
+              0 0 14px 5px var(--led-halo, rgba(255, 92, 224, 0.45));
   animation: powerFlash 0.4s steps(1, end) 6 both;
   pointer-events: none;
 }
