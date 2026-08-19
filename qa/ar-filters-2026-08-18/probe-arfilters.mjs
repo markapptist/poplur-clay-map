@@ -34,16 +34,34 @@ const liveFilter = () => ev(`(()=>{const v=[...document.querySelectorAll('video'
 const centred = () => ev(`(document.querySelector('[data-idx][aria-pressed=true]')||{}).getAttribute && document.querySelector('[data-idx][aria-pressed=true]').getAttribute('aria-label')`)
 // The rail advances on ArrowRight; a tap works too but the rail CULLS chips
 // more than 3.2 slots out, so anything far along the list is not in the DOM.
-// Waits for the rail to actually ARRIVE, rather than assuming a fixed delay:
-// the handler targets `selected + 1` off React state, so a second arrow sent
-// before the snap lands recomputes the same index and the rail does not move.
+// Drives the rail the way a FINGER does: pointerdown/up on a chip, under the
+// 6px tap threshold. Deliberately not the arrow keys — those move the rail on
+// the dev server and do nothing against a production bundle, so an arrow-based
+// probe passes in dev and reports the shipped bytes as broken. Taps work on
+// both, and they are the interaction a phone actually has.
+//
+// Waits for the rail to ARRIVE rather than sleeping a fixed time: the snap is
+// animated, so reading the grade too early reads the previous filter.
 const stepRight = async () => {
   const before = await centred()
-  await ev(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))`)
-  const until = Date.now() + 5000
+  await ev(`(async () => {
+    const chips = [...document.querySelectorAll('[data-idx]')]
+    const here = chips.findIndex(c => c.getAttribute('aria-pressed') === 'true')
+    // The rail CULLS chips more than 3.2 slots out, so "one to the right" is
+    // the next one present in the DOM, not the next id in AR_FILTERS.
+    const next = chips[here + 1] ?? chips[chips.length - 1]
+    if (!next) return false
+    const line = next.closest('div')
+    const r = next.getBoundingClientRect(); const x = r.x + r.width/2, y = r.y + r.height/2
+    const fire = (ty, buttons) => line.dispatchEvent(new PointerEvent(ty, {
+      bubbles:true, cancelable:true, composed:true, pointerId:21, pointerType:'touch',
+      isPrimary:true, clientX:x, clientY:y, buttons }))
+    fire('pointerdown',1); await new Promise(f=>setTimeout(f,70)); fire('pointerup',0)
+    return true })()`)
+  const until = Date.now() + 6000
   while (Date.now() < until) {
-    await sleep(180)
-    if ((await centred()) !== before) return
+    await sleep(200)
+    if ((await centred()) !== before) { await sleep(500); return }
   }
 }
 
@@ -81,11 +99,29 @@ await shot('ar-filter-applied.png')
 // collapse into one step. That is a keyboard-only nicety on a touch-scrub
 // rail, not the thing under test — but firing them in a tight loop makes this
 // probe report a stuck grade that the product does not actually have.
-for (let i = 0; i < 6; i++) {
-  await ev(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}))`)
-  await sleep(700)
+// Mirror of stepRight, one chip at a time, waiting for each snap to land.
+const stepLeft = async () => {
+  const before = await centred()
+  await ev(`(async () => {
+    const chips = [...document.querySelectorAll('[data-idx]')]
+    const here = chips.findIndex(c => c.getAttribute('aria-pressed') === 'true')
+    const prev = chips[here - 1] ?? chips[0]
+    if (!prev || here <= 0) return false
+    const line = prev.closest('div')
+    const r = prev.getBoundingClientRect(); const x = r.x + r.width/2, y = r.y + r.height/2
+    const fire = (ty, buttons) => line.dispatchEvent(new PointerEvent(ty, {
+      bubbles:true, cancelable:true, composed:true, pointerId:22, pointerType:'touch',
+      isPrimary:true, clientX:x, clientY:y, buttons }))
+    fire('pointerdown',1); await new Promise(f=>setTimeout(f,70)); fire('pointerup',0)
+    return true })()`)
+  const until = Date.now() + 6000
+  while (Date.now() < until) {
+    await sleep(200)
+    if ((await centred()) !== before) { await sleep(400); return }
+  }
 }
-await sleep(1200)
+for (let i = 0; i < 8 && (await centred()) !== 'None'; i++) await stepLeft()
+await sleep(1000)
 check('returning to None clears the grade', (await liveFilter()) === 'none', await liveFilter())
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed')
