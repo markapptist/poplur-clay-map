@@ -91,10 +91,16 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // the two tiles were indistinguishable in the wheel — and it also meant the
     // VIDEO cube could not be dropped in without silently restyling TV GUIDE.
     { icon: 'Video', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
-    // CAMERA ROLL and LIVE are gone from the wheel: both are now side buttons
-    // on the camera itself, visible while you are looking through the lens.
-    // The roll still rises from the bottom of the page, and LIVE still starts
-    // the broadcast on the camera you are already pointing.
+    // CAMERA ROLL and LIVE are BACK in the wheel. They were pulled on the
+    // grounds that both are side buttons on the camera itself — true, but it
+    // left the channel arrows and the wheel disagreeing about what this tab
+    // contains, and the two ways in should offer the same four things.
+    //
+    // They sit on the same ring the arrows now walk: PHOTO, VIDEO, ROLL, LIVE.
+    // LIVE ARMS rather than fires (see the action dispatcher in HomeTwin) —
+    // flicking past a tile must never put you on air.
+    { icon: 'CameraRoll', title: 'CAMERA ROLL', screen: 'camera-roll', action: 'roll' },
+    { icon: 'YouTube', title: 'LIVE', screen: 'camera-live', action: 'live' },
     // ML scan and AR are persistent camera-side controls. They do not belong
     // in the hold menu, where they duplicate controls that remain visible on
     // the live viewfinder.

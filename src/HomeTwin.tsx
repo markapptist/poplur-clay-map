@@ -1993,10 +1993,38 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // PHOTO/VIDEO is a capture mode. Selecting VIDEO puts the camcorder in your
   // hand; recording begins only when that camcorder is tapped, and its next tap
   // stops. This mirrors the photo camera: choosing it is not itself a shutter.
-  const [cameraCaptureMode, setCameraCaptureMode] = useState<'photo' | 'video'>(() => {
+  // What the camera is ARMED for. Selection and firing are deliberately separate
+  // on this tab: the mode decides which object the navigator wears, and tapping
+  // that object is the shutter. LIVE joins photo/video here for exactly that
+  // reason — flicking past it must not put you on air.
+  const [cameraCaptureMode, setCameraCaptureMode] = useState<'photo' | 'video' | 'live'>(() => {
     const requested = new URLSearchParams(window.location.search).get('camera-mode')
-    return requested === 'video' ? 'video' : 'photo'
+    return requested === 'video' ? 'video' : requested === 'live' ? 'live' : 'photo'
   })
+
+  // The camera's own channel cycle. PHOTO and VIDEO were already modes; ROLL is
+  // a screen you land on and LIVE was an action that fired the moment it was
+  // touched. Putting all four on one ring is what makes the channel arrows mean
+  // the same thing here as everywhere else.
+  //
+  // ROLL is the odd one: it is a page, not an arming state, and the shell
+  // toggles it by stepping cameraStep (Camera reads page from step % 2). So the
+  // ring reads the roll's open/closed state as its "current" when it is up.
+  const CAMERA_CYCLE = ['photo', 'video', 'roll', 'live'] as const
+  const stepCameraMode = (dir: 1 | -1) => {
+    const onRoll = ((cameraStep % 2) + 2) % 2 === 1
+    const current: (typeof CAMERA_CYCLE)[number] = onRoll ? 'roll' : cameraCaptureMode
+    const i = CAMERA_CYCLE.indexOf(current)
+    const n = CAMERA_CYCLE.length
+    const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
+    if (next === 'roll') {
+      if (!onRoll) setCameraStep(step => step + 1)
+      return
+    }
+    // Leaving the roll closes it, so the viewfinder is what the next mode arms.
+    if (onRoll) setCameraStep(step => step + 1)
+    setCameraCaptureMode(next)
+  }
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
   // Who the camera is currently looking at. While a user is detected the radius
@@ -2038,11 +2066,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setCameraStep(current => current + 1)
       return
     }
-    if (action === 'photo' || action === 'video') {
+    // Selection, not firing. LIVE joins photo/video here: the tile arms the
+    // broadcast and the cube tap commits it, so neither a wheel pick nor a
+    // channel flick can put you on air by itself.
+    if (action === 'photo' || action === 'video' || action === 'live') {
       setCameraCaptureMode(action)
       return
     }
-    if (action === 'detect' || action === 'ar' || action === 'live') {
+    if (action === 'detect' || action === 'ar') {
       cameraActionsRef.current?.[action]()
       return
     }
@@ -2252,6 +2283,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // With the hold menu mounted (a page is open, or the wheel is up) it owns
     // the cycle: it walks its own tab's pages and the door back out.
     if (subscreenArrowsRef.current?.(dir)) return
+    // Standing on the camera itself, the arrows walk its capture ring rather
+    // than stepping into the tab's page list. Selection only — the cube tap
+    // below is still what fires the shutter, starts the recording or goes live.
+    if (activeTab === 'post') { stepCameraMode(dir); return }
     // Standing on the tab's own screen with nothing mounted to answer — this
     // IS the door, so step into the tab's page list. The menu is not mounted
     // here at all, which is why the walk above cannot do it: opening the page
