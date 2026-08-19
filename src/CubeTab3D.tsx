@@ -95,6 +95,33 @@ const CAMCORDER_MOTION_GAIN = 1.15
     the whole point on a clay cube and completely wrong on a viewfinder. */
 const CAMCORDER_MOTION_SMOOTHING = 62
 
+/** True-heading facing, layered ON TOP of the parallax envelope above rather
+ *  than replacing it. The parallax response (motionYaw/motionPitch) is
+ *  deliberately small and springs back toward centre — right for "leaning
+ *  against the light in your palm". Compass heading is the opposite: it has
+ *  no centre and no limit, because turning your whole body a full circle has
+ *  to turn the object a full circle, the way a compass needle or an AR
+ *  anchor would. Kept as a second additive term (see `group.rotation.y` in
+ *  the render loop) so it costs nothing when no heading source is present —
+ *  every platform that cannot supply one (no compass permission yet, an
+ *  Android without absolute orientation, a native shell whose bridge has not
+ *  been extended to send `heading`) simply keeps the existing parallax-only
+ *  behaviour unchanged.
+ *
+ *  Calibrated at the FIRST sample rather than pinned to true north: this
+ *  codebase has no authored convention for which way a cube's front "should"
+ *  face at rest, so pinning to raw heading would snap every object to an
+ *  arbitrary pose the moment a reading arrived. Starting from "however it is
+ *  posed right now" and tracking only the CHANGE in heading since then still
+ *  delivers "point wherever I am pointing the phone" — spin a half turn and
+ *  the object turns a half turn — without an artificial jump at start-up. */
+const CUBE_HEADING_DIRECTION = 1 // flip to -1 if a real device turns the object the wrong way
+/** Exponential-smoothing retain, applied per 60fps-equivalent frame via
+ *  `Math.pow(retain, dt*60)` — same frame-rate-independent shape as the
+ *  parallax spring's substeps, just without the spring's overshoot: a needle
+ *  tracking a compass should settle toward the reading, not bounce past it. */
+const CUBE_HEADING_SMOOTHING_RETAIN = 0.82
+
 // The navigator is a ring, not a list of unrelated destinations. Keep this
 // sequence explicit because it is shared by touch and keyboard navigation:
 // Feed -> Profile -> Map -> Camera -> Feed.
@@ -601,6 +628,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     let lastMotionAt = 0
     let rawMotionRoll = 0
     let rawMotionPitch = 0
+    // Compass-heading facing (see CUBE_HEADING_* above). `headingYaw` is what
+    // the render loop actually adds to rotation.y; `headingTargetYaw` is the
+    // continuous, UNWRAPPED target it chases — continuous so spinning several
+    // full turns accumulates past +-2*PI instead of snapping back through
+    // zero, and unwrapped by tracking the shortest delta from the previous
+    // raw reading rather than the raw reading itself. `headingOrigin` is the
+    // first raw sample, which calibrates "no turn yet" to the object's
+    // current authored pose instead of true north.
+    let headingYaw = 0
+    let headingTargetYaw = 0
+    let headingOrigin: number | null = null
+    let lastRawHeading = 0
     // The visible navigator is allowed to be genuinely smooth while it is
     // changing, but never owns a display-rate loop merely because it exists.
     // FULL mode therefore renders motion/pops at 60fps on every shell; lower
@@ -727,6 +766,30 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       needsRender = true
       wakeLoopRef.current()
       return true
+    }
+    /** `headingRad` is a raw compass reading, 0..2*PI, clockwise from north —
+     *  NOT bounded like the parallax target above, and NOT sprung directly;
+     *  it only advances the continuous, unwrapped `headingTargetYaw` the
+     *  render loop's own per-frame smoothing chases. */
+    const applyHeadingTarget = (headingRad: number) => {
+      if (headingOrigin === null) {
+        // First sample: calibrate "no turn yet" to here, so the object does
+        // not jump the moment a heading reading arrives.
+        headingOrigin = headingRad
+        lastRawHeading = headingRad
+        return
+      }
+      // Shortest angular step from the LAST raw reading, not from the origin
+      // — accumulating steps is what lets the target pass through +-PI
+      // (the compass wrapping from 359 deg to 0 deg) without a snap, and keep
+      // going past a full turn instead of resetting at it.
+      let delta = headingRad - lastRawHeading
+      delta -= Math.round(delta / (Math.PI * 2)) * (Math.PI * 2)
+      lastRawHeading = headingRad
+      if (delta === 0) return
+      headingTargetYaw += delta * CUBE_HEADING_DIRECTION
+      needsRender = true
+      wakeLoopRef.current()
     }
     const reconcileLatestMotion = () => {
       const latest = window.__poplurLatestCubeMotion
@@ -965,8 +1028,35 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       reconcileLatestMotion()
       wakeLoopRef.current()
     }
+    // Safari's compass reading (already true heading, no screen-angle math
+    // needed) and, failing that, the standards-track `alpha` on an ABSOLUTE
+    // event (Chrome/Android — see the `deviceorientationabsolute` listener
+    // below, which delivers this same event shape with `absolute` guaranteed
+    // true). A plain relative `deviceorientation` alpha is left alone: it
+    // free-drifts from wherever the device happened to be at page load and is
+    // not a heading at all, so using it would turn the object on its own.
+    const readCompassHeadingDeg = (event: DeviceOrientationEvent): number | null => {
+      const withCompass = event as DeviceOrientationEvent & {
+        webkitCompassHeading?: number
+        absolute?: boolean
+      }
+      if (typeof withCompass.webkitCompassHeading === 'number'
+        && !Number.isNaN(withCompass.webkitCompassHeading)) {
+        return withCompass.webkitCompassHeading
+      }
+      if (withCompass.absolute === true && typeof event.alpha === 'number') {
+        const screenAngle = typeof screen.orientation?.angle === 'number' ? screen.orientation.angle : 0
+        return (360 - event.alpha - screenAngle + 360) % 360
+      }
+      return null
+    }
     const onDeviceOrientation = (event: DeviceOrientationEvent) => {
-      if (document.visibilityState !== 'visible' || (event.gamma == null && event.beta == null)) return
+      if (document.visibilityState !== 'visible') return
+      const headingDeg = readCompassHeadingDeg(event)
+      if (event.gamma == null && event.beta == null) {
+        if (headingDeg != null) applyHeadingTarget(THREE.MathUtils.degToRad(headingDeg))
+        return
+      }
       const now = performance.now()
       // 30Hz is plenty for a clay object leaning against the light. A
       // viewfinder is aimed, and at 30Hz the lag between the handset turning
@@ -988,11 +1078,19 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         devicePitch,
         THREE.MathUtils.degToRad(0.2),
       )
+      if (headingDeg != null) applyHeadingTarget(THREE.MathUtils.degToRad(headingDeg))
     }
     const onNativeMotion = (event: Event) => {
-      const detail = (event as CustomEvent<{ roll?: number; pitch?: number }>).detail
+      const detail = (event as CustomEvent<{ roll?: number; pitch?: number; heading?: number }>).detail
       const roll = detail?.roll
       const devicePitch = detail?.pitch
+      // `heading` is an extension to this bridge event: true compass heading
+      // in degrees, clockwise from north. The native host (Core Motion /
+      // Android's fused sensor) does not send it yet, so this stays a no-op
+      // until that side is wired up — everything else here is unchanged.
+      if (typeof detail?.heading === 'number') {
+        applyHeadingTarget(THREE.MathUtils.degToRad(detail.heading))
+      }
       if (typeof roll !== 'number' && typeof devicePitch !== 'number') return
       const next = { roll: roll ?? 0, pitch: devicePitch ?? 0 }
       window.__poplurLatestCubeMotion = next
@@ -1024,6 +1122,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     window.addEventListener('poplur-native-app-lifecycle', onNativeLifecycle)
     if (!isNativeShell()) {
       window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true })
+      // Chrome/Android's `alpha` on a plain `deviceorientation` event is not
+      // reliably compass-linked; `deviceorientationabsolute` is the event
+      // that guarantees it. Safari never fires this one at all (it has no
+      // need to — `webkitCompassHeading` already rides the plain event
+      // above), so this is additive everywhere, never a duplicate source.
+      window.addEventListener('deviceorientationabsolute', onDeviceOrientation as EventListener, { passive: true })
     }
     window.addEventListener('poplur-native-motion', onNativeMotion)
     window.addEventListener('poplur-motion-tuning', onMotionTuning)
@@ -1119,6 +1223,20 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         needsRender = true
       }
 
+      // Compass facing. Frame-rate-independent exponential smoothing rather
+      // than the parallax spring above: `headingTargetYaw` already moves in
+      // real time with the compass, so chasing it is settling toward a
+      // moving point, not arriving at a fixed one — a spring's overshoot
+      // would read as the object wobbling past where the phone actually is.
+      const headingDelta = headingTargetYaw - headingYaw
+      if (Math.abs(headingDelta) > 0.00005) {
+        headingYaw += headingDelta * (1 - Math.pow(CUBE_HEADING_SMOOTHING_RETAIN, dt * 60))
+        needsRender = true
+      } else if (headingYaw !== headingTargetYaw) {
+        headingYaw = headingTargetYaw
+        needsRender = true
+      }
+
       // ALWAYS turning while you can see it (user-ordered, 18 Aug). This used
       // to expire — armed for 8s at boot and re-armed by interaction — so the
       // globe stopped on its own and read as broken: "why does this turn off
@@ -1141,7 +1259,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         // The globe's authored entrance turn and live device response share
         // one rotation. Every other object stays front-facing and moves only
         // from device tilt; a tab change never carries the globe's yaw into it.
-        group.rotation.y = (targetTabRef.current === 'map' ? yaw : 0) + motionYaw
+        group.rotation.y = (targetTabRef.current === 'map' ? yaw : 0) + motionYaw + headingYaw
         pitchGroup.rotation.x = pitch + motionPitch
         renderer.render(scene, camera)
         needsRender = false
@@ -1158,6 +1276,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         || Math.abs(motionTargetPitch - motionPitch) > 0.0002
         || Math.abs(motionYawVelocity) > 0.00008
         || Math.abs(motionPitchVelocity) > 0.00008
+        || Math.abs(headingTargetYaw - headingYaw) > 0.00005
         || needsRender
       // Motion samples are still arriving (or only just stopped), so stay
       // scheduled and pick the next one up on the very next frame instead of
@@ -1214,7 +1333,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       canvas.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('poplur-native-app-lifecycle', onNativeLifecycle)
-      if (!isNativeShell()) window.removeEventListener('deviceorientation', onDeviceOrientation)
+      if (!isNativeShell()) {
+        window.removeEventListener('deviceorientation', onDeviceOrientation)
+        window.removeEventListener('deviceorientationabsolute', onDeviceOrientation as EventListener)
+      }
       window.removeEventListener('poplur-native-motion', onNativeMotion)
       window.removeEventListener('poplur-motion-tuning', onMotionTuning)
       canvas.removeEventListener('webglcontextlost', onContextLost)

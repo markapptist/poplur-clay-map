@@ -2024,7 +2024,25 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // ROLL is the odd one: it is a page, not an arming state, and the shell
   // toggles it by stepping cameraStep (Camera reads page from step % 2). So the
   // ring reads the roll's open/closed state as its "current" when it is up.
-  const CAMERA_CYCLE = ['photo', 'video', 'roll', 'live'] as const
+  //
+  // CREATE / GAMES / STUDIO used to be reachable only through the long-press
+  // wheel — the arrows stopped at LIVE, so three of the tab's seven tiles were
+  // invisible to anyone who did not know to hold. They join the ring the same
+  // way ROLL does: landing on one opens it outright rather than merely arming
+  // it. Opening reuses the exact mechanism the generic "step into the tab's
+  // page list" branch below already uses for every other tab (setResume +
+  // setHoldOpen) — the camera skips that branch (it returns early, above), so
+  // this is the same handoff, just reached from here instead. Once open, the
+  // wheel's own arrow-walker (HoldMenuTwin's bindArrows) takes every further
+  // press: it already knows CREATE→GAMES→STUDIO from TAB_MENUS.post, and
+  // wraps back to its "door" — the bare viewfinder — on its own, which is why
+  // this function does not need to know how to leave them again.
+  const CAMERA_CYCLE = ['photo', 'video', 'roll', 'live', 'create', 'games', 'studio'] as const
+  const CAMERA_CYCLE_SCREEN = {
+    create: 'camera-ai-chat',
+    games: 'feed-games',
+    studio: 'camera-studio',
+  } as const
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
     const current: (typeof CAMERA_CYCLE)[number] = onRoll ? 'roll' : cameraCaptureMode
@@ -2033,6 +2051,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
     if (next === 'roll') {
       if (!onRoll) setCameraStep(step => step + 1)
+      return
+    }
+    if (next === 'create' || next === 'games' || next === 'studio') {
+      // Leaving the roll first, same as any other stop past it, so re-entering
+      // the viewfinder later (the wheel's door) does not still show it.
+      if (onRoll) setCameraStep(step => step + 1)
+      setResume(current => ({ screen: CAMERA_CYCLE_SCREEN[next], n: current.n + 1 }))
+      setHoldOpen(true)
       return
     }
     // Leaving the roll closes it, so the viewfinder is what the next mode arms.
