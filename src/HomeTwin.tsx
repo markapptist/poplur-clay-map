@@ -2951,11 +2951,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 : mapHasAccumulatedRadius || (profileTotalKm != null && activeTab === 'profile')
                   ? 'TOTAL RADIUS ◆'
                   : 'RADIUS ◆'}</span>
+            {/* `&& !chromeIdle` on all three counters: the swap beat already
+                pauses with chrome idle, but the counters ALSO re-count on every
+                DATA change — and the feed changes `radius` on every clip
+                advance (~10s), so an untouched feed ran an 880ms rAF volley,
+                per-frame restyle, ~23 tick oscillators and an AudioContext
+                wake every ten seconds forever. Measured before: +2 oscillators
+                per second at idle=true. Idle snaps the number instead; the
+                first touch un-idles the chrome and the very next change beats
+                again. */}
             <AnimatedRadiusMetrics
               radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
-              active={recordMs == null && (activeTab === 'profile' ? profileMetric === 'radius' : !showOnlineAudience)}
+              active={recordMs == null && !chromeIdle && (activeTab === 'profile' ? profileMetric === 'radius' : !showOnlineAudience)}
               accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && profileTotalKm != null))}
             />
             <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : `${POST_COUNT} nearby`}</span>
@@ -2967,7 +2976,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             <span className={styles.statLabel}>{onlineIsGlobal ? 'ONLINE NOW' : 'ONLINE HERE'}</span>
             <AnimatedOnlineCount
               value={onlineAudience}
-              active={recordMs == null && (activeTab === 'profile' ? profileMetric === 'online' : showOnlineAudience)}
+              active={recordMs == null && !chromeIdle && (activeTab === 'profile' ? profileMetric === 'online' : showOnlineAudience)}
             />
             <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
             <span className={styles.statTrend}>{onlineIsGlobal ? 'LIVE APP' : 'LIVE AREA'}</span>
@@ -2979,7 +2988,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             <span className={styles.statLabel}>YOUR POSTS ◆</span>
             <AnimatedPostCount
               value={profilePostCount}
-              active={recordMs == null && activeTab === 'profile' && profileMetric === 'posts'}
+              active={recordMs == null && !chromeIdle && activeTab === 'profile' && profileMetric === 'posts'}
             />
             <span className={styles.statSub}>posts published</span>
             <span className={styles.statTrend}>YOUR POPS</span>
