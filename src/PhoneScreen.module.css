@@ -56,12 +56,22 @@
    Geometry, colours and font are the twin's: a yellow-green panel inset in
    the shell with a dotted inner rule. Everything the phone says goes here. */
 .lcd {
+  /* MEASURED from the artwork, not copied from the twin.
+     The twin's numbers (24.5/18/51.2/18.2) were tuned against its own layout,
+     and here they left the panel too SHORT: the art has a screen of its own
+     baked in — a world map and "stay connected." — so the uncovered strip below
+     kept showing it and the phone read as having two screens stacked.
+     These come from sampling the LCD's own colour across all ten colourway
+     renders, nine of which agree to within a tenth of a percent. (Gold and
+     emerald disagree only because a yellow or green BODY answers a naive
+     yellow test; the rule that separates them is blue near zero with R and G
+     close, which is the LCD and not a jewelled shell.) */
   position: absolute;
   z-index: 4;
-  left: 24.5%;
-  top: 18%;
-  width: 51.2%;
-  height: 18.2%;
+  left: 25%;
+  top: 18.8%;
+  width: 49.6%;
+  height: 23.7%;
   overflow: hidden;
   border-radius: 2.5%;
   background: #eff100;
