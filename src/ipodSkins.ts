@@ -4,8 +4,15 @@
 // ARTWORK, and where its screen and click wheel ARE is data. Keeping the two
 // together is what lets an eleventh finish ship without touching the player.
 //
-// ART STATUS: sliced from the supplied theme sheet (1024x1536), ten devices in
-// a 5x2 grid below the annotated hero, normalised to one 194x350 canvas.
+// ART STATUS: sliced from ten full-frame exports (1024x1536 each, one device
+// per file), normalised to one 831x1503 canvas.
+//
+// These REPLACED the first pass, which took the ten small cells from the
+// collection sheet and landed at 194x350 -- a 4.6x upscale at the size the
+// player renders, and it looked it. The geometry below was re-measured on the
+// new canvas rather than carried over: the crop bounds differ, so the old
+// normalised numbers would have been subtly wrong even though the device is
+// the same design.
 //
 // Two things about that source are worth recording rather than discovering
 // again:
@@ -17,9 +24,9 @@
 //    removed and interior black survives. retro_neon and chocolate needed a
 //    stricter threshold still; the slicer picks the highest one that keeps the
 //    body at least 92% opaque.
-//  - The cells are 194x350, and the player renders at min(300px, 82vw). On a 3x
-//    panel that is a 4.6x upscale and it looks it. Higher-resolution exports
-//    replace the PNGs; nothing here changes when they do.
+//  - Resolution is now ahead of the render: 831x1503 against a device drawn at
+//    min(300px, 82vw), so even a 3x panel asks for 900x1623 and the art is
+//    within a hair of that. The first pass was 4.6x short.
 
 export interface IpodRect { x: number; y: number; w: number; h: number }
 /** Radius is normalised to the device WIDTH, so a circle stays circular. */
@@ -44,12 +51,17 @@ export interface IpodSkin {
  *  wheel's own radius. A finish that genuinely moved a control would override
  *  this rather than edit it. */
 const SHARED: Omit<IpodSkin, 'id' | 'name' | 'family' | 'art'> = {
-  screen: { x: 0.115, y: 0.057, w: 0.806, h: 0.393 },
-  wheel:  { cx: 0.500, cy: 0.714, r: 0.303 },
-  center: { cx: 0.500, cy: 0.714, r: 0.119 },
+  screen: { x: 0.100, y: 0.048, w: 0.800, h: 0.376 },
+  wheel:  { cx: 0.504, cy: 0.687, r: 0.315 },
+  center: { cx: 0.504, cy: 0.687, r: 0.132 },
 }
 
-const art = (id: string) => `ipod/skins/${id}.png`
+// WebP, not PNG. These are glitter — high-frequency noise that PNG cannot
+// compress, so the ten shipped at 2.6MB each / 26MB total, for art where only
+// one is ever on screen. At q92 they are 0.46MB each and indistinguishable
+// from the PNG at 1:1 on the wheel's glitter, which is the hardest part of the
+// image to hold. 26MB -> 4.6MB, in a bundle that ships to a phone.
+const art = (id: string) => `ipod/skins/${id}.webp`
 
 export const IPOD_SKINS: IpodSkin[] = [
   { id: 'galaxy_purple',      name: 'Galaxy Purple',      family: 'amethyst_purple',        art: art('galaxy_purple'), ...SHARED },

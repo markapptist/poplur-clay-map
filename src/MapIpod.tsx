@@ -12,8 +12,8 @@ import { ipodSkinForTheme } from './ipodSkins'
 
 /** The canvas the skin art is exported at. Its ratio drives the device box,
  *  so the normalised geometry lands on the same pixels at any render size. */
-const IPOD_W = 194
-const IPOD_H = 350
+const IPOD_W = 831
+const IPOD_H = 1503
 
 // The Poplur iPod — the map's music handheld.
 //
