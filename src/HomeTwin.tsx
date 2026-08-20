@@ -974,6 +974,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
 
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
+
+  /** What the cube was answering to a moment ago; see handleSubscreenChange.
+
+      A ref because the comparison must not live inside a state updater. */
+
+  const cubeScreenRef = useRef<string | null>(null)
   /** cubeScreen for callbacks that must not re-bind on every page change. */
   const cubeScreenLiveRef = useRef<string | null>(null)
   cubeScreenLiveRef.current = cubeScreen
@@ -998,7 +1004,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // because the POP is owed on every subscreen change, including the many
     // that share the plain cube — without this, entering News from Home would
     // swap nothing and so pop nothing.
-    setCubeScreen(open && screen ? screen : null)
+    // A PAGE change inside the channel, so both the cube and the screen move
+    // on the vertical axis — the horizontal one belongs to tabs, and using it
+    // here would make "deeper into this channel" look identical to "sideways
+    // to another one". Opening rises (dir 1), closing settles back down.
+    const next = open && screen ? screen : null
+    // Compared against a REF, not inside the state updater: React may invoke an
+    // updater twice, and an animation fired from in there would play twice with
+    // it. The ref is the honest place for "what was on screen a moment ago".
+    if ((cubeScreenRef.current ?? '') !== (next ?? '')) {
+      const dir: 1 | -1 = next ? 1 : -1
+      cubeSwapVec.current = { x: 0, y: dir }
+      pushScreenRef.current?.(dir, 'y')
+    }
+    cubeScreenRef.current = next
+    setCubeScreen(next)
     // Opening a real subscreen IS a page change. Radio, TV Guide and Games each
     // bring their own sound, and `activeTab` does not move, so silence the tab
     // just before it unmounts. A `false` report also occurs when the raw wheel
@@ -1028,7 +1048,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [cubeSwapMode, setCubeSwapMode] = useState<CubeTransition>(() => cubeTransition())
   useEffect(() => onTransitionChanged(() => setCubeSwapMode(cubeTransition())), [])
   /** Which way the tabs moved, so a slide travels the way you swiped. */
-  const cubeSwapDir = useRef(1)
+  const pushScreenRef = useRef<((dir: 1 | -1, axis: 'x' | 'y') => void) | null>(null)
+  /**
+   * Which way the cube slides, as an axis vector. Exactly one component is
+   * ever non-zero: x for a TAB change (left to right through the ring), y for
+   * a PAGE change inside a channel (up and down). The screen underneath reads
+   * the same vector, so the two move together instead of the cube sliding over
+   * a screen that merely swapped.
+   */
+  const cubeSwapVec = useRef<{ x: 0 | 1 | -1; y: 0 | 1 | -1 }>({ x: 1, y: 0 })
   const [cubeSwapPhase, setCubeSwapPhase] = useState<'idle' | 'exit' | 'waiting' | 'enter'>('idle')
   const cubeSwapFallbackTimer = useRef<number | null>(null)
   const cubeModelReadyTimer = useRef<number | null>(null)
@@ -2508,15 +2536,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Direction of the current push, or 0. Cleared when the animation ends so a
   // re-press retriggers it rather than being swallowed by an identical class.
   const [pushDir, setPushDir] = useState<0 | 1 | -1>(0)
+  /** Which axis the in-flight screen change moves along. */
+  const [pushAxis, setPushAxis] = useState<'x' | 'y'>('y')
   const pushTimer = useRef<number | null>(null)
   /** which transition the in-flight screen change is playing */
   const screenAnimMode = useRef<ScreenTransition>('fade')
-  const pushScreen = (dir: 1 | -1) => {
+  const pushScreen = (dir: 1 | -1, axis: 'x' | 'y' = 'y') => {
     // Both modes animate. `fade` used to return here, which made it mean "no
     // transition" — so half the setting was a no-op and the feature looked
     // absent unless you happened to pick the other one.
     screenAnimMode.current = screenTransition()
     if (pushTimer.current !== null) window.clearTimeout(pushTimer.current)
+    setPushAxis(axis)
     setPushDir(0)
     // A frame between clear and set, or React coalesces them and the animation
     // never restarts on a repeated press in the same direction.
@@ -2526,6 +2557,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       pushTimer.current = window.setTimeout(() => { setPushDir(0); pushTimer.current = null }, 300)
     })
   }
+
+  // The tab-change effect is declared ABOVE pushScreen, so it cannot call it
+  // directly without hoisting the whole thing. A ref is the smaller change and
+  // keeps pushScreen next to the state it owns.
+  pushScreenRef.current = pushScreen
 
   const changeChannel = (dir: 1 | -1) => {
     pushScreen(dir)
@@ -2764,7 +2800,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const to = TAB_ORDER.indexOf(activeTab)
     if (from >= 0 && to >= 0) {
       const forward = (to - from + TAB_ORDER.length) % TAB_ORDER.length
-      cubeSwapDir.current = forward <= TAB_ORDER.length / 2 ? 1 : -1
+      const dir: 1 | -1 = forward <= TAB_ORDER.length / 2 ? 1 : -1
+      cubeSwapVec.current = { x: dir, y: 0 }
+      // The screen goes the same way. Tab changes used to animate the cube and
+      // leave the content to snap, which is what read as "no transition".
+      pushScreenRef.current?.(dir, 'x')
     }
     // The old HoldMenu cleanup is asynchronous relative to the tab request.
     // Clear its ownership at the semantic edge so a Camera/Profile subscreen
@@ -2888,7 +2928,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           pushDir === 0
             ? ''
             : screenAnimMode.current === 'push'
-              ? (pushDir === 1 ? styles.pushUp : styles.pushDown)
+              ? (pushAxis === 'x'
+                  ? (pushDir === 1 ? styles.pushLeft : styles.pushRight)
+                  : (pushDir === 1 ? styles.pushUp : styles.pushDown))
               : styles.screenFade,
         ].filter(Boolean).join(' ')}
       >
@@ -3204,7 +3246,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
-          style={{ ['--cube-swap-dir' as string]: cubeSwapDir.current }}
+          style={{
+            ['--cube-swap-x' as string]: cubeSwapVec.current.x,
+            ['--cube-swap-y' as string]: cubeSwapVec.current.y,
+          }}
           className={photoPopping
             ? `${styles.cubePhotoPop} ${styles.cubeFloat}`
             : cubeSwapPhase === 'exit'
