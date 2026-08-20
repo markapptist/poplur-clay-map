@@ -1485,6 +1485,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             detail: { type: 'poplurDMThreads', threads: [] },
           }))
         }
+        // Same for the phone: answer with nothing so the LCD stops saying
+        // "Loading…" forever in a browser.
+        if (detail.type === 'requestPhoneContacts') {
+          window.dispatchEvent(new CustomEvent('poplur-dm-result', {
+            detail: { type: 'poplurPhoneContacts', contacts: [] },
+          }))
+        }
       }
     }
 
@@ -1493,7 +1500,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
       if (data.type !== 'poplurDMThreads'
         && data.type !== 'poplurDMMessages'
-        && data.type !== 'poplurDMSendFailed') return
+        && data.type !== 'poplurDMSendFailed'
+        && data.type !== 'poplurPhoneContacts') return
       window.dispatchEvent(new CustomEvent('poplur-dm-result', { detail: data }))
     }
 

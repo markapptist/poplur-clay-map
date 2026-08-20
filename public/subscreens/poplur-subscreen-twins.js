@@ -714,6 +714,7 @@ window.addEventListener('message', event => {
     reportNestedDepth();
     return;
   }
+  if (handlePhoneContactsMessage(data)) return;
   if (handleDMMessage(data)) return;
   if (handleWalletPassMessage(data)) return;
   handleStoreCheckoutResult(data);
@@ -1437,7 +1438,71 @@ function phoneVibrate(pattern = 18) {
   } catch (_) {}
 }
 
+// ── The phone's address book ────────────────────────────────────────────────
+// The Contacts menu was three hardcoded rows ending in "Add contact — coming
+// soon". Real contacts come from native: favourites first, then people you
+// have a chat with, then people your radius has actually crossed.
+let phoneContacts = null;      // null = native has not answered yet
+let phoneContactsAsked = false;
+
+function requestPhoneContacts() {
+  if (phoneContactsAsked || window.parent === window) return;
+  phoneContactsAsked = true;
+  window.parent.postMessage({ type: 'requestPhoneContacts' }, '*');
+}
+
+function handlePhoneContactsMessage(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (data.type !== 'poplurPhoneContacts') return false;
+  phoneContacts = Array.isArray(data.contacts) ? data.contacts : [];
+  renderPhoneMenu();
+  return true;
+}
+
+/** Toggling is a write plus a re-read: favouriting re-sorts the list. */
+function togglePhoneFavourite(contact) {
+  if (window.parent === window || !contact) return;
+  window.parent.postMessage({
+    type: 'togglePhoneFavourite',
+    contactId: contact.id,
+    favourite: !contact.favourite,
+    name: contact.name,
+  }, '*');
+}
+
+/**
+ * The Contacts screen, built from live data when there is any.
+ *
+ * `*` on a row toggles the favourite — the keypad is the only input this phone
+ * has, so the star key does what a long-press would elsewhere.
+ */
+function phoneContactItems() {
+  if (phoneContacts === null) {
+    return [{ title: 'Loading…', detail: 'reading your Poplur contacts', glyph: '·', action: 'noop' }];
+  }
+  if (phoneContacts.length === 0) {
+    return [{
+      title: 'No contacts yet',
+      detail: 'chat with someone, or cross their radius',
+      glyph: '·',
+      action: 'noop',
+    }];
+  }
+  return phoneContacts.map((contact, index) => ({
+    title: `${contact.favourite ? '\u2605 ' : ''}${contact.name}`,
+    detail: contact.detail || 'on Poplur',
+    glyph: String(index + 1).padStart(2, '0'),
+    action: 'call',
+    contactId: contact.id,
+    contactIndex: index,
+  }));
+}
+
 function phoneMenuItems() {
+  if (phoneMenuScreen === 'contacts') {
+    requestPhoneContacts();
+    return phoneContactItems();
+  }
   return (phoneMenus[phoneMenuScreen] || phoneMenus.main).items;
 }
 
@@ -1476,7 +1541,9 @@ function renderPhoneMenu() {
     <div class="lcd-menu-list">
       ${visible.map((item, offset) => phoneMenuRow(item, start + offset, start + offset === phoneMenuIndex)).join('')}
     </div>
-    <div class="lcd-softkeys">2/8 SCROLL&nbsp;&nbsp;5 OK&nbsp;&nbsp;* BACK</div>
+    <div class="lcd-softkeys">2/8 SCROLL&nbsp;&nbsp;5 OK&nbsp;&nbsp;${
+      phoneMenuScreen === 'contacts' ? '0 FAV&nbsp;&nbsp;* BACK' : '* BACK'
+    }</div>
   `;
 }
 
@@ -1522,6 +1589,24 @@ function handlePhoneKey(key) {
   }
 
   const items = phoneMenuItems();
+  // On Contacts, `0` favourites the highlighted person — the keypad is this
+  // phone's only input, so it stands in for the long-press every other address
+  // book would use.
+  //
+  // Deliberately NOT `*`: that is the ONLY way back out of a submenu, and
+  // taking it would have left you stuck on Contacts with no exit. `#` is taken
+  // too (it selects, alongside 5). `0` is the one free key in menu mode.
+  if (key === '0' && phoneMenuScreen === 'contacts') {
+    const row = items[phoneMenuIndex];
+    const contact = row && Array.isArray(phoneContacts)
+      ? phoneContacts[row.contactIndex]
+      : null;
+    if (contact) {
+      togglePhoneFavourite(contact);
+      flashPhoneMessage(contact.favourite ? 'UNFAVOURITED' : 'FAVOURITED', 700);
+      return;
+    }
+  }
   if (key === '2') {
     phoneMenuIndex = (phoneMenuIndex - 1 + items.length) % items.length;
     renderPhoneMenu();

@@ -569,7 +569,8 @@ export default function HoldMenuTwin({
       // Direct messages. The chat page has no Firebase, so its reads and writes
       // ride the same road: page -> here -> HomeTwin -> native -> Firestore.
       if (event.source === frame.contentWindow
-        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM'].includes(data.type)) {
+        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM',
+            'requestPhoneContacts', 'togglePhoneFavourite'].includes(data.type)) {
         window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: data }))
       }
     }
@@ -593,7 +594,8 @@ export default function HoldMenuTwin({
       const data = (event as CustomEvent<Record<string, unknown>>).detail
       if (data?.type === 'poplurDMThreads'
         || data?.type === 'poplurDMMessages'
-        || data?.type === 'poplurDMSendFailed') {
+        || data?.type === 'poplurDMSendFailed'
+        || data?.type === 'poplurPhoneContacts') {
         frame.contentWindow?.postMessage(data, '*')
       }
     }
