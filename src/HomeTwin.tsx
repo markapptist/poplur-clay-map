@@ -2029,36 +2029,55 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // wheel — the arrows stopped at LIVE, so three of the tab's seven tiles were
   // invisible to anyone who did not know to hold. They join the ring the same
   // way ROLL does: landing on one opens it outright rather than merely arming
-  // it. Opening reuses the exact mechanism the generic "step into the tab's
-  // page list" branch below already uses for every other tab (setResume +
-  // setHoldOpen) — the camera skips that branch (it returns early, above), so
-  // this is the same handoff, just reached from here instead. Once open, the
-  // wheel's own arrow-walker (HoldMenuTwin's bindArrows) takes every further
-  // press: it already knows CREATE→GAMES→STUDIO from TAB_MENUS.post, and
-  // wraps back to its "door" — the bare viewfinder — on its own, which is why
-  // this function does not need to know how to leave them again.
+  // it (opening reuses setResume + setHoldOpen, the same handoff every other
+  // tab's page-list branch performs).
+  //
+  // This function owns the WHOLE ring, the three subscreen stops included.
+  // The first version handed arrow presses to the wheel's own walker once a
+  // subscreen was open, but that walker only knows the three page tiles plus
+  // its door — so after visiting CREATE the ring collapsed to
+  // live→create→games→studio→live and VIDEO, PHOTO and ROLL became
+  // unreachable going forward. Now an open ring subscreen is simply the
+  // ring's current stop: stepping off it closes the menu and lands on the
+  // neighbouring mode, so all seven stops cycle in both directions, always.
   const CAMERA_CYCLE = ['photo', 'video', 'roll', 'live', 'create', 'games', 'studio'] as const
   const CAMERA_CYCLE_SCREEN = {
     create: 'camera-ai-chat',
     games: 'feed-games',
     studio: 'camera-studio',
   } as const
+  const CAMERA_STOP_BY_SCREEN: Record<string, 'create' | 'games' | 'studio'> = {
+    'camera-ai-chat': 'create',
+    'feed-games': 'games',
+    'camera-studio': 'studio',
+  }
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
-    const current: (typeof CAMERA_CYCLE)[number] = onRoll ? 'roll' : cameraCaptureMode
+    const openRing = holdOpen && cubeScreen ? CAMERA_STOP_BY_SCREEN[cubeScreen] ?? null : null
+    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? (onRoll ? 'roll' : cameraCaptureMode)
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
-    if (next === 'roll') {
-      if (!onRoll) setCameraStep(step => step + 1)
-      return
-    }
     if (next === 'create' || next === 'games' || next === 'studio') {
       // Leaving the roll first, same as any other stop past it, so re-entering
-      // the viewfinder later (the wheel's door) does not still show it.
+      // the viewfinder later does not still show it.
       if (onRoll) setCameraStep(step => step + 1)
       setResume(current => ({ screen: CAMERA_CYCLE_SCREEN[next], n: current.n + 1 }))
       setHoldOpen(true)
+      return
+    }
+    // Stepping OFF a ring subscreen back onto a viewfinder stop: close the
+    // menu and forget the page, exactly what landing on the walker's door
+    // does — otherwise returning to this tab later resumes the subscreen the
+    // arrows deliberately walked away from.
+    if (openRing) {
+      lastOpenSubscreenRef.current = null
+      writeLastScreen(activeTabLiveRef.current, null)
+      setResume(current => ({ screen: null, n: current.n }))
+      setHoldOpen(false)
+    }
+    if (next === 'roll') {
+      if (!onRoll) setCameraStep(step => step + 1)
       return
     }
     // Leaving the roll closes it, so the viewfinder is what the next mode arms.
@@ -2337,6 +2356,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // posts. Both report whether they took the press.
     if (activeTab === 'post' && cameraActionsRef.current?.arrow(dir)) return
     if (activeTab === 'profile' && profileArrowsRef.current?.(dir)) return
+    // The camera's ring owns its arrows even while one of its ring subscreens
+    // (CREATE / GAMES / STUDIO) is up — the wheel's own walker only knows the
+    // page tiles plus its door, so handing it these presses collapsed the ring
+    // to those three stops and stranded VIDEO, PHOTO and ROLL. The walker
+    // keeps the press only when the bare wheel (or a non-ring page) is up.
+    if (activeTab === 'post'
+      && (!holdOpen || (cubeScreen != null && CAMERA_STOP_BY_SCREEN[cubeScreen] != null))) {
+      stepCameraMode(dir)
+      return
+    }
     // With the hold menu mounted (a page is open, or the wheel is up) it owns
     // the cycle: it walks its own tab's pages and the door back out.
     if (subscreenArrowsRef.current?.(dir)) return
@@ -2585,12 +2614,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
-    // Nothing inside the screen claimed the tap, so it is a step back through
-    // the screens themselves: out of a page onto what was under it, or back
-    // across the tab jump that brought you here.
-    if (goBackOneScreen()) { playPop(); return }
-    playPop()
+    // The bare viewfinder: the cube IS the shutter here, before any history
+    // walk. Every layer that makes the tap a back step (an open page, the
+    // composer, the roll) has already answered above, so what is left is the
+    // camera pointed at the world — and a tap on the camera object must take
+    // the picture, not replay navigation history. goBackOneScreen used to run
+    // first, so arriving at the viewfinder from another screen left a stack
+    // entry that turned the shutter into a surprise navigation.
     if (activeTab === 'post') {
+      playPop()
       // Selection changes the object; tapping that object performs its shutter.
       // VIDEO deliberately remains armed after stopping so tap -> record and
       // tap again -> stop happen on the same forward-facing camcorder.
@@ -2599,6 +2631,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       cameraActionsRef.current?.[which]()
       return
     }
+    // Nothing inside the screen claimed the tap, so it is a step back through
+    // the screens themselves: out of a page onto what was under it, or back
+    // across the tab jump that brought you here.
+    if (goBackOneScreen()) { playPop(); return }
+    playPop()
     // No pinned favourite any more — a plain tap on the other tabs is the pop
     // itself. Where you LAND on a tab is owned by the last-page resume below.
     setPopping(true)
@@ -2814,7 +2851,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           floated and the arrows and radius label it sits between vanished
           underneath. The whole HUD is one piece of home chrome. */}
       <div
-        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone || gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
@@ -2843,7 +2880,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             there was no way to stop turn-by-turn at all. The unit toggle still
             works on feed, profile and camera; drop 'map' from this test to put
             it back on the map too. */}
-        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}>
+        {/* gamesChromeMuted hides the TICKER only, not the row: a game keeps
+            the channel arrows (they walk the camera ring / the tab's pages)
+            and the cube (the way out) — it is the stat cards and the wordmark
+            that were sitting on the console art. */}
+        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}${chromeGone || gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}>
           {recordMs != null && (
             <div className={styles.statCard} aria-label="Recording">
               <span className={styles.statLabel}>RECORDING ◆</span>
