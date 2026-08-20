@@ -14,15 +14,13 @@
     "webglRenderer": 1
   },
   "ClayCornerButton.tsx": {
-    "rawRaf": 2,
-    "webglRenderer": 1
+    "rawRaf": 2
   },
   "ClayMap.tsx": {
     "rawRaf": 4
   },
   "ClayMuteButton.tsx": {
-    "rawRaf": 2,
-    "webglRenderer": 1
+    "rawRaf": 2
   },
   "ClayNotifIcon.tsx": {
     "webglRenderer": 1
