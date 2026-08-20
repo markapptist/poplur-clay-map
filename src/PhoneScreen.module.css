@@ -1,217 +1,201 @@
-/* The Poplur phone. Its first screen is who your radius reaches, and whose
-   radius reaches you — the two directions shown side by side, because they
-   are genuinely different answers. */
+/* The Poplur phone, with the reach list living INSIDE it.
+   Device art, LCD geometry, colours and font all follow the phone twin
+   (poplur-subscreen-twins) so this is the same handset, not a lookalike. */
 
 .screen {
   position: absolute;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  padding-top: max(12px, env(safe-area-inset-top));
+  display: grid;
+  place-items: center;
+  padding: max(10px, env(safe-area-inset-top)) 8px max(14px, env(safe-area-inset-bottom));
   background:
     radial-gradient(120% 44% at 50% 0%, rgba(246, 59, 154, 0.14), transparent 60%),
     linear-gradient(180deg, #14101b 0%, #0c0912 52%, #08060d 100%);
-  color: #f4eef5;
-  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   overflow: hidden;
 }
 
-.head {
-  padding: 4px 18px 10px;
-  flex: 0 0 auto;
+.device {
+  position: relative;
+  height: 100%;
+  max-height: 100%;
+  display: flex;
 }
 
-.title {
+.rest {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Colourway arrows, exactly as the twin carries them. */
+.swipe {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  width: 34px;
+  height: 54px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(12, 8, 16, 0.45);
+  color: rgba(255, 255, 255, 0.82);
   font-size: 22px;
-  font-weight: 900;
-  letter-spacing: -0.01em;
-}
-
-.reach {
-  margin-top: 2px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.reachValue { color: #ff6cb4; font-weight: 800; }
-
-/* The two-direction key, so the icons on each row are never a guess. */
-.key {
-  display: flex;
-  gap: 14px;
-  margin-top: 10px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.52);
-}
-
-.keyItem { display: flex; align-items: center; gap: 5px; }
-
-.list {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
-  padding: 0 12px calc(18px + env(safe-area-inset-bottom) + var(--cube-size, 176px));
-  scrollbar-width: none;
-}
-
-.list::-webkit-scrollbar { display: none; }
-
-.groupLabel {
-  padding: 14px 6px 6px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.42);
-}
-
-.row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  color: inherit;
-  text-align: left;
-  font: inherit;
+  line-height: 1;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 
-.row:active { transform: scale(0.99); }
+.swipeLeft { left: -6px; }
+.swipeRight { right: -6px; }
 
-/* Out of reach in both directions: present, plainly inert. */
-.rowNone { opacity: 0.45; cursor: default; }
-
-.rowNone:active { transform: none; }
-
-.face {
-  width: 42px;
-  height: 42px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  object-fit: cover;
-  background: rgba(255, 255, 255, 0.1);
-  border: 2px solid var(--who, #f63b9a);
-}
-
-.who { flex: 1 1 auto; min-width: 0; }
-
-.handle {
-  font-size: 14px;
-  font-weight: 800;
-  white-space: nowrap;
+/* ── the LCD ──────────────────────────────────────────────────────────────
+   Geometry, colours and font are the twin's: a yellow-green panel inset in
+   the shell with a dotted inner rule. Everything the phone says goes here. */
+.lcd {
+  position: absolute;
+  z-index: 4;
+  left: 24.5%;
+  top: 18%;
+  width: 51.2%;
+  height: 18.2%;
   overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.where {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.55);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* The pair of arrows. Lit means that direction is open. */
-.dirs {
-  flex: 0 0 auto;
+  border-radius: 2.5%;
+  background: #eff100;
+  border: 2px solid rgba(8, 26, 0, 0.62);
+  color: #082901;
+  font-family: Menlo, ui-monospace, SFMono-Regular, monospace;
+  box-shadow: inset 0 0 12px rgba(8, 41, 1, 0.22);
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-  font-size: 10px;
-  letter-spacing: 0.03em;
+  padding: 4% 5%;
+  gap: 1%;
+  container-type: inline-size;
 }
 
-.dir {
+.lcd::after {
+  content: "";
+  position: absolute;
+  inset: 6.5% 5.5% 7.5%;
+  pointer-events: none;
+  border: 2px dotted rgba(8, 41, 1, 0.66);
+}
+
+/* Every LCD size is in container units, so the panel reads the same at any
+   render size instead of only at the one it was tuned on. */
+.topline {
+  display: flex;
+  justify-content: space-between;
+  font-size: 4.2cqw;
+  letter-spacing: -0.02em;
+  opacity: 0.85;
+}
+
+.titleRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 5cqw;
+  font-weight: 700;
+}
+
+.titleRow em { font-style: normal; font-size: 4.2cqw; opacity: 0.8; }
+
+.list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1.2cqw;
+  min-height: 0;
+}
+
+.row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  color: rgba(255, 255, 255, 0.3);
+  gap: 2cqw;
+  padding: 0.8cqw 1.4cqw;
+  border: 0;
+  border-radius: 1cqw;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.dirOn { color: #4dff69; }
+/* The Nokia inversion: the selected row is ink-filled. */
+.rowOn { background: #082901; color: #eff100; }
 
-.dirOff { color: rgba(255, 255, 255, 0.28); }
-
-.gap {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
-  margin-top: 2px;
+.rowGlyph {
+  flex: 0 0 auto;
+  font-size: 4.6cqw;
+  font-weight: 700;
+  letter-spacing: -0.06em;
+  min-width: 7cqw;
 }
 
-/* ── call sheet ───────────────────────────────────────────────────────────── */
+.rowText { min-width: 0; flex: 1 1 auto; }
 
-.call {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
+.rowTitle {
+  display: block;
+  font-size: 4.6cqw;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowDetail {
+  display: block;
+  font-size: 3.8cqw;
+  font-style: normal;
+  opacity: 0.82;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.softkeys {
+  font-size: 3.6cqw;
+  letter-spacing: -0.02em;
+  opacity: 0.9;
+  text-align: center;
+}
+
+.callStatus {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 24px;
+  gap: 0.6cqw;
   text-align: center;
-  background:
-    radial-gradient(90% 50% at 50% 18%, rgba(246, 59, 154, 0.2), transparent 62%),
-    rgba(8, 6, 13, 0.96);
-  backdrop-filter: blur(6px);
 }
 
-.callFace {
-  width: 108px;
-  height: 108px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 3px solid var(--who, #f63b9a);
-  background: rgba(255, 255, 255, 0.08);
-}
+.callStatus strong { font-size: 5.6cqw; }
+.callStatus span { font-size: 4cqw; }
 
-.callWho { font-size: 20px; font-weight: 900; }
+/* ── keypad ───────────────────────────────────────────────────────────────
+   The twin's own hit zones, so a press lands on the key the art draws. */
+.keys { position: absolute; inset: 0; z-index: 5; }
 
-.callState {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.68);
-  letter-spacing: 0.04em;
-}
-
-.callNote {
-  max-width: 260px;
-  font-size: 11px;
-  line-height: 1.45;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-.hang {
-  margin-top: 10px;
-  padding: 12px 28px;
+.key {
+  position: absolute;
   border: 0;
-  border-radius: 999px;
-  background: #e2103a;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
+  padding: 0;
+  background: none;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.hang:active { transform: scale(0.96); }
-
-@keyframes ringPulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.04); opacity: 0.86; }
-}
-
-.ringing { animation: ringPulse 1.1s ease-in-out infinite; }
+.key:active { background: rgba(255, 255, 255, 0.16); border-radius: 8px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .ringing { animation: none; }
-  .row:active, .hang:active { transform: none; }
+  .key:active { background: none; }
 }

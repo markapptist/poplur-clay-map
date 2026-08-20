@@ -3,193 +3,248 @@ import styles from './PhoneScreen.module.css'
 import { OTHER_POPS } from './data'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { reachBetween, reachState, type Reach, type ReachState } from './reach'
+import { packBase } from './assetPacks'
 import { playPop } from './pop'
 
 // The Poplur phone.
 //
-// Who you can call is a radius question, and it has TWO answers, because
-// everyone carries their own radius:
+// Who you can call is a radius question with TWO answers, because everyone
+// carries their own radius:
 //
-//   you can call them   — they stand inside YOUR radius
-//   they can call you   — you stand inside THEIRS
+//   you can call them   distance <= YOUR radius
+//   they can call you   distance <= THEIR radius
 //
-// Those are independent. A pop with a 320km reach can ring you from another
-// city while your own reach falls a long way short of them, and the phone has
-// to show that rather than flattening it into one "nearby" list. So the first
-// screen IS this: everyone, sorted by how open the line is, with both
-// directions on every row.
+// Those are independent — a pop with a 320km reach can ring you from another
+// city while your own reach falls a long way short of them — and the phone's
+// first screen is exactly that list.
+//
+// It is shown INSIDE the handset, on the LCD, in the LCD's own font. The
+// device art, the panel's geometry and colours, the topline/title/softkey
+// layout and the keypad hit zones all follow the phone twin
+// (poplur-subscreen-twins), so this is that phone with something real on its
+// screen rather than a second phone that resembles it.
+
+/** Device art, from the subscreens pack — the same files the twin loads. */
+const COLORWAYS = [
+  ['Silver', 'poplur_bling_phone_01_silver_diamond'],
+  ['Gold', 'poplur_bling_phone_02_champagne_gold'],
+  ['Rose', 'poplur_bling_phone_03_rose_gold_pink'],
+  ['Ruby', 'poplur_bling_phone_04_ruby_red'],
+  ['Blue', 'poplur_bling_phone_05_sapphire_blue'],
+  ['Green', 'poplur_bling_phone_06_emerald_green'],
+  ['Purple', 'poplur_bling_phone_07_amethyst_purple'],
+  ['Onyx', 'poplur_bling_phone_08_jet_black_onyx'],
+  ['Aqua', 'poplur_bling_phone_09_icy_aqua_turquoise'],
+  ['Holo', 'poplur_bling_phone_10_holographic_iridescent'],
+] as const
+
+/** `${assets}/<set>.imageset/<file>` — the twin's own `ios()` path shape. */
+function restUrl(set: string): string {
+  return `${packBase('subscreens', 'subscreens')}/assets/${set}.imageset/${set}.png`
+}
+
+/** The twin's keypad geometry: left%, top%, width%, height%. */
+const KEYS: Array<[key: string, left: number, top: number, w: number, h: number]> = [
+  ['1', 20.5, 62.2, 17, 6], ['2', 41.5, 62.2, 17, 6], ['3', 62.5, 62.2, 17, 6],
+  ['4', 20.5, 69.4, 17, 6], ['5', 41.5, 69.4, 17, 6], ['6', 62.5, 69.4, 17, 6],
+  ['7', 20.5, 76.7, 17, 6], ['8', 41.5, 76.7, 17, 6], ['9', 62.5, 76.7, 17, 6],
+  ['*', 20.5, 84.0, 17, 6], ['0', 41.5, 84.0, 17, 6], ['#', 62.5, 84.0, 17, 6],
+  ['5', 39.5, 50.9, 21, 7],
+]
 
 interface Contact {
   id: string
   handle: string
   place: string
-  color: string
-  avatar: string
-  /** their own reach, which is what decides whether they can ring you */
   theirRadiusKm: number
   reach: Reach
   state: ReachState
 }
 
-/** Most open line first. Within a group, whoever is closest. */
+/** Most open line first; closest first inside a group. */
 const GROUP_ORDER: ReachState[] = ['both', 'outgoing', 'incoming', 'none']
 
-const GROUP_LABEL: Record<ReachState, string> = {
-  both: 'OPEN BOTH WAYS',
+/** Two marks per row, in the LCD's own character vocabulary: the top arrow is
+ *  you reaching out, the bottom is them reaching you. */
+const GLYPH: Record<ReachState, string> = {
+  both: '⇄',
+  outgoing: '→',
+  incoming: '←',
+  none: '·',
+}
+
+const STATE_WORD: Record<ReachState, string> = {
+  both: 'BOTH WAYS',
   outgoing: 'YOU CAN CALL',
-  incoming: 'THEY CAN CALL YOU',
+  incoming: 'THEY CAN CALL',
   none: 'OUT OF REACH',
 }
 
-function useContacts(reachKm: number): Contact[] {
-  return useMemo(() => {
-    const contacts = OTHER_POPS.map(pop => {
-      const reach = reachBetween(pop.coords, pop.radiusKm, reachKm)
-      return {
-        id: pop.id,
-        handle: pop.user,
-        place: pop.name,
-        color: pop.color,
-        avatar: pop.avatar,
-        theirRadiusKm: pop.radiusKm,
-        reach,
-        state: reachState(reach),
-      }
-    })
-    return contacts.sort((a, b) => {
-      const group = GROUP_ORDER.indexOf(a.state) - GROUP_ORDER.indexOf(b.state)
-      return group !== 0 ? group : a.reach.distanceKm - b.reach.distanceKm
-    })
-  }, [reachKm])
-}
-
 function km(value: number): string {
-  return value >= 100 ? `${Math.round(value)} km` : `${value.toFixed(1)} km`
+  return value >= 100 ? `${Math.round(value)}KM` : `${value.toFixed(1)}KM`
 }
 
 export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
   const [reachKm, setReachKm] = useState(() => radiusKm())
+  const [index, setIndex] = useState(0)
+  const [colorIndex, setColorIndex] = useState(0)
   const [calling, setCalling] = useState<Contact | null>(null)
 
-  // Reach is live: spend or earn radius anywhere in the app and the lines that
-  // are open change here without reopening the phone.
   useEffect(() => {
     const sync = () => setReachKm(radiusKm())
     window.addEventListener(RADIUS_CHANGE_EVENT, sync)
     return () => window.removeEventListener(RADIUS_CHANGE_EVENT, sync)
   }, [])
 
-  const contacts = useContacts(reachKm)
+  const contacts = useMemo<Contact[]>(() => {
+    return OTHER_POPS.map(pop => {
+      const reach = reachBetween(pop.coords, pop.radiusKm, reachKm)
+      return {
+        id: pop.id,
+        handle: pop.user,
+        place: pop.name,
+        theirRadiusKm: pop.radiusKm,
+        reach,
+        state: reachState(reach),
+      }
+    }).sort((a, b) => {
+      const group = GROUP_ORDER.indexOf(a.state) - GROUP_ORDER.indexOf(b.state)
+      return group !== 0 ? group : a.reach.distanceKm - b.reach.distanceKm
+    })
+  }, [reachKm])
 
-  const dial = useCallback((contact: Contact) => {
-    // Only the outgoing direction opens a call. Someone who can reach YOU is
-    // not someone you can reach, and the row says so rather than dialling into
-    // nothing.
-    if (!contact.reach.youCanCall) return
+  const current = contacts[Math.min(index, contacts.length - 1)]
+
+  const step = useCallback((delta: 1 | -1) => {
     playPop()
-    setCalling(contact)
-  }, [])
+    setIndex(i => (i + delta + contacts.length) % contacts.length)
+  }, [contacts.length])
 
-  const hangUp = useCallback(() => { playPop(); setCalling(null) }, [])
+  const select = useCallback(() => {
+    if (!current) return
+    // Only the outgoing direction dials. Someone who can reach YOU is not
+    // someone you can reach, and the LCD says so instead of pretending.
+    if (!current.reach.youCanCall) { playPop(); return }
+    playPop()
+    setCalling(current)
+  }, [current])
 
-  // The cube is the way out of every subscreen; Escape is its keyboard twin.
+  const back = useCallback(() => {
+    playPop()
+    if (calling) { setCalling(null); return }
+    onClose?.()
+  }, [calling, onClose])
+
+  const press = useCallback((key: string) => {
+    if (key === '2') step(-1)
+    else if (key === '8') step(1)
+    else if (key === '5') select()
+    else if (key === '*') back()
+    else playPop()
+  }, [back, select, step])
+
+  // Keyboard twin of the keypad, so the phone is drivable without a finger.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+      const map: Record<string, string> = {
+        ArrowUp: '2', ArrowDown: '8', Enter: '5', Escape: '*',
+      }
+      const key = map[event.key] ?? (/^[0-9*#]$/.test(event.key) ? event.key : null)
+      if (!key) return
       event.preventDefault()
-      if (calling) hangUp()
-      else onClose?.()
+      press(key)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [calling, hangUp, onClose])
+  }, [press])
 
-  let lastGroup: ReachState | null = null
+  // Three rows, windowed on the cursor — the twin's own menu behaviour.
+  const start = Math.max(0, Math.min(index - 1, Math.max(0, contacts.length - 3)))
+  const visible = contacts.slice(start, start + 3)
+  const colorway = COLORWAYS[colorIndex % COLORWAYS.length]
 
   return (
     <div className={styles.screen} data-poplur-screen="profile-phone" aria-label="Poplur phone">
-      <div className={styles.head}>
-        <div className={styles.title}>Phone</div>
-        <div className={styles.reach}>
-          your reach <span className={styles.reachValue}>{km(reachKm)}</span>
-          {' · '}
-          {contacts.filter(c => c.reach.youCanCall).length} you can call
-          {' · '}
-          {contacts.filter(c => c.reach.theyCanCall).length} can call you
-        </div>
-        <div className={styles.key} aria-hidden="true">
-          <span className={styles.keyItem}><b className={styles.dirOn}>→</b> you can call</span>
-          <span className={styles.keyItem}><b className={styles.dirOn}>←</b> they can call you</span>
-        </div>
-      </div>
+      <div className={styles.device}>
+        <img className={styles.rest} src={restUrl(colorway[1])} alt={`Poplur phone, ${colorway[0]}`} draggable={false} />
 
-      <div className={styles.list} data-clay-scroll>
-        {contacts.map(contact => {
-          const header = contact.state !== lastGroup ? GROUP_LABEL[contact.state] : null
-          lastGroup = contact.state
-          const { youCanCall, theyCanCall, distanceKm } = contact.reach
-          return (
-            <React.Fragment key={contact.id}>
-              {header && <div className={styles.groupLabel}>{header}</div>}
-              <button
-                type="button"
-                className={contact.state === 'none' ? `${styles.row} ${styles.rowNone}` : styles.row}
-                style={{ ['--who' as string]: contact.color }}
-                onClick={() => dial(contact)}
-                disabled={!youCanCall}
-                aria-label={`${contact.handle}, ${GROUP_LABEL[contact.state].toLowerCase()}`}
-              >
-                <img className={styles.face} src={contact.avatar} alt="" draggable={false} />
-                <span className={styles.who}>
-                  <span className={styles.handle}>{contact.handle}</span>
-                  <span className={styles.where}>{contact.place} · {km(distanceKm)} away</span>
-                  {/* What the shortfall actually is, per direction — the number
-                      you would have to close to open the line. */}
-                  {!youCanCall && (
-                    <span className={styles.gap}>
-                      {km(distanceKm - reachKm)} more reach to call them
-                    </span>
-                  )}
-                </span>
-                <span className={styles.dirs}>
-                  <span className={`${styles.dir} ${youCanCall ? styles.dirOn : styles.dirOff}`}>
-                    <b>→</b>
-                  </span>
-                  <span className={`${styles.dir} ${theyCanCall ? styles.dirOn : styles.dirOff}`}>
-                    <b>←</b>
-                  </span>
-                </span>
-              </button>
-            </React.Fragment>
-          )
-        })}
-      </div>
+        <div className={styles.lcd} aria-live="polite">
+          <div className={styles.topline} aria-hidden="true">
+            <span>▮▮▮ ⋮</span><span>▮▮</span>
+          </div>
 
-      {calling && (
-        <div className={styles.call} role="dialog" aria-label={`Calling ${calling.handle}`}>
-          <img
-            className={`${styles.callFace} ${styles.ringing}`}
-            style={{ ['--who' as string]: calling.color }}
-            src={calling.avatar}
-            alt=""
-            draggable={false}
-          />
-          <div className={styles.callWho}>{calling.handle}</div>
-          <div className={styles.callState}>
-            {calling.reach.theyCanCall ? 'RINGING · OPEN BOTH WAYS' : 'RINGING · ONE WAY'}
-          </div>
-          <div className={styles.callNote}>
-            {calling.place} is {km(calling.reach.distanceKm)} away, inside your {km(reachKm)} reach.
-            {calling.reach.theyCanCall
-              ? ' They can reach you too.'
-              : ` Their own reach is ${km(calling.theirRadiusKm)}, so they cannot ring you back yet.`}
-          </div>
-          {/* Said plainly rather than mimed: the radius rules are real, the
-              voice link is not wired to anything yet. */}
-          <div className={styles.callNote}>Voice is not connected yet — this is the line, not the call.</div>
-          <button type="button" className={styles.hang} onClick={hangUp}>End</button>
+          {calling ? (
+            <>
+              <div className={styles.callStatus}>
+                <strong>CALLING</strong>
+                <span>{calling.handle.replace(/^@/, '').toUpperCase()}</span>
+                <span>
+                  {calling.reach.theyCanCall ? 'LINE OPEN BOTH WAYS' : 'ONE WAY · THEY CANNOT'}
+                </span>
+              </div>
+              <div className={styles.softkeys}>5 HANG UP&nbsp;&nbsp;* BACK</div>
+            </>
+          ) : (
+            <>
+              <div className={styles.titleRow}>
+                <strong>CALLS {km(reachKm)}</strong>
+                <em>{contacts.length ? index + 1 : 0}/{contacts.length}</em>
+              </div>
+              <div className={styles.list}>
+                {visible.map((contact, offset) => {
+                  const at = start + offset
+                  return (
+                    <button
+                      key={contact.id}
+                      type="button"
+                      className={at === index ? `${styles.row} ${styles.rowOn}` : styles.row}
+                      onClick={() => { setIndex(at); if (at === index) select() }}
+                      aria-label={`${contact.handle}, ${STATE_WORD[contact.state]}`}
+                    >
+                      <b className={styles.rowGlyph}>{GLYPH[contact.state]}</b>
+                      <span className={styles.rowText}>
+                        <strong className={styles.rowTitle}>{contact.handle.replace(/^@/, '').toUpperCase()}</strong>
+                        <em className={styles.rowDetail}>
+                          {km(contact.reach.distanceKm)} · {STATE_WORD[contact.state]}
+                        </em>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className={styles.softkeys}>
+                {current?.reach.youCanCall ? '2/8 SCROLL  5 CALL  * BACK' : '2/8 SCROLL  * BACK'}
+              </div>
+            </>
+          )}
         </div>
-      )}
+
+        <div className={styles.keys} aria-label="Poplur phone keypad">
+          {KEYS.map(([key, left, top, w, h], i) => (
+            <button
+              key={`${key}-${i}`}
+              type="button"
+              className={styles.key}
+              style={{ left: `${left}%`, top: `${top}%`, width: `${w}%`, height: `${h}%` }}
+              onClick={() => press(key)}
+              aria-label={i === KEYS.length - 1 ? 'Center select' : key}
+            />
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className={`${styles.swipe} ${styles.swipeLeft}`}
+          onClick={() => { playPop(); setColorIndex(i => (i - 1 + COLORWAYS.length) % COLORWAYS.length) }}
+          aria-label="Previous phone colorway"
+        >‹</button>
+        <button
+          type="button"
+          className={`${styles.swipe} ${styles.swipeRight}`}
+          onClick={() => { playPop(); setColorIndex(i => (i + 1) % COLORWAYS.length) }}
+          aria-label="Next phone colorway"
+        >›</button>
+      </div>
     </div>
   )
 }
