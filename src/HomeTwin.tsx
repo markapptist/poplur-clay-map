@@ -1470,6 +1470,33 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
     }
 
+    // Direct messages: hand the page's request to native, and hand native's
+    // live snapshots back down. Deliberately a pass-through — the SERVER rules
+    // decide who may read or write a thread, so there is nothing to validate
+    // here that would not be a second, weaker copy of that.
+    const onDMRequested = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail
+      if (!detail || typeof detail.type !== 'string') return
+      if (!isNativeShell() || !postNativeEvent(detail)) {
+        // No bridge (a browser): answer the inbox request with nothing so the
+        // page stops waiting and keeps its preview seed.
+        if (detail.type === 'requestDMThreads') {
+          window.dispatchEvent(new CustomEvent('poplur-dm-result', {
+            detail: { type: 'poplurDMThreads', threads: [] },
+          }))
+        }
+      }
+    }
+
+    const onNativeDMResult = (event: MessageEvent) => {
+      const data = event.data
+      if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
+      if (data.type !== 'poplurDMThreads'
+        && data.type !== 'poplurDMMessages'
+        && data.type !== 'poplurDMSendFailed') return
+      window.dispatchEvent(new CustomEvent('poplur-dm-result', { detail: data }))
+    }
+
     const onNativeWalletPassResult = (event: MessageEvent) => {
       const data = event.data
       if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
@@ -1492,11 +1519,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
     window.addEventListener('poplur-store-checkout-requested', onCheckoutRequest)
     window.addEventListener('poplur-wallet-pass-requested', onWalletPassRequested)
+    window.addEventListener('poplur-dm-requested', onDMRequested)
+    window.addEventListener('message', onNativeDMResult)
     window.addEventListener('message', onNativeCheckoutResult)
     window.addEventListener('message', onNativeWalletPassResult)
     return () => {
       window.removeEventListener('poplur-store-checkout-requested', onCheckoutRequest)
       window.removeEventListener('poplur-wallet-pass-requested', onWalletPassRequested)
+      window.removeEventListener('poplur-dm-requested', onDMRequested)
+      window.removeEventListener('message', onNativeDMResult)
       window.removeEventListener('message', onNativeCheckoutResult)
       window.removeEventListener('message', onNativeWalletPassResult)
     }

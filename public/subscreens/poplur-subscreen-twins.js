@@ -228,6 +228,59 @@ let profileStat = null;
 let profileSettingsPanel = null;
 let profileSettingsNotice = '';
 
+// ── Direct messages ─────────────────────────────────────────────────────────
+// Real threads arrive from native (`poplurDMThreads`), which reads Firestore —
+// this bundle has no Firebase, so every read and write crosses the bridge. The
+// array below is the pre-bridge SEED: it is what a browser preview shows, and
+// it is replaced wholesale the moment native answers. Kept rather than emptied
+// so the screen still has something to look at outside the app.
+let profileMailSeeded = true;
+let profileMailAsked = false;
+let profileMailSendError = '';
+
+/** Ask native for the live inbox. Idempotent — native keeps a listener open. */
+function requestDMThreads() {
+  if (profileMailAsked || window.parent === window) return;
+  profileMailAsked = true;
+  window.parent.postMessage({ type: 'requestDMThreads' }, '*');
+}
+
+function handleDMMessage(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (data.type === 'poplurDMThreads') {
+    // The first real answer replaces the seed outright, even when the inbox is
+    // empty — an empty inbox is a true answer and must not keep showing the
+    // fake chats a browser preview needs.
+    profileMailSeeded = false;
+    const incoming = Array.isArray(data.threads) ? data.threads : [];
+    profileMailThreads.length = 0;
+    for (const t of incoming) {
+      profileMailThreads.push({
+        id: t.id, otherId: t.otherId, initials: t.initials || 'P',
+        title: t.title || 'Poplur', preview: t.preview || 'No messages yet',
+        unread: t.unread || 0, messages: [],
+      });
+    }
+    renderScreen();
+    return true;
+  }
+  if (data.type === 'poplurDMMessages') {
+    const item = profileMailThreads.find(t => t.id === data.threadId);
+    if (item) {
+      item.messages = Array.isArray(data.messages) ? data.messages : [];
+      renderScreen();
+    }
+    return true;
+  }
+  if (data.type === 'poplurDMSendFailed') {
+    // Put the text back in the box rather than losing what was typed.
+    profileMailSendError = data.text || '';
+    renderScreen();
+    return true;
+  }
+  return false;
+}
+
 const profileMailThreads = [
   {
     id: 'chat-a31f62',
@@ -661,6 +714,7 @@ window.addEventListener('message', event => {
     reportNestedDepth();
     return;
   }
+  if (handleDMMessage(data)) return;
   if (handleWalletPassMessage(data)) return;
   handleStoreCheckoutResult(data);
 });
@@ -986,12 +1040,20 @@ screenEl.addEventListener('click', e => {
     profileMailThread = mailThread.dataset.mailThread;
     const threadItem = profileMailThreads.find(item => item.id === profileMailThread);
     if (threadItem) threadItem.unread = 0;
+    // Live messages for THIS thread only; native drops the previous listener.
+    if (window.parent !== window) {
+      window.parent.postMessage(
+        { type: 'openDMThread', threadId: profileMailThread }, '*');
+    }
     renderScreen();
     return;
   }
 
   if (e.target.closest('[data-mail-back]')) {
     profileMailThread = null;
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'closeDMThread' }, '*');
+    }
     renderScreen();
     return;
   }
@@ -1156,9 +1218,20 @@ screenEl.addEventListener('submit', e => {
   const threadItem = profileMailThreads.find(item => item.id === profileMailThread);
   if (!text || !threadItem) return;
 
-  threadItem.messages.push({ from: 'me', text });
-  threadItem.preview = text;
-  threadItem.unread = 0;
+  if (window.parent !== window && threadItem.otherId) {
+    // Native writes it and the thread listener delivers it back, so the
+    // message appears once — pushing it locally too would double it, then
+    // double it again on the snapshot.
+    profileMailSendError = '';
+    window.parent.postMessage(
+      { type: 'sendDM', otherId: threadItem.otherId, text }, '*');
+    field.value = '';
+  } else {
+    // Browser preview: no bridge, so echo locally to keep the screen usable.
+    threadItem.messages.push({ from: 'me', text });
+    threadItem.preview = text;
+    threadItem.unread = 0;
+  }
   renderScreen();
   window.setTimeout(() => screenEl.querySelector('[name="message"]')?.focus(), 0);
 });
@@ -2038,6 +2111,7 @@ function creatorScreen() {
 }
 
 function messagesScreen(from) {
+  requestDMThreads();
   const selected = profileMailThreads.find(item => item.id === profileMailThread);
   if (selected) {
     return `

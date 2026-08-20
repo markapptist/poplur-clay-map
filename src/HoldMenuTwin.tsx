@@ -566,6 +566,12 @@ export default function HoldMenuTwin({
         && (data.type === 'poplurWalletPassRequested' || data.type === 'poplurWalletPassAvailability')) {
         window.dispatchEvent(new CustomEvent('poplur-wallet-pass-requested', { detail: data }))
       }
+      // Direct messages. The chat page has no Firebase, so its reads and writes
+      // ride the same road: page -> here -> HomeTwin -> native -> Firestore.
+      if (event.source === frame.contentWindow
+        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM'].includes(data.type)) {
+        window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: data }))
+      }
     }
 
     const onResult = (event: Event) => {
@@ -583,10 +589,21 @@ export default function HoldMenuTwin({
       }
     }
 
+    const onDMResult = (event: Event) => {
+      const data = (event as CustomEvent<Record<string, unknown>>).detail
+      if (data?.type === 'poplurDMThreads'
+        || data?.type === 'poplurDMMessages'
+        || data?.type === 'poplurDMSendFailed') {
+        frame.contentWindow?.postMessage(data, '*')
+      }
+    }
+
     window.addEventListener('message', onMessage)
     window.addEventListener('poplur-store-checkout-result', onResult)
     window.addEventListener('poplur-wallet-pass-result', onWalletResult)
+    window.addEventListener('poplur-dm-result', onDMResult)
     return () => {
+      window.removeEventListener('poplur-dm-result', onDMResult)
       window.removeEventListener('poplur-wallet-pass-result', onWalletResult)
       window.removeEventListener('message', onMessage)
       window.removeEventListener('poplur-store-checkout-result', onResult)
