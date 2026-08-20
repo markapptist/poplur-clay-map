@@ -176,5 +176,33 @@ rm -f "$RN_TMP"
 unzip -tq "$RN_TMP" >/dev/null
 mv -f "$RN_TMP" "$RN_DEST"
 
+# The RN repo no longer TRACKS that zip (it is ~105MB rewritten on every web
+# change, and Git LFS stores whole copies — 135 of them exhausted the budget
+# and blocked the repo entirely). It tracks bundle.json instead, and its build
+# refuses to start when the zip on disk is not the one recorded there. So the
+# record has to be rewritten with the file, or the next RN build fails on a
+# bundle that is actually correct.
+RN_MANIFEST="/Users/matrix/Developer/Poplur2025-ReactNative/src/assets/claymap/bundle.json"
+if [ -f "$RN_MANIFEST" ]; then
+  RN_BYTES="$(/usr/bin/stat -f%z "$RN_DEST")"
+  RN_SHA="$(/usr/bin/shasum -a 256 "$RN_DEST" | cut -d' ' -f1)"
+  RN_VER="$(sed -n "s/.*BUNDLE_VERSION = '\([0-9]*\)'.*/\1/p" \
+    /Users/matrix/Developer/Poplur2025-ReactNative/src/screens/PostLoginHomeWebScreen.tsx | head -n 1)"
+  python3 - "$RN_MANIFEST" "$RN_BYTES" "$RN_SHA" "$RN_VER" <<'PYEOF'
+import json, sys
+path, byte_count, digest, version = sys.argv[1:5]
+with open(path) as handle:
+    manifest = json.load(handle)
+manifest['bytes'] = int(byte_count)
+manifest['sha256'] = digest
+if version:
+    manifest['bundleVersion'] = version
+with open(path, 'w') as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write('\n')
+PYEOF
+  echo "  updated RN bundle.json -> v${RN_VER} ${RN_BYTES} bytes"
+fi
+
 echo "Synced clay map bundle:"
 du -sh "$IOS_DEST" "$ANDROID_DEST" "$RN_DEST"
