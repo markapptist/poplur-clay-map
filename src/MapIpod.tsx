@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './MapIpod.module.css'
 import { OTHER_POPS, POIS } from './data'
 import { loadTrackBuffer, trackSource, type Track } from './musicLibrary'
-import { musicShelf, startMusicPostIntake, MUSIC_POSTS_CHANGE_EVENT } from './musicPosts'
+import { musicShelf, startMusicPostIntake, startAccountTrackIntake, MUSIC_POSTS_CHANGE_EVENT } from './musicPosts'
 import { attachWidget, widgetSrc, SC_EVENTS, type SCWidget } from './soundcloudWidget'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { registerAudioOwner, requestAudioFocus, releaseAudioFocus } from './audioFocus'
@@ -149,7 +149,14 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     const sync = () => setShelfVersion(v => v + 1)
     window.addEventListener(MUSIC_POSTS_CHANGE_EVENT, sync)
     const stopIntake = startMusicPostIntake()
-    return () => { window.removeEventListener(MUSIC_POSTS_CHANGE_EVENT, sync); stopIntake() }
+    // Ask the signed-in shell for this user's library. Outside a native shell
+    // this is a no-op and the local store stands in.
+    const stopAccount = startAccountTrackIntake()
+    return () => {
+      window.removeEventListener(MUSIC_POSTS_CHANGE_EVENT, sync)
+      stopIntake()
+      stopAccount()
+    }
   }, [])
 
   // A queue that shrank must not leave the cursor past the end.
@@ -225,6 +232,12 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       if (cancelled) return
       if (!widget) { setStatus("Playing in SoundCloud's own player"); return }
       scWidgetRef.current = widget
+      // Duration is only answerable once the widget is READY. Asking cold
+      // returns nothing, which read as "no progress bar" for the first
+      // seconds of every SoundCloud track.
+      widget.bind(SC_EVENTS.READY, () => {
+        try { widget.getDuration(ms => { if (ms > 0) durationRef.current = ms / 1000 }) } catch { /* gone */ }
+      })
       widget.bind(SC_EVENTS.FINISH, () => stopPlayback())
     })
     return () => { cancelled = true; scWidgetRef.current = null }

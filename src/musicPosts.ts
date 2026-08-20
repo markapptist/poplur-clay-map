@@ -11,7 +11,24 @@
 // get pinned to a pop deterministically; a real post never is, because it
 // genuinely happened somewhere.
 //
-// Three ways in, all landing in the same place:
+// WHERE A REAL POST LIVES: on the user's ACCOUNT, as a URL — never as bytes in
+// this app. The account row carries a pointer plus the ground it was left on,
+// and the handheld streams from that pointer. Two kinds of pointer, and the
+// difference is not cosmetic:
+//
+//   url        a file Poplur hosts (Firebase Storage / GCS). A genuine stream
+//              URL: fetchable, decodable, ours. This is what an upload writes.
+//   permalink  a SoundCloud track link. NOT a stream URL — SoundCloud does not
+//              hand out playable media URLs to third parties, so what the
+//              account stores is the pointer to THEIR player.
+//
+// The account is read the same way the profile grid reads its posts: ask the
+// authenticated shell (`requestProfileTracks`), receive Firestore rows back
+// over the bridge. Outside a native shell there is no authenticated user, so
+// the local store below stands in — same fallback shape the rest of the app
+// already uses for profile media.
+//
+// Four ways in, all landing in the same place:
 //   addPostedTrack()      the studio, once it can render an upload
 //   addSoundCloudTrack()  an artist's existing SoundCloud track, resolved
 //                         through SoundCloud's public oEmbed endpoint so the
@@ -19,9 +36,12 @@
 //                         typed in
 //   window.__poplurAddMusic(url)   the same thing from the console, so links
 //                         can be dropped in without a build
+//   the account          rows the native shell reads out of the signed-in
+//                         user's Firestore document
 
 import { TRACKS, type Track } from './musicLibrary'
 import { HOME } from './reach'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 
 const POST_KEY = 'poplur.music.posts.v1'
 export const MUSIC_POSTS_CHANGE_EVENT = 'poplur-music-posts-change'
@@ -45,7 +65,73 @@ function announce() {
   try { window.dispatchEvent(new Event(MUSIC_POSTS_CHANGE_EVENT)) } catch { /* SSR */ }
 }
 
-/** Tracks people have posted, newest first. */
+// ── the account ────────────────────────────────────────────────────────────
+// Held in memory for the session, not mirrored into localStorage: the account
+// is the source of truth and a stale local copy of someone's library is a
+// liability, not a cache. A refresh REPLACES this wholesale, the same way the
+// profile grid replaces its posts.
+let accountTracks: Track[] = []
+
+/** One Firestore row → a Track, or null if it names no playable pointer. */
+function accountTrack(row: Record<string, unknown>): Track | null {
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const id = str(row.id)
+  const url = str(row.url)
+  const permalink = str(row.permalink)
+  // A row with no pointer is not a track — it is a placeholder somebody wrote
+  // half of, and playing it would fail with no way to say why.
+  if (!id || (!url && !permalink)) return null
+  const lat = num(row.lat)
+  const lng = num(row.lng)
+  return {
+    id,
+    title: str(row.title) ?? 'Untitled',
+    artist: str(row.artist) ?? str(row.postedBy) ?? 'Poplur artist',
+    bpm: num(row.bpm) ?? 120,
+    root: num(row.root) ?? 0,
+    mood: str(row.mood) ?? 'POSTED',
+    duration: num(row.duration) ?? 0,
+    source: url ? { kind: 'upload', url } : { kind: 'soundcloud', permalink: permalink as string },
+    place: str(row.place) ?? 'Here',
+    // Firestore stores lat/lng; the map and the radius both speak [lng, lat].
+    coords: lat != null && lng != null ? [lng, lat] : undefined,
+    postedBy: str(row.postedBy) ?? undefined,
+    postedAt: num(row.postedAt) ?? undefined,
+    licence: str(row.licence) ?? undefined,
+  }
+}
+
+/**
+ * Ask the signed-in shell for this user's tracks and keep them in step.
+ *
+ * Mirrors ProfileTwin's `requestProfilePosts`: the web has no Firestore
+ * credentials of its own, so the authenticated native side does the read and
+ * hands back rows. Outside a native shell this does nothing at all and the
+ * local store stands in.
+ */
+export function startAccountTrackIntake(): () => void {
+  const receive = (event: Event) => {
+    const payload = (event as CustomEvent<{ tracks?: unknown }>).detail
+    const rows = Array.isArray(payload?.tracks) ? payload.tracks : []
+    accountTracks = rows.flatMap(row => {
+      const track = row && typeof row === 'object' ? accountTrack(row as Record<string, unknown>) : null
+      return track ? [track] : []
+    })
+    announce()
+  }
+  window.addEventListener('poplur-native-profile-tracks', receive)
+  if (isNativeShell()) postNativeEvent({ type: 'requestProfileTracks' })
+  return () => window.removeEventListener('poplur-native-profile-tracks', receive)
+}
+
+/** What the account has handed back this session. */
+export function accountShelf(): Track[] {
+  return accountTracks
+}
+
+/** Tracks posted on THIS device, newest first — the stand-in for an account
+ *  while there is no signed-in shell to ask. */
 export function postedTracks(): Track[] {
   return readJson<Track[]>(POST_KEY, [])
     .filter(t => t && typeof t.id === 'string' && t.source)
@@ -57,9 +143,17 @@ export function postedTracks(): Track[] {
  * new music under five stand-ins is not a shelf anyone would post to.
  */
 export function musicShelf(): Track[] {
-  const posts = postedTracks()
-  const seen = new Set(posts.map(t => t.id))
-  return [...posts, ...TRACKS.filter(t => !seen.has(t.id))]
+  // Account first — it is the real library. Local posts next, seeds last, and
+  // an id already seen never appears twice: an account row WINS over the local
+  // copy of the same track, because the account is what other people see.
+  const seen = new Set<string>()
+  const shelf: Track[] = []
+  for (const track of [...accountTracks, ...postedTracks(), ...TRACKS]) {
+    if (seen.has(track.id)) continue
+    seen.add(track.id)
+    shelf.push(track)
+  }
+  return shelf
 }
 
 function save(tracks: Track[]) {
