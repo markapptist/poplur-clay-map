@@ -7,6 +7,7 @@ import TVGuide from './TVGuide'
 import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
 import MapIpod from './MapIpod'
+import PhoneScreen from './PhoneScreen'
 import GamesScreen from './GamesScreen'
 import MapShowMe from './MapShowMe'
 import AIChatScreen from './AIChatScreen'
@@ -123,7 +124,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', glyph: 'P', home: true },
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages' },
     { icon: 'Store', title: 'STORE', screen: 'profile-store' },
-    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
+    // A real screen now, not a Rough Copy capture: who you can call is a live
+    // radius question in both directions, and a picture of a phone cannot
+    // answer it.
+    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone', native: true },
     // No NOTIFICATIONS tile: the bell on the profile already opens the sheet,
     // and it is on screen the whole time this menu takes two gestures to reach.
     // The `poplur-open-notifications` event it used to fire is still listened
@@ -828,6 +832,13 @@ export default function HoldMenuTwin({
       )
     }
     // TV GUIDE is a real screen in the app, not a Rough Copy capture.
+    if (activeScreen.native && activeScreen.screen === 'profile-phone') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur phone">
+          <PhoneScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
     if (activeScreen.native && activeScreen.screen === 'map-ipod') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur iPod">

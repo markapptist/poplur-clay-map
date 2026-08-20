@@ -6,6 +6,7 @@ import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { registerAudioOwner, requestAudioFocus, releaseAudioFocus } from './audioFocus'
 import { isGateMuted, onGateChange } from './audioGate'
 import { playPop } from './pop'
+import { HOME, haversineKm } from './reach'
 import { readSelectedProfileTheme, PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
 
 // The Poplur iPod — the map's music handheld.
@@ -25,20 +26,6 @@ interface Pickup {
   place: string
   /** great-circle km from you to the pop holding this track */
   distanceKm: number
-}
-
-/** Where "you" are until the map hands over a live fix — the same Toronto
- *  origin the navigation default uses, so distances agree with the map. */
-const HOME: [number, number] = [-79.3811, 43.6487]
-
-function haversineKm(a: [number, number], b: [number, number]): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180
-  const dLat = toRad(b[1] - a[1])
-  const dLng = toRad(b[0] - a[0])
-  const lat1 = toRad(a[1])
-  const lat2 = toRad(b[1])
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
-  return 6371 * 2 * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
 /**
