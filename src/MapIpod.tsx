@@ -11,7 +11,8 @@ import { playPop } from './pop'
 import { HOME, haversineKm } from './reach'
 import { readSelectedProfileTheme, PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
 import { onTick } from './frameGovernor'
-import { ipodSkinForTheme } from './ipodSkins'
+import { ipodSkinForTheme, ipodSkinById, IPOD_SKINS } from './ipodSkins'
+import ClayChannelArrows from './ClayChannelArrows'
 
 /** The canvas the skin art is exported at. Its ratio drives the device box,
  *  so the normalised geometry lands on the same pixels at any render size. */
@@ -138,6 +139,12 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   const [status, setStatus] = useState('')
   const [reach, setReach] = useState(() => radiusKm())
   const [skin, setSkin] = useState(() => readSelectedProfileTheme())
+  /** A finish chosen ON THE HANDHELD, which outranks the profile theme until
+   *  you leave. Two of the ten (ocean teal, holographic silver) have no profile
+   *  theme pointing at them, so without this they could never be seen at all. */
+  const [finish, setFinish] = useState<string | null>(null)
+  /** The classic cold start: the mark on a dark screen before the menu. */
+  const [booting, setBooting] = useState(true)
 
   // The shelf is live: post a track (studio, or the console hook) and it lands
   // here without a reload, which is the behaviour a posting app has to have.
@@ -163,6 +170,15 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   useEffect(() => {
     setTrackIndex(i => (queue.length ? Math.min(i, queue.length - 1) : 0))
   }, [queue])
+
+  // Boot. The real thing takes a beat to wake with the mark on the glass, and
+  // the handheld reads as a device rather than a screen because of it. Short
+  // enough that it is a boot and not a wait, and the wheel is dead until it
+  // finishes — pressing through a boot is not a thing the object does.
+  useEffect(() => {
+    const done = window.setTimeout(() => setBooting(false), 1500)
+    return () => window.clearTimeout(done)
+  }, [])
 
   // Your reach is live: spend it elsewhere in the app and the tracks that are
   // in range change under you.
@@ -458,6 +474,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   }
 
   const onWheelDown = (e: React.PointerEvent) => {
+    if (booting) return
     // A new press means the previous gesture's click has already been and gone,
     // so the deadline has done its job — clearing it keeps a fast tap right
     // after a spin from being eaten.
@@ -495,6 +512,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   /** A zone press only counts if the gesture that produced it never became a
    *  scroll — otherwise finishing a spin over MENU would also fire MENU. */
   const tap = (fn: () => void) => () => {
+    if (booting) return
     if (performance.now() < suppressClickUntil.current) return
     fn()
   }
@@ -574,11 +592,11 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   const title = frame.id === 'songs' ? frame.title : FRAME_TITLES[frame.id]
   const screen = frame.id === 'nowplaying' ? (
     <ul className={styles.menu}>
-      <li className={styles.menuHead}><span>Now Playing</span><span className={styles.battery} /></li>
+      <li className={styles.menuHead}><span>Now Playing</span></li>
     </ul>
   ) : (
     <ul className={styles.menu}>
-      <li className={styles.menuHead}><span>{title}</span><span className={styles.battery} /></li>
+      <li className={styles.menuHead}><span>{title}</span></li>
       {rows.length === 0 && (
         <li className={`${styles.row} ${styles.rowInert}`}><span>Nothing here yet</span></li>
       )}
@@ -605,7 +623,28 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   // positioned on top of it from the skin's own measurements, so a new finish
   // ships by adding a PNG rather than by touching this file. Same seam the
   // arcade shells use.
-  const pod = ipodSkinForTheme(skin.id)
+  const pod = finish ? ipodSkinById(finish) : ipodSkinForTheme(skin.id)
+  // Each finish is ~460KB of WebP, and swapping to one the browser has never
+  // seen leaves the device blank for the decode. Warm the two you can reach
+  // from here — never all ten, which would be 4.6MB for nine you may not open.
+  useEffect(() => {
+    const at = IPOD_SKINS.findIndex(k => k.id === pod.id)
+    for (const d of [1, -1]) {
+      const neighbour = IPOD_SKINS[(at + d + IPOD_SKINS.length) % IPOD_SKINS.length]
+      const warm = new Image()
+      warm.src = neighbour.art
+    }
+  }, [pod.id])
+
+  const finishIndex = IPOD_SKINS.findIndex(k => k.id === pod.id)
+
+  const stepFinish = (delta: 1 | -1) => {
+    playPop()
+    const at = IPOD_SKINS.findIndex(s => s.id === pod.id)
+    const next = IPOD_SKINS[(at + delta + IPOD_SKINS.length) % IPOD_SKINS.length]
+    setFinish(next.id)
+    setStatus(next.name)
+  }
   const pct = (n: number) => `${n * 100}%`
   const wheelBox = {
     left: pct(pod.wheel.cx - pod.wheel.r),
@@ -628,9 +667,19 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
           style={{
             left: pct(pod.screen.x), top: pct(pod.screen.y),
             width: pct(pod.screen.w), height: pct(pod.screen.h),
+            // The painted divider, not a ratio that happens to look close.
+            gridTemplateColumns: `${pct(pod.split)} ${pct(1 - pod.split)}`,
           }}
         >
+          {booting && (
+            <div className={styles.boot} aria-label="Starting up">
+              <img className={styles.bootMark} src="logo_icon.png" alt="" aria-hidden="true" draggable={false} />
+            </div>
+          )}
           {screen}
+          {status && (
+            <div className={styles.status} role="status" aria-live="polite">{status}</div>
+          )}
           {scPermalink && (
             <iframe
               ref={scFrameRef}
@@ -647,7 +696,6 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
             />
           )}
           <div className={styles.art}>
-            <div className={styles.artMark} aria-hidden="true">P</div>
             <div className={styles.artTitle}>
               {frame.id === 'root'
                 ? `${pickups.filter(unlocked).length} in reach`
@@ -682,15 +730,30 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
             onPointerUp={endSpin}
             onPointerCancel={endSpin}
           >
-            <button type="button" className={`${styles.zone} ${styles.zoneTop}`} onClick={tap(back)} aria-label="Menu">MENU</button>
-            <button type="button" className={`${styles.zone} ${styles.zoneLeft}`} onClick={tap(() => step(-1))} aria-label="Previous">◀◀</button>
-            <button type="button" className={`${styles.zone} ${styles.zoneRight}`} onClick={tap(() => step(1))} aria-label="Next">▶▶</button>
-            <button type="button" className={`${styles.zone} ${styles.zoneBottom}`} onClick={tap(playPause)} aria-label={playingId ? 'Pause' : 'Play'}>▶❙❙</button>
+            <button type="button" className={`${styles.zone} ${styles.zoneTop}`} onClick={tap(back)} aria-label="Menu" />
+            <button type="button" className={`${styles.zone} ${styles.zoneLeft}`} onClick={tap(() => step(-1))} aria-label="Previous" />
+            <button type="button" className={`${styles.zone} ${styles.zoneRight}`} onClick={tap(() => step(1))} aria-label="Next" />
+            <button type="button" className={`${styles.zone} ${styles.zoneBottom}`} onClick={tap(playPause)} aria-label={playingId ? 'Pause' : 'Play'} />
             <button type="button" className={styles.center} onClick={tap(select)} aria-label="Select" />
           </div>
         </div>
 
-        <div className={styles.status} role="status" aria-live="polite">{status}</div>
+        {/* ON the device, in the plain glitter BELOW the wheel — the wheel's
+            circle ends around 86% of the body, leaving the bottom eighth free.
+            Overlapping the object rather than sitting beside it keeps the
+            handheld the whole picture, which is the point of the artwork. */}
+        <div className={styles.finishArrows}>
+          <ClayChannelArrows
+            number={0}
+            label={`${finishIndex + 1}/${IPOD_SKINS.length}`}
+            orientation="horizontal"
+            size={118}
+            upLabel="Next finish"
+            downLabel="Previous finish"
+            onUp={() => stepFinish(1)}
+            onDown={() => stepFinish(-1)}
+          />
+        </div>
       </div>
     </div>
   )

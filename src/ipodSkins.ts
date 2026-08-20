@@ -39,6 +39,10 @@ export interface IpodSkin {
   family?: string
   art: string
   screen: IpodRect
+  /** Where the painted screen splits the menu list from the art panel, as a
+   *  fraction of the screen's own width (x=435 of 92..745). The right half is
+   *  left TRANSPARENT so each finish's own artwork shows through. */
+  split: number
   /** The whole click wheel: the ring that carries MENU and the transport. */
   wheel: IpodCircle
   /** The select button at its hub. */
@@ -51,7 +55,13 @@ export interface IpodSkin {
  *  wheel's own radius. A finish that genuinely moved a control would override
  *  this rather than edit it. */
 const SHARED: Omit<IpodSkin, 'id' | 'name' | 'family' | 'art'> = {
-  screen: { x: 0.100, y: 0.048, w: 0.800, h: 0.376 },
+  // Measured off the artwork itself, not eyeballed: the menu panel's pure-black
+  // field runs x 92..435 and the screen box x 92..745, y 93..626 on the 831x1503
+  // canvas. The art paints a COMPLETE UI — menu rows, MENU, the transport marks
+  // — so the live screen has to land on the painted one exactly, or you see two
+  // of everything.
+  screen: { x: 0.1107, y: 0.0619, w: 0.7858, h: 0.3546 },
+  split: 0.5253,
   wheel:  { cx: 0.504, cy: 0.687, r: 0.315 },
   center: { cx: 0.504, cy: 0.687, r: 0.132 },
 }

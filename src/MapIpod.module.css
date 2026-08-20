@@ -8,9 +8,15 @@
 .deck {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
-  padding: max(12px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Sized in cqh/cqw against the deck itself, because this sits inside the
+     phone twin as often as it does a real viewport — vh would measure the wrong
+     box. The insets are what keeps the device clear of the app chrome drawn
+     over it: the wordmark above, the radius readout below. */
+  container-type: size;
+  padding: 10cqh 5cqw 12cqh;
   /* Its own ground, like the radio's: a lit object in a dark room. The app
      theme paints the app, not the inside of this handheld. */
   background:
@@ -37,35 +43,23 @@
   --ink: #ffffff;
 
   position: relative;
-  width: min(300px, 82vw);
-  max-height: 100%;
+  /* AS BIG AS THE ROOM ALLOWS. It was pinned to 300px, which on a 430pt phone
+     left the device occupying a third of the screen and the menu text at 11px.
+     Height drives it and aspect-ratio (set inline from the skin canvas) gives
+     the width back; max-width re-resolves the height on a narrow screen. */
+  height: 100%;
+  max-width: 100%;
+  margin: 0 auto;
   isolation: isolate;
-  /* Translucent shell: a tinted body over a bright inner rim. */
-  backdrop-filter: blur(2px);
+  /* Everything inside is placed as a FRACTION of this box, so type has to scale
+     with it too — cqw units below, rather than a pixel size that only suits one
+     device width. */
+  container-type: inline-size;
 }
 
-/* The sparkle. Two stacked gradient fields at different scales so it reads as
-   suspended flecks rather than a repeating texture. Pointer-transparent. */
-.body::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.9;
-  background-image:
-    radial-gradient(1.6px 1.6px at 14% 12%, var(--spark-a), transparent 60%),
-    radial-gradient(1.2px 1.2px at 68% 8%, var(--spark-b), transparent 60%),
-    radial-gradient(1.8px 1.8px at 32% 34%, var(--spark-a), transparent 60%),
-    radial-gradient(1.1px 1.1px at 84% 28%, #fff, transparent 60%),
-    radial-gradient(1.5px 1.5px at 22% 62%, var(--spark-b), transparent 60%),
-    radial-gradient(1.3px 1.3px at 74% 58%, var(--spark-a), transparent 60%),
-    radial-gradient(1.7px 1.7px at 48% 78%, #fff, transparent 60%),
-    radial-gradient(1.2px 1.2px at 88% 84%, var(--spark-b), transparent 60%),
-    radial-gradient(1.4px 1.4px at 8% 88%, var(--spark-a), transparent 60%),
-    radial-gradient(1.1px 1.1px at 58% 94%, #fff, transparent 60%);
-}
+/* No sparkle layer here any more: the artwork IS the glitter, at a fidelity a
+   handful of radial-gradients never reached, and drawing a second field over it
+   only muddied the first. */
 
 /* ── screen ───────────────────────────────────────────────────────────────── */
 
@@ -76,9 +70,11 @@
   position: absolute;
   z-index: 1;
   display: grid;
-  grid-template-columns: 1.15fr 1fr;
+  /* Split set inline from skin.split — the painted divider, not a guess. */
   overflow: hidden;
-  font-size: 11px;
+  /* Scales with the device instead of sitting at 11px whatever the size. */
+  font-size: 3.5cqw;
+  line-height: 1.42;
 }
 
 .menu {
@@ -87,13 +83,21 @@
   margin: 0;
   list-style: none;
   overflow: hidden;
+  /* OPAQUE, and this is the whole fix for the doubled screen. The art paints a
+     full menu — Poplur / Music / Videos / … — and this list was being drawn on
+     top of it with no ground of its own, so both were visible at once, at
+     slightly different sizes. Black matches the painted panel exactly, so the
+     live list simply replaces it. */
+  background: #000;
 }
 
 .menuHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 3px 6px;
+  height: 7.08cqw;
+  box-sizing: border-box;
+  padding: 0 2.4cqw;
   font-weight: 800;
   color: color-mix(in srgb, var(--skin-lit) 80%, #fff);
   border-bottom: 1px solid rgba(255, 255, 255, 0.14);
@@ -118,8 +122,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 2px 6px;
+  gap: 1.6cqw;
+  /* The painted panel fits nine rows across its height; matching that exactly
+     is what makes the selection bar land where the art's does. */
+  height: 7.08cqw;
+  box-sizing: border-box;
+  padding: 0 2.4cqw;
   color: rgba(255, 255, 255, 0.88);
   white-space: nowrap;
   overflow: hidden;
@@ -143,23 +151,27 @@
 .rowLocked { color: rgba(255, 255, 255, 0.42); }
 
 .rowMeta {
-  font-size: 9px;
+  font-size: 2.8cqw;
   letter-spacing: 0.02em;
   opacity: 0.85;
   flex: 0 0 auto;
 }
 
 .art {
+  /* TRANSPARENT on purpose. Every finish paints its own scene in this half —
+     the glitter P over a skyline, the neon sun, and so on — and that art is the
+     reason to have ten of them. Covering it with a flat panel threw away the
+     only part of the screen the artwork was still allowed to own. Live text
+     sits at the bottom, over the painting, with a scrim so it stays readable. */
   position: relative;
-  display: grid;
-  place-items: center;
-  background:
-    radial-gradient(90% 70% at 50% 20%, color-mix(in srgb, var(--skin) 55%, transparent), transparent 70%),
-    linear-gradient(180deg, #170e2b, #090514);
-  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
   overflow: hidden;
-  padding: 6px;
+  padding: 0 4% 5%;
   text-align: center;
+  background: linear-gradient(180deg, transparent 52%, rgba(4, 2, 10, 0.82) 88%);
 }
 
 .artMark {
@@ -173,22 +185,31 @@
 }
 
 .artTitle {
-  margin-top: 6px;
-  font-size: 10px;
+  font-size: 3.2cqw;
   font-weight: 700;
   color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .artSub {
-  font-size: 9px;
-  color: rgba(255, 255, 255, 0.62);
+  font-size: 2.7cqw;
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 /* now-playing scrubber */
 .bar {
-  margin-top: 6px;
+  margin-top: 1.4cqw;
   width: 84%;
-  height: 4px;
+  height: 1.1cqw;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.18);
   overflow: hidden;
@@ -240,10 +261,10 @@
   border: 0;
   background: none;
   padding: 0;
-  color: color-mix(in srgb, var(--skin-lit) 78%, #fff);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  /* No text and no colour: MENU and the transport marks are PAINTED on the
+     wheel. Rendering them again put a second MENU a few pixels off the first. */
+  font-size: 0;
+  color: transparent;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   display: grid;
@@ -258,17 +279,14 @@
 .zone:active { transform: scale(0.94); }
 
 .center {
+  /* Invisible, for the same reason as the zones: the art paints the centre
+     button, glitter and all. This is the hit target over it. */
   width: 38%;
   aspect-ratio: 1;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background:
-    radial-gradient(circle at 38% 30%, color-mix(in srgb, var(--skin-lit) 80%, #fff), transparent 58%),
-    color-mix(in srgb, var(--skin) 85%, #000);
-  box-shadow:
-    inset 0 2px 5px rgba(255, 255, 255, 0.5),
-    inset 0 -6px 12px rgba(0, 0, 0, 0.5),
-    0 3px 8px rgba(0, 0, 0, 0.55);
+  border: 0;
+  background: none;
+  padding: 0;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
@@ -278,14 +296,23 @@
 /* A short status line under the wheel — what the last press did, and why a
    locked track is locked. */
 .status {
-  position: relative;
-  z-index: 1;
-  min-height: 14px;
+  /* ON the glass, across the bottom of both panels. It used to sit under the
+     device, where it collided with the finish stepper and with the app's own
+     chrome; an iPod would have put it on the screen anyway. */
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
   text-align: center;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.72);
-  padding-bottom: 10px;
+  font-size: 2.7cqw;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+  padding: 1cqw 2cqw;
+  background: linear-gradient(180deg, rgba(4, 2, 10, 0), rgba(4, 2, 10, 0.92) 45%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -320,3 +347,59 @@
   background: #0d0d0d;
   transition: opacity 160ms ease;
 }
+
+/* ── boot ─────────────────────────────────────────────────────────────────── */
+/* The cold start, covering the WHOLE screen — both the menu panel and the
+   finish's own painting. A boot that left half the art lit would read as a
+   glitch rather than as a device waking up. */
+.boot {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: #000;
+  animation: bootWake 1.5s ease-out both;
+}
+
+.bootMark {
+  width: 34%;
+  max-width: 34%;
+  filter: drop-shadow(0 0 6cqw rgba(246, 59, 154, 0.45));
+  animation: bootMark 1.5s ease-out both;
+}
+
+@keyframes bootWake {
+  0%   { background: #000; }
+  82%  { background: #000; }
+  100% { background: #000; opacity: 0; }
+}
+
+/* The mark fades up the way a backlight comes on, not the way a page loads. */
+@keyframes bootMark {
+  0%   { opacity: 0; transform: scale(0.86); }
+  38%  { opacity: 1; transform: scale(1); }
+  82%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.02); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot, .bootMark { animation-duration: 0.01ms; }
+}
+
+/* ── the finish stepper ───────────────────────────────────────────────────── */
+/* Sits ON the device, low on the body where the glitter is plainest, so it
+   reads as part of the object. Pointer-transparent except on the arrows
+   themselves — the wheel is right above it and must stay pressable. */
+.finishArrows {
+  position: absolute;
+  left: 50%;
+  /* The wheel's own circle ends at ~86% of the body; this sits in the glitter
+     under it, on the device rather than beside it. */
+  top: 93%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.finishArrows > * { pointer-events: auto; }
