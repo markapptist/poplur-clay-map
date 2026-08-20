@@ -8,7 +8,8 @@ import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
 import { screenTransition } from './cubeTransitions'
-import { startEngagementChips } from './engagement'
+import { startEngagementChips, engagementVerb } from './engagement'
+import { onEngagementLogged } from './engagementLog'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
@@ -1140,6 +1141,40 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (mapMounted) return
     return startEngagementChips({ demo: true })
   }, [mapMounted])
+
+  // ── The outside-app notification has to say what the screen says ──────────
+  //
+  // These were two unrelated systems. The push was
+  // `poplur.daily.radius.insight`: one recurring daily summary built from
+  // Firestore post signals, scheduled on a single reused identifier that each
+  // new one removed. The list you actually open lives here in the web and is
+  // driven by the engagement log. So the same push arrived over and over while
+  // the notifications screen showed something else.
+  //
+  // `.engagement` was always meant to arrive remotely from the
+  // notifyOnEngagement Cloud Function; until that is live nothing arrives at
+  // all. So the row that was just written is forwarded down, and native
+  // schedules it under that row's own id.
+  //
+  // Forwarded from the SHELL because the shell is what writes the log — the
+  // same reason engagement generation moved here when the map iframe stopped
+  // being permanent.
+  useEffect(() => {
+    let lastAt = 0
+    return onEngagementLogged(entries => {
+      const newest = entries[0]          // newest first, as the list renders it
+      if (!newest || newest.at <= lastAt) return
+      lastAt = newest.at
+      postNativeEvent({
+        type: 'notification',
+        // Deterministic, so a resend after a reconnect is recognised as the
+        // same notification rather than stacking a duplicate.
+        id: `engagement-${newest.at}-${newest.user}`,
+        title: newest.user,
+        detail: engagementVerb(newest.kind),
+      })
+    })
+  }, [])
   // Camera uploads use the Map as a focused location picker, not as a normal
   // destination. Keep that intent on the iframe URL for this mount so ClayMap
   // can skip its globe launch before the first frame is drawn. An empty object
