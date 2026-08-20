@@ -15,6 +15,18 @@ declare global {
     /** HomeTwin's chrome-idle flag: true after 10s untouched. The globe's
         authored spin reads it so the turn rests exactly when the HUD ghosts. */
     __poplurChromeIdle?: boolean
+    /** Globe-spin state, readable rather than inferred — the same contract
+        __poplurChromeIdle exists for. A parked loop and a loop that is running
+        but gated look identical from the outside (both draw nothing), so the
+        heat probes could not tell "the spin correctly rested" from "the spin
+        never ran at all". Written on every loop pass and once when the loop
+        parks. `spinning` is the authored turn actually advancing; `gate` says
+        which precondition is holding it back. */
+    __poplurGlobeSpin?: {
+      spinning: boolean
+      gate: 'spinning' | 'hidden' | 'display-off' | 'chrome-idle' | 'not-map-tab' | 'not-globe' | 'parked'
+      at: number
+    }
     __poplurDisplayRAF?: (callback: FrameRequestCallback) => number
     __poplurCancelDisplayRAF?: (id: number) => void
     /** Last accepted handset attitude. It lives on the document rather than
@@ -685,7 +697,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // Rests with the chrome (user-ordered 19 Aug, superseding the 18 Aug
       // "always turning": "the phone should not be heating up at all"). The
       // spin runs the whole time the screen is attended and parks on the same
-      // 10s-untouched beat that ghosts the HUD, so an app left face-up on a
+      // untouched beat that ghosts the HUD (CHROME_IDLE_MS, 30s), so an app
+      // left face-up on a
       // table stops paying display-rate frames for a turn nobody is watching.
       // The document-level pointerdown listener below wakes the loop, and
       // HomeTwin's own capture-phase wake flips the flag back first, so the
@@ -1281,7 +1294,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // Turning while you can see it AND are with it. The 18 Aug order made
       // this spin never expire; the 19 Aug heat order rests it with the
       // chrome instead — mapGlobeIsVisible() now includes the chrome-idle
-      // flag, so the turn parks after 10s untouched and the first touch
+      // flag, so the turn parks once the chrome goes idle and the first touch
       // brings it straight back. This used
       // to expire — armed for 8s at boot and re-armed by interaction — so the
       // globe stopped on its own and read as broken: "why does this turn off
@@ -1295,6 +1308,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // lock the phone and it stops — so "always" costs frames only while
       // someone is looking at it.
       const globeAnimating = mapGlobeIsVisible()
+      // Report WHY, so a rested spin and a dead one are distinguishable from
+      // outside. Cheap: object literal on an already-running frame.
+      window.__poplurGlobeSpin = {
+        spinning: globeAnimating,
+        gate: globeAnimating ? 'spinning'
+          : document.visibilityState !== 'visible' ? 'hidden'
+            : !(window.__poplurDisplayActive?.() ?? true) ? 'display-off'
+              : window.__poplurChromeIdle === true ? 'chrome-idle'
+                : targetTabRef.current !== 'map' ? 'not-map-tab'
+                  : 'not-globe',
+        at: now,
+      }
       if (globeAnimating) {
         yaw = (yaw + 0.5 * dt) % (Math.PI * 2)
         needsRender = true
@@ -1354,6 +1379,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         // the actual draw. This prevents an Android 60/120Hz display from
         // invoking a no-op JS callback for every hardware refresh.
         scheduleLoop(Math.max(0, 1000 / loopFPS - 8))
+      } else if (window.__poplurGlobeSpin) {
+        // Nothing re-armed: the loop is parked until something wakes it. Say so,
+        // or a parked loop reads as "gated" forever off its last pass.
+        window.__poplurGlobeSpin = { spinning: false, gate: 'parked', at: now }
       }
     }
     const wake = () => {
