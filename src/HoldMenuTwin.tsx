@@ -560,6 +560,12 @@ export default function HoldMenuTwin({
       if (event.source === frame.contentWindow && data.type === 'poplurStoreCheckoutRequested') {
         window.dispatchEvent(new CustomEvent('poplur-store-checkout-requested', { detail: data }))
       }
+      // Add to Apple Wallet takes the same route for the same reason: PassKit
+      // is native-only, and this store is a page inside a WebView.
+      if (event.source === frame.contentWindow
+        && (data.type === 'poplurWalletPassRequested' || data.type === 'poplurWalletPassAvailability')) {
+        window.dispatchEvent(new CustomEvent('poplur-wallet-pass-requested', { detail: data }))
+      }
     }
 
     const onResult = (event: Event) => {
@@ -569,9 +575,19 @@ export default function HoldMenuTwin({
       }
     }
 
+    const onWalletResult = (event: Event) => {
+      const data = (event as CustomEvent<Record<string, unknown>>).detail
+      if (data?.type === 'poplurWalletPassResult'
+        || data?.type === 'poplurWalletPassAvailabilityResult') {
+        frame.contentWindow?.postMessage(data, '*')
+      }
+    }
+
     window.addEventListener('message', onMessage)
     window.addEventListener('poplur-store-checkout-result', onResult)
+    window.addEventListener('poplur-wallet-pass-result', onWalletResult)
     return () => {
+      window.removeEventListener('poplur-wallet-pass-result', onWalletResult)
       window.removeEventListener('message', onMessage)
       window.removeEventListener('poplur-store-checkout-result', onResult)
     }

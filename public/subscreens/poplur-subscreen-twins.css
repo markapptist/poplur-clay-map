@@ -4658,6 +4658,26 @@ body.rcl-clay .stats-page.stats-world-page,
   opacity: 0.58;
 }
 
+/* Add to Apple Wallet. Apple's guidelines want their own black pill for this,
+   and the native side uses the real PKAddPassButton — this is the web twin of
+   it, so it deliberately matches that shape rather than Poplur's pink. */
+.store-wallet-button {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 10px;
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: #000;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.store-wallet-button:disabled {
+  opacity: 0.58;
+}
+
 .store-empty-bag {
   padding: 65px 22px 20px;
   text-align: center;

@@ -621,8 +621,16 @@ const TAB_TRANSITION_LEASE_MS = 900
 // visible booting map rather than a permanently blank panel.
 const MAP_COVER_MAX_MS = 1500
 
+// How long the parked map iframe survives after its tab stops being front.
+// 0 tore it down on leave, which made every return a full Mapbox reboot — the
+// 20 Aug burn log's rapid tab cycling re-fronted the map every 20-75s, and the
+// log-replayed harness measured those reboots at HALF the cycle's renderer
+// CPU. 75s covers six of the eight observed return gaps while keeping the
+// hidden retention bounded; the Android shell ignores this and still drops on
+// leave (see the lifetime effect). `?map-grace=<seconds>` overrides; 0 restores
+// tear-down-on-leave.
 const MAP_GRACE_MS = (() => {
-  const fallback = 0
+  const fallback = 75_000
   if (typeof window === 'undefined') return fallback
   const raw = new URLSearchParams(window.location.search).get('map-grace')
   if (raw === null) return fallback
@@ -1422,6 +1430,47 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
     }
 
+    // Add to Apple Wallet. The store subscreen asks, native signs and presents
+    // (PassKit cannot be driven from a page), and the answer comes back the
+    // same way. Deliberately thin: no validation to do here beyond "is this a
+    // card id at all", because the SERVER re-checks ownership before it will
+    // sign anything.
+    const onWalletPassRequested = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail
+      const emit = (data: Record<string, unknown>) => {
+        window.dispatchEvent(new CustomEvent('poplur-wallet-pass-result', { detail: data }))
+      }
+      if (detail?.type === 'poplurWalletPassAvailability') {
+        // Outside the app there is no Wallet: answer with an empty list so the
+        // page hides the button rather than leaving it hanging on no reply.
+        if (!isNativeShell() || !postNativeEvent({ type: 'poplurWalletPassAvailability' })) {
+          emit({ type: 'poplurWalletPassAvailabilityResult', cardIds: [] })
+        }
+        return
+      }
+      if (detail?.type !== 'poplurWalletPassRequested') return
+      const cardId = typeof detail.cardId === 'string' ? detail.cardId : ''
+      if (!cardId) {
+        emit({ type: 'poplurWalletPassResult', status: 'failure', message: 'Unknown card.' })
+        return
+      }
+      if (!isNativeShell() || !postNativeEvent({ type: 'poplurWalletPassRequested', cardId })) {
+        emit({
+          type: 'poplurWalletPassResult',
+          status: 'failure',
+          message: 'Adding to Apple Wallet is available in the Poplur app.',
+        })
+      }
+    }
+
+    const onNativeWalletPassResult = (event: MessageEvent) => {
+      const data = event.data
+      if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
+      if (data.type !== 'poplurWalletPassResult'
+        && data.type !== 'poplurWalletPassAvailabilityResult') return
+      window.dispatchEvent(new CustomEvent('poplur-wallet-pass-result', { detail: data }))
+    }
+
     const onNativeCheckoutResult = (event: MessageEvent) => {
       const data = event.data
       if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
@@ -1435,10 +1484,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
 
     window.addEventListener('poplur-store-checkout-requested', onCheckoutRequest)
+    window.addEventListener('poplur-wallet-pass-requested', onWalletPassRequested)
     window.addEventListener('message', onNativeCheckoutResult)
+    window.addEventListener('message', onNativeWalletPassResult)
     return () => {
       window.removeEventListener('poplur-store-checkout-requested', onCheckoutRequest)
+      window.removeEventListener('poplur-wallet-pass-requested', onWalletPassRequested)
       window.removeEventListener('message', onNativeCheckoutResult)
+      window.removeEventListener('message', onNativeWalletPassResult)
     }
   }, [])
 
@@ -1983,24 +2036,54 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setMapMounted(false)
       setMapReady(false)
     }
-    const screenCanRender = mainSurfaceVisible
-    const apply = () => {
-      if (activeTab === 'map' && committedTab === 'map' && screenCanRender) { setMapMounted(true); return }
-      if (ANDROID_SHELL || MAP_GRACE_MS === 0) { drop(); return }
-      dropTimer = window.setTimeout(drop, MAP_GRACE_MS)
-    }
     // Covered and backgrounded surfaces are not a navigation animation. Drop
     // them synchronously instead of waiting for the cube's settle window.
-    if (!screenCanRender || activeTab !== 'map') {
+    // Deliberately NOT mainSurfaceVisible: that flag includes
+    // `!switchingScreens`, which is true for the 180ms settle of EVERY tab
+    // change — testing it here dropped the map on each switch, which is what
+    // kept the grace window from ever engaging (and made `?map-grace` dead
+    // code on the ordinary leave path).
+    if (!surfaceVisible || overlayOpen || activePermission !== null) {
       drop()
       return
     }
-    // `committedTab` already coalesces transient cube faces and carries its own
-    // parked-spring backstop. Applying it directly avoids a second timer and
-    // prevents decorative motion from owning map lifecycle forever.
-    apply()
-    return () => { window.clearTimeout(dropTimer) }
-  }, [activeTab, committedTab, mainSurfaceVisible])
+    if (activeTab === 'map') {
+      // `committedTab` already coalesces transient cube faces and carries its
+      // own parked-spring backstop; a face mid-spin neither mounts nor drops.
+      if (committedTab === 'map') setMapMounted(true)
+      return
+    }
+    // Ordinary tab leave. The 20 Aug device burn log showed the real cadence:
+    // during active use the map re-fronts every 20-75s, and dropping on leave
+    // made every one of those returns a full Mapbox reboot — measured at HALF
+    // the renderer CPU of the whole rapid tab cycle (51s of 101s over a
+    // 3-minute log-replayed run). The parked iframe costs nothing while
+    // hidden (poplur-map-front:false → setSurfaceFront(false) parks the
+    // embed's clock and renderer; .mapLayerIdle is display:none), so the
+    // grace window trades bounded memory for not re-parsing style, tiles and
+    // workers on every return. Each navigation while off-map re-arms the full
+    // window — grace measures "time since the user last went anywhere", so an
+    // active session keeps its warm map and a settled one lets it go.
+    //
+    // Drop NOW instead when: the Android shell (its budget-GPU trade
+    // predates this and stands), a one-shot task map (pickSpot — its reset
+    // contract waits for unmount, and a graced return would resurrect the
+    // picker), or real memory pressure (the shell's poplur-memory-pressure
+    // event) arrives mid-grace. While graced, engagement generation pauses
+    // (the embed's onTick is parked and the shell's generator keys on
+    // mapMounted) and resumes on return or expiry — bounded and demo-only.
+    if (ANDROID_SHELL || MAP_GRACE_MS === 0 || mapPickSpotLaunch !== null) {
+      drop()
+      return
+    }
+    dropTimer = window.setTimeout(drop, MAP_GRACE_MS)
+    const onMemoryPressure = () => { window.clearTimeout(dropTimer); drop() }
+    window.addEventListener('poplur-memory-pressure', onMemoryPressure)
+    return () => {
+      window.clearTimeout(dropTimer)
+      window.removeEventListener('poplur-memory-pressure', onMemoryPressure)
+    }
+  }, [activeTab, committedTab, surfaceVisible, overlayOpen, activePermission, mapPickSpotLaunch])
 
   // Do not mutate the iframe URL while it is still mounted: changing `src`
   // during the return-to-Camera transition would reload a map that is about to
