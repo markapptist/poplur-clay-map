@@ -1073,3 +1073,63 @@
   object-fit: contain;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
 }
+
+/* ── Posting a track ───────────────────────────────────────────────────────
+   Saving to the phone and posting to your radius are different acts, so they
+   do not share a row: one keeps a file, the other leaves it on the ground for
+   anyone whose reach gets here. */
+.publish {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.publishHead {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.publishName {
+  width: 100%;
+  box-sizing: border-box;
+  /* 16px or larger, always: iOS WebKit auto-zooms the whole page when a
+     smaller field takes focus and never zooms back — the same trap the map's
+     composer field documents. */
+  font-size: 16px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.32);
+  color: #fff;
+}
+
+.publishName::placeholder { color: rgba(255, 255, 255, 0.38); }
+
+.publishBtn {
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: linear-gradient(135deg, #ff5fa8, #c40f66);
+  cursor: pointer;
+}
+
+.publishBtn:disabled { opacity: 0.55; cursor: default; }
+
+.publishNote,
+.publishHint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.publishHint { color: rgba(255, 255, 255, 0.46); }

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './PostComposer.module.css'
+import { awaitNativeUpload, type UploadPhase } from './nativeUpload'
 import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
 import { playPop } from './pop'
@@ -73,34 +74,6 @@ function previousComposerStep(step: PostComposerStep, usedAI: boolean): PostComp
   }
 }
 
-type NativeUploadResult = {
-  requestId?: string
-  ok?: boolean
-  error?: string
-}
-
-type NativeUploadProgress = {
-  requestId?: string
-  /** Preferred bridge shape: a normalized 0...1 transfer fraction. */
-  progress?: number
-  /** iOS PostUploadService bridge field. */
-  fraction?: number
-  /** Accepted for native implementations that mirror Foundation Progress. */
-  fractionCompleted?: number
-  bytesTransferred?: number
-  totalBytes?: number
-  phase?: string
-}
-
-type UploadPhase = 'preparing' | 'uploading' | 'saving'
-
-type UploadProgressUpdate = {
-  fraction: number | null
-  phase: UploadPhase
-}
-
-const NATIVE_UPLOAD_TIMEOUT_MS = 90_000
-
 function releasePreviewVideo(video: HTMLVideoElement): void {
   video.pause()
   video.removeAttribute('src')
@@ -119,71 +92,6 @@ function stillFromVideo(video: HTMLVideoElement): string | null {
   } catch {
     return null
   }
-}
-
-/**
- * A native shell owns Firebase auth, Storage and the Firestore write. The web
- * composer must wait for that side to report the result; otherwise it can show
- * a green "Posted" state while the device has not uploaded anything yet.
- */
-function normalizedUploadProgress(detail: NativeUploadProgress): number | null {
-  let fraction = detail.progress ?? detail.fraction ?? detail.fractionCompleted
-  if (!Number.isFinite(fraction)
-      && Number.isFinite(detail.bytesTransferred)
-      && Number.isFinite(detail.totalBytes)
-      && Number(detail.totalBytes) > 0) {
-    fraction = Number(detail.bytesTransferred) / Number(detail.totalBytes)
-  }
-  if (!Number.isFinite(fraction)) return null
-  // A few bridges report an integer percentage. Accept that without requiring
-  // a second event name, while keeping the preferred contract normalized.
-  const normalized = Number(fraction) > 1 ? Number(fraction) / 100 : Number(fraction)
-  return Math.min(1, Math.max(0, normalized))
-}
-
-function uploadPhase(detail: NativeUploadProgress, fraction: number | null): UploadPhase {
-  const phase = detail.phase?.trim().toLowerCase() ?? ''
-  if (phase.includes('queue') || phase.includes('prepar') || phase.includes('encod') || phase.includes('stag')) return 'preparing'
-  if (phase.includes('sav') || phase.includes('publish') || phase.includes('finish') || phase.includes('complete')) return 'saving'
-  // A completed Storage transfer can still be waiting on its Firestore post.
-  if (fraction === 1) return 'saving'
-  return 'uploading'
-}
-
-function awaitNativeUpload(
-  requestId: string,
-  onProgress: (update: UploadProgressUpdate) => void,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      cleanup()
-      reject(new Error('Upload is taking longer than expected.'))
-    }, NATIVE_UPLOAD_TIMEOUT_MS)
-
-    const onResult = (event: Event) => {
-      const detail = (event as CustomEvent<NativeUploadResult>).detail
-      if (!detail || detail.requestId !== requestId) return
-      cleanup()
-      if (detail.ok) resolve()
-      else reject(new Error(detail.error || 'The post could not be uploaded.'))
-    }
-
-    const onNativeProgress = (event: Event) => {
-      const detail = (event as CustomEvent<NativeUploadProgress>).detail
-      if (!detail || detail.requestId !== requestId) return
-      const fraction = normalizedUploadProgress(detail)
-      onProgress({ fraction, phase: uploadPhase(detail, fraction) })
-    }
-
-    const cleanup = () => {
-      window.clearTimeout(timeout)
-      window.removeEventListener('poplur-upload-result', onResult)
-      window.removeEventListener('poplur-upload-progress', onNativeProgress)
-    }
-
-    window.addEventListener('poplur-upload-result', onResult)
-    window.addEventListener('poplur-upload-progress', onNativeProgress)
-  })
 }
 
 export default function PostComposer({

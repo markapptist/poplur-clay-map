@@ -3,6 +3,12 @@ import styles from './StudioScreen.module.css'
 import { playPop } from './pop'
 import { modelSprite } from './modelSprite'
 import { requestAudioFocus, releaseAudioFocus, registerAudioOwner } from './audioFocus'
+import { mixdown, type RenderTarget } from './studioMixdown'
+import { HOME } from './reach'
+import { awaitNativeUpload } from './nativeUpload'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { addPostedTrack } from './musicPosts'
+import { radiusKm } from './radiusLedger'
 
 // Poplur Studio — record a take, let the AI turn it into a song.
 //
@@ -228,8 +234,11 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
 
   // One synthesized voice per trigger. Short, percussive, clay-adjacent: the
   // same building blocks as the radio bed so the app keeps one sonic family.
-  const voice = (name: string, at: number, freq = 220) => {
-    const { ctx, master } = engine()
+  const voice = (name: string, at: number, freq = 220, target?: RenderTarget) => {
+    // Defaults to the live engine; the offline bounce passes its own context so
+    // the published file is made by the same instrument you were listening to,
+    // not by a second implementation that would drift from it.
+    const { ctx, master } = target ?? engine()
     const out = ctx.createGain()
     out.connect(master)
     let liveSources = 0
@@ -285,6 +294,129 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
                         ;                tone('triangle', freq * 1.5, freq * 1.5, 0.5)
                         ;                tone('triangle', freq * 2, freq * 2, 0.5); break
       default:          env(0.3, 0.12);  tone('square', freq, freq, 0.12)
+    }
+  }
+
+  // ── Publishing ─────────────────────────────────────────────────────────────
+  //
+  // What a "post" means for music: the arrangement is bounced to one file, the
+  // file goes in the bucket, and a row goes in tracks/ carrying the URL plus
+  // the ground it was left on. From that moment it is on the iPod's shelf for
+  // anyone whose radius reaches here.
+  //
+  // The web has no Firebase account, so the bounce is handed to the shell as a
+  // data: URL and everything authenticated happens there — the same division
+  // the camera composer already uses, over the same upload events.
+  const [title, setTitle] = useState('')
+  const [publishing, setPublishing] = useState<null | 'bouncing' | 'uploading'>(null)
+  const [publishNote, setPublishNote] = useState<string | null>(null)
+  const [published, setPublished] = useState(false)
+
+  /** Where you are standing. A track is left on ground, and this is the ground. */
+  const here = (): { lat: number; lng: number } => {
+    const w = window as unknown as {
+      __poplurNativeLocation?: { latitude?: unknown; longitude?: unknown }
+    }
+    const lat = Number(w.__poplurNativeLocation?.latitude)
+    const lng = Number(w.__poplurNativeLocation?.longitude)
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng }
+    return { lat: HOME[1], lng: HOME[0] }
+  }
+
+  const publish = async () => {
+    if (publishing) return
+    playPop()
+    const name = title.trim()
+    if (!name) { setPublishNote('Give it a name first.'); return }
+    setPublishNote(null)
+    setPublishing('bouncing')
+    try {
+      const bounce = await mixdown({
+        takeUrl,
+        songUrl,
+        audible: isAudible,
+        maxSeconds: MAX_TAKE_MS / 1000,
+        // The bed is only in the file when it was in your ears — no
+        // instrumental means the synthesised pattern IS the track.
+        scheduleBed: (target, endSeconds) => {
+          // The SAME pattern the transport plays — drums from the genre, the
+          // roll's notes, the 808 and the chord stab — walked step by step
+          // against absolute offsets instead of the live clock. Written out
+          // rather than shared with the scheduler above because that one is
+          // driven by a lookahead horizon it cannot have offline.
+          const stepDur = 60 / bpmRef.current / 4
+          const ok = isAudible
+          for (let n = 0; n * stepDur < endSeconds; n++) {
+            const at = n * stepDur
+            const step = n % 16
+            for (const d of drumsAt(step, genre)) {
+              const lane = d === 'Snare' || d === 'Hat' ? 'Drum Loop' : d
+              if (ok(lane)) voice(d, at, 220, target)
+            }
+            if (step % 8 === 0 && ok('808')) voice('808', at, 55, target)
+            for (const id of cellsRef.current) {
+              const [row, cellStep] = id.split(':').map(Number)
+              if (cellStep !== step) continue
+              if (ok('Melody')) voice('Melody', at, rowHz(row), target)
+              if (ok('Bass') && row >= 5) voice('Bass', at, rowHz(row), target)
+            }
+            if (step === 0 && ok('Chords')) voice('Chords', at, rowHz(0), target)
+          }
+        },
+      })
+      if (!bounce) {
+        setPublishNote('There is nothing recorded to publish yet.')
+        setPublishing(null)
+        return
+      }
+
+      const spot = here()
+      if (!isNativeShell()) {
+        // The browser preview has no account, so nothing can reach the bucket.
+        // Put it on THIS device's shelf so the loop is inspectable, and say
+        // plainly that it went nowhere else — a green "published" here would
+        // be a lie about a file that was never uploaded.
+        addPostedTrack({
+          id: `studio-${Date.now()}`,
+          title: name,
+          artist: 'You',
+          bpm, root: 0, mood: genre.toUpperCase(),
+          duration: bounce.seconds,
+          source: { kind: 'upload', url: URL.createObjectURL(bounce.blob) },
+          place: 'Here', coords: [spot.lng, spot.lat],
+          postedBy: 'you', postedAt: Date.now(), licence: 'own-work',
+        })
+        setPublished(true)
+        setPublishing(null)
+        setPublishNote('On this device only — publishing needs your Poplur account, so nothing left this browser.')
+        return
+      }
+
+      const requestId = `track-${Date.now()}-${Math.floor(performance.now())}`
+      const done = awaitNativeUpload(requestId, update => {
+        setPublishing(update.phase === 'preparing' ? 'bouncing' : 'uploading')
+      })
+      setPublishing('uploading')
+      postNativeEvent({
+        type: 'publishTrack',
+        requestId,
+        data: bounce.dataUri,
+        title: name,
+        genre,
+        bpm,
+        duration: bounce.seconds,
+        latitude: spot.lat,
+        longitude: spot.lng,
+        radiusKm: radiusKm(),
+        licence: 'own-work',
+      })
+      await done
+      setPublished(true)
+      setPublishNote('Left on the ground here. Anyone whose radius reaches this spot can pick it up.')
+    } catch (error) {
+      setPublishNote(error instanceof Error ? error.message : 'That track could not be published.')
+    } finally {
+      setPublishing(null)
     }
   }
 
@@ -843,6 +975,42 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
               </a>
             )}
             {!songUrl && !takeUrl && <span className={styles.exportEmpty}>Nothing to save yet — record a take or make a track.</span>}
+          </div>
+
+          {/* Saving it to the phone is not posting it. THIS is posting it: the
+              arrangement is bounced to one file, the file goes in the bucket,
+              and the row that points at it carries the ground you are standing
+              on — which is the only way anybody else ever hears it. */}
+          <div className={styles.publish}>
+            <div className={styles.publishHead}>POST TO YOUR RADIUS</div>
+            <input
+              className={styles.publishName}
+              value={title}
+              onChange={event => setTitle(event.target.value)}
+              placeholder="Name this track"
+              maxLength={80}
+              disabled={publishing != null || published}
+              aria-label="Track name"
+            />
+            <button
+              type="button"
+              className={styles.publishBtn}
+              onClick={() => void publish()}
+              disabled={publishing != null || published || (!songUrl && !takeUrl)}
+            >
+              {published ? '✓ Posted'
+                : publishing === 'bouncing' ? 'Bouncing the mix…'
+                : publishing === 'uploading' ? 'Uploading…'
+                : 'Post it here'}
+            </button>
+            {publishNote && (
+              <div className={styles.publishNote} role="status" aria-live="polite">{publishNote}</div>
+            )}
+            {!publishNote && !published && (
+              <div className={styles.publishHint}>
+                Muted lanes stay out of the bounce — what you post is what you are hearing.
+              </div>
+            )}
           </div>
         </section>
       )}
