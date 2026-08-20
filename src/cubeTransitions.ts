@@ -21,8 +21,15 @@ const read = <T extends string>(key: string, fallback: T, allowed: readonly T[])
   }
 }
 
-export const cubeTransition = () => read<CubeTransition>(CUBE_KEY, 'roll', ['roll', 'slide'])
-export const screenTransition = () => read<ScreenTransition>(SCREEN_KEY, 'fade', ['fade', 'push'])
+// Both default to the DIRECTIONAL member of their pair, because direction is
+// not a taste question — it is what makes the gesture legible. `roll` pops the
+// cube in place and `fade` cross-fades the screen, so with the old defaults a
+// swipe left and a swipe right produced identical motion and nothing followed
+// the finger. The alternatives are still one tap away in Settings for whoever
+// prefers them; they just no longer decide whether the app answers the
+// gesture at all.
+export const cubeTransition = () => read<CubeTransition>(CUBE_KEY, 'slide', ['roll', 'slide'])
+export const screenTransition = () => read<ScreenTransition>(SCREEN_KEY, 'push', ['fade', 'push'])
 
 /** Setting one notifies live listeners, so a change is felt without a reload. */
 export function setCubeTransition(v: CubeTransition): void {

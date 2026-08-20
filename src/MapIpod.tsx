@@ -10,6 +10,7 @@ import { isGateMuted, onGateChange } from './audioGate'
 import { playPop } from './pop'
 import { HOME, haversineKm } from './reach'
 import { readSelectedProfileTheme, PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
+import { postNativeEvent } from './nativeBridge'
 import { onTick } from './frameGovernor'
 import { ipodSkinForTheme, ipodSkinById, IPOD_SKINS } from './ipodSkins'
 import ClayChannelArrows from './ClayChannelArrows'
@@ -189,11 +190,25 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   }, [])
 
   // The handheld wears the skin you chose for the app — the theme collection is
-  // the profile themes, not a second set of names to keep in step.
+  // the profile themes, not a second set of names to keep in step. A theme
+  // change is a device event, not a paint job: it reboots the handheld and
+  // buzzes the phone, the same beat the Poplur phone answers a colour change
+  // with.
   useEffect(() => {
-    const sync = () => setSkin(readSelectedProfileTheme())
+    let rebootTimer: number | null = null
+    const sync = () => {
+      setSkin(readSelectedProfileTheme())
+      setBooting(true)
+      try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
+      postNativeEvent({ type: 'phoneThemeEffects' })
+      if (rebootTimer !== null) window.clearTimeout(rebootTimer)
+      rebootTimer = window.setTimeout(() => setBooting(false), 1500)
+    }
     window.addEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
-    return () => window.removeEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
+    return () => {
+      window.removeEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
+      if (rebootTimer !== null) window.clearTimeout(rebootTimer)
+    }
   }, [])
 
   // ── audio ────────────────────────────────────────────────────────────────

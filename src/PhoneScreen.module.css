@@ -16,19 +16,52 @@
 
 .device {
   position: relative;
+  width: 100%;
   height: 100%;
   max-height: 100%;
   display: flex;
 }
 
 .rest {
+  /* The case art (1024x1536) is proportionally wider than this stage, so a
+     plain contain-fit leaves ~125px of dead space above and below it. Cover
+     fills the stage exactly and crops only the outer bezel edges — verified
+     the LCD (25-74.6% of source width) and every key sit well inside the
+     15.8-84.2% band that survives the crop. .lcd/.keys below are recalibrated
+     to this cropped mapping, not the old letterboxed one. */
+  width: 100%;
   height: 100%;
-  width: auto;
-  max-width: 100%;
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center;
   display: block;
   user-select: none;
   -webkit-user-drag: none;
+}
+
+/* The wake sequence — a 4x4 spritesheet stepped by JS, covering the resting
+   art, LCD and keys so the device reads as booting, not as a phone with an
+   animation stuck over it. */
+.boot {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background-repeat: no-repeat;
+  background-size: 400% 400%;
+  pointer-events: none;
+}
+
+.deviceBooting { animation: phoneWake 0.14s linear infinite; }
+.deviceBooting .rest { opacity: 0; }
+
+@keyframes phoneWake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  25% { transform: translate3d(-1px, 1px, 0); }
+  50% { transform: translate3d(1px, -1px, 0); }
+  75% { transform: translate3d(-1px, -1px, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deviceBooting { animation: none; }
 }
 
 /* Colourway arrows, exactly as the twin carries them. */
@@ -68,10 +101,10 @@
      close, which is the LCD and not a jewelled shell.) */
   position: absolute;
   z-index: 4;
-  left: 25%;
-  top: 18.8%;
-  width: 49.6%;
-  height: 23.7%;
+  left: 13.4%;
+  top: 4.3%;
+  width: 72.6%;
+  height: 34.7%;
   overflow: hidden;
   border-radius: 2.5%;
   background: #eff100;

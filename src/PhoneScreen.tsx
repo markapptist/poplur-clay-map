@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './PhoneScreen.module.css'
 import { OTHER_POPS } from './data'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { reachBetween, reachState, type Reach, type ReachState } from './reach'
 import { packBase } from './assetPacks'
 import { playPop } from './pop'
+import { PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
+import { postNativeEvent } from './nativeBridge'
 
 // The Poplur phone.
 //
@@ -43,13 +45,26 @@ function restUrl(set: string): string {
   return `${packBase('subscreens', 'subscreens')}/assets/${set}.imageset/${set}.png`
 }
 
-/** The twin's keypad geometry: left%, top%, width%, height%. */
+/** Each colourway's 4x4 wake spritesheet — same set, boot naming. */
+function bootUrl(set: string): string {
+  const slug = set.replace(/^poplur_bling_phone_\d+_/, '')
+  return `${packBase('subscreens', 'subscreens')}/assets/poplur_phone_bootup_${slug}.imageset/poplur_${slug}_boot_spritesheet_4x4.png`
+}
+
+const BOOT_FRAMES = 16
+const BOOT_FRAME_MS = 112
+
+/** Left%, top%, width%, height% — recalibrated for the cropped (object-fit:
+ *  cover) case art. Row tops are compressed slightly off their raw geometric
+ *  conversion (which pushed the bottom row past the frame edge) so all four
+ *  rows stay fully on-screen and non-overlapping; still ordered top-to-bottom
+ *  matching the physical keys. */
 const KEYS: Array<[key: string, left: number, top: number, w: number, h: number]> = [
-  ['1', 20.5, 62.2, 17, 6], ['2', 41.5, 62.2, 17, 6], ['3', 62.5, 62.2, 17, 6],
-  ['4', 20.5, 69.4, 17, 6], ['5', 41.5, 69.4, 17, 6], ['6', 62.5, 69.4, 17, 6],
-  ['7', 20.5, 76.7, 17, 6], ['8', 41.5, 76.7, 17, 6], ['9', 62.5, 76.7, 17, 6],
-  ['*', 20.5, 84.0, 17, 6], ['0', 41.5, 84.0, 17, 6], ['#', 62.5, 84.0, 17, 6],
-  ['5', 39.5, 50.9, 21, 7],
+  ['1', 6.8, 67.9, 24.9, 7], ['2', 37.6, 67.9, 24.9, 7], ['3', 68.3, 67.9, 24.9, 7],
+  ['4', 6.8, 75.9, 24.9, 7], ['5', 37.6, 75.9, 24.9, 7], ['6', 68.3, 75.9, 24.9, 7],
+  ['7', 6.8, 84.0, 24.9, 7], ['8', 37.6, 84.0, 24.9, 7], ['9', 68.3, 84.0, 24.9, 7],
+  ['*', 6.8, 92.0, 24.9, 7], ['0', 37.6, 92.0, 24.9, 7], ['#', 68.3, 92.0, 24.9, 7],
+  ['5', 34.6, 51.3, 30.7, 10.2],
 ]
 
 interface Contact {
@@ -89,12 +104,54 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
   const [index, setIndex] = useState(0)
   const [colorIndex, setColorIndex] = useState(0)
   const [calling, setCalling] = useState<Contact | null>(null)
+  const [booting, setBooting] = useState(true)
+  const [bootFrame, setBootFrame] = useState(0)
+  const bootTimer = useRef<number | null>(null)
 
   useEffect(() => {
     const sync = () => setReachKm(radiusKm())
     window.addEventListener(RADIUS_CHANGE_EVENT, sync)
     return () => window.removeEventListener(RADIUS_CHANGE_EVENT, sync)
   }, [])
+
+  // Wake sequence: 16 frames of the colourway's own spritesheet, one every
+  // 112ms — about 1.8s, the same beat the map iPod boots to. Reused for a
+  // theme change too: the handset reboots rather than just repainting.
+  const runBoot = useCallback(() => {
+    if (bootTimer.current !== null) window.clearInterval(bootTimer.current)
+    setBooting(true)
+    setBootFrame(0)
+    let frame = 0
+    bootTimer.current = window.setInterval(() => {
+      frame += 1
+      if (frame >= BOOT_FRAMES) {
+        if (bootTimer.current !== null) window.clearInterval(bootTimer.current)
+        bootTimer.current = null
+        setBooting(false)
+        return
+      }
+      setBootFrame(frame)
+    }, BOOT_FRAME_MS)
+  }, [])
+
+  useEffect(() => {
+    runBoot()
+    return () => {
+      if (bootTimer.current !== null) window.clearInterval(bootTimer.current)
+    }
+  }, [runBoot])
+
+  // The app theme changing reboots the handset and buzzes the phone, the same
+  // reaction the map iPod now gives it.
+  useEffect(() => {
+    const sync = () => {
+      try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
+      postNativeEvent({ type: 'phoneThemeEffects' })
+      runBoot()
+    }
+    window.addEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
+    return () => window.removeEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
+  }, [runBoot])
 
   const contacts = useMemo<Contact[]>(() => {
     return OTHER_POPS.map(pop => {
@@ -165,8 +222,19 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
 
   return (
     <div className={styles.screen} data-poplur-screen="profile-phone" aria-label="Poplur phone">
-      <div className={styles.device}>
+      <div className={booting ? `${styles.device} ${styles.deviceBooting}` : styles.device}>
         <img className={styles.rest} src={restUrl(colorway[1])} alt={`Poplur phone, ${colorway[0]}`} draggable={false} />
+
+        {booting && (
+          <div
+            className={styles.boot}
+            aria-hidden="true"
+            style={{
+              backgroundImage: `url(${bootUrl(colorway[1])})`,
+              backgroundPosition: `${(bootFrame % 4) / 3 * 100}% ${Math.floor(bootFrame / 4) / 3 * 100}%`,
+            }}
+          />
+        )}
 
         <div className={styles.lcd} aria-live="polite">
           <div className={styles.topline} aria-hidden="true">
