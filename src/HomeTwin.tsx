@@ -7,7 +7,7 @@ import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
-import { screenTransition } from './cubeTransitions'
+import { cubeTransition, onTransitionChanged, screenTransition, type CubeTransition, type ScreenTransition } from './cubeTransitions'
 import { startEngagementChips, engagementVerb } from './engagement'
 import { onEngagementLogged } from './engagementLog'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
@@ -1007,6 +1007,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // continuous clay pop rather than a disappearance and reappearance.
   const [appliedCubeScreen, setAppliedCubeScreen] = useState<string | null>(null)
   const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab))
+  // Which swap the navigator uses, chosen in Settings > Cube change. Read live
+  // so flipping it there is felt on the very next tab swipe. This setting had
+  // no consumer at all: it persisted and read back in Settings while nothing
+  // in the app ever asked for it, so the toggle moved and the cube did not.
+  const [cubeSwapMode, setCubeSwapMode] = useState<CubeTransition>(() => cubeTransition())
+  useEffect(() => onTransitionChanged(() => setCubeSwapMode(cubeTransition())), [])
+  /** Which way the tabs moved, so a slide travels the way you swiped. */
+  const cubeSwapDir = useRef(1)
   const [cubeSwapPhase, setCubeSwapPhase] = useState<'idle' | 'exit' | 'waiting' | 'enter'>('idle')
   const cubeSwapFallbackTimer = useRef<number | null>(null)
   const cubeModelReadyTimer = useRef<number | null>(null)
@@ -2371,12 +2379,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // re-press retriggers it rather than being swallowed by an identical class.
   const [pushDir, setPushDir] = useState<0 | 1 | -1>(0)
   const pushTimer = useRef<number | null>(null)
+  /** which transition the in-flight screen change is playing */
+  const screenAnimMode = useRef<ScreenTransition>('fade')
   const pushScreen = (dir: 1 | -1) => {
-    if (screenTransition() !== 'push') return
+    // Both modes animate. `fade` used to return here, which made it mean "no
+    // transition" — so half the setting was a no-op and the feature looked
+    // absent unless you happened to pick the other one.
+    screenAnimMode.current = screenTransition()
     if (pushTimer.current !== null) window.clearTimeout(pushTimer.current)
     setPushDir(0)
     // A frame between clear and set, or React coalesces them and the animation
     // never restarts on a repeated press in the same direction.
+    // governor-ok: single-frame separator fired once per channel press — not a loop, cannot re-arm, nothing runs at idle
     requestAnimationFrame(() => {
       setPushDir(dir)
       pushTimer.current = window.setTimeout(() => { setPushDir(0); pushTimer.current = null }, 300)
@@ -2614,6 +2628,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const previous = cubeOwnerTabRef.current
     cubeOwnerTabRef.current = activeTab
     if (previous === activeTab) return
+    // Shortest way round the ring, so a wrap (post -> feed) slides the way the
+    // swipe actually went rather than the long way back.
+    const from = TAB_ORDER.indexOf(previous)
+    const to = TAB_ORDER.indexOf(activeTab)
+    if (from >= 0 && to >= 0) {
+      const forward = (to - from + TAB_ORDER.length) % TAB_ORDER.length
+      cubeSwapDir.current = forward <= TAB_ORDER.length / 2 ? 1 : -1
+    }
     // The old HoldMenu cleanup is asynchronous relative to the tab request.
     // Clear its ownership at the semantic edge so a Camera/Profile subscreen
     // can never lend its object to the next tab for even one transition.
@@ -2732,7 +2754,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       <div
         className={[
           styles.contentLayer,
-          pushDir === 1 ? styles.pushUp : pushDir === -1 ? styles.pushDown : '',
+          pushDir === 0
+            ? ''
+            : screenAnimMode.current === 'push'
+              ? (pushDir === 1 ? styles.pushUp : styles.pushDown)
+              : styles.screenFade,
         ].filter(Boolean).join(' ')}
       >
         {mainSurfaceVisible && committedTab === 'feed' && (
@@ -3047,16 +3073,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         style={{ width: cubeSize, height: cubeSize }}
       >
         <div
+          style={{ ['--cube-swap-dir' as string]: cubeSwapDir.current }}
           className={photoPopping
             ? `${styles.cubePhotoPop} ${styles.cubeFloat}`
-            : cubeSwapPhase === 'exit' ? `${styles.cubeSwapExit} ${styles.cubeFloat}`
-            : cubeSwapPhase === 'waiting' ? `${styles.cubeSwapWaiting} ${styles.cubeFloat}`
-            : cubeSwapPhase === 'enter' ? `${styles.cubeSwapEnter} ${styles.cubeFloat}`
+            : cubeSwapPhase === 'exit'
+              ? `${cubeSwapMode === 'slide' ? styles.cubeSlideExit : styles.cubeSwapExit} ${styles.cubeFloat}`
+            : cubeSwapPhase === 'waiting'
+              ? `${cubeSwapMode === 'slide' ? styles.cubeSlideWaiting : styles.cubeSwapWaiting} ${styles.cubeFloat}`
+            : cubeSwapPhase === 'enter'
+              ? `${cubeSwapMode === 'slide' ? styles.cubeSlideEnter : styles.cubeSwapEnter} ${styles.cubeFloat}`
             : popping ? `${styles.cubePop} ${styles.cubeFloat}` : styles.cubeFloat}
           onAnimationEnd={e => {
             if (e.animationName.includes('cubePhotoCapture')) setPhotoPopping(false)
-            else if (e.animationName.includes('cubeSwapBubbleExit')) finishCubeSwapExit()
-            else if (e.animationName.includes('cubeSwapBubbleEnter')) finishCubeSwapEnter()
+            // Both swaps drive the same phase machine, so each phase has to be
+            // finished by EITHER keyframe name. Matching only the bubble names
+            // would strand the slide in 'exit' forever.
+            else if (e.animationName.includes('SwapBubbleExit') || e.animationName.includes('SwapSlideExit')) finishCubeSwapExit()
+            else if (e.animationName.includes('SwapBubbleEnter') || e.animationName.includes('SwapSlideEnter')) finishCubeSwapEnter()
             else if (e.animationName.includes('Pop')) setPopping(false)
           }}
         >
