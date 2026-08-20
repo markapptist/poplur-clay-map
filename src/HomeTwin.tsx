@@ -589,14 +589,20 @@ const ANDROID_SHELL =
 // Hiding it, shrinking its canvas to 2x2 and pausing its render loop all
 // measured no better; only unmounting recovered the frame budget (~3 -> 30fps).
 //
-// So every shell now takes the Android trade: the map is mounted ONLY while the
-// Map tab is front. Leaving it unmounts the iframe immediately, which recovers
-// the full frame budget on Profile / Feed / Camera (profile measured 5.5 ->
-// 59.9fps median once the map is gone). Coming back to Map remounts a fresh
-// iframe, which shows the loading globe while it boots — the same overlay the
-// map route already uses. `?map-grace=<seconds>` opts back into a warm bounce
-// for testing (the iframe lingers that long so a quick return to Map is free);
-// the default 0 keeps the map off every non-map tab.
+// So every shell took the Android trade: map mounted ONLY while its tab is
+// front, unmounted on leave (profile measured 5.5 -> 59.9fps median once the
+// map was gone). HISTORY, since partly superseded: those numbers predate the
+// governor's surfaceFront park and the explicit poplur-map-front machinery.
+// Re-measured 20 Aug on the built bundle: a hidden PARKED map iframe now runs
+// 0 rAF callbacks over a 90s dwell, and the feed in front of one profiles
+// median 59.9fps at 4x throttle — identical to a run with no map mounted at
+// all. What HAS a real price today is the reboot: the 20 Aug device burn log
+// (thermal fair in 7m21s, unplugged) showed rapid tab cycling re-fronting the
+// map every 20-75s, and the log-replayed harness measured those Mapbox
+// reboots at half the cycle's renderer CPU. Hence the grace below: leaving
+// the map parks it for MAP_GRACE_MS before unmounting, so an active session
+// bounces back to a warm map. Android still drops on leave (budget GPUs).
+// `?map-grace=<seconds>` overrides; 0 restores tear-down-on-leave.
 // How long `activeTab` must hold still before the map layer acts on it. Long
 // enough to swallow a spin (the cube commits a face every ~150-250ms while
 // turning), short enough to be invisible on a deliberate tab change.
@@ -1126,10 +1132,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(false)
   const droppedClaimsRef = useRef<Array<Record<string, unknown>>>([])
-  // The map iframe mounts only while the Map tab is front (the Android trade):
-  // it starts mounted only when Home opens directly on the map, and otherwise
-  // stays absent so Profile / Feed / Camera keep their full frame budget. It is
-  // torn down once the user leaves the map (after MAP_GRACE_MS, default 0).
+  // The map iframe mounts on the first Map visit (starts mounted only when
+  // Home opens directly on the map). Leaving the map PARKS it — hidden,
+  // display:none, embed clock stopped — for MAP_GRACE_MS before it is torn
+  // down, so the rapid map↔feed↔camera bouncing of real use does not pay a
+  // full Mapbox reboot per return. Android drops on leave (its shell trade).
   const [mapMounted, setMapMounted] = useState(initialTab === 'map')
 
   // ── Engagement must not depend on the map being mounted ───────────────────
@@ -2796,11 +2803,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       <div className={`${styles.universalTitle}${gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}>
         <TopChrome />
       </div>
-      {/* The map iframe mounts only while the Map tab is front. CSS cannot make
-          an idle map cheap (a hidden iframe still holds its GL context, tile
-          workers and full-res canvas), so leaving the map unmounts it entirely
-          and returning remounts a fresh iframe (see MAP_GRACE_MS). This keeps
-          the map from starving Profile / Feed / Camera of frames. */}
+      {/* The map iframe mounts on first Map visit and survives a tab leave in
+          a PARKED state for MAP_GRACE_MS (display:none + front:false stops the
+          embed's clock — measured 0 rAF while hidden, and the front tab
+          profiles the same fps as with no map at all), so a prompt return
+          skips the full Mapbox reboot. Real cover (background, overlay,
+          permission card) and memory pressure still unmount it at once. */}
       {mapMounted && (
         <>
           <iframe

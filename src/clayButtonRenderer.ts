@@ -57,22 +57,43 @@ function ensureRenderer(): THREE.WebGLRenderer | null {
  *  case the caller shows its flat fallback and must NOT call release. */
 export function acquireClayRenderer(onLost: () => void): boolean {
   if (!ensureRenderer()) return false
+  window.clearTimeout(releaseTimer)
   users += 1
   lostCallbacks.add(onLost)
   return true
 }
 
+// Last-out release is deferred: releasing the moment the last control left
+// meant a context create + full shader recompile on every feed/camera visit,
+// which the 20 Aug cycle harness profiled at ~2.5s of a 45s tab lap
+// (getContext + getProgramParameter/InfoLog stalls). The linger keeps rapid
+// tab cycling on one warm context while the long stretches the original
+// release existed for (map, games, subscreens) still free the cap slot.
+// Native memory pressure releases immediately.
+const RELEASE_LINGER_MS = 75_000
+let releaseTimer = 0
+
+function releaseNow(): void {
+  if (users > 0 || !renderer) return
+  glCanvas?.removeEventListener('webglcontextlost', onContextLost)
+  releaseWebGL(renderer)
+  renderer = null
+  glCanvas = null
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('poplur-memory-pressure', () => {
+    window.clearTimeout(releaseTimer)
+    releaseNow()
+  })
+}
+
 export function releaseClayRenderer(onLost: () => void): void {
   lostCallbacks.delete(onLost)
   users = Math.max(0, users - 1)
-  // Last control out releases the context — the app spends long stretches
-  // (map, games, subscreens) with none of these mounted at all, and a parked
-  // invisible context would still hold its cap slot the whole time.
   if (users === 0 && renderer) {
-    glCanvas?.removeEventListener('webglcontextlost', onContextLost)
-    releaseWebGL(renderer)
-    renderer = null
-    glCanvas = null
+    window.clearTimeout(releaseTimer)
+    releaseTimer = window.setTimeout(releaseNow, RELEASE_LINGER_MS)
   }
 }
 

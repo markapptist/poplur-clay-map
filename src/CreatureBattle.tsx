@@ -265,6 +265,7 @@ export default function CreatureBattle({ specUrl, artUrl, onFinished }: Props) {
   // The effect sprite lives for a fixed number of frames, then clears itself.
   useEffect(() => {
     if (!effect) return
+    // governor-ok: one-shot frame step, re-armed only while an effect object exists (18 frames max, then null) — finite, gameplay-only, never idles
     const id = requestAnimationFrame(() =>
       setEffect(e => (e && e.at < 18 ? { ...e, at: e.at + 1 } : null)))
     return () => cancelAnimationFrame(id)
@@ -286,6 +287,7 @@ export default function CreatureBattle({ specUrl, artUrl, onFinished }: Props) {
   // Hit flash: a few frames of blinking so a landed attack is felt, not just read.
   useEffect(() => {
     if (flash <= 0) return
+    // governor-ok: one-shot per frame while flash > 0 (a handful of frames after a landed attack), self-clearing — finite, gameplay-only, never idles
     const id = requestAnimationFrame(() => setFlash(f => f - 1))
     return () => cancelAnimationFrame(id)
   }, [flash])

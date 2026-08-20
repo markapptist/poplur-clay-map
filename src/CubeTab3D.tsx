@@ -428,10 +428,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         rotate it twice when a swipe reverses. */
     fitted: boolean
   } | null>(null)
-  // Separate from the forward-prepared slot: this is the one model that was
-  // just visible. Keeping both bounded slots makes a reverse swipe immediate
-  // without turning the navigator into an unbounded tab-model cache.
-  const retiredModelRef = useRef<{ url: string; model: THREE.Object3D } | null>(null)
+  // Separate from the forward-prepared slot: models that were recently
+  // visible, keyed by URL, newest last. One retired slot made a reverse swipe
+  // immediate but a 4-tab ROTATION missed every time — the 20 Aug burn
+  // harness profiled the resulting per-switch GLB decode (GLTF parse, Draco,
+  // texture blob URLs, GPU upload) as the largest named cost of a tab lap
+  // after the map reboot itself (createObjectURL alone 4.9s self time per
+  // 45s lap). Three pooled models plus the installed one covers the full
+  // map/feed/post/profile rotation at steady state with zero re-decodes,
+  // stays a hard bound rather than an unbounded cache, and empties itself on
+  // native memory pressure.
+  const RETIRED_POOL_MAX = 3
+  const retiredPoolRef = useRef<Map<string, THREE.Object3D>>(new Map())
   const preparingModelRef = useRef<{ url: string; generation: number } | null>(null)
   const preparationGenerationRef = useRef(0)
   const [preparedVersion, setPreparedVersion] = useState(0)
@@ -1415,13 +1423,15 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   }, [size])
 
   // Decode at most one destination ahead of the visual trough. This avoids a
-  // cold 2MB globe appearing after the old object has already settled back, but
-  // does not retain all four tab models or create extra renderers/contexts.
+  // cold 2MB globe appearing after the old object has already settled back,
+  // and never creates extra renderers/contexts. (Recently-visible models are
+  // additionally pooled — see retiredPoolRef — so this decode only happens the
+  // first time a destination appears or after pressure emptied the pool.)
   useEffect(() => {
     if (!prepareModelUrl || prepareModelUrl === loadedUrlRef.current || prepareModelUrl === modelUrlRef.current) return
     if (
       preparedModelRef.current?.url === prepareModelUrl
-      || retiredModelRef.current?.url === prepareModelUrl
+      || retiredPoolRef.current.has(prepareModelUrl)
       || preparingModelRef.current?.url === prepareModelUrl
     ) return
     if (preparedModelRef.current) {
@@ -1447,13 +1457,23 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     })
   }, [prepareModelUrl])
 
-  useEffect(() => () => {
-    preparationGenerationRef.current += 1
-    preparingModelRef.current = null
-    if (preparedModelRef.current) disposeModel(preparedModelRef.current.model)
-    preparedModelRef.current = null
-    if (retiredModelRef.current) disposeModel(retiredModelRef.current.model)
-    retiredModelRef.current = null
+  useEffect(() => {
+    // Real memory pressure empties the retired pool — the pooled models are a
+    // speed trade, never a requirement, and this is the same signal that drops
+    // the graced map iframe.
+    const releasePool = () => {
+      for (const model of retiredPoolRef.current.values()) disposeModel(model)
+      retiredPoolRef.current.clear()
+    }
+    window.addEventListener('poplur-memory-pressure', releasePool)
+    return () => {
+      window.removeEventListener('poplur-memory-pressure', releasePool)
+      preparationGenerationRef.current += 1
+      preparingModelRef.current = null
+      if (preparedModelRef.current) disposeModel(preparedModelRef.current.model)
+      preparedModelRef.current = null
+      releasePool()
+    }
   }, [])
 
   // Hot-swap the model when the screen asks the navigator to become something
@@ -1472,11 +1492,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       const previousUrl = loadedUrlRef.current
       if (previous) {
         group.remove(previous)
-        if (retiredModelRef.current) disposeModel(retiredModelRef.current.model)
         if (previousUrl && previousUrl !== modelUrl) {
-          retiredModelRef.current = { url: previousUrl, model: previous }
+          const pool = retiredPoolRef.current
+          const stale = pool.get(previousUrl)
+          if (stale && stale !== previous) disposeModel(stale)
+          pool.delete(previousUrl)
+          pool.set(previousUrl, previous)
+          while (pool.size > RETIRED_POOL_MAX) {
+            const [oldestUrl, oldest] = pool.entries().next().value as [string, THREE.Object3D]
+            pool.delete(oldestUrl)
+            disposeModel(oldest)
+          }
         } else {
-          retiredModelRef.current = null
           disposeModel(previous)
         }
       }
@@ -1508,10 +1535,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       install(prepared.model, prepared.fitted)
       return
     }
-    const retired = retiredModelRef.current
-    if (retired?.url === modelUrl) {
-      retiredModelRef.current = null
-      install(retired.model, true)
+    const retired = retiredPoolRef.current.get(modelUrl)
+    if (retired) {
+      retiredPoolRef.current.delete(modelUrl)
+      install(retired, true)
       return
     }
     // The preparation effect owns the in-flight decode and will bump
