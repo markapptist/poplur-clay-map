@@ -487,6 +487,75 @@ function requestStoreCheckout() {
   renderScreen();
 }
 
+// ── Add to Apple Wallet ──────────────────────────────────────────────────────
+// PassKit can only be presented from Swift, so the button here is a REQUEST:
+// the shell relays it to native, native signs the pass through poplurWalletPass
+// and shows Apple's add sheet, then answers back. Same relay the checkout above
+// uses, for the same reason — this store is a web surface inside a WebView.
+//
+// The first version of this shipped as a SwiftUI button in RadiusStoreView,
+// which Phase 3 orphaned along with the rest of HomeView. It never rendered.
+let walletOwnedCardIds = null;      // null = native has not answered yet
+let walletPassAsked = false;
+let walletPassPending = null;       // cardId currently being added
+let walletPassNotice = '';
+
+function requestWalletAvailability() {
+  // iOS only, and only inside the app: a browser has no Wallet to add to, so
+  // no answer means no button rather than a button that cannot work.
+  if (walletPassAsked || window.parent === window) return;
+  walletPassAsked = true;
+  window.parent.postMessage({ type: 'poplurWalletPassAvailability' }, '*');
+}
+
+function requestWalletPass(cardId) {
+  if (window.parent === window) {
+    walletPassNotice = 'Adding to Apple Wallet is available in the Poplur app.';
+    renderScreen();
+    return;
+  }
+  walletPassPending = cardId;
+  walletPassNotice = '';
+  window.parent.postMessage({ type: 'poplurWalletPassRequested', cardId }, '*');
+  renderScreen();
+}
+
+function handleWalletPassMessage(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (data.type === 'poplurWalletPassAvailabilityResult') {
+    walletOwnedCardIds = Array.isArray(data.cardIds) ? data.cardIds : [];
+    renderScreen();
+    return true;
+  }
+  if (data.type === 'poplurWalletPassResult') {
+    walletPassPending = null;
+    const status = String(data.status || '').toLowerCase();
+    // 'cancelled' is the person backing out of Apple's sheet — not a failure,
+    // and saying anything about it would be noise.
+    walletPassNotice = status === 'success' || status === 'cancelled'
+      ? ''
+      : (typeof data.message === 'string' && data.message
+          ? data.message
+          : 'That card could not be added to Wallet.');
+    renderScreen();
+    return true;
+  }
+  return false;
+}
+
+/** The button, rendered only for a card this account actually owns. */
+function walletPassButton(cardId) {
+  if (!Array.isArray(walletOwnedCardIds) || !walletOwnedCardIds.includes(cardId)) return '';
+  const busy = walletPassPending === cardId;
+  return `
+    <button type="button" class="store-wallet-button" data-store-wallet="${esc(cardId)}"
+      ${busy ? 'disabled aria-busy="true"' : ''}>
+      ${busy ? 'Adding to Wallet…' : 'Add to Apple Wallet'}
+    </button>
+    ${walletPassNotice ? `<div class="profile-notice" role="status">${esc(walletPassNotice)}</div>` : ''}
+  `;
+}
+
 function handleStoreCheckoutResult(data) {
   if (!data || data.type !== 'poplurStoreCheckoutResult') return;
   if (!profileStoreCheckoutPending || typeof profileStoreCheckoutRequestId !== 'string') return;
@@ -592,6 +661,7 @@ window.addEventListener('message', event => {
     reportNestedDepth();
     return;
   }
+  if (handleWalletPassMessage(data)) return;
   handleStoreCheckoutResult(data);
 });
 
@@ -937,6 +1007,12 @@ screenEl.addEventListener('click', e => {
   if (storeRemove) {
     removeStoreProduct(storeRemove.dataset.storeRemove);
     renderScreen();
+    return;
+  }
+
+  const walletButton = e.target.closest('[data-store-wallet]');
+  if (walletButton) {
+    requestWalletPass(walletButton.dataset.storeWallet);
     return;
   }
 
@@ -2015,6 +2091,7 @@ function storeModelViewer(item, className) {
 }
 
 function storeScreen() {
+  requestWalletAvailability();
   if (profileStoreView === 'bag') return storeBagScreen();
 
   const selected = profileStoreProducts.find(item => item.id === profileStoreProduct);
@@ -2035,6 +2112,7 @@ function storeScreen() {
           <div class="store-credit-pill">${selected.credits.toLocaleString('en-US')} credits after verified purchase</div>
           <button type="button" class="profile-action wide" data-store-action="add" ${profileStoreCheckoutPending ? 'disabled aria-disabled="true"' : ''}>Add to Bag</button>
           <button type="button" class="profile-secondary-action" data-store-action="bag">View Bag${bagCount ? ` (${bagCount})` : ''}</button>
+          ${walletPassButton(selected.id)}
           ${profileStoreNotice ? `<div class="profile-notice" role="status">${esc(profileStoreNotice)}</div>` : ''}
         </div>
       </div>

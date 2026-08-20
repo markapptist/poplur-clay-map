@@ -39,6 +39,7 @@ function ensureRenderer(): THREE.WebGLRenderer | null {
     glCanvas = document.createElement('canvas')
     // Same knobs the per-button renderers used: no MSAA (pixel ratio does the
     // smoothing on surfaces this small) and the low-power GPU path.
+    // governor-ok: renders only inside blitClayScene calls (the callers' own demand loops are the governed parts) — no rAF, no timer, zero work between calls, and the last control out releases the context entirely
     renderer = new THREE.WebGLRenderer({
       canvas: glCanvas, alpha: true, antialias: false, powerPreference: 'low-power',
     })
