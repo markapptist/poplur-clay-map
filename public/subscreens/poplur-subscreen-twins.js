@@ -228,6 +228,240 @@ let profileStat = null;
 let profileSettingsPanel = null;
 let profileSettingsNotice = '';
 
+// ── In-app video calls ──────────────────────────────────────────────────────
+// The peer connection lives HERE, in the page, because the chat it belongs to
+// is a page. Native owns Firestore and carries the offer, the answer and the
+// ICE candidates between the two sides — no media crosses the bridge, that goes
+// peer to peer.
+//
+// STUN only for now. Without a TURN relay a call fails on symmetric NAT and on
+// networks that block direct paths, which is a real slice of mobile — TURN is a
+// paid service and belongs in POPLUR_CALL_ICE below the moment there is one.
+const POPLUR_CALL_ICE = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+
+let callPeer = null;
+let callId = '';
+let callLocalStream = null;
+let callState = 'idle';   // idle | ringing | connecting | live
+let callWith = '';
+let callError = '';
+let callIncoming = null;  // { callId, callerId }
+let callWatching = false;
+
+function callBridge(message) {
+  if (window.parent === window) return false;
+  window.parent.postMessage(message, '*');
+  return true;
+}
+
+/** Ask native to watch for somebody calling us. Once per page life. */
+function watchIncomingCalls() {
+  if (callWatching || window.parent === window) return;
+  callWatching = true;
+  callBridge({ type: 'callWatchIncoming' });
+}
+
+function newPeer() {
+  const peer = new RTCPeerConnection({ iceServers: POPLUR_CALL_ICE });
+  peer.onicecandidate = event => {
+    if (!event.candidate || !callId) return;
+    callBridge({ type: 'callCandidate', callId, candidate: event.candidate.toJSON() });
+  };
+  peer.ontrack = event => {
+    const remote = screenEl.querySelector('[data-call-remote]');
+    if (remote && event.streams[0] && remote.srcObject !== event.streams[0]) {
+      remote.srcObject = event.streams[0];
+    }
+    if (callState !== 'live') { callState = 'live'; renderScreen(); }
+  };
+  peer.onconnectionstatechange = () => {
+    // `failed` here is almost always the missing TURN relay above, so say that
+    // rather than leaving a call spinning on "connecting" forever.
+    if (peer.connectionState === 'failed') {
+      callError = 'Could not connect. This network may need a relay.';
+      endCall();
+    }
+    if (peer.connectionState === 'disconnected' || peer.connectionState === 'closed') {
+      if (callState !== 'idle') endCall();
+    }
+  };
+  return peer;
+}
+
+async function attachLocalMedia() {
+  callLocalStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  for (const track of callLocalStream.getTracks()) callPeer.addTrack(track, callLocalStream);
+  // The element only exists after the overlay renders, so attach on the next
+  // frame rather than assuming it is already in the DOM.
+  window.setTimeout(() => {
+    const local = screenEl.querySelector('[data-call-local]');
+    if (local && callLocalStream) local.srcObject = callLocalStream;
+  }, 0);
+}
+
+async function startVideoCall(otherId, name) {
+  if (!otherId || callState !== 'idle') return;
+  if (window.parent === window) {
+    callError = 'Video calls are available in the Poplur app.';
+    renderScreen();
+    return;
+  }
+  callError = '';
+  callWith = name || 'Poplur';
+  callState = 'ringing';
+  renderScreen();
+  try {
+    callPeer = newPeer();
+    await attachLocalMedia();
+    callBridge({ type: 'callStart', otherId });
+  } catch (err) {
+    callError = 'Camera or microphone unavailable.';
+    endCall();
+  }
+}
+
+async function acceptIncomingCall() {
+  if (!callIncoming) return;
+  const incoming = callIncoming;
+  callIncoming = null;
+  callId = incoming.callId;
+  callState = 'connecting';
+  callError = '';
+  renderScreen();
+  try {
+    callPeer = newPeer();
+    await attachLocalMedia();
+    // Join BEFORE answering so the caller's candidates are not missed while
+    // the answer is still being produced.
+    callBridge({ type: 'callAnswerJoin', callId });
+  } catch (err) {
+    callError = 'Camera or microphone unavailable.';
+    endCall();
+  }
+}
+
+function declineIncomingCall() {
+  if (!callIncoming) return;
+  callBridge({ type: 'callEnd', callId: callIncoming.callId });
+  callIncoming = null;
+  renderScreen();
+}
+
+function endCall() {
+  if (callId) callBridge({ type: 'callEnd', callId });
+  if (callPeer) { try { callPeer.close(); } catch { /* already closed */ } }
+  if (callLocalStream) {
+    // Releasing the tracks is what turns the camera light off. Closing the
+    // peer connection alone does not.
+    for (const track of callLocalStream.getTracks()) track.stop();
+  }
+  callPeer = null;
+  callLocalStream = null;
+  callId = '';
+  callState = 'idle';
+  callWith = '';
+  renderScreen();
+}
+
+/**
+ * Whether this is ours, checked SYNCHRONOUSLY.
+ *
+ * handleCallMessage is async, so it returns a Promise — and a Promise is
+ * truthy. Dispatching on its return value would have made the call handler
+ * swallow every message in the app: DMs, wallet, phone contacts, all of it.
+ */
+const CALL_MESSAGE_TYPES = new Set([
+  'poplurCallStarted', 'poplurCallIncoming', 'poplurCallDescription',
+  'poplurCallCandidate', 'poplurCallEnded',
+]);
+
+function isCallMessage(data) {
+  return Boolean(data) && typeof data === 'object' && CALL_MESSAGE_TYPES.has(data.type);
+}
+
+async function handleCallMessage(data) {
+  if (!data || typeof data !== 'object') return false;
+  switch (data.type) {
+    case 'poplurCallStarted': {
+      if (!data.ok || !data.callId) { callError = 'Could not place the call.'; endCall(); return true; }
+      callId = data.callId;
+      const offer = await callPeer.createOffer();
+      await callPeer.setLocalDescription(offer);
+      callBridge({ type: 'callDescription', callId, sdpType: 'offer', sdp: offer.sdp });
+      return true;
+    }
+    case 'poplurCallIncoming': {
+      // Ignore our own outgoing call echoing back, and a second ring while
+      // already busy.
+      if (callState !== 'idle' || data.callId === callId) return true;
+      callIncoming = { callId: data.callId, callerId: data.callerId };
+      renderScreen();
+      return true;
+    }
+    case 'poplurCallDescription': {
+      if (!callPeer || data.callId !== callId) return true;
+      await callPeer.setRemoteDescription({ type: data.sdpType, sdp: data.sdp });
+      if (data.sdpType === 'offer') {
+        const answer = await callPeer.createAnswer();
+        await callPeer.setLocalDescription(answer);
+        callBridge({ type: 'callDescription', callId, sdpType: 'answer', sdp: answer.sdp });
+      }
+      if (callState === 'ringing') { callState = 'connecting'; renderScreen(); }
+      return true;
+    }
+    case 'poplurCallCandidate': {
+      if (!callPeer || data.callId !== callId) return true;
+      // A candidate arriving before the remote description is normal; adding
+      // it then throws, and dropping it is the correct, harmless response.
+      try { await callPeer.addIceCandidate(data.candidate); } catch { /* too early */ }
+      return true;
+    }
+    case 'poplurCallEnded': {
+      if (data.callId === callId) endCall();
+      if (callIncoming && callIncoming.callId === data.callId) { callIncoming = null; renderScreen(); }
+      return true;
+    }
+    default: return false;
+  }
+}
+
+/** The call overlay: full-bleed remote, local inset, one hang-up. */
+function callOverlay() {
+  if (callIncoming) {
+    return `
+      <div class="call-overlay incoming" role="dialog" aria-label="Incoming call">
+        <div class="call-incoming-card">
+          <strong>Incoming Poplur call</strong>
+          <span>${esc(callIncoming.callerId.slice(0, 8))}</span>
+          <div class="call-incoming-actions">
+            <button type="button" class="call-accept" data-call-accept>Accept</button>
+            <button type="button" class="call-decline" data-call-decline>Decline</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  if (callState === 'idle') {
+    return callError
+      ? `<div class="profile-notice" role="status">${esc(callError)}</div>`
+      : '';
+  }
+  return `
+    <div class="call-overlay" role="dialog" aria-label="Poplur video call">
+      <video class="call-remote" data-call-remote autoplay playsinline></video>
+      <video class="call-local" data-call-local autoplay playsinline muted></video>
+      <div class="call-status">${
+        callState === 'live' ? esc(callWith || 'Connected')
+          : callState === 'connecting' ? 'Connecting…' : `Calling ${esc(callWith)}…`
+      }</div>
+      <button type="button" class="call-hangup" data-call-hangup aria-label="End call">End</button>
+    </div>
+  `;
+}
+
 // ── Direct messages ─────────────────────────────────────────────────────────
 // Real threads arrive from native (`poplurDMThreads`), which reads Firestore —
 // this bundle has no Firebase, so every read and write crosses the bridge. The
@@ -714,6 +948,7 @@ window.addEventListener('message', event => {
     reportNestedDepth();
     return;
   }
+  if (isCallMessage(data)) { void handleCallMessage(data); return; }
   if (handlePhoneContactsMessage(data)) return;
   if (handleDMMessage(data)) return;
   if (handleWalletPassMessage(data)) return;
@@ -1072,6 +1307,15 @@ screenEl.addEventListener('click', e => {
     renderScreen();
     return;
   }
+
+  const dmCall = e.target.closest('[data-dm-call]');
+  if (dmCall) {
+    startVideoCall(dmCall.dataset.dmCall, dmCall.dataset.dmCallName);
+    return;
+  }
+  if (e.target.closest('[data-call-accept]')) { acceptIncomingCall(); return; }
+  if (e.target.closest('[data-call-decline]')) { declineIncomingCall(); return; }
+  if (e.target.closest('[data-call-hangup]')) { endCall(); return; }
 
   const walletButton = e.target.closest('[data-store-wallet]');
   if (walletButton) {
@@ -2197,6 +2441,7 @@ function creatorScreen() {
 
 function messagesScreen(from) {
   requestDMThreads();
+  watchIncomingCalls();
   const selected = profileMailThreads.find(item => item.id === profileMailThread);
   if (selected) {
     return `
@@ -2207,12 +2452,17 @@ function messagesScreen(from) {
             <h1>${esc(selected.title)}</h1>
             <span>Active in your Poplur radius</span>
           </div>
+          ${selected.otherId ? `<button type="button" class="dm-call-button"
+            data-dm-call="${esc(selected.otherId)}"
+            data-dm-call-name="${esc(selected.title)}"
+            aria-label="Video call ${esc(selected.title)}">Video</button>` : ''}
         </div>
         <div class="mail-conversation" aria-live="polite">
           ${selected.messages.map(message => `
             <div class="mail-bubble ${message.from === 'me' ? 'mine' : ''}">${esc(message.text)}</div>
           `).join('')}
         </div>
+        ${callOverlay()}
         <form class="mail-compose" data-mail-compose>
           <label class="sr-only" for="profileMailMessage">Message</label>
           <input id="profileMailMessage" name="message" autocomplete="off" placeholder="Message ${esc(selected.title)}">

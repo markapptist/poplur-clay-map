@@ -570,7 +570,9 @@ export default function HoldMenuTwin({
       // ride the same road: page -> here -> HomeTwin -> native -> Firestore.
       if (event.source === frame.contentWindow
         && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM',
-            'requestPhoneContacts', 'togglePhoneFavourite'].includes(data.type)) {
+            'requestPhoneContacts', 'togglePhoneFavourite',
+            'callStart', 'callAnswerJoin', 'callDescription', 'callCandidate',
+            'callEnd', 'callWatchIncoming'].includes(data.type)) {
         window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: data }))
       }
     }
@@ -595,7 +597,8 @@ export default function HoldMenuTwin({
       if (data?.type === 'poplurDMThreads'
         || data?.type === 'poplurDMMessages'
         || data?.type === 'poplurDMSendFailed'
-        || data?.type === 'poplurPhoneContacts') {
+        || data?.type === 'poplurPhoneContacts'
+        || String(data?.type ?? '').startsWith('poplurCall')) {
         frame.contentWindow?.postMessage(data, '*')
       }
     }

@@ -1501,7 +1501,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (data.type !== 'poplurDMThreads'
         && data.type !== 'poplurDMMessages'
         && data.type !== 'poplurDMSendFailed'
-        && data.type !== 'poplurPhoneContacts') return
+        && data.type !== 'poplurPhoneContacts'
+        && !String(data.type).startsWith('poplurCall')) return
       window.dispatchEvent(new CustomEvent('poplur-dm-result', { detail: data }))
     }
 

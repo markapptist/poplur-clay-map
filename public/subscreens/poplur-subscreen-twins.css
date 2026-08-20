@@ -4678,6 +4678,107 @@ body.rcl-clay .stats-page.stats-world-page,
   opacity: 0.58;
 }
 
+/* ── In-app video call ─────────────────────────────────────────────────────
+   Full-bleed remote with the local camera inset, the shape every video call
+   has had for fifteen years — there is nothing to invent here, and a novel
+   layout would only make it harder to use. */
+.call-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: #05060a;
+  overflow: hidden;
+}
+
+.call-remote {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #05060a;
+}
+
+.call-local {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  width: 96px;
+  height: 132px;
+  object-fit: cover;
+  border-radius: 14px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.55);
+  /* Your own preview is a mirror, the way every camera app shows it. */
+  transform: scaleX(-1);
+}
+
+.call-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 22px;
+  text-align: center;
+  color: #fff;
+  font: 800 14px/1.2 system-ui, -apple-system, sans-serif;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+}
+
+.call-hangup {
+  position: absolute;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  min-width: 128px;
+  padding: 15px 26px;
+  border: 0;
+  border-radius: 999px;
+  background: #e5323b;
+  color: #fff;
+  font: 900 15px/1 system-ui, -apple-system, sans-serif;
+}
+
+.call-overlay.incoming {
+  display: grid;
+  place-items: center;
+  background: rgba(5, 6, 10, 0.92);
+}
+
+.call-incoming-card {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 26px 30px;
+  border-radius: 22px;
+  background: #16060f;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  color: #fff;
+  text-align: center;
+}
+
+.call-incoming-card strong { font: 900 16px/1.2 system-ui, sans-serif; }
+.call-incoming-card span { font: 700 13px/1 ui-monospace, Menlo, monospace; opacity: .72; }
+
+.call-incoming-actions { display: flex; gap: 10px; margin-top: 6px; }
+.call-accept, .call-decline {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 22px;
+  font: 900 14px/1 system-ui, sans-serif;
+  color: #fff;
+}
+.call-accept { background: #1db954; }
+.call-decline { background: #e5323b; }
+
+.dm-call-button {
+  margin-left: auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 16px;
+  background: rgba(244, 69, 156, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(244, 69, 156, 0.42);
+  color: #c81d5e;
+  font: 900 12px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.08em;
+}
+
 .store-empty-bag {
   padding: 65px 22px 20px;
   text-align: center;
