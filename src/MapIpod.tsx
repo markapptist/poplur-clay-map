@@ -8,6 +8,12 @@ import { isGateMuted, onGateChange } from './audioGate'
 import { playPop } from './pop'
 import { HOME, haversineKm } from './reach'
 import { readSelectedProfileTheme, PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
+import { ipodSkinForTheme } from './ipodSkins'
+
+/** The canvas the skin art is exported at. Its ratio drives the device box,
+ *  so the normalised geometry lands on the same pixels at any render size. */
+const IPOD_W = 194
+const IPOD_H = 350
 
 // The Poplur iPod — the map's music handheld.
 //
@@ -316,10 +322,35 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     </ul>
   )
 
+  // The device is the supplied ARTWORK, not drawn here. Everything below is
+  // positioned on top of it from the skin's own measurements, so a new finish
+  // ships by adding a PNG rather than by touching this file. Same seam the
+  // arcade shells use.
+  const pod = ipodSkinForTheme(skin.id)
+  const pct = (n: number) => `${n * 100}%`
+  const wheelBox = {
+    left: pct(pod.wheel.cx - pod.wheel.r),
+    top: pct(pod.wheel.cy - pod.wheel.r * (IPOD_W / IPOD_H)),
+    width: pct(pod.wheel.r * 2),
+  }
+
   return (
     <div className={styles.deck} data-poplur-screen="map-ipod" aria-label="Poplur iPod">
-      <div className={styles.body} data-skin={skin.id}>
-        <div className={styles.screen} role="group" aria-label="iPod screen">
+      <div
+        className={styles.body}
+        data-skin={skin.id}
+        style={{ aspectRatio: `${IPOD_W} / ${IPOD_H}` }}
+      >
+        <img className={styles.skinArt} src={pod.art} alt="" aria-hidden="true" draggable={false} />
+        <div
+          className={styles.screen}
+          role="group"
+          aria-label="iPod screen"
+          style={{
+            left: pct(pod.screen.x), top: pct(pod.screen.y),
+            width: pct(pod.screen.w), height: pct(pod.screen.h),
+          }}
+        >
           {screen}
           <div className={styles.art}>
             <div className={styles.artMark} aria-hidden="true">P</div>
@@ -339,10 +370,8 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
           </div>
         </div>
 
-        <div className={styles.wordmark}>Poplur</div>
-
-        <div className={styles.wheelWrap}>
-          <div className={styles.wheel}>
+        <div className={styles.wheelWrap} style={wheelBox}>
+          <div className={styles.wheel} style={{ aspectRatio: '1' }}>
             <button type="button" className={`${styles.zone} ${styles.zoneTop}`} onClick={back} aria-label="Menu">MENU</button>
             <button type="button" className={`${styles.zone} ${styles.zoneLeft}`} onClick={() => step(-1)} aria-label="Previous">◀◀</button>
             <button type="button" className={`${styles.zone} ${styles.zoneRight}`} onClick={() => step(1)} aria-label="Next">▶▶</button>
