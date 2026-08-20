@@ -12,6 +12,9 @@ import { PoplurPerformanceManager } from './poplurPerformanceManager'
 declare global {
   interface Window {
     __poplurDisplayActive?: () => boolean
+    /** HomeTwin's chrome-idle flag: true after 10s untouched. The globe's
+        authored spin reads it so the turn rests exactly when the HUD ghosts. */
+    __poplurChromeIdle?: boolean
     __poplurDisplayRAF?: (callback: FrameRequestCallback) => number
     __poplurCancelDisplayRAF?: (id: number) => void
     /** Last accepted handset attitude. It lives on the document rather than
@@ -671,6 +674,15 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && (window.__poplurDisplayActive?.() ?? true)
+      // Rests with the chrome (user-ordered 19 Aug, superseding the 18 Aug
+      // "always turning": "the phone should not be heating up at all"). The
+      // spin runs the whole time the screen is attended and parks on the same
+      // 10s-untouched beat that ghosts the HUD, so an app left face-up on a
+      // table stops paying display-rate frames for a turn nobody is watching.
+      // The document-level pointerdown listener below wakes the loop, and
+      // HomeTwin's own capture-phase wake flips the flag back first, so the
+      // very touch that un-ghosts the chrome also restarts the turn.
+      && window.__poplurChromeIdle !== true
       && targetTabRef.current === 'map'
       && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
     const armGlobeSpin = (durationMs: number) => {
@@ -1145,6 +1157,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
     }
     window.addEventListener('poplur-native-motion', onNativeMotion)
     window.addEventListener('poplur-motion-tuning', onMotionTuning)
+    // Any touch anywhere is what un-idles the chrome (HomeTwin's own
+    // capture-phase listener flips __poplurChromeIdle first — it registered
+    // earlier, so it runs earlier). This one only wakes the parked loop so
+    // the globe's turn resumes on that same touch instead of waiting for the
+    // next canvas gesture or motion sample.
+    const onAnyPress = () => { wakeLoopRef.current() }
+    document.addEventListener('pointerdown', onAnyPress, { capture: true, passive: true })
 
     // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
@@ -1251,7 +1270,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         needsRender = true
       }
 
-      // ALWAYS turning while you can see it (user-ordered, 18 Aug). This used
+      // Turning while you can see it AND are with it. The 18 Aug order made
+      // this spin never expire; the 19 Aug heat order rests it with the
+      // chrome instead — mapGlobeIsVisible() now includes the chrome-idle
+      // flag, so the turn parks after 10s untouched and the first touch
+      // brings it straight back. This used
       // to expire — armed for 8s at boot and re-armed by interaction — so the
       // globe stopped on its own and read as broken: "why does this turn off
       // by itself". The spin is the object's character, not an entrance
@@ -1375,6 +1398,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       }
       window.removeEventListener('poplur-native-motion', onNativeMotion)
       window.removeEventListener('poplur-motion-tuning', onMotionTuning)
+      document.removeEventListener('pointerdown', onAnyPress, { capture: true })
       canvas.removeEventListener('webglcontextlost', onContextLost)
       disposeModel(scene)
       releaseWebGL(renderer)

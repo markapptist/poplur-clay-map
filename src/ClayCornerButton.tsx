@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
+import { acquireClayRenderer, blitClayScene, releaseClayRenderer } from './clayButtonRenderer'
 
 // Clay 3D corner controls for the camera (flash + switch-camera): the same
 // extruded-clay recipe as ClayChannelArrows / ClayMuteButton — matte pink
@@ -128,35 +128,19 @@ export default function ClayCornerButton({
   useEffect(() => {
     const canvas = canvasRef.current
     if (cssOnly || !canvas) return
-    let renderer: THREE.WebGLRenderer
-    try {
-      // This component is instantiated ~26 times across the app, and every
-      // instance is its own GL context. MSAA and the high-performance GPU path
-      // on a button this small are pure heat.
-      renderer = new THREE.WebGLRenderer({
-        canvas, alpha: true, antialias: false, powerPreference: 'low-power',
-      })
-    } catch {
+    // This component is instantiated ~26 times across the app, and every
+    // instance used to be its own GL context — so a feed or camera visit
+    // created and shader-compiled several contexts on every lap, which the
+    // profiler measured as the largest per-navigation CPU spike. All clay
+    // controls now draw through ONE shared context (clayButtonRenderer) and
+    // keep only a plain 2D canvas each; the scene below is unchanged, so the
+    // pixels are identical. The shared context can still fail or be taken
+    // away under memory pressure, in which case the flat glyph takes over.
+    const onContextLost = () => setFlat(true)
+    if (!acquireClayRenderer(onContextLost)) {
       setFlat(true)
       return
     }
-        // Pixel ratio, not MSAA. These are physically small surfaces, so the cost of
-    // rendering them at the device's real ratio is bounded by their own size
-    // rather than the viewport -- but MSAA would add a multisampled framebuffer
-    // per instance, and there are ~26 of these. Raising the ceiling to 3 fixes
-    // the visible jaggedness at a fraction of MSAA's cost. qualityPixelRatio
-    // still follows the governor's ladder ([1, 1.25, 1.5, max]), so thermal
-    // pressure steps this straight back down.
-        // Back to 1.5 after the device stayed warm. Raised to 3 earlier tonight on
-    // the reasoning that these are render-on-demand and park at rest — true,
-    // but the heat is felt DURING use, and during use the extra fill is real.
-    // Heat beat sharpness; this is one line to put back once a soak shows room.
-    renderer.setPixelRatio(qualityPixelRatio(1.5))
-    renderer.setSize(size, size, false)
-    renderer.setClearColor(0x000000, 0)
-    // The context can also be taken away later, under memory pressure.
-    const onContextLost = () => setFlat(true)
-    canvas.addEventListener('webglcontextlost', onContextLost)
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100)
@@ -391,7 +375,14 @@ export default function ClayCornerButton({
       bodyMat.emissiveIntensity =
         ((kind === 'flash' || kind === 'heart' || kind === 'comments' || kind === 'live')
           && activeRef.current ? 0.6 : 0.35) + pulse.current * 1.6
-      renderer.render(scene, camera)
+      // Pixel ratio, not MSAA — small surfaces, and the governor's ladder
+      // steps this down under thermal pressure. (1.5 held after the device
+      // stayed warm at 3; heat beat sharpness.)
+      if (!blitClayScene(scene, camera, canvas, size, qualityPixelRatio(1.5))) {
+        setFlat(true)
+        raf = 0
+        return
+      }
       // Still buttons hold their pose: keep drawing only while a press pulse is
       // still decaying, otherwise stop the loop entirely.
       if (!still || pulse.current > 0.002) raf = requestAnimationFrame(tick)
@@ -405,11 +396,10 @@ export default function ClayCornerButton({
 
     return () => {
       cancelAnimationFrame(raf)
-      canvas.removeEventListener('webglcontextlost', onContextLost)
       geos.forEach(g => g.dispose())
       mat.dispose()
       creamMat.dispose()
-      releaseWebGL(renderer)
+      releaseClayRenderer(onContextLost)
     }
   }, [cssOnly, size, kind, tone, still])
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react'
-import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
+import { acquireClayRenderer, blitClayScene, releaseClayRenderer } from './clayButtonRenderer'
 
 // Clay mute mark for the feed's top bar: the speaker built from the SAME
 // extruded-clay recipe as ClayChannelArrows (material, lighting, idle tumble,
@@ -53,26 +53,12 @@ export default function ClayMuteButton({
 
   useEffect(() => {
     const canvas = canvasRef.current!
-    // A ~40px clay icon is its own GL context and its own framebuffer. MSAA on
-    // something this small buys nothing the pixel ratio is not already giving
-    // us, and low-power keeps it off the high-performance GPU path.
-    const renderer = new THREE.WebGLRenderer({
-      canvas, alpha: true, antialias: false, powerPreference: 'low-power',
-    })
-        // Pixel ratio, not MSAA. These are physically small surfaces, so the cost of
-    // rendering them at the device's real ratio is bounded by their own size
-    // rather than the viewport -- but MSAA would add a multisampled framebuffer
-    // per instance, and there are ~26 of these. Raising the ceiling to 3 fixes
-    // the visible jaggedness at a fraction of MSAA's cost. qualityPixelRatio
-    // still follows the governor's ladder ([1, 1.25, 1.5, max]), so thermal
-    // pressure steps this straight back down.
-        // Back to 1.5 after the device stayed warm. Raised to 3 earlier tonight on
-    // the reasoning that these are render-on-demand and park at rest — true,
-    // but the heat is felt DURING use, and during use the extra fill is real.
-    // Heat beat sharpness; this is one line to put back once a soak shows room.
-    renderer.setPixelRatio(qualityPixelRatio(1.5))
-    renderer.setSize(size, size, false)
-    renderer.setClearColor(0x000000, 0)
+    // A ~40px clay icon used to be its own GL context and framebuffer — one
+    // more context created and compiled on every feed/camera visit. It now
+    // draws through the ONE shared clay-control context (clayButtonRenderer)
+    // into a plain 2D canvas; the scene is unchanged, so the pixels are too.
+    const onContextLost = () => { /* the speaker is decorative; stay blank */ }
+    if (!acquireClayRenderer(onContextLost)) return
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100)
@@ -162,7 +148,7 @@ export default function ClayMuteButton({
       mat.emissive.copy(restEmissive).lerp(litEmissive, pulse.current)
       mat.emissiveIntensity = 0.35 + pulse.current * 1.6
 
-      renderer.render(scene, camera)
+      blitClayScene(scene, camera, canvas, size, qualityPixelRatio(1.5))
     }
 
     // Render-on-demand: frames run only while a pulse is decaying, then park.
@@ -183,7 +169,7 @@ export default function ClayMuteButton({
       cancelAnimationFrame(raf)
       geos.forEach(g => g.dispose())
       mat.dispose()
-      releaseWebGL(renderer)
+      releaseClayRenderer(onContextLost)
     }
   }, [size])
 

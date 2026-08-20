@@ -4741,6 +4741,15 @@ body.rcl-clay .stats-page.stats-world-page,
   border-radius: 15px;
 }
 
+/* Rest with the chrome: twinIdleGovernor (end of the JS) stamps .twin-rest
+   after 10s untouched. Animations pause IN PLACE — no snap, orbits hold their
+   phase — and resume on the first touch. Transitions are unaffected. */
+.twin-rest *,
+.twin-rest *::before,
+.twin-rest *::after {
+  animation-play-state: paused !important;
+}
+
 
 /* --- bundled copy: the phone is real, so it brings its own --- */
 body.embed .status,

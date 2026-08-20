@@ -2609,3 +2609,41 @@ function phoneKey(key, left, top, width, height, label = key) {
 }
 
 update();
+
+// --- Rest with the chrome (19 Aug heat order) ------------------------------
+// The app's HUD ghosts after 10 seconds untouched, and (same order) the home
+// globe's turn now parks on that beat too. These twins ran their decoration
+// forever regardless: profile-stats holds ~10 infinite CSS animations and the
+// STORE's model-viewer auto-rotates at ~32 raf/s for as long as the screen is
+// open — the two surfaces the heat profiler named. One governor gives the
+// whole page the app's contract: 10s without a touch pauses every CSS
+// animation IN PLACE (no snap — orbits freeze mid-pose) and stops
+// auto-rotate; the first touch resumes both instantly. Entrance animations
+// finish long before the timer, so only genuinely idle decoration rests.
+(function twinIdleGovernor() {
+  const IDLE_MS = 10000;
+  let timer = 0;
+  const rest = () => {
+    document.documentElement.classList.add('twin-rest');
+    document.querySelectorAll('model-viewer[auto-rotate]').forEach(mv => {
+      mv.dataset.twinWasRotating = '1';
+      mv.removeAttribute('auto-rotate');
+    });
+  };
+  const wake = () => {
+    if (document.documentElement.classList.contains('twin-rest')) {
+      document.documentElement.classList.remove('twin-rest');
+      document.querySelectorAll('model-viewer[data-twin-was-rotating]').forEach(mv => {
+        delete mv.dataset.twinWasRotating;
+        mv.setAttribute('auto-rotate', '');
+      });
+    }
+    clearTimeout(timer);
+    timer = setTimeout(rest, IDLE_MS);
+  };
+  // Capture phase: several controls in these twins stop propagation.
+  for (const type of ['pointerdown', 'touchstart', 'wheel', 'keydown']) {
+    document.addEventListener(type, wake, { capture: true, passive: true });
+  }
+  wake();
+})();
