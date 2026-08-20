@@ -1013,7 +1013,26 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // updater twice, and an animation fired from in there would play twice with
     // it. The ref is the honest place for "what was on screen a moment ago".
     if ((cubeScreenRef.current ?? '') !== (next ?? '')) {
-      const dir: 1 | -1 = next ? 1 : -1
+      // A GESTURE decides its own direction. "Opening rises" is the right
+      // default for a tile tap, which has no direction of its own — but it was
+      // applied unconditionally, so a swipe DOWN that happened to open a page
+      // animated UP, and the gesture's own direction was overwritten a beat
+      // after it was set. Whichever way the finger actually went wins, and the
+      // record is consumed so it can never colour a later, untouched change.
+      // NOT consumed on first use. Opening a page bumps the resume nonce, which
+      // remounts the hold menu — so ONE swipe reports three changes (open, the
+      // old instance closing, the new one opening). Clearing the direction on
+      // the first of those left the last one, which is the one that actually
+      // lands, falling back to "opening rises" and animating against the
+      // finger. The time window below is what bounds this instead.
+      const swiped = navDirRef.current
+      // 2.5s, not a few hundred ms: opening a page mounts the hold menu and
+      // then the screen itself, and that round trip routinely outran a 900ms
+      // window — so the gesture's direction expired before the change it
+      // caused arrived, and the "opening rises" default silently won again.
+      const dir: 1 | -1 = swiped && Date.now() - swiped.at < 2500
+        ? swiped.dir
+        : next ? 1 : -1
       cubeSwapVec.current = { x: 0, y: dir }
       pushScreenRef.current?.(dir, 'y')
     }
@@ -1058,6 +1077,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
    */
   const cubeSwapVec = useRef<{ x: 0 | 1 | -1; y: 0 | 1 | -1 }>({ x: 1, y: 0 })
   const [cubeSwapPhase, setCubeSwapPhase] = useState<'idle' | 'exit' | 'waiting' | 'enter'>('idle')
+  /** A navigation that moves the screen but does NOT change the cube's object.
+   *  Non-zero for the length of one directional nudge; the axis comes from
+   *  cubeSwapVec, the same pair the real slide reads, so both travel the way
+   *  the finger did. Cleared by its own animationend (with a timer as the
+   *  fallback, since an interrupted animation never fires one). */
+  const [nudgeDir, setNudgeDir] = useState<0 | 1 | -1>(0)
+  const nudgeTimer = useRef<number | null>(null)
+  /** The direction of the vertical gesture that is driving the navigation
+   *  currently in flight, if any. Read once by handleSubscreenChange so an
+   *  opening page travels the way the finger did rather than always rising. */
+  const navDirRef = useRef<{ dir: 1 | -1; at: number } | null>(null)
   const cubeSwapFallbackTimer = useRef<number | null>(null)
   const cubeModelReadyTimer = useRef<number | null>(null)
   const cubeModelReadyFrame = useRef<number | null>(null)
@@ -1223,6 +1253,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         id: `engagement-${newest.at}-${newest.user}`,
         title: newest.user,
         detail: engagementVerb(newest.kind),
+        kind: newest.kind,
       })
     })
   }, [])
@@ -2563,6 +2594,25 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // keeps pushScreen next to the state it owns.
   pushScreenRef.current = pushScreen
 
+  /** A vertical swipe on the navigator. Same axis, same direction and the same
+   *  handler the channel arrows use — the gesture is a second way to press
+   *  them, not a second navigation model. */
+  const verticalSwipe = (dir: 1 | -1) => {
+    navDirRef.current = { dir, at: Date.now() }
+    cubeSwapVec.current = { x: 0, y: dir }
+    if (nudgeTimer.current !== null) window.clearTimeout(nudgeTimer.current)
+    setNudgeDir(0)
+    // A frame between clear and set, or React coalesces them and a repeat
+    // swipe in the same direction never restarts the animation — the same
+    // reason pushScreen separates its own two writes.
+    // governor-ok: single-frame separator fired once per swipe — not a loop, cannot re-arm, nothing runs at idle
+    requestAnimationFrame(() => {
+      setNudgeDir(dir)
+      nudgeTimer.current = window.setTimeout(() => { setNudgeDir(0); nudgeTimer.current = null }, 400)
+    })
+    changeChannel(dir)
+  }
+
   const changeChannel = (dir: 1 | -1) => {
     pushScreen(dir)
     // A transient layer INSIDE the tab answers first — it covers the screen,
@@ -3114,11 +3164,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             there was no way to stop turn-by-turn at all. The unit toggle still
             works on feed, profile and camera; drop 'map' from this test to put
             it back on the map too. */}
-        {/* gamesChromeMuted hides the TICKER only, not the row: a game keeps
-            the channel arrows (they walk the camera ring / the tab's pages)
-            and the cube (the way out) — it is the stat cards and the wordmark
-            that were sitting on the console art. */}
-        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}${chromeGone || gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}>
+        {/* The RADIUS card stays up on a game (user-ordered 20 Aug). Muting the
+            games chrome used to take this with it, which is why the radius
+            label went missing there — but radius is the app's running score,
+            not decoration, and a game is exactly where you want to see it
+            move. Only the wordmark is muted now; it was the piece actually
+            overlapping the console art. */}
+        <div className={`${styles.statStack}${overlayOpen || holdOpen || activeTab === 'map' ? ` ${styles.statStackInert}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}>
           {recordMs != null && (
             <div className={styles.statCard} aria-label="Recording">
               <span className={styles.statLabel}>RECORDING ◆</span>
@@ -3258,6 +3310,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               ? `${cubeSwapMode === 'slide' ? styles.cubeSlideWaiting : styles.cubeSwapWaiting} ${styles.cubeFloat}`
             : cubeSwapPhase === 'enter'
               ? `${cubeSwapMode === 'slide' ? styles.cubeSlideEnter : styles.cubeSwapEnter} ${styles.cubeFloat}`
+            // The nudge sits BELOW every swap phase on purpose. A navigation
+            // that changes the object plays the real slide; one that does not
+            // (a page change inside the same tab keeps the same model, so the
+            // swap machine correctly declines to run) would otherwise leave the
+            // cube completely still while the screen travelled. This gives that
+            // case the same direction of motion, without pretending an object
+            // changed.
+            : nudgeDir !== 0 ? `${styles.cubeNudge} ${styles.cubeFloat}`
             : popping ? `${styles.cubePop} ${styles.cubeFloat}` : styles.cubeFloat}
           onAnimationEnd={e => {
             if (e.animationName.includes('cubePhotoCapture')) setPhotoPopping(false)
@@ -3266,6 +3326,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             // would strand the slide in 'exit' forever.
             else if (e.animationName.includes('SwapBubbleExit') || e.animationName.includes('SwapSlideExit')) finishCubeSwapExit()
             else if (e.animationName.includes('SwapBubbleEnter') || e.animationName.includes('SwapSlideEnter')) finishCubeSwapEnter()
+            else if (e.animationName.includes('cubeNudge')) setNudgeDir(0)
             else if (e.animationName.includes('Pop')) setPopping(false)
           }}
         >
@@ -3299,6 +3360,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               targetTab={activeTab}
               showFoodFace={false}
               onFaceChange={switchTabByGesture}
+              onVerticalSwipe={verticalSwipe}
               onTap={popCube}
               onHold={() => {
                 playPop()

@@ -144,6 +144,15 @@ export const TAB_ORDER: readonly CubeTab[] = ['feed', 'profile', 'map', 'post']
 
 const HALF_PI = Math.PI / 2
 
+/** How much of the canvas, measured from its centre as a fraction of the
+ *  canvas WIDTH, counts as "on the navigator" for a drag. The object is drawn
+ *  centred and does not fill its canvas, so the surround is deliberately left
+ *  to the screen behind (see the note in onPointerDown). 0.34 is a little
+ *  inside the drawn object's silhouette: generous enough that grabbing it
+ *  never scrolls the page by accident, tight enough that the empty corners
+ *  over a post grid still scroll it. */
+const OBJECT_GRAB_RADIUS = 0.34
+
 const TAB_LABEL: Record<CubeTab, string> = {
   map: 'Map',
   feed: 'Feed',
@@ -156,6 +165,13 @@ export interface CubeTab3DProps {
   targetTab: CubeTab
   /** fired once when a completed swipe or keyboard step chooses a tab */
   onFaceChange: (tab: CubeTab) => void
+  /** A completed VERTICAL swipe on the navigator. Horizontal moves between
+      tabs; vertical moves through the pages of the tab you are on, which is
+      the same axis the channel arrows already drive. +1 for a swipe UP (the
+      content travels up and the next page arrives from below), -1 for a swipe
+      DOWN. Optional: a host with no vertical axis omits it and the gesture is
+      ignored exactly as it was before. */
+  onVerticalSwipe?: (dir: 1 | -1) => void
   onTap: () => void
   onHold: () => void
   size?: number
@@ -399,7 +415,7 @@ function disposeModel(node: THREE.Object3D) {
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false, motionContextKey }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false, motionContextKey }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -416,8 +432,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
   // below. Model swaps need both halves: merely waking a clean loop leaves the
   // old framebuffer on screen until a tap marks it dirty.
   const wakeLoopRef = useRef<() => void>(() => {})
-  const callbacksRef = useRef({ onFaceChange, onTap, onHold, onModelReady })
-  callbacksRef.current = { onFaceChange, onTap, onHold, onModelReady }
+  const callbacksRef = useRef({ onFaceChange, onVerticalSwipe, onTap, onHold, onModelReady })
+  callbacksRef.current = { onFaceChange, onVerticalSwipe, onTap, onHold, onModelReady }
 
   // Decode the tiny shared sample before the first navigation gesture. The
   // context stays suspended/parks at idle; pointerdown below performs the
@@ -941,7 +957,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
       // Read it now, while the pointer is still where it went down: the cube
       // captures the pointer, so elementsFromPoint later in the drag would
       // answer for wherever the finger has travelled to.
-      scrollBehind = scrollableUnder(e.clientX, e.clientY)
+      //
+      // Only the TRANSPARENT MARGIN hands its drag to the page behind. The
+      // canvas is a good deal wider than the object drawn in it, which is what
+      // made "scroll the grid underneath" the right call for the empty corners
+      // — but applied to the whole canvas it also swallowed drags on the
+      // object itself, so a vertical swipe ON the navigator scrolled the page
+      // instead of navigating. Grabbing the object is a gesture for the cube;
+      // the surround still belongs to whatever is underneath.
+      const box = canvas.getBoundingClientRect()
+      const grabR = Math.hypot(e.clientX - (box.x + box.width / 2), e.clientY - (box.y + box.height / 2))
+      const onObject = grabR <= box.width * OBJECT_GRAB_RADIUS
+      scrollBehind = onObject ? null : scrollableUnder(e.clientX, e.clientY)
       scrolling = false
       dragging = true
       moved = false
@@ -999,9 +1026,20 @@ export default function CubeTab3D({ targetTab, onFaceChange, onTap, onHold, size
         if (performance.now() - downTime < 350) callbacksRef.current.onTap()
         return
       }
+      // Whichever axis the finger actually travelled on wins. A vertical drag
+      // used to be dropped here, so swiping up or down on the navigator did
+      // nothing at all — the vertical axis existed (the channel arrows drive
+      // it) but the cube would not answer it.
+      const vertical = Math.abs(dy) > Math.abs(dx)
       // A small attempted swipe is a cancellation, never a cube tap. This is
       // especially important on Camera, where a tap is the shutter.
-      if (Math.abs(dx) < 28 || Math.abs(dx) < Math.abs(dy)) return
+      if (Math.abs(vertical ? dy : dx) < 28) return
+      if (vertical) {
+        // Up (dy < 0) is +1: the content travels up and the next page arrives
+        // from below, matching both the cube's slide and the screen's push.
+        callbacksRef.current.onVerticalSwipe?.(dy < 0 ? 1 : -1)
+        return
+      }
       const index = TAB_ORDER.indexOf(targetTabRef.current)
       const delta = dx < 0 ? 1 : -1
       commitTo(TAB_ORDER[(index + delta + TAB_ORDER.length) % TAB_ORDER.length])
