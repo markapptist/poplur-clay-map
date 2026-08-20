@@ -1,31 +1,48 @@
-// ── The music bed for the video editor ──────────────────────────────────────
+// ── Poplur's music ──────────────────────────────────────────────────────────
 //
-// PLACEHOLDER LIBRARY, AND DELIBERATELY SO.
+// Poplur is SoundCloud for underground artists, except the shelf is the ground.
+// A track is not "in your library" — it was LEFT somewhere, and you hear it when
+// your radius reaches the place it was left. Everything below exists to carry a
+// posted track from wherever it came from to that rule.
 //
-// Poplur has no music licences yet. The editor still needs a real track model
-// to be built against — offsets, volume, looping, mixing into the exported file
-// — so the mechanism is finished and only the SOURCE is standing in.
+// A track can come from three places, and the player treats them differently
+// because it has to:
 //
-// The stand-ins are SYNTHESISED here, not bundled audio files. That is the
-// point: there is no third-party recording anywhere in the repo, so nothing has
-// to be scrubbed later and no build can accidentally ship someone's master. A
-// generated loop is unmistakably not a real song, which is exactly what you
-// want a placeholder to sound like.
+//   'upload'      a file Poplur hosts. THE REAL THING. Decoded into an
+//                 AudioBuffer, so the handheld owns the clock, the level, the
+//                 mute gate and the video editor's mix. Nothing here is
+//                 waiting on anything: give a Track this source and it plays.
 //
-// SWAPPING IN THE REAL THING, when licences exist:
-//   1. give each Track a `url` and drop the licensed file in public/music/
-//   2. make loadTrackBuffer() fetch+decode that url instead of synthesising
-//   3. carry the licence id / rights-holder on the Track and send it with the
-//      post, because the upload will need to declare what it used
-// Nothing else in the editor has to change — it only ever asks for an
-// AudioBuffer.
+//   'soundcloud'  an artist's track played through SoundCloud's OWN embedded
+//                 player. Their audio is not fetchable — pulling the stream
+//                 into Web Audio is against their terms, and the widget is the
+//                 route they publish for this. So it plays in an iframe, and
+//                 the handheld drives it over the Widget API instead of the
+//                 audio graph. Interim content until artists upload.
+//
+//   'synth'       the built-in stand-in, generated here from BPM and key. No
+//                 third-party recording sits in this repo, so no build can
+//                 ship someone's master by accident.
+//
+// The studio does not exist yet and nobody has posted, so the seeded library is
+// still stand-ins. That is a CONTENT gap, not a mechanism gap — musicPosts.ts is
+// the intake, and a track posted through it plays like any other.
 
 import { poplurAssetCache } from './PoplurAssetCache'
+
+/** Where a track's audio actually comes from. See the header. */
+export type TrackSource =
+  /** a file Poplur hosts — user uploads, and any licensed file we drop in */
+  | { kind: 'upload'; url: string }
+  /** an artist's track, played inside SoundCloud's own embedded player */
+  | { kind: 'soundcloud'; permalink: string }
+  /** generated stand-in, so the mechanism is testable with no recording */
+  | { kind: 'synth' }
 
 export interface Track {
   id: string
   title: string
-  /** shown under the title; for real tracks this becomes the rights holder */
+  /** shown under the title; the rights holder for anything not a stand-in */
   artist: string
   /** beats per minute — drives the synthesised stand-in, and is genuinely
    *  useful metadata to keep for real tracks (beat-matched cuts later) */
@@ -36,27 +53,80 @@ export interface Track {
   mood: string
   /** seconds. Real tracks report their own; stand-ins loop to fill. */
   duration: number
+  /** where the audio comes from. Absent means the stand-in, so older callers
+   *  that build a bare Track still work. */
+  source?: TrackSource
+
+  // ── what a POSTED track carries, and a seeded one does not ───────────────
+  /** the pop it was dropped on. Without this the track gets pinned to a pop
+   *  deterministically, which is what the seeds do. */
+  place?: string
+  /** [lng, lat] of the ground it was left on — this is what the radius
+   *  measures against, so a real post is reachable exactly where it happened */
+  coords?: [number, number]
+  /** the poster's handle, for the artist line and the profile link later */
+  postedBy?: string
+  /** epoch ms, for ordering the shelf newest-first */
+  postedAt?: number
+  /** what the poster declared they had the right to post. Carried with the
+   *  track so a takedown has something to match on. */
+  licence?: string
 }
 
+/** The source a track actually has, defaulting bare tracks to the stand-in. */
+export function trackSource(track: Track): TrackSource {
+  return track.source ?? { kind: 'synth' }
+}
+
+/** The seeded shelf. Stand-ins until the studio ships — real posts arrive
+ *  through musicPosts.ts and are appended to these. */
 export const TRACKS: Track[] = [
-  { id: 'neon-run',    title: 'Neon Run',      artist: 'Poplur Placeholder', bpm: 124, root: 0,  mood: 'HYPE',   duration: 30 },
-  { id: 'slow-clay',   title: 'Slow Clay',     artist: 'Poplur Placeholder', bpm: 84,  root: 3,  mood: 'CHILL',  duration: 30 },
-  { id: 'night-drive', title: 'Night Drive',   artist: 'Poplur Placeholder', bpm: 108, root: -2, mood: 'MOODY',  duration: 30 },
-  { id: 'sunroom',     title: 'Sunroom',       artist: 'Poplur Placeholder', bpm: 96,  root: 5,  mood: 'WARM',   duration: 30 },
-  { id: 'static-pop',  title: 'Static Pop',    artist: 'Poplur Placeholder', bpm: 140, root: -4, mood: 'PUNCHY', duration: 30 },
+  { id: 'neon-run',    title: 'Neon Run',      artist: 'Poplur Placeholder', bpm: 124, root: 0,  mood: 'HYPE',   duration: 30, source: { kind: 'synth' } },
+  { id: 'slow-clay',   title: 'Slow Clay',     artist: 'Poplur Placeholder', bpm: 84,  root: 3,  mood: 'CHILL',  duration: 30, source: { kind: 'synth' } },
+  { id: 'night-drive', title: 'Night Drive',   artist: 'Poplur Placeholder', bpm: 108, root: -2, mood: 'MOODY',  duration: 30, source: { kind: 'synth' } },
+  { id: 'sunroom',     title: 'Sunroom',       artist: 'Poplur Placeholder', bpm: 96,  root: 5,  mood: 'WARM',   duration: 30, source: { kind: 'synth' } },
+  { id: 'static-pop',  title: 'Static Pop',    artist: 'Poplur Placeholder', bpm: 140, root: -4, mood: 'PUNCHY', duration: 30, source: { kind: 'synth' } },
 ]
 
 /**
- * An AudioBuffer for a track. Real tracks will fetch and decode; stand-ins are
- * built here from a bass pulse, a chord pad and a hat on the track's own BPM —
- * enough to hear the beat move against the video, set a level, and slide the
- * offset, which is everything the editor's controls need to be testable.
+ * An AudioBuffer for a track.
+ *
+ * A hosted file is fetched and decoded — that is the real path, and it is the
+ * one uploads take. Stand-ins are built here from a bass pulse, a chord pad and
+ * a hat on the track's own BPM: enough to hear the beat move against the video,
+ * set a level and slide the offset, which is everything the editor's controls
+ * need to be testable.
+ *
+ * SoundCloud tracks never reach here — their audio is not ours to decode, so
+ * the handheld plays them through the embedded widget instead.
  */
 export async function loadTrackBuffer(ctx: BaseAudioContext, track: Track): Promise<AudioBuffer> {
-  // The editor loops these buffers, so synthesising all 30 display seconds is
-  // unnecessary work. Two bars preserve the beat, harmony and stereo movement
-  // while placing a small, deterministic ceiling on main-thread synthesis and
-  // cached PCM (roughly 3.4–5.7s for the placeholder library).
+  const source = trackSource(track)
+
+  if (source.kind === 'soundcloud') {
+    // Loud, because silently handing back a synth loop would make an artist's
+    // track sound like a placeholder and nobody would know why.
+    throw new Error('soundcloud tracks play through the widget, not the audio graph')
+  }
+
+  if (source.kind === 'upload') {
+    // Decoded PCM is big, so this is cached by URL rather than by track id —
+    // the same file posted twice decodes once.
+    const key = `audio-track:file-v1:${source.url}:${ctx.sampleRate}`
+    const cached = poplurAssetCache.get<AudioBuffer>(key)
+    if (cached) return cached
+    const res = await fetch(source.url)
+    if (!res.ok) throw new Error(`track ${track.id}: ${res.status}`)
+    // Vite's dev fallback answers a missing public/ file with index.html at
+    // 200, so status is not proof. decodeAudioData is: HTML will not decode.
+    const decoded = await ctx.decodeAudioData(await res.arrayBuffer())
+    poplurAssetCache.set(key, decoded, {
+      kind: 'temporary',
+      estimatedBytes: decoded.length * decoded.numberOfChannels * 4,
+    })
+    return decoded
+  }
+
   const beat = 60 / track.bpm
   const loopDuration = Math.min(6, Math.max(2, beat * 8))
   const cacheKey = `audio-track:short-loop-v1:${track.id}:${ctx.sampleRate}:${loopDuration}`

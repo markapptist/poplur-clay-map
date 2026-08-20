@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './VideoEditor.module.css'
 import { playPop } from './pop'
-import { TRACKS, loadTrackBuffer, type Track } from './musicLibrary'
+import { loadTrackBuffer, trackSource, type Track } from './musicLibrary'
+import { musicShelf } from './musicPosts'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // ── POPLUR VIDEO EDITOR ─────────────────────────────────────────────────────
@@ -179,7 +180,12 @@ export default function VideoEditor({
   const bakeRunRef = useRef<BakeRun | null>(null)
   const dragCleanupRef = useRef<(() => void) | null>(null)
 
-  const track: Track | null = trackId ? TRACKS.find(t => t.id === trackId) ?? null : null
+  // The shelf, not the seed array — a track someone posted should be usable as
+  // a bed. SoundCloud tracks are excluded on purpose: their audio plays in an
+  // iframe and never reaches an AudioBuffer, so it cannot be mixed into an
+  // export. Offering one here would produce a silent video.
+  const beds = useMemo(() => musicShelf().filter(t => trackSource(t).kind !== 'soundcloud'), [])
+  const track: Track | null = trackId ? beds.find(t => t.id === trackId) ?? null : null
 
   const cancelBake = useCallback(() => {
     const run = bakeRunRef.current
@@ -976,7 +982,7 @@ export default function VideoEditor({
           <span className={styles.trackTitle}>No music</span>
           <span className={styles.trackMeta}>Original audio only</span>
         </button>
-        {TRACKS.map(t => (
+        {beds.map(t => (
           <button
             key={t.id}
             className={trackId === t.id ? `${styles.track} ${styles.trackOn}` : styles.track}
