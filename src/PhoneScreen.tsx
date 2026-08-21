@@ -435,8 +435,8 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   }, [press])
 
   // Three rows, windowed on the cursor — the twin's own menu behaviour.
-  const start = Math.max(0, Math.min(index - 1, Math.max(0, contacts.length - 3)))
-  const visible = contacts.slice(start, start + 3)
+  const start = Math.max(0, Math.min(index, Math.max(0, contacts.length - 2)))
+  const visible = contacts.slice(start, start + 2)
   const colorway = COLORWAYS[colorIndex % COLORWAYS.length]
 
   return (
@@ -508,20 +508,24 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
                 <strong>RINGTONE</strong>
               </div>
               <div className={styles.list}>
-                {RINGTONES.map(r => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    className={r.id === selectedRingtone ? `${styles.row} ${styles.rowOn}` : styles.row}
-                    onClick={() => { setSelectedRingtone(r.id); previewRingtone(r.id) }}
-                    aria-label={r.name}
-                  >
-                    <b className={styles.rowGlyph}>{r.id === getRingtone() ? '★' : '·'}</b>
-                    <span className={styles.rowText}>
-                      <strong className={styles.rowTitle}>{r.name}</strong>
-                    </span>
-                  </button>
-                ))}
+                {(() => {
+                  const selIdx = RINGTONES.findIndex(r => r.id === selectedRingtone)
+                  const rStart = Math.max(0, Math.min(selIdx, RINGTONES.length - 3))
+                  return RINGTONES.slice(rStart, rStart + 3).map(r => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      className={r.id === selectedRingtone ? `${styles.row} ${styles.rowOn}` : styles.row}
+                      onClick={() => { setSelectedRingtone(r.id); previewRingtone(r.id) }}
+                      aria-label={r.name}
+                    >
+                      <b className={styles.rowGlyph}>{r.id === getRingtone() ? '★' : '·'}</b>
+                      <span className={styles.rowText}>
+                        <strong className={styles.rowTitle}>{r.name}</strong>
+                      </span>
+                    </button>
+                  ))
+                })()}
               </div>
               <div className={styles.softkeys}>2/8 SCROLL  5 SET  * BACK</div>
             </>

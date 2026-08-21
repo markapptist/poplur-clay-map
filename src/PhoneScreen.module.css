@@ -131,8 +131,8 @@
   box-shadow: inset 0 0 12px rgba(8, 41, 1, 0.22);
   display: flex;
   flex-direction: column;
-  padding: 4% 5%;
-  gap: 1%;
+  padding: 3% 5%;
+  gap: 0.5%;
   container-type: inline-size;
 }
 
@@ -149,7 +149,7 @@
 .topline {
   display: flex;
   justify-content: space-between;
-  font-size: 4.2cqw;
+  font-size: 3.6cqw;
   letter-spacing: -0.02em;
   opacity: 0.85;
 }
@@ -158,26 +158,27 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 5cqw;
+  font-size: 4.2cqw;
   font-weight: 700;
 }
 
-.titleRow em { font-style: normal; font-size: 4.2cqw; opacity: 0.8; }
+.titleRow em { font-style: normal; font-size: 3.6cqw; opacity: 0.8; }
 
 .list {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 1.2cqw;
+  justify-content: flex-start;
+  gap: 0.6cqw;
   min-height: 0;
+  overflow: hidden;
 }
 
 .row {
   display: flex;
   align-items: center;
-  gap: 2cqw;
-  padding: 0.8cqw 1.4cqw;
+  gap: 1.4cqw;
+  padding: 0.4cqw 1.2cqw;
   border: 0;
   border-radius: 1cqw;
   background: none;
@@ -195,17 +196,17 @@
 
 .rowGlyph {
   flex: 0 0 auto;
-  font-size: 4.6cqw;
+  font-size: 3.8cqw;
   font-weight: 700;
   letter-spacing: -0.06em;
-  min-width: 7cqw;
+  min-width: 5cqw;
 }
 
 .rowText { min-width: 0; flex: 1 1 auto; }
 
 .rowTitle {
   display: block;
-  font-size: 4.6cqw;
+  font-size: 3.8cqw;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -214,7 +215,7 @@
 
 .rowDetail {
   display: block;
-  font-size: 3.8cqw;
+  font-size: 3.2cqw;
   font-style: normal;
   opacity: 0.82;
   white-space: nowrap;
@@ -223,7 +224,7 @@
 }
 
 .softkeys {
-  font-size: 3.6cqw;
+  font-size: 3cqw;
   letter-spacing: -0.02em;
   opacity: 0.9;
   text-align: center;
@@ -239,8 +240,8 @@
   text-align: center;
 }
 
-.callStatus strong { font-size: 5.6cqw; }
-.callStatus span { font-size: 4cqw; }
+.callStatus strong { font-size: 4.6cqw; }
+.callStatus span { font-size: 3.4cqw; }
 
 .incoming strong { animation: incomingPulse 1.2s ease-in-out infinite; }
 @keyframes incomingPulse {
@@ -251,7 +252,7 @@
 .callRinging strong { animation: incomingPulse 1.6s ease-in-out infinite; }
 
 .callTimer {
-  font-size: 6cqw;
+  font-size: 5cqw;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
