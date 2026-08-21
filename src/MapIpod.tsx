@@ -651,8 +651,6 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     }
   }, [pod.id])
 
-  const finishIndex = IPOD_SKINS.findIndex(k => k.id === pod.id)
-
   const stepFinish = (delta: 1 | -1) => {
     playPop()
     const at = IPOD_SKINS.findIndex(s => s.id === pod.id)
@@ -688,7 +686,13 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
         >
           {booting && (
             <div className={styles.boot} aria-label="Starting up">
+              <div className={styles.bootFlicker} aria-hidden="true" />
               <img className={styles.bootMark} src="logo_icon.png" alt="" aria-hidden="true" draggable={false} />
+              <div className={styles.bootDots} aria-hidden="true">
+                <span className={styles.bootDot} />
+                <span className={styles.bootDot} />
+                <span className={styles.bootDot} />
+              </div>
             </div>
           )}
           {screen}
@@ -753,20 +757,33 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
           </div>
         </div>
 
-        {/* ON the device, in the plain glitter BELOW the wheel — the wheel's
-            circle ends around 86% of the body, leaving the bottom eighth free.
-            Overlapping the object rather than sitting beside it keeps the
-            handheld the whole picture, which is the point of the artwork. */}
-        <div className={styles.finishArrows}>
+        {/* One clay chevron per SIDE of the device, mid-height — the same
+            arrangement the Poplur phone's colorway arrows use, so changing a
+            handheld's look reads the same on both. Left steps back through the
+            finishes, right steps forward; the status toast still names the one
+            you landed on, which replaces the old n/10 counter. */}
+        <div className={styles.finishArrowLeft}>
           <ClayChannelArrows
             number={0}
-            label={`${finishIndex + 1}/${IPOD_SKINS.length}`}
+            single="up"
+            orientation="horizontal"
+            size={118}
+            upLabel="Previous finish"
+            downLabel="Previous finish"
+            onUp={() => stepFinish(-1)}
+            onDown={() => stepFinish(-1)}
+          />
+        </div>
+        <div className={styles.finishArrowRight}>
+          <ClayChannelArrows
+            number={0}
+            single="down"
             orientation="horizontal"
             size={118}
             upLabel="Next finish"
-            downLabel="Previous finish"
+            downLabel="Next finish"
             onUp={() => stepFinish(1)}
-            onDown={() => stepFinish(-1)}
+            onDown={() => stepFinish(1)}
           />
         </div>
       </div>

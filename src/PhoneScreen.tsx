@@ -1,12 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './PhoneScreen.module.css'
-import { OTHER_POPS } from './data'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
-import { reachBetween, reachState, type Reach, type ReachState } from './reach'
 import { packBase } from './assetPacks'
 import { playPop } from './pop'
 import { PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
 import { postNativeEvent } from './nativeBridge'
+import ClayChannelArrows from './ClayChannelArrows'
 
 // The Poplur phone.
 //
@@ -54,47 +53,38 @@ function bootUrl(set: string): string {
 const BOOT_FRAMES = 16
 const BOOT_FRAME_MS = 112
 
-/** Left%, top%, width%, height% — MEASURED off the artwork (1024x1536), now
- *  that the container carries the art's own ratio and a percentage means the
- *  same thing at every size. The three key columns sit at x 240/432/626 with a
- *  150px width; the four rows at y 954/1052/1152/1254. Hit targets are padded
- *  about a percent past the painted oval, which is comfortable for a thumb and
- *  still short of the 6.5% row pitch, so no two keys overlap. */
+/** Left%, top%, width%, height% — the artwork's own key positions (see the
+ *  git history on this array for the raw x/y pixel measurements) run through
+ *  this stage's crop (object-fit:cover on .rest, ~359x788 against the
+ *  1024x1536 source): vertical is untouched since the crop is width-only,
+ *  horizontal is remapped through the same crop .lcd uses. Drifts on a stage
+ *  with a meaningfully different aspect ratio, same as .lcd. */
 const KEYS: Array<[key: string, left: number, top: number, w: number, h: number]> = [
-  ['1', 22.4, 61.2, 16.7, 5.8], ['2', 41.2, 61.2, 16.7, 5.8], ['3', 60.1, 61.2, 16.7, 5.8],
-  ['4', 22.4, 67.6, 16.7, 6.0], ['5', 41.2, 67.6, 16.7, 6.0], ['6', 60.1, 67.6, 16.7, 6.0],
-  ['7', 22.4, 74.1, 16.7, 6.0], ['8', 41.2, 74.1, 16.7, 6.0], ['9', 60.1, 74.1, 16.7, 6.0],
-  ['*', 22.4, 80.7, 16.7, 5.5], ['0', 41.2, 80.7, 16.7, 5.5], ['#', 60.1, 80.7, 16.7, 5.5],
+  ['1', 9.6, 61.2, 24.4, 5.8], ['2', 37.1, 61.2, 24.4, 5.8], ['3', 64.8, 61.2, 24.4, 5.8],
+  ['4', 9.6, 67.6, 24.4, 6.0], ['5', 37.1, 67.6, 24.4, 6.0], ['6', 64.8, 67.6, 24.4, 6.0],
+  ['7', 9.6, 74.1, 24.4, 6.0], ['8', 37.1, 74.1, 24.4, 6.0], ['9', 64.8, 74.1, 24.4, 6.0],
+  ['*', 9.6, 80.7, 24.4, 5.5], ['0', 37.1, 80.7, 24.4, 5.5], ['#', 64.8, 80.7, 24.4, 5.5],
   // The centre of the navigation cluster, above the keypad — select.
-  ['5', 37.0, 50.5, 26.0, 8.5],
+  ['5', 31.0, 50.5, 38.0, 8.5],
 ]
+
+interface NativeContact {
+  id: string
+  name: string
+  favourite: boolean
+  hasDM: boolean
+  inReach: boolean
+  distanceKm: number | null
+  detail: string
+}
 
 interface Contact {
   id: string
   handle: string
-  place: string
-  theirRadiusKm: number
-  reach: Reach
-  state: ReachState
-}
-
-/** Most open line first; closest first inside a group. */
-const GROUP_ORDER: ReachState[] = ['both', 'outgoing', 'incoming', 'none']
-
-/** Two marks per row, in the LCD's own character vocabulary: the top arrow is
- *  you reaching out, the bottom is them reaching you. */
-const GLYPH: Record<ReachState, string> = {
-  both: '⇄',
-  outgoing: '→',
-  incoming: '←',
-  none: '·',
-}
-
-const STATE_WORD: Record<ReachState, string> = {
-  both: 'BOTH WAYS',
-  outgoing: 'YOU CAN CALL',
-  incoming: 'THEY CAN CALL',
-  none: 'OUT OF REACH',
+  detail: string
+  favourite: boolean
+  callable: boolean
+  distanceKm: number | null
 }
 
 function km(value: number): string {
@@ -103,6 +93,7 @@ function km(value: number): string {
 
 export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
   const [reachKm, setReachKm] = useState(() => radiusKm())
+  const [contacts, setContacts] = useState<Contact[]>([])
   const [index, setIndex] = useState(0)
   const [colorIndex, setColorIndex] = useState(0)
   const [calling, setCalling] = useState<Contact | null>(null)
@@ -115,6 +106,26 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
     window.addEventListener(RADIUS_CHANGE_EVENT, sync)
     return () => window.removeEventListener(RADIUS_CHANGE_EVENT, sync)
   }, [])
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || data.type !== 'poplurPhoneContacts') return
+      const raw = data.contacts as NativeContact[] | undefined
+      if (!Array.isArray(raw) || raw.length === 0) return
+      setContacts(raw.map(c => ({
+        id: c.id,
+        handle: c.name,
+        detail: c.detail ?? (c.inReach && c.distanceKm != null ? `${km(c.distanceKm)} away` : 'on Poplur'),
+        favourite: c.favourite,
+        callable: c.inReach || c.hasDM || c.favourite,
+        distanceKm: c.distanceKm,
+      })))
+    }
+    window.addEventListener('message', onMessage)
+    postNativeEvent({ type: 'requestPhoneContacts', radiusKm: reachKm })
+    return () => window.removeEventListener('message', onMessage)
+  }, [reachKm])
 
   // Wake sequence: 16 frames of the colourway's own spritesheet, one every
   // 112ms — about 1.8s, the same beat the map iPod boots to. Reused for a
@@ -155,23 +166,6 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
     return () => window.removeEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
   }, [runBoot])
 
-  const contacts = useMemo<Contact[]>(() => {
-    return OTHER_POPS.map(pop => {
-      const reach = reachBetween(pop.coords, pop.radiusKm, reachKm)
-      return {
-        id: pop.id,
-        handle: pop.user,
-        place: pop.name,
-        theirRadiusKm: pop.radiusKm,
-        reach,
-        state: reachState(reach),
-      }
-    }).sort((a, b) => {
-      const group = GROUP_ORDER.indexOf(a.state) - GROUP_ORDER.indexOf(b.state)
-      return group !== 0 ? group : a.reach.distanceKm - b.reach.distanceKm
-    })
-  }, [reachKm])
-
   const current = contacts[Math.min(index, contacts.length - 1)]
 
   const step = useCallback((delta: 1 | -1) => {
@@ -183,7 +177,7 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
     if (!current) return
     // Only the outgoing direction dials. Someone who can reach YOU is not
     // someone you can reach, and the LCD says so instead of pretending.
-    if (!current.reach.youCanCall) { playPop(); return }
+    if (!current.callable) { playPop(); return }
     playPop()
     setCalling(current)
   }, [current])
@@ -249,7 +243,7 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
                 <strong>CALLING</strong>
                 <span>{calling.handle.replace(/^@/, '').toUpperCase()}</span>
                 <span>
-                  {calling.reach.theyCanCall ? 'LINE OPEN BOTH WAYS' : 'ONE WAY · THEY CANNOT'}
+                  {calling.favourite ? 'FAVOURITE' : calling.detail.toUpperCase()}
                 </span>
               </div>
               <div className={styles.softkeys}>5 HANG UP&nbsp;&nbsp;* BACK</div>
@@ -269,13 +263,13 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
                       type="button"
                       className={at === index ? `${styles.row} ${styles.rowOn}` : styles.row}
                       onClick={() => { setIndex(at); if (at === index) select() }}
-                      aria-label={`${contact.handle}, ${STATE_WORD[contact.state]}`}
+                      aria-label={`${contact.handle}, ${contact.detail}`}
                     >
-                      <b className={styles.rowGlyph}>{GLYPH[contact.state]}</b>
+                      <b className={styles.rowGlyph}>{contact.favourite ? '★' : contact.callable ? '→' : '·'}</b>
                       <span className={styles.rowText}>
                         <strong className={styles.rowTitle}>{contact.handle.replace(/^@/, '').toUpperCase()}</strong>
                         <em className={styles.rowDetail}>
-                          {km(contact.reach.distanceKm)} · {STATE_WORD[contact.state]}
+                          {contact.detail.toUpperCase()}
                         </em>
                       </span>
                     </button>
@@ -283,7 +277,7 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
                 })}
               </div>
               <div className={styles.softkeys}>
-                {current?.reach.youCanCall ? '2/8 SCROLL  5 CALL  * BACK' : '2/8 SCROLL  * BACK'}
+                {current?.callable ? '2/8 SCROLL  5 CALL  * BACK' : '2/8 SCROLL  * BACK'}
               </div>
             </>
           )}
@@ -302,18 +296,30 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
           ))}
         </div>
 
-        <button
-          type="button"
-          className={`${styles.swipe} ${styles.swipeLeft}`}
-          onClick={() => { playPop(); setColorIndex(i => (i - 1 + COLORWAYS.length) % COLORWAYS.length) }}
-          aria-label="Previous phone colorway"
-        >‹</button>
-        <button
-          type="button"
-          className={`${styles.swipe} ${styles.swipeRight}`}
-          onClick={() => { playPop(); setColorIndex(i => (i + 1) % COLORWAYS.length) }}
-          aria-label="Next phone colorway"
-        >›</button>
+        <div className={`${styles.swipe} ${styles.swipeLeft}`}>
+          <ClayChannelArrows
+            number={0}
+            onUp={() => { playPop(); setColorIndex(i => (i - 1 + COLORWAYS.length) % COLORWAYS.length) }}
+            onDown={() => {}}
+            upLabel="Previous phone colorway"
+            downLabel=""
+            size={88}
+            orientation="horizontal"
+            single="up"
+          />
+        </div>
+        <div className={`${styles.swipe} ${styles.swipeRight}`}>
+          <ClayChannelArrows
+            number={0}
+            onUp={() => {}}
+            onDown={() => { playPop(); setColorIndex(i => (i + 1) % COLORWAYS.length) }}
+            upLabel=""
+            downLabel="Next phone colorway"
+            size={88}
+            orientation="horizontal"
+            single="down"
+          />
+        </div>
       </div>
     </div>
   )

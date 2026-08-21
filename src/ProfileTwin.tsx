@@ -893,6 +893,16 @@ export default function ProfileTwin({
         setPhoto(prof.photo)
         writeStoredPhoto(prof.photo)
         window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: prof.photo } }))
+      } else {
+        // The ACCOUNT has no picture and this device does — lift ours up, the
+        // same backfill the username gets above. The photo used to live only
+        // in this localStorage key: commitSelfieVideo saved the VIDEO natively
+        // but never posted the poster, so `profilePictureURL` had no writer on
+        // the live path and any data wipe showed "not set" on every device.
+        const localPhoto = readStoredPhoto()
+        if (localPhoto?.startsWith('data:image/jpeg')) {
+          postNativeEvent({ type: 'saveProfilePhoto', photo: localPhoto })
+        }
       }
       const nativeVideo = usableSelfieVideo(prof?.video)
       if (nativeVideo) {
@@ -1440,6 +1450,13 @@ export default function ProfileTwin({
     setSelfieVideo(source)
     writeStoredSelfieVideo(source)
     if (nativePayload) postNativeEvent(nativePayload)
+    // The poster is the profile picture, and it must reach the ACCOUNT, not
+    // just this device: the shell uploads it and writes profilePictureURL.
+    // Without this post the video saved durably while the photo lived only in
+    // localStorage, so a reinstall showed "not set" everywhere.
+    if (isNativeShell() && preview.startsWith('data:image/jpeg')) {
+      postNativeEvent({ type: 'saveProfilePhoto', photo: preview })
+    }
     window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: preview } }))
     window.dispatchEvent(new CustomEvent('poplur-profile-media', { detail: { photo: preview, video: source } }))
     try { window.localStorage.setItem('poplur.faceid.reference', '1') } catch { /* embedded */ }
@@ -1874,7 +1891,19 @@ export default function ProfileTwin({
                 aria-label="Profile selfie video"
               />
             ) : photo ? (
-              <img className={styles.photo} src={photo} alt="" draggable="false" />
+              <img
+                className={styles.photo}
+                src={photo}
+                alt=""
+                draggable="false"
+                onError={() => {
+                  if (photo.startsWith('data:')) {
+                    console.warn('[ProfileTwin] photo data URI failed to load — this should not happen')
+                  } else {
+                    setPhoto(null)
+                  }
+                }}
+              />
             ) : (
               <div className={styles.noPhoto} aria-label="No profile photo set">
                 <span className={styles.noPhotoText}>NO PROFILE<br />PHOTO SET</span>

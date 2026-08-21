@@ -358,16 +358,46 @@
   z-index: 5;
   display: grid;
   place-items: center;
+  gap: 5.5cqw;
   background: #000;
   animation: bootWake 1.5s ease-out both;
+}
+
+/* A quick brightness pulse before the mark appears — a power-on cue, not
+   just a logo fading up out of nothing. */
+.bootFlicker {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(55% 55% at 50% 50%, rgba(246, 59, 154, 0.5), transparent 70%);
+  animation: bootFlicker 1.5s ease-out both;
+  pointer-events: none;
 }
 
 .bootMark {
   width: 34%;
   max-width: 34%;
   filter: drop-shadow(0 0 6cqw rgba(246, 59, 154, 0.45));
-  animation: bootMark 1.5s ease-out both;
+  animation: bootMark 1.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
 }
+
+/* Loading dots while the mark holds — the beat that says the device is doing
+   something, not just sitting lit. */
+.bootDots {
+  display: flex;
+  gap: 1.6cqw;
+  animation: bootDotsIn 1.5s ease-out both;
+}
+
+.bootDot {
+  width: 1.6cqw;
+  height: 1.6cqw;
+  border-radius: 50%;
+  background: rgba(246, 59, 154, 0.85);
+  animation: bootDotPulse 0.9s ease-in-out infinite;
+}
+
+.bootDot:nth-child(2) { animation-delay: 0.15s; }
+.bootDot:nth-child(3) { animation-delay: 0.3s; }
 
 @keyframes bootWake {
   0%   { background: #000; }
@@ -375,31 +405,56 @@
   100% { background: #000; opacity: 0; }
 }
 
-/* The mark fades up the way a backlight comes on, not the way a page loads. */
+@keyframes bootFlicker {
+  0%   { opacity: 0; }
+  5%   { opacity: 1; }
+  16%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+/* The mark springs up the way a backlight snaps on, not the way a page loads. */
 @keyframes bootMark {
-  0%   { opacity: 0; transform: scale(0.86); }
-  38%  { opacity: 1; transform: scale(1); }
+  0%   { opacity: 0; transform: scale(0.7); }
+  10%  { opacity: 0; transform: scale(0.7); }
+  30%  { opacity: 1; transform: scale(1.05); }
+  40%  { transform: scale(1); }
   82%  { opacity: 1; transform: scale(1); }
   100% { opacity: 0; transform: scale(1.02); }
 }
 
+@keyframes bootDotsIn {
+  0%, 42%  { opacity: 0; }
+  52%, 82% { opacity: 1; }
+  100%     { opacity: 0; }
+}
+
+@keyframes bootDotPulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50%      { opacity: 1; transform: scale(1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .boot, .bootMark { animation-duration: 0.01ms; }
+  .boot, .bootMark, .bootFlicker, .bootDots, .bootDot { animation-duration: 0.01ms; }
 }
 
 /* ── the finish stepper ───────────────────────────────────────────────────── */
 /* Sits ON the device, low on the body where the glitter is plainest, so it
    reads as part of the object. Pointer-transparent except on the arrows
    themselves — the wheel is right above it and must stay pressable. */
-.finishArrows {
+/* One chevron per side of the device, vertically centered — the phone's
+   colorway-arrow arrangement. They overhang the body edge slightly so they
+   read as handles ON the handheld rather than floating beside it. */
+.finishArrowLeft,
+.finishArrowRight {
   position: absolute;
-  left: 50%;
-  /* The wheel's own circle ends at ~86% of the body; this sits in the glitter
-     under it, on the device rather than beside it. */
-  top: 93%;
-  transform: translate(-50%, -50%);
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 3;
   pointer-events: none;
 }
 
-.finishArrows > * { pointer-events: auto; }
+.finishArrowLeft { left: -26px; }
+.finishArrowRight { right: -26px; }
+
+.finishArrowLeft > *,
+.finishArrowRight > * { pointer-events: auto; }

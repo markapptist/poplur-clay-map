@@ -8,60 +8,52 @@
   display: grid;
   place-items: center;
   padding: max(10px, env(safe-area-inset-top)) 8px max(14px, env(safe-area-inset-bottom));
-  background:
-    radial-gradient(120% 44% at 50% 0%, rgba(246, 59, 154, 0.14), transparent 60%),
-    linear-gradient(180deg, #14101b 0%, #0c0912 52%, #08060d 100%);
   overflow: hidden;
-  /* A SIZE container, so .device can be sized from the stage's own box. This
-     screen renders inside the phone twin as often as a real viewport, so vh/vw
-     would measure the wrong thing entirely. */
-  container-type: size;
 }
 
 .device {
-  /* The box IS the artwork. Everything below is placed as a percentage of this
-     element, so unless it has the art's own proportions those percentages point
-     at nothing in particular — which is exactly what went wrong. */
-  /* The box IS the artwork's rectangle, at any stage size.
-     Two earlier attempts failed for instructive reasons: `height:100%` with an
-     aspect-ratio is a DEFINITE size that beats max-width, so the device came
-     out 605px wide inside a 430px phone; and shrink-wrapping the img made its
-     own `max-height:100%` resolve against a box the img was sizing, which is
-     circular and collapsed to 0x0.
-     min() against the stage's container units has neither problem: it picks
-     whichever of width-limited or height-limited is smaller, and the ratio then
-     gives the other side exactly. */
+  /* Full-bleed, not contain-fit: the art (1024x1536) is proportionally wider
+     than this stage, so sizing .device to the art's own ratio (the previous
+     approach) always leaves dead space above and below it, however precisely
+     that's computed. Filling the stage and letting .rest crop via
+     object-fit:cover is what actually reads as "the phone," at the cost of
+     .lcd/.keys below being measured against ONE crop ratio (this stage's) —
+     they will drift on a stage with a meaningfully different aspect ratio.
+     overflow clips .boot, which deliberately overhangs the sides (below). */
   position: relative;
-  width: min(100cqw, calc(100cqh * 1024 / 1536));
-  aspect-ratio: 1024 / 1536;
+  width: 100%;
+  height: 100%;
   display: block;
-  container-type: inline-size;
+  overflow: hidden;
 }
 
 .rest {
-  /* `object-fit: cover` was the bug. Cover CROPS by an amount that depends on
-     the stage's aspect ratio, so the artwork's real rectangle stopped matching
-     this element's box — and every percentage below was measured against the
-     crop as it happened to fall on ONE screen. On a taller phone the crop
-     differs and the LCD lands off the device entirely, which is the yellow
-     panel floating behind the handset.
-     The container now carries the art's ratio, so the image fills it exactly
-     and a percentage means the same thing at every size. */
   display: block;
   width: 100%;
   height: 100%;
-  /* The box already carries the art's ratio, so fill and contain agree. */
-  object-fit: fill;
+  object-fit: cover;
+  object-position: center;
   user-select: none;
   -webkit-user-drag: none;
 }
 
 /* The wake sequence — a 4x4 spritesheet stepped by JS, covering the resting
    art, LCD and keys so the device reads as booting, not as a phone with an
-   animation stuck over it. */
+   animation stuck over it.
+   NOT inset:0 — a sheet cell is 2:3 like the resting art, and painting it
+   into the narrower stage box distorted it, so the handset visibly shrank
+   for the boot and snapped back after ("it changes sizes"). Measured: both
+   assets frame the device identically (68% of frame width, centred), so the
+   fix is purely geometric — give the boot layer the cell's own ratio at full
+   stage height, centred. That is exactly the rectangle object-fit:cover
+   gives .rest, and .device clips the same overhang off both. */
 .boot {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 100%;
+  aspect-ratio: 512 / 768;
   z-index: 10;
   background-repeat: no-repeat;
   background-size: 400% 400%;
@@ -82,41 +74,37 @@
   .deviceBooting { animation: none; }
 }
 
-/* Colourway arrows, exactly as the twin carries them. */
+/* Colourway arrows — clay channel buttons, same as the home view. */
 .swipe {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
   z-index: 6;
-  width: 34px;
-  height: 54px;
-  border: 0;
-  border-radius: 12px;
-  background: rgba(12, 8, 16, 0.45);
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+  pointer-events: auto;
 }
 
-.swipeLeft { left: -6px; }
-.swipeRight { right: -6px; }
+.swipeLeft { left: -48px; }
+.swipeRight { right: -48px; }
 
 /* ── the LCD ──────────────────────────────────────────────────────────────
    Geometry, colours and font are the twin's: a yellow-green panel inset in
    the shell with a dotted inner rule. Everything the phone says goes here. */
 .lcd {
-  /* MEASURED off the artwork itself: the LCD's yellow-green field runs
-     x 254..767 and y 286..653 on the 1024x1536 source. That lands within a
-     third of a percent of the twin's original numbers — which were right all
-     along; what broke them was the cover-crop above, not the geometry. */
+  /* The artwork's own measured cutout (x 254..767, y 286..653 of 1024x1536)
+     mapped through this stage's cover crop. The crop is width-only (the box
+     is proportionally taller than the art), so the vertical numbers ARE the
+     art's own fractions untouched — 18.6% top, 23.9% tall — and only the
+     horizontal pair is remapped through the ~15.8%-per-side crop. The three
+     earlier values here (4.3% top and its two height guesses) converted the
+     pre-crop era's numbers instead, which were themselves miscalibrated
+     against the art; device-verified via iPhone Mirroring that they floated
+     the panel well above the painted cutout. */
   position: absolute;
   z-index: 4;
-  left: 24.80%;
-  top: 18.62%;
-  width: 50.10%;
-  height: 23.89%;
+  left: 13.1%;
+  top: 18.6%;
+  width: 73.3%;
+  height: 23.9%;
   overflow: hidden;
   border-radius: 2.5%;
   background: #eff100;

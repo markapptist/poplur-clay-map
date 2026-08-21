@@ -17,6 +17,12 @@
 // cache; until then a dropped message survives a reload, which is what makes
 // the map and the paper agree.
 
+export interface NewsMediaAttachment {
+  kind: 'photo' | 'video'
+  src: string
+  poster?: string
+}
+
 export interface NewsMessage {
   id: string
   body: string
@@ -27,6 +33,8 @@ export interface NewsMessage {
   radiusKm: number
   /** epoch ms */
   at: number
+  /** up to 4 images or 1 video */
+  media?: NewsMediaAttachment[]
 }
 
 const STORAGE_KEY = 'poplur.news.messages'
@@ -35,8 +43,8 @@ const STORAGE_KEY = 'poplur.news.messages'
  *  list never becomes the reason localStorage fills up. Oldest fall off. */
 const KEEP = 60
 
-/** A pop is a headline, not an essay — the Times sets it in a column. */
-export const MESSAGE_MAX = 240
+/** Longer now that pops can carry media — a caption under an image needs room. */
+export const MESSAGE_MAX = 500
 
 type Listener = (messages: NewsMessage[]) => void
 const listeners = new Set<Listener>()
@@ -97,6 +105,7 @@ export function noteNewsMessage(value: unknown): NewsMessage | null {
   if (!body) return null
   const current = readNewsMessages()
   if (current.some(m => m.id === value.id)) return null
+  const media = Array.isArray((value as any).media) ? (value as any).media as NewsMediaAttachment[] : undefined
   const message: NewsMessage = {
     id: value.id,
     body,
@@ -104,6 +113,7 @@ export function noteNewsMessage(value: unknown): NewsMessage | null {
     lng: value.lng,
     radiusKm: value.radiusKm,
     at: value.at,
+    media: media?.length ? media.slice(0, 4) : undefined,
   }
   write([message, ...current])
   return message
@@ -115,18 +125,18 @@ export function dropNewsMessage(input: {
   lat: number
   lng: number
   radiusKm: number
+  media?: NewsMediaAttachment[]
 }): NewsMessage | null {
   const body = normalizeMessageBody(input.body)
   if (!body) return null
   const message: NewsMessage = {
-    // Doubles as the claim id on the map, so the disc and the story are the
-    // same object as far as both surfaces are concerned.
     id: `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     body,
     lat: input.lat,
     lng: input.lng,
     radiusKm: input.radiusKm,
     at: Date.now(),
+    media: input.media?.length ? input.media.slice(0, 4) : undefined,
   }
   write([message, ...readNewsMessages()])
   return message

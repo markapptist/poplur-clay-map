@@ -7,12 +7,15 @@ import { requestProfileMode } from './profileMode'
 import { localDaylight } from './skyCycle'
 import ScreenCoach from './ScreenCoach'
 import ClayCornerButton from './ClayCornerButton'
+import TabControlRail from './TabControlRail'
+import { useControlSide } from './controlPlacement'
 import {
   distanceKm,
   onNewsMessages,
   readNewsMessages,
   relativeWhen,
   type NewsMessage,
+  type NewsMediaAttachment,
 } from './newsMessages'
 
 // THE POPLUR TIMES — the News screen.
@@ -53,6 +56,9 @@ export interface Entry {
   mine?: boolean
   /** real drops know where they are: lng, lat */
   coords?: [number, number]
+  /** attached images or video */
+  media?: NewsMediaAttachment[]
+  verified?: 'verified' | 'confirmed'
 }
 
 const AVATARS = [
@@ -103,22 +109,48 @@ function seeded(n: number) {
   return x - Math.floor(x)
 }
 
+const SAMPLE_POSTERS = [
+  'feed/posters/ad-food.jpg', 'feed/posters/ad-comedy.jpg',
+  'feed/posters/ad-shopping.jpg', 'feed/posters/ad-music.jpg',
+  'feed/posters/ad-sports.jpg', 'feed/posters/ad-french.jpg',
+]
+const SAMPLE_CLIPS = [
+  'feed/ad-food.mp4', 'feed/ad-comedy.mp4',
+  'feed/ad-music.mp4', 'feed/ad-sports.mp4',
+]
+
+function sampleMedia(seed: number): NewsMediaAttachment[] | undefined {
+  const roll = seeded(seed + 200)
+  if (roll > 0.5) return undefined          // ~50% text-only
+  if (roll > 0.35) {                        // ~15% single image
+    return [{ kind: 'photo', src: SAMPLE_POSTERS[seed % SAMPLE_POSTERS.length] }]
+  }
+  if (roll > 0.2) {                         // ~15% multi-image
+    const a = seed % SAMPLE_POSTERS.length
+    const b = (seed + 3) % SAMPLE_POSTERS.length
+    return [
+      { kind: 'photo', src: SAMPLE_POSTERS[a] },
+      { kind: 'photo', src: SAMPLE_POSTERS[b] },
+    ]
+  }
+  // ~20% video
+  const clip = SAMPLE_CLIPS[seed % SAMPLE_CLIPS.length]
+  const poster = SAMPLE_POSTERS[seed % SAMPLE_POSTERS.length]
+  return [{ kind: 'video', src: clip, poster }]
+}
+
 // Successive pages sit further out. A message only appears if its radius still
 // reaches you — the same interception rule the feed and the map use.
 function buildPage(page: number, edition = 0): Entry[] {
   const out: Entry[] = []
   for (let i = 0; i < 8; i += 1) {
     const n = page * 8 + i
-    // The edition offsets only the CONTENT seed. It must not touch `n`, which
-    // also sets how far out a story sits: adding it there pushed every entry
-    // hundreds of km away, past its own radius, and the interception rule
-    // below then dropped the whole edition — a refresh emptied the paper.
     const seed = n + edition * 997
     const r = seeded(seed)
     const kind: Entry['kind'] = n % 3 === 0 ? 'dispatch' : 'message'
     const distanceKm = +(n * 0.9 + r * 2.4).toFixed(1)
     const radiusKm = +(3 + seeded(seed + 101) * 38).toFixed(1)
-    if (distanceKm > radiusKm) continue // out of reach: it is not your news
+    if (distanceKm > radiusKm) continue
     const writer = WRITERS[seed % WRITERS.length]
     out.push({
       id: `e${edition}-${n}`,
@@ -133,6 +165,8 @@ function buildPage(page: number, edition = 0): Entry[] {
       replies: Math.floor(r * 40),
       repops: Math.floor(seeded(seed + 7) * 90),
       likes: Math.floor(seeded(seed + 13) * 400),
+      media: kind === 'message' ? sampleMedia(seed) : undefined,
+      verified: kind === 'dispatch' ? 'verified' : seed % 4 === 0 ? 'verified' : seed % 5 === 0 ? 'confirmed' : undefined,
     })
   }
   return out
@@ -190,6 +224,7 @@ function myEntries(list: NewsMessage[], nowMs: number): Entry[] {
     likes: 0,
     mine: true,
     coords: [m.lng, m.lat] as [number, number],
+    media: m.media,
   }))
 }
 
@@ -200,6 +235,53 @@ function editionStamp(now: Date) {
     }),
     time: now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }),
   }
+}
+
+function VerifyBadge({ tier }: { tier: 'verified' | 'confirmed' }) {
+  const fill = tier === 'verified' ? '#3b82f6' : '#9ca3af'
+  return (
+    <svg viewBox="0 0 22 22" width="13" height="13" className={styles.verifyBadge} aria-label={tier === 'verified' ? 'Verified' : 'Confirmed'}>
+      <circle cx="11" cy="11" r="10" fill={fill} />
+      <path d="M7 11.5l2.5 2.5 5.5-5.5" stroke="#fff" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function EntryMedia({ media, large }: { media: NewsMediaAttachment[], large?: boolean }) {
+  if (!media.length) return null
+  const first = media[0]
+
+  if (first.kind === 'video') {
+    return (
+      <figure className={large ? styles.mediaCardLarge : styles.mediaCard}>
+        <video
+          className={styles.mediaVideo}
+          src={first.src}
+          poster={first.poster}
+          controls
+          playsInline
+          muted
+          preload="none"
+        />
+      </figure>
+    )
+  }
+
+  if (media.length === 1) {
+    return (
+      <figure className={large ? styles.mediaCardLarge : styles.mediaCard}>
+        <img className={styles.mediaSingle} src={first.src} alt="" loading="lazy" draggable={false} />
+      </figure>
+    )
+  }
+
+  return (
+    <figure className={large ? styles.mediaGridLarge : styles.mediaGrid}>
+      {media.slice(0, 4).map((m, i) => (
+        <img key={i} className={styles.mediaGridImg} src={m.src} alt="" loading="lazy" draggable={false} />
+      ))}
+    </figure>
+  )
 }
 
 export default function NewsPaper({ onClose, bindBack }: {
@@ -297,6 +379,7 @@ export default function NewsPaper({ onClose, bindBack }: {
   // needs and nothing else (the queue names exactly these): a search that
   // really filters what is set, and a door to your profile that lands on
   // Messages — the drawer is where you go to READ, so it opens your inbox.
+  const controlSide = useControlSide()
   const [menuOpen, setMenuOpen] = useState(false)
   const [query, setQuery] = useState('')
   /** POSTS searches what was written; USERS searches who wrote it. */
@@ -512,12 +595,14 @@ export default function NewsPaper({ onClose, bindBack }: {
                 <div className={styles.entryTop}>
                   <span className={styles.who}>{entry.who}</span>
                   <span className={styles.handle}>{entry.handle}</span>
+                  {entry.verified && <VerifyBadge tier={entry.verified} />}
                   <span className={styles.dot}>·</span>
                   <span className={styles.when}>{entry.when}</span>
                   {entry.kind === 'dispatch' && <span className={styles.aiTag}>MAP DISPATCH</span>}
                   {entry.mine && <span className={styles.mineTag}>YOUR POP</span>}
                 </div>
                 <p className={styles.body}>{entry.body}</p>
+                {entry.media?.length ? <EntryMedia media={entry.media} /> : null}
                 {(entry.kind === 'dispatch' || entry.mine) && snapshotFor(entry) && (
                   <figure className={styles.plateSmall}>
                     <img
@@ -582,12 +667,13 @@ export default function NewsPaper({ onClose, bindBack }: {
               <button className={styles.detailWho} onClick={() => openProfileFor(detail.handle)}>
                 <img src={detail.avatar} alt="" draggable={false} />
                 <span>
-                  <b>{detail.who}</b>
+                  <b>{detail.who}{detail.verified && <VerifyBadge tier={detail.verified} />}</b>
                   <i>{detail.handle} · view profile</i>
                 </span>
               </button>
 
               <p className={styles.detailBody}>{detail.body}</p>
+              {detail.media?.length ? <EntryMedia media={detail.media} large /> : null}
               <p className={styles.detailWhen}>{detail.when} ago</p>
 
               {/* Where it reaches, and where it was actually dropped. */}
@@ -641,12 +727,23 @@ export default function NewsPaper({ onClose, bindBack }: {
         ]}
       />
 
-      {/* The hamburger. Top-left, outside the scroll, the way a timeline app
-          carries it — the paper is Poplur's timeline, so it gets the timeline
-          furniture rather than a newspaper's. */}
-      <button className={styles.burger} onClick={openMenu} aria-label="Open news menu">
-        <i /><i /><i />
-      </button>
+      {/* Side rail, outside the scroll — the same edge-mounted furniture the
+          TV screen and the map carry, rather than a hamburger stuck in a
+          corner it doesn't share with anything. */}
+      <TabControlRail side={controlSide} label="News controls">
+        <button className={styles.burger} onClick={openMenu} aria-label="Open news menu">
+          <i /><i /><i />
+        </button>
+        <button
+          className={showTop ? styles.toTop : `${styles.toTop} ${styles.toTopHidden}`}
+          onClick={backToTop}
+          aria-label="Back to the top of the paper"
+          aria-hidden={showTop ? undefined : 'true'}
+          tabIndex={showTop ? 0 : -1}
+        >
+          ⌃<span className={styles.toTopText}>TOP</span>
+        </button>
+      </TabControlRail>
 
       {menuOpen && (
         <>
@@ -731,18 +828,6 @@ export default function NewsPaper({ onClose, bindBack }: {
           </aside>
         </>
       )}
-
-      {/* Back to the masthead in one press. Lives outside the scroll so it
-          never travels with the page; appears only once you are deep in. */}
-      <button
-        className={showTop ? styles.toTop : `${styles.toTop} ${styles.toTopHidden}`}
-        onClick={backToTop}
-        aria-label="Back to the top of the paper"
-        aria-hidden={showTop ? undefined : 'true'}
-        tabIndex={showTop ? 0 : -1}
-      >
-        ⌃<span className={styles.toTopText}>TOP</span>
-      </button>
     </div>
   )
 }

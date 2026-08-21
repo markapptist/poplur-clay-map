@@ -1357,3 +1357,39 @@
      just does not travel. */
   .pushUp, .pushDown, .pushLeft, .pushRight, .screenFade { animation-duration: 1ms; }
 }
+
+/* ── thermal cue ────────────────────────────────────────────────────────────
+   The governor stamps data-poplur-thermal on <html> from the native thermal
+   feed (frameGovernor.applyNativeThermal). At serious/critical it parks
+   canvases and freezes the cube swap — which reads as the app breaking, not
+   protecting itself. The cue makes the parked state legible: the cube dims
+   and a small badge says why. No animation: it exists exactly when the
+   governed contract is to spend nothing. */
+:global(html[data-poplur-thermal='serious']) .cubeWrap,
+:global(html[data-poplur-thermal='critical']) .cubeWrap {
+  opacity: 0.55;
+  filter: saturate(0.55);
+}
+
+.coolingCue {
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(10, 16, 26, 0.78);
+  border: 1px solid rgba(140, 200, 255, 0.45);
+  color: #bfe2ff;
+  font: 700 10px/1.2 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+:global(html[data-poplur-thermal='serious']) .coolingCue,
+:global(html[data-poplur-thermal='critical']) .coolingCue {
+  display: block;
+}
