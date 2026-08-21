@@ -202,12 +202,17 @@ function applySky(map: mapboxgl.Map, day: boolean) {
       'space-color': '#8ec9f2',
       'star-intensity': 0,
     } as never : {
+      // Night, but a soft one. The old space-color was near-black (#030512),
+      // which — per the note above — read as a MISSING hemisphere on the
+      // constrained globe rather than as sky. Poplur's globe is a clay toy, not
+      // an astronomy sim, so keep the night sky an actual luminous indigo: the
+      // globe stays whole and legible, just after-dark tinted.
       range: [0.6, 8],
-      color: 'rgba(20, 27, 79, 0.72)',
-      'high-color': '#302b70',
-      'horizon-blend': 0.24,
-      'space-color': '#030512',
-      'star-intensity': 0.86,
+      color: 'rgba(40, 48, 104, 0.58)',
+      'high-color': '#3b3a86',
+      'horizon-blend': 0.3,
+      'space-color': '#232a5e',
+      'star-intensity': 0.4,
     } as never)
   } catch { /* fog unsupported */ }
 }

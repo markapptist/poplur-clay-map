@@ -20,7 +20,7 @@ interface Game {
   web?: string
 }
 
-type FpsState = 'loading' | 'menu' | 'zoom' | 'playing' | 'paused' | 'dead' | 'win'
+type FpsState = 'loading' | 'menu' | 'zoom' | 'playing' | 'paused' | 'dead' | 'win' | 'levelclear'
 type FpsControl = 'move' | 'look' | 'fire' | 'interact' | 'pause' | 'weaponNext'
 
 interface AnalogStickProps {
@@ -310,6 +310,42 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('message', onMessage)
   }, [running?.id])
 
+  // Tell the cube to become the FPS controller
+  useEffect(() => {
+    const on = running?.id === 'fps' && controllerReady
+    window.dispatchEvent(new CustomEvent('poplur-fps-cube-controller', { detail: { on } }))
+    return () => {
+      window.dispatchEvent(new CustomEvent('poplur-fps-cube-controller', { detail: { on: false } }))
+    }
+  }, [running?.id, controllerReady])
+
+  // Listen for controls dispatched from the cube overlay
+  useEffect(() => {
+    if (running?.id !== 'fps') return
+    const onCubeInput = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (!detail?.control) return
+      const { control, ...values } = detail
+      sendFpsControl(control, values)
+    }
+    window.addEventListener('poplur-fps-cube-input', onCubeInput)
+    return () => window.removeEventListener('poplur-fps-cube-input', onCubeInput)
+  }, [running?.id, sendFpsControl])
+
+  // Device tilt → look
+  useEffect(() => {
+    if (running?.id !== 'fps' || !controllerReady) return
+    const onOrientation = (e: DeviceOrientationEvent) => {
+      if (e.gamma == null) return
+      const deadZone = 3
+      const gamma = Math.abs(e.gamma) < deadZone ? 0 : e.gamma
+      const lookX = Math.max(-1, Math.min(1, gamma / 35))
+      sendFpsControl('look', { x: lookX })
+    }
+    window.addEventListener('deviceorientation', onOrientation, { passive: true })
+    return () => window.removeEventListener('deviceorientation', onOrientation)
+  }, [running?.id, controllerReady, sendFpsControl])
+
   // The bundled FPS owns an unconditional rAF plus a deliberate 10fps hidden
   // interval. Its code runs inside the iframe, so pausing the parent visually
   // cannot stop it; the only reliable ownership boundary is retiring the
@@ -413,53 +449,13 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
             }}
           />
         ) : null}
-        {running.id === 'fps' && (
-          <div
-            className={styles.stationController}
-            data-controller-ready={controllerReady ? 'true' : 'false'}
-            data-game-state={fpsState}
-            aria-label="Interactive PoplurStation controller"
-          >
-            <StationModel kind="controller" className={styles.controllerModel} />
-            <AnalogStick
-              className={styles.moveStick}
-              label="Move"
-              onChange={(x, y) => sendFpsControl('move', { x, y })}
-            />
-            <AnalogStick
-              className={styles.lookStick}
-              label="Look"
-              onChange={x => sendFpsControl('look', { x })}
-            />
-            <button
-              type="button"
-              className={styles.stationStart}
-              aria-label="Start or use"
-              title="Start / Use"
-              {...holdControlProps('interact')}
-            >◆</button>
-            <button
-              type="button"
-              className={styles.stationFire}
-              aria-label="Fire"
-              title="Fire"
-              {...holdControlProps('fire')}
-            >●</button>
-            <button
-              type="button"
-              className={styles.stationWeapon}
-              aria-label="Next weapon"
-              title="Next weapon"
-              onClick={() => pulseFpsControl('weaponNext')}
-            >↻</button>
-            <button
-              type="button"
-              className={styles.stationPause}
-              aria-label={fpsState === 'paused' ? 'Resume game' : 'Pause game'}
-              title={fpsState === 'paused' ? 'Resume' : 'Pause'}
-              onClick={() => pulseFpsControl('pause')}
-            >{fpsState === 'paused' ? '▶' : 'Ⅱ'}</button>
-          </div>
+        {running.id === 'fps' && controllerReady && (
+          <button
+            type="button"
+            className={styles.fpsExit}
+            aria-label="Exit game"
+            onClick={quit}
+          >✕</button>
         )}
         {bootCard}
         {/* The app cube remains above this stage and is the one back control. */}

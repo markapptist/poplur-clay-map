@@ -1,10 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './PhoneScreen.module.css'
+import { OTHER_POPS } from './data'
+import { reachBetween } from './reach'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { packBase } from './assetPacks'
 import { playPop } from './pop'
 import { PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
 import { postNativeEvent } from './nativeBridge'
+import { placeCall, hangup as hangupCall, subscribeCall, toggleMute, type CallSnapshot } from './webCall'
+import { startRingtone, stopRingtone, previewRingtone, getRingtone, setRingtone, RINGTONES, type RingtoneId } from './phoneRingtones'
 import ClayChannelArrows from './ClayChannelArrows'
 
 // The Poplur phone.
@@ -91,7 +95,68 @@ function km(value: number): string {
   return value >= 100 ? `${Math.round(value)}KM` : `${value.toFixed(1)}KM`
 }
 
-export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
+/** The web preview has no native bridge, so `requestPhoneContacts` never gets
+ *  an answer. Rather than leave the handset empty and uncallable there, fall
+ *  back to the world board — the same pops the map shows — run through the real
+ *  reach model against your radius, so the web phone is browsable and you can
+ *  place a call from it exactly as on device. Native never uses this: once the
+ *  bridge answers even once, its list wins for the life of the screen. */
+function fillerContacts(reachKm: number): Contact[] {
+  return OTHER_POPS.map(pop => {
+    const reach = reachBetween(pop.coords as [number, number], pop.radiusKm, reachKm)
+    return {
+      id: pop.id,
+      handle: pop.user,
+      detail: reach.youCanCall ? `${km(reach.distanceKm)} away · in your radius`
+        : reach.theyCanCall ? `${km(reach.distanceKm)} away · can reach you`
+        : `${km(reach.distanceKm)} away · out of reach`,
+      favourite: false,
+      callable: reach.youCanCall,
+      distanceKm: reach.distanceKm,
+    }
+  }).sort((a, b) => {
+    if (a.callable !== b.callable) return a.callable ? -1 : 1
+    return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity)
+  })
+}
+
+/** Real Firestore people when the browser tab is signed in (dial-able uids),
+ *  else the world-board filler. Firebase is imported lazily so it never loads
+ *  inside the native app, where the bridge answers and this is never reached. */
+async function webOrFillerContacts(reachKm: number): Promise<Contact[]> {
+  try {
+    const fb = await import('./webFirebase')
+    if (fb.currentUid()) {
+      const { fetchWebContacts } = await import('./webContacts')
+      const real = await fetchWebContacts()
+      if (real.length > 0) {
+        return real.map(c => ({
+          id: c.id,
+          handle: c.handle,
+          detail: c.detail,
+          favourite: false,
+          callable: c.callable,
+          distanceKm: null,
+        }))
+      }
+    }
+  } catch { /* fall through to the world board */ }
+  return fillerContacts(reachKm)
+}
+
+export interface IncomingCall {
+  callId: string
+  callerId: string
+  callerName: string
+}
+
+export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDeclineCall, autoCall }: {
+  onClose?: () => void
+  incomingCall?: IncomingCall | null
+  onAcceptCall?: (call: IncomingCall) => void
+  onDeclineCall?: (call: IncomingCall) => void
+  autoCall?: { id: string; name: string } | null
+}) {
   const [reachKm, setReachKm] = useState(() => radiusKm())
   const [contacts, setContacts] = useState<Contact[]>([])
   const [index, setIndex] = useState(0)
@@ -99,7 +164,13 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
   const [calling, setCalling] = useState<Contact | null>(null)
   const [booting, setBooting] = useState(true)
   const [bootFrame, setBootFrame] = useState(0)
+  const [themeRebooting, setThemeRebooting] = useState(false)
+  const [liveCall, setLiveCall] = useState<CallSnapshot | null>(null)
+  const [callNow, setCallNow] = useState(() => Date.now())
+  const [showSettings, setShowSettings] = useState(false)
+  const [selectedRingtone, setSelectedRingtone] = useState<RingtoneId>(() => getRingtone())
   const bootTimer = useRef<number | null>(null)
+  const everNativeRef = useRef(false)
 
   useEffect(() => {
     const sync = () => setReachKm(radiusKm())
@@ -108,11 +179,22 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
   }, [])
 
   useEffect(() => {
+    const onCallEnd = (event: MessageEvent) => {
+      if (event.data?.type === 'poplurCallEnded') setCalling(null)
+    }
+    window.addEventListener('message', onCallEnd)
+    return () => window.removeEventListener('message', onCallEnd)
+  }, [])
+
+  useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const data = event.data
       if (!data || data.type !== 'poplurPhoneContacts') return
+      // The bridge answered — its list owns the phone from here on, even when
+      // it is empty (nobody in reach), which is a real answer, not a gap.
+      everNativeRef.current = true
       const raw = data.contacts as NativeContact[] | undefined
-      if (!Array.isArray(raw) || raw.length === 0) return
+      if (!Array.isArray(raw)) return
       setContacts(raw.map(c => ({
         id: c.id,
         handle: c.name,
@@ -124,7 +206,38 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
     }
     window.addEventListener('message', onMessage)
     postNativeEvent({ type: 'requestPhoneContacts', radiusKm: reachKm })
-    return () => window.removeEventListener('message', onMessage)
+    // No bridge (web preview) means no answer ever comes. On the signed-in web
+    // pull REAL people from Firestore (real uids you can actually dial);
+    // otherwise fall back to the world board so the phone stays browsable.
+    let cancelled = false
+    const fallback = window.setTimeout(() => {
+      if (everNativeRef.current) return
+      void webOrFillerContacts(reachKm).then(list => {
+        if (!cancelled && !everNativeRef.current) setContacts(list)
+      })
+    }, 600)
+    return () => {
+      cancelled = true
+      window.removeEventListener('message', onMessage)
+      window.clearTimeout(fallback)
+    }
+  }, [reachKm])
+
+  // When the browser tab signs in, swap the world-board filler for real,
+  // dial-able Firestore contacts without waiting for a remount.
+  useEffect(() => {
+    if (everNativeRef.current) return
+    let cancelled = false
+    let unsub: (() => void) | undefined
+    void import('./webFirebase').then(fb => {
+      if (cancelled) return
+      unsub = fb.onUser(() => {
+        void webOrFillerContacts(reachKm).then(list => {
+          if (!cancelled && !everNativeRef.current) setContacts(list)
+        })
+      })
+    })
+    return () => { cancelled = true; unsub?.() }
   }, [reachKm])
 
   // Wake sequence: 16 frames of the colourway's own spritesheet, one every
@@ -154,19 +267,76 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
     }
   }, [runBoot])
 
-  // The app theme changing reboots the handset and buzzes the phone, the same
-  // reaction the map iPod now gives it.
+  // The app theme changing reboots the handset with a blue "loading" screen
+  // and buzzes the phone.
   useEffect(() => {
     const sync = () => {
       try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
       postNativeEvent({ type: 'phoneThemeEffects' })
+      setThemeRebooting(true)
       runBoot()
     }
     window.addEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
     return () => window.removeEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
   }, [runBoot])
 
+  useEffect(() => {
+    if (!booting && themeRebooting) setThemeRebooting(false)
+  }, [booting, themeRebooting])
+
+  useEffect(() => subscribeCall(snap => {
+    setLiveCall(snap.phase === 'idle' ? null : snap)
+    if (snap.phase === 'idle' || snap.phase === 'ended') setCalling(null)
+  }), [])
+
+  useEffect(() => {
+    if (!liveCall) return
+    if (liveCall.phase === 'calling' && liveCall.outgoing) startRingtone()
+    else if (liveCall.phase === 'connected' || liveCall.phase === 'ended' || liveCall.phase === 'idle') stopRingtone()
+    return () => stopRingtone()
+  }, [liveCall?.phase, liveCall?.outgoing])
+
+  useEffect(() => {
+    if (incomingCall) startRingtone()
+    else stopRingtone()
+    return () => stopRingtone()
+  }, [incomingCall])
+
+  useEffect(() => {
+    if (liveCall?.phase !== 'connected') return
+    const id = window.setInterval(() => setCallNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [liveCall?.phase])
+
   const current = contacts[Math.min(index, contacts.length - 1)]
+
+  const autoCallDone = useRef(false)
+  useEffect(() => {
+    if (!autoCall || autoCallDone.current || booting || !contacts.length) return
+    autoCallDone.current = true
+    const target = contacts.find(c => c.id === autoCall.id || c.handle === autoCall.name)
+    if (target) {
+      const idx = contacts.indexOf(target)
+      setIndex(idx)
+      setCalling(target)
+      void placeCall(target.id, target.handle)
+    } else {
+      const synth: Contact = { id: autoCall.id, handle: autoCall.name, detail: 'POPLUR MAIL', favourite: false, callable: true, distanceKm: null }
+      setCalling(synth)
+      void placeCall(autoCall.id, autoCall.name)
+    }
+  }, [autoCall, booting, contacts])
+
+  // Changing the handset's colourway IS changing its theme, so it buzzes the
+  // same way an app-theme change does — the vibration that went missing when
+  // this became the live phone. Native haptics ride the same phoneThemeEffects
+  // event the theme-change effect uses; navigator.vibrate covers the web.
+  const cycleColorway = useCallback((delta: 1 | -1) => {
+    playPop()
+    try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
+    postNativeEvent({ type: 'phoneThemeEffects' })
+    setColorIndex(i => (i + delta + COLORWAYS.length) % COLORWAYS.length)
+  }, [])
 
   const step = useCallback((delta: 1 | -1) => {
     playPop()
@@ -175,26 +345,79 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
 
   const select = useCallback(() => {
     if (!current) return
-    // Only the outgoing direction dials. Someone who can reach YOU is not
-    // someone you can reach, and the LCD says so instead of pretending.
     if (!current.callable) { playPop(); return }
     playPop()
     setCalling(current)
+    // Open the media call (mic + peer connection); the LCD shows CALLING until
+    // the InCallBar takes over on connect.
+    void placeCall(current.id, current.handle)
   }, [current])
 
   const back = useCallback(() => {
     playPop()
-    if (calling) { setCalling(null); return }
+    if (showSettings) { setShowSettings(false); return }
+    if (liveCall && liveCall.phase !== 'idle' && liveCall.phase !== 'ended') {
+      hangupCall()
+      setCalling(null)
+      return
+    }
+    if (calling) {
+      hangupCall()
+      setCalling(null)
+      return
+    }
+    if (incomingCall) {
+      onDeclineCall?.(incomingCall)
+      return
+    }
     onClose?.()
-  }, [calling, onClose])
+  }, [calling, incomingCall, liveCall, onClose, onDeclineCall, showSettings])
 
   const press = useCallback((key: string) => {
+    if (incomingCall) {
+      if (key === '5') { playPop(); onAcceptCall?.(incomingCall) }
+      else if (key === '*') { playPop(); onDeclineCall?.(incomingCall) }
+      else playPop()
+      return
+    }
+    if (showSettings) {
+      if (key === '2') {
+        playPop()
+        const idx = RINGTONES.findIndex(r => r.id === selectedRingtone)
+        const prev = RINGTONES[(idx - 1 + RINGTONES.length) % RINGTONES.length]
+        setSelectedRingtone(prev.id)
+        previewRingtone(prev.id)
+      } else if (key === '8') {
+        playPop()
+        const idx = RINGTONES.findIndex(r => r.id === selectedRingtone)
+        const next = RINGTONES[(idx + 1) % RINGTONES.length]
+        setSelectedRingtone(next.id)
+        previewRingtone(next.id)
+      } else if (key === '5') {
+        playPop()
+        setRingtone(selectedRingtone)
+        setShowSettings(false)
+      } else if (key === '*') {
+        back()
+      } else {
+        playPop()
+      }
+      return
+    }
+    if (liveCall?.phase === 'connected') {
+      if (key === '5') { playPop(); hangupCall() }
+      else if (key === '1') { playPop(); toggleMute() }
+      else if (key === '*') { back() }
+      else playPop()
+      return
+    }
     if (key === '2') step(-1)
     else if (key === '8') step(1)
     else if (key === '5') select()
+    else if (key === '#') { playPop(); setShowSettings(true) }
     else if (key === '*') back()
     else playPop()
-  }, [back, select, step])
+  }, [back, incomingCall, liveCall?.phase, onAcceptCall, onDeclineCall, select, selectedRingtone, showSettings, step])
 
   // Keyboard twin of the keypad, so the phone is drivable without a finger.
   useEffect(() => {
@@ -232,14 +455,45 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
           />
         )}
 
-        <div className={styles.lcd} aria-live="polite">
+        <div className={themeRebooting ? `${styles.lcd} ${styles.lcdBlue}` : styles.lcd} aria-live="polite">
           <div className={styles.topline} aria-hidden="true">
             <span>▮▮▮ ⋮</span><span>▮▮</span>
           </div>
 
-          {calling ? (
+          {themeRebooting ? (
+            <div className={styles.callStatus}>
+              <strong>POPLUR</strong>
+              <span className={styles.incoming}><strong>LOADING...</strong></span>
+            </div>
+          ) : incomingCall ? (
+            <>
+              <div className={`${styles.callStatus} ${styles.incoming}`}>
+                <strong>INCOMING</strong>
+                <span>{incomingCall.callerName.replace(/^@/, '').toUpperCase()}</span>
+              </div>
+              <div className={styles.softkeys}>5 ACCEPT&nbsp;&nbsp;* DECLINE</div>
+            </>
+          ) : liveCall?.phase === 'connected' ? (
             <>
               <div className={styles.callStatus}>
+                <strong>ON CALL</strong>
+                <span>{(liveCall.peerName || 'CONTACT').replace(/^@/, '').toUpperCase()}</span>
+                <span className={styles.callTimer}>
+                  {(() => {
+                    const ms = callNow - (liveCall.connectedAt ?? callNow)
+                    const total = Math.max(0, Math.floor(ms / 1000))
+                    const m = Math.floor(total / 60)
+                    const s = total % 60
+                    return `${m}:${s.toString().padStart(2, '0')}`
+                  })()}
+                </span>
+                <span>{liveCall.muted ? '(MUTED)' : ''}</span>
+              </div>
+              <div className={styles.softkeys}>1 MUTE&nbsp;&nbsp;5 END&nbsp;&nbsp;* BACK</div>
+            </>
+          ) : calling ? (
+            <>
+              <div className={`${styles.callStatus} ${styles.callRinging}`}>
                 <strong>CALLING</strong>
                 <span>{calling.handle.replace(/^@/, '').toUpperCase()}</span>
                 <span>
@@ -247,6 +501,29 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
                 </span>
               </div>
               <div className={styles.softkeys}>5 HANG UP&nbsp;&nbsp;* BACK</div>
+            </>
+          ) : showSettings ? (
+            <>
+              <div className={styles.titleRow}>
+                <strong>RINGTONE</strong>
+              </div>
+              <div className={styles.list}>
+                {RINGTONES.map(r => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    className={r.id === selectedRingtone ? `${styles.row} ${styles.rowOn}` : styles.row}
+                    onClick={() => { setSelectedRingtone(r.id); previewRingtone(r.id) }}
+                    aria-label={r.name}
+                  >
+                    <b className={styles.rowGlyph}>{r.id === getRingtone() ? '★' : '·'}</b>
+                    <span className={styles.rowText}>
+                      <strong className={styles.rowTitle}>{r.name}</strong>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className={styles.softkeys}>2/8 SCROLL  5 SET  * BACK</div>
             </>
           ) : (
             <>
@@ -277,7 +554,7 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
                 })}
               </div>
               <div className={styles.softkeys}>
-                {current?.callable ? '2/8 SCROLL  5 CALL  * BACK' : '2/8 SCROLL  * BACK'}
+                {current?.callable ? '2/8 SCROLL  5 CALL  # SET  * BACK' : '2/8 SCROLL  # SET  * BACK'}
               </div>
             </>
           )}
@@ -299,7 +576,7 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
         <div className={`${styles.swipe} ${styles.swipeLeft}`}>
           <ClayChannelArrows
             number={0}
-            onUp={() => { playPop(); setColorIndex(i => (i - 1 + COLORWAYS.length) % COLORWAYS.length) }}
+            onUp={() => cycleColorway(-1)}
             onDown={() => {}}
             upLabel="Previous phone colorway"
             downLabel=""
@@ -312,7 +589,7 @@ export default function PhoneScreen({ onClose }: { onClose?: () => void }) {
           <ClayChannelArrows
             number={0}
             onUp={() => {}}
-            onDown={() => { playPop(); setColorIndex(i => (i + 1) % COLORWAYS.length) }}
+            onDown={() => cycleColorway(1)}
             upLabel=""
             downLabel="Next phone colorway"
             size={88}

@@ -7,6 +7,7 @@ import { requestProfileMode } from './profileMode'
 import { localDaylight } from './skyCycle'
 import ScreenCoach from './ScreenCoach'
 import ClayCornerButton from './ClayCornerButton'
+import ShaderVideoPlayer from './ShaderVideoPlayer'
 import TabControlRail from './TabControlRail'
 import { useControlSide } from './controlPlacement'
 import {
@@ -121,19 +122,18 @@ const SAMPLE_CLIPS = [
 
 function sampleMedia(seed: number): NewsMediaAttachment[] | undefined {
   const roll = seeded(seed + 200)
-  if (roll > 0.5) return undefined          // ~50% text-only
-  if (roll > 0.35) {                        // ~15% single image
+  if (roll > 0.7) return undefined          // ~30% text-only
+  if (roll > 0.45) {                        // ~25% single photo
     return [{ kind: 'photo', src: SAMPLE_POSTERS[seed % SAMPLE_POSTERS.length] }]
   }
-  if (roll > 0.2) {                         // ~15% multi-image
-    const a = seed % SAMPLE_POSTERS.length
-    const b = (seed + 3) % SAMPLE_POSTERS.length
-    return [
-      { kind: 'photo', src: SAMPLE_POSTERS[a] },
-      { kind: 'photo', src: SAMPLE_POSTERS[b] },
-    ]
+  if (roll > 0.25) {                        // ~20% multi-image (2-4 photos)
+    const count = 2 + (seed % 3)
+    return Array.from({ length: count }, (_, i) => ({
+      kind: 'photo' as const,
+      src: SAMPLE_POSTERS[(seed + i * 3) % SAMPLE_POSTERS.length],
+    }))
   }
-  // ~20% video
+  // ~25% video
   const clip = SAMPLE_CLIPS[seed % SAMPLE_CLIPS.length]
   const poster = SAMPLE_POSTERS[seed % SAMPLE_POSTERS.length]
   return [{ kind: 'video', src: clip, poster }]
@@ -254,15 +254,7 @@ function EntryMedia({ media, large }: { media: NewsMediaAttachment[], large?: bo
   if (first.kind === 'video') {
     return (
       <figure className={large ? styles.mediaCardLarge : styles.mediaCard}>
-        <video
-          className={styles.mediaVideo}
-          src={first.src}
-          poster={first.poster}
-          controls
-          playsInline
-          muted
-          preload="none"
-        />
+        <ShaderVideoPlayer src={first.src} poster={first.poster} />
       </figure>
     )
   }

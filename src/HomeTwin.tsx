@@ -21,6 +21,9 @@ import {
   MOTION_REQUEST_EVENT, motionNeedsAsking, requestMotionFromGesture, declineMotion,
 } from './motionPermission'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
+import InCallBar from './InCallBar'
+import WebSignIn from './WebSignIn'
+import { acceptCall } from './webCall'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop } from './pop'
 import { clearPendingMapPost, onCameraStore, selectedCount } from './cameraStore'
@@ -78,7 +81,7 @@ const CHROME_IDLE_MS = 30_000
 // is Draco-compressed into a 40k-150k triangle range, and CubeTab3D holds only
 // the visible model plus one prepared destination. This keeps Meshy's surface
 // detail without putting the 23-47MB authoring masters on a phone.
-const CLAY_TV_MODEL = 'clay_tv_navigator.glb'
+const CLAY_TV_MODEL = 'clay_tv.glb'
 // The flash camera the profile wears while you are taking your picture.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
 const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
@@ -92,10 +95,6 @@ const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
 /** Where the app is standing: the tab, the hold-menu page on it (null = the
     tab's own main screen), and the visited profile if one is open. The cube's
     back step walks a stack of these. */
-type NavLoc = { tab: CubeTab; screen: string | null; user: string | null }
-const sameNavLoc = (a: NavLoc | null, b: NavLoc | null) =>
-  !!a && !!b && a.tab === b.tab && a.screen === b.screen && a.user === b.user
-
 // One small JSON map, tab → subscreen id, of where each tab was left. Read at
 // boot and on every gesture switch; written when a tab is left. Local to the
 // device on purpose: where you wander is not account state.
@@ -584,9 +583,9 @@ const CLAY_MAP_SRC = (() => {
     : `index.html?map=1&front=${front}${modeQuery}${fallbackQuery}${liteQuery}${locationQuery}`
 })()
 
-// Android app shell (PoplurNative bridge). Its budget GPUs can't afford Mapbox
-// running behind every tab, so the map iframe mounts on-demand there (see the
-// map layer below). iOS and the browser keep the always-warm map.
+// Android app shell (PoplurNative bridge). Budget GPUs get a shorter map grace
+// than iOS (ANDROID_MAP_GRACE_MS) rather than the unconditional drop-on-leave
+// they used to get — see MAP_GRACE_MS. Also gates the native camera preview.
 const ANDROID_SHELL =
   typeof window !== 'undefined' &&
   Boolean((window as unknown as { PoplurNative?: unknown }).PoplurNative)
@@ -613,8 +612,8 @@ const ANDROID_SHELL =
 // map every 20-75s, and the log-replayed harness measured those Mapbox
 // reboots at half the cycle's renderer CPU. Hence the grace below: leaving
 // the map parks it for MAP_GRACE_MS before unmounting, so an active session
-// bounces back to a warm map. Android still drops on leave (budget GPUs).
-// `?map-grace=<seconds>` overrides; 0 restores tear-down-on-leave.
+// bounces back to a warm map — on every shell, Android included, which used to
+// be excluded. `?map-grace=<seconds>` overrides; 0 restores tear-down-on-leave.
 // How long `activeTab` must hold still before the map layer acts on it. Long
 // enough to swallow a spin (the cube commits a face every ~150-250ms while
 // turning), short enough to be invisible on a deliberate tab change.
@@ -644,17 +643,115 @@ const MAP_COVER_MAX_MS = 1500
 // 20 Aug burn log's rapid tab cycling re-fronted the map every 20-75s, and the
 // log-replayed harness measured those reboots at HALF the cycle's renderer
 // CPU. 75s covers six of the eight observed return gaps while keeping the
-// hidden retention bounded; the Android shell ignores this and still drops on
-// leave (see the lifetime effect). `?map-grace=<seconds>` overrides; 0 restores
+// hidden retention bounded. `?map-grace=<seconds>` overrides; 0 restores
 // tear-down-on-leave.
+//
+// ANDROID used to be pinned at 0 here — drop on every leave — on the original
+// finding that a hidden map iframe held the front tab at ~3fps. That finding
+// predates the park machinery (poplur-map-front:false stops the embed clock and
+// renderer) and the lifetime comment above already flags it as superseded: a
+// parked iframe now runs 0 rAF over a 90s dwell.
+//
+// Measured 21 Aug on the shipped bundle, host load 4, renderer-thread CPU over
+// the 30s after a return (`.codex/thermal-gate.mjs` now budgets this as
+// maxArrivalCpuMs, surface `map-arrival`):
+//
+//   return after a DROP (full rebuild)   7458ms   484 Mapbox frames
+//   return after a PARK (unpark)         5800ms   290 Mapbox frames
+//
+// So the grace is worth ~22% of a return, NOT the whole warm-up: rebuilding
+// the document was never the expensive part. The 5.8s that survives is the
+// WAKE — ~290 frames redrawn for a view whose camera never moved — and no
+// retention policy can touch it. That is the next piece of work, not this one.
+//
+// Android gets a real grace, just a shorter one than iOS: budget devices have
+// less headroom to hold a retained GL context, and the shell's
+// `poplur-memory-pressure` event still drops mid-grace (see the lifetime
+// effect). 20s covers the short end of the 20-75s return cadence the burn log
+// recorded — the rapid cycling that actually generates heat — while bounding
+// retention on the phones least able to afford it.
+const ANDROID_MAP_GRACE_MS = 20_000
 const MAP_GRACE_MS = (() => {
-  const fallback = 75_000
+  const fallback = ANDROID_SHELL ? ANDROID_MAP_GRACE_MS : 75_000
   if (typeof window === 'undefined') return fallback
   const raw = new URLSearchParams(window.location.search).get('map-grace')
   if (raw === null) return fallback
   const seconds = Number(raw)
   return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : fallback
 })()
+
+function FpsCubeOverlay({ size }: { size: number }) {
+  const pointer = useRef<number | null>(null)
+  const startPos = useRef({ x: 0, y: 0 })
+  const downTime = useRef(0)
+  const moved = useRef(false)
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const holdFired = useRef(false)
+  const dispatch = (control: string, values: Record<string, unknown> = {}) => {
+    window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control, ...values } }))
+  }
+  const limit = size * 0.35
+  const cancelHold = () => { if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null } }
+  return (
+    <div
+      style={{
+        position: 'absolute', inset: 0, zIndex: 40,
+        touchAction: 'none', cursor: 'grab', borderRadius: '50%',
+      }}
+      onPointerDown={e => {
+        pointer.current = e.pointerId
+        startPos.current = { x: e.clientX, y: e.clientY }
+        downTime.current = performance.now()
+        moved.current = false
+        holdFired.current = false
+        cancelHold()
+        holdTimer.current = setTimeout(() => {
+          holdTimer.current = null
+          holdFired.current = true
+          dispatch('pause', { pressed: true })
+        }, 500)
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch {}
+        e.preventDefault()
+      }}
+      onPointerMove={e => {
+        if (pointer.current !== e.pointerId) return
+        const dx = e.clientX - startPos.current.x
+        const dy = e.clientY - startPos.current.y
+        if (!moved.current && Math.hypot(dx, dy) > 6) {
+          moved.current = true
+          cancelHold()
+        }
+        if (!moved.current) return
+        const normalize = (v: number) => {
+          const u = Math.max(-1, Math.min(1, v / limit))
+          return Math.abs(u) < 0.08 ? 0 : u
+        }
+        dispatch('move', { x: normalize(dx), y: -normalize(dy) })
+        e.preventDefault()
+      }}
+      onPointerUp={e => {
+        if (pointer.current !== e.pointerId) return
+        pointer.current = null
+        cancelHold()
+        if (moved.current) {
+          dispatch('move', { x: 0, y: 0 })
+        } else if (!holdFired.current && performance.now() - downTime.current < 350) {
+          dispatch('fire', { pressed: true })
+          setTimeout(() => dispatch('fire', { pressed: false }), 100)
+        }
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId)
+        }
+      }}
+      onPointerCancel={e => {
+        if (pointer.current !== e.pointerId) return
+        pointer.current = null
+        cancelHold()
+        dispatch('move', { x: 0, y: 0 })
+      }}
+    />
+  )
+}
 
 export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'live' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'live' | 'roll' }) {
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
@@ -830,13 +927,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // triple is a navigation, so keeping the PREVIOUS one gives the cube a real
   // back: out of a page to what was under it, and back across a tab jump
   // (VIEW PROFILE from News returns to News rather than to the feed root).
-  const navStackRef = useRef<NavLoc[]>([])
-  /** The last location that stayed put long enough to count as a destination. */
-  const navSettledRef = useRef<NavLoc | null>(null)
-  /** True while a back step is landing, so it is not recorded as a new move. */
-  const navPoppingRef = useRef(false)
-  // (No restoreScreenRef: back is per-tab, so it never causes a tab change and
-  // never needs to name the incoming tab's page.)
   const switchTabByGesture = useCallback((tab: CubeTab) => {
     gestureSwitchRef.current = tab
     setActiveTab(tab)
@@ -1010,15 +1100,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
 
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
+  const [incomingCall, setIncomingCall] = useState<{ callId: string; callerId: string; callerName: string } | null>(null)
 
   /** What the cube was answering to a moment ago; see handleSubscreenChange.
 
       A ref because the comparison must not live inside a state updater. */
 
   const cubeScreenRef = useRef<string | null>(null)
-  /** cubeScreen for callbacks that must not re-bind on every page change. */
-  const cubeScreenLiveRef = useRef<string | null>(null)
-  cubeScreenLiveRef.current = cubeScreen
   const handleSubscreenChange = useCallback((open: boolean, screen?: string, _unmounting?: boolean) => {
     setOverlayOpen(open)
     // Resume bookkeeping — STICKY by design. Standing on a page records it,
@@ -1462,6 +1550,47 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     window.addEventListener('message', onPhoneMessage)
     return () => window.removeEventListener('message', onPhoneMessage)
+  }, [])
+
+  const incomingCallTimer = useRef<number | null>(null)
+  useEffect(() => {
+    postNativeEvent({ type: 'callWatchIncoming' })
+    const onCallEvent = (event: MessageEvent) => {
+      if (event.source !== window || !event.data || typeof event.data !== 'object') return
+      if (event.data.type === 'poplurCallIncoming') {
+        if (incomingCallTimer.current) window.clearTimeout(incomingCallTimer.current)
+        setIncomingCall({
+          callId: event.data.callId ?? '',
+          callerId: event.data.callerId ?? '',
+          callerName: event.data.callerName ?? 'Unknown',
+        })
+        incomingCallTimer.current = window.setTimeout(() => setIncomingCall(null), 30_000)
+      }
+      if (event.data.type === 'poplurCallEnded') {
+        if (incomingCallTimer.current) { window.clearTimeout(incomingCallTimer.current); incomingCallTimer.current = null }
+        setIncomingCall(null)
+      }
+    }
+    window.addEventListener('message', onCallEvent)
+    return () => {
+      window.removeEventListener('message', onCallEvent)
+      if (incomingCallTimer.current) window.clearTimeout(incomingCallTimer.current)
+    }
+  }, [])
+
+  const acceptIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string }) => {
+    playPop()
+    // acceptCall opens the mic + peer connection and sends callAccept itself,
+    // so the answer actually negotiates media rather than only flipping the
+    // Firestore status. The InCallBar then owns the live-call UI.
+    void acceptCall(call.callId, call.callerName)
+    setIncomingCall(null)
+  }, [])
+
+  const declineIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string }) => {
+    playPop()
+    postNativeEvent({ type: 'callDecline', callId: call.callId })
+    setIncomingCall(null)
   }, [])
 
   // The Store lives in HoldMenuTwin's bundled subscreen iframe. That owner
@@ -2014,15 +2143,32 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [])
   // Re-sent on every map (re)load as well as every change: the iframe remounts
-  // on tab changes and a message sent to a dead frame is simply lost.
+  // on tab changes and a message sent to a dead frame is simply lost. If React
+  // state is null but localStorage has a value (race between mount and native
+  // profile response), forward the localStorage copy so the map pin is never
+  // blank when the profile picture exists on disk.
   useEffect(() => {
     if (!mapReady) return
+    let photo = ownPhoto
+    let video = ownSelfieVideo
+    if (!photo) {
+      try {
+        const raw = window.localStorage.getItem('poplur.profile.photo')
+        if (raw && (raw.startsWith('data:image/') || /^https:\/\//i.test(raw))) photo = raw
+      } catch { /* embedded */ }
+    }
+    if (!video) {
+      try {
+        const raw = window.localStorage.getItem('poplur.profile.selfieVideo')
+        if (raw && (raw.startsWith('data:video/') || /^https:\/\//i.test(raw) || /^poplur-clay:\/\//i.test(raw))) video = raw
+      } catch { /* embedded */ }
+    }
     mapFrameRef.current?.contentWindow?.postMessage(
       {
         type: 'poplur-map-action',
         action: 'setOwnProfileMedia',
-        photo: ownPhoto,
-        video: ownSelfieVideo,
+        photo,
+        video,
       }, '*',
     )
   }, [ownPhoto, ownSelfieVideo, mapReady])
@@ -2055,8 +2201,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-native-feed-ad', onFeedAd)
     return () => window.removeEventListener('poplur-native-feed-ad', onFeedAd)
   }, [])
-  /** Chrome fully away — the feed's player mode, a subscreen, or an ad slot. */
-  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen
+  /** Chrome fully away — the feed's player mode, a subscreen, an ad slot,
+   *  or the post composer (trapped inside contentLayer z-index 4, so the
+   *  chrome at 260 must stand down for the composer to be tappable). */
+  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || composerOpen
   // Games run full-bleed under the HUD (GamesScreen.module.css), so the
   // wordmark and the bottom stat row sat on top of the console art the whole
   // time a game was open. Unlike subscreenFullscreen this does NOT take the
@@ -2069,6 +2217,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     window.addEventListener('poplur-games-chrome-mute', onGamesChrome)
     return () => window.removeEventListener('poplur-games-chrome-mute', onGamesChrome)
+  }, [])
+  const [fpsCubeMode, setFpsCubeMode] = useState(false)
+  const fpsCubeModeRef = useRef(false)
+  useEffect(() => {
+    const onFpsCube = (event: Event) => {
+      const on = Boolean((event as CustomEvent<{ on?: boolean }>).detail?.on)
+      setFpsCubeMode(on)
+      fpsCubeModeRef.current = on
+    }
+    window.addEventListener('poplur-fps-cube-controller', onFpsCube)
+    return () => window.removeEventListener('poplur-fps-cube-controller', onFpsCube)
   }, [])
   const [mapTourOn, setMapTourOn] = useState(false)
   // The map's status title, drawn by the shell so it can never collide with
@@ -2237,14 +2396,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // window — grace measures "time since the user last went anywhere", so an
     // active session keeps its warm map and a settled one lets it go.
     //
-    // Drop NOW instead when: the Android shell (its budget-GPU trade
-    // predates this and stands), a one-shot task map (pickSpot — its reset
+    // Drop NOW instead when: a one-shot task map (pickSpot — its reset
     // contract waits for unmount, and a graced return would resurrect the
     // picker), or real memory pressure (the shell's poplur-memory-pressure
-    // event) arrives mid-grace. While graced, engagement generation pauses
-    // (the embed's onTick is parked and the shell's generator keys on
-    // mapMounted) and resumes on return or expiry — bounded and demo-only.
-    if (ANDROID_SHELL || MAP_GRACE_MS === 0 || mapPickSpotLaunch !== null) {
+    // event) arrives mid-grace. Android no longer drops unconditionally
+    // here; it takes the shorter ANDROID_MAP_GRACE_MS window instead.
+    //
+    // While graced, engagement generation pauses (the embed's onTick is parked
+    // and the shell's generator keys on mapMounted) and resumes on return or
+    // expiry — bounded and demo-only.
+    if (MAP_GRACE_MS === 0 || mapPickSpotLaunch !== null) {
       drop()
       return
     }
@@ -2382,14 +2543,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setResume(current => ({ screen: null, n: current.n }))
       setHoldOpen(false)
     }
-    if (next === 'roll') {
-      // ROLL rides the same cameraStep parity toggle the pager already reads
-      // (page = step % 2) — arrive here by making it odd, same as the
-      // hold-menu tile does, rather than a separate mechanism.
-      if (!onRoll) setCameraStep(step => step + 1)
-      setCameraCaptureMode('photo')
-      return
-    }
     if (onRoll) setCameraStep(step => step + 1)
     setCameraCaptureMode(next)
   }
@@ -2486,69 +2639,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Where that profile was opened FROM, so closing it returns you there (the
   // feed you were watching) instead of dropping you on your own profile.
   const [profileOrigin, setProfileOrigin] = useState<CubeTab | null>(null)
-  // Record every settled location so the cube can walk back through them.
-  // SETTLED, not every render: one tap can flick through two or three
-  // intermediate locations — tapping VIEW PROFILE closes the wheel first, which
-  // reads as "the feed root" for a frame before the profile opens — and
-  // recording those would make the cube step back through places nobody
-  // visited. Waiting for the triple to hold still collapses each burst to the
-  // one destination it was heading for.
-  useEffect(() => {
-    const next: NavLoc = { tab: activeTab, screen: cubeScreen, user: viewingUser }
-    if (sameNavLoc(next, navSettledRef.current)) return
-    const timer = window.setTimeout(() => {
-      if (navPoppingRef.current) navPoppingRef.current = false
-      else if (navSettledRef.current) {
-        navStackRef.current.push(navSettledRef.current)
-        if (navStackRef.current.length > 40) navStackRef.current.shift()
-      }
-      navSettledRef.current = next
-    }, 420)
-    return () => window.clearTimeout(timer)
-  }, [activeTab, cubeScreen, viewingUser])
-
-  /** The cube's back step: return to the previous screen. Returns false when
-      there is no history left, so the tap falls through to its plain pop. */
-  const goBackOneScreen = useCallback((): boolean => {
-    // Back is PER TAB by default. The cube walks back through the screens of
-    // the tab you are ON and never sideways into another one: popping the
-    // global top meant that visiting the map, switching to camera and tapping
-    // the cube threw you back to the map, which reads as the cube changing
-    // tabs. Switching tabs is the SWIPE's job, and a tap must not do it.
-    //
-    // Entries for other tabs are SKIPPED, not dropped. Discarding them would
-    // spend the map's history while you happen to be standing in the camera,
-    // and switching back to the map later would find nothing to go back to.
-    //
-    // There is no exception to this. A tap that lands you on a different tab
-    // reads as the cube changing tabs, which is the swipe's job — even when
-    // the jump being undone was one the app performed for you.
-    const stack = navStackRef.current
-    for (let i = stack.length - 1; i >= 0; i--) {
-      if (stack[i].tab !== activeTabLiveRef.current) continue
-      const [target] = stack.splice(i, 1)
-      navPoppingRef.current = true
-      setViewingUser(target.user)
-      // A fresh nonce remounts the menu so it opens ON the page rather than
-      // re-showing the wheel.
-      setResume(current => ({ screen: target.screen, n: current.n + 1 }))
-      setHoldOpen(target.screen != null)
-      return true
-    }
-    // Nothing recorded for this tab. If a page is open anyway you arrived by
-    // resume (a tab reopens where you left it), and there is still an obvious
-    // way out — the tab's own main screen.
-    if (cubeScreenLiveRef.current != null) {
-      navPoppingRef.current = true
-      setResume(current => ({ screen: null, n: current.n + 1 }))
-      setHoldOpen(false)
-      return true
-    }
-    // Nothing left at all: report no-op so the tap falls through to its plain
-    // behaviour rather than silently doing nothing.
-    return false
-  }, [])
-
   // Which of the nearby posts the map arrows are parked on (1-based on screen).
   const [mapPostIdx, setMapPostIdx] = useState(0)
   /** The reach of the video playing in the feed right now. Every video change
@@ -2981,6 +3071,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [activeTab])
 
   const popCube = () => {
+    // FPS cube mode: tap fires the weapon
+    if (fpsCubeModeRef.current) {
+      window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'fire', pressed: true } }))
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'fire', pressed: false } }))
+      }, 100)
+      return
+    }
     // Back before anything else: if a subscreen or the hold menu is open, the
     // tap is the way out of it, not a favourite-action trigger.
     if (goBackRef.current?.()) { playPop(); return }
@@ -3003,13 +3101,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
-    // The bare viewfinder: the cube IS the shutter here, before any history
-    // walk. Every layer that makes the tap a back step (an open page, the
-    // composer, the roll) has already answered above, so what is left is the
-    // camera pointed at the world — and a tap on the camera object must take
-    // the picture, not replay navigation history. goBackOneScreen used to run
-    // first, so arriving at the viewfinder from another screen left a stack
-    // entry that turned the shutter into a surprise navigation.
     if (activeTab === 'post') {
       playPop()
       // Selection changes the object; tapping that object performs its shutter.
@@ -3020,13 +3111,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       cameraActionsRef.current?.[which]()
       return
     }
-    // Nothing inside the screen claimed the tap, so it is a step back through
-    // the screens themselves: out of a page onto what was under it, or back
-    // across the tab jump that brought you here.
-    if (goBackOneScreen()) { playPop(); return }
     playPop()
-    // No pinned favourite any more — a plain tap on the other tabs is the pop
-    // itself. Where you LAND on a tab is owned by the last-page resume below.
     setPopping(true)
   }
 
@@ -3481,6 +3566,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               onVerticalSwipe={verticalSwipe}
               onTap={popCube}
               onHold={() => {
+                // FPS mode: long-press pauses
+                if (fpsCubeModeRef.current) {
+                  window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'pause', pressed: true } }))
+                  return
+                }
                 playPop()
                 // A deliberate long-press asks for the WHEEL. With the menu
                 // already up — standing on a page, or on the wheel itself —
@@ -3498,6 +3588,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               }}
             />
           </div>
+          {fpsCubeMode && (
+            <FpsCubeOverlay size={cubeSize} />
+          )}
         </div>
       </div>
 
@@ -3524,6 +3617,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         onTabRequest={tab => setActiveTab(tab)}
         onChannelRequest={tuneFeedChannelFromVoice}
       />
+
+      {/* InCallBar removed — active call UI lives inside PhoneScreen's LCD */}
+      <WebSignIn />
+
+      {incomingCall && !holdOpen && (
+        <div className={styles.incomingCallBanner} role="alertdialog" aria-label={`Incoming call from ${incomingCall.callerName}`}>
+          <div className={styles.incomingCallInfo}>
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.36 11.36 0 0 0 3.58.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z" fill="currentColor"/>
+            </svg>
+            <div>
+              <strong>{incomingCall.callerName}</strong>
+              <span>Poplur Call</span>
+            </div>
+          </div>
+          <div className={styles.incomingCallActions}>
+            <button type="button" className={styles.incomingDecline} onClick={() => declineIncomingCall(incomingCall)} aria-label="Decline">
+              Decline
+            </button>
+            <button type="button" className={styles.incomingAccept} onClick={() => acceptIncomingCall(incomingCall)} aria-label="Accept">
+              Accept
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Auth routing owns WHERE the primer appears. Signed-out users receive
           the matching sequence on Welcome; returning authenticated users are
@@ -3626,6 +3744,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           onSubscreenChange={handleSubscreenChange}
           bindArrows={bindSubscreenArrows}
           bindGoBack={fn => { goBackRef.current = fn }}
+          incomingCall={incomingCall}
+          onAcceptCall={acceptIncomingCall}
+          onDeclineCall={declineIncomingCall}
         />
       )}
     </section>

@@ -7,6 +7,7 @@ import ClayMuteButton from './ClayMuteButton'
 import RadioBoot from './RadioBootScreen'
 import { isRadioBackgroundEnabled, listLocalStations, playStation, readRadioScope, stopMapRadio, nowPlayingStation, type LocalStation } from './mapRadio'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
+import { postNativeEvent, isNativeShell } from './nativeBridge'
 
 // POPLUR RADIO — the station deck.
 //
@@ -43,7 +44,7 @@ type Wave = 'all' | 'fm' | 'am' | 'net'
  * broadcast, and lands under NET rather than being guessed onto a band.
  */
 function waveOf(station: LocalStation): Exclude<Wave, 'all'> {
-  if (station.source === 'soundcloud') return 'net'
+  if (station.source === 'poplur') return 'net'
   const text = `${station.name} ${station.genre}`
   if (/\bFM\b/i.test(text)) return 'fm'
   if (/\bAM\b/i.test(text)) return 'am'
@@ -197,16 +198,26 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
       }
       window.addEventListener('poplur-location', onNativeLocation)
       window.addEventListener('poplur-native-location', onNativeLocation)
+      // Actively ask native for the fix it already holds, rather than only
+      // waiting for a broadcast that fires when the MAP happens to move. Native
+      // answers with poplur-location, attributed to "Poplur", no new prompt.
+      postNativeEvent({ type: 'requestLocation' })
       const fallbackTimer = window.setTimeout(() => {
         if (settled) return
-        if (navigator.geolocation) {
+        // Inside the native shell the OS already granted "Poplur" location, so
+        // calling the WebView's OWN navigator.geolocation is a SECOND, generic
+        // "app" prompt for a permission already given — the ugly duplicate the
+        // user sees. Never ask it here; fall back to the home region and let a
+        // later native broadcast refine it. Only the plain browser, which has
+        // no native fix, legitimately asks the browser.
+        if (!isNativeShell() && navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
             pos => load(pos.coords.latitude, pos.coords.longitude),
             () => load(HOME[1], HOME[0]),
             { timeout: 4000, maximumAge: 600_000 },
           )
         } else load(HOME[1], HOME[0])
-      }, 1500)
+      }, isNativeShell() ? 3500 : 1500)
       return () => {
         alive = false
         controller.abort()
@@ -351,13 +362,8 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     // Picking a channel IS the intent to listen — tuning while the board is
     // muted otherwise looks like the button did nothing at all.
     if (isUserMuted()) { setUserMuted(false); setMuted(false) }
-    if (s.source === 'soundcloud') {
-      stopMapRadio()
-      setSoundCloudUrl(s.url)
-    } else {
-      setSoundCloudUrl(null)
-      playStation(s)
-    }
+    setSoundCloudUrl(null)
+    playStation(s)
     setTunedUrl(s.url)
   }
 
@@ -493,10 +499,8 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
                 <div className={styles.segGenre}>{tuned ? tuned.genre.toUpperCase() : 'SELECT A CHANNEL'}</div>
                 <div className={styles.segStats}>
                   {tuned
-                    ? tuned.source === 'soundcloud'
-                      ? 'SOUNDCLOUD · LIVE PLAYLIST'
-                      : `${compact(tuned.listeners)} LISTENERS · ${tuned.distanceKm} KM · ${tuned.bitrate || '--'} KBPS`
-                    : 'ALL CHANNELS BELOW REACH YOU'}
+                    ? `${compact(tuned.listeners)} LISTENERS · ${tuned.distanceKm} KM`
+                    : 'BROADCASTS IN YOUR AREA'}
                 </div>
               </div>
             </div>
@@ -520,17 +524,6 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
               />
             </div>
 
-            {soundCloudUrl && boot === 'done' && pageVisible && gateOpen && !muted && embeddedPlaybackAllowed && (
-              <iframe
-                key={soundCloudUrl}
-                ref={soundCloudFrameRef}
-                className={styles.soundCloudPlayer}
-                title="SoundCloud player"
-                allow="autoplay; encrypted-media"
-                src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(soundCloudUrl)}&auto_play=true&color=%23f63b9a&show_artwork=false&show_comments=false&show_playcount=true&show_user=true&sharing=false&download=false&single_active=true`}
-              />
-            )}
-
             {/* the channel list, on the same glass */}
             <div className={styles.lcdList}>
               <div className={styles.lcdListHead}>
@@ -549,7 +542,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
                     <span className={styles.lcdName}>{st.name.toUpperCase()}</span>
                     <span className={styles.lcdGenre}>{st.genre.toUpperCase()}</span>
                   </span>
-                  <span className={styles.lcdReach}>{st.source === 'soundcloud' ? 'SC' : st.distanceKm}</span>
+                  <span className={styles.lcdReach}>{st.distanceKm}</span>
                 </button>
               ))}
             </div>
@@ -578,7 +571,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
         </div>
         <div className={styles.barBody}>
           <div className={styles.barName}>{tuned?.name ?? 'Nothing tuned'}</div>
-          <div className={styles.barTag}>{tuned ? (tuned.source === 'soundcloud' ? `${tuned.genre} · SoundCloud` : `${tuned.genre} · ${tuned.distanceKm} km away`) : 'Pick a station'}</div>
+          <div className={styles.barTag}>{tuned ? `${tuned.genre} · ${tuned.distanceKm} km away` : 'Pick a broadcast'}</div>
         </div>
         <div className={tuned ? `${styles.barWave} ${styles.barWaveOn}` : styles.barWave} aria-hidden="true">
           {Array.from({ length: 34 }, (_, i) => (

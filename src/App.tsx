@@ -240,187 +240,36 @@ const TOUR_TOPIC_FOR_KIND: Record<TourKind, MapTourTopic> = {
   hotel: 'hotels',
 }
 
-const RADIO_MARKETS: Record<string, RadioStation[]> = {
-  toronto: [
-    { name: 'CBC Music Toronto', frequency: '94.1 FM', style: 'local arts' },
-    { name: 'KiSS 92.5', frequency: '92.5 FM', style: 'pop hits' },
-    { name: 'FLOW 98.7', frequency: '98.7 FM', style: 'hip-hop and R&B' },
-  ],
-  paris: [
-    { name: 'FIP Paris', frequency: '105.1 FM', style: 'eclectic' },
-    { name: 'Radio Nova', frequency: '101.5 FM', style: 'global grooves' },
-    { name: 'France Inter', frequency: '87.8 FM', style: 'culture' },
-  ],
-  london: [
-    { name: 'BBC Radio London', frequency: '94.9 FM', style: 'city news' },
-    { name: 'Capital London', frequency: '95.8 FM', style: 'pop hits' },
-    { name: 'Kiss Fresh', frequency: 'DAB', style: 'dance and R&B' },
-  ],
-  newyork: [
-    { name: 'Hot 97', frequency: '97.1 FM', style: 'hip-hop' },
-    { name: 'Z100', frequency: '100.3 FM', style: 'pop hits' },
-    { name: 'WNYC', frequency: '93.9 FM', style: 'city talk' },
-  ],
-  cairo: [
-    { name: 'Nile FM', frequency: '104.2 FM', style: 'international hits' },
-    { name: 'Nogoum FM', frequency: '100.6 FM', style: 'Arabic pop' },
-    { name: 'Radio Masr', frequency: '88.7 FM', style: 'local talk' },
-  ],
-  rio: [
-    { name: 'Rádio Globo Rio', frequency: '98.1 FM', style: 'local talk' },
-    { name: 'FM O Dia', frequency: '100.5 FM', style: 'Brazilian pop' },
-    { name: 'JB FM', frequency: '99.9 FM', style: 'smooth classics' },
-  ],
-  agra: [
-    { name: 'Radio Mirchi Agra', frequency: '89.3 FM', style: 'Bollywood' },
-    { name: 'AIR Agra', frequency: '1530 AM', style: 'public radio' },
-    { name: 'Red FM Agra', frequency: '93.5 FM', style: 'Hindi hits' },
-  ],
-  sydney: [
-    { name: 'triple j Sydney', frequency: '105.7 FM', style: 'new music' },
-    { name: 'KIIS 106.5', frequency: '106.5 FM', style: 'pop hits' },
-    { name: 'FBI Radio', frequency: '94.5 FM', style: 'independent' },
-  ],
-  rome: [
-    { name: 'Radio Globo Roma', frequency: '99.6 FM', style: 'Italian pop' },
-    { name: 'Dimensione Suono Roma', frequency: '101.9 FM', style: 'city hits' },
-    { name: 'Rai Radio 2', frequency: 'DAB', style: 'national pop' },
-  ],
-  dubai: [
-    { name: 'Virgin Radio Dubai', frequency: '104.4 FM', style: 'pop hits' },
-    { name: 'Dubai 92', frequency: '92.0 FM', style: 'classic hits' },
-    { name: 'Dubai Eye', frequency: '103.8 FM', style: 'city talk' },
-  ],
-  seattle: [
-    { name: 'KEXP', frequency: '90.3 FM', style: 'independent' },
-    { name: 'KNKX', frequency: '88.5 FM', style: 'jazz and news' },
-    { name: 'Seattle Wolf', frequency: '100.7 FM', style: 'country' },
-  ],
-  bayarea: [
-    { name: 'KQED', frequency: '88.5 FM', style: 'public radio' },
-    { name: 'Wild 94.9', frequency: '94.9 FM', style: 'pop hits' },
-    { name: 'KFOG Archives', frequency: '104.5 HD2', style: 'Bay Area rock' },
-  ],
-  minneapolis: [
-    { name: 'The Current', frequency: '89.3 FM', style: 'independent' },
-    { name: 'KDWB', frequency: '101.3 FM', style: 'pop hits' },
-    { name: 'MPR News', frequency: '91.1 FM', style: 'public radio' },
-  ],
-  edmonton: [
-    { name: 'CJSR Edmonton', frequency: '88.5 FM', style: 'campus and indie' },
-    { name: 'SONiC 102.9', frequency: '102.9 FM', style: 'alternative' },
-    { name: 'CBC Music Edmonton', frequency: '90.9 FM', style: 'local arts' },
-  ],
-  honolulu: [
-    { name: 'KCCN FM100', frequency: '100.3 FM', style: 'Hawaiian hits' },
-    { name: 'Island 98.5', frequency: '98.5 FM', style: 'island reggae' },
-    { name: 'Hawaii Public Radio', frequency: '88.1 FM', style: 'public radio' },
-  ],
-  losangeles: [
-    { name: 'KCRW', frequency: '89.9 FM', style: 'culture and music' },
-    { name: 'KIIS FM', frequency: '102.7 FM', style: 'pop hits' },
-    { name: 'Power 106', frequency: '105.9 FM', style: 'hip-hop' },
-  ],
-  boston: [
-    { name: 'WBUR', frequency: '90.9 FM', style: 'public radio' },
-    { name: 'Kiss 108', frequency: '107.9 FM', style: 'pop hits' },
-    { name: 'WERS', frequency: '88.9 FM', style: 'college radio' },
-  ],
-  paloalto: [
-    { name: 'KZSU Stanford', frequency: '90.1 FM', style: 'college radio' },
-    { name: 'KQED', frequency: '88.5 FM', style: 'public radio' },
-    { name: 'Live 105', frequency: '105.3 FM', style: 'alternative' },
-  ],
-  chicago: [
-    { name: 'WXRT', frequency: '93.1 FM', style: 'rock' },
-    { name: 'Vocalo', frequency: '91.1 FM', style: 'local culture' },
-    { name: 'WBEZ', frequency: '91.5 FM', style: 'public radio' },
-  ],
-  global: [
-    { name: 'Poplur World Radio', frequency: 'AI 1', style: 'global mix' },
-    { name: 'Poplur Local Pulse', frequency: 'AI 2', style: 'nearby posts' },
-    { name: 'Poplur Night Drive', frequency: 'AI 3', style: 'city flyover' },
-  ],
-}
+const POPLUR_RADIO_CUES: RadioStation[] = [
+  { name: 'Poplur Radio', frequency: 'LIVE', style: 'local broadcasts' },
+  { name: 'Poplur Podcasts', frequency: 'LIVE', style: 'nearby creators' },
+  { name: 'Poplur Music', frequency: 'LIVE', style: 'artists in your area' },
+]
 
-const DESTINATION_RADIO_MARKET: Record<string, string> = {
-  eiffel: 'paris',
-  louvre: 'paris',
-  'cn-tower': 'toronto',
-  'eaton-centre': 'toronto',
-  yorkdale: 'toronto',
-  'scotiabank-arena': 'toronto',
-  'rogers-centre': 'toronto',
-  'u-of-t': 'toronto',
-  rom: 'toronto',
-  'trinity-bellwoods': 'toronto',
-  'yonge-dundas': 'toronto',
-  'kensington-market': 'toronto',
-  'union-station-toronto': 'toronto',
-  'st-lawrence-market': 'toronto',
-  'exhibition-place': 'toronto',
-  'nathan-phillips': 'toronto',
-  'pearson-airport': 'toronto',
-  'fairmont-royal-york': 'toronto',
-  'big-ben': 'london',
-  wembley: 'london',
-  'borough-market': 'london',
-  heathrow: 'london',
-  'statue-liberty': 'newyork',
-  met: 'newyork',
-  'times-square': 'newyork',
-  'madison-square-garden': 'newyork',
-  'grand-central': 'newyork',
-  'chelsea-market': 'newyork',
-  'jfk-airport': 'newyork',
-  giza: 'cairo',
-  'christ-redeemer': 'rio',
-  'taj-mahal': 'agra',
-  'sydney-opera': 'sydney',
-  colosseum: 'rome',
-  'burj-khalifa': 'dubai',
-  'dubai-mall': 'dubai',
-  'space-needle': 'seattle',
-  'pike-place': 'seattle',
-  'golden-gate': 'bayarea',
-  'mall-america': 'minneapolis',
-  'west-edmonton-mall': 'edmonton',
-  'ala-moana': 'honolulu',
-  sofi: 'losangeles',
-  'crypto-arena': 'losangeles',
-  ucla: 'losangeles',
-  'hollywood-bowl': 'losangeles',
-  'la-live': 'losangeles',
-  'lax-airport': 'losangeles',
-  disneyland: 'losangeles',
-  'harvard-yard': 'boston',
-  'mit-dome': 'boston',
-  'stanford-oval': 'paloalto',
-  'central-park': 'newyork',
-  'millennium-park': 'chicago',
-}
-
-const RADIO_MARKET_CITY: Record<string, string> = {
-  toronto: 'Toronto',
-  paris: 'Paris',
-  london: 'London',
-  newyork: 'New York',
-  cairo: 'Cairo',
-  rio: 'Rio de Janeiro',
-  agra: 'Agra',
-  sydney: 'Sydney',
-  rome: 'Rome',
-  dubai: 'Dubai',
-  seattle: 'Seattle',
-  bayarea: 'San Francisco Bay Area',
-  minneapolis: 'Minneapolis',
-  edmonton: 'Edmonton',
-  honolulu: 'Honolulu',
-  losangeles: 'Los Angeles',
-  boston: 'Boston',
-  paloalto: 'Palo Alto',
-  chicago: 'Chicago',
-  global: 'this stop',
+const DESTINATION_CITY: Record<string, string> = {
+  eiffel: 'Paris', louvre: 'Paris',
+  'cn-tower': 'Toronto', 'eaton-centre': 'Toronto', yorkdale: 'Toronto',
+  'scotiabank-arena': 'Toronto', 'rogers-centre': 'Toronto', 'u-of-t': 'Toronto',
+  rom: 'Toronto', 'trinity-bellwoods': 'Toronto', 'yonge-dundas': 'Toronto',
+  'kensington-market': 'Toronto', 'union-station-toronto': 'Toronto',
+  'st-lawrence-market': 'Toronto', 'exhibition-place': 'Toronto',
+  'nathan-phillips': 'Toronto', 'pearson-airport': 'Toronto',
+  'fairmont-royal-york': 'Toronto',
+  'big-ben': 'London', wembley: 'London', 'borough-market': 'London', heathrow: 'London',
+  'statue-liberty': 'New York', met: 'New York', 'times-square': 'New York',
+  'madison-square-garden': 'New York', 'grand-central': 'New York',
+  'chelsea-market': 'New York', 'jfk-airport': 'New York', 'central-park': 'New York',
+  giza: 'Cairo', 'christ-redeemer': 'Rio de Janeiro', 'taj-mahal': 'Agra',
+  'sydney-opera': 'Sydney', colosseum: 'Rome',
+  'burj-khalifa': 'Dubai', 'dubai-mall': 'Dubai',
+  'space-needle': 'Seattle', 'pike-place': 'Seattle',
+  'golden-gate': 'San Francisco', 'mall-america': 'Minneapolis',
+  'west-edmonton-mall': 'Edmonton', 'ala-moana': 'Honolulu',
+  sofi: 'Los Angeles', 'crypto-arena': 'Los Angeles', ucla: 'Los Angeles',
+  'hollywood-bowl': 'Los Angeles', 'la-live': 'Los Angeles',
+  'lax-airport': 'Los Angeles', disneyland: 'Los Angeles',
+  'harvard-yard': 'Boston', 'mit-dome': 'Boston',
+  'stanford-oval': 'Palo Alto', 'millennium-park': 'Chicago',
 }
 
 /** Mixed POIs the AI tours through: landmarks, malls, arenas, schools and more. */
@@ -581,16 +430,12 @@ const ENGAGEMENT_POP_MATCH_M = 400
 // happened, which is the whole takeover idea working in your favour.
 const COMMENT_RADIUS_STEP = 2
 
-function radioMarketForDestination(destination: TourDestination): string {
-  return DESTINATION_RADIO_MARKET[destination.id] ?? 'global'
-}
-
-function radioStationsForDestination(destination: TourDestination): RadioStation[] {
-  return RADIO_MARKETS[radioMarketForDestination(destination)] ?? RADIO_MARKETS.global
+function radioStationsForDestination(_destination: TourDestination): RadioStation[] {
+  return POPLUR_RADIO_CUES
 }
 
 function cityNameForDestination(destination: TourDestination): string {
-  return RADIO_MARKET_CITY[radioMarketForDestination(destination)] ?? RADIO_MARKET_CITY.global
+  return DESTINATION_CITY[destination.id] ?? 'this stop'
 }
 
 // "This area" for the pops-in-area readout: pops whose centres stand within

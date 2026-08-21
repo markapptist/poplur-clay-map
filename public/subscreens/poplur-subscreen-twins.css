@@ -2937,29 +2937,45 @@ body.embed .phone {
   80% { transform: translate(-50%, -50%); }
 }
 
+/* The colorway steppers wear the feed's clay channel-arrow art — the same
+   control the iPod's finish arrows use, so "arrows beside the handheld change
+   its look" reads identically on both devices. The up arrow rolled a quarter
+   turn points left, the down arrow points right; both keep the channel
+   buttons' press-down feel. */
 .phone-swipe-arrow {
   position: absolute;
   top: 50%;
   z-index: 12;
   transform: translateY(-50%);
-  color: rgba(255, 255, 255, 0.38);
-  font-size: 58px;
-  line-height: 1;
-  font-weight: 950;
-  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.75);
   appearance: none;
   border: 0;
   background: transparent;
-  width: 48px;
-  height: 90px;
+  width: 58px;
+  height: 58px;
+  padding: 0;
+  cursor: pointer;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.55));
+  transition: transform 0.12s ease;
+}
+
+.phone-swipe-arrow img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform: rotate(-90deg);
+  pointer-events: none;
+}
+
+.phone-swipe-arrow:active {
+  transform: translateY(-50%) scale(0.9);
 }
 
 .phone-swipe-arrow.left {
-  left: 12px;
+  left: 10px;
 }
 
 .phone-swipe-arrow.right {
-  right: 12px;
+  right: 10px;
 }
 
 .store-page {

@@ -9,6 +9,16 @@
   place-items: center;
   padding: max(10px, env(safe-area-inset-top)) 8px max(14px, env(safe-area-inset-bottom));
   overflow: hidden;
+  /* The handset is portrait inside a taller stage, so the surround shows. The
+     resting phone art (poplur_bling_phone_*.png) carries an OPAQUE BLACK
+     background baked around the device, while the boot spritesheet is
+     transparent — so before this, boot let the light app ground show and the
+     resting art then painted it black, a jarring white→black flash the instant
+     boot ended. The art's black cannot be repainted (supplied asset), so match
+     it: paint the whole stage the same black, and the boot's transparent
+     surround now falls through to it too. Surround is one flat black across
+     boot and the live screen — no flip. */
+  background: #000;
 }
 
 .device {
@@ -83,8 +93,12 @@
   pointer-events: auto;
 }
 
-.swipeLeft { left: -48px; }
-.swipeRight { right: -48px; }
+/* Flush to the stage edges, overlaying the handset's side bezel. The phone art
+   fills the width, so there is no outboard margin to sit in (an earlier -48px
+   put them off-screen on a phone-width stage); riding the edges keeps both
+   clay chevrons visible and tappable at any width. */
+.swipeLeft { left: 2px; }
+.swipeRight { right: 2px; }
 
 /* ── the LCD ──────────────────────────────────────────────────────────────
    Geometry, colours and font are the twin's: a yellow-green panel inset in
@@ -107,7 +121,10 @@
   height: 23.9%;
   overflow: hidden;
   border-radius: 2.5%;
-  background: #eff100;
+  /* Match the boot spritesheet's lit backlight exactly (sampled #d0de01) so the
+     reach list reads as the same screen the "stay connected" splash boots into,
+     not a brighter panel laid over it. */
+  background: #d0de01;
   border: 2px solid rgba(8, 26, 0, 0.62);
   color: #082901;
   font-family: Menlo, ui-monospace, SFMono-Regular, monospace;
@@ -172,8 +189,9 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-/* The Nokia inversion: the selected row is ink-filled. */
-.rowOn { background: #082901; color: #eff100; }
+/* The Nokia inversion: the selected row is ink-filled, lit in the same
+   backlight green as the panel. */
+.rowOn { background: #082901; color: #d0de01; }
 
 .rowGlyph {
   flex: 0 0 auto;
@@ -223,6 +241,32 @@
 
 .callStatus strong { font-size: 5.6cqw; }
 .callStatus span { font-size: 4cqw; }
+
+.incoming strong { animation: incomingPulse 1.2s ease-in-out infinite; }
+@keyframes incomingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.callRinging strong { animation: incomingPulse 1.6s ease-in-out infinite; }
+
+.callTimer {
+  font-size: 6cqw;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.lcdBlue {
+  background: #0044cc !important;
+  border-color: rgba(0, 20, 80, 0.7) !important;
+  color: #aaccff !important;
+  box-shadow: inset 0 0 16px rgba(0, 30, 120, 0.3) !important;
+  transition: background 0.3s, color 0.3s;
+}
+
+.lcdBlue .topline { opacity: 0.5; }
+.lcdBlue::after { border-color: rgba(100, 150, 255, 0.4) !important; }
 
 /* ── keypad ───────────────────────────────────────────────────────────────
    The twin's own hit zones, so a press lands on the key the art draws. */

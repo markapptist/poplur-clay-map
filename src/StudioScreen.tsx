@@ -9,6 +9,7 @@ import { awaitNativeUpload } from './nativeUpload'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { addPostedTrack } from './musicPosts'
 import { radiusKm } from './radiusLedger'
+import { addBroadcast, type PoplurBroadcast } from './mapRadio'
 
 // Poplur Studio — record a take, let the AI turn it into a song.
 //
@@ -67,6 +68,9 @@ const STEPS = 16
 // The take is a clip, not a session: 30 seconds, hard stop. Short enough to be
 // fearless, long enough for a hook — and exactly what the AI builder consumes.
 const MAX_TAKE_MS = 30_000
+const MAX_PODCAST_MS = 10 * 60_000
+
+const PODCAST_GENRES = ['Talk', 'Interview', 'Story', 'News', 'Culture', 'Comedy', 'Music Talk'] as const
 
 const mmssms = (ms: number) => {
   const m = Math.floor(ms / 60000)
@@ -103,7 +107,12 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   // then does the editor open — with the song and your take already on the
   // transport. Landing cold on a DAW full of empty lanes was the old, terrible
   // version of this screen.
-  const [stage, setStage] = useState<'mic' | 'style' | 'studio'>('mic')
+  const [mode, setMode] = useState<'music' | 'podcast'>('music')
+  const [stage, setStage] = useState<'choose' | 'mic' | 'style' | 'drop' | 'studio'>('choose')
+  const [podcastGenre, setPodcastGenre] = useState<string>('Talk')
+  const [aiEnhance, setAiEnhance] = useState(false)
+  const [dropping, setDropping] = useState(false)
+  const [goingLive, setGoingLive] = useState(false)
   const [songUrl, setSongUrl] = useState<string | null>(null)
   const [aiError, setAiError] = useState<string | null>(null)
   const [styleText, setStyleText] = useState('')
@@ -420,6 +429,97 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const dropPodcast = async () => {
+    if (dropping) return
+    playPop()
+    const name = title.trim()
+    if (!name) { setPublishNote('Give it a name first.'); return }
+    setPublishNote(null)
+    setDropping(true)
+    try {
+      const spot = here()
+      const broadcast: PoplurBroadcast = {
+        id: `pod-${Date.now()}`,
+        title: name,
+        artist: 'You',
+        type: 'podcast',
+        status: 'recorded',
+        lat: spot.lat,
+        lng: spot.lng,
+        audioUrl: takeUrl ?? '',
+        genre: podcastGenre,
+        listeners: 0,
+        duration: Math.round(recMs / 1000),
+        coverArt: null,
+        aiEnhanced: aiEnhance,
+      }
+      addBroadcast(broadcast)
+      if (isNativeShell()) {
+        const requestId = `podcast-${Date.now()}-${Math.floor(performance.now())}`
+        const done = awaitNativeUpload(requestId, update => {
+          setPublishNote(update.phase === 'preparing' ? 'Preparing…' : 'Uploading…')
+        })
+        postNativeEvent({
+          type: 'publishBroadcast',
+          requestId,
+          data: takeUrl ?? '',
+          title: name,
+          genre: podcastGenre,
+          duration: Math.round(recMs / 1000),
+          latitude: spot.lat,
+          longitude: spot.lng,
+          radiusKm: radiusKm(),
+          broadcastType: 'podcast',
+          aiEnhanced: aiEnhance,
+        })
+        await done
+      }
+      setPublished(true)
+      setPublishNote(isNativeShell()
+        ? 'Dropped here. Anyone in range will pick it up on their radio.'
+        : 'On this device only — publishing needs your Poplur account.')
+    } catch (error) {
+      setPublishNote(error instanceof Error ? error.message : 'Could not drop this podcast.')
+    } finally {
+      setDropping(false)
+    }
+  }
+
+  const goLive = () => {
+    playPop()
+    setGoingLive(true)
+    const spot = here()
+    const broadcast: PoplurBroadcast = {
+      id: `live-${Date.now()}`,
+      title: title.trim() || 'Live Session',
+      artist: 'You',
+      type: 'podcast',
+      status: 'live',
+      lat: spot.lat,
+      lng: spot.lng,
+      audioUrl: '',
+      genre: podcastGenre,
+      listeners: 0,
+      duration: 0,
+      coverArt: null,
+      aiEnhanced: aiEnhance,
+    }
+    addBroadcast(broadcast)
+    if (isNativeShell()) {
+      postNativeEvent({
+        type: 'startLiveBroadcast',
+        title: broadcast.title,
+        genre: podcastGenre,
+        latitude: spot.lat,
+        longitude: spot.lng,
+        radiusKm: radiusKm(),
+        aiEnhanced: aiEnhance,
+      })
+    }
+    setPublished(true)
+    setPublishNote('You are live. Anyone in range hears you now.')
+  }
+
   // Row → pitch for the roll. KEYS lists C2 down to C1; A1 = 55Hz anchors it.
   const rowHz = (row: number) => {
     const SEMIS = [24, 23, 22, 21, 20, 19, 17, 12] // C2,B1,A#1,A1,G#1,G1,F1,C1 above C0=16.35
@@ -497,24 +597,25 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, genre])
 
+  const maxRecMs = mode === 'podcast' ? MAX_PODCAST_MS : MAX_TAKE_MS
   useEffect(() => {
     if (!recording) return
+    const limit = mode === 'podcast' ? MAX_PODCAST_MS : MAX_TAKE_MS
     const from = performance.now() - recMs
     const id = window.setInterval(() => {
       const ms = performance.now() - from
-      if (ms >= MAX_TAKE_MS) {
-        // Hard stop at 30s — the counter freezing at 0:30.00 IS the affordance.
-        setRecMs(MAX_TAKE_MS)
+      if (ms >= limit) {
+        setRecMs(limit)
         stopCapture()
         setRecording(false)
-        setStage(prev => (prev === 'mic' ? 'style' : prev))
+        setStage(prev => (prev === 'mic' ? (mode === 'podcast' ? 'drop' : 'style') : prev))
         return
       }
       setRecMs(ms)
     }, 50)
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording])
+  }, [recording, mode])
 
   // The AI build, reported as real progress rather than a spinner that lies.
   useEffect(() => {
@@ -715,7 +816,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     if (recording) {
       stopCapture()
       setRecording(false)
-      setStage('style')
+      setStage(mode === 'podcast' ? 'drop' : 'style')
       return
     }
     requestAudioFocus('studio')
@@ -785,6 +886,36 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     return { bar: Math.floor(b / 4) + 1, beat: Math.floor(b % 4) + 1 }
   }, [pos, bpm])
 
+  // ── stage 0: choose mode. Music or podcast — one tap, then the mic. ──────
+  if (stage === 'choose') {
+    return (
+      <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
+        <div className={styles.styleStage}>
+          <span className={styles.styleKicker}>POPLUR STUDIO</span>
+          <h1 className={styles.styleTitle}>What are you making?</h1>
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '24px' }}>
+            <button
+              className={styles.styleGo}
+              type="button"
+              style={{ flex: 1, maxWidth: '160px' }}
+              onClick={() => { playPop(); setMode('music'); setStage('mic') }}
+            >
+              🎵 MUSIC
+            </button>
+            <button
+              className={styles.styleGo}
+              type="button"
+              style={{ flex: 1, maxWidth: '160px' }}
+              onClick={() => { playPop(); setMode('podcast'); setStage('mic') }}
+            >
+              🎙 PODCAST
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // ── stage 1: the mic. The session starts by SINGING, not by staring at
   // lanes. One button, thirty seconds, then the style question. ─────────────
   if (stage === 'mic') {
@@ -812,24 +943,37 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className={styles.micTime}>
-            {mmssms(recMs)} <span>/ 00:30.00</span>
+            {mmssms(recMs)} <span>/ {mode === 'podcast' ? '10:00.00' : '00:30.00'}</span>
           </div>
           <button className={recording ? `${styles.micBtn} ${styles.micBtnLive}` : styles.micBtn} type="button" onClick={micTap}>
             {recording ? '■ FINISH' : '● RECORD'}
           </button>
           <span className={styles.micHint}>
             {micDenied
-              ? 'Microphone refused — allow access, or skip and let the AI carry it.'
-              : recording ? 'Thirty seconds max. Make it count.' : 'Tap record and give it a hook.'}
+              ? 'Microphone refused — allow access in settings.'
+              : mode === 'podcast'
+                ? (recording ? 'Recording your podcast. Tap finish when done.' : 'Tap record to start your podcast.')
+                : (recording ? 'Thirty seconds max. Make it count.' : 'Tap record and give it a hook.')}
           </span>
-          <button className={styles.micSkip} type="button" onClick={() => {
-            playPop()
-            stopCapture(true)
-            setRecording(false)
-            setStage('style')
-          }}>
-            SKIP — NO VOCAL
-          </button>
+          {mode === 'podcast' ? (
+            <button className={styles.micSkip} type="button" onClick={() => {
+              playPop()
+              stopCapture(true)
+              setRecording(false)
+              setStage('drop')
+            }}>
+              SKIP — GO LIVE INSTEAD
+            </button>
+          ) : (
+            <button className={styles.micSkip} type="button" onClick={() => {
+              playPop()
+              stopCapture(true)
+              setRecording(false)
+              setStage('style')
+            }}>
+              SKIP — NO VOCAL
+            </button>
+          )}
         </div>
       </div>
     )
@@ -874,6 +1018,86 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             <button className={styles.styleGo} type="button" onClick={() => void generateSong(styleText)}>
               ✦ MAKE MY TRACK
             </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── stage 2b: the podcast drop. Name it, tag it, drop it on the ground. ──
+  if (stage === 'drop') {
+    return (
+      <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
+        <div className={styles.styleStage}>
+          <span className={styles.styleKicker}>POPLUR PODCAST</span>
+          <h1 className={styles.styleTitle}>Drop your podcast</h1>
+          <div className={styles.chips}>
+            {PODCAST_GENRES.map(g => (
+              <button
+                key={g}
+                className={`${styles.chip}${podcastGenre === g ? ` ${styles.chipOn}` : ''}`}
+                type="button"
+                aria-pressed={podcastGenre === g}
+                onClick={() => { playPop(); setPodcastGenre(g) }}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+          <input
+            className={styles.styleInput}
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="Name this podcast"
+            maxLength={80}
+            aria-label="Podcast name"
+            onFocus={() => window.requestAnimationFrame(() => window.scrollTo(0, 0))}
+            onBlur={() => window.requestAnimationFrame(() => window.scrollTo(0, 0))}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', margin: '12px 0' }}>
+            <span style={{ color: 'var(--poplur-ink, #ccc)', fontSize: '13px' }}>AI RADIO VOICE</span>
+            <button
+              className={`${styles.toggle}${aiEnhance ? ` ${styles.toggleOn}` : ''}`}
+              type="button"
+              role="switch"
+              aria-checked={aiEnhance}
+              aria-label="AI radio enhancement"
+              onClick={() => { playPop(); setAiEnhance(v => !v) }}
+            >
+              <span className={styles.knob} />
+            </button>
+            <span style={{ color: 'var(--poplur-ink, #888)', fontSize: '11px', opacity: 0.7 }}>costs credits</span>
+          </div>
+          {publishNote && (
+            <div className={styles.publishNote} role="status" aria-live="polite">{publishNote}</div>
+          )}
+          {published ? (
+            <div style={{ textAlign: 'center', color: 'var(--poplur-ink, #aaa)', fontSize: '13px', marginTop: '8px' }}>
+              {publishNote}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '16px' }}>
+              {takeUrl && (
+                <button
+                  className={styles.styleGo}
+                  type="button"
+                  style={{ flex: 1, maxWidth: '180px' }}
+                  onClick={() => void dropPodcast()}
+                  disabled={dropping}
+                >
+                  {dropping ? 'Dropping…' : '📍 DROP HERE'}
+                </button>
+              )}
+              <button
+                className={styles.styleGo}
+                type="button"
+                style={{ flex: 1, maxWidth: '180px' }}
+                onClick={goLive}
+                disabled={goingLive || published}
+              >
+                {goingLive ? 'Going live…' : '🔴 GO LIVE'}
+              </button>
+            </div>
           )}
         </div>
       </div>

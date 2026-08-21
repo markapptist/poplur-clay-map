@@ -1,6 +1,7 @@
 import { isGateMuted, onGateChange } from './audioGate'
 import { holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { musicShelf } from './musicPosts'
 
 /** Where we last looked for a station, so a dead stream can be replaced. */
 let lastTuneCoords: { lat: number; lng: number } | null = null
@@ -155,11 +156,176 @@ export function setRadioMasterVolume(value: number) {
   setRadioLevel(targetRadioLevel, 0.08)
 }
 
-// ── Live radio: REAL music via Radio Browser (radio-browser.info) ──────────
-// Free, keyless, open directory of ~50k real internet stations, geo-searchable
-// — the map tunes an actual local station for wherever the camera lands. The
-// synth bed stays as the instant-on fallback and ducks to a whisper while a
-// live stream is playing.
+// ── Poplur Radio: broadcasts and music from artists in your area ────────────
+// No generic internet stations. The radio tunes Poplur content — live podcasts,
+// recorded sessions, and music tracks dropped at locations by artists. The synth
+// bed plays between broadcasts and when nothing is nearby.
+
+export interface PoplurBroadcast {
+  id: string
+  title: string
+  artist: string
+  type: 'podcast' | 'music'
+  status: 'live' | 'recorded'
+  lat: number
+  lng: number
+  audioUrl: string
+  genre: string
+  listeners: number
+  duration: number
+  coverArt: string | null
+  aiEnhanced: boolean
+  distanceKm?: number
+}
+
+const BROADCAST_SHELF_KEY = 'poplur.broadcasts.v1'
+const BROADCAST_CHANGE_EVENT = 'poplur-broadcasts-change'
+
+function readBroadcastShelf(): PoplurBroadcast[] {
+  try {
+    const raw = window.localStorage.getItem(BROADCAST_SHELF_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function writeBroadcastShelf(broadcasts: PoplurBroadcast[]) {
+  try { window.localStorage.setItem(BROADCAST_SHELF_KEY, JSON.stringify(broadcasts)) } catch {}
+  try { window.dispatchEvent(new Event(BROADCAST_CHANGE_EVENT)) } catch {}
+}
+
+export function addBroadcast(broadcast: PoplurBroadcast): PoplurBroadcast {
+  const shelf = readBroadcastShelf().filter(b => b.id !== broadcast.id)
+  shelf.unshift(broadcast)
+  if (shelf.length > 100) shelf.length = 100
+  writeBroadcastShelf(shelf)
+  return broadcast
+}
+
+export function removeBroadcast(id: string) {
+  writeBroadcastShelf(readBroadcastShelf().filter(b => b.id !== id))
+}
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371, toRad = (v: number) => (v * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1)
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(h))
+}
+
+let pendingBroadcastCallbacks: Map<string, (broadcasts: PoplurBroadcast[]) => void> = new Map()
+let broadcastCallbackId = 0
+
+function queryBroadcastsViaBridge(
+  lat: number, lng: number, radiusM: number, signal?: AbortSignal,
+): Promise<PoplurBroadcast[]> {
+  return new Promise(resolve => {
+    const cbId = `bc_${++broadcastCallbackId}`
+    const timeout = window.setTimeout(() => {
+      pendingBroadcastCallbacks.delete(cbId)
+      resolve([])
+    }, 8000)
+    if (signal) signal.addEventListener('abort', () => {
+      window.clearTimeout(timeout)
+      pendingBroadcastCallbacks.delete(cbId)
+      resolve([])
+    }, { once: true })
+    pendingBroadcastCallbacks.set(cbId, (broadcasts) => {
+      window.clearTimeout(timeout)
+      resolve(broadcasts)
+    })
+    postNativeEvent({ type: 'poplurBroadcasts', latitude: lat, longitude: lng, radiusM, callbackId: cbId })
+  })
+}
+
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, unknown>).__poplurBroadcastsResult = (
+    callbackId: string, data: unknown[],
+  ) => {
+    const cb = pendingBroadcastCallbacks.get(callbackId)
+    pendingBroadcastCallbacks.delete(callbackId)
+    if (!cb) return
+    const broadcasts: PoplurBroadcast[] = (Array.isArray(data) ? data : []).flatMap(raw => {
+      const r = raw as Record<string, unknown>
+      if (!r || typeof r.id !== 'string' || typeof r.audioUrl !== 'string') return []
+      return [{
+        id: r.id as string,
+        title: (r.title as string) || 'Untitled',
+        artist: (r.artist as string) || 'Poplur creator',
+        type: r.type === 'podcast' ? 'podcast' : 'music' as const,
+        status: r.status === 'live' ? 'live' : 'recorded' as const,
+        lat: Number(r.lat) || 0,
+        lng: Number(r.lng) || 0,
+        audioUrl: r.audioUrl as string,
+        genre: (r.genre as string) || 'Various',
+        listeners: Number(r.listeners) || 0,
+        duration: Number(r.duration) || 0,
+        coverArt: typeof r.coverArt === 'string' ? r.coverArt : null,
+        aiEnhanced: !!r.aiEnhanced,
+      }]
+    })
+    cb(broadcasts)
+  }
+}
+
+async function discoverBroadcasts(
+  lat: number, lng: number, radiusM: number, signal?: AbortSignal,
+): Promise<PoplurBroadcast[]> {
+  const radiusKmLimit = radiusM / 1000
+
+  // Music tracks from the shelf that have coordinates and a playable URL
+  const musicBroadcasts: PoplurBroadcast[] = musicShelf()
+    .filter(t => t.coords && t.source && t.source.kind === 'upload')
+    .map(t => {
+      const [lng2, lat2] = t.coords!
+      return {
+        id: t.id,
+        title: t.title,
+        artist: t.postedBy || t.artist,
+        type: 'music' as const,
+        status: 'recorded' as const,
+        lat: lat2,
+        lng: lng2,
+        audioUrl: (t.source as { kind: 'upload'; url: string }).url,
+        genre: t.mood || 'Music',
+        listeners: 0,
+        duration: t.duration,
+        coverArt: null,
+        aiEnhanced: false,
+        distanceKm: haversineKm(lat, lng, lat2, lng2),
+      }
+    })
+    .filter(b => b.distanceKm! <= radiusKmLimit)
+
+  // Podcast/broadcast posts from localStorage
+  const localBroadcasts = readBroadcastShelf()
+    .map(b => ({ ...b, distanceKm: haversineKm(lat, lng, b.lat, b.lng) }))
+    .filter(b => b.distanceKm <= radiusKmLimit)
+
+  // In native shell, also query Firestore via bridge
+  let remoteBroadcasts: PoplurBroadcast[] = []
+  if (isNativeShell() && !signal?.aborted) {
+    remoteBroadcasts = await queryBroadcastsViaBridge(lat, lng, radiusM, signal)
+    remoteBroadcasts = remoteBroadcasts
+      .map(b => ({ ...b, distanceKm: haversineKm(lat, lng, b.lat, b.lng) }))
+      .filter(b => b.distanceKm! <= radiusKmLimit)
+  }
+
+  // Merge, deduplicate by id, sort: live first, then by distance
+  const seen = new Set<string>()
+  const all: PoplurBroadcast[] = []
+  for (const b of [...remoteBroadcasts, ...localBroadcasts, ...musicBroadcasts]) {
+    if (seen.has(b.id)) continue
+    seen.add(b.id)
+    all.push(b)
+  }
+  all.sort((a, b) => {
+    if (a.status === 'live' && b.status !== 'live') return -1
+    if (b.status === 'live' && a.status !== 'live') return 1
+    return (a.distanceKm ?? 0) - (b.distanceKm ?? 0)
+  })
+  return all
+}
+
 let liveAudio: HTMLAudioElement | null = null
 let liveStation: { name: string; url: string } | null = null
 let liveFadeTimer: number | null = null
@@ -186,11 +352,8 @@ export function onLiveStationChange(listener: (name: string | null) => void): ()
   return () => window.removeEventListener(RADIO_STATION_EVENT, handler)
 }
 
-const RADIO_BROWSER_HOSTS = [
-  'https://de1.api.radio-browser.info',
-  'https://fi1.api.radio-browser.info',
-  'https://nl1.api.radio-browser.info',
-]
+// Discovery radii: start local, widen until something is on air
+const DISCOVERY_RINGS_M = [5_000, 25_000, 100_000, 500_000, 2_000_000]
 
 async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -749,58 +912,34 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
 
 export async function tuneLiveRadio(lat: number, lng: number): Promise<string | null> {
   if (typeof window === 'undefined') return null
-  // Remembered so a station that dies later can be replaced without waiting
-  // for the map to move.
   lastTuneCoords = { lat, lng }
   const generation = ++liveTuneGeneration
   liveTuneAbort?.abort()
   const tuneAbort = new AbortController()
   liveTuneAbort = tuneAbort
-  const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
-  // Keep widening until something real is on air: your own town first, then the
-  // next city out, then the region. A single fixed radius left listeners in
-  // silence wherever no station happened to sit inside 90 km.
-  const RINGS_M = [30_000, 90_000, 250_000, 600_000, 1_500_000]
   try {
-  for (const radius of RINGS_M) {
-  for (const host of hosts) {
-    try {
-      const res = await fetchWithTimeout(
-        `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=${radius}&hidebroken=true&order=clickcount&reverse=true&limit=24`,
-        {},
-        5000,
-        tuneAbort.signal,
-      )
-      if (!res.ok) continue
-      const found = (await res.json()) as Array<{
-        name?: string; url_resolved?: string; codec?: string; bitrate?: number
-      }>
-      if (generation !== liveTuneGeneration) return null // a newer tune superseded us
-      const good = found.filter(st =>
-        typeof st.url_resolved === 'string' &&
-        st.url_resolved.startsWith('https://') && // mixed-content safe in the WebView
-        /mp3|aac/i.test(st.codec ?? '') &&
-        ((st.bitrate ?? 0) === 0 || (st.bitrate ?? 0) >= 96), // quality floor; 0 = unreported
-      )
-      if (!good.length) continue
-      const pick = good[Math.floor(Math.random() * Math.min(5, good.length))]
+    for (const radius of DISCOVERY_RINGS_M) {
+      if (tuneAbort.signal.aborted) return null
+      const broadcasts = await discoverBroadcasts(lat, lng, radius, tuneAbort.signal)
+      if (generation !== liveTuneGeneration) return null
+      const playable = broadcasts.filter(b => b.audioUrl.startsWith('https://'))
+      if (!playable.length) continue
+      const pick = playable[0]
       const audio = getLiveAudio()
       if (!audio) return null
-      liveStation = { name: (pick.name ?? '').trim() || 'local radio', url: pick.url_resolved! }
+      const label = pick.type === 'podcast'
+        ? `${pick.title} — ${pick.artist}`
+        : `${pick.artist} — ${pick.title}`
+      liveStation = { name: label, url: pick.audioUrl }
       publishLiveStation()
-      audio.src = pick.url_resolved!
+      audio.src = pick.audioUrl
       if (soundWanted) {
         setRadioLevel(targetRadioLevel, 0.5)
         tryPlayLiveRadio()
       }
       return liveStation.name
-    } catch {
-      if (tuneAbort.signal.aborted) return null
-      // Network error — try the next mirror.
     }
-  }
-  }
-  return null
+    return null
   } finally {
     if (liveTuneAbort === tuneAbort) liveTuneAbort = null
   }
@@ -960,49 +1099,10 @@ export interface LocalStation {
   listeners: number
   /** km from you — the station's transmitter, so "intercepting" is literal */
   distanceKm: number
-  source?: 'radio' | 'soundcloud'
+  source?: 'poplur'
 }
 
-const SOUNDCLOUD_PLAYLISTS = [
-  { key: 'electronic', name: 'Buzzing Electronic', genre: 'Electronic', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-electronic' },
-  { key: 'indie', name: 'Buzzing Indie', genre: 'Indie', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-indie' },
-  { key: 'rock', name: 'Buzzing Rock', genre: 'Rock', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-rock' },
-  { key: 'metal', name: 'Buzzing Metal', genre: 'Metal', url: 'https://soundcloud.com/buzzing-playlists/sets/buzzing-metal' },
-] as const
-
-async function listSoundCloudStations(signal?: AbortSignal): Promise<LocalStation[]> {
-  const stations = await Promise.all(SOUNDCLOUD_PLAYLISTS.map(async playlist => {
-    let logo: string | null = null
-    let name: string = playlist.name
-    try {
-      const response = await fetchWithTimeout(
-        `https://soundcloud.com/oembed?format=json&url=${encodeURIComponent(playlist.url)}`,
-        { cache: 'force-cache' },
-        5000,
-        signal,
-      )
-      if (response.ok) {
-        const metadata = await response.json() as { title?: string; thumbnail_url?: string }
-        name = metadata.title?.replace(/\s+by\s+New!$/i, '') || name
-        logo = metadata.thumbnail_url?.startsWith('https://') ? metadata.thumbnail_url : null
-      }
-    } catch { /* playlist remains usable without its artwork */ }
-    return {
-      id: `soundcloud-${playlist.key}`,
-      name,
-      genre: playlist.genre,
-      bitrate: 0,
-      url: playlist.url,
-      logo,
-      listeners: 0,
-      distanceKm: 0,
-      source: 'soundcloud' as const,
-    }
-  }))
-  return stations
-}
-
-/** Every station whose signal reaches where you are, nearest first. */
+/** Every broadcast whose signal reaches where you are, nearest first. */
 export async function listLocalStations(
   lat: number,
   lng: number,
@@ -1011,67 +1111,27 @@ export async function listLocalStations(
 ): Promise<LocalStation[]> {
   if (typeof window === 'undefined') return []
   if (signal?.aborted) return []
-  const hosts = [...RADIO_BROWSER_HOSTS].sort(() => Math.random() - 0.5)
-  const soundCloudPromise = listSoundCloudStations(signal)
-  const radii = [...new Set([radiusM, 300_000, 900_000, 1_500_000])]
-  let radioStations: LocalStation[] = []
+  const radii = [...new Set([radiusM, 500_000, 2_000_000])]
   for (const radius of radii) {
-  for (const host of hosts) {
     if (signal?.aborted) return []
-    try {
-      const res = await fetchWithTimeout(
-        `${host}/json/stations/search?geo_lat=${lat}&geo_long=${lng}&geo_distance=${radius}`
-        + '&hidebroken=true&order=clickcount&reverse=true&limit=60',
-        {},
-        6000,
-        signal,
-      )
-      if (!res.ok) continue
-      const found = (await res.json()) as Array<{
-        stationuuid?: string; name?: string; url_resolved?: string; codec?: string
-        bitrate?: number; tags?: string; geo_lat?: number; geo_long?: number
-        favicon?: string; clickcount?: number; votes?: number
-      }>
-      const km = (a: number, b: number, c: number, d: number) => {
-        const R = 6371, toRad = (v: number) => (v * Math.PI) / 180
-        const dLat = toRad(c - a), dLng = toRad(d - b)
-        const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a)) * Math.cos(toRad(c)) * Math.sin(dLng / 2) ** 2
-        return 2 * R * Math.asin(Math.sqrt(h))
-      }
-      radioStations = found
-        .filter(st => typeof st.url_resolved === 'string'
-          && st.url_resolved.startsWith('https://')   // mixed content is blocked in the WebView
-          && /mp3|aac/i.test(st.codec ?? ''))
-        .map(st => ({
-          id: st.stationuuid ?? st.url_resolved!,
-          name: (st.name ?? '').trim() || 'Unnamed station',
-          genre: (st.tags ?? '').split(',')[0]?.trim() || 'Various',
-          bitrate: st.bitrate ?? 0,
-          url: st.url_resolved!,
-          logo: st.favicon && st.favicon.startsWith('https://') ? st.favicon : null,
-          listeners: Math.max(st.clickcount ?? 0, st.votes ?? 0),
-          distanceKm: st.geo_lat != null && st.geo_long != null
-            ? +km(lat, lng, st.geo_lat, st.geo_long).toFixed(1)
-            : 0,
-          source: 'radio' as const,
-        }))
-        .sort((a, b) => a.distanceKm - b.distanceKm)
-      if (radioStations.length) break
-    } catch {
-      if (signal?.aborted) return []
-      // Mirror down — try the next.
-    }
+    const broadcasts = await discoverBroadcasts(lat, lng, radius, signal)
+    if (signal?.aborted) return []
+    if (!broadcasts.length) continue
+    return broadcasts.map(b => ({
+      id: b.id,
+      name: b.type === 'podcast'
+        ? `${b.title} — ${b.artist}`
+        : `${b.artist} — ${b.title}`,
+      genre: b.genre,
+      bitrate: 0,
+      url: b.audioUrl,
+      logo: b.coverArt,
+      listeners: b.listeners,
+      distanceKm: b.distanceKm ?? 0,
+      source: 'poplur' as const,
+    }))
   }
-  if (radioStations.length) break
-  }
-  const soundCloud = await soundCloudPromise
-  if (signal?.aborted) return []
-  if (!radioStations.length) return soundCloud
-  // SoundCloud discoveries interrupt the geographic dial instead of living in
-  // a separate app. Local signals remain the majority and the first result.
-  const combined = [...radioStations]
-  soundCloud.forEach((station, index) => combined.splice(Math.min(combined.length, 2 + index * 5), 0, station))
-  return combined
+  return []
 }
 
 /** Tune a specific station picked from the dial. */

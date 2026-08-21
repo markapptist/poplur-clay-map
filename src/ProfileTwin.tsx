@@ -736,6 +736,7 @@ export default function ProfileTwin({
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
   const [captureSource, setCaptureSource] = useState<CaptureSource>('camera')
+  const [cameraRollThumb, setCameraRollThumb] = useState<{ kind: 'photo' | 'video'; src: string } | null>(null)
   const [savingPhoto, setSavingPhoto] = useState(false)
   const [selfieRecording, setSelfieRecording] = useState(false)
   const [selfieSecondsLeft, setSelfieSecondsLeft] = useState(SELFIE_DURATION_SECONDS)
@@ -927,6 +928,21 @@ export default function ProfileTwin({
       window.removeEventListener('poplur-native-profile', receiveProfile)
     }
   }, [])
+
+  useEffect(() => {
+    if (!capturing || !isNativeShell()) return
+    const receiveCameraRollThumb = (event: Event) => {
+      const detail = (event as CustomEvent<{ kind: 'photo' | 'video'; src: string }>).detail
+      if (detail?.src && detail?.kind) {
+        setCameraRollThumb(detail)
+      }
+    }
+    window.addEventListener('poplur-camera-roll-thumb', receiveCameraRollThumb)
+    postNativeEvent({ type: 'requestMostRecentCameraRollItem' })
+    return () => {
+      window.removeEventListener('poplur-camera-roll-thumb', receiveCameraRollThumb)
+    }
+  }, [capturing])
 
   // The previous web Profile always rendered the seeded POSTS constant, even
   // though native uploaders had successfully written the owner's real posts to
@@ -1654,7 +1670,16 @@ export default function ProfileTwin({
         </div>
         {captureSource === 'camera' && <div className={styles.vfRing} />}
         <div className={styles.captureBar}>
-          <div className={styles.captureSpacer} aria-hidden="true" />
+          {captureSource === 'camera' && cameraRollThumb && (
+            <button
+              className={styles.cameraRollThumb}
+              onClick={() => { playPop(); setCaptureSource('library') }}
+              aria-label="Switch to camera roll"
+            >
+              <img src={cameraRollThumb.src} alt="Most recent" />
+            </button>
+          )}
+          {captureSource === 'camera' && !cameraRollThumb && <div className={styles.captureSpacer} aria-hidden="true" />}
           {captureSource === 'camera' ? (
             <div className={`${styles.captureAction} ${styles.captureActionPrimary}`}>
               <ClayCornerButton kind="capture" label="Record 10 second selfie" onPress={recordSelfie} size={108} activateOnClick />
@@ -1663,7 +1688,8 @@ export default function ProfileTwin({
               </span>
             </div>
           ) : <div className={styles.captureLibraryHint}>{savingPhoto ? 'SAVING SELFIE VIDEO' : 'TAP A VIDEO'}</div>}
-          <div className={styles.captureSpacer} aria-hidden="true" />
+          {captureSource === 'camera' && cameraRollThumb && <div className={styles.captureSpacer} aria-hidden="true" />}
+          {captureSource === 'camera' && !cameraRollThumb && <div className={styles.captureSpacer} aria-hidden="true" />}
         </div>
       </div>
     )
@@ -1896,11 +1922,16 @@ export default function ProfileTwin({
                 src={photo}
                 alt=""
                 draggable="false"
-                onError={() => {
+                onError={e => {
                   if (photo.startsWith('data:')) {
                     console.warn('[ProfileTwin] photo data URI failed to load — this should not happen')
                   } else {
-                    setPhoto(null)
+                    const img = e.currentTarget
+                    const attempt = Number(img.dataset.retry ?? '0')
+                    if (attempt < 2) {
+                      img.dataset.retry = String(attempt + 1)
+                      setTimeout(() => { img.src = photo }, 800 * (attempt + 1))
+                    }
                   }
                 }}
               />

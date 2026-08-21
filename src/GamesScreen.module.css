@@ -526,6 +526,28 @@
   .stationPause:active { transform: scale(.7); }
 }
 
+/* ── FPS exit button (top-left, small) ───────────────────────────────────── */
+.fpsExit {
+  position: absolute;
+  z-index: 12;
+  top: max(14px, env(safe-area-inset-top));
+  left: 14px;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  color: rgba(255, 255, 255, 0.8);
+  font: 700 15px/1 system-ui, sans-serif;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+.fpsExit:active { opacity: 1; transform: scale(0.9); }
+
 @keyframes launchGrow { from { width: 0; } to { width: 100%; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 

@@ -39,6 +39,7 @@ export default function ClayChannelArrows({
   downLabel = 'Channel down',
   size = 176,
   orientation = 'vertical',
+  single,
 }: {
   number: number
   /** replaces the channel number outright — the camera pages are not channels,
@@ -56,14 +57,21 @@ export default function ClayChannelArrows({
    *  clay, turned on its side: the map uses it UNDER the pop to step between
    *  pops, where up/down would read as altitude rather than "next one". */
   orientation?: 'vertical' | 'horizontal'
+  /** One chevron alone, for controls that flank a device (the iPod's finish
+   *  arrows sit one per side, like the phone's). The SAME clay, lighting and
+   *  press-glow — only the pair layout and the label are dropped. 'up' is the
+   *  first arrow of the pair (left when horizontal), 'down' the second. */
+  single?: 'up' | 'down'
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [rendererState, setRendererState] = useState<'mounting' | 'ready' | 'failed'>('mounting')
   const horizontal = orientation === 'horizontal'
   // The box is the same clay either way, just laid the other way round: the
-  // long side follows the direction the arrows point.
-  const boxW = horizontal ? size : Math.round(size / 2)
-  const boxH = horizontal ? Math.round(size / 2) : size
+  // long side follows the direction the arrows point. A single chevron gets a
+  // square box: half the pair's long side, so `size` keeps meaning what it
+  // meant and one arrow lands the same pixel size it had inside the pair.
+  const boxW = single ? Math.round(size / 2) : horizontal ? size : Math.round(size / 2)
+  const boxH = single ? Math.round(size / 2) : horizontal ? Math.round(size / 2) : size
   const width = boxW
   // pressed pulse targets per arrow, read by the render loop
   const pulse = useRef({ up: 0, down: 0 })
@@ -184,17 +192,27 @@ export default function ClayChannelArrows({
     const SPREAD = horizontal ? 2.95 : 1.28
     const up = new THREE.Mesh(geo, matUp)
     const down = new THREE.Mesh(geo, matDown)
-    if (horizontal) {
-      up.position.set(-SPREAD, 0, 0)
-      down.position.set(SPREAD, 0, 0)
+    if (single) {
+      // One chevron, centered. Both meshes exist so the draw loop's pulse and
+      // material paths stay identical; only the chosen one joins the scene.
+      up.position.set(0, 0, 0)
+      down.position.set(0, 0, 0)
+      scene.add(single === 'up' ? up : down)
     } else {
-      up.position.set(0, SPREAD, 0)
-      down.position.set(0, -SPREAD, 0)
+      if (horizontal) {
+        up.position.set(-SPREAD, 0, 0)
+        down.position.set(SPREAD, 0, 0)
+      } else {
+        up.position.set(0, SPREAD, 0)
+        down.position.set(0, -SPREAD, 0)
+      }
+      scene.add(up, down)
     }
-    scene.add(up, down)
 
     let raf = 0
-    const baseScale = horizontal ? 1.9 : 1
+    // A lone chevron fills its square the way a pair member fills its half of
+    // the long box; 1.55 lands the same apparent size at the same `size`.
+    const baseScale = single ? 1.55 : horizontal ? 1.9 : 1
 
     // A fixed 3/4 pose: a downward tilt reveals the top faces and a steady yaw
     // swings the extruded sides into the light, so the depth reads as 3D
@@ -257,7 +275,7 @@ export default function ClayChannelArrows({
       matDown.dispose()
       releaseWebGL(renderer)
     }
-  }, [size, width, horizontal])
+  }, [size, width, horizontal, single])
 
   const press = (dir: 'up' | 'down', handler: () => void) => {
     // The clay arrows ALWAYS pop on press, whatever the press does
@@ -282,8 +300,9 @@ export default function ClayChannelArrows({
           silently swapped the real buttons for something that only resembled
           them. If the context is lost the canvas simply stays empty for the
           moment it takes the home watchdog to remount the clay renderer. */}
-      {/* the channel number — or, on the camera, what the roll has selected */}
-      <span
+      {/* the channel number — or, on the camera, what the roll has selected.
+          A lone chevron has no gap to frame a number in, so it carries none. */}
+      {!single && <span
         style={{
           position: 'absolute',
           top: '50%',
@@ -300,10 +319,10 @@ export default function ClayChannelArrows({
         }}
       >
         {label ?? number}
-      </span>
+      </span>}
       {/* Recording tell: centered in the channel buttons and modeled as a
           rounded clay light, with a lit crown and a soft cast shadow. */}
-      {dot && (
+      {dot && !single && (
         <span
           aria-hidden="true"
           style={{
@@ -322,25 +341,29 @@ export default function ClayChannelArrows({
           }}
         />
       )}
-      {/* transparent hit areas */}
-      <button
+      {/* transparent hit areas — a single chevron is one full-box target */}
+      {single !== 'down' && <button
         type="button"
         data-poplur-channel-control="up"
         onPointerDown={() => press('up', onUp)}
         aria-label={upLabel}
-        style={horizontal
-          ? { position: 'absolute', top: 0, left: 0, height: '100%', width: '42%', background: 'transparent', border: 0, cursor: 'pointer' }
-          : { position: 'absolute', top: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
-      />
-      <button
+        style={single
+          ? { position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }
+          : horizontal
+            ? { position: 'absolute', top: 0, left: 0, height: '100%', width: '42%', background: 'transparent', border: 0, cursor: 'pointer' }
+            : { position: 'absolute', top: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
+      />}
+      {single !== 'up' && <button
         type="button"
         data-poplur-channel-control="down"
         onPointerDown={() => press('down', onDown)}
         aria-label={downLabel}
-        style={horizontal
-          ? { position: 'absolute', top: 0, right: 0, height: '100%', width: '42%', background: 'transparent', border: 0, cursor: 'pointer' }
-          : { position: 'absolute', bottom: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
-      />
+        style={single
+          ? { position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }
+          : horizontal
+            ? { position: 'absolute', top: 0, right: 0, height: '100%', width: '42%', background: 'transparent', border: 0, cursor: 'pointer' }
+            : { position: 'absolute', bottom: 0, left: 0, width: '100%', height: '42%', background: 'transparent', border: 0, cursor: 'pointer' }}
+      />}
     </div>
   )
 }

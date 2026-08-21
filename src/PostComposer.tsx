@@ -6,6 +6,7 @@ import { CHANNELS } from './FeedTwin'
 import { playPop } from './pop'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { setPendingAICompose, setPendingMapPost, type PendingMapPost } from './cameraStore'
+import { dropNewsMessage, type NewsMediaAttachment } from './newsMessages'
 import VideoEditor from './VideoEditor'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import VFXStudio, {
@@ -60,6 +61,7 @@ export interface PublishedPost {
   caption: string
   usedAI: boolean
   target?: ComposerTarget
+  destination: 'feed' | 'tv'
 }
 
 export type PostComposerStep = 'edit' | 'effects' | 'choice' | 'ai' | 'channel'
@@ -353,6 +355,7 @@ export default function PostComposer({
     setPublishing(true)
     setUploadProgress(null)
     setUploadPhaseState('preparing')
+    const destination = caption.trim() ? 'feed' as const : 'tv' as const
     const post: PublishedPost = {
       media,
       filterId,
@@ -363,6 +366,7 @@ export default function PostComposer({
       caption,
       usedAI,
       target: target && { ...target, radiusKm },
+      destination,
     }
     try {
       // The app shell owns the account, Firebase Storage and the posts write
@@ -402,8 +406,23 @@ export default function PostComposer({
           latitude: target?.lat,
           longitude: target?.lng,
           radiusKm: target ? radiusKm : undefined,
+          destination,
         })
         await uploadResult
+        if (caption.trim() && target) {
+          const attachment: NewsMediaAttachment = {
+            kind: media.kind,
+            src: media.src,
+            poster: media.kind === 'video' ? (previewStill ?? undefined) : undefined,
+          }
+          dropNewsMessage({
+            body: caption.trim(),
+            lat: target.lat,
+            lng: target.lng,
+            radiusKm,
+            media: [attachment],
+          })
+        }
         onPosted?.(post)
         setPosted(true)
         window.setTimeout(onClose, 1800)
@@ -712,6 +731,11 @@ export default function PostComposer({
             placeholder="Add a caption…"
             onChange={e => setCaption(e.target.value)}
           />
+          <p className={styles.destinationHint}>
+            {caption.trim()
+              ? '→ Posting to News Feed'
+              : '→ Posting to TV'}
+          </p>
           {target && (
             <label className={styles.radiusRow}>
               <span>Claim radius <b>{radiusKm.toFixed(1)} km</b></span>

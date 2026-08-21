@@ -250,6 +250,19 @@ let callWith = '';
 let callError = '';
 let callIncoming = null;  // { callId, callerId }
 let callWatching = false;
+/**
+ * ICE candidates that arrived before the remote description was set.
+ *
+ * The answer and the candidates come over two INDEPENDENT Firestore listeners,
+ * so candidates routinely land first — especially on a fast local network. The
+ * first version dropped those, with a comment calling it harmless. It is not:
+ * a dropped candidate is never re-offered, and losing the early ones is losing
+ * exactly the host candidates that would have connected two devices on the same
+ * Wi-Fi. The call sat on "Connecting…" forever.
+ */
+let callPendingCandidates = [];
+/** The description already applied, so a repeated snapshot is not re-applied. */
+let callRemoteSdp = '';
 
 function callBridge(message) {
   if (window.parent === window) return false;
@@ -360,6 +373,8 @@ function endCall() {
   }
   callPeer = null;
   callLocalStream = null;
+  callPendingCandidates = [];
+  callRemoteSdp = '';
   callId = '';
   callState = 'idle';
   callWith = '';
@@ -403,7 +418,17 @@ async function handleCallMessage(data) {
     }
     case 'poplurCallDescription': {
       if (!callPeer || data.callId !== callId) return true;
+      // The doc listener fires on EVERY snapshot of the call, so the same
+      // answer arrives more than once; re-applying it throws once the
+      // connection is stable.
+      if (data.sdp === callRemoteSdp) return true;
+      callRemoteSdp = data.sdp;
       await callPeer.setRemoteDescription({ type: data.sdpType, sdp: data.sdp });
+      // Everything that queued up while we waited can go in now, in order.
+      for (const candidate of callPendingCandidates) {
+        try { await callPeer.addIceCandidate(candidate); } catch { /* stale */ }
+      }
+      callPendingCandidates = [];
       if (data.sdpType === 'offer') {
         const answer = await callPeer.createAnswer();
         await callPeer.setLocalDescription(answer);
@@ -414,9 +439,13 @@ async function handleCallMessage(data) {
     }
     case 'poplurCallCandidate': {
       if (!callPeer || data.callId !== callId) return true;
-      // A candidate arriving before the remote description is normal; adding
-      // it then throws, and dropping it is the correct, harmless response.
-      try { await callPeer.addIceCandidate(data.candidate); } catch { /* too early */ }
+      // Before the remote description exists there is nothing to attach a
+      // candidate to, so hold it rather than throw it away.
+      if (!callRemoteSdp) {
+        callPendingCandidates.push(data.candidate);
+        return true;
+      }
+      try { await callPeer.addIceCandidate(data.candidate); } catch { /* stale */ }
       return true;
     }
     case 'poplurCallEnded': {
@@ -3068,8 +3097,8 @@ function phoneScreen() {
   const colorway = currentPhoneColorway();
   return `
     <div class="ios-screen phone-page">
-      <button type="button" class="phone-swipe-arrow left" data-phone-step="-1" aria-label="Previous phone colorway">‹</button>
-      <button type="button" class="phone-swipe-arrow right" data-phone-step="1" aria-label="Next phone colorway">›</button>
+      <button type="button" class="phone-swipe-arrow left" data-phone-step="-1" aria-label="Previous phone colorway"><img src="${A.up}" alt=""></button>
+      <button type="button" class="phone-swipe-arrow right" data-phone-step="1" aria-label="Next phone colorway"><img src="${A.down}" alt=""></button>
       <div class="popular-phone-device">
         <img class="phone-resting" src="${colorway.rest}" alt="">
         <div class="phone-boot-frame" style="background-image:url('${colorway.boot}')"></div>

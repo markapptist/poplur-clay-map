@@ -1393,3 +1393,81 @@
 :global(html[data-poplur-thermal='critical']) .coolingCue {
   display: block;
 }
+
+/* ── Incoming call banner ──────────────────────────────────────────────── */
+.incomingCallBanner {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top, 12px));
+  left: 8px;
+  right: 8px;
+  z-index: 850;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(40, 40, 42, 0.92);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.12) inset;
+  color: #fff;
+  animation: callBannerSlide 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: auto;
+}
+
+@keyframes callBannerSlide {
+  from { transform: translateY(-120%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.incomingCallInfo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.incomingCallInfo svg { flex: 0 0 auto; color: #34c759; }
+
+.incomingCallInfo div { min-width: 0; }
+
+.incomingCallInfo strong {
+  display: block;
+  font: 600 15px/1.2 system-ui, -apple-system, sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.incomingCallInfo span {
+  display: block;
+  font: 400 13px/1.3 system-ui, -apple-system, sans-serif;
+  opacity: 0.7;
+}
+
+.incomingCallActions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.incomingDecline,
+.incomingAccept {
+  border: 0;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font: 600 14px/1 system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.incomingDecline {
+  background: #ff3b30;
+  color: #fff;
+}
+
+.incomingAccept {
+  background: #34c759;
+  color: #fff;
+}

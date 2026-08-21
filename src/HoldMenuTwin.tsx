@@ -14,6 +14,7 @@ import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
 import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
+import MailScreen from './MailScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
@@ -113,18 +114,18 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   ],
   profile: [
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', glyph: 'P', home: true },
-    { icon: 'Mail', title: 'MAIL', screen: 'profile-messages' },
+    { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', native: true },
     { icon: 'Store', title: 'STORE', screen: 'profile-store' },
-    // A real screen now, not a Rough Copy capture: who you can call is a live
-    // radius question in both directions, and a picture of a phone cannot
-    // answer it.
-    // NOT `native: true`. That flag routed the tile to the React PhoneScreen,
-    // which is a reduced rewrite showing only the reach list — no menu, no
-    // Contacts, no Texts, no theme cycling. The real phone is the subscreen
-    // twin, and it already has all of that plus the native address book
-    // (requestPhoneContacts). Flipping this one flag took the whole handset
-    // away; flipping it back restores it.
-    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
+    // The React PhoneScreen, not the Rough Copy twin: who you can call is a
+    // live radius question in both directions, and a static capture cannot
+    // answer it or place a call. `native: true` routes this tile to
+    // PhoneScreen (see renderSubscreen), which draws the reach list from the
+    // native address book (requestPhoneContacts) and cycles colourways with
+    // the same clay channel arrows the home view uses. On the web preview,
+    // where no bridge answers, it falls back to the world board so the handset
+    // is still browsable and callable. The trade against the twin is the
+    // Contacts/Texts submenu, which the reach list supersedes.
+    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone', native: true },
     // No NOTIFICATIONS tile: the bell on the profile already opens the sheet,
     // and it is on screen the whole time this menu takes two gestures to reach.
     // The `poplur-open-notifications` event it used to fire is still listened
@@ -246,6 +247,9 @@ export default function HoldMenuTwin({
   wheelOverNonce = 0,
   bindGoBack,
   bindArrows,
+  incomingCall,
+  onAcceptCall,
+  onDeclineCall,
 }: {
   tab: CubeTab
   /** `dismiss` = the person waved the wheel away (empty-space tap, cube tap,
@@ -285,6 +289,9 @@ export default function HoldMenuTwin({
   /** Registers the channel arrows while a subscreen is up, so up/down walks
       the tab's subscreens instead of the screen buried underneath them. */
   bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
+  incomingCall?: import('./PhoneScreen').IncomingCall | null
+  onAcceptCall?: (call: import('./PhoneScreen').IncomingCall) => void
+  onDeclineCall?: (call: import('./PhoneScreen').IncomingCall) => void
 }) {
   // The item set is fixed to the tab the menu was opened from.
   const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).map(item => {
@@ -311,6 +318,7 @@ export default function HoldMenuTwin({
   // sprite bake and for screenshotting a single screen: several hold-menu
   // screens are several wheel turns deep, and driving that wheel from a script
   // is far more brittle than naming the screen you want.
+  const [autoCall, setAutoCall] = useState<{ id: string; name: string } | null>(null)
   const [activeScreen, setActiveScreen] = useState<Item | null>(() => {
     if (typeof window === 'undefined') return null
     // The resume prop and the URL parameter share one lookup: a screen id in,
@@ -876,7 +884,23 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'profile-phone') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur phone">
-          <PhoneScreen onClose={() => { playPop(); onClose() }} />
+          <PhoneScreen onClose={() => { setAutoCall(null); playPop(); onClose() }} autoCall={autoCall} incomingCall={incomingCall} onAcceptCall={onAcceptCall} onDeclineCall={onDeclineCall} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-messages') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Mail">
+          <MailScreen
+            onClose={() => { playPop(); onClose() }}
+            onCallViaPhone={(id, name) => {
+              const phoneTile = items.find(it => it.screen === 'profile-phone')
+              if (phoneTile) {
+                setAutoCall({ id, name })
+                setActiveScreen(phoneTile)
+              }
+            }}
+          />
         </div>
       )
     }
