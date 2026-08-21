@@ -109,6 +109,12 @@
   animation: tabFade 260ms ease both;
 }
 
+/* ...except while the LAYER itself is travelling. Two animations over the same
+   content read as a wash rather than a push: the child was fading 0 → 1 on its
+   own clock at the same time the layer slid, which is most of why the movement
+   was hard to see at all. The push already carries its own opacity ramp. */
+.pushUp > *, .pushDown > *, .pushLeft > *, .pushRight > * { animation: none; }
+
 @keyframes tabFade {
   from { opacity: 0; }
   to { opacity: 1; }

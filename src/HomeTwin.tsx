@@ -2572,22 +2572,47 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const pushTimer = useRef<number | null>(null)
   /** which transition the in-flight screen change is playing */
   const screenAnimMode = useRef<ScreenTransition>('fade')
-  const pushScreen = (dir: 1 | -1, axis: 'x' | 'y' = 'y') => {
-    // Both modes animate. `fade` used to return here, which made it mean "no
-    // transition" — so half the setting was a no-op and the feature looked
-    // absent unless you happened to pick the other one.
-    screenAnimMode.current = screenTransition()
+  /** A TAB change's push has to wait for the new screen to exist.
+   *  `committedTab` lags `activeTab` by MAP_SETTLE_MS plus the mount itself,
+   *  so firing at swipe time ran the entire 260ms animation on an EMPTY layer
+   *  — measured: layer opacity ramping 1 → 0 → 0.79 with no child at all, and
+   *  the screen finally arriving a second later to do its own flat fade. The
+   *  direction was always right; nothing was in the box while it travelled.
+   *  A CHANNEL change keeps the same screen mounted and only moves what is
+   *  inside it, so that one still plays immediately. */
+  const pendingPushRef = useRef<{ dir: 1 | -1; axis: 'x' | 'y' } | null>(null)
+
+  const runPush = (dir: 1 | -1, axis: 'x' | 'y') => {
     if (pushTimer.current !== null) window.clearTimeout(pushTimer.current)
     setPushAxis(axis)
     setPushDir(0)
     // A frame between clear and set, or React coalesces them and the animation
     // never restarts on a repeated press in the same direction.
-    // governor-ok: single-frame separator fired once per channel press — not a loop, cannot re-arm, nothing runs at idle
+    // governor-ok: single-frame separator fired once per navigation — not a loop, cannot re-arm, nothing runs at idle
     requestAnimationFrame(() => {
       setPushDir(dir)
       pushTimer.current = window.setTimeout(() => { setPushDir(0); pushTimer.current = null }, 300)
     })
   }
+
+  const pushScreen = (dir: 1 | -1, axis: 'x' | 'y' = 'y') => {
+    // Both modes animate. `fade` used to return here, which made it mean "no
+    // transition" — so half the setting was a no-op and the feature looked
+    // absent unless you happened to pick the other one.
+    screenAnimMode.current = screenTransition()
+    if (axis === 'x') { pendingPushRef.current = { dir, axis }; return }
+    runPush(dir, axis)
+  }
+
+  // The deferred half: play the tab push the moment its screen is on screen.
+  useEffect(() => {
+    const pending = pendingPushRef.current
+    if (!pending) return
+    pendingPushRef.current = null
+    runPush(pending.dir, pending.axis)
+    // runPush is stable enough for this: it only touches refs and setState.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [committedTab])
 
   // The tab-change effect is declared ABOVE pushScreen, so it cannot call it
   // directly without hoisting the whole thing. A ref is the smaller change and
