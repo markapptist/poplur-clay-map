@@ -1105,7 +1105,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
    * the same vector, so the two move together instead of the cube sliding over
    * a screen that merely swapped.
    */
-  const cubeSwapVec = useRef<{ x: 0 | 1 | -1; y: 0 | 1 | -1 }>({ x: 1, y: 0 })
+  // STATE, not a ref. The value was read fresh into an inline CSS custom
+  // property on every render, and this component re-renders constantly for
+  // reasons that have nothing to do with the cube (counters, timers, feed
+  // ticks). Every one of those incidental renders pushed whatever the ref
+  // held at that instant into --cube-swap-x/y — and the keyframes read that
+  // property LIVE via var(), so a re-render mid-animation silently bent an
+  // already-playing swap onto a different axis or sign. That is exactly what
+  // "moves in the wrong direction, sometimes" looks like: not a sign bug, a
+  // race between how busy the component happened to be and how far into its
+  // 125-320ms animation the swap was. State only changes when a swap
+  // deliberately starts (every writer already triggers a render via
+  // cubeSwapPhase/nudgeDir), so an incidental render now reproduces the exact
+  // same value and the DOM attribute is a no-op write instead of a live one.
+  const [cubeSwapVec, setCubeSwapVec] = useState<{ x: 0 | 1 | -1; y: 0 | 1 | -1 }>({ x: 1, y: 0 })
   const [cubeSwapPhase, setCubeSwapPhase] = useState<'idle' | 'exit' | 'waiting' | 'enter'>('idle')
   /** A navigation that moves the screen but does NOT change the cube's object.
    *  Non-zero for the length of one directional nudge; the axis comes from
@@ -1564,8 +1577,25 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // decide who may read or write a thread, so there is nothing to validate
     // here that would not be a second, weaker copy of that.
     const onDMRequested = (event: Event) => {
-      const detail = (event as CustomEvent<Record<string, unknown>>).detail
-      if (!detail || typeof detail.type !== 'string') return
+      const rawDetail = (event as CustomEvent<Record<string, unknown>>).detail
+      if (!rawDetail || typeof rawDetail.type !== 'string') return
+      // The address book wants REACH as well as history, and the radius lives
+      // out here — the ledger is the web's, and the phone is a page inside a
+      // page with no access to it. Carry it on the request rather than making
+      // the native side guess at a radius or keep its own copy in step.
+      let detail = rawDetail
+      if (rawDetail.type === 'requestPhoneContacts') {
+        const where = (window as unknown as {
+          __poplurNativeLocation?: { latitude?: unknown; longitude?: unknown }
+        }).__poplurNativeLocation
+        const lat = Number(where?.latitude)
+        const lng = Number(where?.longitude)
+        detail = {
+          ...rawDetail,
+          radiusKm: radiusKm(),
+          ...(Number.isFinite(lat) && Number.isFinite(lng) ? { latitude: lat, longitude: lng } : {}),
+        }
+      }
       if (!isNativeShell() || !postNativeEvent(detail)) {
         // No bridge (a browser): answer the inbox request with nothing so the
         // page stops waiting and keeps its preview seed.
