@@ -2337,13 +2337,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // live→create→games→studio→live and VIDEO, PHOTO and ROLL became
   // unreachable going forward. Now an open ring subscreen is simply the
   // ring's current stop: stepping off it closes the menu and lands on the
-  // neighbouring mode, so all seven stops cycle in both directions, always.
-  // ROLL was documented as the ring's third stop ("all seven stops cycle in
-  // both directions") but was never actually in this array — stepping past
-  // VIDEO always jumped straight to LIVE, and the only way onto ROLL was the
-  // hold-menu tile, not the arrows. Landing here reads as "photo, video,
-  // (live/create/games/studio all run together), restart" — the missing stop.
-  const CAMERA_CYCLE = ['photo', 'video', 'roll', 'live', 'create', 'games', 'studio'] as const
+  // neighbouring mode, so every stop cycles in both directions, always.
+  //
+  // photo -> video -> the camera's subscreens -> repeat. ROLL and LIVE came
+  // OUT of the ring: the roll is the camera's own second page (the cube walks
+  // up to it), and going live is a thing you do while filming, not a stop you
+  // arrive at — it is a control on the video screen now. Leaving them in made
+  // the arrows walk through two capture modes that are not destinations before
+  // reaching anything that is.
+  const CAMERA_CYCLE = ['photo', 'video', 'create', 'games', 'studio'] as const
   const CAMERA_CYCLE_SCREEN = {
     create: 'camera-ai-chat',
     games: 'feed-games',
@@ -2357,7 +2359,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
     const openRing = holdOpen && cubeScreen ? CAMERA_STOP_BY_SCREEN[cubeScreen] ?? null : null
-    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? (onRoll ? 'roll' : cameraCaptureMode)
+    // The roll is the camera's second PAGE, not a stop on the ring. Stepping
+    // while it is up leaves it and resumes the ring from the capture mode you
+    // were in — so the arrows always walk photo / video / subscreens, whatever
+    // page you happened to be looking at.
+    // 'live' is not a ring stop — it is something you start while filming, so
+    // for the purpose of stepping it IS the video screen.
+    const mode = cameraCaptureMode === 'live' ? 'video' : cameraCaptureMode
+    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? mode
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
@@ -3111,6 +3120,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )}
         {mainSurfaceVisible && committedTab === 'post' && (
           <Camera
+            captureMode={cameraCaptureMode}
             // The translucent wheel is controls over the live lens, not a new
             // heavyweight screen. Keep the preview alive behind it; a real
             // Hold destination flips overlayOpen and unmounts Camera entirely.

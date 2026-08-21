@@ -203,6 +203,7 @@ function clampZoom(value: number, range: CameraZoomRange): number {
 // plainly unavailable and offers a retry instead of pretending a still is live.
 export default function Camera({
   step = 0,
+  captureMode = 'photo',
   surfaceVisible = true,
   onCloseRoll,
   onOpenRoll,
@@ -220,6 +221,10 @@ export default function Camera({
   onFlashChange,
 }: {
   step?: number
+  /** Which capture the tab is set to. LIVE is a thing you do while FILMING, so
+   *  its control only exists on the video screen — on the photo screen it was
+   *  offering a broadcast from a camera that was not rolling. */
+  captureMode?: 'photo' | 'video' | 'live'
   /** False while Home keeps this pager mounted behind its hold menu. */
   surfaceVisible?: boolean
   onCloseRoll?: () => void
@@ -1679,15 +1684,20 @@ export default function Camera({
             shader-text says "you're about to broadcast" faster than an icon
             would. Same gradient-clip-text technique as the zoom presets,
             just red; a faster, brighter pulse marks actually being on air. */}
-        <button
-          type="button"
-          className={onAir ? `${styles.camLiveTextBtn} ${styles.camLiveTextBtnOn}` : styles.camLiveTextBtn}
-          aria-label={onAir ? 'End live broadcast' : 'Go live'}
-          aria-pressed={onAir}
-          onClick={toggleLive}
-        >
-          LIVE
-        </button>
+        {/* Video only — see captureMode. Kept mounted while ON AIR regardless,
+            because the control that ends a broadcast must never disappear
+            because the mode moved underneath it. */}
+        {(captureMode === 'video' || captureMode === 'live' || onAir) && (
+          <button
+            type="button"
+            className={onAir ? `${styles.camLiveTextBtn} ${styles.camLiveTextBtnOn}` : styles.camLiveTextBtn}
+            aria-label={onAir ? 'End live broadcast' : 'Go live'}
+            aria-pressed={onAir}
+            onClick={toggleLive}
+          >
+            LIVE
+          </button>
+        )}
         {/* Camera roll, promoted from a floating bottom-left button into this
             rail so it reads as one of the camera's own controls instead of a
             stray tile. Shows the latest shot from this session as its own
