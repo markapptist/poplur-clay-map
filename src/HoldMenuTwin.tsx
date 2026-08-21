@@ -127,7 +127,13 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // A real screen now, not a Rough Copy capture: who you can call is a live
     // radius question in both directions, and a picture of a phone cannot
     // answer it.
-    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone', native: true },
+    // NOT `native: true`. That flag routed the tile to the React PhoneScreen,
+    // which is a reduced rewrite showing only the reach list — no menu, no
+    // Contacts, no Texts, no theme cycling. The real phone is the subscreen
+    // twin, and it already has all of that plus the native address book
+    // (requestPhoneContacts). Flipping this one flag took the whole handset
+    // away; flipping it back restores it.
+    { icon: 'Phone', title: 'PHONE', screen: 'profile-phone' },
     // No NOTIFICATIONS tile: the bell on the profile already opens the sheet,
     // and it is on screen the whole time this menu takes two gestures to reach.
     // The `poplur-open-notifications` event it used to fire is still listened
