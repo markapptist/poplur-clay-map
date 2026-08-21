@@ -1670,15 +1670,6 @@ export default function Camera({
           size={44}
           onToggle={() => setArOpen(open => !open)}
         />
-        {/* The camera roll, on the camera. It used to be a hold-menu tile two
-            gestures away; it is a side button now, and it still rises from the
-            bottom of the page rather than opening as a screen of its own. */}
-        <ClayCornerButton
-          kind="roll"
-          size={44}
-          label="Camera roll"
-          onPress={() => onOpenRoll?.()}
-        />
         {/* …and going live, which is an act performed on the camera you are
             already pointing. Lit red for as long as you are on air; pressing
             it again ends the broadcast. */}
@@ -1771,6 +1762,17 @@ export default function Camera({
           })}
         </div>
       )}
+      <button
+        type="button"
+        className={styles.camRollBtn}
+        aria-label="Camera roll"
+        onClick={() => { playPop(); onOpenRoll?.() }}
+      >
+        <svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+          <rect x="2" y="2" width="24" height="24" rx="4" fill="rgba(255,255,255,0.18)" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" />
+          <rect x="6" y="6" width="16" height="16" rx="2" fill="rgba(255,255,255,0.28)" />
+        </svg>
+      </button>
     </section>
   )
 

@@ -2332,7 +2332,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // unreachable going forward. Now an open ring subscreen is simply the
   // ring's current stop: stepping off it closes the menu and lands on the
   // neighbouring mode, so all seven stops cycle in both directions, always.
-  const CAMERA_CYCLE = ['photo', 'video', 'roll', 'live', 'create', 'games', 'studio'] as const
+  const CAMERA_CYCLE = ['photo', 'video', 'live', 'create', 'games', 'studio'] as const
   const CAMERA_CYCLE_SCREEN = {
     create: 'camera-ai-chat',
     games: 'feed-games',
@@ -2346,33 +2346,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
     const openRing = holdOpen && cubeScreen ? CAMERA_STOP_BY_SCREEN[cubeScreen] ?? null : null
-    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? (onRoll ? 'roll' : cameraCaptureMode)
+    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? (onRoll ? 'photo' : cameraCaptureMode)
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
     if (next === 'create' || next === 'games' || next === 'studio') {
-      // Leaving the roll first, same as any other stop past it, so re-entering
-      // the viewfinder later does not still show it.
       if (onRoll) setCameraStep(step => step + 1)
       setResume(current => ({ screen: CAMERA_CYCLE_SCREEN[next], n: current.n + 1 }))
       setHoldOpen(true)
       return
     }
-    // Stepping OFF a ring subscreen back onto a viewfinder stop: close the
-    // menu and forget the page, exactly what landing on the walker's door
-    // does — otherwise returning to this tab later resumes the subscreen the
-    // arrows deliberately walked away from.
     if (openRing) {
       lastOpenSubscreenRef.current = null
       writeLastScreen(activeTabLiveRef.current, null)
       setResume(current => ({ screen: null, n: current.n }))
       setHoldOpen(false)
     }
-    if (next === 'roll') {
-      if (!onRoll) setCameraStep(step => step + 1)
-      return
-    }
-    // Leaving the roll closes it, so the viewfinder is what the next mode arms.
     if (onRoll) setCameraStep(step => step + 1)
     setCameraCaptureMode(next)
   }

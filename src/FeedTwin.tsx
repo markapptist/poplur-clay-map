@@ -1822,6 +1822,7 @@ export default function FeedTwin({
               >
                 <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
                   {post?.user ?? ch.user}
+                  <svg viewBox="0 0 22 22" width="12" height="12" className={styles.verifyBadge} aria-label="Verified"><circle cx="11" cy="11" r="10" fill="#3b82f6" /><path d="M7 11.5l2.5 2.5 5.5-5.5" stroke="#fff" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </div>
                 <span className={`${styles.reachText} ${styles.feedReach}`} aria-hidden="true">
                   {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
