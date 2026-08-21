@@ -80,8 +80,14 @@
 
 .stage {
   position: relative;
-  flex: 0 0 auto;
-  height: 42vh;
+  /* A percentage flex-basis resolves against .studio's own box, whatever
+     that box is — a real phone viewport, or a desktop-sized device frame in
+     a review harness. `vh` was used here before and measures the actual
+     browser viewport instead, which is the real device screen on a phone
+     but breaks out to the full desktop window's height inside a harness
+     that draws a phone-sized box on a much taller page — pushing the
+     header/Done button far off-screen instead of pinning them at the top. */
+  flex: 0 0 42%;
   min-height: 200px;
   max-height: 340px;
   overflow: hidden;
