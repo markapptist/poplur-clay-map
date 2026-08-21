@@ -54,17 +54,19 @@ function bootUrl(set: string): string {
 const BOOT_FRAMES = 16
 const BOOT_FRAME_MS = 112
 
-/** Left%, top%, width%, height% — recalibrated for the cropped (object-fit:
- *  cover) case art. Row tops are compressed slightly off their raw geometric
- *  conversion (which pushed the bottom row past the frame edge) so all four
- *  rows stay fully on-screen and non-overlapping; still ordered top-to-bottom
- *  matching the physical keys. */
+/** Left%, top%, width%, height% — MEASURED off the artwork (1024x1536), now
+ *  that the container carries the art's own ratio and a percentage means the
+ *  same thing at every size. The three key columns sit at x 240/432/626 with a
+ *  150px width; the four rows at y 954/1052/1152/1254. Hit targets are padded
+ *  about a percent past the painted oval, which is comfortable for a thumb and
+ *  still short of the 6.5% row pitch, so no two keys overlap. */
 const KEYS: Array<[key: string, left: number, top: number, w: number, h: number]> = [
-  ['1', 6.8, 67.9, 24.9, 7], ['2', 37.6, 67.9, 24.9, 7], ['3', 68.3, 67.9, 24.9, 7],
-  ['4', 6.8, 75.9, 24.9, 7], ['5', 37.6, 75.9, 24.9, 7], ['6', 68.3, 75.9, 24.9, 7],
-  ['7', 6.8, 84.0, 24.9, 7], ['8', 37.6, 84.0, 24.9, 7], ['9', 68.3, 84.0, 24.9, 7],
-  ['*', 6.8, 92.0, 24.9, 7], ['0', 37.6, 92.0, 24.9, 7], ['#', 68.3, 92.0, 24.9, 7],
-  ['5', 34.6, 51.3, 30.7, 10.2],
+  ['1', 22.4, 61.2, 16.7, 5.8], ['2', 41.2, 61.2, 16.7, 5.8], ['3', 60.1, 61.2, 16.7, 5.8],
+  ['4', 22.4, 67.6, 16.7, 6.0], ['5', 41.2, 67.6, 16.7, 6.0], ['6', 60.1, 67.6, 16.7, 6.0],
+  ['7', 22.4, 74.1, 16.7, 6.0], ['8', 41.2, 74.1, 16.7, 6.0], ['9', 60.1, 74.1, 16.7, 6.0],
+  ['*', 22.4, 80.7, 16.7, 5.5], ['0', 41.2, 80.7, 16.7, 5.5], ['#', 60.1, 80.7, 16.7, 5.5],
+  // The centre of the navigation cluster, above the keypad — select.
+  ['5', 37.0, 50.5, 26.0, 8.5],
 ]
 
 interface Contact {

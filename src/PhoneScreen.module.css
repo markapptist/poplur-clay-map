@@ -12,28 +12,46 @@
     radial-gradient(120% 44% at 50% 0%, rgba(246, 59, 154, 0.14), transparent 60%),
     linear-gradient(180deg, #14101b 0%, #0c0912 52%, #08060d 100%);
   overflow: hidden;
+  /* A SIZE container, so .device can be sized from the stage's own box. This
+     screen renders inside the phone twin as often as a real viewport, so vh/vw
+     would measure the wrong thing entirely. */
+  container-type: size;
 }
 
 .device {
+  /* The box IS the artwork. Everything below is placed as a percentage of this
+     element, so unless it has the art's own proportions those percentages point
+     at nothing in particular — which is exactly what went wrong. */
+  /* The box IS the artwork's rectangle, at any stage size.
+     Two earlier attempts failed for instructive reasons: `height:100%` with an
+     aspect-ratio is a DEFINITE size that beats max-width, so the device came
+     out 605px wide inside a 430px phone; and shrink-wrapping the img made its
+     own `max-height:100%` resolve against a box the img was sizing, which is
+     circular and collapsed to 0x0.
+     min() against the stage's container units has neither problem: it picks
+     whichever of width-limited or height-limited is smaller, and the ratio then
+     gives the other side exactly. */
   position: relative;
-  width: 100%;
-  height: 100%;
-  max-height: 100%;
-  display: flex;
+  width: min(100cqw, calc(100cqh * 1024 / 1536));
+  aspect-ratio: 1024 / 1536;
+  display: block;
+  container-type: inline-size;
 }
 
 .rest {
-  /* The case art (1024x1536) is proportionally wider than this stage, so a
-     plain contain-fit leaves ~125px of dead space above and below it. Cover
-     fills the stage exactly and crops only the outer bezel edges — verified
-     the LCD (25-74.6% of source width) and every key sit well inside the
-     15.8-84.2% band that survives the crop. .lcd/.keys below are recalibrated
-     to this cropped mapping, not the old letterboxed one. */
+  /* `object-fit: cover` was the bug. Cover CROPS by an amount that depends on
+     the stage's aspect ratio, so the artwork's real rectangle stopped matching
+     this element's box — and every percentage below was measured against the
+     crop as it happened to fall on ONE screen. On a taller phone the crop
+     differs and the LCD lands off the device entirely, which is the yellow
+     panel floating behind the handset.
+     The container now carries the art's ratio, so the image fills it exactly
+     and a percentage means the same thing at every size. */
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: center;
-  display: block;
+  /* The box already carries the art's ratio, so fill and contain agree. */
+  object-fit: fill;
   user-select: none;
   -webkit-user-drag: none;
 }
@@ -89,22 +107,16 @@
    Geometry, colours and font are the twin's: a yellow-green panel inset in
    the shell with a dotted inner rule. Everything the phone says goes here. */
 .lcd {
-  /* MEASURED from the artwork, not copied from the twin.
-     The twin's numbers (24.5/18/51.2/18.2) were tuned against its own layout,
-     and here they left the panel too SHORT: the art has a screen of its own
-     baked in — a world map and "stay connected." — so the uncovered strip below
-     kept showing it and the phone read as having two screens stacked.
-     These come from sampling the LCD's own colour across all ten colourway
-     renders, nine of which agree to within a tenth of a percent. (Gold and
-     emerald disagree only because a yellow or green BODY answers a naive
-     yellow test; the rule that separates them is blue near zero with R and G
-     close, which is the LCD and not a jewelled shell.) */
+  /* MEASURED off the artwork itself: the LCD's yellow-green field runs
+     x 254..767 and y 286..653 on the 1024x1536 source. That lands within a
+     third of a percent of the twin's original numbers — which were right all
+     along; what broke them was the cover-crop above, not the geometry. */
   position: absolute;
   z-index: 4;
-  left: 13.4%;
-  top: 4.3%;
-  width: 72.6%;
-  height: 34.7%;
+  left: 24.80%;
+  top: 18.62%;
+  width: 50.10%;
+  height: 23.89%;
   overflow: hidden;
   border-radius: 2.5%;
   background: #eff100;
