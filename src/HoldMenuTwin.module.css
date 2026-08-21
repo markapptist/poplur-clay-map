@@ -41,7 +41,13 @@
   background: var(--poplur-ground, #08040a);
   /* a plain fade reads far calmer than the old slide+scale, which made every
      sub-screen feel like it was being thrown at you */
-  animation: subscreenIn 0.34s cubic-bezier(0.22, 0.9, 0.24, 1) both;
+  /* 26%, not the tabs' 14%. A tab push moves the whole visible screen — feed
+     video, the profile grid — against a different screen, so 14% reads. This
+     stage is TRANSPARENT over the menu it came from, so the only thing that
+     appears to move is the subscreen's own panel, and the same 14% was easy to
+     miss entirely on a phone. Matching the number was the wrong kind of
+     consistency: what should match is how legible the motion IS. */
+  animation: subscreenIn 0.38s cubic-bezier(0.22, 0.9, 0.24, 1) both;
 }
 
 /* Games run full-bleed (position/inset) so the game itself fills the screen,
@@ -145,8 +151,8 @@
   from {
     opacity: 0;
     transform: translate3d(
-      calc(var(--poplur-push-axis-x, 0) * var(--poplur-push-dir, 1) * 14%),
-      calc(var(--poplur-push-axis-y, 1) * var(--poplur-push-dir, 1) * 14%), 0);
+      calc(var(--poplur-push-axis-x, 0) * var(--poplur-push-dir, 1) * 26%),
+      calc(var(--poplur-push-axis-y, 1) * var(--poplur-push-dir, 1) * 26%), 0);
   }
   to { opacity: 1; transform: none; }
 }
