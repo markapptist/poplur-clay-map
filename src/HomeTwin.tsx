@@ -1063,7 +1063,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       const dir: 1 | -1 = swiped && Date.now() - swiped.at < 2500
         ? swiped.dir
         : next ? 1 : -1
-      cubeSwapVec.current = { x: 0, y: dir }
+      setCubeSwapVec({ x: 0, y: dir })
       pushScreenRef.current?.(dir, 'y')
     }
     cubeScreenRef.current = next
@@ -2684,7 +2684,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
    *  them, not a second navigation model. */
   const verticalSwipe = (dir: 1 | -1) => {
     navDirRef.current = { dir, at: Date.now() }
-    cubeSwapVec.current = { x: 0, y: dir }
+    setCubeSwapVec({ x: 0, y: dir })
     if (nudgeTimer.current !== null) window.clearTimeout(nudgeTimer.current)
     setNudgeDir(0)
     // A frame between clear and set, or React coalesces them and a repeat
@@ -2936,7 +2936,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (from >= 0 && to >= 0) {
       const forward = (to - from + TAB_ORDER.length) % TAB_ORDER.length
       const dir: 1 | -1 = forward <= TAB_ORDER.length / 2 ? 1 : -1
-      cubeSwapVec.current = { x: dir, y: 0 }
+      setCubeSwapVec({ x: dir, y: 0 })
       // The screen goes the same way. Tab changes used to animate the cube and
       // leave the content to snap, which is what read as "no transition".
       pushScreenRef.current?.(dir, 'x')
@@ -3384,8 +3384,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       >
         <div
           style={{
-            ['--cube-swap-x' as string]: cubeSwapVec.current.x,
-            ['--cube-swap-y' as string]: cubeSwapVec.current.y,
+            ['--cube-swap-x' as string]: cubeSwapVec.x,
+            ['--cube-swap-y' as string]: cubeSwapVec.y,
           }}
           className={photoPopping
             ? `${styles.cubePhotoPop} ${styles.cubeFloat}`

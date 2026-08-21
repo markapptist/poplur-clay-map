@@ -1188,27 +1188,35 @@
    right through the ring) and --cube-swap-y a page change inside a channel
    (up and down). Exactly one of them is ever non-zero, so the cube slides
    along the axis the move actually happened on. */
+/* Blur rides the same two phases: sharp at rest, blurred at full speed
+   (mid-exit / mid-enter), sharp again once parked or arrived. That mid-speed
+   peak is what reads as motion blur rather than a defocus effect — a blur
+   that were still climbing at 100% would look like the cube arrived out of
+   focus instead of having been moving fast. governor-ok: one-shot, 125-185ms,
+   transform+opacity+filter only, no idle loop. */
 @keyframes cubeSwapSlideExit {
-  0%   { transform: translate3d(0, 0, 0) scale3d(1, 1, 1); opacity: 1; }
+  0%   { transform: translate3d(0, 0, 0) scale3d(1, 1, 1); opacity: 1; filter: blur(0px); }
+  55%  { filter: blur(7px); }
   100% { transform: translate3d(
            calc(var(--cube-swap-x, 1) * -46%),
-           calc(var(--cube-swap-y, 0) * -46%), 0) scale3d(0.86, 0.86, 1); opacity: 0; }
+           calc(var(--cube-swap-y, 0) * -46%), 0) scale3d(0.86, 0.86, 1); opacity: 0; filter: blur(3px); }
 }
 
 @keyframes cubeSwapSlideEnter {
   0%   { transform: translate3d(
            calc(var(--cube-swap-x, 1) * 46%),
-           calc(var(--cube-swap-y, 0) * 46%), 0) scale3d(0.86, 0.86, 1); opacity: 0; }
+           calc(var(--cube-swap-y, 0) * 46%), 0) scale3d(0.86, 0.86, 1); opacity: 0; filter: blur(7px); }
+  45%  { filter: blur(6px); }
   72%  { transform: translate3d(
            calc(var(--cube-swap-x, 1) * -3%),
-           calc(var(--cube-swap-y, 0) * -3%), 0) scale3d(1.02, 1.02, 1); opacity: 1; }
-  100% { transform: translate3d(0, 0, 0) scale3d(1, 1, 1); opacity: 1; }
+           calc(var(--cube-swap-y, 0) * -3%), 0) scale3d(1.02, 1.02, 1); opacity: 1; filter: blur(1px); }
+  100% { transform: translate3d(0, 0, 0) scale3d(1, 1, 1); opacity: 1; filter: blur(0px); }
 }
 
 .cubeSlideExit {
   transform-origin: 50% 50%;
   animation: cubeSwapSlideExit 125ms cubic-bezier(.4, 0, .9, .4) both;
-  will-change: transform, opacity;
+  will-change: transform, opacity, filter;
   backface-visibility: hidden;
   translate: 0 0;
 }
@@ -1227,6 +1235,7 @@
       calc(var(--cube-swap-x, 1) * 46%),
       calc(var(--cube-swap-y, 0) * 46%), 0) scale3d(0.86, 0.86, 1);
   opacity: 0;
+  filter: blur(7px);
   backface-visibility: hidden;
   translate: 0 0;
 }
@@ -1234,7 +1243,7 @@
 .cubeSlideEnter {
   transform-origin: 50% 50%;
   animation: cubeSwapSlideEnter 185ms cubic-bezier(.16, 1, .3, 1) both;
-  will-change: transform, opacity;
+  will-change: transform, opacity, filter;
   backface-visibility: hidden;
   translate: 0 0;
 }
@@ -1248,17 +1257,17 @@
    --cube-swap-* pair, smaller throw because nothing is actually leaving.
    Transform-only and one-shot, so it composites and cannot run at idle. */
 @keyframes cubeNudge {
-  0%   { transform: translate3d(0, 0, 0) scale3d(1, 1, 1); }
+  0%   { transform: translate3d(0, 0, 0) scale3d(1, 1, 1); filter: blur(0px); }
   38%  { transform: translate3d(
            calc(var(--cube-swap-x, 0) * -13%),
-           calc(var(--cube-swap-y, 0) * -13%), 0) scale3d(0.955, 0.955, 1); }
-  100% { transform: translate3d(0, 0, 0) scale3d(1, 1, 1); }
+           calc(var(--cube-swap-y, 0) * -13%), 0) scale3d(0.955, 0.955, 1); filter: blur(3px); }
+  100% { transform: translate3d(0, 0, 0) scale3d(1, 1, 1); filter: blur(0px); }
 }
 
 .cubeNudge {
   transform-origin: 50% 50%;
   animation: cubeNudge 320ms cubic-bezier(.22, .72, .24, 1) both;
-  will-change: transform;
+  will-change: transform, filter;
   backface-visibility: hidden;
   translate: 0 0;
 }
@@ -1303,32 +1312,44 @@
 
 .screenFade { animation: poplurScreenFade 220ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
 
-.pushUp    { animation: poplurPushUp 260ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
-.pushDown  { animation: poplurPushDown 260ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
+.pushUp    { animation: poplurPushUp 340ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
+.pushDown  { animation: poplurPushDown 340ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
 /* Horizontal twins, for a TAB change. The screen moves the way the cube does —
    a cube sliding right over a screen that only cross-faded was the thing that
-   read as "the screen is just being replaced". Same 14% and same curve as the
-   vertical pair so the two axes feel like one motion. */
-.pushLeft  { animation: poplurPushLeft 260ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
-.pushRight { animation: poplurPushRight 260ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
+   read as "the screen is just being replaced". Same curve as the vertical
+   pair so the two axes feel like one motion.
+   The travel used to be 14% — barely a nudge, and with opacity fading in
+   over the same span it read as a fade with a slight offset, not a push.
+   This is the incoming layer only (the outgoing one is swapped out by React
+   before it mounts, nothing to animate out), so the whole "obviously pushed"
+   read has to come from this one layer's entrance: it now travels the full
+   width/height, off-screen edge to rest, with a small overshoot-and-settle
+   at the end (same shape as the cube's own slide-enter) so it visibly
+   *arrives* rather than merely fades up. */
+.pushLeft  { animation: poplurPushLeft 340ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
+.pushRight { animation: poplurPushRight 340ms cubic-bezier(0.22, 0.9, 0.24, 1) both; }
 
 @keyframes poplurPushLeft {
-  0%   { transform: translate3d(14%, 0, 0); opacity: 0; }
-  100% { transform: translate3d(0, 0, 0);   opacity: 1; }
+  0%   { transform: translate3d(100%, 0, 0); opacity: 0.5; }
+  78%  { transform: translate3d(-2%, 0, 0);  opacity: 1; }
+  100% { transform: translate3d(0, 0, 0);    opacity: 1; }
 }
 
 @keyframes poplurPushRight {
-  0%   { transform: translate3d(-14%, 0, 0); opacity: 0; }
-  100% { transform: translate3d(0, 0, 0);    opacity: 1; }
+  0%   { transform: translate3d(-100%, 0, 0); opacity: 0.5; }
+  78%  { transform: translate3d(2%, 0, 0);    opacity: 1; }
+  100% { transform: translate3d(0, 0, 0);     opacity: 1; }
 }
 
 @keyframes poplurPushUp {
-  0%   { transform: translate3d(0, 14%, 0); opacity: 0; }
-  100% { transform: translate3d(0, 0, 0);   opacity: 1; }
+  0%   { transform: translate3d(0, 100%, 0); opacity: 0.5; }
+  78%  { transform: translate3d(0, -2%, 0);  opacity: 1; }
+  100% { transform: translate3d(0, 0, 0);    opacity: 1; }
 }
 @keyframes poplurPushDown {
-  0%   { transform: translate3d(0, -14%, 0); opacity: 0; }
-  100% { transform: translate3d(0, 0, 0);    opacity: 1; }
+  0%   { transform: translate3d(0, -100%, 0); opacity: 0.5; }
+  78%  { transform: translate3d(0, 2%, 0);    opacity: 1; }
+  100% { transform: translate3d(0, 0, 0);     opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
