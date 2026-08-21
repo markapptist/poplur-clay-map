@@ -555,8 +555,14 @@ export default function HoldMenuTwin({
   // STORE is a bundled iframe, while its payment authority is the native
   // shell. Relay only messages from that exact iframe into Home's validated
   // native boundary, then route the matching result back to the same frame.
+  //
+  // PHONE is the same kind of iframe subscreen and shares this relay for its
+  // DM/call messages (requestPhoneContacts, callStart, ...) — those were
+  // added to the handler below without widening this guard, so the listener
+  // was never actually attached while PHONE was open and every call/DM
+  // message from that iframe went nowhere.
   useEffect(() => {
-    if (activeScreen?.screen !== 'profile-store') return
+    if (activeScreen?.screen !== 'profile-store' && activeScreen?.screen !== 'profile-phone') return
     const frame = subscreenFrameRef.current
     if (!frame) return
 
