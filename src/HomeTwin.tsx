@@ -2205,6 +2205,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
    *  or the post composer (trapped inside contentLayer z-index 4, so the
    *  chrome at 260 must stand down for the composer to be tappable). */
   const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || composerOpen
+  /** The cube's own version of chromeGone, composerOpen excluded: the capture
+   *  preview and post composer are a home surface, not a takeover, and
+   *  PostComposer/VFXStudio already reserve --composer-home-clearance so the
+   *  cube has room to sit below them unobstructed — the cube going with the
+   *  rest of the chrome left nothing there to reserve room for. */
+  const cubeChromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen
   // Games run full-bleed under the HUD (GamesScreen.module.css), so the
   // wordmark and the bottom stat row sat on top of the console art the whole
   // time a game was open. Unlike subscreenFullscreen this does NOT take the
@@ -3488,11 +3494,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           over whatever content is active. Its face tracks the current tab. */}
       {/* The HUD used to duck out while the composer was up. It stays now: the
           capture preview is a home surface — cube back, arrows flip filters. */}
-      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`} />
+      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeChromeGone ? ` ${styles.chromeHidden}` : ''}`} />
       <div
         data-poplur-cube
         data-poplur-cube-swap={cubeSwapPhase}
-        className={`${styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeChromeGone ? ` ${styles.chromeHidden}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
         {/* Visible only while the governor's thermal park is engaged (the

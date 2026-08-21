@@ -1,10 +1,27 @@
+/* Header (Done) and the video stage used to share ONE scrolling region with
+   every editing control below them — so reaching the object rail or a Meshy
+   prompt at the bottom scrolled the Done button and the video itself out of
+   view along with it. The video is what you are editing; it should stay put.
+   Now only .controls scrolls: header and stage are plain, non-scrolling flex
+   children, sized once, and everything editable lives in its own scroll
+   viewport underneath them. */
 .studio {
   position: absolute;
   inset: 0;
   z-index: 5;
-  display: grid;
-  grid-template-rows: auto minmax(250px, 1fr) auto auto minmax(112px, auto);
-  gap: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: #22151e;
+  background: #f8edf2;
+}
+
+.controls {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
   /* The Home navigator remains the universal back control above this editor.
      Keep the VFX controls in their own native-feeling scroll viewport so its
@@ -18,12 +35,11 @@
   scroll-padding-block: 12px var(--composer-home-clearance, 190px);
   scrollbar-width: none;
   -ms-overflow-style: none;
-  color: #22151e;
-  background: #f8edf2;
 }
-.studio::-webkit-scrollbar { display: none; }
+.controls::-webkit-scrollbar { display: none; }
 
 .header {
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 58px;
   display: flex;
@@ -64,7 +80,10 @@
 
 .stage {
   position: relative;
-  min-height: 0;
+  flex: 0 0 auto;
+  height: 42vh;
+  min-height: 200px;
+  max-height: 340px;
   overflow: hidden;
   background: #171115;
   isolation: isolate;

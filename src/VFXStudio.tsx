@@ -581,6 +581,12 @@ export default function VFXStudio({
         )}
       </div>
 
+      {/* Everything editable rides its own scroll viewport below the fixed
+          header and stage — see .controls in VFXStudio.module.css for why:
+          this used to be part of the same scroll as the header/video, so
+          reaching the object rail scrolled the Done button and the preview
+          out of view along with it. */}
+      <div className={styles.controls}>
       <div className={styles.timeline}>
         <button type="button" className={styles.playButton} onClick={togglePlayback} aria-label={playing && previewAwake ? 'Pause preview' : 'Play preview'}>
           {playing && previewAwake ? 'Ⅱ' : '▶'}
@@ -750,6 +756,7 @@ export default function VFXStudio({
           )}
         </div>
       )}
+      </div>
     </section>
   )
 }
