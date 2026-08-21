@@ -241,7 +241,13 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // gone: it had exactly one reference, this line.
   'feed-news': 'poplur_newspaper.glb',
   'camera-ai-chat': 'poplur_cube_create.glb',
-  'profile-messages': 'poplur_cube_mail.glb',
+  // The clay envelope the app already draws on visited profiles
+  // (ClayCornerButton's `mail` kind), baked to a GLB by
+  // scripts/bake-mail-navigator.mjs — the same shapes, extrusion and clay
+  // material, so the navigator and the corner button are one object. Replaced
+  // poplur_cube_mail.glb (a cube wearing an envelope sticker), which now has
+  // no references.
+  'profile-messages': 'poplur_clay_mail_navigator.glb',
   'profile-stats': 'poplur_cube_stats.glb',
   'profile-store': 'poplur_cube_store.glb',
   'profile-settings': 'poplur_cube_settings.glb',
