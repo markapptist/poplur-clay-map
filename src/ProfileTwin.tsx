@@ -1689,6 +1689,9 @@ export default function ProfileTwin({
     ? DEFAULT_PROFILE_THEME
     : selectedProfileTheme
   const shownName = viewUser ? viewUser.replace(/^@/, '') : username
+  const verificationTier: 'none' | 'confirmed' | 'verified' = viewUser
+    ? (viewUser === '@poplur' ? 'none' : 'confirmed')
+    : 'verified'
   const visitingAvatar = viewUser ? (AVATAR_BY_HANDLE[viewUser] ?? 'mark_talk0.png') : null
 
   // Tell the shell the taking screen is up, so the cube navigator can wear the
@@ -1859,7 +1862,26 @@ export default function ProfileTwin({
           </div>
         )}
 
-        <h1 className={styles.username}>{shownName.toUpperCase()}</h1>
+        <h1 className={styles.username}>
+          {shownName.toUpperCase()}
+          {verificationTier !== 'none' && (
+            // The scalloped seal, in Poplur pink rather than the borrowed
+            // Twitter blue this used to be. Two tiers keep the same shape and
+            // differ only in weight: a CONFIRMED account is grey and reads as
+            // quieter, a VERIFIED one is pink and carries the brand — the
+            // distinction is status, so it should not also be a shape change
+            // the reader has to learn twice.
+            <svg viewBox="0 0 24 24" width="18" height="18" className={styles.verifyBadge} aria-label={verificationTier === 'verified' ? 'Verified' : 'Confirmed'}>
+              <path
+                d="M12 1.6l2.1 1.6 2.6-.5 1.2 2.4 2.4 1.2-.5 2.6L21.4 12l-1.6 2.1.5 2.6-2.4 1.2-1.2 2.4-2.6-.5L12 22.4l-2.1-1.6-2.6.5-1.2-2.4-2.4-1.2.5-2.6L2.6 12l1.6-2.1-.5-2.6 2.4-1.2 1.2-2.4 2.6.5z"
+                fill={verificationTier === 'verified' ? '#f4459c' : '#9ca3af'}
+              />
+              {/* Filled, not stroked: at 18px a stroked tick thins out against
+                  the scallops, and the notches eat the ends of the line. */}
+              <path d="M10.6 15.4l-3-3 1.3-1.3 1.7 1.7 4.4-4.4 1.3 1.3z" fill="#fff" />
+            </svg>
+          )}
+        </h1>
         <div className={styles.modeSwitch}>
           {(['media', 'messages', 'liked'] as Mode[]).map(m => (
             <button
