@@ -2643,6 +2643,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const pendingPushRef = useRef<{ dir: 1 | -1; axis: 'x' | 'y' } | null>(null)
 
   const runPush = (dir: 1 | -1, axis: 'x' | 'y') => {
+    // Publish the direction on the root so anything OUTSIDE this content layer
+    // can travel with it. The hold menu's subscreen stage is a sibling at a
+    // higher z-index, so the push class here never reached it — subscreens got
+    // a flat opacity fade and read as "no transition", which is why the motion
+    // was only ever visible entering a tab. A custom property inherits through
+    // CSS-module boundaries, so it needs no prop threaded through a component
+    // several sessions are editing.
+    document.documentElement.style.setProperty('--poplur-push-dir', String(dir))
+    document.documentElement.style.setProperty('--poplur-push-axis-x', axis === 'x' ? '1' : '0')
+    document.documentElement.style.setProperty('--poplur-push-axis-y', axis === 'y' ? '1' : '0')
     if (pushTimer.current !== null) window.clearTimeout(pushTimer.current)
     setPushAxis(axis)
     setPushDir(0)

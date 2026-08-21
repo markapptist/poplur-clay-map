@@ -58,9 +58,18 @@ export default function ScreenCoach({ id, title, lines, split, pinArrows }: Coac
     // thing it just described.
     const dismiss = () => setOpen(false)
     window.addEventListener('pointerdown', dismiss, { once: true, capture: true })
+    // The MAP is an iframe. A tap there never reaches this document — the
+    // iframe's own document consumes it — so a pointerdown listener alone left
+    // the map's card up forever, which is the one screen whose card most needs
+    // to get out of the way. The embed reports its first touch instead.
+    const touched = (event: MessageEvent) => {
+      if ((event.data as { type?: string } | null)?.type === 'poplur-map-touched') dismiss()
+    }
+    window.addEventListener('message', touched)
     return () => {
       window.clearTimeout(timer.current)
       window.removeEventListener('pointerdown', dismiss, { capture: true } as EventListenerOptions)
+      window.removeEventListener('message', touched)
     }
   }, [open, id])
 

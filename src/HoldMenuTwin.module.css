@@ -41,7 +41,7 @@
   background: var(--poplur-ground, #08040a);
   /* a plain fade reads far calmer than the old slide+scale, which made every
      sub-screen feel like it was being thrown at you */
-  animation: subscreenIn 0.42s ease both;
+  animation: subscreenIn 0.34s cubic-bezier(0.22, 0.9, 0.24, 1) both;
 }
 
 /* Games run full-bleed (position/inset) so the game itself fills the screen,
@@ -134,9 +134,21 @@
   z-index: 2;
 }
 
+/* A subscreen arrives the way the navigation went, like a tab does. This was a
+   bare opacity fade, which is why the transition was only ever visible entering
+   a tab: the directional push lives on the content layer, and this stage sits
+   ABOVE it at z-index 240, so the push was playing underneath a screen that
+   merely faded in on top. The direction comes from --poplur-push-dir, which
+   HomeTwin publishes on the root for exactly this reason. Same 14% and the same
+   curve as the tab pair, so both axes feel like one motion. */
 @keyframes subscreenIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+    transform: translate3d(
+      calc(var(--poplur-push-axis-x, 0) * var(--poplur-push-dir, 1) * 14%),
+      calc(var(--poplur-push-axis-y, 1) * var(--poplur-push-dir, 1) * 14%), 0);
+  }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes menuIn {

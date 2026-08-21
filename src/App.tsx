@@ -975,6 +975,17 @@ export default function App() {
   const lastTourDestinationRef = useRef<string | null>(null)
   useEffect(() => {
     if (harnessView) return
+    // Tell the parent the map has been TOUCHED. The screen coach sits over
+    // this iframe with pointer-events: none, deliberately, so the tap that
+    // dismisses it also does the thing it just taught. That works everywhere
+    // the tap lands on a parent-document element — but here it lands INSIDE
+    // the iframe, whose document swallows it, so the parent's window listener
+    // never fired and the card sat there permanently. One message is enough:
+    // the coach only needs to know a gesture happened.
+    if (window.parent !== window) {
+      const tell = () => window.parent.postMessage({ type: 'poplur-map-touched' }, '*')
+      window.addEventListener('pointerdown', tell, { once: true, capture: true })
+    }
     if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-loading' }, '*')
     postNativeEvent({ type: 'mapLoading' })
   }, [harnessView])
