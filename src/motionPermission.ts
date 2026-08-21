@@ -12,6 +12,8 @@
 // from that alert's Allow button — which is itself a gesture, so this is
 // stricter about the platform's rule than the scattered calls were.
 
+import { isNativeShell } from './nativeBridge'
+
 const ASKED_KEY = 'poplur.permission.motion.v1'
 
 /** Dispatched by anything that wants the tilt; Home answers by showing the card. */
@@ -21,9 +23,21 @@ type MotionCapableWindow = Window & {
   DeviceOrientationEvent?: { requestPermission?: () => Promise<string> }
 }
 
-/** Only iOS-family browsers gate this. Everywhere else motion just works. */
+/**
+ * Only iOS-family BROWSERS gate this — and only browsers should ever be asked.
+ *
+ * Inside the app the tilt comes from native Core Motion over the bridge, so the
+ * web permission buys nothing: the WKWebView still exposes
+ * DeviceOrientationEvent.requestPermission, so asking there produces a real iOS
+ * dialog for a capability the shell already has. The cube's original code
+ * guarded on `!isNativeShell()` for exactly this reason and I dropped that
+ * guard when routing the ask through Poplur's card — which added a system
+ * prompt on the first touch of the navigator, in the app, where there had
+ * never been one.
+ */
 export function motionIsGated(): boolean {
   if (typeof window === 'undefined') return false
+  if (isNativeShell()) return false
   const doe = (window as MotionCapableWindow).DeviceOrientationEvent
   return typeof doe?.requestPermission === 'function'
 }
