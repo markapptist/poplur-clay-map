@@ -2338,7 +2338,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // unreachable going forward. Now an open ring subscreen is simply the
   // ring's current stop: stepping off it closes the menu and lands on the
   // neighbouring mode, so all seven stops cycle in both directions, always.
-  const CAMERA_CYCLE = ['photo', 'video', 'live', 'create', 'games', 'studio'] as const
+  // ROLL was documented as the ring's third stop ("all seven stops cycle in
+  // both directions") but was never actually in this array — stepping past
+  // VIDEO always jumped straight to LIVE, and the only way onto ROLL was the
+  // hold-menu tile, not the arrows. Landing here reads as "photo, video,
+  // (live/create/games/studio all run together), restart" — the missing stop.
+  const CAMERA_CYCLE = ['photo', 'video', 'roll', 'live', 'create', 'games', 'studio'] as const
   const CAMERA_CYCLE_SCREEN = {
     create: 'camera-ai-chat',
     games: 'feed-games',
@@ -2352,7 +2357,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
     const openRing = holdOpen && cubeScreen ? CAMERA_STOP_BY_SCREEN[cubeScreen] ?? null : null
-    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? (onRoll ? 'photo' : cameraCaptureMode)
+    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? (onRoll ? 'roll' : cameraCaptureMode)
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
@@ -2367,6 +2372,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       writeLastScreen(activeTabLiveRef.current, null)
       setResume(current => ({ screen: null, n: current.n }))
       setHoldOpen(false)
+    }
+    if (next === 'roll') {
+      // ROLL rides the same cameraStep parity toggle the pager already reads
+      // (page = step % 2) — arrive here by making it odd, same as the
+      // hold-menu tile does, rather than a separate mechanism.
+      if (!onRoll) setCameraStep(step => step + 1)
+      setCameraCaptureMode('photo')
+      return
     }
     if (onRoll) setCameraStep(step => step + 1)
     setCameraCaptureMode(next)

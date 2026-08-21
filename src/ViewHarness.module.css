@@ -398,13 +398,10 @@
 }
 .camZoomPreset:active { transform: scale(0.92); }
 
+/* Now a TabControlRail child — the rail's own `.rail > *` rule already forces
+   the 44×44 box and the column position, so this only carries the button's
+   own look, not placement. */
 .camRollBtn {
-  position: absolute;
-  left: 16px;
-  bottom: calc(156px + env(safe-area-inset-bottom));
-  z-index: 28;
-  width: 44px;
-  height: 44px;
   border: 0;
   border-radius: 8px;
   background: rgba(22, 6, 15, 0.52);
@@ -415,12 +412,55 @@
     0 2px 6px rgba(0, 0, 0, 0.5);
   display: grid;
   place-items: center;
+  overflow: hidden;
   cursor: pointer;
   transition: transform 120ms ease, background 120ms ease;
 }
 .camRollBtn:active {
   transform: scale(0.88);
   background: rgba(255, 138, 198, 0.28);
+}
+.camRollBtnThumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+/* The LIVE control: text in the same shader-clip technique as the zoom
+   presets, red instead of pink/cyan so it reads as broadcast rather than
+   framing. .camLiveTextBtnOn is the on-air state — faster, brighter pulse,
+   the same cue the old clay object's "lit red" gave, just on text now. */
+.camLiveTextBtn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: 950 12px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 0.03em;
+  background-image: linear-gradient(105deg, #ff5252 0%, #ffffff 27%, #ff0000 52%, #ffffff 72%, #ff5252 100%);
+  background-size: 260% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: .75px rgba(40, 0, 0, 0.9);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 2px 0 rgba(40, 0, 0, 0.62))
+    drop-shadow(0 4px 7px rgba(0, 0, 0, 0.62))
+    drop-shadow(0 0 6px rgba(255, 30, 30, 0.45));
+  animation: camZoomTextShader 4.8s linear infinite;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+.camLiveTextBtn:active { transform: scale(0.9); }
+.camLiveTextBtnOn {
+  animation-duration: 1.4s;
+  filter:
+    drop-shadow(0 2px 0 rgba(40, 0, 0, 0.72))
+    drop-shadow(0 0 10px rgba(255, 20, 20, 0.85))
+    drop-shadow(0 0 16px rgba(255, 60, 60, 0.6));
 }
 
 @keyframes camZoomTextShader {

@@ -9,7 +9,7 @@ import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
-import { addCapture, isDetectOn, setDetectOn, onCameraStore, takePendingMapPost, type PendingMapPost } from './cameraStore'
+import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, takePendingMapPost, type PendingMapPost } from './cameraStore'
 import { startBroadcast, stopBroadcast, isLive, onLiveStore, ownBroadcast } from './liveStore'
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
@@ -320,6 +320,11 @@ export default function Camera({
   // Shared with the hold menu, so the tile and the model can never disagree.
   const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
   const onAir = useSyncExternalStore(onLiveStore, isLive, isLive)
+  // The roll button's own thumbnail: whatever was shot most recently this
+  // session (captures unshift newest-first). No thumbnail before the first
+  // shot — the button falls back to its plain icon rather than showing
+  // nothing or a placeholder square.
+  const latestCapture = useSyncExternalStore(onCameraStore, () => listCaptures()[0] ?? null, () => listCaptures()[0] ?? null)
   const [detections, setDetections] = useState<Detection[]>([])
   const detectionsRef = useRef(detections)
   detectionsRef.current = detections
@@ -1670,16 +1675,43 @@ export default function Camera({
           size={44}
           onToggle={() => setArOpen(open => !open)}
         />
-        {/* …and going live, which is an act performed on the camera you are
-            already pointing. Lit red for as long as you are on air; pressing
-            it again ends the broadcast. */}
-        <ClayCornerButton
-          kind="live"
-          size={44}
-          active={onAir}
-          label={onAir ? 'End live broadcast' : 'Go live'}
-          onPress={toggleLive}
-        />
+        {/* Text, not a clay object — going live is a mode you read, and red
+            shader-text says "you're about to broadcast" faster than an icon
+            would. Same gradient-clip-text technique as the zoom presets,
+            just red; a faster, brighter pulse marks actually being on air. */}
+        <button
+          type="button"
+          className={onAir ? `${styles.camLiveTextBtn} ${styles.camLiveTextBtnOn}` : styles.camLiveTextBtn}
+          aria-label={onAir ? 'End live broadcast' : 'Go live'}
+          aria-pressed={onAir}
+          onClick={toggleLive}
+        >
+          LIVE
+        </button>
+        {/* Camera roll, promoted from a floating bottom-left button into this
+            rail so it reads as one of the camera's own controls instead of a
+            stray tile. Shows the latest shot from this session as its own
+            thumbnail once there is one. */}
+        <button
+          type="button"
+          className={styles.camRollBtn}
+          aria-label="Camera roll"
+          onClick={() => { playPop(); onOpenRoll?.() }}
+        >
+          {latestCapture && latestCapture.kind === 'photo' ? (
+            <img
+              className={styles.camRollBtnThumb}
+              src={latestCapture.src}
+              alt=""
+              aria-hidden="true"
+            />
+          ) : (
+            <svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+              <rect x="2" y="2" width="24" height="24" rx="4" fill="rgba(255,255,255,0.18)" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" />
+              <rect x="6" y="6" width="16" height="16" rx="2" fill="rgba(255,255,255,0.28)" />
+            </svg>
+          )}
+        </button>
       </TabControlRail>
       {/* ONE persistent AI line. Keep the latest real reading between the
           deliberately sparse native analysis samples; before the first one,
@@ -1762,17 +1794,6 @@ export default function Camera({
           })}
         </div>
       )}
-      <button
-        type="button"
-        className={styles.camRollBtn}
-        aria-label="Camera roll"
-        onClick={() => { playPop(); onOpenRoll?.() }}
-      >
-        <svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
-          <rect x="2" y="2" width="24" height="24" rx="4" fill="rgba(255,255,255,0.18)" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" />
-          <rect x="6" y="6" width="16" height="16" rx="2" fill="rgba(255,255,255,0.28)" />
-        </svg>
-      </button>
     </section>
   )
 
