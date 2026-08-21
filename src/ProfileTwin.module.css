@@ -469,6 +469,14 @@
   animation: profileTextShader 4.8s linear 3;
 }
 
+.verifyBadge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 6px;
+  margin-bottom: 2px;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.18));
+}
+
 /* ---- Media / Messages / Saved switcher with cyan underline ---- */
 
 .modeSwitch {
@@ -1903,3 +1911,29 @@
    reading. (NotifConfetti is z-index 1 within .notifBanner.) */
 .notifBanner .notifTitle,
 .notifBanner .notifSwipe { position: relative; z-index: 2; }
+
+/* The handle is editable in place: no pencil, no separate settings screen —
+   the name IS the control, which is why it carries a hover affordance rather
+   than looking like plain text. */
+.usernameEditable {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.15s ease;
+}
+.usernameEditable:hover { border-bottom-color: currentColor; }
+
+/* Inherits the h1's type so committing does not make the name jump. */
+.usernameInput {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: uppercase;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  outline: none;
+  text-align: center;
+  width: 8ch;
+  max-width: 100%;
+  padding: 0;
+}

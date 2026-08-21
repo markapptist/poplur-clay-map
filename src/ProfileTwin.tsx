@@ -108,6 +108,14 @@ function usableUsername(value: string | null | undefined): string | null {
   return trimmed.replace(/^@/, '')
 }
 
+/// What the account will actually accept. Native re-checks this before it
+/// writes — the page enforcing the same rule is about not letting somebody type
+/// a handle that silently fails to save, not about trusting the client.
+const USERNAME_MAX = 30
+function sanitizeUsername(value: string): string {
+  return value.replace(/^@/, '').replace(/[^A-Za-z0-9_.]/g, '').slice(0, USERNAME_MAX)
+}
+
 function readStoredPhoto(): string | null {
   try {
     const raw = window.localStorage.getItem(PHOTO_KEY)
@@ -830,6 +838,31 @@ export default function ProfileTwin({
     try { stored = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
     return fromQuery ?? stored ?? PROFILE_NAME_FALLBACK
   })
+  // Editing your own handle. There was no way to set one anywhere in the
+  // shipping app: the only editor was the native EditProfileView, which the web
+  // home orphaned, so accounts simply had no username and every surface fell
+  // back to a uid prefix.
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const persistedName = useRef<string | null>(null)
+  if (persistedName.current === null) {
+    // Seeded from real sources only. The fallback is a placeholder, never
+    // something the account is believed to already hold.
+    try { persistedName.current = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
+  }
+
+  const commitUsername = () => {
+    setEditingName(false)
+    const next = usableUsername(sanitizeUsername(nameDraft))
+    if (!next || next === persistedName.current) return
+    persistedName.current = next
+    setUsername(next)
+    try { window.localStorage.setItem('poplur.username', next) } catch { /* embedded */ }
+    // Storage is the fallback, not the record. The account is the record, and
+    // this is the only path that reaches it.
+    postNativeEvent({ type: 'saveProfileUsername', username: next })
+  }
+
   useEffect(() => {
     if (!isNativeShell()) return
     type NativeProfile = { username?: string; business?: boolean; photo?: string; video?: string }
@@ -839,6 +872,21 @@ export default function ProfileTwin({
       if (nextUsername) {
         setUsername(nextUsername)
         try { window.localStorage.setItem('poplur.username', nextUsername) } catch { /* embedded */ }
+        persistedName.current = nextUsername
+      } else {
+        // The ACCOUNT has no username and this device does — so lift ours up.
+        //
+        // The username only ever lived in this localStorage key. Nothing wrote
+        // it to Firestore: the one writer is the native EditProfileView, which
+        // the web home orphaned, so every handle in the product was per-device
+        // and invisible to every other device and to the server. That is why a
+        // wallet pass minted server-side showed a uid prefix instead of a name.
+        //
+        // Native cannot do this backfill itself — the value is in web storage,
+        // which it cannot read — so the page has to offer it.
+        let local: string | null = null
+        try { local = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
+        if (local) postNativeEvent({ type: 'saveProfileUsername', username: local })
       }
       if (prof?.photo && (prof.photo.startsWith('data:image/') || /^https:\/\//i.test(prof.photo))) {
         setPhoto(prof.photo)
@@ -1863,7 +1911,35 @@ export default function ProfileTwin({
         )}
 
         <h1 className={styles.username}>
-          {shownName.toUpperCase()}
+          {editingName && !visiting ? (
+            <input
+              className={styles.usernameInput}
+              value={nameDraft}
+              autoFocus
+              maxLength={USERNAME_MAX}
+              style={{ width: `${Math.min(Math.max(nameDraft.length + 1, 5), USERNAME_MAX + 1)}ch` }}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+              aria-label="Username"
+              onChange={e => setNameDraft(sanitizeUsername(e.target.value))}
+              onBlur={commitUsername}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitUsername()
+                // Escape abandons the draft rather than committing it — a blur
+                // commit alone leaves no way to back out of a mistyped handle.
+                if (e.key === 'Escape') setEditingName(false)
+              }}
+            />
+          ) : (
+            <span
+              className={visiting ? undefined : styles.usernameEditable}
+              onClick={visiting ? undefined : () => { setNameDraft(username); setEditingName(true) }}
+              title={visiting ? undefined : 'Tap to change your username'}
+            >
+              {shownName.toUpperCase()}
+            </span>
+          )}
           {verificationTier !== 'none' && (
             // The scalloped seal, in Poplur pink rather than the borrowed
             // Twitter blue this used to be. Two tiers keep the same shape and
