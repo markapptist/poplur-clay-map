@@ -156,8 +156,11 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     let alive = true
+    let settled = false
     const controller = new AbortController()
     const load = (lat: number, lng: number) => {
+      if (settled) return
+      settled = true
       listLocalStations(lat, lng, 120_000, controller.signal)
         .then(found => {
           if (!alive) return
@@ -166,13 +169,52 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
         })
         .catch(() => { if (alive) setError('Could not reach the station directory') })
     }
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        pos => load(pos.coords.latitude, pos.coords.longitude),
-        () => load(HOME[1], HOME[0]),
-        { timeout: 4000, maximumAge: 600_000 },
-      )
-    } else load(HOME[1], HOME[0])
+    const readNativeLocation = (value: unknown): [number, number] | null => {
+      if (!value || typeof value !== 'object') return null
+      const payload = value as { latitude?: unknown; longitude?: unknown; detail?: unknown }
+      if (payload.detail && typeof payload.detail === 'object') return readNativeLocation(payload.detail)
+      const latitude = Number(payload.latitude)
+      const longitude = Number(payload.longitude)
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
+      return [latitude, longitude]
+    }
+    // The map already asks native for location on launch, through
+    // CLLocationManager/FusedLocationProvider — a request the OS attributes
+    // to Poplur by name. This screen used to call the browser's own
+    // navigator.geolocation unconditionally on mount instead, which is a
+    // SEPARATE grant from WKWebView's JS engine, and iOS surfaces it as a
+    // generic "app" prompt rather than "Poplur" — a second, uglier ask for
+    // permission the user already gave once. Prefer whatever native already
+    // has (synchronously, or via the same broadcast the map listens for) and
+    // only fall back to the browser API if nothing native shows up in time.
+    const existing = readNativeLocation((window as unknown as { __poplurNativeLocation?: unknown }).__poplurNativeLocation)
+    if (existing) {
+      load(existing[0], existing[1])
+    } else {
+      const onNativeLocation = (event: Event) => {
+        const found = readNativeLocation((event as CustomEvent).detail)
+        if (found) load(found[0], found[1])
+      }
+      window.addEventListener('poplur-location', onNativeLocation)
+      window.addEventListener('poplur-native-location', onNativeLocation)
+      const fallbackTimer = window.setTimeout(() => {
+        if (settled) return
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            pos => load(pos.coords.latitude, pos.coords.longitude),
+            () => load(HOME[1], HOME[0]),
+            { timeout: 4000, maximumAge: 600_000 },
+          )
+        } else load(HOME[1], HOME[0])
+      }, 1500)
+      return () => {
+        alive = false
+        controller.abort()
+        window.removeEventListener('poplur-location', onNativeLocation)
+        window.removeEventListener('poplur-native-location', onNativeLocation)
+        window.clearTimeout(fallbackTimer)
+      }
+    }
     return () => { alive = false; controller.abort() }
   }, [])
 
