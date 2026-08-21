@@ -1215,8 +1215,17 @@
 
 .cubeSlideWaiting {
   transform-origin: 50% 50%;
-  /* Parked off-stage on the entering side, so the swap happens out of sight. */
-  transform: translate3d(calc(var(--cube-swap-dir, 1) * 46%), 0, 0) scale3d(0.86, 0.86, 1);
+  /* Parked off-stage on the ENTERING side, so the swap happens out of sight.
+     This read `--cube-swap-dir`, which nothing has ever set — so it fell back
+     to 1 and parked at +46% on X every time: on the wrong side for a rightward
+     swipe, and on the wrong AXIS entirely for a channel change. The cube
+     visibly flashed across before entering (traced: +73px on a finger-right
+     swipe, then snapping to -73). These are the same two variables the enter
+     keyframes read, and this must match their 0% frame exactly — that is what
+     "parked on the entering side" means. */
+  transform: translate3d(
+      calc(var(--cube-swap-x, 1) * 46%),
+      calc(var(--cube-swap-y, 0) * 46%), 0) scale3d(0.86, 0.86, 1);
   opacity: 0;
   backface-visibility: hidden;
   translate: 0 0;

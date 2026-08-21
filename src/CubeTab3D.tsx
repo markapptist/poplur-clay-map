@@ -6,6 +6,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { primeMotionAudio } from './motionEffectsAudio'
 import { preloadPop, primePopAudio } from './pop'
+import { askForMotion } from './motionPermission'
 import { isNativeShell } from './nativeBridge'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
@@ -944,15 +945,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       primeMotionAudio()
       primePopAudio()
       armGlobeSpin(3500)
-      // iOS requires motion permission from a direct user gesture. Asking on
-      // the navigator itself keeps the experience opt-in and avoids a prompt
-      // before the user has touched the object they want to move.
-      if (!isNativeShell() && typeof DeviceOrientationEvent !== 'undefined') {
-        const orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
-          requestPermission?: () => Promise<'granted' | 'denied'>
-        }
-        void orientation.requestPermission?.().catch(() => {})
-      }
+      // Ask through Poplur's own alert rather than firing the OS dialog here.
+      // Touching the navigator is still what raises the question — it is just
+      // answered by the same card location, photos and notifications use, and
+      // the platform call is made from that card's Allow button (which is the
+      // gesture iOS actually requires).
+      askForMotion()
       try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
       // Read it now, while the pointer is still where it went down: the cube
       // captures the pointer, so elementsFromPoint later in the drag would

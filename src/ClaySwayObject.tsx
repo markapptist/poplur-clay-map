@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { askForMotion } from './motionPermission'
 import { modelSprite } from './modelSprite'
 
 // A supplied clay GLB shown as a real object on a screen you park on — the
@@ -47,7 +48,8 @@ export function primeMotionPermission(): void {
   if (typeof DOE?.requestPermission !== 'function') return
   const ask = () => {
     window.removeEventListener('pointerdown', ask)
-    try { void DOE.requestPermission?.() } catch { /* older platforms */ }
+    // Poplur's own alert asks; its Allow button makes the platform call.
+    askForMotion()
   }
   window.addEventListener('pointerdown', ask, { once: true, passive: true })
 }

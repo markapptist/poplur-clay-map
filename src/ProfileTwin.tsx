@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { askForMotion } from './motionPermission'
 import { createPortal } from 'react-dom'
 import styles from './ProfileTwin.module.css'
 import pullStyles from './PullToRefresh.module.css'
@@ -1422,9 +1423,9 @@ export default function ProfileTwin({
   const beginCapture = () => {
     if (launchingCamera || capturing) return
     playPop()
-    // iOS requires the motion permission to be requested from a user gesture.
-    const DOE = (window as unknown as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } }).DeviceOrientationEvent
-    try { void DOE?.requestPermission?.() } catch { /* older platforms */ }
+    // Poplur's own alert asks, and fires the platform call from its Allow
+    // button — which is the user gesture iOS requires.
+    askForMotion()
     setLaunchingCamera(true)
     window.setTimeout(() => {
       setCaptureSource('camera')

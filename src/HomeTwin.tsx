@@ -17,6 +17,9 @@ import HoldMenuTwin, { isResumablePage, tabPageScreens } from './HoldMenuTwin'
 import LoadingGlobe from './LoadingGlobe'
 import TopChrome from './TopChrome'
 import PermissionAlert from './PermissionAlert'
+import {
+  MOTION_REQUEST_EVENT, motionNeedsAsking, requestMotionFromGesture, declineMotion,
+} from './motionPermission'
 import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop } from './pop'
@@ -526,7 +529,7 @@ function compactAudience(value: number): string {
   return value.toString()
 }
 
-type PostLoginPermission = 'location' | 'photos' | 'notifications'
+type PostLoginPermission = 'location' | 'photos' | 'notifications' | 'motion'
 
 /**
  * Native hosts resolve authentication and real OS authorization before loading
@@ -541,6 +544,9 @@ function initialPostLoginPermissions(): PostLoginPermission[] {
   if (force || params.get('askLocation') === '1') queue.push('location')
   if (force || params.get('askPhotos') === '1') queue.push('photos')
   if (force || params.get('askNotifications') === '1') queue.push('notifications')
+  // Motion is NOT seeded here. It is asked at the moment something wants the
+  // tilt (see motionPermission.askForMotion) rather than up front, because a
+  // gyroscope prompt before you have touched anything has no context to it.
   return queue
 }
 
@@ -654,6 +660,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   activeTabRef.current = activeTab
   const activeStoreCheckoutRequestRef = useRef<string | null>(null)
   const [permissionQueue, setPermissionQueue] = useState<PostLoginPermission[]>(initialPostLoginPermissions)
+  // The tilt is asked for on demand: the cube, the profile card and the sway
+  // objects each raise MOTION_REQUEST_EVENT the first time they want it, and
+  // Poplur's own alert answers instead of the bare OS dialog.
+  useEffect(() => {
+    const wanted = () => setPermissionQueue(queue => (
+      queue.includes('motion') || !motionNeedsAsking() ? queue : [...queue, 'motion']
+    ))
+    window.addEventListener(MOTION_REQUEST_EVENT, wanted)
+    return () => window.removeEventListener(MOTION_REQUEST_EVENT, wanted)
+  }, [])
   const activePermission = permissionQueue[0] ?? null
   const uiRecoveryKey = useUIRecoveryWatchdog()
   const finishPermission = useCallback(() => {
@@ -669,6 +685,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     finishPermission()
   }, [activePermission, finishPermission])
+  /** The OS prompt is fired from HERE — the Allow button — because iOS only
+   *  honours requestPermission() inside a real user gesture. Routing it through
+   *  the card is what guarantees one. */
+  const allowMotion = useCallback(() => {
+    playPop()
+    void requestMotionFromGesture()
+    finishPermission()
+  }, [finishPermission])
+  const refuseMotion = useCallback(() => {
+    playPop()
+    // Poplur's own no. The OS is never troubled, and we do not ask again.
+    declineMotion()
+    finishPermission()
+  }, [finishPermission])
   const allowPhotos = useCallback(() => {
     playPop()
     if (activePermission && isNativeShell()) {
@@ -3458,6 +3488,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           choices={[
             { label: "Don't Allow", onPick: denyPermission },
             { label: 'Allow', grants: true, onPick: allowPhotos },
+          ]}
+        />
+      )}
+      {activePermission === 'motion' && (
+        <PermissionAlert
+          icon="motion"
+          label="Motion permission"
+          title={'Allow "Poplur" to use motion and orientation?'}
+          copy="Tilt your phone and the clay objects lean with it — the cube, the globe and the objects on your profile."
+          choices={[
+            { label: "Don't Allow", onPick: refuseMotion },
+            { label: 'Allow', grants: true, onPick: allowMotion },
           ]}
         />
       )}
