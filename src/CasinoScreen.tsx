@@ -21,33 +21,41 @@ import { creditBalance, grantCasinoWin, onCreditsChange } from './poplurCredits'
 
 interface SlotSymbol {
   id: string
-  glyph: string
   name: string
-  /** CSS-module class painting the glyph's gradient */
-  tone: string
+  /** tile art under public/casino/ — cropped from the user-supplied cabinet render */
+  img: string
+  /** wider-than-square art (shades, WILD banner) letterboxes instead of cropping */
+  wide?: boolean
   /** payline pay for 3 / 4 / 5 of a kind, in Poplur Credits */
   pays: [number, number, number]
 }
 
-// Poplur-themed reel symbols as styled text — no generated art (house rule).
-// Mostly small pays; the 5×P line is the machine's "jackpot".
+// Reel symbols cropped straight out of the user-supplied cabinet reference
+// (no synthesized art — these are the render's own tiles, starfield backing
+// included so they blend into the dark reels). Mostly small pays; the 5×P
+// line is the machine's "jackpot".
 const SYMBOLS: SlotSymbol[] = [
-  { id: 'p', glyph: 'P', name: 'POPLUR', tone: 'tonePink', pays: [3, 10, 100] },
-  { id: 'seven', glyph: '7', name: 'LUCKY 7', tone: 'toneGold', pays: [2, 8, 25] },
-  { id: 'star', glyph: '★', name: 'STAR', tone: 'toneGold', pays: [2, 6, 20] },
-  { id: 'coin', glyph: '$', name: 'COINS', tone: 'toneGreen', pays: [1, 5, 15] },
-  { id: 'note', glyph: '♪', name: 'BEATS', tone: 'tonePurple', pays: [1, 4, 12] },
-  { id: 'gem', glyph: '◆', name: 'GEM', tone: 'toneCyan', pays: [1, 3, 10] },
+  { id: 'p', name: 'POPLUR', img: 'casino/sym-p.png', pays: [3, 10, 100] },
+  { id: 'star', name: 'STAR', img: 'casino/sym-star.png', pays: [2, 8, 25] },
+  { id: 'headphones', name: 'BEATS', img: 'casino/sym-headphones.png', pays: [2, 6, 20] },
+  { id: 'phone', name: 'PHONE', img: 'casino/sym-phone.png', pays: [2, 5, 16] },
+  { id: 'sneaker', name: 'KICKS', img: 'casino/sym-sneaker.png', pays: [1, 5, 15] },
+  { id: 'coins', name: 'COINS', img: 'casino/sym-coins.png', pays: [1, 4, 12] },
+  { id: 'shades', name: 'SHADES', img: 'casino/sym-shades.png', wide: true, pays: [1, 4, 10] },
+  { id: 'backpack', name: 'PACK', img: 'casino/sym-backpack.png', pays: [1, 3, 10] },
+  { id: 'camera', name: 'CAMERA', img: 'casino/sym-camera.png', pays: [1, 3, 8] },
+  { id: 'globe', name: 'GLOBE', img: 'casino/sym-globe.png', pays: [1, 2, 6] },
 ]
 
 // WILD never fills a losing line — it only ever stands in on a paid one, so
 // seeing it always means the line hit.
-const WILD: SlotSymbol = { id: 'wild', glyph: 'W', name: 'WILD', tone: 'toneWild', pays: [0, 0, 0] }
+const WILD: SlotSymbol = { id: 'wild', name: 'WILD', img: 'casino/sym-wild.png', wide: true, pays: [0, 0, 0] }
 
 const REELS = 5
-/** Must match the CSS --cell height — the travel transform is computed here. */
-const CELL_PX = 56
-/** Reel i settles at BASE + i·STEP ms; the whole spin is ~2.5s, one-shot. */
+/** Reel i settles at BASE + i·STEP ms; the whole spin is ~2.5s, one-shot.
+    The travel distance is a PERCENTAGE of the strip's own height (see the
+    transform below), so the CSS --cell can scale with the viewport without
+    the component knowing the pixel size. */
 const REEL_DUR_BASE = 1400
 const REEL_DUR_STEP = 260
 
@@ -130,13 +138,17 @@ function buildDressingRow(): SlotSymbol[] {
 /** faces[reel] = [top, middle, bottom] */
 type Faces = SlotSymbol[][]
 
+// The at-rest faces reproduce the reference cabinet's own reel layout,
+// WILD tile included (cosmetic here — the middle line is shades/headphones/
+// star/backpack/globe, five distinct symbols, so it reads as no win).
+const SYMBOL_BY_ID = new Map([...SYMBOLS, WILD].map(s => [s.id, s]))
 const ATTRACT_FACES: Faces = [
-  ['note', 'p', 'star'],
-  ['gem', 'star', 'coin'],
-  ['star', 'seven', 'p'],
-  ['coin', 'star', 'gem'],
-  ['seven', 'p', 'note'],
-].map(col => col.map(id => SYMBOLS.find(s => s.id === id) as SlotSymbol))
+  ['p', 'shades', 'sneaker'],
+  ['star', 'headphones', 'coins'],
+  ['headphones', 'star', 'wild'],
+  ['phone', 'backpack', 'camera'],
+  ['sneaker', 'globe', 'p'],
+].map(col => col.map(id => SYMBOL_BY_ID.get(id) as SlotSymbol))
 
 /** Old face, a blur of filler, new face — the strip each reel travels once. */
 function buildStrips(from: Faces, to: Faces): Faces {
@@ -147,6 +159,19 @@ function buildStrips(from: Faces, to: Faces): Faces {
 }
 
 interface SpinResult { amount: number; line: string }
+
+// The cabinet's payline number chips — the colored circles running down both
+// sides of the reference's reel panel, top to bottom. Decorative hardware
+// until multi-line play exists; values and colourways copied from the render.
+const PAYLINE_CHIPS: Array<[label: string, tone: string]> = [
+  ['4', 'chipPink'], ['2', 'chipGold'], ['8', 'chipIndigo'], ['6', 'chipTeal'], ['1', 'chipGreen'],
+  ['7', 'chipGold'], ['9', 'chipGreen'], ['3', 'chipBlue'], ['5', 'chipPurple'],
+]
+
+/** Slot-machine readouts show cents even though credits are integers —
+    1,234.00, like the reference's BALANCE well. Same number, more Vegas. */
+const fmtWell = (n: number) =>
+  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const [faces, setFaces] = useState<Faces>(ATTRACT_FACES)
@@ -269,8 +294,12 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
       : 'YOUR FREE DAILY SPIN IS READY'
 
   return (
-    <div className={styles.stage}>
+    <div className={styles.stage} data-win={result && result.amount > 0 ? 'true' : undefined}>
       <div className={styles.ambient} aria-hidden="true" />
+      {/* Hot-pink neon rails down both screen edges — the reference cabinet's
+          side lighting. Static glows, nothing animates. */}
+      <span className={`${styles.rail} ${styles.railLeft}`} aria-hidden="true" />
+      <span className={`${styles.rail} ${styles.railRight}`} aria-hidden="true" />
 
       <header className={styles.topbar}>
         <div className={styles.chWrap}>
@@ -284,20 +313,26 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
         {/* No ✕ — the cube closes every subscreen, this one included. */}
       </header>
 
-      {/* Decorative sign, like the reference cabinet's crown. The tiers become
-          real when the server economy lands. */}
-      <section className={styles.jackpotSign} aria-hidden="true">
-        <span className={styles.jackpotWord}>JACKPOT</span>
-        <span className={styles.jackpotAmount}>10,000.00</span>
-        <div className={styles.tiers}>
-          <span className={styles.tier}>MAJOR</span>
-          <span className={styles.tier}>MINOR</span>
-          <span className={styles.tier}>MINI</span>
-        </div>
-      </section>
+      {/* The reference render's own marquee — wordmark, jackpot sign, mascot,
+          skyline — cropped as one strip. It IS the header; the jackpot tiers
+          on it become real when the server economy lands. width/height keep
+          the strip's aspect reserved before the bytes arrive. */}
+      <img
+        className={styles.marquee}
+        src="casino/marquee.png"
+        alt="POPLUR casino — jackpot 10,000"
+        width={1200}
+        height={223}
+        draggable={false}
+      />
 
-      <section className={styles.cabinet} data-win={result && result.amount > 0 ? 'true' : undefined}>
-        <span className={styles.wordmark} aria-hidden="true">POPLUR</span>
+      {/* Reel panel flanked by the payline number chips, like the reference. */}
+      <section className={styles.reelsBand}>
+        <span className={styles.chipCol} aria-hidden="true">
+          {PAYLINE_CHIPS.map(([label, tone], i) => (
+            <span key={i} className={`${styles.chip} ${styles[tone]}`}>{label}</span>
+          ))}
+        </span>
         <div className={styles.reels} role="img" aria-label="Slot reels — middle line pays">
           {Array.from({ length: REELS }, (_, i) => {
             const cells = strips?.[i] ?? faces[i]
@@ -307,7 +342,9 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
                 <div
                   className={styles.strip}
                   style={traveling ? {
-                    transform: `translateY(${-(cells.length - 3) * CELL_PX}px)`,
+                    // Travel = strip height minus the 3 visible cells, as a
+                    // fraction of the strip's own height — cell-size agnostic.
+                    transform: `translateY(-${(((cells.length - 3) / cells.length) * 100).toFixed(4)}%)`,
                     transitionDuration: `${REEL_DUR_BASE + i * REEL_DUR_STEP}ms`,
                     willChange: 'transform',
                   } : undefined}
@@ -316,7 +353,16 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
                   }}
                 >
                   {cells.map((sym, j) => (
-                    <span key={j} className={`${styles.cell} ${styles[sym.tone]}`}>{sym.glyph}</span>
+                    <span key={j} className={styles.cell}>
+                      {/* the cell box is fixed by CSS (--cell), so tiles never
+                          reflow the strip while their bytes load */}
+                      <img
+                        className={sym.wide ? `${styles.cellArt} ${styles.cellArtWide}` : styles.cellArt}
+                        src={sym.img}
+                        alt=""
+                        draggable={false}
+                      />
+                    </span>
                   ))}
                 </div>
               </div>
@@ -324,6 +370,47 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
           })}
           <span className={styles.payband} aria-hidden="true" />
         </div>
+        <span className={styles.chipCol} aria-hidden="true">
+          {PAYLINE_CHIPS.map(([label, tone], i) => (
+            <span key={i} className={`${styles.chip} ${styles[tone]}`}>{label}</span>
+          ))}
+        </span>
+      </section>
+
+      {/* BALANCE / BET / WIN wells plus the glitter SPIN panel, the reference
+          readout row. BALANCE and WIN are live; BET is honestly FREE (the
+          daily spin has no stake) and the +/− pills are decorative hardware. */}
+      <section className={styles.readout}>
+        <div className={styles.well}>
+          <span className={styles.wellLabel}>BALANCE</span>
+          <span className={styles.wellRow}>
+            <b className={styles.wellValue}>{fmtWell(credits)}</b>
+            <span className={styles.wellPill} aria-hidden="true">+</span>
+          </span>
+        </div>
+        <div className={styles.well}>
+          <span className={styles.wellLabel}>BET</span>
+          <span className={styles.wellRow}>
+            <span className={styles.wellPill} aria-hidden="true">−</span>
+            <b className={styles.wellValue}>FREE</b>
+            <span className={styles.wellPill} aria-hidden="true">+</span>
+          </span>
+        </div>
+        <div className={styles.well}>
+          <span className={styles.wellLabel}>WIN</span>
+          <span className={styles.wellRow}>
+            <b className={styles.wellValue}>{fmtWell(result?.amount ?? 0)}</b>
+          </span>
+        </div>
+        <button
+          type="button"
+          className={styles.spinPanel}
+          onClick={spin}
+          disabled={used || spinning}
+          aria-label={used ? 'Free spin used — come back tomorrow' : 'Spin'}
+        >
+          <img src="casino/spin-panel.png" alt="" width={279} height={86} draggable={false} />
+        </button>
       </section>
 
       <div className={styles.resultRow} role="status" aria-live="polite">
@@ -338,29 +425,43 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
-      <div className={styles.deck}>
-        <button
-          type="button"
-          className={styles.deckBtn}
-          onClick={() => { playPop(); setPaysOpen(open => !open) }}
-        >
-          PAY TABLE
-        </button>
-        <button
-          type="button"
-          className={styles.spinBtn}
-          onClick={spin}
-          disabled={used || spinning}
-          aria-label={used ? 'Free spin used — come back tomorrow' : 'Spin'}
-        >
-          {spinning ? '· · ·' : used ? 'TOMORROW' : 'SPIN'}
-        </button>
-        {/* Decorative, like the reference cabinet's bet rail: the daily spin
-            is always one free credit line, so there is nothing to bet. */}
-        <span className={styles.betChip} aria-hidden="true">
-          BET<b>FREE</b>
-        </span>
-      </div>
+      {/* Bottom hardware row. Only PAY TABLE and SPIN are wired — the rest
+          are honest decorative hardware (spans, not buttons) until bets and
+          autoplay exist; the mini-panel is the reference's own art. */}
+      <section className={styles.hardware}>
+        <div className={styles.hwRow}>
+          <button
+            type="button"
+            className={styles.hwBtn}
+            onClick={() => { playPop(); setPaysOpen(open => !open) }}
+          >
+            PAY TABLE
+          </button>
+          <span className={styles.hwBtn} aria-hidden="true">BET DOWN</span>
+          <span className={styles.hwBtn} aria-hidden="true">BET UP</span>
+          <span className={styles.hwBtn} aria-hidden="true">MAX BET</span>
+          <span className={`${styles.hwBtn} ${styles.hwBlue}`} aria-hidden="true">AUTO PLAY</span>
+        </div>
+        <div className={styles.hwRow}>
+          <img
+            className={styles.miniPanel}
+            src="casino/mini-panel.png"
+            alt=""
+            width={388}
+            height={150}
+            draggable={false}
+          />
+          <button
+            type="button"
+            className={styles.spinBtn}
+            onClick={spin}
+            disabled={used || spinning}
+            aria-label={used ? 'Free spin used — come back tomorrow' : 'Spin'}
+          >
+            {spinning ? '· · ·' : used ? 'TOMORROW' : 'SPIN'}
+          </button>
+        </div>
+      </section>
 
       {paysOpen && (
         <div className={styles.paysCard} role="dialog" aria-label="Pay table">
@@ -368,13 +469,13 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
           <ul className={styles.paysList}>
             {SYMBOLS.map(s => (
               <li key={s.id} className={styles.paysRow}>
-                <span className={`${styles.paysGlyph} ${styles[s.tone]}`}>{s.glyph}</span>
+                <span className={styles.paysGlyph}><img src={s.img} alt="" draggable={false} /></span>
                 <span className={styles.paysName}>{s.name}</span>
                 <span className={styles.paysNums}>×3 {s.pays[0]} · ×4 {s.pays[1]} · ×5 {s.pays[2]}</span>
               </li>
             ))}
             <li className={styles.paysRow}>
-              <span className={`${styles.paysGlyph} ${styles.toneWild}`}>W</span>
+              <span className={styles.paysGlyph}><img src={WILD.img} alt="" draggable={false} /></span>
               <span className={styles.paysName}>WILD</span>
               <span className={styles.paysNums}>stands in for any symbol</span>
             </li>
