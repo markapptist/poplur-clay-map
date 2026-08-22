@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { modelUrl } from './modelUrl'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { primeMotionAudio } from './motionEffectsAudio'
@@ -232,7 +233,13 @@ const IMAGE_MODEL_RE = /\.(?:avif|jpe?g|png|webp)(?:[?#].*)?$/i
 
 /** Image support remains for legacy subscreen objects. Main Profile navigation
     now uses real static 3D LODs and never enters this billboard path. */
-async function loadNavigatorObject(url: string): Promise<THREE.Object3D> {
+async function loadNavigatorObject(name: string): Promise<THREE.Object3D> {
+  // The seam: a navigator model named in the clay-models pack loads from the
+  // pack, everything else from the bundle exactly as before. The pack set is
+  // empty today (see modelUrl.ts) so this is a no-op — the point is that
+  // moving a navigator model to the cloud later is a data change there, not a
+  // code change here.
+  const url = modelUrl(name)
   if (!IMAGE_MODEL_RE.test(url)) return (await clayLoader().loadAsync(url)).scene
 
   const texture = await new THREE.TextureLoader().loadAsync(url)

@@ -9,7 +9,7 @@
 
 import { createHash } from 'node:crypto'
 import { cpSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
 const PUBLIC = 'public'
 const OUT = 'dist-packs'
@@ -22,6 +22,14 @@ const PACKS = [
   { id: 'arcade-art',     from: 'games/arcade/art',  version: 1 },
   { id: 'subscreens',     from: 'subscreens',        version: 1 },
   { id: 'profile-themes', from: 'profile-themes',    version: 1 },
+  // The clay-models pack is a FILE LIST, not a directory: the models it moves
+  // out of the bundle are scattered top-level GLBs, not one folder. Keep this
+  // list identical to CLAY_MODELS_PACK in src/modelUrl.ts — the app's resolver
+  // and this builder must agree on exactly which models the pack owns, or a
+  // model gets dropped from the bundle that the app still loads bundle-relative.
+  { id: 'clay-models', version: 1, files: [
+    'games/poplurstation/console.glb',
+  ] },
 ]
 
 const walk = (dir, base = dir) =>
@@ -35,18 +43,32 @@ mkdirSync(OUT, { recursive: true })
 
 const packs = []
 for (const pack of PACKS) {
-  const src = join(PUBLIC, pack.from)
-  let files
-  try { files = walk(src) } catch { console.error(`  skipped ${pack.id}: ${src} not found`); continue }
-
   const dest = join(OUT, pack.id)
-  cpSync(src, dest, { recursive: true })
+  let files
+  const sizeOf = f => statSync(join(PUBLIC, pack.from ? join(pack.from, f) : f)).size
 
-  const bytes = files.reduce((sum, f) => sum + statSync(join(src, f)).size, 0)
+  if (pack.files) {
+    // File-list pack: copy each named file, preserving its relative path so the
+    // pack URL matches the name the app's resolver passes.
+    try { files = pack.files; files.forEach(f => statSync(join(PUBLIC, f))) }
+    catch (e) { console.error(`  skipped ${pack.id}: ${e.message}`); continue }
+    for (const f of files) {
+      const to = join(dest, f)
+      mkdirSync(dirname(to), { recursive: true })
+      cpSync(join(PUBLIC, f), to)
+    }
+  } else {
+    // Directory pack: everything under `from`.
+    const src = join(PUBLIC, pack.from)
+    try { files = walk(src) } catch { console.error(`  skipped ${pack.id}: ${src} not found`); continue }
+    cpSync(src, dest, { recursive: true })
+  }
+
+  const bytes = files.reduce((sum, f) => sum + sizeOf(f), 0)
   // A digest of the file list and sizes, so a changed pack is visible without
   // hashing every byte of a 66MB directory on every build.
   const digest = createHash('sha256')
-    .update(files.map(f => `${f}:${statSync(join(src, f)).size}`).sort().join('\n'))
+    .update(files.map(f => `${f}:${sizeOf(f)}`).sort().join('\n'))
     .digest('hex').slice(0, 12)
 
   packs.push({ id: pack.id, version: pack.version, bytes, digest, files })

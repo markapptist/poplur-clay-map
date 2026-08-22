@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { modelUrl } from './modelUrl'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import PRERENDERED from './spritePrerender.json'
@@ -116,7 +117,13 @@ export function recordedSpriteKeys(): string[] {
 }
 const requested = new Set<string>()
 
-function loadModel(url: string): Promise<THREE.Object3D> {
+function loadModel(name: string): Promise<THREE.Object3D> {
+  // Resolve at the FETCH point, never before the sprite viewKey: the
+  // pre-rendered manifest is keyed by the model's logical name, so resolving
+  // earlier would miss every baked sprite. A member of the clay-models pack
+  // fetches from the pack here; a non-member is unchanged. Cache follows the
+  // resolved url so bundle and pack copies never collide.
+  const url = modelUrl(name)
   const key = `model:${url}`
   const cached = poplurAssetCache.get<THREE.Object3D>(key)
   if (cached) return Promise.resolve(cached.clone(true))
