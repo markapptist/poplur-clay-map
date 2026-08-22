@@ -525,6 +525,14 @@ function destinationsForTopics(topics: readonly MapTourTopic[]): TourDestination
   return TOUR_DESTINATIONS.filter(destination => selected.has(TOUR_TOPIC_FOR_KIND[destination.kind]))
 }
 
+/** The map's twelve world landmarks — CN Tower, Eiffel, Big Ben, Giza,
+ *  Christ the Redeemer, Statue of Liberty, Taj Mahal, Sydney Opera House,
+ *  Colosseum, Burj Khalifa, Space Needle, Golden Gate Bridge. Each has a real
+ *  3D clay model standing on the map (see WORLD_LANDMARKS in ClayMap.tsx), so
+ *  the tour visiting all of them is the natural pairing — you see the object,
+ *  then you fly to where it stands. */
+const TOUR_LANDMARKS: TourDestination[] = TOUR_DESTINATIONS.filter(d => d.kind === 'landmark')
+
 function displayPlaceName(name: string): string {
   return name.replace(/^the\s+/i, '')
 }
@@ -833,6 +841,10 @@ export default function App() {
     schedule: () => {}, cancel: () => {},
   })
   const lastTourDestinationRef = useRef<string | null>(null)
+  /** Round-robin cursor into TOUR_LANDMARKS, so the tour visits ALL of
+   *  them in a predictable sequence rather than dice-rolling among
+   *  destinations. Starts at -1 so the first tourStep lands at 0. */
+  const tourLandmarkCursorRef = useRef(-1)
   useEffect(() => {
     if (harnessView) return
     // Tell the parent the map has been TOUCHED. The screen coach sits over
@@ -1494,10 +1506,19 @@ export default function App() {
 
   // ── AI place tour: each stop holds for five minutes after arrival ─────────
   const tourStep = useCallback((preferredDestination?: TourDestination) => {
-    const selected = destinationsForTopics(tourTopicsRef.current)
-    const options = selected.filter(destination => destination.id !== lastTourDestinationRef.current)
-    const destination = preferredDestination ?? options[Math.floor(Math.random() * options.length)] ?? selected[0] ?? TOUR_DESTINATIONS[0]
-    activateTourDestination(destination)
+    // The tour visits ALL twelve landmarks in sequence, rather than random-
+    // picking from the SHOW ME topic list. A tour that skips half of them or
+    // repeats the same three feels arbitrary; a fixed round-robin turns each
+    // pass into a complete pilgrimage through the built world. Topics still
+    // exist for the SHOW ME screen, they just no longer bound this loop.
+    if (preferredDestination) {
+      activateTourDestination(preferredDestination)
+      return
+    }
+    const list = TOUR_LANDMARKS
+    if (list.length === 0) return
+    tourLandmarkCursorRef.current = (tourLandmarkCursorRef.current + 1) % list.length
+    activateTourDestination(list[tourLandmarkCursorRef.current])
   }, [activateTourDestination])
 
   // Whether the tour is running. The hold menu's tile has to read STOP TOUR
