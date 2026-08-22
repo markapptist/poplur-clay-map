@@ -314,6 +314,11 @@ const COMMENT_ROLL = [
   { who: '@hauls', body: 'my whole feed is this place today', pic: 'feed/posters/ad-cartoon.jpg' },
 ]
 
+// Clips of unattended autoplay before the feed rests on a tap-to-resume
+// cover. ~6 clips is a couple of minutes — long enough not to interrupt real
+// watching, short enough to stop decoding for a phone left on the feed.
+const AUTOPLAY_REST_AFTER = 6
+
 export default function FeedTwin({
   index: controlledIndex,
   onIndexChange,
@@ -388,6 +393,16 @@ export default function FeedTwin({
   const playerModeRef = useRef(false)
   const [playerPaused, setPlayerPaused] = useState(false)
   const playerPausedByUserRef = useRef(false)
+  // "Are you still watching?" — a feed left on screen autoplays clip after clip
+  // through advanceCompletedContent forever, decoding video the whole time even
+  // when nobody is looking. That is real sustained heat the frame governor
+  // cannot touch (a <video> decoder runs independently of the shared clock).
+  // After a run of auto-advances with no interaction the feed rests on a
+  // tap-to-resume cover instead. The decoder is already released at onEnded, so
+  // resting spends nothing; any touch (noteFeedActivity) brings it back.
+  const [autoplayRested, setAutoplayRested] = useState(false)
+  const autoplayRestedRef = useRef(false)
+  const unattendedAdvancesRef = useRef(0)
   const [playerTime, setPlayerTime] = useState(0)
   const [playerDuration, setPlayerDuration] = useState(0)
   const [playerBuffered, setPlayerBuffered] = useState(0)
@@ -634,7 +649,30 @@ export default function FeedTwin({
   }, [])
 
 
+  const noteFeedActivity = useCallback(() => {
+    unattendedAdvancesRef.current = 0
+    if (autoplayRestedRef.current) {
+      autoplayRestedRef.current = false
+      setAutoplayRested(false)
+    }
+  }, [])
+
+  const wakeFeed = useCallback(() => {
+    unattendedAdvancesRef.current = 0
+    autoplayRestedRef.current = false
+    setAutoplayRested(false)
+    const count = postsFor(ch).length
+    if (count >= 2) {
+      const cur = contentIdxRef.current[ch.id] ?? 0
+      const nxt = (cur + 1) % count
+      contentIdxRef.current[ch.id] = nxt
+      onContentAdvance?.(ch.id, nxt)
+    }
+    forceContentRender(n => n + 1)
+  }, [ch, onContentAdvance])
+
   const change = useCallback((dir: 1 | -1) => {
+    noteFeedActivity()
     const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
     if (next === index) return
     const currentVideo = adVideoRef.current
@@ -660,6 +698,7 @@ export default function FeedTwin({
   // a channel always starts on the widest-reaching post and swiping left
   // narrows in.
   const changeContent = useCallback((dir: 1 | -1) => {
+    noteFeedActivity()
     const count = postsFor(ch).length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
@@ -680,6 +719,12 @@ export default function FeedTwin({
   const advanceCompletedContent = useCallback(() => {
     const count = postsFor(ch).length
     if (count < 2) return
+    if (unattendedAdvancesRef.current >= AUTOPLAY_REST_AFTER) {
+      autoplayRestedRef.current = true
+      setAutoplayRested(true)
+      return
+    }
+    unattendedAdvancesRef.current += 1
     const current = contentIdxRef.current[ch.id] ?? 0
     const next = (current + 1) % count
     contentIdxRef.current[ch.id] = next
@@ -1272,6 +1317,7 @@ export default function FeedTwin({
   }
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return
+    noteFeedActivity()
     const target = e.target
     const mediaSurface = target instanceof Element
       ? target.closest('[data-feed-media="true"]')
@@ -1603,6 +1649,29 @@ export default function FeedTwin({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
+      {autoplayRested && (
+        <button
+          type="button"
+          onPointerDown={e => e.stopPropagation()}
+          onClick={wakeFeed}
+          aria-label="Resume feed"
+          style={{
+            position: 'absolute', inset: 0, zIndex: 40, border: 'none',
+            display: 'grid', placeItems: 'center', rowGap: '12px',
+            background: 'rgba(6, 3, 10, 0.74)',
+            backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+            color: '#fff', cursor: 'pointer', textAlign: 'center', padding: '24px',
+            font: "600 16px/1.4 system-ui, -apple-system, 'SF Pro Rounded', sans-serif",
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: '34px', lineHeight: 1 }}>▶</span>
+          <span>Still watching?
+            <span style={{ display: 'block', marginTop: '4px', fontSize: '13px', fontWeight: 500, opacity: 0.66 }}>
+              Tap to keep going
+            </span>
+          </span>
+        </button>
+      )}
       {/* Tap the left or right edge to step through the other users posting on
           this channel — the tap twin of the horizontal swipe. Radius reactions
           intentionally live only on the visible thumbs controls in the rail. */}
