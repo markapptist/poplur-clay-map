@@ -308,6 +308,11 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // The wallet itself; its SEND/CASH OUT pages swap to the coin and cash
   // stacks via poplur-wallet-page (see walletPage below).
   'profile-wallet': 'poplur_cube_wallet.glb',
+  // The TROPHY ROOM's navigator is the trophy itself. Supplied Meshy export
+  // was 83MB; decimated by the standard recipe (Draco + simplify 0.0005 +
+  // 256px webp) to 322KB — the mixer/newspaper weight class, the bar for
+  // anything that decodes every time its screen opens.
+  'profile-trophies': 'poplur_cube_trophy.glb',
   // The mini-app folder is, fittingly, a folder.
   'feed-apps': 'poplur_cube_folder.glb',
   // In the bundle and deliberately unwired, for want of a screen to stand on:

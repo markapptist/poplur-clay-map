@@ -126,6 +126,13 @@ export function nextRadiusInactivityAt(): number | null {
   return Number.isFinite(next) ? next : null
 }
 
+/** How many posts this account has put on the ground — the same owned-post
+    roll the inactivity clock runs on, so "posts" means the same thing to the
+    trophy wall as it does to the radius. */
+export function ownedPostCount(): number {
+  return readJson<OwnedPost[]>(OWNED_POST_KEY, []).length
+}
+
 export function radiusKm(): number {
   const delta = events().reduce((sum, event) => sum + event.deltaKm, 0)
   return Math.max(0, BASE_RADIUS_KM + delta)

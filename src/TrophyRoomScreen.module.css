@@ -1,0 +1,272 @@
+/* TROPHY ROOM — a dark stone wall with pink neon shelves. The wall is built
+   in CSS (stacked repeating gradients for the brick courses, a vignette to
+   sink the corners) rather than shipping a wall photograph: the reference is
+   a MOOD, and a gradient wall stays crisp at every width and costs 0 bytes.
+
+   Deliberately ignores --poplur-ground: a trophy room is a room, and it is
+   dark in there no matter which theme the rest of the profile wears — the
+   same self-owned-surface exception the newspaper and the games take. */
+
+.screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px)
+    18px
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: #ffe2f2;
+  background-color: #0d0614;
+  /* the wall: a warm pink ambient glow from the shelving, then the mortar
+     lines of the brick courses (rows always, verticals offset per course via
+     two half-height layers), then the stone's own faint mottle */
+  background-image:
+    radial-gradient(130% 55% at 50% 0%, rgba(246, 59, 154, 0.14), rgba(246, 59, 154, 0) 60%),
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.42) 0 2px, transparent 2px 44px),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.22) 0 2px, transparent 2px 72px),
+    linear-gradient(180deg, #170a22 0%, #0d0614 55%, #0a040f 100%);
+  background-attachment: local;
+}
+
+.wall {
+  max-width: 420px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.title {
+  margin: 0;
+  font: 900 22px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.22em;
+  color: #fff2f8;
+  text-shadow:
+    0 0 14px rgba(246, 59, 154, 0.55),
+    0 0 40px rgba(246, 59, 154, 0.25);
+}
+
+.count {
+  font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.24em;
+  color: rgba(255, 138, 198, 0.85);
+}
+
+/* ── one shelf: three trophies standing on a neon plank ── */
+
+.shelf {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: end;
+  gap: 8px;
+  padding: 12px 6px 10px;
+  /* governor-ok: one-shot entrance per shelf on mount (staggered via
+     --shelf-delay), animation ends and never re-arms — nothing runs at idle */
+  animation: shelfIn 0.45s cubic-bezier(0.22, 0.9, 0.24, 1) both;
+  animation-delay: var(--shelf-delay, 0s);
+}
+
+/* the plank: a pink neon tube the trophies stand on */
+.shelf::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 0;
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #b02f74, #ff8ac6 18%, #f63b9a 50%, #ff8ac6 82%, #b02f74);
+  box-shadow:
+    0 0 10px 1px rgba(246, 59, 154, 0.85),
+    0 0 26px 6px rgba(246, 59, 154, 0.38),
+    0 10px 30px 6px rgba(246, 59, 154, 0.16);
+}
+
+.trophy {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  padding: 4px 2px 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.trophy:active .art { transform: scale(0.94); }
+
+.art {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  transform-origin: bottom center;
+  transition: transform 0.15s ease;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.55));
+}
+
+/* earned: full colour with the rarity's halo behind it */
+.trophy[data-earned='true'] .art {
+  filter:
+    drop-shadow(0 4px 10px rgba(0, 0, 0, 0.55))
+    drop-shadow(0 0 12px color-mix(in srgb, var(--rarity, #f63b9a) 60%, transparent));
+}
+
+/* locked: a dark silhouette still recognisably shaped like its prize */
+.trophy[data-earned='false'] .art {
+  filter: brightness(0.22) saturate(0.25) contrast(1.05)
+    drop-shadow(0 4px 10px rgba(0, 0, 0, 0.55));
+}
+
+.name {
+  font: 800 11px/1.15 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: #fff2f8;
+}
+
+.trophy[data-earned='true'] .name {
+  color: color-mix(in srgb, var(--rarity, #fff2f8) 55%, #fff2f8);
+}
+
+.trophy[data-earned='false'] .name { color: rgba(255, 226, 242, 0.45); }
+
+/* the locked tile's bar: a count when the ledger can count, words otherwise */
+.need {
+  font: 600 9px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-style: normal;
+  letter-spacing: 0.03em;
+  text-align: center;
+  color: rgba(255, 138, 198, 0.55);
+}
+
+.hint {
+  margin-top: 14px;
+  text-align: center;
+  font: 500 11px/1.4 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 226, 242, 0.4);
+}
+
+/* ── detail overlay: one trophy off the shelf, in your hands ── */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 3, 12, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  /* governor-ok: one-shot fade on open, ends and never re-arms */
+  animation: overlayIn 0.22s ease-out both;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(320px, 100%);
+  padding: 26px 22px 22px;
+  border-radius: 24px;
+  border: 1px solid color-mix(in srgb, var(--rarity, #f63b9a) 55%, transparent);
+  background:
+    radial-gradient(120% 70% at 50% 0%, color-mix(in srgb, var(--rarity, #f63b9a) 16%, transparent), transparent 70%),
+    linear-gradient(180deg, #1c0f28 0%, #120818 100%);
+  box-shadow:
+    0 0 22px color-mix(in srgb, var(--rarity, #f63b9a) 30%, transparent),
+    0 18px 50px rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+
+.cardArt {
+  width: 168px;
+  height: 168px;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.6));
+}
+
+.card[data-earned='false'] .cardArt {
+  filter: brightness(0.22) saturate(0.25) contrast(1.05)
+    drop-shadow(0 8px 18px rgba(0, 0, 0, 0.6));
+}
+
+.rarity {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--rarity, #f63b9a) 70%, transparent);
+  font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.22em;
+  color: var(--rarity, #f63b9a);
+}
+
+.cardName {
+  margin: 2px 0 0;
+  font: 900 22px/1.1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: #fff2f8;
+}
+
+.cardDesc {
+  margin: 0;
+  font: 500 13px/1.5 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 226, 242, 0.78);
+}
+
+.cardMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 138, 198, 0.18);
+}
+
+.cardReq {
+  font: 600 11px/1.35 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 226, 242, 0.6);
+}
+
+.cardEarned {
+  font: 900 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  color: #4ade80;
+}
+
+.cardLocked {
+  font: 800 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  color: rgba(255, 138, 198, 0.65);
+}
+
+@keyframes shelfIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shelf, .overlay { animation: none; }
+  .art, .trophy:active .art { transition: none; transform: none; }
+}

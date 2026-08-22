@@ -16,6 +16,7 @@ import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
 import MailScreen from './MailScreen'
 import StatsScreen from './StatsScreen'
+import TrophyRoomScreen from './TrophyRoomScreen'
 import WalletScreen from './WalletScreen'
 import AppsScreen from './AppsScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
@@ -140,6 +141,12 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The `poplur-open-notifications` event it used to fire is still listened
     // for (ProfileTwin), so a host can open the sheet without a tile here.
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats', native: true },
+    // The wall of trophies this account has collected. STATS is the numbers;
+    // TROPHIES is what the numbers have won you — the library, predicates and
+    // earned-date ratchet live in trophies.ts. The tile icon is the supplied
+    // globe-cup sticker (public/holdmenu/Trophy.png), from the same artwork
+    // set the wall itself hangs.
+    { icon: 'Trophy', title: 'TROPHIES', screen: 'profile-trophies', native: true },
     // AVATAR makes the cube you wear on this tab out of a picture you supply —
     // a logo, a face, a product. Meshy sculpts it (Poplur credits) or the app
     // presses the image onto a clay cube for free. It sits next to SETTINGS
@@ -977,6 +984,13 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Settings">
           <SettingsScreen bindBack={bindNativeBack} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-trophies') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Trophy room">
+          <TrophyRoomScreen bindBack={bindNativeBack} />
         </div>
       )
     }
