@@ -48,10 +48,13 @@ export const CLAY_MODELS_PACK = new Set<string>([
   //   3. drop it from the phone bundle in scripts/sync-mobile.sh
   //   4. verify on a device that the surface still renders (CORS + WebView fetch
   //      of a remote GLB is the part that only a device can confirm)
-  // The first ready candidate is 'games/poplurstation/console.glb': its only
-  // consumer is CubeTab3D, already routed below, so it needs just publish +
-  // bundle-drop + device pass. Until then this set stays empty and every model
-  // resolves to the bundle exactly as before.
+  // First model actually moved to the cloud: the games-subscreen cube face.
+  // Its only consumer is CubeTab3D (routed below), it is published to the
+  // bucket (verified: 200, byte-identical, access-control-allow-origin:*,
+  // content-type model/gltf-binary), and it is dropped from the phone bundle in
+  // scripts/sync-mobile.sh. Expanding to newspaper/mic/mixer needs their other
+  // loaders (modelSprite icons, ClaySwayObject, VFXStudio) routed first.
+  'games/poplurstation/console.glb',
 ])
 
 /** Resolve a model filename to a URL. Members of the clay-models pack resolve

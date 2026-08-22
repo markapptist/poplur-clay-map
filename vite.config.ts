@@ -34,7 +34,13 @@ const ASSET_PACK_BASE: string = (() => {
 // build ONLY while ASSET_PACK_BASE is set: with no published base the bundled
 // copy IS the pack, so the build keeps shipping it. Point the manifest back at
 // localPaths and these return to the bundle on the next build, no config edit.
-const PUBLISHED_PACK_DIRS = ['subscreens', 'profile-themes', 'games/arcade/art']
+// Also accepts exact FILE paths, matched by `path === entry` below — the
+// clay-models pack moves individual GLBs, not whole folders (its dir also holds
+// game-bundle assets we do not serve). Keep the file list in sync with
+// CLAY_MODELS_PACK in src/modelUrl.ts: a file excluded here but not routed
+// there would 404, and vice versa it would ship dead weight.
+const PUBLISHED_PACK_DIRS = ['subscreens', 'profile-themes', 'games/arcade/art',
+  'games/poplurstation/console.glb']
 
 // Source-quality meshes retained for authoring/prerender regeneration. The
 // running app uses the checked-in sprites or decimated `*_lite.glb` variants;
