@@ -9,7 +9,7 @@ import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
-import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, takePendingMapPost, type PendingMapPost } from './cameraStore'
+import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, takePendingMapPost, type PendingMapPost } from './cameraStore'
 import { startBroadcast, stopBroadcast, isLive, onLiveStore, ownBroadcast } from './liveStore'
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
@@ -330,23 +330,6 @@ export default function Camera({
   // shot — the button falls back to its plain icon rather than showing
   // nothing or a placeholder square.
   const latestCapture = useSyncExternalStore(onCameraStore, () => listCaptures()[0] ?? null, () => listCaptures()[0] ?? null)
-  // The device library's newest item — what the roll button shows until this
-  // session takes something of its own (session captures do not persist, so
-  // every launch used to open on an empty square). Delivered by the shell via
-  // CameraRoll's window.poplurCameraRoll and shared through the store.
-  const libraryNewest = useSyncExternalStore(onCameraStore, getLibraryNewest, getLibraryNewest)
-  useEffect(() => {
-    if (!NATIVE_SHELL || latestCapture || libraryNewest) return
-    // Respect the roll's own in-app primer: never surface library media on a
-    // button when the user has not accepted the roll itself. The shell side is
-    // prompt-safe regardless — requestCameraRoll only answers when Photos is
-    // ALREADY authorized, and never summons the OS permission sheet.
-    try {
-      if (window.localStorage.getItem('poplur.rollPermission') !== 'granted') return
-    } catch { return }
-    postNativeEvent({ type: 'requestCameraRoll' })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
   const [detections, setDetections] = useState<Detection[]>([])
   const detectionsRef = useRef(detections)
   detectionsRef.current = detections
@@ -1244,24 +1227,7 @@ export default function Camera({
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     rec.onstop = () => {
       const blob = new Blob(chunks, { type: rec.mimeType || 'video/webm' })
-      // The clip's still, taken from the live viewfinder in the same tick the
-      // recording ends — the frame you stopped on. Costs one small canvas draw
-      // here so the roll and the roll button never need a <video> decoder just
-      // to show what was recorded. Best-effort: a torn-down viewfinder simply
-      // leaves poster unset and renderers use their metadata-frame fallback.
-      let poster: string | undefined
-      const finder = videoRef.current
-      if (finder && finder.videoWidth >= 2) {
-        try {
-          const still = document.createElement('canvas')
-          const scale = Math.min(1, 320 / Math.max(finder.videoWidth, finder.videoHeight))
-          still.width = Math.max(1, Math.round(finder.videoWidth * scale))
-          still.height = Math.max(1, Math.round(finder.videoHeight * scale))
-          still.getContext('2d')?.drawImage(finder, 0, 0, still.width, still.height)
-          poster = still.toDataURL('image/jpeg', 0.8)
-        } catch { /* tainted or torn down — fall back to the video frame */ }
-      }
-      const clip = addCapture({ kind: 'video', src: URL.createObjectURL(blob), length: mmss(performance.now() - started), poster })
+      const clip = addCapture({ kind: 'video', src: URL.createObjectURL(blob), length: mmss(performance.now() - started) })
       recorderRef.current = null
       setRecStart(null)
       playPop()
@@ -1750,32 +1716,10 @@ export default function Camera({
           aria-label="Camera roll"
           onClick={() => { playPop(); onOpenRoll?.() }}
         >
-          {latestCapture && (latestCapture.kind === 'photo' || latestCapture.poster) ? (
+          {latestCapture && latestCapture.kind === 'photo' ? (
             <img
               className={styles.camRollBtnThumb}
-              src={latestCapture.kind === 'photo' ? latestCapture.src : latestCapture.poster}
-              alt=""
-              aria-hidden="true"
-            />
-          ) : latestCapture ? (
-            // A video that arrived without a still (native capture). Same
-            // trick as the roll's session tiles: #t=0.1 makes the browser
-            // paint a real first frame under preload=metadata.
-            <video
-              className={styles.camRollBtnThumb}
-              src={`${latestCapture.src}#t=0.1`}
-              preload="metadata"
-              muted
-              playsInline
-              aria-hidden="true"
-            />
-          ) : libraryNewest ? (
-            // Nothing taken this session: the device library's newest item.
-            // Its src is already a small JPEG thumbnail for videos too, so
-            // this branch never mounts a decoder.
-            <img
-              className={styles.camRollBtnThumb}
-              src={libraryNewest.src}
+              src={latestCapture.src}
               alt=""
               aria-hidden="true"
             />
@@ -1794,16 +1738,15 @@ export default function Camera({
         const sceneReads = currentCameraReads.length ? currentCameraReads : lastCameraReads
         const detected = sceneReads.find(read => read.user) ?? sceneReads[0] ?? null
         const recognizedSelf = Boolean(detected?.isUser && detected.user)
-        // A thermally parked camera used to announce itself here as CAMERA
-        // COOLING. Cut by request: the label read as the app complaining. The
-        // line already survives on sparse samples, so a parked scan simply
-        // keeps showing the latest real reading until sampling resumes.
+        const cameraParked = nativeCameraBudget?.state === 'parked'
         const primaryLabel = !detectOn
           ? 'TAP SCAN'
-          : detected
-            ? (detected.user?.name ?? detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase())
-            : 'AI SCANNING'
-        const contextLabel = detectOn && detected
+          : cameraParked
+            ? 'CAMERA COOLING'
+            : detected
+              ? (detected.user?.name ?? detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase())
+              : 'AI SCANNING'
+        const contextLabel = detectOn && detected && !cameraParked
           ? (detected.user
             ? `${detected.user.radiusKm.toFixed(1)} KM OVERALL`
             : sceneReads.slice(1)
@@ -1814,7 +1757,7 @@ export default function Camera({
           <div className={styles.camDetectionTitle} role="status" aria-live="polite">
             <div className={styles.camDetectionPrimary}>
               <span>{primaryLabel}</span>
-              {detectOn && detected && (
+              {detectOn && detected && !cameraParked && (
                 <small>{Math.round(detected.confidence * 100)}%</small>
               )}
             </div>

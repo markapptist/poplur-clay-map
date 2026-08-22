@@ -4,12 +4,11 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  background: linear-gradient(180deg, #0a0a1a 0%, #141428 40%, #1a1a2e 100%);
+  background: linear-gradient(180deg, #08081a 0%, #0e0e22 40%, #121228 100%);
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px 16px 24px;
-  gap: 12px;
+  padding: 8px 4px 0;
+  gap: 20px;
   color: #e8e8f0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   scrollbar-width: none;
@@ -17,13 +16,23 @@
 
 .screen::-webkit-scrollbar { display: none; }
 
-/* ── Globe ─────────────────────────────────────────────────────────────── */
+/* ── Globe section — globe + orbiting wooden cards ────────────────────── */
+
+.globeSection {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  height: 520px;
+  flex: 0 0 auto;
+}
 
 .globeWrap {
-  position: relative;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: 280px;
   height: 280px;
-  flex: 0 0 auto;
 }
 
 .globe {
@@ -33,6 +42,7 @@
   background-size: 11200px 280px;
   background-repeat: no-repeat;
   animation: globeSpin 3s steps(40) infinite;
+  border-radius: 50%;
 }
 
 @keyframes globeSpin {
@@ -47,7 +57,7 @@
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  border: 2px solid rgba(246, 59, 154, 0.5);
+  border: 2px solid rgba(246, 59, 154, 0.35);
   transform: translate(-50%, -50%) scale(1);
   animation: pulse 2.4s ease-out infinite;
   pointer-events: none;
@@ -57,212 +67,418 @@
 .pulseRing:nth-child(3) { animation-delay: 1.6s; }
 
 @keyframes pulse {
-  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.7; }
-  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.5; }
+  100% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
 }
 
-.radiusLabel {
-  text-align: center;
-  font-size: 13px;
-  font-weight: 600;
-  color: #f63b9a;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  margin-top: -4px;
-}
-
-.radiusValue {
-  font-size: 36px;
-  font-weight: 800;
-  color: #fff;
-  letter-spacing: -0.02em;
-}
-
-.radiusUnit {
-  font-size: 15px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.5);
-  margin-left: 4px;
-}
-
-/* ── Pop-up book cards ─────────────────────────────────────────────────── */
-
-.cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  width: 100%;
-  max-width: 360px;
-  perspective: 600px;
-}
+/* ── Wooden cards ─────────────────────────────────────────────────────── */
 
 .card {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  padding: 14px;
+  position: absolute;
+  background:
+    repeating-linear-gradient(
+      175deg, transparent, transparent 4px,
+      rgba(139, 109, 76, 0.06) 4px, rgba(139, 109, 76, 0.06) 5px
+    ),
+    linear-gradient(160deg, #d4b896 0%, #c9a97e 25%, #d6bc9e 50%, #c4a882 75%, #d1b48e 100%);
+  border: 2px solid rgba(160, 128, 96, 0.6);
+  border-radius: 10px;
+  padding: 14px 10px 8px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  transform-origin: bottom center;
-  animation: popUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  align-items: center;
+  gap: 1px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  z-index: 2;
+  width: 105px;
 }
 
-.card:nth-child(1) { animation-delay: 0.1s; border-top: 3px solid #f63b9a; }
-.card:nth-child(2) { animation-delay: 0.25s; border-top: 3px solid #4ade80; }
-.card:nth-child(3) { animation-delay: 0.4s; border-top: 3px solid #38bdf8; }
-.card:nth-child(4) { animation-delay: 0.55s; border-top: 3px solid #fbbf24; }
-
-@keyframes popUp {
-  from {
-    transform: rotateX(-90deg);
-    opacity: 0;
-  }
-  to {
-    transform: rotateX(0deg);
-    opacity: 1;
-  }
+.card::before {
+  content: '';
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ff8ec4, #f63b9a, #c22a72);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  z-index: 3;
 }
 
-.cardIcon {
-  font-size: 20px;
-  line-height: 1;
-}
+.cardIcon { font-size: 20px; line-height: 1; }
 
 .cardValue {
-  font-size: 26px;
-  font-weight: 800;
-  color: #fff;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
+  font-size: 30px;
+  font-weight: 900;
+  color: #f63b9a;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .cardLabel {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 8px;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-/* ── Stat tiles ────────────────────────────────────────────────────────── */
-
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  width: 100%;
-  max-width: 360px;
-}
-
-.tile {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
-  padding: 10px 8px;
+  letter-spacing: 0.05em;
+  color: #4a3520;
   text-align: center;
+}
+
+/* ── Card positions ───────────────────────────────────────────────────── */
+
+.cardTop {
+  top: 8px;
+  left: 50%;
+  width: 140px;
+  padding: 14px 12px 10px;
+  animation: popUpCenter 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.1s;
+}
+
+.cardLeftTop {
+  top: 120px;
+  left: 4px;
+  animation: popUpSide 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.2s;
+}
+
+.cardRightTop {
+  top: 120px;
+  right: 4px;
+  animation: popUpSide 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.25s;
+}
+
+.cardLeftBottom {
+  top: 290px;
+  left: 4px;
+  animation: popUpSide 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.35s;
+}
+
+.cardRightBottom {
+  top: 290px;
+  right: 4px;
+  animation: popUpSide 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.4s;
+}
+
+.cardBottom {
+  bottom: 8px;
+  left: 50%;
+  animation: popUpCenter 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.5s;
+}
+
+@keyframes popUpCenter {
+  from { opacity: 0; transform: translateX(-50%) translateY(16px) scale(0.85); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+@keyframes popUpSide {
+  from { opacity: 0; transform: translateY(16px) scale(0.85); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Mini gain/loss bar ───────────────────────────────────────────────── */
+
+.miniFlow {
+  width: 100%;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  animation: fadeUp 0.5s ease both;
-}
-
-.tile:nth-child(1) { animation-delay: 0.7s; }
-.tile:nth-child(2) { animation-delay: 0.8s; }
-.tile:nth-child(3) { animation-delay: 0.9s; }
-
-@keyframes fadeUp {
-  from { transform: translateY(12px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-
-.tileValue {
-  font-size: 20px;
+  gap: 4px;
+  font-size: 8px;
   font-weight: 700;
-  color: #fff;
+  margin-top: 3px;
 }
 
-.tileLabel {
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: rgba(255, 255, 255, 0.4);
-}
+.miniGain { color: #2d8a4e; }
+.miniLoss { color: #c0392b; }
 
-/* ── Badges ────────────────────────────────────────────────────────────── */
-
-.badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-  width: 100%;
-  max-width: 360px;
-  animation: fadeUp 0.5s ease 1s both;
-}
-
-.badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 20px;
-  padding: 6px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.badgeIcon { font-size: 14px; }
-
-.badgeLocked {
-  opacity: 0.35;
-  filter: grayscale(1);
-}
-
-/* ── Gain / loss bar ───────────────────────────────────────────────────── */
-
-.flowBar {
-  width: 100%;
-  max-width: 360px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  animation: fadeUp 0.5s ease 0.65s both;
-}
-
-.flowGain { color: #4ade80; }
-.flowLoss { color: #f87171; }
-
-.flowTrack {
+.miniTrack {
   flex: 1;
-  height: 6px;
+  height: 5px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(74, 53, 32, 0.15);
   overflow: hidden;
   display: flex;
 }
 
-.flowFill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.6s ease;
+.miniFillGain { height: 100%; background: #4ade80; border-radius: 3px 0 0 3px; }
+.miniFillLoss { height: 100%; background: #f87171; border-radius: 0 3px 3px 0; }
+
+/* ── Funny summary ────────────────────────────────────────────────────── */
+
+.summary {
+  width: 100%;
+  max-width: 340px;
+  padding: 0 8px;
+  text-align: center;
 }
 
-.flowFillGain { background: #4ade80; }
-.flowFillLoss { background: #f87171; }
+.summaryTitle {
+  font-size: 20px;
+  font-weight: 800;
+  color: #f63b9a;
+  margin: 0 0 12px;
+}
+
+.summaryLine {
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.65);
+  margin: 0 0 10px;
+}
+
+/* ── Chart sections ───────────────────────────────────────────────────── */
+
+.chartSection {
+  width: 100%;
+  max-width: 340px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.chartTitle {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.45);
+  margin: 0;
+}
+
+/* ── 3D Pie chart ─────────────────────────────────────────────────────── */
+
+.pieWrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+}
+
+.pie3d {
+  perspective: 500px;
+  flex: 0 0 auto;
+}
+
+.pieDisc {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  transform: rotateX(55deg);
+  box-shadow:
+    0 4px 0 0 rgba(100, 30, 60, 0.7),
+    0 8px 0 0 rgba(80, 25, 50, 0.5),
+    0 12px 0 0 rgba(60, 20, 40, 0.35),
+    0 16px 0 0 rgba(40, 15, 30, 0.2),
+    0 22px 30px rgba(0, 0, 0, 0.4);
+  animation: pieReveal 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.6s both;
+}
+
+@keyframes pieReveal {
+  from { transform: rotateX(55deg) scale(0.3) rotateZ(-90deg); opacity: 0; }
+  to   { transform: rotateX(55deg) scale(1) rotateZ(0deg); opacity: 1; }
+}
+
+.pieLegend {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.legendDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.legendLabel {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.legendVal {
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 3D Bar chart ─────────────────────────────────────────────────────── */
+
+.barChart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 200px;
+  padding: 10px 10px 0;
+}
+
+.barCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.bar3d {
+  position: relative;
+  width: 34px;
+  height: var(--bar-h, 10px);
+  transform-origin: bottom center;
+  animation: growBar 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--bar-delay, 0.8s);
+}
+
+.barFront {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 34px;
+  height: 100%;
+  background: var(--bar-color, #888);
+  border-radius: 3px 3px 0 0;
+}
+
+.barSide {
+  position: absolute;
+  bottom: 0;
+  left: 34px;
+  width: 12px;
+  height: 100%;
+  background: var(--bar-color, #888);
+  filter: brightness(0.55);
+  transform-origin: bottom left;
+  transform: skewY(-40deg);
+  border-radius: 0 2px 0 0;
+}
+
+.barTop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 34px;
+  height: 12px;
+  background: var(--bar-color, #888);
+  filter: brightness(1.3);
+  transform-origin: bottom left;
+  transform: skewX(-40deg) translateX(7px) translateY(-5px);
+  border-radius: 2px;
+}
+
+@keyframes growBar {
+  from { transform: scaleY(0); opacity: 0; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+
+.barLabel {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.barVal {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ── 3D Line chart ────────────────────────────────────────────────────── */
+
+.lineWrap {
+  width: 100%;
+  perspective: 400px;
+}
+
+.lineSvg {
+  width: 100%;
+  max-width: 320px;
+  display: block;
+  margin: 0 auto;
+  transform: rotateX(12deg) rotateY(-3deg);
+}
+
+.linePath {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: drawLine 1.5s ease 1s both;
+}
+
+@keyframes drawLine {
+  to { stroke-dashoffset: 0; }
+}
+
+.lineArea {
+  opacity: 0;
+  animation: fadeIn 0.6s ease 2s both;
+}
+
+@keyframes fadeIn {
+  to { opacity: 1; }
+}
+
+.lineDot {
+  opacity: 0;
+  animation: dotPop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes dotPop {
+  from { opacity: 0; transform: scale(0); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.lineLabels {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 16px 0;
+  max-width: 320px;
+  margin: 0 auto;
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.lineLabelNow {
+  color: #f63b9a;
+  font-weight: 800;
+}
+
+/* ── Spacer ───────────────────────────────────────────────────────────── */
+
+.spacer { height: 40px; flex: 0 0 auto; }
+
+/* ── Reduced motion ───────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
   .globe { animation: none; }
   .pulseRing { animation: none; display: none; }
-  .card { animation: none; opacity: 1; transform: none; }
-  .tile { animation: none; opacity: 1; transform: none; }
-  .badges { animation: none; opacity: 1; }
-  .flowBar { animation: none; opacity: 1; }
+  .card { animation: none !important; opacity: 1; }
+  .cardTop, .cardBottom { transform: translateX(-50%); }
+  .pieDisc { animation: none; opacity: 1; }
+  .bar3d { animation: none; opacity: 1; transform: none; }
+  .linePath { animation: none; stroke-dashoffset: 0; }
+  .lineArea { animation: none; opacity: 1; }
+  .lineDot { animation: none; opacity: 1; }
 }

@@ -10,11 +10,6 @@ export interface Capture {
   src: string
   /** mm:ss, videos only */
   length?: string
-  /** Small still for tiles/buttons (videos): the roll and the viewfinder's
-   *  roll button draw this instead of mounting a <video> decoder per thumb.
-   *  Web recordings set it from the viewfinder at stop; native captures may
-   *  arrive without one, and renderers fall back to a metadata-frame video. */
-  poster?: string
   at: number
 }
 
@@ -35,16 +30,6 @@ const captures: Capture[] = []
 const selected = new Set<string>()
 const listeners = new Set<() => void>()
 
-// The newest item in the DEVICE's photo library, as the small JPEG thumbnail
-// the native roll bridge already delivers (WebCameraRollProvider sorts by
-// creationDate descending and thumbnails videos too). Session captures reset
-// per launch, so without this the camera's roll button opened every session
-// as an empty square no matter how full the phone's library was. Published by
-// CameraRoll when the shell answers `requestCameraRoll`; the store holds it so
-// the camera button does not need its own copy of the single-slot
-// window.poplurCameraRoll callback the roll owns.
-let libraryNewest: { kind: 'photo' | 'video'; src: string } | null = null
-
 const emit = () => listeners.forEach(fn => fn())
 
 export function onCameraStore(fn: () => void): () => void {
@@ -61,14 +46,6 @@ export function setDetectOn(on: boolean): void {
 }
 
 export function listCaptures(): readonly Capture[] { return captures }
-
-export function getLibraryNewest(): { kind: 'photo' | 'video'; src: string } | null { return libraryNewest }
-
-export function setLibraryNewest(item: { kind: 'photo' | 'video'; src: string } | null): void {
-  if (item?.src === libraryNewest?.src && item?.kind === libraryNewest?.kind) return
-  libraryNewest = item
-  emit()
-}
 
 export function addCapture(capture: Omit<Capture, 'id' | 'at'>): Capture {
   // Newest first — the roll reads top-left as most recent, like Photos.
