@@ -566,6 +566,32 @@ function CelestialBody({ model, size, rotateDeg = 0 }: {
  *  a city skyline, not to metres: a sprite has a fixed pixel size while the
  *  buildings around it grow with zoom, so exact proportion is not on offer.
  */
+/** MultiPolygon of ±0.003° squares (~250m per side) around each landmark's
+ *  coords, wrapped as a GeoJSON Feature. Passed to a `["!", ["within", ...]]`
+ *  filter on clay-buildings-3d so the map's own extruded prism at each
+ *  landmark's footprint disappears — and the 3D model stands alone rather
+ *  than sharing pixels with its OSM building. Recomputed if someone adds a
+ *  landmark, so keeping it derived rather than hand-authored means the two
+ *  tables cannot drift out of step. */
+function landmarkExclusionZones(): GeoJSON.Feature<GeoJSON.MultiPolygon> {
+  const D = 0.003
+  return {
+    type: 'Feature',
+    properties: {},
+    geometry: {
+      type: 'MultiPolygon',
+      coordinates: WORLD_LANDMARKS.map(m => {
+        const [lng, lat] = m.coords
+        return [[
+          [lng - D, lat - D], [lng + D, lat - D],
+          [lng + D, lat + D], [lng - D, lat + D],
+          [lng - D, lat - D],
+        ]]
+      }),
+    },
+  }
+}
+
 const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; heightM: number; yaw?: number }[] = [
   { id: 'burj-khalifa', coords: [55.2744, 25.1972], width: 720, heightM: 828 },
   { id: 'cn-tower', coords: [-79.3871, 43.6426], width: 640, heightM: 553 },
@@ -2742,6 +2768,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           type: 'fill-extrusion',
           source: buildingSource,
           'source-layer': 'building',
+          // Cut out the OSM buildings at each landmark footprint. Without this,
+          // the map extrudes CN Tower's base as a squat prism and my 3D CN
+          // Tower model stands INSIDE it — the user's video called this out
+          // exactly ("the landmark should actually replace the building, not
+          // just hover on it"). One MultiPolygon of ±0.003° squares (~250m
+          // per side, plenty for a building footprint) around each of the
+          // twelve landmarks, so ONE within-check per feature covers all of
+          // them at layer-eval time.
+          filter: ['!', ['within', landmarkExclusionZones()]],
           // Geometry culling: no extrusions until the camera is close enough
           // to be looking at a neighbourhood, not a whole city. The clay
           // settlement placeholders own everything wider than this.
@@ -2802,7 +2837,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         source: buildingSource,
         'source-layer': 'building',
         minzoom: 14.5,
-        filter: ['>=', ['case', ['has', 'height'], ['to-number', ['get', 'height']], 0], 45] as never,
+        filter: ['all',
+          ['>=', ['case', ['has', 'height'], ['to-number', ['get', 'height']], 0], 45],
+          // Skip the roof cap at each landmark footprint, same reason
+          // clay-buildings-3d skips its extrusion — the 3D model IS the roof.
+          ['!', ['within', landmarkExclusionZones()]],
+        ] as never,
         layout: {
           'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.95,
         } as never,
