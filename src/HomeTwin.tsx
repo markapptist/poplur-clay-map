@@ -44,6 +44,7 @@ import {
   type MapTourTopic,
 } from './mapTourPreferences'
 import { noteNewsMessage } from './newsMessages'
+import { onProfileGenderChange, profileHeadModel } from './profileGender'
 import { POIS } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
 import {
@@ -85,7 +86,8 @@ const CLAY_TV_MODEL = 'clay_tv.glb'
 // The flash camera the profile wears while you are taking your picture.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
 const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
-const PROFILE_MARK_MODEL = 'poplur_mark_head_navigator.glb'
+// The male head constant lives in profileGender.ts now (MALE_HEAD_MODEL),
+// beside the female head it is chosen against.
 const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // The cube's recording face. Bundle ROOT, not models/ — same reason as every
 // other navigator here (sync-mobile strips models/ from the phone bundles).
@@ -103,6 +105,14 @@ const DIRECTOR_BOARD_MODEL = 'poplur_cube_director_board.glb'
 // thread list; this is the opened envelope, shown only while a thread is
 // active. See mailThreadOpen below for the window event that drives this.
 const MAIL_ENVELOPE_OPEN_MODEL = 'poplur_cube_mail_envelope.glb'
+// A FaceTime call wears the contact card — the person, not the apparatus.
+// Swapped in over poplur-facetime-open while MailScreen's overlay is up.
+const FACETIME_CONTACT_MODEL = 'poplur_cube_contact.glb'
+// The wallet's inner pages: SEND turns the wallet into the coin stack and
+// CASH OUT into the cash stack, over poplur-wallet-page — the same
+// one-screen-two-states route MAIL's envelope uses.
+const WALLET_SEND_MODEL = 'poplur_cube_coin_stack.glb'
+const WALLET_CASHOUT_MODEL = 'poplur_cube_cash_stack.glb'
 
 // ── Last-page memory ─────────────────────────────────────────────────────────
 /** Where the app is standing: the tab, the hold-menu page on it (null = the
@@ -143,12 +153,14 @@ function writeLastScreen(tab: CubeTab, screen: string | null) {
 }
 
 /** Each main tab owns one recognisable, true 3D clay object. The Profile tab
-    always uses its textured head; profile media belongs in the profile frame. */
+    wears the head that matches the account's chosen gender (profileGender.ts)
+    — the mark head or the female head; profile media belongs in the profile
+    frame. */
 function tabNavigatorModel(tab: CubeTab): string {
   if (tab === 'map') return MAP_GLOBE_MODEL
   if (tab === 'feed') return CLAY_TV_MODEL
   if (tab === 'post') return PROFILE_CAMERA_MODEL
-  return PROFILE_MARK_MODEL
+  return profileHeadModel()
 }
 
 /** What each tab teaches the first time you land on it. Gestures only — the
@@ -293,6 +305,11 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   'profile-avatar': 'poplur_cube_printer.glb',
   // IPOD, likewise previously unwired.
   'map-ipod': 'poplur_cube_ipod.glb',
+  // The wallet itself; its SEND/CASH OUT pages swap to the coin and cash
+  // stacks via poplur-wallet-page (see walletPage below).
+  'profile-wallet': 'poplur_cube_wallet.glb',
+  // The mini-app folder is, fittingly, a folder.
+  'feed-apps': 'poplur_cube_folder.glb',
   // In the bundle and deliberately unwired, for want of a screen to stand on:
   // ar, video, search, directions, map, tour, comment, live, cameraroll,
   // heypoplur. 'camera-capture' in particular is NOT a destination — PHOTO,
@@ -1151,7 +1168,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-mail-thread-open', onThread)
   }, [])
   // FaceTime: MailScreen tells the shell when a video call overlay is up so
-  // the cube can wear the camera lens for the duration of the call. Same
+  // the cube can wear the contact card for the duration of the call. Same
   // window-event route as the mailbox/envelope split above.
   const [faceTimeOpen, setFaceTimeOpen] = useState(false)
   useEffect(() => {
@@ -1159,6 +1176,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-facetime-open', onCall)
     return () => window.removeEventListener('poplur-facetime-open', onCall)
   }, [])
+  // Which wallet face is up: home, send (coin stack) or cashout (cash stack).
+  const [walletPage, setWalletPage] = useState<'home' | 'send' | 'cashout'>('home')
+  useEffect(() => {
+    const onPage = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail
+      setWalletPage(detail === 'send' || detail === 'cashout' ? detail : 'home')
+    }
+    window.addEventListener('poplur-wallet-page', onPage)
+    return () => window.removeEventListener('poplur-wallet-page', onPage)
+  }, [])
+  // The profile head follows the gender setting live — Settings flips it and
+  // the cube re-molds without a relaunch. The state's value is unused; its
+  // bump is what makes requestedCubeModel recompute through profileHeadModel().
+  const [, setGenderVersion] = useState(0)
+  useEffect(() => onProfileGenderChange(() => setGenderVersion(v => v + 1)), [])
   // The director board: announced by PostComposer while an actual editing
   // step (Filters, VFX Studio) is on screen, same route as the two above.
   const [composerEditing, setComposerEditing] = useState(false)
@@ -3028,10 +3060,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     : (avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? PROFILE_CAMERA_MODEL : undefined)
       ?? (cubeScreen === 'profile-messages' && mailThreadOpen ? MAIL_ENVELOPE_OPEN_MODEL : undefined)
-      // FaceTime video call — the cube should read as a video call, so it
-      // wears the camera lens rather than the phone body. Only while the
-      // call overlay is up, matching mailThreadOpen's shape.
-      ?? (faceTimeOpen ? CAMERA_LENS_MODEL : undefined)
+      // FaceTime video call — the cube wears the contact card while the call
+      // overlay is up: the person, not the apparatus. Same shape as
+      // mailThreadOpen above.
+      ?? (faceTimeOpen ? FACETIME_CONTACT_MODEL : undefined)
+      // The wallet's inner pages: coins for SEND, cash for CASH OUT.
+      ?? (cubeScreen === 'profile-wallet' && walletPage === 'send' ? WALLET_SEND_MODEL : undefined)
+      ?? (cubeScreen === 'profile-wallet' && walletPage === 'cashout' ? WALLET_CASHOUT_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
       // PHOTO mode wears the Kodak, same as the POST tab's idle default.

@@ -8,7 +8,11 @@
 // spent once — the two must never be confused, so they stay separate ledgers
 // with separate words on screen.
 
-export type CreditEntryKind = 'welcome' | 'purchase' | 'refund' | 'avatar-cube'
+export type CreditEntryKind =
+  | 'welcome' | 'purchase' | 'refund' | 'avatar-cube'
+  // Wallet movements. Same ledger deliberately: the wallet is a WINDOW onto
+  // this ledger, not a second balance that could disagree with it.
+  | 'transfer-out' | 'transfer-in' | 'cash-out'
 
 export interface CreditEntry {
   id: string
@@ -118,6 +122,46 @@ export function refundCredits(cost: number, note?: string): void {
 export function grantCredits(amount: number, note?: string): void {
   if (!Number.isFinite(amount) || amount <= 0) return
   append('purchase', amount, note)
+}
+
+// ── Wallet operations ────────────────────────────────────────────────────────
+// Client-side mirrors of what the Wallet spec defines as server-authoritative
+// operations (sendCredits / requestCashOut). Same contract as spendCredits
+// above: when the server ledger lands these become the local mirror of its
+// balance, and every mutation here already carries the shape the server needs
+// (idempotent append, no in-place edits, reversal-not-deletion).
+
+/** What one credit redeems for, in CAD. Display only — the Wallet spec's
+    `creditsPerDollar` (100/[$1]) lives server-side when cash-out goes live. */
+export const CREDITS_PER_DOLLAR = 100
+
+export function creditsToCad(credits: number): string {
+  return (credits / CREDITS_PER_DOLLAR).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' })
+}
+
+/** Send credits to another user. Balance-guarded like spendCredits — a false
+    return means "not enough", never a partial write. */
+export function transferCreditsOut(amount: number, toHandle: string): boolean {
+  if (!Number.isFinite(amount) || amount <= 0) return false
+  if (!canAfford(amount)) return false
+  append('transfer-out', -amount, `To ${toHandle}`)
+  return true
+}
+
+/** Receive credits from another user (bridge/demo path until the server
+    ledger notifies for real). */
+export function receiveCredits(amount: number, fromHandle: string): void {
+  if (!Number.isFinite(amount) || amount <= 0) return
+  append('transfer-in', amount, `From ${fromHandle}`)
+}
+
+/** Redeem credits toward a payout. The debit is immediate; payout state
+    machine (created → processing → paid) is the server's job when it lands. */
+export function cashOutCredits(amount: number): boolean {
+  if (!Number.isFinite(amount) || amount <= 0) return false
+  if (!canAfford(amount)) return false
+  append('cash-out', -amount, `Cash out ${creditsToCad(amount)}`)
+  return true
 }
 
 export function onCreditsChange(listener: () => void): () => void {

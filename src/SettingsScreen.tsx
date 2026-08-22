@@ -24,6 +24,7 @@ import {
 } from './referral'
 import { readRadioScope, setRadioScope, type RadioScope } from './mapRadio'
 import { readControlSide, setControlSide, type ControlSide } from './controlPlacement'
+import { readProfileGender, writeProfileGender, type ProfileGender } from './profileGender'
 import {
   PROFILE_THEMES,
   onProfileThemeChange,
@@ -76,6 +77,11 @@ const SIDE_LABEL: Record<ControlSide, string> = {
   right: 'Right side',
 }
 
+const GENDER_LABEL: Record<ProfileGender, string> = {
+  male: 'Male',
+  female: 'Female',
+}
+
 // No onClose prop: with DONE gone, the cube is the only way out of this screen,
 // and the cube is the shell's own handler — nothing here needs to call it.
 export default function SettingsScreen({ bindBack }: {
@@ -104,6 +110,7 @@ export default function SettingsScreen({ bindBack }: {
   const [controlSide, setControlSideState] = useState<ControlSide>(readControlSide)
   const [profileTheme, setProfileThemeState] = useState<ProfileTheme>(readSelectedProfileTheme)
   const [appIcon, setAppIcon] = useState<AppIconOption>(readSelectedAppIcon)
+  const [gender, setGenderState] = useState<ProfileGender>(readProfileGender)
   // null is the root list. The cube still closes Settings outright, so this only
   // ever has to walk back one level.
   const [page, setPage] = useState<Page | null>(null)
@@ -494,6 +501,32 @@ export default function SettingsScreen({ bindBack }: {
             ))}
           </div>
           <p className={styles.radioScopeNote}>Moves the Camera and Map action rails to your preferred thumb side.</p>
+        </article>
+        )}
+
+        {page === 'profile' && (
+        <article className={styles.group} aria-label="Cube head">
+          <div className={styles.radioScope} role="radiogroup" aria-label="Which clay head your profile wears">
+            {(Object.entries(GENDER_LABEL) as Array<[ProfileGender, string]>).map(([value, label]) => (
+              <button
+                type="button"
+                key={value}
+                role="radio"
+                aria-checked={gender === value}
+                className={gender === value ? styles.radioScopeOn : undefined}
+                onClick={() => {
+                  playPop()
+                  setGenderState(value)
+                  writeProfileGender(value)
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className={styles.radioScopeNote}>
+            The clay head your Profile tab wears — also asked once when you first sign in.
+          </p>
         </article>
         )}
 

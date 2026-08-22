@@ -16,6 +16,8 @@ import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
 import MailScreen from './MailScreen'
 import StatsScreen from './StatsScreen'
+import WalletScreen from './WalletScreen'
+import AppsScreen from './AppsScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
@@ -88,6 +90,9 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
     { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
+    // The mini-app folder: everything this account has made with the AI
+    // builder, seeded with Poplur Flashlight. See miniApps.ts for the schema.
+    { icon: 'Create', title: 'APPS', screen: 'feed-apps', native: true, glyph: '▦' },
   ],
   post: [
     // PHOTO and VIDEO select which physical camera object the navigator wears.
@@ -117,6 +122,9 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', glyph: 'P', home: true },
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', native: true },
     { icon: 'Store', title: 'STORE', screen: 'profile-store' },
+    // The account's money face: credit balance, the Store's cards, send and
+    // cash-out. A window onto the poplurCredits ledger, never a second one.
+    { icon: 'Store', title: 'WALLET', screen: 'profile-wallet', native: true, glyph: 'W' },
     // The React PhoneScreen, not the Rough Copy twin: who you can call is a
     // live radius question in both directions, and a static capture cannot
     // answer it or place a call. `native: true` routes this tile to
@@ -969,6 +977,20 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Settings">
           <SettingsScreen bindBack={bindNativeBack} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-wallet') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Wallet">
+          <WalletScreen bindBack={bindNativeBack} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'feed-apps') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Your apps">
+          <AppsScreen bindBack={bindNativeBack} />
         </div>
       )
     }
