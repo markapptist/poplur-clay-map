@@ -24,130 +24,166 @@
   gap: 14px;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
+/* ── the catalogue ──
+   Every app is an ICON with its facts centred underneath it, and nothing draws
+   a container around them. Two earlier shapes were wrong in the same way: a
+   card that wrapped icon + text in one rounded rectangle read as a giant icon
+   with words printed on it, and a row that put the text beside the icon still
+   needed a card to hold the two together. With no background, the icon is the
+   only object on the ground and the type below it is plainly a caption.
+
+   Fixed-width columns rather than `1fr`, centred as a group: a single app in a
+   stretch-to-fit grid lands in the first column and reads as a half-empty
+   shelf, which is the complaint that started this. */
+.listHead {
+  display: flex;
+  justify-content: center;
+  padding: 0 4px;
+  font: 700 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: inherit;
+  opacity: 0.45;
 }
 
-.tile {
+.list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, 152px);
+  justify-content: center;
+  gap: 26px 18px;
+  padding: 4px 0;
+}
+
+.app {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 16px 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(255, 138, 198, 0.22);
-  background: rgba(14, 5, 20, 0.72);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  color: inherit;
-  text-align: left;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 
-.tile:active { background: rgba(255, 138, 198, 0.12); }
+.app:active .icon { transform: scale(0.94); }
 
 /* ── the icon ──
-   An App Store Connect-style rounded square, not a bare glyph on the ground.
-   The tile IS the icon until a generated one exists: squircle, clay gradient,
-   inner highlight and a drop shadow, with the app's emoji sitting on it. That
-   way every app reads as an icon in the grid from the moment it is created,
-   and a baked sprite later just replaces the face without moving anything. */
-.tileIcon {
+   A clay prop floating on the screen's ground: no plate, no squircle, no
+   background. The shadow is what makes it read as an object above the page
+   rather than a sticker on it, so it is the only chrome here. */
+.icon {
   position: relative;
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 15px; /* ~26% — the iOS squircle ratio */
-  font-size: 28px;
-  line-height: 1;
-  background:
-    radial-gradient(120% 120% at 30% 18%, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 52%),
-    linear-gradient(168deg, #ff8ac6 0%, #f0509f 46%, #b02f74 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.5),
-    inset 0 -2px 6px rgba(90, 12, 55, 0.45),
-    0 6px 14px rgba(0, 0, 0, 0.34);
-  overflow: hidden;
+  transition: transform 140ms ease;
 }
 
-/* A real generated/supplied icon fills the squircle edge to edge. The emoji
-   fallback keeps its padding; an authored icon should not be inset inside a
-   frame it already draws for itself. */
-.tileIconImg {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.iconObject {
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 10px rgba(20, 10, 4, 0.24));
+}
+
+/* The emoji fallback, treated as an OBJECT rather than as text: sized to fill
+   the icon slot and given the same shadow the clay props get, so a row with an
+   emoji and a row with a prop read as the same kind of thing. Apple's emoji are
+   already dimensional, which is why this holds up next to the clay. */
+.iconEmoji {
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  filter: drop-shadow(0 8px 10px rgba(20, 10, 4, 0.24));
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Before the bake lands — and permanently if it fails. Deliberately empty:
+   an icon-shaped hole is honest, a placeholder glyph is a stand-in. */
+.iconPending {
   display: block;
 }
 
-.tile b {
-  font: 800 14px/1.2 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  color: #fff2f8;
+/* ── the caption: every fact, centred below the icon, never on it ──
+   Inks itself from --poplur-ink rather than a fixed near-white: the ground is
+   theme-wide and swings from the house cream to a dark photo, so hard-coded
+   light type disappears on half the themes. */
+.identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  color: inherit;
 }
 
-.tile i {
+.name {
+  font: 800 13px/1.25 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: inherit;
+}
+
+.desc {
   font: 500 11px/1.35 system-ui, -apple-system, sans-serif;
   font-style: normal;
-  color: rgba(255, 226, 242, 0.62);
+  color: inherit;
+  opacity: 0.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  margin-top: 3px;
 }
 
 /* ── radius + ground, the line under every piece of user content ── */
-.meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 138, 198, 0.16);
-}
-
 .radius {
-  font: 900 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.02em;
-  color: #6fe3ff;
+  font: 800 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.01em;
+  color: var(--poplur-theme-accent, #d81b7a);
 }
 
 /* Never posted: say so plainly rather than printing a confident 0.0 km for
    something that was never given any ground. */
 .radius[data-unposted='true'] {
-  color: rgba(255, 226, 242, 0.42);
+  color: inherit;
+  opacity: 0.42;
   font-weight: 700;
-  letter-spacing: 0.12em;
 }
 
 .coords {
   font: 600 9.5px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: rgba(255, 226, 242, 0.55);
+  color: inherit;
+  opacity: 0.5;
   word-break: break-word;
 }
 
 .place {
   font: 700 10px/1.3 system-ui, -apple-system, sans-serif;
-  color: rgba(255, 226, 242, 0.7);
+  color: inherit;
+  opacity: 0.68;
 }
 
-/* Drop / pick up. A separate control from the tile body, because opening an
+/* Drop / pick up. A separate control from the row body, because opening an
    app and moving it to new ground are different intentions and a single tap
-   target for both would guarantee mis-drops. */
-.dropRow {
-  display: flex;
-  width: 100%;
-  margin-top: 8px;
-}
-
+   target for both would guarantee mis-drops. Sized to its text and parked in
+   the row's third column rather than stretched across a card. */
 .dropButton {
-  flex: 1;
-  padding: 8px 10px;
+  flex: none;
+  white-space: nowrap;
+  padding: 6px 12px;
+  margin-top: 2px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 138, 198, 0.38);
-  background: rgba(255, 138, 198, 0.12);
-  color: #ffd9ee;
-  font: 900 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.14em;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: var(--poplur-theme-accent, #d81b7a);
+  opacity: 0.9;
+  font: 800 10.5px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.02em;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }

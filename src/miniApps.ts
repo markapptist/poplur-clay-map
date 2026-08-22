@@ -48,6 +48,12 @@ export interface MiniAppDefinition {
         objects already use) or an uploaded file. Wins over `icon` when set;
         absent is the normal state, not a defect. */
     iconUrl?: string
+    /** The app's OWN clay object, as a path to a .glb under Poplur's origin.
+        This is the hook for an icon made at creation time — a Meshy or AI
+        generated prop dropped into `public/` — so an app is not limited to the
+        props the library happens to ship. Rendered by modelSprite exactly like
+        the matched ones, so a supplied model and a library one look alike. */
+    iconModel?: string
     theme: 'poplur-glitter'
   }
   variables: Record<string, number | boolean | string>
@@ -82,6 +88,11 @@ export function validateMiniApp(def: MiniAppDefinition): string | null {
   if (def.app.iconUrl != null && !isAllowedIconUrl(def.app.iconUrl)) {
     return 'Unsupported iconUrl'
   }
+  // Same stance as iconUrl: a definition is untrusted input, so its model must
+  // be a plain relative .glb on our own origin — never a scheme, never a host.
+  if (def.app.iconModel != null && !isAllowedIconModel(def.app.iconModel)) {
+    return 'Unsupported iconModel'
+  }
   if (!Array.isArray(def.screens) || def.screens.length === 0) return 'No screens'
   if (def.screens.length > 8) return 'Too many screens'
   for (const screen of def.screens) {
@@ -95,6 +106,14 @@ export function validateMiniApp(def: MiniAppDefinition): string | null {
     }
   }
   return null
+}
+
+/** A generated app may bring its own clay prop. Keep it to a relative path
+ *  ending in .glb: no scheme, no protocol-relative `//host`, no traversal. */
+function isAllowedIconModel(url: unknown): boolean {
+  if (typeof url !== 'string' || !url.trim()) return false
+  if (/^[a-z]+:/i.test(url) || url.startsWith('//') || url.includes('..')) return false
+  return /\.glb$/i.test(url)
 }
 
 /** Poplur Flashlight — the proof-of-concept app, authored in the same schema
