@@ -497,6 +497,35 @@
 
 .spacer { height: 40px; flex: 0 0 auto; }
 
+/* ── Idle and low-power freeze ────────────────────────────────────────────
+   Seven INFINITE repaint animations were running here forever — six
+   `shimmer` on .cardValue plus `globeSpin`, both animating background-position,
+   which repaints rather than composites. Measured on an idle, ambient-asleep
+   Stats: 1,047ms CPU per 10s against a 488ms profile-home baseline, the same
+   class of shader-text loop the 6 Aug device trace put at 49% of the visible
+   WebContent process. .pulseRing is left alone — transform/opacity composites
+   and is free.
+
+   The still fallback is not new design: the reduced-motion block below already
+   authors it. This just reuses it on the idle/low-power edges, the same idiom
+   PostComposer's .filterNameShader uses. */
+:global(.tier-ios) .globe,
+:global(.poplur-ambient-sleep) .globe,
+:global([data-poplur-performance-mode='low_power']) .globe,
+:global([data-poplur-performance-mode='emergency']) .globe {
+  animation: none;
+}
+
+:global(.tier-ios) .cardValue,
+:global(.poplur-ambient-sleep) .cardValue,
+:global([data-poplur-performance-mode='low_power']) .cardValue,
+:global([data-poplur-performance-mode='emergency']) .cardValue {
+  animation: none;
+  background: none;
+  -webkit-text-fill-color: #f63b9a;
+  color: #f63b9a;
+}
+
 /* ── Reduced motion ───────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
