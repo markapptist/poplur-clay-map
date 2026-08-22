@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES, OTHER_POPS, PALETTE, type PopLevel } from './data'
+import { loadManifest, ensurePack, MANIFEST_URL } from './assetPacks'
 
 /** Takeover test mode — `?takeover=1`.
  *
@@ -584,6 +585,23 @@ export default function App() {
   const [weatherForecast, setWeatherForecast] = useState<Array<{ date: string; high: number; low: number; code: number }>>([])
   const [weatherOverride, setWeatherOverride] = useState<WeatherMode | null>(null)
   const [weatherOpen, setWeatherOpen] = useState(false)
+  // Warm the clay-models pack in the background at boot, so a navigator face
+  // that now lives in the cloud is already in Cache Storage by the time the
+  // user reaches its subscreen — no fetch stall on first navigation. Fire and
+  // forget: a screen that needs a face before this lands loads it on demand
+  // (CubeTab3D tolerates the async), and offline simply skips the warm.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const manifest = await loadManifest(`${import.meta.env.BASE_URL}${MANIFEST_URL}`)
+        const pack = manifest.packs.find(p => p.id === 'clay-models')
+        if (pack && !cancelled) await ensurePack(pack)
+      } catch { /* offline / no manifest: faces load on demand */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   // TEST ONLY: walk day → night → day so both skies can be checked without
   // waiting twelve hours. ?day-cycle=0 turns it off; dev builds only.
   useEffect(() => {
