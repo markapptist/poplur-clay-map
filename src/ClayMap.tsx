@@ -8,6 +8,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
+import { subsolarPoint, sublunarPoint, moonPhase, CELESTIAL_MODELS } from './celestial'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
 import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
@@ -514,6 +515,36 @@ const SVG_TREE = `<svg viewBox="0 0 48 64" xmlns="http://www.w3.org/2000/svg"><r
 const SVG_BOAT = `<svg viewBox="0 0 72 60" xmlns="http://www.w3.org/2000/svg"><path d="M10 40 L62 40 L54 52 L18 52 Z" fill="#F63B9A" stroke="#c92e7d" stroke-width="2"/><rect x="34" y="8" width="4" height="32" rx="2" fill="#8a5a2a"/><path d="M38 10 C50 16 54 26 52 36 L38 36 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="2"/><path d="M32 14 C24 20 22 28 24 36 L32 36 Z" fill="#FF8AC6"/><circle cx="24" cy="46" r="2.5" fill="#161116"/><circle cx="36" cy="46" r="2.5" fill="#161116"/><circle cx="48" cy="46" r="2.5" fill="#161116"/></svg>`
 
 // City props: clay trees in the parks, boats in the harbour (Toronto demo)
+/** The sun or the moon, as the clay model rather than a drawn circle. Same
+ *  sprite route every other model on this map takes (globe projection has no
+ *  custom-layer support), so it is pre-rendered and costs a PNG at runtime.
+ *  `rotateDeg` turns the crescent to its bright limb. */
+function CelestialBody({ model, size, rotateDeg = 0 }: {
+  model: string
+  size: number
+  rotateDeg?: number
+}) {
+  const [uri, setUri] = React.useState<string | null>(null)
+  React.useEffect(() => {
+    let live = true
+    modelSprite(model, { yaw: 0, pitch: 0, size: 256 })
+      .then(next => { if (live) setUri(next) })
+      .catch(() => { /* the sky simply stays empty rather than breaking the map */ })
+    return () => { live = false }
+  }, [model])
+  if (!uri) return null
+  return (
+    <img
+      src={uri}
+      width={size}
+      height={size}
+      alt=""
+      draggable={false}
+      style={rotateDeg ? { transform: `rotate(${rotateDeg}deg)` } : undefined}
+    />
+  )
+}
+
 /** World landmarks, as clay models standing at their real coordinates.
  *
  *  WHY THESE EXIST: the style is Mapbox Dark recoloured into clay, and
@@ -4689,54 +4720,95 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       {/* Clay zoom slider — bottom-right, street level at the top, globe at the
           bottom. The thumb IS the zoom-level clay object (globe → cloud →
           airplane → buildings), swapped by zoom band and re-popped per notch. */}
-      {/* Zoomed all the way out you are looking at the sky, not the weather:
-          the sun and moon ride the same arc the real ones do. Local noon puts
-          the sun at the top, midnight puts the moon there, and they sit
-          opposite each other the whole way round. */}
+      {/* Zoomed all the way out you are looking at the sky, and the sun and the
+          moon are where they REALLY are. This used to put the sun on a clock
+          circle and the moon at sunAngle + 180 — which is only true at full
+          moon, and put the sun over the wrong ocean at noon. celestial.ts has
+          carried the ephemeris for this all along; nothing had ever imported
+          it, so the map drew two flat SVGs instead of the models it already
+          ships. Sub-point in, screen position out: the sun sits over the spot
+          where it is actually overhead, so the daylit half of the globe is the
+          half it is standing on. */}
       {zoomValue <= 4.4 && (() => {
-        const minutes = skyClock.getHours() * 60 + skyClock.getMinutes()
-        // midnight at the bottom, noon at the top
-        const sunAngle = (minutes / 1440) * 360 - 90
-        const moonAngle = sunAngle + 180
-        const place = (deg: number) => {
-          const rad = (deg * Math.PI) / 180
+        const map = mapRef.current
+        if (!map) return null
+        const centre = map.getCenter()
+        const phase = moonPhase(skyClock)
+
+        // celestial.ts speaks lon, Mapbox speaks lng.
+        //
+        // On the face of the globe a body sits exactly over the spot where it
+        // is overhead. Behind the globe it does NOT simply vanish: it rides the
+        // ring at its true BEARING, dimmed. Vanishing is the more literal
+        // reading, but it empties the sky for hours at a time — at 1am the sun
+        // is over Asia and the moon can be over the Pacific, and a night sky
+        // with nothing in it is a worse lie than a moon held at the horizon.
+        // Either way the DIRECTION is the real one, which is the part the old
+        // clock-circle got wrong.
+        const toRad = Math.PI / 180
+        const place = (point: { lat: number; lon: number }) => {
+          const cosArc = Math.sin(centre.lat * toRad) * Math.sin(point.lat * toRad)
+            + Math.cos(centre.lat * toRad) * Math.cos(point.lat * toRad)
+              * Math.cos((point.lon - centre.lng) * toRad)
+          if (cosArc > 0.08) {
+            const at = map.project([point.lon, point.lat] as mapboxgl.LngLatLike)
+            return { style: { left: `${at.x}px`, top: `${at.y}px` }, behind: false }
+          }
+          // Initial great-circle bearing from the camera's centre to the body.
+          const dLon = (point.lon - centre.lng) * toRad
+          const y = Math.sin(dLon) * Math.cos(point.lat * toRad)
+          const x = Math.cos(centre.lat * toRad) * Math.sin(point.lat * toRad)
+            - Math.sin(centre.lat * toRad) * Math.cos(point.lat * toRad) * Math.cos(dLon)
+          const bearing = Math.atan2(y, x)
           return {
-            left: `calc(50% + ${(Math.cos(rad) * 40).toFixed(2)}vh)`,
-            top: `calc(50% + ${(Math.sin(rad) * 40).toFixed(2)}vh)`,
+            // The ring radius is min(vh, vw), not 40vh. On a portrait phone
+            // 40vh is wider than half the screen, so a body to the east or west
+            // was placed off the side and never seen — which is how the old
+            // clock-circle lost its moon too.
+            style: {
+              left: `calc(50% + ${(Math.sin(bearing) * 38).toFixed(2)} * min(1vh, 1vw))`,
+              top: `calc(50% - ${(Math.cos(bearing) * 38).toFixed(2)} * min(1vh, 1vw))`,
+            },
+            behind: true,
           }
         }
+
+        const sunAt = place(subsolarPoint(skyClock))
+        const moonAt = place(sublunarPoint(skyClock))
+        const moonModel = phase.model === 'full'
+          ? CELESTIAL_MODELS.moonFull
+          : CELESTIAL_MODELS.moonCrescent
+
         return (
           <>
-            <div
-              className={dayTime ? styles.celestial : `${styles.celestial} ${styles.celestialDim}`}
-              style={place(sunAngle)}
-              aria-hidden="true"
-            >
-              <svg viewBox="0 0 64 64" width="58" height="58">
-                <g stroke="#ffd76a" strokeWidth="4" strokeLinecap="round" opacity="0.95">
-                  <path d="M32 4v8M32 52v8M4 32h8M52 32h8M12 12l6 6M46 46l6 6M52 12l-6 6M18 46l-6 6" />
-                </g>
-                <circle cx="32" cy="32" r="15" fill="#ffcf4d" stroke="#e0a51f" strokeWidth="1.4" />
-                <ellipse cx="26" cy="26" rx="5" ry="3.4" fill="rgba(255,255,255,.55)" />
-              </svg>
-            </div>
-            <div
-              className={dayTime ? `${styles.celestial} ${styles.celestialDim}` : styles.celestial}
-              style={place(moonAngle)}
-              aria-hidden="true"
-            >
-              <svg viewBox="0 0 64 64" width="52" height="52">
-                <defs>
-                  <mask id="poplurMoonBite">
-                    <rect width="64" height="64" fill="#fff" />
-                    <circle cx="42" cy="26" r="16" fill="#000" />
-                  </mask>
-                </defs>
-                <circle cx="32" cy="32" r="17" fill="#eef3ff" stroke="#b9c6e6" strokeWidth="1.4" mask="url(#poplurMoonBite)" />
-                <circle cx="25" cy="37" r="2.6" fill="rgba(150,168,205,.55)" />
-                <circle cx="30" cy="26" r="1.8" fill="rgba(150,168,205,.45)" />
-              </svg>
-            </div>
+            {sunAt && (
+              <div
+                className={dayTime && !sunAt.behind
+                  ? styles.celestial
+                  : `${styles.celestial} ${styles.celestialDim}`}
+                style={sunAt.style}
+                aria-hidden="true"
+              >
+                <CelestialBody model={CELESTIAL_MODELS.sun} size={64} />
+              </div>
+            )}
+            {moonAt && (
+              <div
+                className={!dayTime && !moonAt.behind
+                  ? styles.celestial
+                  : `${styles.celestial} ${styles.celestialDim}`}
+                style={moonAt.style}
+                aria-hidden="true"
+              >
+                {/* The crescent is TURNED to the bright limb. Horns pointing the
+                    wrong way read as broken to anyone who has looked up. */}
+                <CelestialBody
+                  model={moonModel}
+                  size={56}
+                  rotateDeg={phase.model === 'crescent' ? phase.brightLimbAngle : 0}
+                />
+              </div>
+            )}
           </>
         )
       })()}
