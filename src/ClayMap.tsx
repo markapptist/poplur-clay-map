@@ -499,6 +499,41 @@ const SVG_TREE = `<svg viewBox="0 0 48 64" xmlns="http://www.w3.org/2000/svg"><r
 const SVG_BOAT = `<svg viewBox="0 0 72 60" xmlns="http://www.w3.org/2000/svg"><path d="M10 40 L62 40 L54 52 L18 52 Z" fill="#F63B9A" stroke="#c92e7d" stroke-width="2"/><rect x="34" y="8" width="4" height="32" rx="2" fill="#8a5a2a"/><path d="M38 10 C50 16 54 26 52 36 L38 36 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="2"/><path d="M32 14 C24 20 22 28 24 36 L32 36 Z" fill="#FF8AC6"/><circle cx="24" cy="46" r="2.5" fill="#161116"/><circle cx="36" cy="46" r="2.5" fill="#161116"/><circle cx="48" cy="46" r="2.5" fill="#161116"/></svg>`
 
 // City props: clay trees in the parks, boats in the harbour (Toronto demo)
+/** World landmarks, as clay models standing at their real coordinates.
+ *
+ *  WHY THESE EXIST: the style is Mapbox Dark recoloured into clay, and
+ *  `show3dLandmarks` is a Mapbox STANDARD config property — on a classic style
+ *  it is a no-op. Photographed at 2.2945,48.8584 the map showed flat footprints
+ *  and no Eiffel Tower, so nothing was drawing these places at all.
+ *
+ *  They are sprites, not meshes, for the same reason every other clay prop is:
+ *  globe projection has no custom-layer support (see modelSprite), so a marker
+ *  wearing a pre-rendered PNG is the portable way to put a model on this map.
+ *  The clay tint is baked INTO each GLB (scripts/bake-landmark-tints.mjs) —
+ *  a sprite has already decided its colours by the time the app sees it.
+ *
+ *  `width` is the sprite's on-screen size in px. The sprite is SQUARE with the
+ *  model fitted inside, so width is effectively the rendered HEIGHT — the first
+ *  pass used tree-sized numbers and made a 553m CN Tower the size of a house
+ *  next to 30m extruded blocks. These are scaled to how each one reads against
+ *  a city skyline, not to metres: a sprite has a fixed pixel size while the
+ *  buildings around it grow with zoom, so exact proportion is not on offer.
+ */
+const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; yaw?: number }[] = [
+  { id: 'burj-khalifa', coords: [55.2744, 25.1972], width: 260 },
+  { id: 'cn-tower', coords: [-79.3871, 43.6426], width: 230 },
+  { id: 'eiffel', coords: [2.2945, 48.8584], width: 190 },
+  { id: 'space-needle', coords: [-122.3493, 47.6205], width: 150 },
+  { id: 'golden-gate', coords: [-122.4783, 37.8199], width: 200, yaw: 12 },
+  { id: 'statue-liberty', coords: [-74.0445, 40.6892], width: 112 },
+  { id: 'big-ben', coords: [-0.1246, 51.5007], width: 110 },
+  { id: 'giza', coords: [31.1342, 29.9792], width: 150 },
+  { id: 'taj-mahal', coords: [78.0421, 27.1751], width: 130 },
+  { id: 'colosseum', coords: [12.4922, 41.8902], width: 130 },
+  { id: 'sydney-opera', coords: [151.2153, -33.8568], width: 130 },
+  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], width: 84 },
+]
+
 const CITY_TREES: { coords: [number, number]; width: number; palm?: boolean }[] = [
   { coords: [-79.4139, 43.6465], width: 34 },  // Trinity Bellwoods
   { coords: [-79.4105, 43.6502], width: 28 },
@@ -981,6 +1016,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const dayTimeRef = useRef(dayTime)
   dayTimeRef.current = dayTime
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
+  const worldLandmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
   const carMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1712,6 +1748,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         ref.current.forEach(mk => {
           mk.getElement().style.display = isCity ? '' : 'none'
         }))
+      // Landmarks earn a wider band than street props: you should see the
+      // Eiffel Tower while still reading Paris, and they must not clutter the
+      // globe, where the claim blooms already speak.
+      worldLandmarkMarkersRef.current.forEach(mk => {
+        mk.getElement().style.display = zoom >= 9.5 ? '' : 'none'
+      })
       markersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? 'none' : ''
       })
@@ -2928,6 +2970,27 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           .addTo(map)
       })
 
+      // ── World landmarks ───────────────────────────────────────────────────
+      // Nothing else draws these: show3dLandmarks is a Standard-style config
+      // and this style is Dark. No SVG placeholder either — a landmark has no
+      // generic shape the way a tree or a boat does, so it simply appears when
+      // its sprite is ready.
+      worldLandmarkMarkersRef.current.forEach(mk => mk.remove())
+      worldLandmarkMarkersRef.current = WORLD_LANDMARKS.map(mark => {
+        const el = document.createElement('div')
+        el.className = styles.landmark
+        el.style.width = `${mark.width}px`
+        el.innerHTML = `<div class="${styles.landmarkInner}"></div>`
+        modelSprite(`landmarks/${mark.id}.glb`, { yaw: mark.yaw ?? 18, pitch: 10, size: 320 })
+          .then(uri => {
+            el.innerHTML = `<div class="${styles.landmarkInner}"><img src="${uri}" style="width:100%" alt=""/></div>`
+          })
+          .catch(() => { /* a missing landmark must never break the map */ })
+        return new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+          .setLngLat(mark.coords)
+          .addTo(map)
+      })
+
       // ── City props: clay trees, harbour boats, cars on the roads ───────────
       treeMarkersRef.current.forEach(mk => mk.remove())
       // Trees belong on LAND — any coordinate that lands on the clay water
@@ -3692,7 +3755,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       stopCarAudio()
       popFrameStops.forEach(stop => stop())
       popFrameStops.clear()
-      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef].forEach(ref => {
+      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef, worldLandmarkMarkersRef].forEach(ref => {
         ref.current.forEach(mk => mk.remove())
         ref.current = []
       })

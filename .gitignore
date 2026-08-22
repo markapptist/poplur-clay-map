@@ -4,3 +4,8 @@ dist/
 .DS_Store
 *.local
 dist-packs/
+
+# Meshy landmark generation: task state (signed URLs that expire) and the raw
+# 16MB exports. The shipped product is public/landmarks/*.glb, decimated.
+scripts/.meshy-landmarks.json
+scripts/.meshy-out/

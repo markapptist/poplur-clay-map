@@ -35,5 +35,17 @@
   "poplur_mic_lite.glb|0|0|512": "sprites/poplur_mic_lite_y0_p0_s512.png",
   "poplur_mixer_lite.glb|22|26|256": "sprites/poplur_mixer_lite_y22_p26_s256.png",
   "poplur_pin_lite.glb|0|0|256": "sprites/poplur_pin_lite_y0_p0_s256.png",
-  "poplur_pin_lite.glb|20|14|256": "sprites/poplur_pin_lite_y20_p14_s256.png"
+  "poplur_pin_lite.glb|20|14|256": "sprites/poplur_pin_lite_y20_p14_s256.png",
+  "landmarks/big-ben.glb|18|10|320": "sprites/big-ben_y18_p10_s320.png",
+  "landmarks/burj-khalifa.glb|18|10|320": "sprites/burj-khalifa_y18_p10_s320.png",
+  "landmarks/christ-redeemer.glb|18|10|320": "sprites/christ-redeemer_y18_p10_s320.png",
+  "landmarks/cn-tower.glb|18|10|320": "sprites/cn-tower_y18_p10_s320.png",
+  "landmarks/colosseum.glb|18|10|320": "sprites/colosseum_y18_p10_s320.png",
+  "landmarks/eiffel.glb|18|10|320": "sprites/eiffel_y18_p10_s320.png",
+  "landmarks/giza.glb|18|10|320": "sprites/giza_y18_p10_s320.png",
+  "landmarks/golden-gate.glb|12|10|320": "sprites/golden-gate_y12_p10_s320.png",
+  "landmarks/space-needle.glb|18|10|320": "sprites/space-needle_y18_p10_s320.png",
+  "landmarks/statue-liberty.glb|18|10|320": "sprites/statue-liberty_y18_p10_s320.png",
+  "landmarks/sydney-opera.glb|18|10|320": "sprites/sydney-opera_y18_p10_s320.png",
+  "landmarks/taj-mahal.glb|18|10|320": "sprites/taj-mahal_y18_p10_s320.png"
 }
