@@ -4,12 +4,18 @@ import { playPop } from './pop'
 import { modelSprite } from './modelSprite'
 import { requestAudioFocus, releaseAudioFocus, registerAudioOwner } from './audioFocus'
 import { mixdown, type RenderTarget } from './studioMixdown'
-import { HOME } from './reach'
+import { HOME, haversineKm } from './reach'
+import { OTHER_POPS } from './data'
 import { awaitNativeUpload } from './nativeUpload'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { addPostedTrack } from './musicPosts'
 import { radiusKm } from './radiusLedger'
 import { addBroadcast, type PoplurBroadcast } from './mapRadio'
+
+/** Focus and blur can leave the page scrolled under the keyboard; one deferred
+ *  frame puts it back. governor-ok: a single frame per event, no loop, cannot
+ *  re-arm itself, and nothing runs at idle. */
+const pinScrollTop = () => window.requestAnimationFrame(() => window.scrollTo(0, 0))
 
 // Poplur Studio — record a take, let the AI turn it into a song.
 //
@@ -65,9 +71,10 @@ const KEYS = [
   { name: 'F1', black: false }, { name: 'C1', black: false },
 ]
 const STEPS = 16
-// The take is a clip, not a session: 30 seconds, hard stop. Short enough to be
-// fearless, long enough for a hook — and exactly what the AI builder consumes.
-const MAX_TAKE_MS = 30_000
+// The take is a performance, not a clip: up to three minutes, hard stop. Long
+// enough for a verse-and-hook pass — and exactly the span the AI builder
+// consumes. (It was 30 seconds when the take was only a hook seed.)
+const MAX_TAKE_MS = 180_000
 const MAX_PODCAST_MS = 10 * 60_000
 
 const PODCAST_GENRES = ['Talk', 'Interview', 'Story', 'News', 'Culture', 'Comedy', 'Music Talk'] as const
@@ -103,7 +110,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     () => new Set(['1:2', '1:6', '3:0', '3:8', '5:4', '5:12', '7:10']),
   )
   // The studio is a pipeline, not a dashboard: the mic comes FIRST (record up
-  // to 30s), then the style question, then the AI builds the track, and only
+  // to 3 minutes), then the style question, then the AI builds the track, and only
   // then does the editor open — with the song and your take already on the
   // transport. Landing cold on a DAW full of empty lanes was the old, terrible
   // version of this screen.
@@ -116,23 +123,17 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   const [songUrl, setSongUrl] = useState<string | null>(null)
   const [aiError, setAiError] = useState<string | null>(null)
   const [styleText, setStyleText] = useState('')
-  const [micArtOk, setMicArtOk] = useState(true)
-  // The supplied Poplur objects, baked to flat sprites by modelSprite (the
-  // GLBs are 44MB and 40MB — decoding either on a phone is exactly what the
-  // prerender pass exists to prevent, so these resolve straight out of the
-  // manifest and the models are never fetched on a device).
-  // The baked transparent render is the first paint. Waiting on the sprite
-  // manifest used to flash the older flat microphone photo before the same 3D
-  // object replaced it a moment later.
-  const [micArt3d, setMicArt3d] = useState<string | null>('sprites/poplur_mic_y0_p0_s512.png')
+  // The mixing desk, baked to a flat sprite by modelSprite for the editor's
+  // header (the master GLB is 40MB — decoding it on a phone is exactly what
+  // the prerender pass exists to prevent, so this resolves straight out of the
+  // manifest and the model is never fetched on a device).
+  // The RECORD stage used to bake the 3D microphone here too. It no longer
+  // does: the cube navigator itself wears poplur_mic_lite.glb for the whole
+  // mic stage now (HomeTwin listens on poplur-studio-stage below), and the
+  // same object twice on one screen read as a duplicate, not a composition.
   const [mixerArt, setMixerArt] = useState<string | null>(null)
   useEffect(() => {
     let live = true
-    // Straight on: the mic is the whole screen here, so any yaw reads as the
-    // object having been knocked over rather than presented.
-    modelSprite('poplur_mic_lite.glb', { yaw: 0, pitch: 0, size: 512 })
-      .then(src => { if (live) setMicArt3d(src) })
-      .catch(() => { /* falls back to the supplied PNG */ })
     modelSprite('poplur_mixer_lite.glb', { yaw: 22, pitch: 26, size: 256 })
       .then(src => { if (live) setMixerArt(src) })
       .catch(() => { /* falls back to the clay chip */ })
@@ -165,6 +166,8 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       : label === 'RECORD' ? recorderSectionRef.current
       : label === 'MIXER' ? rollRef.current
       : builderRef.current
+    // governor-ok: one deferred frame to measure post-layout before a smooth
+    // scroll — fires once per section change, no loop, nothing runs at idle.
     window.requestAnimationFrame(() => {
       const body = bodyRef.current
       if (!body || !target) return
@@ -213,6 +216,46 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     })
     return () => { unregister(); releaseAudioFocus('studio') }
   }, [])
+
+  // Tell the shell which stage of the pipeline is up, so the cube navigator
+  // can wear the 3D microphone for the RECORD stage — the same window-event
+  // route MailScreen uses for its mailbox/envelope split, since Studio has no
+  // prop channel to the cube either. The cleanup dispatch clears it on unmount
+  // so the navigator is back on the mixing desk (SUBSCREEN_CUBE_MODEL's
+  // camera-studio entry) the moment the studio closes mid-take.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('poplur-studio-stage', { detail: stage }))
+    return () => {
+      window.dispatchEvent(new CustomEvent('poplur-studio-stage', { detail: null }))
+    }
+  }, [stage])
+
+  // ── podcast invites: who your radius reaches ─────────────────────────────
+  // A podcast is a session, and a session has guests. The list is the demo
+  // board's identities (OTHER_POPS — the same handles the map and feed show),
+  // filtered to the ones standing inside YOUR current radius, because inviting
+  // someone your radius cannot reach would be a lie about how reach works.
+  // Computed once per visit: the seed coords and the ledger radius do not move
+  // while the studio is open.
+  const nearbyPops = useMemo(() => {
+    const reach = radiusKm()
+    return OTHER_POPS
+      .map(pop => ({ ...pop, distanceKm: haversineKm(HOME, pop.coords) }))
+      .filter(pop => pop.distanceKm <= reach)
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+  }, [])
+  const [invited, setInvited] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const toggleInvite = (id: string) => {
+    playPop()
+    const next = new Set(invited)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    setInvited(next)
+    // Announced for the native bridge to pick up (there is no live roster on
+    // the web build, so nothing here simulates an acceptance): the shell can
+    // turn these ids into real session invites when it has accounts to send
+    // them to.
+    window.dispatchEvent(new CustomEvent('poplur-podcast-invite', { detail: [...next] }))
+  }
 
   // ── the engine: the grid MAKES SOUND ─────────────────────────────────────
   // Everything below used to be a picture of a DAW — a playhead interval over
@@ -517,7 +560,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       })
     }
     setPublished(true)
-    setPublishNote('You are live. Anyone in range hears you now.')
+    setPublishNote('You are live on the map. Anyone in range hears you now.')
   }
 
   // Row → pitch for the roll. KEYS lists C2 down to C1; A1 = 55Hz anchors it.
@@ -826,9 +869,10 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   }
 
   // The AI music stack. ElevenLabs Music — the same provider whose key slot the
-  // native app already carries for voices — builds a 30s instrumental from the
-  // style ask. No key or a failed call degrades HONESTLY: the editor still
-  // opens and says the clay band is backing you, instead of a spinner that lies.
+  // native app already carries for voices — builds an instrumental the length
+  // of the take cap (three minutes) from the style ask. No key or a failed call
+  // degrades HONESTLY: the editor still opens and says the clay band is backing
+  // you, instead of a spinner that lies.
   const generateSong = async (style: string) => {
     playPop()
     aiAbortRef.current?.abort()
@@ -852,7 +896,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
         signal: controller.signal,
         headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: `${style || genre} instrumental, ${bpm} BPM, 30 seconds, radio-ready, space left for a lead vocal.`,
+          prompt: `${style || genre} instrumental, ${bpm} BPM, 3 minutes, radio-ready, space left for a lead vocal.`,
           music_length_ms: MAX_TAKE_MS,
         }),
       })
@@ -917,25 +961,27 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   }
 
   // ── stage 1: the mic. The session starts by SINGING, not by staring at
-  // lanes. One button, thirty seconds, then the style question. ─────────────
+  // lanes. One button, up to three minutes, then the style question. ────────
   if (stage === 'mic') {
     return (
       <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
         <div className={styles.micStage}>
+          {/* The 3D microphone is the CUBE now — the bottom navigator wears
+              poplur_mic_lite.glb for this whole stage (poplur-studio-stage
+              above), so drawing the same object big in the middle of the
+              screen would just be it twice. What stays is the part the cube
+              cannot do: the halo and voice arcs breathing with the LIVE
+              signal, compacted from the old full-height mic pedestal into a
+              glow the recording controls sit under. */}
           <div
-            className={recording ? `${styles.micScene} ${styles.micSceneLive}` : styles.micScene}
+            className={recording
+              ? `${styles.micScene} ${styles.micSceneCompact} ${styles.micSceneLive}`
+              : `${styles.micScene} ${styles.micSceneCompact}`}
             style={{ '--mic-energy': micEnergy } as React.CSSProperties}
           >
             <span className={styles.micHalo} aria-hidden="true" />
             <span className={`${styles.voiceArc} ${styles.voiceArcLeft}`} aria-hidden="true"><i /><i /><i /></span>
             <span className={`${styles.voiceArc} ${styles.voiceArcRight}`} aria-hidden="true"><i /><i /><i /></span>
-            {micArt3d ? (
-              <img className={styles.micArt3d} src={micArt3d} alt="Poplur studio microphone" draggable={false} />
-            ) : micArtOk ? (
-              <img className={styles.micArt} src="studio_mic.png" alt="Poplur studio microphone" draggable={false} onError={() => setMicArtOk(false)} />
-            ) : (
-              <img className={styles.micArtFallback} src="holdmenu/Mic.svg" alt="Microphone" draggable={false} />
-            )}
           </div>
           <div className={styles.micWave} aria-hidden="true">
             {levels.slice(-40).map((h, i) => (
@@ -943,7 +989,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className={styles.micTime}>
-            {mmssms(recMs)} <span>/ {mode === 'podcast' ? '10:00.00' : '00:30.00'}</span>
+            {mmssms(recMs)} <span>/ {mode === 'podcast' ? '10:00.00' : '03:00.00'}</span>
           </div>
           <button className={recording ? `${styles.micBtn} ${styles.micBtnLive}` : styles.micBtn} type="button" onClick={micTap}>
             {recording ? '■ FINISH' : '● RECORD'}
@@ -953,7 +999,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
               ? 'Microphone refused — allow access in settings.'
               : mode === 'podcast'
                 ? (recording ? 'Recording your podcast. Tap finish when done.' : 'Tap record to start your podcast.')
-                : (recording ? 'Thirty seconds max. Make it count.' : 'Tap record and give it a hook.')}
+                : (recording ? 'Three minutes max. Make it count.' : 'Tap record and give it a hook.')}
           </span>
           {mode === 'podcast' ? (
             <button className={styles.micSkip} type="button" onClick={() => {
@@ -1006,8 +1052,8 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             onChange={e => setStyleText(e.target.value)}
             placeholder={`Describe it — moody ${genre.toLowerCase()} with heavy 808s…`}
             aria-label="Describe the song you want"
-            onFocus={() => window.requestAnimationFrame(() => window.scrollTo(0, 0))}
-            onBlur={() => window.requestAnimationFrame(() => window.scrollTo(0, 0))}
+            onFocus={pinScrollTop}
+            onBlur={pinScrollTop}
           />
           {building > 0 ? (
             <div className={styles.styleBuilding}>
@@ -1051,8 +1097,8 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             placeholder="Name this podcast"
             maxLength={80}
             aria-label="Podcast name"
-            onFocus={() => window.requestAnimationFrame(() => window.scrollTo(0, 0))}
-            onBlur={() => window.requestAnimationFrame(() => window.scrollTo(0, 0))}
+            onFocus={pinScrollTop}
+            onBlur={pinScrollTop}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', margin: '12px 0' }}>
             <span style={{ color: 'var(--poplur-ink, #ccc)', fontSize: '13px' }}>AI RADIO VOICE</span>
@@ -1068,12 +1114,49 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
             </button>
             <span style={{ color: 'var(--poplur-ink, #888)', fontSize: '11px', opacity: 0.7 }}>costs credits</span>
           </div>
+          {/* Guests for the session — everyone here is inside YOUR radius, or
+              they would not be listed (nearbyPops above). Kept on screen after
+              going live too, because a live session is exactly when you want
+              to wave more people in. INVITED is the whole truth of it: no
+              acceptance is simulated, the ids just go out over
+              poplur-podcast-invite for the shell to act on. */}
+          {nearbyPops.length > 0 && (
+            <div className={styles.invitePanel}>
+              <div className={styles.inviteHead}>
+                INVITE FROM YOUR RADIUS · {Math.round(radiusKm())} KM
+              </div>
+              {nearbyPops.map(pop => {
+                const on = invited.has(pop.id)
+                return (
+                  <button
+                    key={pop.id}
+                    className={styles.inviteRow}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleInvite(pop.id)}
+                  >
+                    <span className={styles.inviteDot} style={{ background: pop.color }} aria-hidden="true" />
+                    <span className={styles.inviteName}>{pop.user}</span>
+                    <span className={styles.inviteKm}>{pop.distanceKm.toFixed(1)} km</span>
+                    <span className={on ? `${styles.invitePill} ${styles.invitePillOn}` : styles.invitePill}>
+                      {on ? '✓ INVITED' : 'INVITE'}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
           {publishNote && (
             <div className={styles.publishNote} role="status" aria-live="polite">{publishNote}</div>
           )}
           {published ? (
             <div style={{ textAlign: 'center', color: 'var(--poplur-ink, #aaa)', fontSize: '13px', marginTop: '8px' }}>
               {publishNote}
+              {invited.size > 0 && (
+                <div className={styles.inviteCount}>
+                  {invited.size} invited to this session
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '16px' }}>

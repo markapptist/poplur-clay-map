@@ -121,6 +121,14 @@ const WALLET_CASHOUT_MODEL = 'poplur_cube_cash_stack.glb'
 // newspaper's 385KB, which is the heaviest thing already in the set.
 const SETTINGS_APPEARANCE_MODEL = 'poplur_cube_paint_bucket.glb'
 const SETTINGS_VERIFY_MODEL = 'poplur_cube_verification.glb'
+// The studio's RECORD stage: the cube IS the 3D microphone while a take is
+// being sung, and every other stage keeps the mixing desk in
+// SUBSCREEN_CUBE_MODEL below. Announced by StudioScreen over
+// poplur-studio-stage — the same one-screen-two-states route MAIL's envelope
+// uses — because the stage lives in StudioScreen's own state and this map
+// only carries one model per screen id. The GLB is the 349KB decimation the
+// screen itself used to bake into a sprite, the mixer's weight class.
+const STUDIO_MIC_MODEL = 'poplur_mic_lite.glb'
 
 // ── Last-page memory ─────────────────────────────────────────────────────────
 /** Where the app is standing: the tab, the hold-menu page on it (null = the
@@ -1212,6 +1220,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const onPage = (e: Event) => setSettingsPage((e as CustomEvent<string>).detail || 'root')
     window.addEventListener('poplur-settings-page', onPage)
     return () => window.removeEventListener('poplur-settings-page', onPage)
+  }, [])
+  // Which stage of the studio pipeline is up ('choose' | 'mic' | 'style' |
+  // 'drop' | 'studio', null while Studio is closed — its unmount cleanup
+  // dispatches the null). Only 'mic' changes the cube: the RECORD stage wears
+  // the microphone itself, everything else keeps the mixing desk.
+  const [studioStage, setStudioStage] = useState<string | null>(null)
+  useEffect(() => {
+    const onStage = (e: Event) => {
+      const detail = (e as CustomEvent<string | null>).detail
+      setStudioStage(typeof detail === 'string' ? detail : null)
+    }
+    window.addEventListener('poplur-studio-stage', onStage)
+    return () => window.removeEventListener('poplur-studio-stage', onStage)
   }, [])
   // The profile head follows the gender setting live — Settings flips it and
   // the cube re-molds without a relaunch. The state's value is unused; its
@@ -3100,6 +3121,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         ? SETTINGS_APPEARANCE_MODEL : undefined)
       ?? (cubeScreen === 'profile-settings' && settingsPage === 'verify'
         ? SETTINGS_VERIFY_MODEL : undefined)
+      // The studio's RECORD stage: the cube is the 3D microphone while the
+      // take is being sung — the screen's own big mic sprite came out in the
+      // same change, so this is the only mic on the stage. Every other studio
+      // stage falls through to the mixing desk in SUBSCREEN_CUBE_MODEL.
+      ?? (cubeScreen === 'camera-studio' && studioStage === 'mic'
+        ? STUDIO_MIC_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
       // PHOTO mode wears the Kodak, same as the POST tab's idle default.
