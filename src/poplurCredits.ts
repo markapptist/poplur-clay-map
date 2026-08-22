@@ -13,6 +13,10 @@ export type CreditEntryKind =
   // Wallet movements. Same ledger deliberately: the wallet is a WINDOW onto
   // this ledger, not a second balance that could disagree with it.
   | 'transfer-out' | 'transfer-in' | 'cash-out'
+  // The casino's daily free spin (CasinoScreen). Its own kind, not 'purchase',
+  // so the history says where the credits came from — these are WON, and when
+  // the server-side economy lands they become the mirror of a server grant.
+  | 'casino-win'
 
 export interface CreditEntry {
   id: string
@@ -122,6 +126,16 @@ export function refundCredits(cost: number, note?: string): void {
 export function grantCredits(amount: number, note?: string): void {
   if (!Number.isFinite(amount) || amount <= 0) return
   append('purchase', amount, note)
+}
+
+/** Casino winnings. Client-side for now, like every grant in this file: the
+    outcome that earned it is rolled on-device (CasinoScreen), and the server-
+    authoritative casino economy replaces both the roll and this grant when it
+    lands. Until then the most a tamperer can mint is one small win a day on
+    their own device. */
+export function grantCasinoWin(amount: number, note?: string): void {
+  if (!Number.isFinite(amount) || amount <= 0) return
+  append('casino-win', amount, note)
 }
 
 // ── Wallet operations ────────────────────────────────────────────────────────

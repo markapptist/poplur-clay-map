@@ -1,0 +1,462 @@
+/* POPLUR CASINO — hot-pink neon on black glass, gold jackpot crown, five
+   reels behind a glossy panel, pink physical buttons along the bottom.
+   Recreated from the supplied cabinet reference in DOM/CSS only.
+
+   IDLE DISCIPLINE: every neon glow here is a STATIC gradient or shadow.
+   The only keyframe animations are bounded one-shots (wordmark shimmer on
+   mount, win flash after a spin) — nothing loops while the machine idles.
+   The reels themselves move via one-shot transitions set inline by
+   CasinoScreen.tsx; .strip carries no default duration, so at rest it is
+   just a painted column. */
+
+.stage {
+  --cell: 56px; /* must match CELL_PX in CasinoScreen.tsx */
+  --neon-pink: #f63b9a;
+  --neon-purple: #b06cf0;
+  --gold: #ffd76a;
+  position: absolute;
+  inset: 0;
+  overflow: hidden auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #fff;
+  background: #060309;
+  font-family: system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Static room light: pink from above, purple pooling low. No pulsing. */
+.ambient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(90% 42% at 50% 0%, rgba(246, 59, 154, 0.22), transparent 62%),
+    radial-gradient(110% 50% at 50% 108%, rgba(176, 108, 240, 0.18), transparent 60%);
+}
+
+/* ── top bar (GamesScreen's channel framing, in house pink) ──────────────── */
+.topbar {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: max(14px, env(safe-area-inset-top)) 18px 8px;
+}
+.chWrap { display: flex; align-items: baseline; gap: 8px; }
+.chPill {
+  font: 900 12px/1 system-ui, sans-serif;
+  color: #2b0418;
+  background: var(--neon-pink);
+  padding: 5px 9px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(246, 59, 154, 0.45);
+}
+.chName { font-weight: 900; font-size: 15px; letter-spacing: 1.5px; color: var(--neon-pink); }
+
+.creditsBox {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(13, 8, 20, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 106, 0.35), 0 0 12px rgba(255, 215, 106, 0.12);
+}
+.creditsLabel { font-size: 10px; font-weight: 900; letter-spacing: 1.2px; color: rgba(255, 215, 106, 0.75); }
+.creditsValue { font-size: 17px; font-weight: 950; color: var(--gold); }
+
+/* ── jackpot crown (decorative) ──────────────────────────────────────────── */
+.jackpotSign {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+}
+.jackpotWord {
+  font: 950 15px/1 system-ui, sans-serif;
+  letter-spacing: 5px;
+  /* the established gradient-clip shader-text look (see .camZoomPreset in
+     ViewHarness.module.css), gold colourway, no animation */
+  background-image: linear-gradient(105deg, #8a5a12 0%, #ffd76a 26%, #fff5cf 50%, #ffd76a 74%, #8a5a12 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 0 rgba(64, 36, 2, 0.9)) drop-shadow(0 0 8px rgba(255, 215, 106, 0.4));
+}
+.jackpotAmount {
+  font: 950 30px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 2px;
+  background-image: linear-gradient(180deg, #fff8dc 0%, #ffd76a 42%, #c98f1d 78%, #ffe9a8 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 0 rgba(64, 36, 2, 0.85)) drop-shadow(0 0 14px rgba(255, 200, 64, 0.35));
+}
+.tiers { display: flex; gap: 8px; margin-top: 4px; }
+.tier {
+  font: 900 9px/1 system-ui, sans-serif;
+  letter-spacing: 1.4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: #ffe9b8;
+  background: rgba(13, 8, 20, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 106, 0.4);
+}
+
+/* ── the cabinet ─────────────────────────────────────────────────────────── */
+.cabinet {
+  position: relative;
+  z-index: 1;
+  margin-top: 10px;
+  padding: 12px 12px 14px;
+  border-radius: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  /* glossy black glass with a pink/purple neon edge — all static */
+  background: linear-gradient(180deg, #17101f 0%, #0b0611 46%, #060309 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 26px rgba(246, 59, 154, 0.1),
+    0 0 0 1px rgba(246, 59, 154, 0.55),
+    0 0 18px rgba(246, 59, 154, 0.4),
+    0 0 46px rgba(176, 108, 240, 0.28),
+    0 22px 44px rgba(0, 0, 0, 0.6);
+}
+
+/* Hot-pink glitter wordmark: gradient-clip text plus layered glow shadows.
+   governor-ok: the shimmer sweep runs 3 bounded iterations on mount (the
+   camZoomPreset precedent) and then holds as a static gradient. */
+.wordmark {
+  font: 950 26px/1 system-ui, sans-serif;
+  letter-spacing: 7px;
+  padding-left: 7px; /* optically re-centre against the tracking */
+  background-image: linear-gradient(105deg, #ff2d8b 0%, #ff8ac6 22%, #fff0f8 38%, #ff5aaa 55%, #ffd0e8 72%, #ff2d8b 100%);
+  background-size: 260% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter:
+    drop-shadow(0 1px 0 rgba(64, 2, 32, 0.95))
+    drop-shadow(0 0 7px rgba(246, 59, 154, 0.65))
+    drop-shadow(0 0 18px rgba(246, 59, 154, 0.35));
+  animation: wordmarkShimmer 2.6s linear 3;
+}
+@keyframes wordmarkShimmer {
+  from { background-position: 0 0; }
+  to { background-position: 100% 0; }
+}
+
+.reels {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 14px;
+  background: #030108;
+  box-shadow:
+    inset 0 2px 10px rgba(0, 0, 0, 0.9),
+    inset 0 0 0 1px rgba(176, 108, 240, 0.35);
+}
+
+.reelWindow {
+  position: relative;
+  width: clamp(48px, 13.5vw, 58px);
+  height: calc(var(--cell) * 3);
+  overflow: hidden;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #241830 0%, #0d0812 24%, #0d0812 76%, #241830 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* The travelling column. NO default transition-duration: at rest a strip is
+   inert, and the one-shot spin duration arrives inline from the component. */
+.strip {
+  display: flex;
+  flex-direction: column;
+  transform: translateY(0);
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.16, 0.84, 0.3, 1);
+}
+
+.cell {
+  flex: none;
+  height: var(--cell);
+  display: grid;
+  place-items: center;
+  font: 950 30px/1 system-ui, sans-serif;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Symbol colourways — the same shader-text trick per tone, static. */
+.tonePink {
+  background-image: linear-gradient(180deg, #ffb1d9 0%, #ff3d9c 55%, #b30f61 100%);
+  filter: drop-shadow(0 1px 0 rgba(50, 2, 26, 0.9)) drop-shadow(0 0 6px rgba(246, 59, 154, 0.55));
+}
+.toneGold {
+  background-image: linear-gradient(180deg, #fff3c4 0%, #ffcf4d 55%, #a86f0e 100%);
+  filter: drop-shadow(0 1px 0 rgba(56, 34, 2, 0.9)) drop-shadow(0 0 6px rgba(255, 200, 64, 0.5));
+}
+.toneGreen {
+  background-image: linear-gradient(180deg, #c9ffd9 0%, #37d472 55%, #0c7a37 100%);
+  filter: drop-shadow(0 1px 0 rgba(2, 40, 16, 0.9)) drop-shadow(0 0 6px rgba(55, 212, 114, 0.45));
+}
+.tonePurple {
+  background-image: linear-gradient(180deg, #e6cdff 0%, #b06cf0 55%, #6a2bb0 100%);
+  filter: drop-shadow(0 1px 0 rgba(28, 4, 52, 0.9)) drop-shadow(0 0 6px rgba(176, 108, 240, 0.5));
+}
+.toneCyan {
+  background-image: linear-gradient(180deg, #d2f6ff 0%, #4ac4ff 55%, #0e6da3 100%);
+  filter: drop-shadow(0 1px 0 rgba(2, 26, 40, 0.9)) drop-shadow(0 0 6px rgba(74, 196, 255, 0.5));
+}
+.toneWild {
+  background-image: linear-gradient(105deg, #ff5aaa 0%, #ffd76a 34%, #7fe3ff 68%, #ff5aaa 100%);
+  filter: drop-shadow(0 1px 0 rgba(30, 4, 24, 0.9)) drop-shadow(0 0 8px rgba(255, 255, 255, 0.4));
+}
+
+/* The middle line is the payline: a faint gold band across all five windows,
+   brightened by the one-shot win flash below. */
+.payband {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: calc(8px + var(--cell));
+  height: var(--cell);
+  pointer-events: none;
+  border-top: 1px solid rgba(255, 215, 106, 0.4);
+  border-bottom: 1px solid rgba(255, 215, 106, 0.4);
+  background: linear-gradient(180deg, rgba(255, 215, 106, 0.07), rgba(255, 215, 106, 0.02) 50%, rgba(255, 215, 106, 0.07));
+}
+
+/* governor-ok: two bounded iterations right after a winning settle, then the
+   band returns to its static self. Nothing replays until the next daily spin. */
+.cabinet[data-win="true"] .payband {
+  animation: winFlash 0.7s ease-in-out 2;
+}
+@keyframes winFlash {
+  0%, 100% { box-shadow: none; }
+  50% {
+    box-shadow: 0 0 18px rgba(255, 215, 106, 0.55), inset 0 0 18px rgba(255, 215, 106, 0.3);
+    border-color: rgba(255, 235, 170, 0.9);
+  }
+}
+
+/* ── status + result ─────────────────────────────────────────────────────── */
+.resultRow {
+  position: relative;
+  z-index: 1;
+  min-height: 30px;
+  display: grid;
+  place-items: center;
+  margin-top: 10px;
+  padding: 0 18px;
+  text-align: center;
+}
+.statusLine {
+  font: 800 11px/1.3 system-ui, sans-serif;
+  letter-spacing: 1.6px;
+  color: rgba(255, 255, 255, 0.62);
+}
+/* governor-ok: one-shot entrance per settle. */
+.resultWin {
+  font: 950 20px/1 system-ui, sans-serif;
+  letter-spacing: 2px;
+  background-image: linear-gradient(180deg, #fff8dc 0%, #ffd76a 46%, #c98f1d 82%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 0 rgba(64, 36, 2, 0.85)) drop-shadow(0 0 12px rgba(255, 200, 64, 0.5));
+  animation: resultIn 0.4s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.resultWin b { font-size: 24px; }
+.resultMiss {
+  font: 900 12px/1.3 system-ui, sans-serif;
+  letter-spacing: 1.4px;
+  color: #ff8ac6;
+  animation: resultIn 0.4s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes resultIn {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ── the button deck ─────────────────────────────────────────────────────── */
+.deck {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 6px;
+  /* clear the persistent bottom HUD (cube + arrows + radius) exactly like
+     GamesScreen's shelf does */
+  padding: 4px 18px clamp(150px, 23vh, 188px);
+}
+
+/* Pink physical-looking pills: top highlight, deep base shadow, press dip. */
+.deckBtn {
+  border: 0;
+  padding: 12px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  font: 900 11px/1 system-ui, sans-serif;
+  letter-spacing: 1.2px;
+  color: #fff;
+  background: linear-gradient(180deg, #ff77bd 0%, #f63b9a 52%, #c21b73 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -3px 0 rgba(90, 6, 50, 0.55),
+    0 6px 14px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(246, 59, 154, 0.35);
+  text-shadow: 0 1px 2px rgba(90, 6, 50, 0.7);
+}
+.deckBtn:active { transform: translateY(2px) scale(0.97); }
+
+.spinBtn {
+  border: 0;
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  cursor: pointer;
+  font: 950 20px/1 system-ui, sans-serif;
+  letter-spacing: 1.6px;
+  color: #fff;
+  background: radial-gradient(circle at 32% 26%, #ffa8d6 0%, #f63b9a 44%, #a1145e 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -6px 10px rgba(90, 6, 50, 0.6),
+    0 0 0 4px #0d0812,
+    0 0 0 6px rgba(255, 215, 106, 0.7),
+    0 10px 22px rgba(0, 0, 0, 0.6),
+    0 0 22px rgba(246, 59, 154, 0.45);
+  text-shadow: 0 2px 3px rgba(90, 6, 50, 0.8);
+  transition: transform 120ms ease;
+}
+.spinBtn:active { transform: scale(0.94); }
+.spinBtn:disabled {
+  cursor: default;
+  filter: saturate(0.35) brightness(0.7);
+  font-size: 14px;
+  transform: none;
+}
+
+.betChip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 9px 14px;
+  border-radius: 14px;
+  font: 900 9px/1 system-ui, sans-serif;
+  letter-spacing: 1.3px;
+  color: rgba(255, 255, 255, 0.75);
+  background: linear-gradient(180deg, #1d1226 0%, #0d0812 100%);
+  box-shadow: inset 0 0 0 1px rgba(246, 59, 154, 0.45), 0 4px 10px rgba(0, 0, 0, 0.45);
+}
+.betChip b { font-size: 13px; color: #ff8ac6; }
+
+/* ── pay table overlay ───────────────────────────────────────────────────── */
+.paysCard {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(320px, 86vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(13, 8, 20, 0.97);
+  box-shadow:
+    inset 0 0 0 1px rgba(246, 59, 154, 0.5),
+    0 0 26px rgba(246, 59, 154, 0.3),
+    0 24px 54px rgba(0, 0, 0, 0.7);
+  animation: resultIn 0.3s cubic-bezier(0.2, 1.2, 0.4, 1) both; /* governor-ok: one-shot open */
+}
+.paysTitle {
+  font: 950 13px/1 system-ui, sans-serif;
+  letter-spacing: 3px;
+  text-align: center;
+  color: var(--gold);
+}
+.paysList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.paysRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.paysGlyph {
+  width: 26px;
+  text-align: center;
+  font: 950 19px/1 system-ui, sans-serif;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+.paysName { font: 900 11px/1 system-ui, sans-serif; letter-spacing: 1px; }
+.paysNums { margin-left: auto; font: 800 11px/1 ui-monospace, Menlo, monospace; color: rgba(255, 255, 255, 0.72); }
+.paysFoot {
+  margin: 0;
+  font: 700 10px/1.5 system-ui, sans-serif;
+  letter-spacing: 0.4px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.55);
+}
+.paysClose {
+  align-self: center;
+  border: 0;
+  padding: 10px 22px;
+  border-radius: 999px;
+  cursor: pointer;
+  font: 900 11px/1 system-ui, sans-serif;
+  letter-spacing: 1.4px;
+  color: #fff;
+  background: linear-gradient(180deg, #ff77bd 0%, #f63b9a 52%, #c21b73 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -3px 0 rgba(90, 6, 50, 0.55), 0 6px 14px rgba(0, 0, 0, 0.5);
+}
+.paysClose:active { transform: translateY(2px) scale(0.97); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* transitionend still fires at 0.01s, so the settle path is unchanged;
+     !important because the spin duration arrives as an inline style */
+  .strip { transition-duration: 0.01s !important; }
+  .wordmark,
+  .resultWin,
+  .resultMiss,
+  .paysCard,
+  .cabinet[data-win="true"] .payband {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+}

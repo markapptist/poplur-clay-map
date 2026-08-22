@@ -9,6 +9,7 @@ import RadioScreen from './RadioScreen'
 import MapIpod from './MapIpod'
 import PhoneScreen from './PhoneScreen'
 import GamesScreen from './GamesScreen'
+import CasinoScreen from './CasinoScreen'
 import MapShowMe from './MapShowMe'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
@@ -91,6 +92,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
     { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
+    // The daily casino: one free slots spin a day, paid in Poplur Credits.
+    // It lives in the feed like TV and NEWS — a channel you visit, not a
+    // tool — and the '7' glyph stands in until a clay chip mark is drawn.
+    { icon: 'Games', title: 'CASINO', screen: 'feed-casino', native: true, glyph: '7' },
     // The mini-app folder: everything this account has made with the AI
     // builder, seeded with Poplur Flashlight. See miniApps.ts for the schema.
     { icon: 'Create', title: 'APPS', screen: 'feed-apps', native: true, glyph: '▦' },
@@ -956,6 +961,13 @@ export default function HoldMenuTwin({
       return (
         <div className={`${styles.subscreenStage} ${styles.gameStage}`} role="dialog" aria-label="Games">
           <GamesScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'feed-casino') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Casino">
+          <CasinoScreen onClose={() => { playPop(); onClose() }} />
         </div>
       )
     }

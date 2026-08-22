@@ -58,6 +58,7 @@ const ENTRY_LABEL: Record<CreditEntry['kind'], string> = {
   'transfer-out': 'Sent',
   'transfer-in': 'Received',
   'cash-out': 'Cash out',
+  'casino-win': 'Casino win',
 }
 
 type WalletPage = 'home' | 'send' | 'cashout'

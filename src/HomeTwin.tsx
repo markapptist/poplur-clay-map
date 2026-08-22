@@ -315,6 +315,12 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   'profile-trophies': 'poplur_cube_trophy.glb',
   // The mini-app folder is, fittingly, a folder.
   'feed-apps': 'poplur_cube_folder.glb',
+  // The casino wears the machine itself. 86MB Meshy export decimated to 455KB
+  // by the standard recipe (Draco + simplify 0.0005 + 256px webp) — the
+  // heaviest in this set (the newspaper is 385KB), carried because the
+  // cabinet's lever, marquee and button deck are what make it read as a slot
+  // machine at navigator size.
+  'feed-casino': 'poplur_cube_slot_machine.glb',
   // In the bundle and deliberately unwired, for want of a screen to stand on:
   // ar, video, search, directions, map, tour, comment, live, cameraroll,
   // heypoplur. 'camera-capture' in particular is NOT a destination — PHOTO,
