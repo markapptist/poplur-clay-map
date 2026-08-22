@@ -243,8 +243,24 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   // Wake sequence: 16 frames of the colourway's own spritesheet, one every
   // 112ms — about 1.8s, the same beat the map iPod boots to. Reused for a
   // theme change too: the handset reboots rather than just repainting.
-  const runBoot = useCallback(() => {
+  const runBoot = useCallback((withEffects = true) => {
     if (bootTimer.current !== null) window.clearInterval(bootTimer.current)
+    // The boot buzz, which never fired on device. Native already implements it
+    // — WebHomeCameraLayer's `phoneBootEffects` runs a six-beat impact sequence
+    // and pulses the torch — and the only thing missing was anybody sending the
+    // event. HomeTwin does relay it, but only from a `postMessage`, which was
+    // right when the handset was an IFRAME and became dead code the moment it
+    // became this in-document React screen: nothing has posted that message
+    // since. Post it from the boot itself, where the boot actually happens.
+    //
+    // `navigator.vibrate` is NOT a substitute and never was: pop.ts says so
+    // outright ("iOS Safari ignores this, hence the native bridge"), so on the
+    // phone the existing call was always a no-op pretending to be a haptic.
+    // Kept only for Android/Chrome, where it is the real thing.
+    if (withEffects) {
+      try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
+      postNativeEvent({ type: 'phoneBootEffects' })
+    }
     setBooting(true)
     setBootFrame(0)
     let frame = 0
@@ -272,9 +288,12 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   useEffect(() => {
     const sync = () => {
       try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
+      // Theme, not cold boot: same haptic sequence natively but no boot sound,
+      // and `false` so the reboot below does not fire a SECOND phoneBootEffects
+      // on top of this one.
       postNativeEvent({ type: 'phoneThemeEffects' })
       setThemeRebooting(true)
-      runBoot()
+      runBoot(false)
     }
     window.addEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
     return () => window.removeEventListener(PROFILE_THEME_CHANGE_EVENT, sync)

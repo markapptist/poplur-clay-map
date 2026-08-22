@@ -57,6 +57,18 @@
    fix is purely geometric — give the boot layer the cell's own ratio at full
    stage height, centred. That is exactly the rectangle object-fit:cover
    gives .rest, and .device clips the same overhang off both. */
+/* The wake plays ON the handset's screen, not INSTEAD of the handset.
+   It used to span the whole device (full height, its own 512/768 ratio,
+   overhanging the sides) while `.deviceBooting .rest { opacity: 0 }` hid the
+   shell outright — so a cold start showed a bare boot image with no phone
+   around it, and the shell only appeared when the boot finished, reading as
+   the shell loading in late over it.
+
+   Now it takes the LCD's rectangle: the same artwork-measured cutout `.lcd`
+   uses (device-verified via iPhone Mirroring — see the note there), so the
+   animation sits exactly in the painted screen with the shell drawn around it
+   the entire time. Kept in step with `.lcd`: if that cutout is ever recalibrated
+   against new art, this has to move with it. */
 .boot {
   position: absolute;
   top: 0;
@@ -64,14 +76,30 @@
   transform: translateX(-50%);
   height: 100%;
   aspect-ratio: 512 / 768;
-  z-index: 10;
+  /* Above .lcd (4) and .keys (5) so the wake covers the screen furniture it
+     replaces, but below .swipe (12) — the channel arrows stay reachable while
+     the handset is booting. */
+  z-index: 6;
   background-repeat: no-repeat;
   background-size: 400% 400%;
   pointer-events: none;
+  /* Show ONLY the screen out of each frame. The sheet's cells are full-device
+     renders (see above: both assets frame the device identically), so the box
+     stays device-registered — that is what keeps the boot's screen landing
+     exactly on the painted one — and the clip hides everything outside it.
+     The shell around it is `.rest`, drawn the whole time.
+
+     These are the ART's own cutout fractions, NOT the ones on `.lcd`. The two
+     differ on purpose: `.lcd` sits in `.device` and its horizontal pair is
+     remapped through the cover crop, while this box IS the art's own rectangle
+     (the art ratio at full stage height), so the raw numbers apply here —
+     x 254..767 and y 286..653 of 1024x1536 give 24.8% / 25.1% and
+     18.6% / 57.5%. Vertical agrees with `.lcd` because that crop is
+     width-only. */
+  clip-path: inset(18.6% 25.1% 57.5% 24.8% round 1.5%);
 }
 
 .deviceBooting { animation: phoneWake 0.14s linear infinite; }
-.deviceBooting .rest { opacity: 0; }
 
 @keyframes phoneWake {
   0%, 100% { transform: translate3d(0, 0, 0); }
@@ -89,7 +117,12 @@
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 6;
+  /* Above EVERY handset layer, .boot (10) included. At 6 the arrows spent the
+     whole ~1.8s wake buried under the boot sheet, so the screen opened with no
+     visible way off it. They are navigation, not handset furniture: nothing the
+     phone draws — booting, rebooting on a theme change, or lit — should ever be
+     in front of them. */
+  z-index: 12;
   pointer-events: auto;
 }
 
