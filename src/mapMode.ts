@@ -16,11 +16,11 @@ export function savedMapMode(): PoplurMapMode | null {
 }
 
 export function initialMapMode(): PoplurMapMode {
-  if (typeof window === 'undefined') return '2d'
+  if (typeof window === 'undefined') return '3d'
   const hints = window as typeof window & RuntimeHints
   const query = new URLSearchParams(window.location.search).get('mapMode')
   const queryMode = query === '2d' || query === '3d' ? query : null
-  return queryMode ?? hints.__POPLUR_MAP_MODE__ ?? savedMapMode() ?? '2d'
+  return queryMode ?? hints.__POPLUR_MAP_MODE__ ?? savedMapMode() ?? '3d'
 }
 
 export function setMapMode(mode: PoplurMapMode): void {

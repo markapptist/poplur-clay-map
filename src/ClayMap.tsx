@@ -2115,12 +2115,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         }, firstLayerId)
       }
 
-      // The 3D experience keeps its globe-to-city reveal. The default 2D map
-      // starts directly on useful ground: the old six-second world dive forced
-      // Mapbox to stream, layout and upload every intermediate zoom level and
-      // was enough to push an already-warm iPhone into OS throttling on launch.
+      // The 3D experience keeps its globe-to-city reveal. 2D also starts fully
+      // zoomed out and glides into useful ground so the launch reads as an
+      // approach rather than a snap-to; only a focused post-launch (opening
+      // directly onto a specific pin) still jumps straight to the target.
       const focusedCenter = nativeLocationRef.current ?? HOME_CENTER
-      const launchZoom = focusedPostLaunch || MAP_2D ? INTRO_LANDING_ZOOM : 0.85
+      const launchZoom = focusedPostLaunch ? INTRO_LANDING_ZOOM : 0.85
       if (focusedPostLaunch) initialCameraInteractionRef.current = true
       wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
       map.jumpTo({
@@ -2169,16 +2169,27 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           finishInterruptedIntro()
           return
         }
-        // 2D is an event-driven map, not a cinematic. One camera jump loads
-        // only the tiles the user will actually see and leaves the renderer
-        // parked as soon as that frame is complete.
+        // 2D also flies from the fully zoomed-out world into useful ground so
+        // the launch reads as an approach rather than a snap-to. The event
+        // driven behaviour (parked renderer after settle) is preserved by the
+        // wakeManagedRendering that covers the full duration.
         if (MAP_2D) {
-          wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
-          map.jumpTo({ center, zoom: INTRO_LANDING_ZOOM, pitch: 0, bearing: 0 })
-          if (!introDone) {
+          const duration = 3200
+          wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
+          map.easeTo({
+            center,
+            zoom: INTRO_LANDING_ZOOM,
+            pitch: 0,
+            bearing: 0,
+            duration,
+            easing: t => t * t * (3 - 2 * t),
+            essential: true,
+          })
+          map.once('moveend', () => {
+            if (introDone) return
             introDone = true
             onIntroComplete?.(center)
-          }
+          })
           return
         }
         // Behind another tab there is nobody to watch the dive — flying it just
@@ -3912,6 +3923,97 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       radiusPreviewPinRef.current = null
     }
   }, [composeAt?.lat, composeAt?.lng, mapEpoch, mapRef, radiusPreviewLaunch, takeoverFace])
+
+  // Persistent "you are here" marker: your profile face standing on your live
+  // GPS point. Draws whenever a location is known — unlike the radius-preview
+  // pin above, which is only up while composing a new pop. Reads photo/video
+  // from localStorage the same way the radius-preview pin does; the shell keeps
+  // those keys up to date via ProfileTwin.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapEpoch === 0) return
+    if (radiusPreviewLaunch) return
+    let marker: mapboxgl.Marker | null = null
+    let cancelled = false
+    let selfieVideo: HTMLVideoElement | null = null
+    const readStored = (key: string): string | null => {
+      try { return window.localStorage.getItem(key) } catch { return null }
+    }
+    const profileVideo = readStored('poplur.profile.selfieVideo')
+    const usableVideo = profileVideo && (
+      profileVideo.startsWith('data:video/')
+      || /^https:\/\//i.test(profileVideo)
+      || /^poplur-clay:\/\//i.test(profileVideo)
+      || /^[\w-]+\/.+\.(?:mp4|webm)(?:[?#].*)?$/i.test(profileVideo)
+    ) ? profileVideo : null
+    const profilePhoto = readStored('poplur.profile.photo')
+    const usablePhoto = profilePhoto && (
+      profilePhoto.startsWith('data:image/')
+      || /^https:\/\//i.test(profilePhoto)
+      || /^poplur-clay:\/\//i.test(profilePhoto)
+    ) ? profilePhoto : null
+    if (!usablePhoto && !usableVideo) return
+    const build = (coords: [number, number]) => {
+      void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: MAP_2D ? '2d' : '3d' })
+        .then(src => {
+          if (cancelled || mapRef.current !== map) return
+          const markerRoot = document.createElement('div')
+          markerRoot.className = `${styles.popPinMarker}${MAP_2D ? ` ${styles.popPinMarkerFlat}` : ''}`
+          const pin = document.createElement('div')
+          pin.className = `${styles.popPin} ${styles.popPinMine}${MAP_2D ? ` ${styles.popPinFlat}` : ''}`
+          const pinImage = document.createElement('img')
+          pinImage.src = src
+          pinImage.alt = ''
+          pinImage.draggable = false
+          pin.appendChild(pinImage)
+          markerRoot.appendChild(pin)
+          if (usableVideo) {
+            selfieVideo = document.createElement('video')
+            selfieVideo.className = `${styles.popPinSelfie} ${styles.popPinSelfieVideo}`
+            selfieVideo.src = usableVideo
+            selfieVideo.poster = usablePhoto ?? ''
+            selfieVideo.muted = true
+            selfieVideo.loop = true
+            selfieVideo.playsInline = true
+            selfieVideo.autoplay = true
+            selfieVideo.preload = 'metadata'
+            selfieVideo.setAttribute('aria-hidden', 'true')
+            markerRoot.appendChild(selfieVideo)
+            void selfieVideo.play().catch(() => { /* stored native URL resumes in its shell */ })
+          } else if (usablePhoto) {
+            const face = document.createElement('img')
+            face.className = styles.popPinSelfie
+            face.src = usablePhoto
+            face.alt = ''
+            face.draggable = false
+            markerRoot.appendChild(face)
+          }
+          marker = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
+            .setLngLat(coords)
+            .addTo(map)
+        })
+    }
+    const currentCoords = nativeLocationRef.current
+    if (currentCoords) build(currentCoords)
+    const onLocation = () => {
+      const next = nativeLocationRef.current
+      if (!next) return
+      if (marker) marker.setLngLat(next)
+      else build(next)
+    }
+    window.addEventListener('poplur-location', onLocation)
+    return () => {
+      cancelled = true
+      window.removeEventListener('poplur-location', onLocation)
+      if (selfieVideo) {
+        selfieVideo.pause()
+        selfieVideo.removeAttribute('src')
+        selfieVideo.load()
+      }
+      marker?.remove()
+      marker = null
+    }
+  }, [mapEpoch, mapRef, radiusPreviewLaunch])
 
   // Add / update POI markers whenever pois, selection, or the map instance changes
   useEffect(() => {
