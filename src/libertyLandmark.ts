@@ -4,18 +4,27 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 
-// ── The Statue of Liberty as a TRUE 3D model ──────────────────────────────────
+// ── World landmarks as TRUE 3D map models ────────────────────────────────────
 //
 // Mapbox custom layers only render in MERCATOR projection, never in globe. The
 // clay map runs as a globe, so this module keeps the flat sprite marker as the
 // default and swaps in a real three.js custom layer ONLY when the camera is
-// both near Liberty Island AND zoomed in — flipping the map to mercator for
-// that one landmark and back to globe the moment you leave. Everywhere else the
-// globe experience is untouched.
+// both near the landmark AND zoomed in — flipping the map to mercator for the
+// visit and back to globe the moment you leave. Everywhere else the globe
+// experience is untouched.
+//
+// GENERALISED. This started as a Statue of Liberty-only module. The user's
+// video of a hovering CN Tower sprite made the point: a floating sprite the
+// same size at every zoom is not the same object as a 3D model in the map that
+// stands where its building actually is. So one function per landmark became
+// one function driven by config, with a Liberty-specific wrapper kept for the
+// call sites that already named it. Twelve leases at heavy:false, invisible
+// and undemanded until the camera is close, cost nothing to hold and reconcile
+// individually on move/zoom (each has an early-out if wanted has not changed).
 //
 // THERMAL. This layer used to end every render() with map.triggerRepaint(),
 // copied from Mapbox's three.js sample — which animates its model and therefore
-// needs a repaint every frame. The statue does not move. Measured on the
+// needs a repaint every frame. A landmark does not move. Measured on the
 // workbench at Liberty Island zoom 15.2, over a 12s window with the map idle,
 // the governor's renderer park engaged and Mapbox reporting idle():
 //
@@ -25,7 +34,7 @@ import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPer
 // The park flag was set and meant nothing: the repaint re-armed itself from
 // inside the frame it was drawing, so the map never stopped and the whole
 // idle/park/ambient-sleep architecture was defeated for as long as you stood
-// near the statue. A static model only needs to draw when the map draws, which
+// near a landmark. A static model only needs to draw when the map draws, which
 // Mapbox already does for every camera change; the only frames this layer has
 // to ask for are the ones nothing else knows about (the GLB arriving, the lease
 // being granted). Everything else is the map's own repaint schedule.
@@ -37,14 +46,38 @@ import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPer
 // PoplurPerformanceManager lease while it is showing, so a warm phone can drop
 // it back to the flat sprite instead of carrying a second scene forever.
 
-const LIBERTY: [number, number] = [-74.0445, 40.6892]
-const LAYER_ID = 'liberty-3d'
-// Switch to the flat 3D model only within this radius of Liberty Island…
-const NEAR_KM = 8
-// …and only once the camera is zoomed past region level into the harbour.
-const NEAR_ZOOM = 13
-// Statue of Liberty is ~93 m tall including the pedestal.
-const STATUE_HEIGHT_M = 93
+/** Config for one landmark's near-camera 3D swap. */
+export interface NearLandmark3DConfig {
+  /** Stable id used for the mapbox layer id, the lease id and diagnostics. */
+  id: string
+  /** [lng, lat] the model stands on. */
+  coords: [number, number]
+  /** Real-world height in metres. The model is scaled to this. */
+  heightM: number
+  /** Public path to the decimated GLB. Defaults to `landmarks/{id}.glb`. */
+  glbUrl?: string
+  /** Camera must be within this many km of the landmark. Default 8. */
+  nearKm?: number
+  /** …and zoomed past this level. Default 13. */
+  nearZoom?: number
+  /** Priority for the performance lease. Default 60. */
+  perfPriority?: number
+}
+
+export interface NearLandmark3D {
+  /** Re-evaluate whether the 3D model should be active (call on move/zoom). */
+  update: () => void
+  /** True while the flat 3D model + mercator projection are showing. */
+  isActive: () => boolean
+  /** Remove listeners, the custom layer, and free three.js resources. */
+  dispose: () => void
+  /** The config passed in — kept so callers can dispatch by id. */
+  readonly config: NearLandmark3DConfig
+}
+
+/** @deprecated same shape as NearLandmark3D — kept for call sites that used
+ *  the Liberty-specific name before the generalisation. */
+export type LibertyLandmark = NearLandmark3D
 
 function distanceKm(a: [number, number], b: [number, number]): number {
   const R = 6371
@@ -58,54 +91,44 @@ function distanceKm(a: [number, number], b: [number, number]): number {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
-export interface LibertyLandmark {
-  /** Re-evaluate whether the 3D model should be active (call on move/zoom). */
-  update: () => void
-  /** True while the flat 3D model + mercator projection are showing. */
-  isActive: () => boolean
-  /** Remove listeners, the custom layer, and free three.js resources. */
-  dispose: () => void
-}
-
-export function installLibertyLandmark(
+/**
+ * Install a near-camera 3D swap for one landmark. Returns a handle whose
+ * update() must be called on map move/zoom (ClayMap invokes each landmark's
+ * update() inside its own move/zoom listener rather than binding twelve extra
+ * ones here).
+ */
+export function installNearLandmark3D(
   map: mapboxgl.Map,
+  cfg: NearLandmark3DConfig,
   opts: {
-    /** Toggle the flat statue-liberty sprite marker (hidden while 3D shows). */
+    /** Toggle the flat sprite marker for this landmark (hidden while 3D shows). */
     onActiveChange?: (active: boolean) => void
   } = {},
-): LibertyLandmark {
-  // What the CAMERA wants: near Liberty Island and zoomed in.
+): NearLandmark3D {
+  const nearKm = cfg.nearKm ?? 8
+  const nearZoom = cfg.nearZoom ?? 13
+  const layerId = `landmark3d-${cfg.id}`
+
   let wanted = false
-  // What the performance manager ALLOWS. Starts false and is only ever set by
-  // an actual grant: reconcile() calls back on every change of a renderer's
-  // active state, so a lease it refuses (light budget full on a warm phone)
-  // stays silent — and optimism here would draw the statue without one.
   let leaseGranted = false
-  // What is actually on the map right now — `wanted && leaseGranted`.
   let shown = false
   let disposed = false
 
-  // The projection the map wants when NOT near Liberty (globe for the normal
-  // clay world; mercator if the shell booted the flat 2D map). We only ever
-  // return to this — we never force globe onto a map that was built flat.
   let baseProjection = 'globe'
   try {
     baseProjection = map.getProjection()?.name ?? 'globe'
   } catch { /* projection API not ready — default to globe */ }
 
-  // Base-aware asset URLs: the app runs from poplur-clay://app on device and
-  // from a nested path on the web, so resolve against the configured base
-  // rather than a hardcoded '/'. landmarks/ DOES ship to the device bundle.
   const base = import.meta.env.BASE_URL || './'
-  const glbUrl = `${base}landmarks/statue-liberty.glb`
+  const glbUrl = cfg.glbUrl ?? `${base}landmarks/${cfg.id}.glb`
   const dracoPath = `${base}draco/`
 
-  const origin = mapboxgl.MercatorCoordinate.fromLngLat(LIBERTY, 0)
+  const origin = mapboxgl.MercatorCoordinate.fromLngLat(cfg.coords, 0)
   const transform = {
     x: origin.x,
     y: origin.y,
     z: origin.z,
-    rotateX: Math.PI / 2, // Y-up GLB → Z-up mercator
+    rotateX: Math.PI / 2,
     scale: origin.meterInMercatorCoordinateUnits(),
   }
 
@@ -133,7 +156,7 @@ export function installLibertyLandmark(
   }
 
   const customLayer: mapboxgl.CustomLayerInterface = {
-    id: LAYER_ID,
+    id: layerId,
     type: 'custom',
     renderingMode: '3d',
     onAdd(m, gl) {
@@ -154,31 +177,24 @@ export function installLibertyLandmark(
       loader.load(
         glbUrl,
         g => {
-          // The layer may have been removed before the GLB finished loading.
           if (!scene) { disposeModel(g.scene); return }
           const built = g.scene
           const box = new THREE.Box3().setFromObject(built)
           const size = new THREE.Vector3()
           box.getSize(size)
-          const s = STATUE_HEIGHT_M / (size.y || 1)
+          const s = cfg.heightM / (size.y || 1)
           built.scale.setScalar(s)
           const box2 = new THREE.Box3().setFromObject(built)
-          built.position.y -= box2.min.y // sit the base on the ground
+          built.position.y -= box2.min.y
           model = built
           scene.add(built)
-          // The one frame the map cannot know it needs: the model arrived
-          // after the camera settled. Ask for exactly one, not for all of them.
           map.triggerRepaint()
         },
         undefined,
-        err => console.warn('[liberty glb]', err),
+        err => console.warn(`[${cfg.id} glb]`, err),
       )
 
-      // This creates NO WebGL context — it wraps the MAP's own canvas and gl
-      // (the ClayBuildings3D pattern), so there is no second context to lease,
-      // park or lose, and releaseWebGL on it would kill the map. What IS
-      // leased is the layer, which is the thing that actually costs frames.
-      // governor-ok: shares the map's context; the layer holds a PoplurPerformanceManager lease (`perf` below) only while it is on the map, and draws only inside Mapbox's own render pass — it asks for no frames of its own
+      // governor-ok: shares the map's context; the layer holds a PoplurPerformanceManager lease only while it is on the map, and draws only inside Mapbox's own render pass — it asks for no frames of its own
       renderer = new THREE.WebGLRenderer({
         canvas: m.getCanvas(),
         context: gl,
@@ -187,7 +203,6 @@ export function installLibertyLandmark(
       renderer.autoClear = false
     },
     onRemove() {
-      // The context belongs to the MAP; only free three's own resources here.
       if (model) { disposeModel(model); model = null }
       scene = null
       cam = null
@@ -207,9 +222,6 @@ export function installLibertyLandmark(
       cam.projectionMatrix = new THREE.Matrix4().fromArray(matrix).multiply(l)
       renderer.resetState()
       renderer.render(scene, cam)
-      // NO triggerRepaint here. See the THERMAL note at the top of the file:
-      // asking for the next frame from inside this one is an ungoverned loop
-      // that no park, thermal ceiling or ambient gate can reach.
     },
   }
 
@@ -219,25 +231,22 @@ export function installLibertyLandmark(
 
   const activate = () => {
     if (currentProjection() !== 'mercator') map.setProjection('mercator')
-    if (!map.getLayer(LAYER_ID)) {
-      try { map.addLayer(customLayer) } catch (e) { console.warn('[liberty] addLayer', e); return }
+    if (!map.getLayer(layerId)) {
+      try { map.addLayer(customLayer) } catch (e) { console.warn(`[${cfg.id}] addLayer`, e); return }
     }
     opts.onActiveChange?.(true)
   }
 
   const deactivate = () => {
-    if (map.getLayer(LAYER_ID)) {
-      try { map.removeLayer(LAYER_ID) } catch { /* already gone */ }
+    if (map.getLayer(layerId)) {
+      try { map.removeLayer(layerId) } catch { /* already gone */ }
     }
-    // Only ever return to the projection the map was built with — never force
-    // globe onto a shell that booted the flat 2D map.
     if (baseProjection !== 'mercator' && currentProjection() !== baseProjection) {
       map.setProjection(baseProjection)
     }
     opts.onActiveChange?.(false)
   }
 
-  /** Bring the map in line with `wanted && leaseGranted`. Idempotent. */
   const sync = () => {
     if (disposed) return
     const next = wanted && leaseGranted
@@ -247,29 +256,18 @@ export function installLibertyLandmark(
     else deactivate()
   }
 
-  // A LEASE, not a registration-for-life. `heavy: false` is deliberate and
-  // load-bearing: the manager keeps exactly ONE heavy renderer active, and that
-  // one is ClayMap3D — registering heavy here would evict the map itself. It
-  // stays invisible/undemanded while the statue is not showing, so it costs a
-  // light slot only for as long as it is actually drawing, and a warm phone
-  // (LOW_POWER drops the light budget to 2, SURVIVAL to 1) drops it back to the
-  // flat sprite rather than carrying a second scene through the whole visit.
   const perf: PoplurRendererHandle = PoplurPerformanceManager.registerRenderer({
-    id: 'LibertyLandmark3D',
+    id: `NearLandmark3D:${cfg.id}`,
     heavy: false,
-    priority: 60,
+    priority: cfg.perfPriority ?? 60,
     visible: false,
     demanded: false,
     onActiveChange: active => {
       leaseGranted = active
       sync()
-      // A re-grant has to redraw: the camera has not moved, so nothing else
-      // will ask Mapbox for the frame that puts the statue back.
       if (active && shown) map.triggerRepaint()
     },
     releaseInactiveResources: () => {
-      // onRemove (via deactivate) already freed the scene; this covers a
-      // manager-driven release that raced ahead of the layer removal.
       if (model) { disposeModel(model); model = null }
     },
   })
@@ -278,34 +276,33 @@ export function installLibertyLandmark(
     if (disposed) return
     const zoom = map.getZoom()
     const c = map.getCenter()
-    const near = distanceKm([c.lng, c.lat], LIBERTY) <= NEAR_KM
-    const next = near && zoom >= NEAR_ZOOM
+    const near = distanceKm([c.lng, c.lat], cfg.coords) <= nearKm
+    const next = near && zoom >= nearZoom
     if (next === wanted) return
     wanted = next
-    // Order matters: setVisible/setDemand reconcile SYNCHRONOUSLY and can call
-    // onActiveChange -> sync() before returning, so `wanted` must already be
-    // current when they run.
     perf.setVisible(next)
     perf.setDemand(next)
     sync()
   }
 
+  // Twelve landmarks × two listeners is trivial next to what Mapbox emits at
+  // 60fps during a zoom, and each update() has an early-out on `next === wanted`
+  // so most calls do nothing beyond a subtraction and a compare.
   map.on('move', update)
   map.on('zoom', update)
 
   return {
+    config: cfg,
     update,
     isActive: () => shown,
     dispose: () => {
       if (disposed) return
       map.off('move', update)
       map.off('zoom', update)
-      // Before the disposed latch: the handle's dispose() runs
-      // releaseInactiveResources, and the layer must still be removable.
       perf.dispose()
       disposed = true
-      if (map.getLayer(LAYER_ID)) {
-        try { map.removeLayer(LAYER_ID) } catch { /* map already torn down */ }
+      if (map.getLayer(layerId)) {
+        try { map.removeLayer(layerId) } catch { /* map already torn down */ }
       }
       if (shown && baseProjection !== 'mercator') {
         try {
@@ -316,4 +313,18 @@ export function installLibertyLandmark(
       shown = false
     },
   }
+}
+
+/** Back-compat wrapper: install the Statue of Liberty specifically. Kept for
+ *  call sites that had already named the module Liberty. The behaviour is the
+ *  same as installNearLandmark3D with statue-liberty's config. */
+export function installLibertyLandmark(
+  map: mapboxgl.Map,
+  opts: { onActiveChange?: (active: boolean) => void } = {},
+): NearLandmark3D {
+  return installNearLandmark3D(
+    map,
+    { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93 },
+    opts,
+  )
 }

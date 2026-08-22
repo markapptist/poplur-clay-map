@@ -8,7 +8,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
-import { installLibertyLandmark, type LibertyLandmark } from './libertyLandmark'
+import { installNearLandmark3D, type NearLandmark3D } from './libertyLandmark'
 import { subsolarPoint, sublunarPoint, moonPhase, CELESTIAL_MODELS } from './celestial'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
@@ -566,19 +566,19 @@ function CelestialBody({ model, size, rotateDeg = 0 }: {
  *  a city skyline, not to metres: a sprite has a fixed pixel size while the
  *  buildings around it grow with zoom, so exact proportion is not on offer.
  */
-const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; yaw?: number }[] = [
-  { id: 'burj-khalifa', coords: [55.2744, 25.1972], width: 720 },
-  { id: 'cn-tower', coords: [-79.3871, 43.6426], width: 640 },
-  { id: 'eiffel', coords: [2.2945, 48.8584], width: 520 },
-  { id: 'space-needle', coords: [-122.3493, 47.6205], width: 420 },
-  { id: 'golden-gate', coords: [-122.4783, 37.8199], width: 560, yaw: 12 },
-  { id: 'statue-liberty', coords: [-74.0445, 40.6892], width: 320 },
-  { id: 'big-ben', coords: [-0.1246, 51.5007], width: 320 },
-  { id: 'giza', coords: [31.1342, 29.9792], width: 420 },
-  { id: 'taj-mahal', coords: [78.0421, 27.1751], width: 380 },
-  { id: 'colosseum', coords: [12.4922, 41.8902], width: 380 },
-  { id: 'sydney-opera', coords: [151.2153, -33.8568], width: 380 },
-  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], width: 260 },
+const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; heightM: number; yaw?: number }[] = [
+  { id: 'burj-khalifa', coords: [55.2744, 25.1972], width: 720, heightM: 828 },
+  { id: 'cn-tower', coords: [-79.3871, 43.6426], width: 640, heightM: 553 },
+  { id: 'eiffel', coords: [2.2945, 48.8584], width: 520, heightM: 330 },
+  { id: 'space-needle', coords: [-122.3493, 47.6205], width: 420, heightM: 184 },
+  { id: 'golden-gate', coords: [-122.4783, 37.8199], width: 560, heightM: 227, yaw: 12 },
+  { id: 'statue-liberty', coords: [-74.0445, 40.6892], width: 320, heightM: 93 },
+  { id: 'big-ben', coords: [-0.1246, 51.5007], width: 320, heightM: 96 },
+  { id: 'giza', coords: [31.1342, 29.9792], width: 420, heightM: 139 },
+  { id: 'taj-mahal', coords: [78.0421, 27.1751], width: 380, heightM: 73 },
+  { id: 'colosseum', coords: [12.4922, 41.8902], width: 380, heightM: 48 },
+  { id: 'sydney-opera', coords: [151.2153, -33.8568], width: 380, heightM: 65 },
+  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], width: 260, heightM: 38 },
 ]
 
 const CITY_TREES: { coords: [number, number]; width: number; palm?: boolean }[] = [
@@ -1064,7 +1064,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   dayTimeRef.current = dayTime
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const worldLandmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
-  const libertyLandmarkRef = useRef<LibertyLandmark | null>(null)
+  const landmarks3dRef = useRef<Map<string, NearLandmark3D>>(new Map())
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
   const carMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1811,8 +1811,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // globe, where the claim blooms already speak.
       worldLandmarkMarkersRef.current.forEach(mk => {
         const el = mk.getElement()
-        // The Statue of Liberty hides its sprite while its real 3D model shows.
-        if (el.dataset.landmarkId === 'statue-liberty' && libertyLandmarkRef.current?.isActive()) {
+        // While a landmark's real 3D model is on the map, its flat sprite
+        // hides — the two must never share the pixel. Same pattern the Liberty
+        // one-off used; now driven by whichever of the twelve is near-camera.
+        const id = el.dataset.landmarkId
+        if (id && landmarks3dRef.current.get(id)?.isActive()) {
           setZoomVisible(el, false)
           return
         }
@@ -3085,28 +3088,39 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       })
 
       // ── Statue of Liberty: swap the flat sprite for a real 3D model ─────────
-      // Near Liberty Island AND zoomed in, flip to mercator and render the GLB
-      // as a three.js custom layer (globe has no custom-layer support). The
+      // Near a landmark AND zoomed in, flip to mercator and render its GLB as
+      // a three.js custom layer (globe has no custom-layer support). The
       // sprite hides while the model shows; both revert on the way back out.
-      // Isolated to this one landmark so the normal globe world is untouched.
-      libertyLandmarkRef.current?.dispose()
-      libertyLandmarkRef.current = installLibertyLandmark(map, {
-        onActiveChange: active3d => {
-          const mk = worldLandmarkMarkersRef.current.find(
-            m => m.getElement().dataset.landmarkId === 'statue-liberty',
-          )
-          if (!mk) return
-          const stEl = mk.getElement()
-          if (active3d) {
-            stEl.dataset.zoomHidden = '1'
-            stEl.style.display = 'none'
-          } else {
-            setZoomVisible(stEl, map.getZoom() >= 9.5)
-          }
-        },
-      })
-      // Evaluate once for the current camera (the app may already be near it).
-      libertyLandmarkRef.current.update()
+      // Twelve leases held at heavy:false, invisible and undemanded until the
+      // camera is close, cost nothing to hold and reconcile individually on
+      // move/zoom — the same pattern that had been proven on Liberty alone.
+      landmarks3dRef.current.forEach(h => h.dispose())
+      landmarks3dRef.current.clear()
+      for (const mark of WORLD_LANDMARKS) {
+        const h = installNearLandmark3D(map, {
+          id: mark.id,
+          coords: mark.coords,
+          heightM: mark.heightM,
+        }, {
+          onActiveChange: active3d => {
+            const mk = worldLandmarkMarkersRef.current.find(
+              m => m.getElement().dataset.landmarkId === mark.id,
+            )
+            if (!mk) return
+            const el = mk.getElement()
+            if (active3d) {
+              el.dataset.zoomHidden = '1'
+              el.style.display = 'none'
+            } else {
+              setZoomVisible(el, map.getZoom() >= 9.5)
+            }
+          },
+        })
+        landmarks3dRef.current.set(mark.id, h)
+        // Evaluate once for the current camera (the app may already be near
+        // one of them, e.g. on a resume to a landmark tab).
+        h.update()
+      }
 
       // ── City props: clay trees, harbour boats, cars on the roads ───────────
       treeMarkersRef.current.forEach(mk => mk.remove())
@@ -3872,8 +3886,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       stopCarAudio()
       popFrameStops.forEach(stop => stop())
       popFrameStops.clear()
-      libertyLandmarkRef.current?.dispose()
-      libertyLandmarkRef.current = null
+      landmarks3dRef.current.forEach(h => h.dispose())
+      landmarks3dRef.current.clear()
       ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef, worldLandmarkMarkersRef].forEach(ref => {
         ref.current.forEach(mk => mk.remove())
         ref.current = []
