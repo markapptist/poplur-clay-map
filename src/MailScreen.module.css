@@ -264,7 +264,18 @@
 .ftOverlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  /* UNDER the home chrome, not over it. This sat at 1000 — the full-screen
+     modal tier — which painted out the whole home HUD (wordmark at 270,
+     arrows/cube/radius at 260) for the length of a call, taking the navigator
+     with it. A subscreen is what this is, so it belongs just below the chrome
+     every other subscreen sits under.
+     Deliberately NOT solved by promoting the HUD above 1000 instead:
+     PermissionAlert's scrim is also 1000 and documents that consent "must be
+     the front-most interaction". A call opens getUserMedia, so that alert is
+     the one thing guaranteed to appear here — lifting the cube over it would
+     hide the permission card behind the navigator.
+     Still far above .contentLayer (4), where MailScreen itself renders. */
+  z-index: 250;
   display: flex;
   flex-direction: column;
   background: #080509;
@@ -302,11 +313,22 @@
 
 .ftVideoOff { opacity: 0.08; }
 
+/* The TOP pane's label only. The overlay is full-bleed by design — video
+   should run under the status bar — but the caller's name is text, and at
+   `top: 12px` it sat directly under the clock and the dynamic island. The
+   local pane's label is mid-screen and needs no inset, so this is scoped to
+   the remote pane rather than padding the whole overlay and letterboxing the
+   video. */
+.ftRemotePane .ftRemoteLabel {
+  top: calc(12px + env(safe-area-inset-top, 0px));
+}
+
 .ftRemoteLabel,
 .ftLocalLabel {
   position: absolute;
   top: 12px;
   left: 14px;
+  z-index: 1;
   padding: 4px 12px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.5);
@@ -325,12 +347,28 @@
   color: rgba(255, 255, 255, .72);
 }
 
+/* Reserve the home dock. Now that .ftOverlay sits UNDER the chrome, the home
+   HUD (arrows, cube, radius) paints over the bottom of this overlay, so that
+   strip is no longer ours to use. The dock is `bottom: 18px` with a height of
+   --cube-size, so clear both plus a gap; same expression the subscreens
+   already pad with, so the controls stop exactly where every other screen's
+   content does.
+   The status line sits above these, so it rides up with them.
+
+   The fallback is a clamp, not a flat 176px: --cube-size is set inline on the
+   home shell and this overlay is portaled to <body>, so it never inherits it
+   and the fallback is what actually applies. HomeTwin sizes the cube as
+   min(176, max(124, innerWidth * 0.37)) — about 145px on a phone — so a flat
+   176 would push the controls ~31px higher than the dock really needs. The
+   clamp below is that same expression in CSS. */
 .ftControls {
   flex: none;
   display: flex;
   justify-content: center;
   gap: 18px;
-  padding: 8px 0 max(20px, env(safe-area-inset-bottom));
+  padding: 8px 0 calc(
+    18px + var(--cube-size, clamp(124px, 37vw, 176px)) + 14px + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 .ftControls button {
