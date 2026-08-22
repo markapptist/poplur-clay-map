@@ -48,7 +48,10 @@ export interface Posting {
   radiusKmAtPost: number
 }
 
-const POSTINGS_KEY = 'poplur.posted-content.v1'
+// Exported because the map runs as its OWN document embedded by the shell: a
+// drop made in the shell reaches the map only as a `storage` event, and the
+// map needs the key to tell this ledger's writes from every other one.
+export const POSTINGS_KEY = 'poplur.posted-content.v1'
 export const POSTED_CONTENT_CHANGE_EVENT = 'poplur-posted-content-change'
 
 function readJson<T>(key: string, fallback: T): T {

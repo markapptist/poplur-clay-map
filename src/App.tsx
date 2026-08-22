@@ -74,6 +74,21 @@ import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import { localDaylight } from './skyCycle'
 import { radiusDeltaForChannel } from './radiusLedger'
+import { listPostings, onPostedContentChange, radiusKmFor, POSTINGS_KEY } from './postedContent'
+
+/** The shipped games by id, so a dropped game's claim can wear its title on
+ *  the pin. A tiny local map rather than an import of GamesScreen: this
+ *  document is the MAP, and pulling the whole games screen (model-viewer,
+ *  playables) into its bundle to read three strings would be absurd. */
+const GAME_TITLES: Record<string, string> = {
+  fps: 'FPS Shooter',
+  poplurgatchi: 'Poplurgatchi',
+  arcade: 'Poplur Boy',
+}
+
+/** Dropped games all claim in the house cyan — one recognisable colour for
+ *  the kind, the way other people's pops each keep theirs. */
+const GAME_CLAIM_COLOR = '#33ccff'
 
 interface RadioStationCue {
   name: string
@@ -1806,6 +1821,46 @@ export default function App() {
     const t = window.setTimeout(apply, 60)
     return () => window.clearTimeout(t)
   }, [popLevel, mapLive])
+
+  // ── Dropped games are territory too ──────────────────────────────────────
+  // GamesScreen drops a created game on the ground (postedContent, kind
+  // 'game'), and dropped ground is a standing claim like any other pop's.
+  // Reach is read live (radiusKmFor = snapshot + earned delta), so a like
+  // landing on a game grows its disc on the next recompute. Two listeners
+  // because the shell and this map are SEPARATE documents on one origin:
+  // drops made in this document announce via the change event, drops made in
+  // the shell only arrive as the localStorage `storage` event.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLive) return
+    const apply = () => {
+      try {
+        setClaimGroup(map, 'games', listPostings('game').map(posting => ({
+          id: `game-${posting.itemId}`,
+          center: posting.coords,
+          radiusKm: radiusKmFor('game', posting.itemId) ?? posting.radiusKmAtPost,
+          color: GAME_CLAIM_COLOR,
+          user: GAME_TITLES[posting.itemId] ?? posting.itemId,
+          // The group tag keeps these out of the colour partition, or the pop
+          // level switch would sweep them off with the 'others' half.
+          group: 'games' as const,
+        })))
+      } catch { /* style can be rebuilding; the next change re-applies */ }
+    }
+    // Same beat as the level effect above: let the first seed land first.
+    const t = window.setTimeout(apply, 60)
+    const stopLocal = onPostedContentChange(apply)
+    // A cleared storage (key null) can also have taken postings with it.
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === POSTINGS_KEY) apply()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.clearTimeout(t)
+      stopLocal()
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [mapLive])
 
   // The pins the map should stand up, derived from the same level. Own pins
   // do not wear a profile photo; the short selfie video sits above one of them.

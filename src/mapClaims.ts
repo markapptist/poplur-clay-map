@@ -18,6 +18,12 @@ export interface Claim {
   color?: string
   /** The poster's handle, for the pin that stands on this claim. */
   user?: string
+  /** Which OWNER GROUP this claim swaps with (see setClaimGroup). Absent means
+   *  the original colour partition applies: no colour is 'mine', a colour is
+   *  'others'. Dropped GAMES carry a colour too, so without this tag the pop
+   *  level switch would sweep them off the board along with other people's
+   *  territory every time it swapped the 'others' half. */
+  group?: 'games'
 }
 
 const CLAIMS_SOURCE = 'poplur-claims'
@@ -672,12 +678,16 @@ function animateClaim(map: mapboxgl.Map, claim: Claim, from: number): void {
  * painted it back. Partitioning by owner lets the untouched half stay exactly
  * where it is while the other half arrives or leaves.
  */
-export function setClaimGroup(map: mapboxgl.Map, owner: 'mine' | 'others', list: Claim[]): void {
+export function setClaimGroup(map: mapboxgl.Map, owner: 'mine' | 'others' | 'games', list: Claim[]): void {
   installClaimsLayer(map)
   cancelAllClaimAnimations(map)
   const candidates = new Map(claims)
   for (const [id, claim] of [...candidates.entries()]) {
-    const belongs = owner === 'mine' ? !claim.color : Boolean(claim.color)
+    // Tagged claims swap only with their own group; untagged ones keep the
+    // original colour partition (no colour = yours, a colour = theirs).
+    const belongs = claim.group
+      ? claim.group === owner
+      : owner === 'mine' ? !claim.color : owner === 'others' && Boolean(claim.color)
     if (belongs) candidates.delete(id)
   }
   for (const claim of list) {

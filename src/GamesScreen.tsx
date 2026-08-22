@@ -5,6 +5,15 @@ import PoplurgatchiPlayable from './PoplurgatchiPlayable'
 import ArcadeScreen from './ArcadeScreen'
 import { playPop } from './pop'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
+import {
+  dropAt,
+  formatCoords,
+  onPostedContentChange,
+  pickUp,
+  postingFor,
+  radiusKmFor,
+} from './postedContent'
+import { HOME } from './reach'
 
 // The optimized PoplurStation GLBs use EXT_meshopt_compression. model-viewer
 // owns a separate loader from CubeTab3D, so it needs its own local decoder
@@ -475,6 +484,9 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
         {/* No ✕ — the cube closes every subscreen, this one included. */}
       </header>
 
+      {/* The featured card is a CARD now, not the whole viewport: the screen
+          reads as a catalogue (the Apps-folder shape) and the hero is merely
+          the focused row writ a little larger. */}
       <section className={styles.hero} aria-live="polite">
         <button className={styles.heroCover} onClick={() => launch(game)} aria-label={`Play ${game.title}`}>
           <Cover game={game} size="hero" />
@@ -489,26 +501,106 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
         </div>
       </section>
 
-      <div className={styles.shelfWrap}>
-        <span className={styles.shelfLabel}>YOUR GAMES</span>
-        <div className={styles.shelf} role="listbox" aria-label="Games">
+      <div className={styles.listWrap}>
+        <span className={styles.listLabel}>YOUR GAMES</span>
+        <div className={styles.list} role="list" aria-label="Games" data-clay-scroll>
           {GAMES.map((g, i) => (
-            <button
+            <GameRow
               key={g.id}
-              data-idx={i}
-              role="option"
-              aria-selected={i === selected}
-              className={`${styles.card} ${i === selected ? styles.cardOn : ''}`}
-              onClick={() => (i === selected ? launch(g) : focus(i))}
-            >
-              <Cover game={g} size="tile" />
-              <span className={styles.cardTitle}>{g.title}</span>
-            </button>
+              game={g}
+              focused={i === selected}
+              onFocus={() => focus(i)}
+              onPlay={() => launch(g)}
+            />
           ))}
         </div>
       </div>
 
       {bootCard}
+    </div>
+  )
+}
+
+/** One game in the catalogue — the Apps-folder row shape: art, identity, and
+ *  the two facts that make a game a POST rather than a file (the radius it
+ *  reaches, and the ground it was left on). A game that has never been dropped
+ *  says so — it has no reach, which is different from a reach of zero.
+ */
+function GameRow({ game, focused, onFocus, onPlay }: {
+  game: Game
+  focused: boolean
+  onFocus: () => void
+  onPlay: () => void
+}) {
+  // Re-read on every drop/move/pick-up rather than holding a copy: the ledger
+  // and the postings are the truth, and a like landing elsewhere in the app
+  // changes this row's radius without anything here being told directly.
+  const [, bump] = useState(0)
+  useEffect(() => onPostedContentChange(() => bump(n => n + 1)), [])
+
+  const posting = postingFor('game', game.id)
+  const reachKm = radiusKmFor('game', game.id)
+
+  const toggleGround = (event: React.MouseEvent) => {
+    // The row itself focuses the hero; this control must not also do that.
+    event.stopPropagation()
+    playPop()
+    if (posting) pickUp('game', game.id)
+    // No live fix here yet, so HOME stands in — the same origin the apps
+    // folder and musicPosts use, so every distance still agrees.
+    else dropAt('game', game.id, HOME)
+    bump(n => n + 1)
+  }
+
+  return (
+    <div
+      className={`${styles.row} ${focused ? styles.rowOn : ''}`}
+      role="listitem"
+      tabIndex={0}
+      style={{ ['--accent' as string]: game.color }}
+      onClick={onFocus}
+      onKeyDown={event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        // Stop here or the window-level handler launches the FOCUSED game on
+        // the same keystroke, which need not be the row the keyboard is on.
+        event.stopPropagation()
+        onPlay()
+      }}
+    >
+      <span className={styles.rowArt} aria-hidden="true">
+        <Cover game={game} size="tile" />
+      </span>
+
+      <span className={styles.rowInfo}>
+        <b className={styles.rowTitle}>{game.title}</b>
+        <i className={styles.rowSub}>{game.subtitle}</i>
+        <span className={styles.rowStatus}>
+          <span className={styles.rowRadius} data-unposted={reachKm == null ? 'true' : 'false'}>
+            {reachKm == null ? 'Not posted' : `${reachKm.toFixed(1)} km radius`}
+          </span>
+          {posting && posting.place && <span className={styles.rowPlace}>{posting.place}</span>}
+          {posting && <span className={styles.rowCoords}>{formatCoords(posting.coords)}</span>}
+        </span>
+      </span>
+
+      <span className={styles.rowActions}>
+        <button
+          type="button"
+          className={styles.rowPlay}
+          onClick={event => { event.stopPropagation(); onPlay() }}
+        >
+          <span className={styles.playTri}>▶</span> PLAY
+        </button>
+        <button
+          type="button"
+          className={styles.dropBtn}
+          data-posted={posting ? 'true' : 'false'}
+          onClick={toggleGround}
+        >
+          {posting ? 'Pick up' : 'Drop here'}
+        </button>
+      </span>
     </div>
   )
 }
