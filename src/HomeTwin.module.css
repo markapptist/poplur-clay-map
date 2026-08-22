@@ -1371,29 +1371,6 @@
   filter: saturate(0.55);
 }
 
-.coolingCue {
-  position: absolute;
-  top: -16px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
-  display: none;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(10, 16, 26, 0.78);
-  border: 1px solid rgba(140, 200, 255, 0.45);
-  color: #bfe2ff;
-  font: 700 10px/1.2 system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.12em;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-:global(html[data-poplur-thermal='serious']) .coolingCue,
-:global(html[data-poplur-thermal='critical']) .coolingCue {
-  display: block;
-}
-
 /* ── Incoming call banner ──────────────────────────────────────────────── */
 .incomingCallBanner {
   position: absolute;
@@ -1405,20 +1382,53 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  background: rgba(40, 40, 42, 0.92);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.12) inset;
+  padding: 13px 15px;
+  /* A CLAY SLAB, not iOS's frosted grey material. This was a faithful copy of
+     the system call banner — 40,40,42 at 92% with a saturate(180%) blur behind
+     it — which made the one moment Poplur interrupts you the one moment it
+     looks like something else. Same clay recipe the thread rows and avatars
+     use: a highlight caught off the top-left, a pink body, and a dark rim
+     underneath so it reads as a pressed object rather than a panel. */
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 18% 14%, rgba(255, 255, 255, 0.55), transparent 34%),
+    linear-gradient(150deg, #ff8ac6 0%, #f63b9a 48%, #8e1b56 100%);
+  box-shadow:
+    inset 0 7px 12px rgba(255, 255, 255, 0.4),
+    inset 0 -6px 14px rgba(74, 10, 44, 0.4),
+    0 14px 26px rgba(60, 12, 40, 0.42);
   color: #fff;
-  animation: callBannerSlide 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  /* Arrives, then rings. The slide is the same easing as before; the ring is a
+     small rotational shudder on a long pause, so the banner behaves like a
+     handset going off rather than a notification that merely appeared. */
+  animation:
+    callBannerSlide 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    callBannerRing 2.4s 0.35s ease-in-out infinite;
   pointer-events: auto;
 }
 
 @keyframes callBannerSlide {
   from { transform: translateY(-120%); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+/* Most of the cycle is rest — the shudder is 8 of 24 hundredths, so it reads as
+   a ring with a pause, not a permanent wobble. */
+@keyframes callBannerRing {
+  0%, 66%, 100% { transform: rotate(0deg); }
+  68% { transform: rotate(-0.9deg); }
+  71% { transform: rotate(0.9deg); }
+  74% { transform: rotate(-0.6deg); }
+  77% { transform: rotate(0.6deg); }
+  80% { transform: rotate(0deg); }
+}
+
+/* The shudder is decoration; the banner is not. Drop the ring and the slide,
+   keep the banner — an incoming call must still announce itself to someone who
+   has asked the system for less movement. */
+@media (prefers-reduced-motion: reduce) {
+  .incomingCallBanner { animation: none; }
 }
 
 .incomingCallInfo {
@@ -1428,13 +1438,32 @@
   min-width: 0;
 }
 
-.incomingCallInfo svg { flex: 0 0 auto; color: #34c759; }
+/* The handset sits in its own pressed clay disc rather than floating as a bare
+   system-green glyph. White on the disc, so it stays legible against the pink
+   body behind it. */
+.incomingCallInfo svg {
+  flex: 0 0 auto;
+  box-sizing: content-box;
+  padding: 8px;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.26), rgba(74, 10, 44, 0.42));
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.4),
+    inset 0 -2px 4px rgba(60, 8, 34, 0.5);
+}
 
 .incomingCallInfo div { min-width: 0; }
 
+/* Poplur's own voice: the name heavy and rounded like every other title in the
+   app, and the kicker in the spaced mono the house uses for technical labels
+   (POST RADIUS, ONLINE NOW). The old pair was iOS's 600/400 system-ui, which is
+   what made the banner read as a borrowed control. */
 .incomingCallInfo strong {
   display: block;
-  font: 600 15px/1.2 system-ui, -apple-system, sans-serif;
+  font: 900 15px/1.15 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.005em;
+  text-shadow: 0 1px 2px rgba(72, 10, 42, 0.45);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1442,8 +1471,11 @@
 
 .incomingCallInfo span {
   display: block;
-  font: 400 13px/1.3 system-ui, -apple-system, sans-serif;
-  opacity: 0.7;
+  margin-top: 2px;
+  font: 800 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 236, 246, 0.82);
 }
 
 .incomingCallActions {
@@ -1452,22 +1484,42 @@
   flex: 0 0 auto;
 }
 
+/* Clay pills. Red/green STAYS — that pairing is not an iOS mannerism, it is the
+   one piece of this control nobody should have to read to understand, and a
+   two-pink banner would make declining and answering look alike at the exact
+   moment misreading them costs most. What changes is the treatment: modelled
+   clay with a lit top edge and a dark underside, and the house's spaced mono
+   caps instead of iOS's 600-weight system font. */
 .incomingDecline,
 .incomingAccept {
-  border: 0;
-  padding: 8px 16px;
-  border-radius: 20px;
-  font: 600 14px/1 system-ui, -apple-system, sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  padding: 9px 15px;
+  border-radius: 999px;
+  font: 900 10.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.34);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  transition: transform 120ms ease;
 }
 
+.incomingDecline:active,
+.incomingAccept:active { transform: scale(0.95); }
+
 .incomingDecline {
-  background: #ff3b30;
-  color: #fff;
+  background: linear-gradient(160deg, #ff6f62 0%, #e0342a 52%, #8d150f 100%);
+  box-shadow:
+    inset 0 3px 5px rgba(255, 255, 255, 0.42),
+    inset 0 -3px 6px rgba(90, 8, 6, 0.5),
+    0 5px 11px rgba(74, 8, 8, 0.4);
 }
 
 .incomingAccept {
-  background: #34c759;
-  color: #fff;
+  background: linear-gradient(160deg, #5ee88c 0%, #1eae52 52%, #0b6630 100%);
+  box-shadow:
+    inset 0 3px 5px rgba(255, 255, 255, 0.44),
+    inset 0 -3px 6px rgba(5, 62, 28, 0.5),
+    0 5px 11px rgba(6, 58, 26, 0.4);
 }
