@@ -33,9 +33,21 @@
     calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  /* Same width expression and easing as .drawer's own slide, so the timeline
+     reads as PUSHED aside by the drawer sliding in over it, not just dimmed
+     under a scrim sitting on top of an unmoved page. .paper clips this with
+     overflow:hidden and carries its own opaque newsprint background, so the
+     strip the timeline vacates on the left never shows a gap. */
+  transition: transform 0.24s cubic-bezier(0.2, 1.2, 0.4, 1);
 }
 
 .scroll::-webkit-scrollbar { display: none; }
+
+.scrollPushed { transform: translateX(min(78%, 300px)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll { transition-duration: 0.01ms; }
+}
 
 /* ---- masthead ---- */
 
@@ -552,9 +564,17 @@
 
 @keyframes newsScrimIn { from { opacity: 0 } to { opacity: 1 } }
 @keyframes newsDrawerIn { from { transform: translateX(-100%) } to { transform: translateX(0) } }
+@keyframes newsScrimOut { from { opacity: 1 } to { opacity: 0 } }
+@keyframes newsDrawerOut { from { transform: translateX(0) } to { transform: translateX(-100%) } }
+
+/* Reverse of the ..In pair, same duration/easing, so closing plays as open
+   in reverse instead of just vanishing. The component keeps this mounted
+   until the animation's end event fires — see menuMounted in NewsPaper.tsx. */
+.scrimOut { animation: newsScrimOut 0.24s ease both; }
+.drawerOut { animation: newsDrawerOut 0.24s cubic-bezier(0.2, 1.2, 0.4, 1) both; }
 
 @media (prefers-reduced-motion: reduce) {
-  .scrim, .drawer { animation-duration: 0.01ms; }
+  .scrim, .drawer, .scrimOut, .drawerOut { animation-duration: 0.01ms; }
 }
 
 /* ── Night edition ──────────────────────────────────────────────────────────

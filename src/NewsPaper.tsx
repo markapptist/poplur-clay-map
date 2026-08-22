@@ -373,6 +373,13 @@ export default function NewsPaper({ onClose, bindBack }: {
   // Messages — the drawer is where you go to READ, so it opens your inbox.
   const controlSide = useControlSide()
   const [menuOpen, setMenuOpen] = useState(false)
+  // The drawer only ever played an ENTER animation — closing it just
+  // unmounted the JSX, so it vanished instantly while .scroll (which now
+  // pushes aside in step with it) eased back over 240ms with nothing left to
+  // be revealing. Keeping it mounted through its own exit animation, and only
+  // dropping it once that finishes, is what makes open and close feel like
+  // the same gesture in reverse.
+  const [menuMounted, setMenuMounted] = useState(false)
   const [query, setQuery] = useState('')
   /** POSTS searches what was written; USERS searches who wrote it. */
   const [scope, setScope] = useState<'posts' | 'users'>('posts')
@@ -396,7 +403,7 @@ export default function NewsPaper({ onClose, bindBack }: {
     return () => bindBack(null)
   }, [bindBack])
 
-  const openMenu = () => { playPop(); setMenuOpen(true) }
+  const openMenu = () => { playPop(); setMenuMounted(true); setMenuOpen(true) }
   const closeMenu = () => { playPop(); setMenuOpen(false) }
   const goToProfileMessages = () => {
     playPop()
@@ -498,7 +505,7 @@ export default function NewsPaper({ onClose, bindBack }: {
       aria-label="Poplur Times"
     >
       {/* No ✕ — the cube is the back control for every subscreen. */}
-      <div className={styles.scroll} ref={scrollHost}>
+      <div className={menuOpen ? `${styles.scroll} ${styles.scrollPushed}` : styles.scroll} ref={scrollHost}>
         <div className={pullStyles.panel} ref={pullPanel} data-pull-panel aria-hidden="true">
           <div className={pullStyles.head} ref={pullHead}>
             {/* The supplied mark head, prebaked flat by prerender-sprites —
@@ -737,10 +744,20 @@ export default function NewsPaper({ onClose, bindBack }: {
         </button>
       </TabControlRail>
 
-      {menuOpen && (
+      {menuMounted && (
         <>
-          <div className={styles.scrim} onClick={closeMenu} aria-hidden="true" />
-          <aside className={styles.drawer} role="dialog" aria-label="News menu">
+          <div
+            className={menuOpen ? styles.scrim : `${styles.scrim} ${styles.scrimOut}`}
+            onClick={closeMenu}
+            onAnimationEnd={() => { if (!menuOpen) setMenuMounted(false) }}
+            aria-hidden="true"
+          />
+          <aside
+            className={menuOpen ? styles.drawer : `${styles.drawer} ${styles.drawerOut}`}
+            role="dialog"
+            aria-label="News menu"
+            aria-hidden={menuOpen ? undefined : 'true'}
+          >
             <p className={styles.drawerTitle}>THE POPLUR TIMES</p>
 
             {/* Two things you can look for in a timeline: something written,
