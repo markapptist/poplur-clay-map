@@ -7,14 +7,28 @@
   background: linear-gradient(180deg, #08081a 0%, #0e0e22 40%, #121228 100%);
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 8px 4px 0;
+  /* Clear the Poplur wordmark the way AVATAR does: the header vars carry the
+     device safe-area, so a bare pixel count sat under the logo on phones. */
+  padding: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px) 4px 0;
   gap: 20px;
   color: #e8e8f0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 .screen::-webkit-scrollbar { display: none; }
+
+/* ── Pull-to-refresh inner wrapper ────────────────────────────────────── */
+
+.pullInner {
+  will-change: transform;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+}
 
 /* ── Globe section — globe + orbiting wooden cards ────────────────────── */
 
@@ -112,9 +126,18 @@
 .cardValue {
   font-size: 30px;
   font-weight: 900;
-  color: #f63b9a;
   line-height: 1;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  background: linear-gradient(90deg, #f63b9a 0%, #ff8ec4 35%, #fff 50%, #ff8ec4 65%, #f63b9a 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 2.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { background-position: 100% 0; }
+  50% { background-position: 0 0; }
 }
 
 .cardLabel {
@@ -274,14 +297,18 @@
   width: 140px;
   height: 140px;
   border-radius: 50%;
-  transform: rotateX(55deg);
+  transform: rotateX(55deg) scale(0.3);
+  opacity: 0;
   box-shadow:
     0 4px 0 0 rgba(100, 30, 60, 0.7),
     0 8px 0 0 rgba(80, 25, 50, 0.5),
     0 12px 0 0 rgba(60, 20, 40, 0.35),
     0 16px 0 0 rgba(40, 15, 30, 0.2),
     0 22px 30px rgba(0, 0, 0, 0.4);
-  animation: pieReveal 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.6s both;
+}
+
+.visible .pieDisc {
+  animation: pieReveal 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
 }
 
 @keyframes pieReveal {
@@ -346,8 +373,13 @@
   width: 34px;
   height: var(--bar-h, 10px);
   transform-origin: bottom center;
+  transform: scaleY(0);
+  opacity: 0;
+}
+
+.visible .bar3d {
   animation: growBar 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: var(--bar-delay, 0.8s);
+  animation-delay: var(--bar-delay, 0.1s);
 }
 
 .barFront {
@@ -357,7 +389,7 @@
   width: 34px;
   height: 100%;
   background: var(--bar-color, #888);
-  border-radius: 3px 3px 0 0;
+  border-radius: 4px 4px 0 0;
 }
 
 .barSide {
@@ -370,20 +402,7 @@
   filter: brightness(0.55);
   transform-origin: bottom left;
   transform: skewY(-40deg);
-  border-radius: 0 2px 0 0;
-}
-
-.barTop {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 34px;
-  height: 12px;
-  background: var(--bar-color, #888);
-  filter: brightness(1.3);
-  transform-origin: bottom left;
-  transform: skewX(-40deg) translateX(7px) translateY(-5px);
-  border-radius: 2px;
+  border-radius: 0 4px 0 0;
 }
 
 @keyframes growBar {
@@ -423,7 +442,10 @@
 .linePath {
   stroke-dasharray: 1000;
   stroke-dashoffset: 1000;
-  animation: drawLine 1.5s ease 1s both;
+}
+
+.visible .linePath {
+  animation: drawLine 1.5s ease 0.3s both;
 }
 
 @keyframes drawLine {
@@ -432,7 +454,10 @@
 
 .lineArea {
   opacity: 0;
-  animation: fadeIn 0.6s ease 2s both;
+}
+
+.visible .lineArea {
+  animation: fadeIn 0.6s ease 1.5s both;
 }
 
 @keyframes fadeIn {
@@ -441,6 +466,9 @@
 
 .lineDot {
   opacity: 0;
+}
+
+.visible .lineDot {
   animation: dotPop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -476,7 +504,8 @@
   .pulseRing { animation: none; display: none; }
   .card { animation: none !important; opacity: 1; }
   .cardTop, .cardBottom { transform: translateX(-50%); }
-  .pieDisc { animation: none; opacity: 1; }
+  .cardValue { animation: none; background: none; -webkit-text-fill-color: #f63b9a; color: #f63b9a; }
+  .pieDisc { animation: none; opacity: 1; transform: rotateX(55deg); }
   .bar3d { animation: none; opacity: 1; transform: none; }
   .linePath { animation: none; stroke-dashoffset: 0; }
   .lineArea { animation: none; opacity: 1; }

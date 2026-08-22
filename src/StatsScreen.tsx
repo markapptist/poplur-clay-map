@@ -1,11 +1,64 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './StatsScreen.module.css'
+import pullStyles from './PullToRefresh.module.css'
 import { radiusStats, RADIUS_CHANGE_EVENT } from './radiusLedger'
+import { usePullToRefresh } from './usePullToRefresh'
+import { onFrame } from './frameGovernor'
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return String(Math.round(n))
+}
+
+function useInView(): [React.RefCallback<HTMLElement>, boolean] {
+  const [visible, setVisible] = useState(false)
+  const obs = useRef<IntersectionObserver | null>(null)
+  const ref = useCallback((node: HTMLElement | null) => {
+    if (obs.current) { obs.current.disconnect(); obs.current = null }
+    if (!node) return
+    const io = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) { setVisible(true); io.disconnect() } },
+      { threshold: 0.15 }
+    )
+    io.observe(node)
+    obs.current = io
+  }, [])
+  return [ref, visible]
+}
+
+// Ten of these mount at once — every stat card, then every pie legend row —
+// and each one is a React setState per frame. On a raw rAF that is ten
+// independent loops at the display's rate, which on a ProMotion iPhone is
+// 120Hz: four times the renders the eye can use, on the screen a person opens
+// to read six numbers. On the shared clock they coalesce into one wake per
+// frame at the governed interactive rate (30Hz at full quality, 20 on a warm
+// phone), and they stop dead the moment the screen goes behind rather than
+// counting up to nobody.
+const COUNT_UP_MS = 900
+
+function AnimNum({ value, run, delay = 0 }: { value: number; run: boolean; delay?: number }) {
+  const [current, setCurrent] = useState(0)
+  useEffect(() => {
+    if (!run) return
+    if (value === 0) { setCurrent(0); return }
+    let stop: (() => void) | null = null
+    const tid = window.setTimeout(() => {
+      // Drive from the clock's own timestamp, not from accumulated dt: a fresh
+      // subscriber's first dt is the time since the governor started, which
+      // would finish the count on frame one.
+      let start = 0
+      stop = onFrame((_dtMs, now) => {
+        if (!start) start = now
+        const t = Math.min((now - start) / COUNT_UP_MS, 1)
+        setCurrent(value * (1 - Math.pow(1 - t, 3)))
+        // A bounded reveal: unsubscribe on arrival so nothing survives it.
+        if (t >= 1) { stop?.(); stop = null }
+      }, 'interactive')
+    }, delay)
+    return () => { window.clearTimeout(tid); stop?.() }
+  }, [value, run, delay])
+  return <>{fmt(current)}</>
 }
 
 function funnySummary(s: ReturnType<typeof radiusStats>): string[] {
@@ -48,12 +101,32 @@ function funnySummary(s: ReturnType<typeof radiusStats>): string[] {
 
 export default function StatsScreen({ onClose }: { onClose: () => void }) {
   const [stats, setStats] = useState(radiusStats)
+  const [globeReady, setGlobeReady] = useState(false)
+  const [pieRef, pieVisible] = useInView()
+  const [barRef, barVisible] = useInView()
+  const [lineRef, lineVisible] = useInView()
+  const screenRef = useRef<HTMLDivElement>(null)
+  const pullInnerRef = useRef<HTMLDivElement>(null)
+  const pullPanelRef = useRef<HTMLDivElement>(null)
+  const pullHeadRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const refresh = () => setStats(radiusStats())
     window.addEventListener(RADIUS_CHANGE_EVENT, refresh)
-    return () => window.removeEventListener(RADIUS_CHANGE_EVENT, refresh)
+    const tid = setTimeout(() => setGlobeReady(true), 200)
+    return () => { window.removeEventListener(RADIUS_CHANGE_EVENT, refresh); clearTimeout(tid) }
   }, [])
+
+  const refreshStats = useCallback(() => { setStats(radiusStats()) }, [])
+
+  usePullToRefresh({
+    scrollRef: screenRef,
+    innerRef: pullInnerRef,
+    panelRef: pullPanelRef,
+    headRef: pullHeadRef,
+    busyClass: pullStyles.busy,
+    onRefresh: refreshStats,
+  })
 
   const total = stats.gains + stats.losses
   const gainPct = total > 0 ? (stats.gains / total) * 100 : 50
@@ -100,7 +173,14 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
   const summary = funnySummary(stats)
 
   return (
-    <div className={styles.screen}>
+    <div ref={screenRef} className={styles.screen}>
+      <div className={pullStyles.panel} ref={pullPanelRef} data-pull-panel aria-hidden="true">
+        <div className={pullStyles.head} ref={pullHeadRef}>
+          <img src="sprites/poplur_mark_head_navigator_y0_p0_s640.png" alt="" draggable={false} />
+        </div>
+      </div>
+
+      <div ref={pullInnerRef} className={styles.pullInner}>
       <div className={styles.globeSection}>
         <div className={styles.globeWrap}>
           <div className={styles.globe} />
@@ -110,7 +190,9 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className={`${styles.card} ${styles.cardTop}`}>
-          <span className={styles.cardValue}>{fmt(stats.radiusKm)}</span>
+          <span className={styles.cardValue}>
+            <AnimNum value={stats.radiusKm} run={globeReady} delay={100} />
+          </span>
           <span className={styles.cardLabel}>RADIUS KM</span>
           <div className={styles.miniFlow}>
             <span className={styles.miniGain}>+{fmt(stats.gains)}</span>
@@ -124,36 +206,44 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
 
         <div className={`${styles.card} ${styles.cardLeftTop}`}>
           <span className={styles.cardIcon}>👁️</span>
-          <span className={styles.cardValue}>{fmt(stats.views)}</span>
+          <span className={styles.cardValue}>
+            <AnimNum value={stats.views} run={globeReady} delay={300} />
+          </span>
           <span className={styles.cardLabel}>POSTS VIEWED</span>
         </div>
 
         <div className={`${styles.card} ${styles.cardRightTop}`}>
           <span className={styles.cardIcon}>👥</span>
-          <span className={styles.cardValue}>{fmt(stats.profileVisits)}</span>
+          <span className={styles.cardValue}>
+            <AnimNum value={stats.profileVisits} run={globeReady} delay={350} />
+          </span>
           <span className={styles.cardLabel}>PEOPLE REACHED</span>
         </div>
 
         <div className={`${styles.card} ${styles.cardLeftBottom}`}>
           <span className={styles.cardIcon}>💬</span>
-          <span className={styles.cardValue}>{fmt(stats.comments)}</span>
+          <span className={styles.cardValue}>
+            <AnimNum value={stats.comments} run={globeReady} delay={450} />
+          </span>
           <span className={styles.cardLabel}>COMMENTS</span>
         </div>
 
         <div className={`${styles.card} ${styles.cardRightBottom}`}>
           <span className={styles.cardIcon}>❤️</span>
-          <span className={styles.cardValue}>{fmt(stats.likes)}</span>
+          <span className={styles.cardValue}>
+            <AnimNum value={stats.likes} run={globeReady} delay={500} />
+          </span>
           <span className={styles.cardLabel}>LIKES</span>
         </div>
 
         <div className={`${styles.card} ${styles.cardBottom}`}>
           <span className={styles.cardIcon}>👎</span>
-          <span className={styles.cardValue}>{fmt(stats.dislikes)}</span>
+          <span className={styles.cardValue}>
+            <AnimNum value={stats.dislikes} run={globeReady} delay={600} />
+          </span>
           <span className={styles.cardLabel}>DISLIKES</span>
         </div>
       </div>
-
-      {/* ── Scrollable content below ───────────────────────────────── */}
 
       <div className={styles.summary}>
         <h2 className={styles.summaryTitle}>Your Stats Story</h2>
@@ -162,7 +252,7 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
         ))}
       </div>
 
-      <div className={styles.chartSection}>
+      <div ref={pieRef} className={`${styles.chartSection} ${pieVisible ? styles.visible : ''}`}>
         <h3 className={styles.chartTitle}>Engagement Breakdown</h3>
         <div className={styles.pieWrap}>
           <div className={styles.pie3d}>
@@ -172,18 +262,20 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div className={styles.pieLegend}>
-            {engData.map(d => (
+            {engData.map((d, i) => (
               <div key={d.label} className={styles.legendItem}>
                 <span className={styles.legendDot} style={{ background: d.color }} />
                 <span className={styles.legendLabel}>{d.label}</span>
-                <span className={styles.legendVal}>{fmt(d.value)}</span>
+                <span className={styles.legendVal}>
+                  <AnimNum value={d.value} run={pieVisible} delay={400 + i * 80} />
+                </span>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      <div className={styles.chartSection}>
+      <div ref={barRef} className={`${styles.chartSection} ${barVisible ? styles.visible : ''}`}>
         <h3 className={styles.chartTitle}>Stats Overview</h3>
         <div className={styles.barChart}>
           {barData.map((d, i) => (
@@ -193,21 +285,22 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
                 style={{
                   '--bar-h': `${Math.max((d.value / barMax) * 130, 10)}px`,
                   '--bar-color': d.color,
-                  '--bar-delay': `${0.8 + i * 0.12}s`,
+                  '--bar-delay': `${0.1 + i * 0.12}s`,
                 } as React.CSSProperties}
               >
                 <div className={styles.barFront} />
                 <div className={styles.barSide} />
-                <div className={styles.barTop} />
               </div>
               <span className={styles.barLabel}>{d.label}</span>
-              <span className={styles.barVal}>{fmt(d.value)}</span>
+              <span className={styles.barVal}>
+                <AnimNum value={d.value} run={barVisible} delay={100 + i * 120} />
+              </span>
             </div>
           ))}
         </div>
       </div>
 
-      <div className={styles.chartSection}>
+      <div ref={lineRef} className={`${styles.chartSection} ${lineVisible ? styles.visible : ''}`}>
         <h3 className={styles.chartTitle}>Radius Growth</h3>
         <div className={styles.lineWrap}>
           <svg viewBox={`0 0 ${svgW} ${svgH}`} className={styles.lineSvg}>
@@ -237,7 +330,7 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
                 stroke="#121228"
                 strokeWidth="2.5"
                 className={styles.lineDot}
-                style={{ animationDelay: `${1.4 + i * 0.1}s` }}
+                style={{ animationDelay: `${0.8 + i * 0.1}s` }}
               />
             ))}
           </svg>
@@ -250,6 +343,7 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className={styles.spacer} />
+      </div>
     </div>
   )
 }
