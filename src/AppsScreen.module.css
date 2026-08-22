@@ -48,7 +48,40 @@
 
 .tile:active { background: rgba(255, 138, 198, 0.12); }
 
-.tileIcon { font-size: 30px; line-height: 1; }
+/* ── the icon ──
+   An App Store Connect-style rounded square, not a bare glyph on the ground.
+   The tile IS the icon until a generated one exists: squircle, clay gradient,
+   inner highlight and a drop shadow, with the app's emoji sitting on it. That
+   way every app reads as an icon in the grid from the moment it is created,
+   and a baked sprite later just replaces the face without moving anything. */
+.tileIcon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 15px; /* ~26% — the iOS squircle ratio */
+  font-size: 28px;
+  line-height: 1;
+  background:
+    radial-gradient(120% 120% at 30% 18%, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 52%),
+    linear-gradient(168deg, #ff8ac6 0%, #f0509f 46%, #b02f74 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -2px 6px rgba(90, 12, 55, 0.45),
+    0 6px 14px rgba(0, 0, 0, 0.34);
+  overflow: hidden;
+}
+
+/* A real generated/supplied icon fills the squircle edge to edge. The emoji
+   fallback keeps its padding; an authored icon should not be inset inside a
+   frame it already draws for itself. */
+.tileIconImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 
 .tile b {
   font: 800 14px/1.2 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
@@ -59,6 +92,72 @@
   font: 500 11px/1.35 system-ui, -apple-system, sans-serif;
   font-style: normal;
   color: rgba(255, 226, 242, 0.62);
+}
+
+/* ── radius + ground, the line under every piece of user content ── */
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 138, 198, 0.16);
+}
+
+.radius {
+  font: 900 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+  color: #6fe3ff;
+}
+
+/* Never posted: say so plainly rather than printing a confident 0.0 km for
+   something that was never given any ground. */
+.radius[data-unposted='true'] {
+  color: rgba(255, 226, 242, 0.42);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.coords {
+  font: 600 9.5px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(255, 226, 242, 0.55);
+  word-break: break-word;
+}
+
+.place {
+  font: 700 10px/1.3 system-ui, -apple-system, sans-serif;
+  color: rgba(255, 226, 242, 0.7);
+}
+
+/* Drop / pick up. A separate control from the tile body, because opening an
+   app and moving it to new ground are different intentions and a single tap
+   target for both would guarantee mis-drops. */
+.dropRow {
+  display: flex;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.dropButton {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 138, 198, 0.38);
+  background: rgba(255, 138, 198, 0.12);
+  color: #ffd9ee;
+  font: 900 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dropButton:active { transform: scale(0.97); }
+
+.dropButton[data-posted='true'] {
+  border-color: rgba(111, 227, 255, 0.4);
+  background: rgba(111, 227, 255, 0.1);
+  color: #cdf3ff;
 }
 
 .hint {
