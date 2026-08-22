@@ -1838,6 +1838,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       })
     }
     map.on('zoom', updateLandmarks)
+    // Panning to a landmark (without zooming) also needs to activate its 3D
+    // handle. moveend rather than move: the 3D swap is a projection/layer
+    // event, expensive to thrash during a gesture, and the update() lat gate
+    // above keeps this cheap.
+    map.on('moveend', () => landmarks3dRef.current.forEach(h => h.update()))
 
     // Pins near the horizon (top of a pitched view) hover over the sky and
     // read as "floating in space" — hide them until the camera brings their

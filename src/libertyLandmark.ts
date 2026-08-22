@@ -272,10 +272,30 @@ export function installNearLandmark3D(
     },
   })
 
+  // Latitude gate against nearKm in degrees. 111km per degree of latitude
+  // means an 8km near-radius is about 0.072°; anything beyond that in latitude
+  // alone cannot possibly be near, and the great-circle math is worth
+  // skipping. It matters because the twelve landmarks together run update()
+  // ~21,600 times over the map's 30s intro fly — the previous full haversine
+  // on every call was the ~3s over-budget the thermal gate rejected.
+  const nearLatDeg = nearKm / 111 + 0.01
+  const targetLat = cfg.coords[1]
+
   const update = () => {
     if (disposed) return
-    const zoom = map.getZoom()
     const c = map.getCenter()
+    if (Math.abs(c.lat - targetLat) > nearLatDeg) {
+      // Clearly out of range on latitude alone. Skip the haversine, but still
+      // clear `wanted` cleanly if we WERE near a moment ago.
+      if (wanted) {
+        wanted = false
+        perf.setVisible(false)
+        perf.setDemand(false)
+        sync()
+      }
+      return
+    }
+    const zoom = map.getZoom()
     const near = distanceKm([c.lng, c.lat], cfg.coords) <= nearKm
     const next = near && zoom >= nearZoom
     if (next === wanted) return
