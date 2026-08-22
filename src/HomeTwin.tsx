@@ -1150,6 +1150,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-mail-thread-open', onThread)
     return () => window.removeEventListener('poplur-mail-thread-open', onThread)
   }, [])
+  // FaceTime: MailScreen tells the shell when a video call overlay is up so
+  // the cube can wear the camera lens for the duration of the call. Same
+  // window-event route as the mailbox/envelope split above.
+  const [faceTimeOpen, setFaceTimeOpen] = useState(false)
+  useEffect(() => {
+    const onCall = (e: Event) => setFaceTimeOpen(Boolean((e as CustomEvent<boolean>).detail))
+    window.addEventListener('poplur-facetime-open', onCall)
+    return () => window.removeEventListener('poplur-facetime-open', onCall)
+  }, [])
   // The director board: announced by PostComposer while an actual editing
   // step (Filters, VFX Studio) is on screen, same route as the two above.
   const [composerEditing, setComposerEditing] = useState(false)
@@ -2633,6 +2642,26 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
+  /** True while the camera is being zoomed, so the navigator can wear the bare
+   *  lens for the gesture and pop back to the body once it settles. Camera.tsx
+   *  announces every accepted zoom change (poplur-camera-zoom); the settle
+   *  timer lives here because the POP belongs to the cube, not to the camera. */
+  const [cameraZooming, setCameraZooming] = useState(false)
+  useEffect(() => {
+    let settle: number | null = null
+    const onZoom = () => {
+      setCameraZooming(true)
+      if (settle !== null) window.clearTimeout(settle)
+      // Long enough that a pinch with a pause mid-gesture does not flap the
+      // cube back and forth, short enough that letting go feels answered.
+      settle = window.setTimeout(() => setCameraZooming(false), 900)
+    }
+    window.addEventListener('poplur-camera-zoom', onZoom)
+    return () => {
+      window.removeEventListener('poplur-camera-zoom', onZoom)
+      if (settle !== null) window.clearTimeout(settle)
+    }
+  }, [])
   // Who the camera is currently looking at. While a user is detected the radius
   // label shows THEIR reach — the number that matters is the one belonging to
   // the person in frame, not your own.
@@ -2987,19 +3016,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // back from the editor that is actually on screen.
   const requestedCubeModel = composerOpen && composerEditing
     ? DIRECTOR_BOARD_MODEL
+    // Zooming pops the navigator to the bare lens and back. Deliberately ABOVE
+    // the video branch: zoom is the glass doing the work whether you are
+    // taking a photo or recording, so the camcorder gets the same pop and
+    // returns to the camcorder afterwards.
+    : activeTab === 'post' && cubeScreen == null && cameraZooming
+    ? CAMERA_LENS_MODEL
     : activeTab === 'post' && cubeScreen == null
     && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
     : (avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? PROFILE_CAMERA_MODEL : undefined)
       ?? (cubeScreen === 'profile-messages' && mailThreadOpen ? MAIL_ENVELOPE_OPEN_MODEL : undefined)
+      // FaceTime video call — the cube should read as a video call, so it
+      // wears the camera lens rather than the phone body. Only while the
+      // call overlay is up, matching mailThreadOpen's shape.
+      ?? (faceTimeOpen ? CAMERA_LENS_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
-      // PHOTO's own lens, only when nothing above already claimed the cube —
-      // CAMERA_LENS_MODEL is a face of its own, never PROFILE_CAMERA_MODEL,
-      // so the POST-tab default and the profile-capture overlay above stay
-      // exactly as they were.
-      ?? (activeTab === 'post' && cubeScreen == null && cameraCaptureMode === 'photo' ? CAMERA_LENS_MODEL : undefined)
+      // PHOTO mode wears the Kodak, same as the POST tab's idle default.
+      // The lens is kept as its own constant but is not used as PHOTO's face
+      // any more — the user asked PHOTO to read as "take the picture" rather
+      // than "line up the shot".
       ?? tabNavigatorModel(activeTab))
 
   // Keep one likely destination decoded but detached. The tab ring's forward
@@ -3175,6 +3213,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.setTimeout(() => {
         window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'fire', pressed: false } }))
       }, 100)
+      return
+    }
+    // MAIL thread: the cube is how you leave a conversation, back to the
+    // thread list. MailScreen answers the event and closes the thread; the
+    // cube's next tap runs the normal subscreen back below.
+    if (cubeScreen === 'profile-messages' && mailThreadOpen) {
+      playPop()
+      window.dispatchEvent(new CustomEvent('poplur-mail-back'))
       return
     }
     // Back before anything else: if a subscreen or the hold menu is open, the

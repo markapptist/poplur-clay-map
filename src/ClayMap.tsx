@@ -66,6 +66,12 @@ export interface ClayMapProps {
   pins?: PopPin[]
   /** A pin was tapped: go to that poster's profile, with this pop's post lit. */
   onPinOpen?: (pin: PopPin) => void
+  /** The signed-in user's profile photo, used by the persistent self-location
+   *  pin. Sourced from the shell (App.tsx); the iframe cannot read the shell's
+   *  localStorage on its own. */
+  ownProfilePhoto?: string | null
+  /** Their looping selfie video, if one is recorded. */
+  ownProfileSelfieVideo?: string | null
 }
 
 /** A pop standing on the map: whose it is, where, and how much it holds. */
@@ -302,6 +308,15 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
     if (/^(road|bridge|tunnel|turning-feature|aeroway)/.test(layer.id)) {
       setLayout(layer.id, 'visibility', 'none')
     }
+    // Kill Mapbox's default landmark 3D meshes — those tall white columns you
+    // see next to a real landmark. Our clay landmark SPRITES (WORLD_LANDMARKS
+    // below) are meant to replace them, not sit beside them. Landmark meshes
+    // arrive as either type:model layers or ids that carry "landmark", both
+    // are hidden here so a style version bump does not silently reintroduce
+    // the white column.
+    if ((layer as { type?: string }).type === 'model' || /landmark/i.test(layer.id)) {
+      setLayout(layer.id, 'visibility', 'none')
+    }
   })
 
   ;['settlement-major-label', 'settlement-minor-label', 'settlement-subdivision-label'].forEach(id => {
@@ -520,18 +535,18 @@ const SVG_BOAT = `<svg viewBox="0 0 72 60" xmlns="http://www.w3.org/2000/svg"><p
  *  buildings around it grow with zoom, so exact proportion is not on offer.
  */
 const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; yaw?: number }[] = [
-  { id: 'burj-khalifa', coords: [55.2744, 25.1972], width: 260 },
-  { id: 'cn-tower', coords: [-79.3871, 43.6426], width: 230 },
-  { id: 'eiffel', coords: [2.2945, 48.8584], width: 190 },
-  { id: 'space-needle', coords: [-122.3493, 47.6205], width: 150 },
-  { id: 'golden-gate', coords: [-122.4783, 37.8199], width: 200, yaw: 12 },
-  { id: 'statue-liberty', coords: [-74.0445, 40.6892], width: 112 },
-  { id: 'big-ben', coords: [-0.1246, 51.5007], width: 110 },
-  { id: 'giza', coords: [31.1342, 29.9792], width: 150 },
-  { id: 'taj-mahal', coords: [78.0421, 27.1751], width: 130 },
-  { id: 'colosseum', coords: [12.4922, 41.8902], width: 130 },
-  { id: 'sydney-opera', coords: [151.2153, -33.8568], width: 130 },
-  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], width: 84 },
+  { id: 'burj-khalifa', coords: [55.2744, 25.1972], width: 720 },
+  { id: 'cn-tower', coords: [-79.3871, 43.6426], width: 640 },
+  { id: 'eiffel', coords: [2.2945, 48.8584], width: 520 },
+  { id: 'space-needle', coords: [-122.3493, 47.6205], width: 420 },
+  { id: 'golden-gate', coords: [-122.4783, 37.8199], width: 560, yaw: 12 },
+  { id: 'statue-liberty', coords: [-74.0445, 40.6892], width: 320 },
+  { id: 'big-ben', coords: [-0.1246, 51.5007], width: 320 },
+  { id: 'giza', coords: [31.1342, 29.9792], width: 420 },
+  { id: 'taj-mahal', coords: [78.0421, 27.1751], width: 380 },
+  { id: 'colosseum', coords: [12.4922, 41.8902], width: 380 },
+  { id: 'sydney-opera', coords: [151.2153, -33.8568], width: 380 },
+  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], width: 260 },
 ]
 
 const CITY_TREES: { coords: [number, number]; width: number; palm?: boolean }[] = [
@@ -986,7 +1001,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, weatherForecast = [], pins, onPinOpen }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, weatherForecast = [], pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -2992,7 +3007,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         el.className = styles.landmark
         el.style.width = `${mark.width}px`
         el.innerHTML = `<div class="${styles.landmarkInner}"></div>`
-        modelSprite(`landmarks/${mark.id}.glb`, { yaw: mark.yaw ?? 18, pitch: 10, size: 320 })
+        modelSprite(`landmarks/${mark.id}.glb`, { yaw: mark.yaw ?? 18, pitch: 10, size: 720 })
           .then(uri => {
             el.innerHTML = `<div class="${styles.landmarkInner}"><img src="${uri}" style="width:100%" alt=""/></div>`
           })
@@ -3927,8 +3942,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // Persistent "you are here" marker: your profile face standing on your live
   // GPS point. Draws whenever a location is known — unlike the radius-preview
   // pin above, which is only up while composing a new pop. Reads photo/video
-  // from localStorage the same way the radius-preview pin does; the shell keeps
-  // those keys up to date via ProfileTwin.
+  // from the props the shell forwards over postMessage (the iframe cannot read
+  // the shell's own localStorage, so it must be told).
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -3936,22 +3951,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     let marker: mapboxgl.Marker | null = null
     let cancelled = false
     let selfieVideo: HTMLVideoElement | null = null
-    const readStored = (key: string): string | null => {
-      try { return window.localStorage.getItem(key) } catch { return null }
-    }
-    const profileVideo = readStored('poplur.profile.selfieVideo')
-    const usableVideo = profileVideo && (
-      profileVideo.startsWith('data:video/')
-      || /^https:\/\//i.test(profileVideo)
-      || /^poplur-clay:\/\//i.test(profileVideo)
-      || /^[\w-]+\/.+\.(?:mp4|webm)(?:[?#].*)?$/i.test(profileVideo)
-    ) ? profileVideo : null
-    const profilePhoto = readStored('poplur.profile.photo')
-    const usablePhoto = profilePhoto && (
-      profilePhoto.startsWith('data:image/')
-      || /^https:\/\//i.test(profilePhoto)
-      || /^poplur-clay:\/\//i.test(profilePhoto)
-    ) ? profilePhoto : null
+    const usableVideo = ownProfileSelfieVideo && (
+      ownProfileSelfieVideo.startsWith('data:video/')
+      || /^https:\/\//i.test(ownProfileSelfieVideo)
+      || /^poplur-clay:\/\//i.test(ownProfileSelfieVideo)
+      || /^[\w-]+\/.+\.(?:mp4|webm)(?:[?#].*)?$/i.test(ownProfileSelfieVideo)
+    ) ? ownProfileSelfieVideo : null
+    const usablePhoto = ownProfilePhoto && (
+      ownProfilePhoto.startsWith('data:image/')
+      || /^https:\/\//i.test(ownProfilePhoto)
+      || /^poplur-clay:\/\//i.test(ownProfilePhoto)
+    ) ? ownProfilePhoto : null
     if (!usablePhoto && !usableVideo) return
     const build = (coords: [number, number]) => {
       void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: MAP_2D ? '2d' : '3d' })
@@ -4013,7 +4023,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       marker?.remove()
       marker = null
     }
-  }, [mapEpoch, mapRef, radiusPreviewLaunch])
+  }, [mapEpoch, mapRef, radiusPreviewLaunch, ownProfilePhoto, ownProfileSelfieVideo])
 
   // Add / update POI markers whenever pois, selection, or the map instance changes
   useEffect(() => {

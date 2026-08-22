@@ -280,20 +280,19 @@ const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> 
   [CAMCORDER_MODEL]: { x: 0, y: -Math.PI / 2, z: 0 },
 }
 
-/** The supplied `poplur_cube_*` set is authored face-UP: the coloured pad that
-    says what the cube is — the settings gear, the mail flap, the store bag —
-    sits on the top of each cube, not its front. At rest you therefore met a
-    blank clay side and never saw the mark. A quarter turn up lays that pad flat
-    to the camera, the same quarter turn the authored food face uses.
+/** The Meshy-exported cube models (mailbox, TV remote, laptop, printer, gear,
+    shopping bag, stats bargraph, showme, ipod, camera lens, envelope, mail
+    envelope, director board) all ship with their hero face already toward the
+    camera at identity. The older "face-UP" set — settings, map, stats, news,
+    search — has been retired and replaced by those Meshy models, so the
+    quarter-turn-up default that used to correct the old set now tips the new
+    ones onto their fronts (the user sees the bottom of each cube).
 
-    The tab navigator is deliberately EXCLUDED. It is `poplur_cube_v4.glb`, it
-    belongs to the same family by name, and it carries its marks on its SIDES
-    because turning between them is the tab gesture — tipping it would put the
-    whole tab bar on its back. */
+    Default is now no rotation. A model that needs a tip must declare it in
+    MODEL_ORIENTATION above. */
 function restingOrientation(url: string) {
   const explicit = MODEL_ORIENTATION[url]
   if (explicit) return explicit
-  if (url.startsWith('poplur_cube_') && url !== CUBE_MODEL) return { x: Math.PI / 2 }
   return null
 }
 

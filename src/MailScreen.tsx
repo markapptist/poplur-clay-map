@@ -163,6 +163,26 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     setFaceTimeWith(null)
   }, [])
 
+  // Tell the shell when a FaceTime overlay is up so the cube can wear the
+  // camera lens for the duration of the call — same window-event route as
+  // poplur-mail-thread-open below.
+  useEffect(() => {
+    const open = Boolean(faceTimeWith)
+    window.dispatchEvent(new CustomEvent('poplur-facetime-open', { detail: open }))
+    return () => {
+      if (open) window.dispatchEvent(new CustomEvent('poplur-facetime-open', { detail: false }))
+    }
+  }, [faceTimeWith])
+
+  // The cube is the back button for the thread — clicking it pops from the
+  // conversation back to the thread list. HomeTwin dispatches
+  // poplur-mail-back when the cube is tapped and MAIL is open on a thread.
+  useEffect(() => {
+    const onBack = () => setActiveThread(null)
+    window.addEventListener('poplur-mail-back', onBack)
+    return () => window.removeEventListener('poplur-mail-back', onBack)
+  }, [])
+
   useEffect(() => { installCallBridge() }, [])
 
   // Tell the shell which face of MAIL is showing, so the cube navigator can
@@ -181,9 +201,9 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     return (
       <div className={styles.screen}>
         <div className={styles.toolbar}>
-          <button type="button" className={styles.backBtn} aria-label="Back to chats" onClick={() => { playPop(); setActiveThread(null) }}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19l-7-7 7-7" /></svg>
-          </button>
+          {/* No back button — the cube (below the screen) is how you leave
+              this thread. HomeTwin fires poplur-mail-back on cube tap, and
+              the effect above closes the thread. */}
           <div className={styles.avatar}>{activeThread.initials}</div>
           <div className={styles.toolbarInfo}>
             <h1>{activeThread.title}</h1>

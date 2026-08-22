@@ -2636,6 +2636,8 @@ export default function App() {
         mapRef={mapRef}
         theme={theme}
         dayTime={dayTime}
+        ownProfilePhoto={ownAvatar}
+        ownProfileSelfieVideo={ownSelfieVideo}
         weatherMode={weatherMode}
         weatherCloud={cloudBadge}
         weatherIcon={weatherIconMarkup}
