@@ -8,6 +8,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
+import { installLibertyLandmark, type LibertyLandmark } from './libertyLandmark'
 import { subsolarPoint, sublunarPoint, moonPhase, CELESTIAL_MODELS } from './celestial'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
@@ -1063,6 +1064,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   dayTimeRef.current = dayTime
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const worldLandmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
+  const libertyLandmarkRef = useRef<LibertyLandmark | null>(null)
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
   const carMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1807,8 +1809,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // Landmarks earn a wider band than street props: you should see the
       // Eiffel Tower while still reading Paris, and they must not clutter the
       // globe, where the claim blooms already speak.
-      worldLandmarkMarkersRef.current.forEach(mk =>
-        setZoomVisible(mk.getElement(), zoom >= 9.5))
+      worldLandmarkMarkersRef.current.forEach(mk => {
+        const el = mk.getElement()
+        // The Statue of Liberty hides its sprite while its real 3D model shows.
+        if (el.dataset.landmarkId === 'statue-liberty' && libertyLandmarkRef.current?.isActive()) {
+          setZoomVisible(el, false)
+          return
+        }
+        setZoomVisible(el, zoom >= 9.5)
+      })
       markersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? 'none' : ''
       })
@@ -3049,6 +3058,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         const el = document.createElement('div')
         el.className = styles.landmark
         el.style.width = `${mark.width}px`
+        el.dataset.landmarkId = mark.id
         el.innerHTML = `<div class="${styles.landmarkInner}"></div>`
         // Start correct for the CURRENT zoom. updateLandmarks only runs on the
         // 'zoom' event, and the app opens at globe zoom — so without this the
@@ -3068,6 +3078,30 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           .setLngLat(mark.coords)
           .addTo(map)
       })
+
+      // ── Statue of Liberty: swap the flat sprite for a real 3D model ─────────
+      // Near Liberty Island AND zoomed in, flip to mercator and render the GLB
+      // as a three.js custom layer (globe has no custom-layer support). The
+      // sprite hides while the model shows; both revert on the way back out.
+      // Isolated to this one landmark so the normal globe world is untouched.
+      libertyLandmarkRef.current?.dispose()
+      libertyLandmarkRef.current = installLibertyLandmark(map, {
+        onActiveChange: active3d => {
+          const mk = worldLandmarkMarkersRef.current.find(
+            m => m.getElement().dataset.landmarkId === 'statue-liberty',
+          )
+          if (!mk) return
+          const stEl = mk.getElement()
+          if (active3d) {
+            stEl.dataset.zoomHidden = '1'
+            stEl.style.display = 'none'
+          } else {
+            setZoomVisible(stEl, map.getZoom() >= 9.5)
+          }
+        },
+      })
+      // Evaluate once for the current camera (the app may already be near it).
+      libertyLandmarkRef.current.update()
 
       // ── City props: clay trees, harbour boats, cars on the roads ───────────
       treeMarkersRef.current.forEach(mk => mk.remove())
@@ -3833,6 +3867,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       stopCarAudio()
       popFrameStops.forEach(stop => stop())
       popFrameStops.clear()
+      libertyLandmarkRef.current?.dispose()
+      libertyLandmarkRef.current = null
       ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef, worldLandmarkMarkersRef].forEach(ref => {
         ref.current.forEach(mk => mk.remove())
         ref.current = []
