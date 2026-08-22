@@ -229,6 +229,21 @@ export function installNearLandmark3D(
     try { return map.getProjection()?.name ?? baseProjection } catch { return baseProjection }
   }
 
+  // Re-attach on style.load: setProjection('mercator') triggers a style
+  // reload, and Mapbox drops custom layers with it. The Liberty one-off did
+  // not hit this because Toronto's cinematic never lands at Liberty Island,
+  // so the projection was never flipped from a live cn-tower-style session;
+  // but at the CN Tower on a Toronto-anchored map, activation and reload
+  // race and the layer loses. Adding it again from the style.load handler
+  // is safe — we only add it when `shown` is still true.
+  const reattachOnStyleLoad = () => {
+    if (!shown || disposed) return
+    if (!map.getLayer(layerId)) {
+      try { map.addLayer(customLayer) } catch (e) { console.warn(`[${cfg.id}] readdLayer`, e) }
+    }
+  }
+  map.on('style.load', reattachOnStyleLoad)
+
   const activate = () => {
     if (currentProjection() !== 'mercator') map.setProjection('mercator')
     if (!map.getLayer(layerId)) {
@@ -318,6 +333,7 @@ export function installNearLandmark3D(
     isActive: () => shown,
     dispose: () => {
       if (disposed) return
+      map.off('style.load', reattachOnStyleLoad)
       perf.dispose()
       disposed = true
       if (map.getLayer(layerId)) {

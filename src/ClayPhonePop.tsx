@@ -3,7 +3,6 @@ import { releaseWebGL } from './threeCleanup'
 import * as THREE from 'three'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { modelUrl } from './modelUrl'
 import styles from './HomeTwin.module.css'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
@@ -26,8 +25,7 @@ const PHONE_MODEL_URL = 'poplur_clay_phone_lite.glb'
 // gate was failing on: 1420ms on home, 2074ms on feed against a 250ms budget.
 let phoneModel: Promise<ArrayBuffer> | null = null
 function phoneModelData(): Promise<ArrayBuffer> {
-  // Routed through the seam: phone_lite streams from the pack when published.
-  phoneModel ??= fetch(modelUrl(PHONE_MODEL_URL)).then(response => {
+  phoneModel ??= fetch(PHONE_MODEL_URL).then(response => {
     if (!response.ok) throw new Error(`phone model HTTP ${response.status}`)
     return response.arrayBuffer()
   })

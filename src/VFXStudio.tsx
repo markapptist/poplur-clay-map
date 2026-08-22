@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ModelViewerElement } from '@google/model-viewer'
 import styles from './VFXStudio.module.css'
-import { modelUrl } from './modelUrl'
 import { generateMeshyObject, MeshyUnavailable, type MeshyProgress } from './meshy'
 import VFXParticleSystem, { type VFXParticleEffect } from './VFXParticleSystem'
 import { onFrame } from './frameGovernor'
@@ -245,11 +244,7 @@ export default function VFXStudio({
     [tool],
   )
   const isParticle = selected.group === 'effects'
-  // A built-in VFX object routes through the seam; a Meshy asset is already a
-  // full URL, so modelUrl leaves it untouched (not a pack member).
-  const activeModelUrl = selected.id === 'meshy'
-    ? (customAsset?.modelUrl ?? null)
-    : (selected.model ? modelUrl(selected.model) : null)
+  const activeModelUrl = selected.id === 'meshy' ? customAsset?.modelUrl ?? null : selected.model
   const activeModelPoster = selected.id === 'meshy'
     ? customAsset?.thumbnailUrl ?? '/logo_icon.png'
     : selected.thumb ?? '/logo_icon.png'
