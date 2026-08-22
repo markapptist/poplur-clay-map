@@ -2718,6 +2718,28 @@ export default function App() {
           activateOnClick
           onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
         />
+        {/* START / STOP TOUR. The same action the hold menu's TOUR tile fires,
+            promoted to the rail because the tour is a map camera control and
+            that is where the map's other camera controls live. Which places it
+            visits is not decided here: tourStep flies destinationsForTopics(),
+            so the SHOW ME screen's checked topics are what the tour shows.
+            `play` rather than a bespoke kind — a tour is the map playing
+            itself, and it lights while running the way LIVE does. */}
+        <ClayCornerButton
+          kind="play"
+          label={tourOn ? 'Stop the tour' : 'Start the tour'}
+          active={tourOn}
+          size={44}
+          still
+          activateOnClick
+          onPress={() => {
+            playPop(0.25)
+            // Read the REF, not the state: same reason the mapAction case does
+            // — this fires timers, and StrictMode double-invokes state updaters.
+            if (tourOnRef.current) stopTour()
+            else startExplicitTourLoop(0)
+          }}
+        />
         <MapLevelButton
           level={popLevel}
           mode={currentMapMode}

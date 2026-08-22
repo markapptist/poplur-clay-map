@@ -1752,6 +1752,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // (Without this, city pins hover in outer space at globe zoom.)
     // display (not opacity) because Mapbox rewrites marker opacity every
     // frame for its own globe horizon fade.
+    // Hiding by ZOOM has to outrank the viewport cull below, which is why this
+    // leaves a marker on the element rather than just writing display. A
+    // display:none marker measures as a zero rect at 0,0, and the cull reads
+    // that as "on screen" and helpfully un-hides it — so every zoom-driven hide
+    // was being undone by the very next moveend/zoomend/idle. That is why the
+    // world landmarks stood over the globe at planet zoom.
+    const setZoomVisible = (el: HTMLElement, visible: boolean) => {
+      if (visible) delete el.dataset.zoomHidden
+      else el.dataset.zoomHidden = '1'
+      el.style.display = visible ? '' : 'none'
+    }
+
     const updateLandmarks = () => {
       const zoom = map.getZoom()
       const isGlobe = zoom < 5.5
@@ -1760,15 +1772,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         mk.getElement().style.display = isGlobe ? '' : 'none'
       })
       ;[treeMarkersRef, boatMarkersRef, carMarkersRef].forEach(ref =>
-        ref.current.forEach(mk => {
-          mk.getElement().style.display = isCity ? '' : 'none'
-        }))
+        ref.current.forEach(mk => setZoomVisible(mk.getElement(), isCity)))
       // Landmarks earn a wider band than street props: you should see the
       // Eiffel Tower while still reading Paris, and they must not clutter the
       // globe, where the claim blooms already speak.
-      worldLandmarkMarkersRef.current.forEach(mk => {
-        mk.getElement().style.display = zoom >= 9.5 ? '' : 'none'
-      })
+      worldLandmarkMarkersRef.current.forEach(mk =>
+        setZoomVisible(mk.getElement(), zoom >= 9.5))
       markersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? 'none' : ''
       })
@@ -2020,6 +2029,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const pending: Array<[HTMLElement, string]> = []
       container.querySelectorAll<HTMLElement>('.mapboxgl-marker').forEach(el => {
         if (moving.has(el)) return
+        // Already hidden because of ZOOM, not because it is off-screen. The
+        // cull owns viewport culling only; it must not vote on this one.
+        if (el.dataset.zoomHidden === '1') return
         const r = el.getBoundingClientRect()
         const off = r.right < -w * m || r.left > w * (1 + m) || r.bottom < -h * m || r.top > h * (1 + m)
         const want = off ? 'none' : ''
@@ -3007,6 +3019,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         el.className = styles.landmark
         el.style.width = `${mark.width}px`
         el.innerHTML = `<div class="${styles.landmarkInner}"></div>`
+        // Start correct for the CURRENT zoom. updateLandmarks only runs on the
+        // 'zoom' event, and the app opens at globe zoom — so without this the
+        // landmarks are born visible and stand over the planet until the user
+        // happens to zoom. Same flag the zoom pass uses, so the viewport cull
+        // leaves them alone too.
+        if (map.getZoom() < 9.5) {
+          el.dataset.zoomHidden = '1'
+          el.style.display = 'none'
+        }
         modelSprite(`landmarks/${mark.id}.glb`, { yaw: mark.yaw ?? 18, pitch: 10, size: 720 })
           .then(uri => {
             el.innerHTML = `<div class="${styles.landmarkInner}"><img src="${uri}" style="width:100%" alt=""/></div>`
