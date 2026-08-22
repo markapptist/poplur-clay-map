@@ -30,14 +30,14 @@
   width: 280px;
   height: 280px;
   background-image: url('/sprites/stats_globe_spin.png');
-  background-size: 2240px 280px;
+  background-size: 6720px 280px;
   background-repeat: no-repeat;
-  animation: globeSpin 2s steps(8) infinite;
+  animation: globeSpin 3s steps(24) infinite;
 }
 
 @keyframes globeSpin {
   from { background-position: 0 0; }
-  to { background-position: -2240px 0; }
+  to { background-position: -6720px 0; }
 }
 
 .pulseRing {
