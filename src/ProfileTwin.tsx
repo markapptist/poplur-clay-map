@@ -11,7 +11,19 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
-import { listEngagement, onEngagementLogged, engagementAge, unreadEngagementCount, markEngagementSeen, type LoggedEngagement } from './engagementLog'
+import { onEngagementLogged, unreadEngagementCount, markEngagementSeen } from './engagementLog'
+// The notification list is shared with the NOTIFICATIONS subscreen — one list,
+// one set of cleared rows. See notifications.ts.
+import {
+  listNotifications,
+  onNotificationsChanged,
+  dismissNotification as clearNotification,
+  notificationKey,
+  NOTIF_ICON_LABEL,
+  TILE_BY_POP_ID,
+  type Notification,
+  type NotificationKind,
+} from './notifications'
 import ClaySwayObject, { primeMotionPermission } from './ClaySwayObject'
 import CameraRoll from './CameraRoll'
 import { radiusStats } from './radiusLedger'
@@ -188,12 +200,8 @@ function preferredSelfieMime(): string | undefined {
 // The map's pops, standing in this grid. Real data (Aug 2026) joins posts to
 // pops by id; until then the first five grid posts stand in for the five map
 // pops, in POIS order — the same order the channel arrows fly them.
-const TILE_BY_POP_ID: Record<string, number> = {
-  liberty: 0, kensington: 1, queen: 2, trinity: 3, distillery: 4,
-  // The map prefixes its own claim ids; a pin hands back the claim id, not the
-  // bare pop id, so both spellings have to resolve to the same tile.
-  'pop-liberty': 0, 'pop-kensington': 1, 'pop-queen': 2, 'pop-trinity': 3, 'pop-distillery': 4,
-}
+// TILE_BY_POP_ID itself lives in notifications.ts now: the seeded notices are
+// what pinned it at module-init time, and they moved there with the list.
 
 /** Which grid tile is "the post that took this ground" on someone ELSE's
  *  profile. Same standing-in rule as your own pops above — in order, until
@@ -253,40 +261,10 @@ function releaseViewerMedia(video: HTMLVideoElement): void {
   video.load()
 }
 
-// like / view / comment are the engagement kinds. Notifications is where the
-// history of your content's engagement lives: the map and feed pop a notice for
-// 3.4 seconds, and this is the same events kept.
-type NotificationKind =
-  | 'growth' | 'decrease' | 'pop' | 'trend' | 'message'
-  | 'like' | 'view' | 'comment'
-
-/** Where a notification LEADS. A notice you cannot follow is just a label, so
- *  every one of these names the thing it is about: the tile that took the
- *  ground, or the conversation it came from. Tapping goes there and lights it
- *  up, the same highlight the map uses when it hands a pop to this screen. */
-type NotifTarget = { mode: 'media'; tile: number } | { mode: 'messages'; who: string }
-
-interface Notification {
-  who: string
-  text: string
-  when: string
-  kind: NotificationKind
-  /** Where it leads. Optional: an engagement row has no tile to point at yet —
-   *  the live wire will carry the post id, and until it does these open your
-   *  media rather than lighting up the wrong tile. */
-  target?: NotifTarget
-  /** Stable identity. Falls back to `text` for the seeded rows, which is what
-   *  identified them before engagement history made text non-unique. */
-  key?: string
-}
-
-const NOTIFICATIONS: Notification[] = [
-  { who: 'Poplur AI', text: 'Your radius grew 1.2 km near Queen West.', when: '2m', kind: 'growth', target: { mode: 'media', tile: TILE_BY_POP_ID.queen } },
-  { who: 'Poplur AI', text: 'Your radius decreased 0.6 km after a downtown pop expired.', when: '7m', kind: 'decrease', target: { mode: 'media', tile: TILE_BY_POP_ID.liberty } },
-  { who: 'takeover', text: 'Your downtown pop now covers 3.0 km.', when: '9m', kind: 'pop', target: { mode: 'media', tile: TILE_BY_POP_ID.distillery } },
-  { who: 'kensington_eats', text: 'that shawarma shot is trending 🔥', when: '18m', kind: 'trend', target: { mode: 'media', tile: TILE_BY_POP_ID.kensington } },
-  { who: 'harbourfront', text: 'blue hour meetup this Friday?', when: '1h', kind: 'message', target: { mode: 'messages', who: 'harbourfront' } },
-]
+// The notification row model, the seeded notices and the engagement→row
+// mapping all live in notifications.ts now — the NOTIFICATIONS subscreen reads
+// the same list, and two components each building their own from the log is
+// how a row ends up cleared in one place and still sitting there in the other.
 
 // Friends offered first in the share sheet — DM inside Poplur. Their pictures
 // are spoofed from stills we already ship (the ad posters and the Mark head)
@@ -341,6 +319,14 @@ const NOTIF_SKIN: NotifSkin = (() => {
   const v = new URLSearchParams(window.location.search).get('notif')
   return v === 'glass' || v === 'cards' || v === 'clay' ? v : 'frost'
 })()
+
+/** The dropdown below is no longer how you read your notifications — the bell
+ *  opens the NOTIFICATIONS subscreen (a white page listing all of them, the
+ *  shape SHOW ME has on the map). ?notif=dropdown puts the old sheet back on
+ *  the bell for comparison, the same escape hatch the rejected skins have. */
+const LEGACY_NOTIF_DROPDOWN =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('notif') === 'dropdown'
 
 function insideDotMapLand(x: number, y: number, polygon: Array<[number, number]>) {
   let hit = false
@@ -443,38 +429,6 @@ function NotificationDotMap() {
   }, [])
 
   return <canvas ref={canvasRef} className={styles.notifDotMap} aria-hidden="true" />
-}
-
-const NOTIF_ICON_LABEL: Record<NotificationKind, string> = {
-  growth: 'Radius increased',
-  decrease: 'Radius decreased',
-  pop: 'New pop',
-  trend: 'Trending',
-  message: 'Message',
-  like: 'Liked your post',
-  view: 'Viewed your post',
-  comment: 'Commented on your post',
-}
-
-// Engagement history → notification rows. The verb matches the sentence the
-// pop-up showed on the map or the feed, so the permanent record reads as the
-// same event the person watched go past.
-const ENGAGEMENT_TEXT: Record<'like' | 'view' | 'comment', string> = {
-  like: 'liked your post',
-  view: 'viewed your post',
-  comment: 'commented on your post',
-}
-
-function engagementRow(entry: LoggedEngagement): Notification {
-  return {
-    who: entry.user,
-    text: entry.place ? `${ENGAGEMENT_TEXT[entry.kind]} · ${entry.place}` : ENGAGEMENT_TEXT[entry.kind],
-    when: engagementAge(entry.at),
-    kind: entry.kind,
-    // user + kind + timestamp: two people can like the same post in the same
-    // minute and each still deserves its own row.
-    key: `${entry.user}|${entry.kind}|${entry.at}`,
-  }
 }
 
 // Real 3D clay icon per notification kind (extruded clay meshes), floating in
@@ -669,27 +623,19 @@ export default function ProfileTwin({
   // state: a cleared notice must stay cleared for the session, and the module
   // list is the incoming feed, not your copy of it.
   // Engagement first, newest at the top, then the seeded notices beneath it.
-  const [notifs, setNotifs] = useState<Notification[]>(
-    () => [...listEngagement().map(engagementRow), ...NOTIFICATIONS],
-  )
-  // Rows the person cleared. Engagement arrives continuously, and without this
-  // a cleared row would reappear the moment the next like landed.
-  const dismissedNotifsRef = useRef(new Set<string>())
+  // The shared list — engagement history newest-first, then the seeded
+  // notices, minus whatever has been cleared. Cleared rows live in
+  // notifications.ts rather than in a ref here, so clearing one on the
+  // NOTIFICATIONS subscreen clears it here too.
+  const [notifs, setNotifs] = useState<Notification[]>(() => listNotifications())
+  useEffect(() => onNotificationsChanged(setNotifs), [])
   // Drives the bell's dot. The dot used to render unconditionally, so it was on
   // before anything had happened and opening the list could not clear it.
   const [unreadNotifs, setUnreadNotifs] = useState(() => unreadEngagementCount())
-  useEffect(() => onEngagementLogged(entries => {
-    setNotifs(list => {
-      const seen = new Set(list.map(n => n.key ?? n.text))
-      const fresh = entries
-        .map(engagementRow)
-        .filter(n => !seen.has(n.key!) && !dismissedNotifsRef.current.has(n.key!))
-      return fresh.length ? [...fresh, ...list] : list
-    })
-    // markEngagementSeen() broadcasts through this same listener, so the count
-    // drops to zero here the moment the list is opened.
-    setUnreadNotifs(unreadEngagementCount())
-  }), [])
+  // markEngagementSeen() broadcasts through this same listener, so the count
+  // drops to zero here the moment the list is opened — including when it is
+  // the subscreen, in another component, that opened it.
+  useEffect(() => onEngagementLogged(() => setUnreadNotifs(unreadEngagementCount())), [])
   const [swipedNotif, setSwipedNotif] = useState<string | null>(null)
   const notifSwipeRef = useRef<{ key: string; x0: number; moved: boolean } | null>(null)
   /** The message row a notification just sent you to, lit like a grid tile. */
@@ -1099,7 +1045,15 @@ export default function ProfileTwin({
     }, 300)
   }
 
+  /** The bell. It opens the NOTIFICATIONS subscreen — a page of its own, all
+   *  of them, on white — rather than springing a sheet down over the profile.
+   *  The shell owns that page (it lives in the hold menu, which this component
+   *  is inside of), so the bell announces the intent and HomeTwin opens it. */
   const toggleNotifs = () => {
+    if (!LEGACY_NOTIF_DROPDOWN) {
+      window.dispatchEvent(new Event('poplur-open-notifications'))
+      return
+    }
     if (showNotifs && !notifsClosing) closeNotifs()
     else openNotifs()
   }
@@ -1132,26 +1086,45 @@ export default function ProfileTwin({
     litTimer.current = window.setTimeout(() => { setLitTiles(null); setLitMessage(null) }, 4_200)
   }
 
-  /** Swipe-then-tap, the way Messages clears a thread. */
+  /** Swipe-then-tap, the way Messages clears a thread. Writes to the SHARED
+   *  cleared set, so the subscreen's list drops the row too. */
   const dismissNotification = (key: string) => {
     playPop()
     setSwipedNotif(null)
-    dismissedNotifsRef.current.add(key)
-    setNotifs(list => list.filter(n => (n.key ?? n.text) !== key))
+    clearNotification(key)
   }
 
   useEffect(() => () => {
     if (notifCloseTimerRef.current != null) window.clearTimeout(notifCloseTimerRef.current)
   }, [])
 
-  // The profile hold menu's NOTIFICATIONS tile springs the real dropdown down
-  // from here (via a window event) instead of opening a captured screen.
+  // `poplur-open-notifications` opens the NOTIFICATIONS SUBSCREEN now — the
+  // shell answers it (HomeTwin), because the page lives in the hold menu and
+  // this component cannot mount one. The legacy dropdown below is still
+  // reachable with ?notif=dropdown for comparison, the same way the rejected
+  // skins are; without that flag nothing here listens, or the bell would open
+  // the page AND spring the dropdown down over it.
   const openNotifsRef = useRef(openNotifs)
   openNotifsRef.current = openNotifs
   useEffect(() => {
+    if (!LEGACY_NOTIF_DROPDOWN) return
     const onOpen = () => openNotifsRef.current()
     window.addEventListener('poplur-open-notifications', onOpen)
     return () => window.removeEventListener('poplur-open-notifications', onOpen)
+  }, [])
+
+  // A row tapped on the NOTIFICATIONS subscreen: the screen hands it back
+  // rather than navigating, because the highlight it leads to (a lit grid
+  // tile, a lit message row) is this component's state.
+  const openNotificationRef = useRef(openNotification)
+  openNotificationRef.current = openNotification
+  useEffect(() => {
+    const onFollow = (event: Event) => {
+      const n = (event as CustomEvent<Notification>).detail
+      if (n) openNotificationRef.current(n)
+    }
+    window.addEventListener('poplur-open-notification', onFollow)
+    return () => window.removeEventListener('poplur-open-notification', onFollow)
   }, [])
 
   // A hand-off from another screen (News' hamburger asks for Messages) chooses
@@ -2159,7 +2132,7 @@ export default function ProfileTwin({
                 // arrived: two people liking the same post produce the same
                 // sentence, so they would have shared a React key and a swipe
                 // state, and clearing one would have cleared the other.
-                const rowKey = n.key ?? n.text
+                const rowKey = notificationKey(n)
                 return (
                 <div
                   key={rowKey}

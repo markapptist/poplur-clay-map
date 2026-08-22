@@ -299,6 +299,10 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // because this map only carries one model per screen id and MAIL is one
   // screen with two states.
   'profile-messages': 'poplur_cube_mailbox.glb',
+  // The same bell the profile's own rail wears (ClaySwayObject, poplur_bell.glb)
+  // — the object you press to get here is the object the navigator holds while
+  // you are here.
+  'profile-notifications': 'poplur_bell.glb',
   'profile-stats': 'poplur_cube_bargraph.glb',
   'profile-store': 'poplur_cube_shopping_bag.glb',
   // A dial/gear face rather than the old plain cube. Named _gear, not
@@ -1176,6 +1180,32 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-open-profile-mode', onProfileMode)
   }, [])
 
+  // The bell → NOTIFICATIONS. It used to spring a dropdown down inside
+  // ProfileTwin; the list is a hold-menu PAGE now (white, the whole history),
+  // so opening it is the same handoff every other page uses: land on the
+  // profile tab, then resume onto the page. Split across two effects on
+  // purpose — the tab-change effect above rewrites `resume` whenever the tab
+  // actually moves, and it is declared FIRST, so the nonce effect below runs
+  // after it in the same commit and gets the last word. With the profile
+  // already up, that effect returns early and this one still fires.
+  const [notifOpenNonce, setNotifOpenNonce] = useState(0)
+  useEffect(() => {
+    const onOpen = () => {
+      setProfileOrigin(activeTabLiveRef.current)
+      // Your notifications, never a visited profile's.
+      setViewingUser(null)
+      setActiveTab('profile')
+      setNotifOpenNonce(n => n + 1)
+    }
+    window.addEventListener('poplur-open-notifications', onOpen)
+    return () => window.removeEventListener('poplur-open-notifications', onOpen)
+  }, [])
+  useEffect(() => {
+    if (notifOpenNonce === 0) return
+    setResume(current => ({ screen: 'profile-notifications', n: current.n + 1 }))
+    setHoldOpen(true)
+  }, [notifOpenNonce])
+
   // Taking your profile picture is NOT a subscreen — it is overlay state inside
   // ProfileTwin, so it has no id and cannot be keyed in SUBSCREEN_CUBE_MODEL
   // above (the same reason 'camera-capture' has no entry there). It announces
@@ -1533,9 +1563,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // trying to park — a map problem. Nothing here moves a camera; it draws a
   // notice and writes a row. With no live backend yet, demo off would mean a
   // notifications screen that never changes, which is the reported symptom.
+  //
+  // GENERATOR ONLY (`wire: false`). App's relay instance runs for the whole
+  // session in this same document and is the one subscribed to the real
+  // `poplur-engagement` wire. While this instance subscribed too, a single
+  // native/live arrival was handled twice — logged twice and popped twice —
+  // any time the map iframe was not mounted, which is every tab but Map. The
+  // old dropdown de-duped its own rows and hid it; the NOTIFICATIONS screen
+  // listed both copies, which is how it was found.
   useEffect(() => {
     if (mapMounted) return
-    return startEngagementChips({ demo: true })
+    return startEngagementChips({ demo: true, wire: false })
   }, [mapMounted])
 
   // ── The outside-app notification has to say what the screen says ──────────

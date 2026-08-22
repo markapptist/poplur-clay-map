@@ -11,6 +11,7 @@ import PhoneScreen from './PhoneScreen'
 import GamesScreen from './GamesScreen'
 import CasinoScreen from './CasinoScreen'
 import MapShowMe from './MapShowMe'
+import NotificationsScreen from './NotificationsScreen'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
 import SettingsScreen from './SettingsScreen'
@@ -156,10 +157,13 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // is still browsable and callable. The trade against the twin is the
     // Contacts/Texts submenu, which the reach list supersedes.
     { icon: 'Phone', title: 'PHONE', screen: 'profile-phone', native: true },
-    // No NOTIFICATIONS tile: the bell on the profile already opens the sheet,
-    // and it is on screen the whole time this menu takes two gestures to reach.
-    // The `poplur-open-notifications` event it used to fire is still listened
-    // for (ProfileTwin), so a host can open the sheet without a tile here.
+    // NOTIFICATIONS is a real screen again. It used to be a dropdown the bell
+    // sprang down over the profile, which is why this tile was removed — a
+    // tile that takes two gestures to reach is worse than a bell that is
+    // already on screen. Now that the list is a PAGE of its own (white, the
+    // whole history, SHOW ME's shape) it belongs in the wheel like every other
+    // page, and the bell opens the same screen via `poplur-open-notifications`.
+    { icon: 'Notifications', format: 'svg', title: 'NOTIFICATIONS', screen: 'profile-notifications', native: true },
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats', native: true },
     // The wall of trophies this account has collected. STATS is the numbers;
     // TROPHIES is what the numbers have won you — the library, predicates and
@@ -932,6 +936,24 @@ export default function HoldMenuTwin({
             selected={mapTourTopics ?? defaultMapTourTopics()}
             onChange={topics => onMapTourTopicsChange?.(topics)}
             onClose={() => { playPop(); onClose() }}
+          />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-notifications') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Notifications">
+          <NotificationsScreen
+            onClose={() => { playPop(); onClose() }}
+            // The profile owns the highlight a notification leads to (a lit
+            // grid tile, a lit message row), so the row is handed BACK to it
+            // rather than navigated from here. Same window-event route the
+            // bell uses to open this screen in the first place.
+            onOpenNotification={n => {
+              playPop()
+              window.dispatchEvent(new CustomEvent('poplur-open-notification', { detail: n }))
+              onClose()
+            }}
           />
         </div>
       )

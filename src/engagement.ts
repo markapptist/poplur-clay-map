@@ -70,6 +70,21 @@ export interface EngagementOptions {
    * embed — see the note in `show`. Ignored when there is no parent.
    */
   forwardToParent?: boolean
+  /**
+   * Subscribe to the REAL wire (the `poplur-engagement` event and the
+   * `poplur-engagement` postMessage). Exactly ONE instance per document may,
+   * for the same reason exactly one may run the demo: `show` both records the
+   * event and draws a notice, so a second subscriber writes the row twice and
+   * pops the notice twice off a single arrival.
+   *
+   * That is not hypothetical — it shipped. The shell runs a relay instance
+   * (App) for the whole session AND a demo instance (HomeTwin) whenever the
+   * map iframe is not mounted, and while both were up a native/live-wire
+   * engagement landed in the log twice, 0–1ms apart. The old notifications
+   * dropdown hid it behind a de-dupe on its own rows; the NOTIFICATIONS screen
+   * listed both. The generator-only instance passes false.
+   */
+  wire?: boolean
 }
 
 // The feed's sample cast (FeedTwin comments + profile) — reused, not invented.
@@ -164,8 +179,11 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
     const d = e.data as (EngagementEvent & { type?: string }) | null
     if (d && d.type === 'poplur-engagement' && typeof d.user === 'string' && d.kind in VERB) show(d)
   }
-  window.addEventListener('poplur-engagement', onEvent)
-  window.addEventListener('message', onMessage)
+  const onWire = options.wire !== false
+  if (onWire) {
+    window.addEventListener('poplur-engagement', onEvent)
+    window.addEventListener('message', onMessage)
+  }
 
   // ── the demo cadence ──────────────────────────────────────────────────────
   // A believable trickle: one engagement every 6–14s, likes twice as common as
@@ -204,8 +222,10 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
   return () => {
     stopped = true
     stopDemoTick?.()
-    window.removeEventListener('poplur-engagement', onEvent)
-    window.removeEventListener('message', onMessage)
+    if (onWire) {
+      window.removeEventListener('poplur-engagement', onEvent)
+      window.removeEventListener('message', onMessage)
+    }
     clearPopups('engagement')
   }
 }
