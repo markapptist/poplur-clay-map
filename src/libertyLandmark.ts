@@ -285,11 +285,12 @@ export function installNearLandmark3D(
     sync()
   }
 
-  // Twelve landmarks × two listeners is trivial next to what Mapbox emits at
-  // 60fps during a zoom, and each update() has an early-out on `next === wanted`
-  // so most calls do nothing beyond a subtraction and a compare.
-  map.on('move', update)
-  map.on('zoom', update)
+  // NO internal move/zoom listeners here. Twelve landmarks × 60fps × 30s of
+  // intro fly is ~43k callback fires — the thermal gate caught a real 600ms
+  // regression on map-arrival because of it. ClayMap owns one zoom handler
+  // that already iterates the flat sprite markers; it drives update() on the
+  // 3D handles in the same pass, so this stays one loop instead of twelve
+  // listeners.
 
   return {
     config: cfg,
@@ -297,8 +298,6 @@ export function installNearLandmark3D(
     isActive: () => shown,
     dispose: () => {
       if (disposed) return
-      map.off('move', update)
-      map.off('zoom', update)
       perf.dispose()
       disposed = true
       if (map.getLayer(layerId)) {

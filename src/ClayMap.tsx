@@ -1809,6 +1809,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // Landmarks earn a wider band than street props: you should see the
       // Eiffel Tower while still reading Paris, and they must not clutter the
       // globe, where the claim blooms already speak.
+      // Drive every 3D landmark handle from THIS pass, not from twelve of
+      // their own move/zoom subscribers — those cost a real ~600ms on
+      // map-arrival at 24 listeners × ~60fps × 30s, and the gate rejected the
+      // build (see libertyLandmark's own note). One forEach at the same beat
+      // Mapbox already fires this handler on.
+      landmarks3dRef.current.forEach(h => h.update())
       worldLandmarkMarkersRef.current.forEach(mk => {
         const el = mk.getElement()
         // While a landmark's real 3D model is on the map, its flat sprite
