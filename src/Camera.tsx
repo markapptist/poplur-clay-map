@@ -971,6 +971,14 @@ export default function Camera({
     if (Math.abs(next - zoomRef.current) < 0.001) return
     zoomRef.current = next
     setZoom(next)
+    // The navigator pops to the bare lens while you are zooming and back to the
+    // camera when you stop — the glass is what the gesture is actually
+    // operating. Announced from HERE rather than from the pinch handler or the
+    // presets because this is the one funnel every zoom path already goes
+    // through (pinch, the 1x/2x presets, the stepper), and it has already
+    // rejected no-op changes above, so holding a pinch steady does not restate
+    // it. HomeTwin owns the pop and the settle timer.
+    window.dispatchEvent(new CustomEvent('poplur-camera-zoom', { detail: { zoom: next } }))
 
     const track = streamRef.current?.getVideoTracks()[0]
     const canUseHardwareZoom = Boolean(
