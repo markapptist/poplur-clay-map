@@ -1,0 +1,268 @@
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: linear-gradient(180deg, #0a0a1a 0%, #141428 40%, #1a1a2e 100%);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 16px 24px;
+  gap: 16px;
+  color: #e8e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  scrollbar-width: none;
+}
+
+.screen::-webkit-scrollbar { display: none; }
+
+/* ── Globe ─────────────────────────────────────────────────────────────── */
+
+.globeWrap {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  flex: 0 0 auto;
+  margin-top: 8px;
+}
+
+.globe {
+  width: 180px;
+  height: 180px;
+  background-image: url('/sprites/stats_globe_spin.png');
+  background-size: 1440px 180px;
+  background-repeat: no-repeat;
+  animation: globeSpin 2s steps(8) infinite;
+}
+
+@keyframes globeSpin {
+  from { background-position: 0 0; }
+  to { background-position: -1440px 0; }
+}
+
+.pulseRing {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  border: 2px solid rgba(246, 59, 154, 0.5);
+  transform: translate(-50%, -50%) scale(1);
+  animation: pulse 2.4s ease-out infinite;
+  pointer-events: none;
+}
+
+.pulseRing:nth-child(2) { animation-delay: 0.8s; }
+.pulseRing:nth-child(3) { animation-delay: 1.6s; }
+
+@keyframes pulse {
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.7; }
+  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+}
+
+.radiusLabel {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f63b9a;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: -4px;
+}
+
+.radiusValue {
+  font-size: 32px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+
+.radiusUnit {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  margin-left: 4px;
+}
+
+/* ── Pop-up book cards ─────────────────────────────────────────────────── */
+
+.cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+  max-width: 360px;
+  perspective: 600px;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transform-origin: bottom center;
+  animation: popUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.card:nth-child(1) { animation-delay: 0.1s; border-top: 3px solid #f63b9a; }
+.card:nth-child(2) { animation-delay: 0.25s; border-top: 3px solid #4ade80; }
+.card:nth-child(3) { animation-delay: 0.4s; border-top: 3px solid #38bdf8; }
+.card:nth-child(4) { animation-delay: 0.55s; border-top: 3px solid #fbbf24; }
+
+@keyframes popUp {
+  from {
+    transform: rotateX(-90deg);
+    opacity: 0;
+  }
+  to {
+    transform: rotateX(0deg);
+    opacity: 1;
+  }
+}
+
+.cardIcon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.cardValue {
+  font-size: 26px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.cardLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── Stat tiles ────────────────────────────────────────────────────────── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 100%;
+  max-width: 360px;
+}
+
+.tile {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 10px 8px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  animation: fadeUp 0.5s ease both;
+}
+
+.tile:nth-child(1) { animation-delay: 0.7s; }
+.tile:nth-child(2) { animation-delay: 0.8s; }
+.tile:nth-child(3) { animation-delay: 0.9s; }
+
+@keyframes fadeUp {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.tileValue {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.tileLabel {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* ── Badges ────────────────────────────────────────────────────────────── */
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  width: 100%;
+  max-width: 360px;
+  animation: fadeUp 0.5s ease 1s both;
+}
+
+.badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.badgeIcon { font-size: 14px; }
+
+.badgeLocked {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+/* ── Gain / loss bar ───────────────────────────────────────────────────── */
+
+.flowBar {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  animation: fadeUp 0.5s ease 0.65s both;
+}
+
+.flowGain { color: #4ade80; }
+.flowLoss { color: #f87171; }
+
+.flowTrack {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  display: flex;
+}
+
+.flowFill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+.flowFillGain { background: #4ade80; }
+.flowFillLoss { background: #f87171; }
+
+@media (prefers-reduced-motion: reduce) {
+  .globe { animation: none; }
+  .pulseRing { animation: none; display: none; }
+  .card { animation: none; opacity: 1; transform: none; }
+  .tile { animation: none; opacity: 1; transform: none; }
+  .badges { animation: none; opacity: 1; }
+  .flowBar { animation: none; opacity: 1; }
+}

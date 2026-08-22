@@ -15,6 +15,7 @@ import StudioScreen from './StudioScreen'
 import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
 import MailScreen from './MailScreen'
+import StatsScreen from './StatsScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
@@ -130,7 +131,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // and it is on screen the whole time this menu takes two gestures to reach.
     // The `poplur-open-notifications` event it used to fire is still listened
     // for (ProfileTwin), so a host can open the sheet without a tile here.
-    { icon: 'Stats', title: 'STATS', screen: 'profile-stats' },
+    { icon: 'Stats', title: 'STATS', screen: 'profile-stats', native: true },
     // AVATAR makes the cube you wear on this tab out of a picture you supply —
     // a logo, a face, a product. Meshy sculpts it (Poplur credits) or the app
     // presses the image onto a clay cube for free. It sits next to SETTINGS
@@ -947,6 +948,13 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Studio">
           <StudioScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-stats') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Stats">
+          <StatsScreen onClose={() => { playPop(); onClose() }} />
         </div>
       )
     }
