@@ -26,10 +26,26 @@ try {
   if (saved && RINGTONES.some(r => r.id === saved)) currentRingtone = saved as RingtoneId
 } catch { /* embedded */ }
 
+/** The ringtone is set from TWO places — the handset's own settings and the
+ *  Settings screen — and either must show what the other picked. Without this
+ *  the choice lives in a module variable no component is subscribed to, so a
+ *  change made in one place leaves the other displaying a stale row until it
+ *  happens to remount. */
+export const RINGTONE_CHANGE_EVENT = 'poplur-ringtone-change'
+
 export function getRingtone(): RingtoneId { return currentRingtone }
+
 export function setRingtone(id: RingtoneId): void {
+  if (id === currentRingtone) return
   currentRingtone = id
   try { localStorage.setItem(SAVED_KEY, id) } catch { /* embedded */ }
+  try { window.dispatchEvent(new Event(RINGTONE_CHANGE_EVENT)) } catch { /* SSR */ }
+}
+
+/** Subscribe to the choice, wherever it was made. Returns the unsubscribe. */
+export function onRingtoneChange(fn: () => void): () => void {
+  window.addEventListener(RINGTONE_CHANGE_EVENT, fn)
+  return () => window.removeEventListener(RINGTONE_CHANGE_EVENT, fn)
 }
 
 function playTone(ac: AudioContext, freq: number, start: number, dur: number, gain: GainNode) {

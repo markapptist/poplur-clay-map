@@ -7,6 +7,10 @@ import styles from './SettingsScreen.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import {
+  RINGTONES, getRingtone, setRingtone, previewRingtone, onRingtoneChange,
+  type RingtoneId,
+} from './phoneRingtones'
+import {
   readCameraAiVoice,
   readCameraDetectDefault,
   writeCameraAiVoice,
@@ -63,7 +67,7 @@ import {
 // lives under Radio. Pages with nothing to set yet still get a row — a gap in
 // the list would read as "this page has no settings screen", which is a
 // different claim from "there is nothing to set here yet".
-type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'app' | 'profile' | 'verify'
+type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'ringtone' | 'app' | 'profile' | 'verify'
 
 const PAGE_TITLE: Record<Page, string> = {
   home: 'HOME',
@@ -71,6 +75,7 @@ const PAGE_TITLE: Record<Page, string> = {
   feed: 'FEED',
   camera: 'CAMERA',
   radio: 'RADIO',
+  ringtone: 'RINGTONE',
   app: 'APP ICON',
   profile: 'PROFILE',
   verify: 'VERIFICATION',
@@ -132,6 +137,21 @@ export default function SettingsScreen({ bindBack }: {
   // null is the root list. The cube still closes Settings outright, so this only
   // ever has to walk back one level.
   const [page, setPage] = useState<Page | null>(null)
+
+  // The ringtone is also settable on the handset itself (PhoneScreen's own
+  // settings), so this mirrors the store rather than owning it — whichever
+  // place you change it, both rows agree.
+  const [ringtone, setRingtoneState] = useState<RingtoneId>(getRingtone)
+  useEffect(() => onRingtoneChange(() => setRingtoneState(getRingtone())), [])
+
+  const chooseRingtone = (id: RingtoneId) => {
+    playPop()
+    setRingtone(id)
+    setRingtoneState(id)
+    // Hear it as you pick it: a ringtone chosen from a list of names is a
+    // guess until it makes a sound.
+    previewRingtone(id)
+  }
 
   // The native side owns both behaviours — CameraAIAnnouncer does the talking
   // and the capture session decides what runs at start — so a switch here has
@@ -389,6 +409,17 @@ export default function SettingsScreen({ bindBack }: {
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
 
+              <button type="button" className={styles.row} onClick={() => openPage('ringtone')}>
+                <span className={styles.rowText}>
+                  <b>Ringtone</b>
+                  <i>What the Poplur Phone plays on an incoming call.</i>
+                </span>
+                <span className={styles.rowValue}>
+                  {RINGTONES.find(r => r.id === ringtone)?.name ?? '—'}
+                </span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
               <button type="button" className={styles.row} onClick={() => openPage('profile')}>
                 <span className={styles.rowText}>
                   <b>Profile</b>
@@ -538,6 +569,32 @@ export default function SettingsScreen({ bindBack }: {
             {radioScope === 'screen' && 'Stops when you leave the Radio screen.'}
             {radioScope === 'app' && 'Keeps playing while you browse Poplur.'}
             {radioScope === 'outside' && 'Keeps the station playing when Poplur is in the background.'}
+          </p>
+        </article>
+        )}
+
+        {page === 'ringtone' && (
+        <article className={styles.group} aria-label="Phone ringtone">
+          {/* Same radiogroup furniture the Radio and Control-position pages use,
+              so this reads as one of the settings pages rather than a new kind
+              of control. */}
+          <div className={styles.radioScope} role="radiogroup" aria-label="Ringtone">
+            {RINGTONES.map(tone => (
+              <button
+                type="button"
+                key={tone.id}
+                role="radio"
+                aria-checked={ringtone === tone.id}
+                className={ringtone === tone.id ? styles.radioScopeOn : undefined}
+                onClick={() => chooseRingtone(tone.id)}
+              >
+                {tone.name}
+              </button>
+            ))}
+          </div>
+          <p className={styles.radioScopeNote}>
+            Plays a preview as you choose. The handset has this same setting on
+            its own screen — either one sets it.
           </p>
         </article>
         )}

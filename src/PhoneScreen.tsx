@@ -8,7 +8,7 @@ import { playPop } from './pop'
 import { PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
 import { postNativeEvent } from './nativeBridge'
 import { placeCall, hangup as hangupCall, subscribeCall, toggleMute, type CallSnapshot } from './webCall'
-import { startRingtone, stopRingtone, previewRingtone, getRingtone, setRingtone, RINGTONES, type RingtoneId } from './phoneRingtones'
+import { startRingtone, stopRingtone, previewRingtone, getRingtone, setRingtone, onRingtoneChange, RINGTONES, type RingtoneId } from './phoneRingtones'
 import ClayChannelArrows from './ClayChannelArrows'
 
 // The Poplur phone.
@@ -169,6 +169,14 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   const [callNow, setCallNow] = useState(() => Date.now())
   const [showSettings, setShowSettings] = useState(false)
   const [selectedRingtone, setSelectedRingtone] = useState<RingtoneId>(() => getRingtone())
+
+  // The Settings screen sets the same ringtone, so a change made there has to
+  // land here too — the ★ below reads getRingtone() inline, which React has no
+  // reason to re-run on its own, and the cursor would otherwise sit on whatever
+  // was chosen the last time this screen was opened. Moving the cursor with it
+  // means opening the handset's list always starts on the tone actually in use,
+  // wherever it was picked.
+  useEffect(() => onRingtoneChange(() => setSelectedRingtone(getRingtone())), [])
   const bootTimer = useRef<number | null>(null)
   const everNativeRef = useRef(false)
 
