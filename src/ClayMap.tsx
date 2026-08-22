@@ -566,30 +566,41 @@ function CelestialBody({ model, size, rotateDeg = 0 }: {
  *  a city skyline, not to metres: a sprite has a fixed pixel size while the
  *  buildings around it grow with zoom, so exact proportion is not on offer.
  */
-/** MultiPolygon of ±0.003° squares (~250m per side) around each landmark's
- *  coords, wrapped as a GeoJSON Feature. Passed to a `["!", ["within", ...]]`
- *  filter on clay-buildings-3d so the map's own extruded prism at each
- *  landmark's footprint disappears — and the 3D model stands alone rather
- *  than sharing pixels with its OSM building. Recomputed if someone adds a
- *  landmark, so keeping it derived rather than hand-authored means the two
- *  tables cannot drift out of step. */
-function landmarkExclusionZones(): GeoJSON.Feature<GeoJSON.MultiPolygon> {
-  const D = 0.003
-  return {
-    type: 'Feature',
-    properties: {},
-    geometry: {
-      type: 'MultiPolygon',
-      coordinates: WORLD_LANDMARKS.map(m => {
-        const [lng, lat] = m.coords
-        return [[
-          [lng - D, lat - D], [lng + D, lat - D],
-          [lng + D, lat + D], [lng - D, lat + D],
-          [lng - D, lat - D],
-        ]]
-      }),
-    },
-  }
+/** OSM way ids of the building features that ARE the landmarks, so the map's
+ *  own extruded prism can be dropped and the 3D model stands in its place.
+ *
+ *  This replaces a `["!", ["within", <polygon>]]` filter that never culled
+ *  anything: Mapbox's `within` only accepts Point and LineString features, and
+ *  buildings are Polygons, so the expression returned false for every feature
+ *  and the negation passed them all. Measured on the workbench at the Eiffel
+ *  Tower — 57 buildings before applying the filter, 57 after.
+ *
+ *  Ids were read off the live tiles (source `clay-streets`, source-layer
+ *  `building`) and each landmark's tallest hit matches its real height to the
+ *  metre: Eiffel 330, CN Tower 553, Burj 828, Great Pyramid 138.8. They are
+ *  OSM way ids, so they are stable. Multi-part structures list every tier —
+ *  the Burj's setbacks, the CN Tower's pod, the Colosseum's rings — because
+ *  masking only the tallest leaves the rest standing inside the model.
+ *
+ *  The Golden Gate has no building feature at all (it is a bridge), so it has
+ *  no entry and needs none. */
+const LANDMARK_BUILDING_IDS: number[] = [
+  137147715, 137153144, 137153142, 137153143, 137147712, 137153131, // burj-khalifa
+  32742038, 288273461, 288273460, 288273459, 288273458,             // cn-tower
+  5013364,                                                          // eiffel
+  229651145, 229651144, 229651143,                                  // statue-liberty
+  123557148,                                                        // big-ben
+  12903132,                                                         // space-needle
+  1834828, 1834826, 1834818, 1834829, 1834825,                      // colosseum
+  383059866, 383059882, 383059880,                                  // taj-mahal
+  1447519482,                                                       // christ-redeemer
+  9596872, 9596880, 9596879, 9596883,                               // sydney-opera
+  4420397,                                                          // giza
+]
+
+/** Filter clause dropping every feature that a 3D landmark model replaces. */
+function notALandmarkBuilding() {
+  return ['!', ['in', ['id'], ['literal', LANDMARK_BUILDING_IDS]]]
 }
 
 const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; heightM: number; yaw?: number }[] = [
@@ -2772,11 +2783,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // the map extrudes CN Tower's base as a squat prism and my 3D CN
           // Tower model stands INSIDE it — the user's video called this out
           // exactly ("the landmark should actually replace the building, not
-          // just hover on it"). One MultiPolygon of ±0.003° squares (~250m
-          // per side, plenty for a building footprint) around each of the
-          // twelve landmarks, so ONE within-check per feature covers all of
-          // them at layer-eval time.
-          filter: ['!', ['within', landmarkExclusionZones()]],
+          // just hover on it"). Matched by OSM way id — see
+          // LANDMARK_BUILDING_IDS for why a geometric test cannot do this.
+          filter: notALandmarkBuilding() as never,
           // Geometry culling: no extrusions until the camera is close enough
           // to be looking at a neighbourhood, not a whole city. The clay
           // settlement placeholders own everything wider than this.
@@ -2841,7 +2850,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           ['>=', ['case', ['has', 'height'], ['to-number', ['get', 'height']], 0], 45],
           // Skip the roof cap at each landmark footprint, same reason
           // clay-buildings-3d skips its extrusion — the 3D model IS the roof.
-          ['!', ['within', landmarkExclusionZones()]],
+          notALandmarkBuilding(),
         ] as never,
         layout: {
           'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.95,

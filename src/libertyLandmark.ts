@@ -6,12 +6,21 @@ import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPer
 
 // ── World landmarks as TRUE 3D map models ────────────────────────────────────
 //
-// Mapbox custom layers only render in MERCATOR projection, never in globe. The
-// clay map runs as a globe, so this module keeps the flat sprite marker as the
-// default and swaps in a real three.js custom layer ONLY when the camera is
-// both near the landmark AND zoomed in — flipping the map to mercator for the
-// visit and back to globe the moment you leave. Everywhere else the globe
-// experience is untouched.
+// Mapbox 3.x renders custom layers in GLOBE as well as mercator: when the
+// projection is globe, render() receives four extra arguments (the projection,
+// a globe->mercator matrix, the camera's mercator centre, and a
+// pixels-per-metre ratio) that place the model on the sphere. This layer
+// handles both, so the map's projection is never touched.
+//
+// It used to force map.setProjection('mercator') on activation. That flips the
+// style, and a style flip DROPS every layer the app added at runtime — the
+// entire clay world: buildings, caps, trees, boats, roads. The user's Paris
+// video showed the result exactly: the Eiffel model standing alone on flat
+// green with no buildings anywhere. Rendering in globe keeps the clay city
+// intact and the landmark stands in it.
+//
+// The flat sprite marker stays the default; the 3D model swaps in only when
+// the camera is both near the landmark AND zoomed in.
 //
 // GENERALISED. This started as a Statue of Liberty-only module. The user's
 // video of a hovering CN Tower sprite made the point: a floating sprite the
@@ -67,7 +76,7 @@ export interface NearLandmark3DConfig {
 export interface NearLandmark3D {
   /** Re-evaluate whether the 3D model should be active (call on move/zoom). */
   update: () => void
-  /** True while the flat 3D model + mercator projection are showing. */
+  /** True while the 3D model is on the map in place of the flat sprite. */
   isActive: () => boolean
   /** Remove listeners, the custom layer, and free three.js resources. */
   dispose: () => void
@@ -113,11 +122,6 @@ export function installNearLandmark3D(
   let leaseGranted = false
   let shown = false
   let disposed = false
-
-  let baseProjection = 'globe'
-  try {
-    baseProjection = map.getProjection()?.name ?? 'globe'
-  } catch { /* projection API not ready — default to globe */ }
 
   const base = import.meta.env.BASE_URL || './'
   const glbUrl = cfg.glbUrl ?? `${base}landmarks/${cfg.id}.glb`
@@ -219,33 +223,46 @@ export function installNearLandmark3D(
       try { renderer?.dispose() } catch { /* already disposed */ }
       renderer = null
     },
-    render(_gl, matrix) {
+    // Mapbox 3.x passes the extra globe arguments whenever the projection is
+    // globe; on mercator it calls render(gl, matrix) and the rest are
+    // undefined. Handling both means the layer never needs the projection
+    // swapped out from under it.
+    render(_gl, matrix, projection, globeToMercMatrix, _transition, centerInMercator, pixelsPerMeterRatio) {
       if (!renderer || !scene || !cam) return
       const rx = new THREE.Matrix4().makeRotationAxis(
         new THREE.Vector3(1, 0, 0),
         transform.rotateX,
       )
-      const l = new THREE.Matrix4()
-        .makeTranslation(transform.x, transform.y, transform.z)
-        .scale(new THREE.Vector3(transform.scale, -transform.scale, transform.scale))
-        .multiply(rx)
+      let l: THREE.Matrix4
+      if (projection?.name === 'globe' && globeToMercMatrix && centerInMercator && pixelsPerMeterRatio) {
+        // In globe the model is placed relative to the camera's mercator
+        // centre, scaled by the globe's metres-per-pixel ratio, then lifted
+        // onto the sphere by globeToMercMatrix.
+        const s = transform.scale * pixelsPerMeterRatio
+        l = new THREE.Matrix4()
+          .makeTranslation(
+            transform.x - centerInMercator[0],
+            transform.y - centerInMercator[1],
+            transform.z,
+          )
+          .scale(new THREE.Vector3(s, -s, s))
+          .multiply(rx)
+        l.premultiply(new THREE.Matrix4().fromArray(globeToMercMatrix))
+      } else {
+        l = new THREE.Matrix4()
+          .makeTranslation(transform.x, transform.y, transform.z)
+          .scale(new THREE.Vector3(transform.scale, -transform.scale, transform.scale))
+          .multiply(rx)
+      }
       cam.projectionMatrix = new THREE.Matrix4().fromArray(matrix).multiply(l)
       renderer.resetState()
       renderer.render(scene, cam)
     },
   }
 
-  const currentProjection = (): string => {
-    try { return map.getProjection()?.name ?? baseProjection } catch { return baseProjection }
-  }
-
-  // Re-attach on style.load: setProjection('mercator') triggers a style
-  // reload, and Mapbox drops custom layers with it. The Liberty one-off did
-  // not hit this because Toronto's cinematic never lands at Liberty Island,
-  // so the projection was never flipped from a live cn-tower-style session;
-  // but at the CN Tower on a Toronto-anchored map, activation and reload
-  // race and the layer loses. Adding it again from the style.load handler
-  // is safe — we only add it when `shown` is still true.
+  // Re-attach on style.load: a style reload drops custom layers with it, and
+  // the clay map reloads its style for theme and surface swaps. Adding the
+  // layer again is safe — we only do it while `shown` is still true.
   const reattachOnStyleLoad = () => {
     if (!shown || disposed) return
     if (!map.getLayer(layerId)) {
@@ -255,7 +272,6 @@ export function installNearLandmark3D(
   map.on('style.load', reattachOnStyleLoad)
 
   const activate = () => {
-    if (currentProjection() !== 'mercator') map.setProjection('mercator')
     if (!map.getLayer(layerId)) {
       try { map.addLayer(customLayer) } catch (e) { console.warn(`[${cfg.id}] addLayer`, e); return }
     }
@@ -265,9 +281,6 @@ export function installNearLandmark3D(
   const deactivate = () => {
     if (map.getLayer(layerId)) {
       try { map.removeLayer(layerId) } catch { /* already gone */ }
-    }
-    if (baseProjection !== 'mercator' && currentProjection() !== baseProjection) {
-      map.setProjection(baseProjection)
     }
     opts.onActiveChange?.(false)
   }
@@ -348,11 +361,6 @@ export function installNearLandmark3D(
       disposed = true
       if (map.getLayer(layerId)) {
         try { map.removeLayer(layerId) } catch { /* map already torn down */ }
-      }
-      if (shown && baseProjection !== 'mercator') {
-        try {
-          if (currentProjection() !== baseProjection) map.setProjection(baseProjection)
-        } catch { /* map already torn down */ }
       }
       wanted = false
       shown = false
