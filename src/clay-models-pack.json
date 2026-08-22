@@ -1,0 +1,22 @@
+{
+  "_comment": "Single source of truth for which model GLBs are served from the asset-pack cloud instead of the phone bundle. Read by src/modelUrl.ts (resolver), scripts/build-asset-packs.mjs (what to publish), and vite.config.ts (what to drop from bucket-mode builds). A file here must have EVERY consumer routed through modelUrl (CubeTab3D + modelSprite today) or it 404s on device; keep it to models whose loaders are all routed.",
+  "files": [
+    "games/poplurstation/console.glb",
+    "poplur_cube_bargraph.glb",
+    "poplur_cube_folder.glb",
+    "poplur_cube_gear.glb",
+    "poplur_cube_ipod.glb",
+    "poplur_cube_laptop.glb",
+    "poplur_cube_mailbox.glb",
+    "poplur_cube_printer.glb",
+    "poplur_cube_shopping_bag.glb",
+    "poplur_cube_showme.glb",
+    "poplur_cube_slot_machine.glb",
+    "poplur_cube_trophy.glb",
+    "poplur_cube_tv_remote.glb",
+    "poplur_cube_wallet.glb",
+    "poplur_mixer_lite.glb",
+    "poplur_newspaper.glb",
+    "poplur_radio.glb"
+  ]
+}

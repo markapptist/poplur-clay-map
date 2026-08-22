@@ -39,8 +39,14 @@ const ASSET_PACK_BASE: string = (() => {
 // game-bundle assets we do not serve). Keep the file list in sync with
 // CLAY_MODELS_PACK in src/modelUrl.ts: a file excluded here but not routed
 // there would 404, and vice versa it would ship dead weight.
-const PUBLISHED_PACK_DIRS = ['subscreens', 'profile-themes', 'games/arcade/art',
-  'games/poplurstation/console.glb']
+const CLAY_MODEL_FILES: string[] = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./src/clay-models-pack.json', import.meta.url)), 'utf8'),
+).files
+// The dir packs plus every clay-models file (exact paths, matched by === below).
+// Sharing src/clay-models-pack.json with the resolver and the pack builder is
+// what keeps "what the app fetches from the bucket" and "what the build drops"
+// from ever disagreeing — a mismatch would 404 a model or ship dead weight.
+const PUBLISHED_PACK_DIRS = ['subscreens', 'profile-themes', 'games/arcade/art', ...CLAY_MODEL_FILES]
 
 // Source-quality meshes retained for authoring/prerender regeneration. The
 // running app uses the checked-in sprites or decimated `*_lite.glb` variants;

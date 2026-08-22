@@ -11,6 +11,11 @@ import { createHash } from 'node:crypto'
 import { cpSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 
+import { readFileSync } from 'node:fs'
+// Single source of truth for the clay-models pack, shared with the app's
+// resolver (src/modelUrl.ts) and the vite bundle-drop (vite.config.ts).
+const CLAY_MODEL_FILES = JSON.parse(readFileSync('src/clay-models-pack.json', 'utf8')).files
+
 const PUBLIC = 'public'
 const OUT = 'dist-packs'
 
@@ -22,14 +27,14 @@ const PACKS = [
   { id: 'arcade-art',     from: 'games/arcade/art',  version: 1 },
   { id: 'subscreens',     from: 'subscreens',        version: 1 },
   { id: 'profile-themes', from: 'profile-themes',    version: 1 },
+  { id: 'feed',           from: 'feed',              version: 1 },
+  { id: 'channels',       from: 'channels',          version: 1 },
   // The clay-models pack is a FILE LIST, not a directory: the models it moves
   // out of the bundle are scattered top-level GLBs, not one folder. Keep this
   // list identical to CLAY_MODELS_PACK in src/modelUrl.ts — the app's resolver
   // and this builder must agree on exactly which models the pack owns, or a
   // model gets dropped from the bundle that the app still loads bundle-relative.
-  { id: 'clay-models', version: 1, files: [
-    'games/poplurstation/console.glb',
-  ] },
+  { id: 'clay-models', version: 1, files: CLAY_MODEL_FILES },
 ]
 
 const walk = (dir, base = dir) =>
@@ -91,7 +96,7 @@ for (const pack of PACKS) {
 // nothing user-generated, so a dedicated public bucket is safe and keeps the
 // two blast radii apart.
 const BUCKET = 'https://storage.googleapis.com/poplur2025-assets/asset-packs'
-const LOCAL = { 'arcade-art': 'games/arcade/art', subscreens: 'subscreens', 'profile-themes': 'profile-themes' }
+const LOCAL = { 'arcade-art': 'games/arcade/art', subscreens: 'subscreens', 'profile-themes': 'profile-themes', feed: 'feed', channels: 'channels' }
 const useBucket = process.env.POPLUR_PACK_BASE === 'bucket'
 
 const manifest = {

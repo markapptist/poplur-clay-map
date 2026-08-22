@@ -35,27 +35,19 @@ import { packBase } from './assetPacks'
  * bundle until a startup-preload step handles them. This set is the models
  * reached only by navigating to a specific subscreen.
  */
-export const CLAY_MODELS_PACK = new Set<string>([
-  // EMPTY on purpose. The workbench ships bucket-mode (asset-manifest.json's
-  // baseUrl is the GCS bucket, baked into the build), so a member here does NOT
-  // fall back to the bundle in the shipped app — it resolves straight to the
-  // bucket. There is no safe middle: a model is either in the bundle (absent
-  // from this set) or published to the bucket AND dropped from the bundle
-  // (present here). So enabling a model is one ATOMIC step, done together and
-  // device-verified:
-  //   1. add its name here and to scripts/build-asset-packs.mjs
-  //   2. npm run build-packs && publish it to the bucket (npm run publish-packs)
-  //   3. drop it from the phone bundle in scripts/sync-mobile.sh
-  //   4. verify on a device that the surface still renders (CORS + WebView fetch
-  //      of a remote GLB is the part that only a device can confirm)
-  // First model actually moved to the cloud: the games-subscreen cube face.
-  // Its only consumer is CubeTab3D (routed below), it is published to the
-  // bucket (verified: 200, byte-identical, access-control-allow-origin:*,
-  // content-type model/gltf-binary), and it is dropped from the phone bundle in
-  // scripts/sync-mobile.sh. Expanding to newspaper/mic/mixer needs their other
-  // loaders (modelSprite icons, ClaySwayObject, VFXStudio) routed first.
-  'games/poplurstation/console.glb',
-])
+import clayModelsPack from './clay-models-pack.json'
+
+/**
+ * Models moved into the clay-models pack — served from Cloud Storage, not the
+ * bundle. The list is shared with the pack builder and the vite bundle-drop via
+ * public/clay-models-pack.json, so the three cannot drift.
+ *
+ * The bar for adding a file there: EVERY consumer resolves through this seam
+ * (CubeTab3D + modelSprite are routed today) and it is published to the bucket
+ * AND dropped from the bundle in the same change. The workbench ships
+ * bucket-mode, so a member does not fall back to the bundle — a half-move 404s.
+ */
+export const CLAY_MODELS_PACK = new Set<string>(clayModelsPack.files)
 
 /** Resolve a model filename to a URL. Members of the clay-models pack resolve
  *  to the pack (bucket when published, bundled until then); everything else is
