@@ -735,6 +735,33 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         wider camcorder envelope ended up unreachable. */
     const isAiming = () => loadedUrlRef.current === CAMCORDER_MODEL
 
+    /** WHICH WAY AN OBJECT FACES, and why — decided by what the object MEANS
+        on the screen it is on, not by listing models that misbehave.
+
+        Compass heading is unbounded: it turns an object a full circle as you
+        turn your body. That is exactly right for something that stands for a
+        DIRECTION, and exactly wrong for something that stands for a THING —
+        you spend half of every turn looking at its back.
+
+        So heading is opt-IN and facing the viewer is the default. This started
+        as the opposite, a list of models that must not spin (the radio dial and
+        the iPod screen, both caught on device on 22 Aug), which had the default
+        backwards: every object added later is born spinning, and nobody finds
+        out until someone turns around while holding a phone. Those two are
+        still front-facing here — neither aims nor is the map — but now so is
+        everything else that was going to be discovered the same way.
+
+          aiming    the camcorder IS the direction the lens points. Turning
+                    with the handset is the entire reading of it.
+          map       the globe is the world, so it stays world-anchored rather
+                    than body-anchored — which is why the map tab already
+                    carries its own authored yaw below.
+          otherwise a faceplate you read or operate: feed, profile, apps, mail,
+                    wallet, games, the FaceTime contact card. It keeps the
+                    parallax tilt, so it still answers your hand; only the
+                    unbounded term is withheld. */
+    const tracksHeading = () => isAiming() || targetTabRef.current === 'map'
+
     const applyMotionDeadZone = (angle: number) => {
       if (Math.abs(angle) <= CUBE_MOTION_DEAD_ZONE) return 0
       return angle - Math.sign(angle) * CUBE_MOTION_DEAD_ZONE
@@ -1318,7 +1345,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // moving point, not arriving at a fixed one — a spring's overshoot
       // would read as the object wobbling past where the phone actually is.
       const headingDelta = headingTargetYaw - headingYaw
-      if (Math.abs(headingDelta) > 0.00005) {
+      if (!tracksHeading()) {
+        // Face-forward objects ignore the compass. Keep the smoother caught
+        // up silently so the next aiming/map object resumes heading from
+        // the live reading instead of spinning to catch up.
+        headingYaw = headingTargetYaw
+      } else if (Math.abs(headingDelta) > 0.00005) {
         headingYaw += headingDelta * (1 - Math.pow(CUBE_HEADING_SMOOTHING_RETAIN, dt * 60))
         needsRender = true
       } else if (headingYaw !== headingTargetYaw) {
@@ -1364,7 +1396,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         // The globe's authored entrance turn and live device response share
         // one rotation. Every other object stays front-facing and moves only
         // from device tilt; a tab change never carries the globe's yaw into it.
-        group.rotation.y = (targetTabRef.current === 'map' ? yaw : 0) + motionYaw + headingYaw
+        group.rotation.y = (targetTabRef.current === 'map' ? yaw : 0) + motionYaw + (tracksHeading() ? headingYaw : 0)
         pitchGroup.rotation.x = pitch + motionPitch
         renderer.render(scene, camera)
         needsRender = false
