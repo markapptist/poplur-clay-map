@@ -165,6 +165,18 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
 
   useEffect(() => { installCallBridge() }, [])
 
+  // Tell the shell which face of MAIL is showing, so the cube navigator can
+  // swap between the mailbox (this list) and the opened envelope (a thread)
+  // — the same window-event route ProfileTwin uses for its capture screen,
+  // since MailScreen has no prop channel to the cube either.
+  useEffect(() => {
+    const open = Boolean(activeThread)
+    window.dispatchEvent(new CustomEvent('poplur-mail-thread-open', { detail: open }))
+    return () => {
+      if (open) window.dispatchEvent(new CustomEvent('poplur-mail-thread-open', { detail: false }))
+    }
+  }, [activeThread])
+
   if (activeThread) {
     return (
       <div className={styles.screen}>

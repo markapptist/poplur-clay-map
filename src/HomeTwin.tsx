@@ -90,6 +90,19 @@ const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // The cube's recording face. Bundle ROOT, not models/ — same reason as every
 // other navigator here (sync-mobile strips models/ from the phone bundles).
 const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
+// PHOTO's own lens, distinct from PROFILE_CAMERA_MODEL above: that constant is
+// shared by the POST tab's idle default AND the profile-capture overlay, so it
+// cannot be repointed here without also changing those. This is a third,
+// independent face, wired in only where PHOTO mode itself is the request.
+const CAMERA_LENS_MODEL = 'poplur_cube_camera_lens.glb'
+// The editing rig the cube wears while the post composer is actually cutting
+// something — Filters or VFX Studio — rather than just standing open. See
+// composerEditing below for the window event that drives this.
+const DIRECTOR_BOARD_MODEL = 'poplur_cube_director_board.glb'
+// The two faces of MAIL: the mailbox in SUBSCREEN_CUBE_MODEL below is the
+// thread list; this is the opened envelope, shown only while a thread is
+// active. See mailThreadOpen below for the window event that drives this.
+const MAIL_ENVELOPE_OPEN_MODEL = 'poplur_cube_mail_envelope.glb'
 
 // ── Last-page memory ─────────────────────────────────────────────────────────
 /** Where the app is standing: the tab, the hold-menu page on it (null = the
@@ -216,7 +229,11 @@ function wornNavigatorModel(
 // simply absent on a phone. (That exclusion is also why the sun and moon,
 // which celestial.ts loads from models/, never appear on device.)
 const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
-  'feed-tvguide': CLAY_TV_MODEL,
+  // A supplied remote for the guide itself, decimated the same way as the
+  // rest of this set. NOT CLAY_TV_MODEL — that constant is also the feed
+  // tab's own idle default (tabNavigatorModel above), so repointing it here
+  // would have quietly changed the plain feed tab's look along with TV GUIDE.
+  'feed-tvguide': 'poplur_cube_tv_remote.glb',
   // The radio screen has its own radio now. The TV stood in here for want of
   // one; the supplied Meshy export is 24MB, decimated to 147KB by the same
   // recipe as the rest of this set (Draco + simplify 0.0005 + 256px webp),
@@ -239,17 +256,23 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // the mixer's 329KB, which this map already carries. poplur_cube_news.glb is
   // gone: it had exactly one reference, this line.
   'feed-news': 'poplur_newspaper.glb',
-  'camera-ai-chat': 'poplur_cube_create.glb',
-  // The clay envelope the app already draws on visited profiles
-  // (ClayCornerButton's `mail` kind), baked to a GLB by
-  // scripts/bake-mail-navigator.mjs — the same shapes, extrusion and clay
-  // material, so the navigator and the corner button are one object. Replaced
-  // poplur_cube_mail.glb (a cube wearing an envelope sticker), which now has
-  // no references.
-  'profile-messages': 'poplur_clay_mail_navigator.glb',
-  'profile-stats': 'poplur_cube_stats.glb',
-  'profile-store': 'poplur_cube_store.glb',
-  'profile-settings': 'poplur_cube_settings.glb',
+  // CREATE takes the supplied laptop — the AI chat runs through a screen, not
+  // a camera gesture, so a laptop reads truer than the old bare cube.
+  'camera-ai-chat': 'poplur_cube_laptop.glb',
+  // This is MAIL's thread-LIST face — the mailbox itself. Replaced
+  // poplur_clay_mail_navigator.glb (ClayCornerButton's baked envelope), which
+  // now has no references. The open-THREAD face is a separate model
+  // (MAIL_ENVELOPE_OPEN_MODEL above) swapped in by a window event MailScreen
+  // dispatches on entering/leaving a thread — see mailThreadOpen below —
+  // because this map only carries one model per screen id and MAIL is one
+  // screen with two states.
+  'profile-messages': 'poplur_cube_mailbox.glb',
+  'profile-stats': 'poplur_cube_bargraph.glb',
+  'profile-store': 'poplur_cube_shopping_bag.glb',
+  // A dial/gear face rather than the old plain cube. Named _gear, not
+  // _settings2, to keep it unmistakably apart from the orphaned
+  // poplur_cube_settings.glb this replaces.
+  'profile-settings': 'poplur_cube_gear.glb',
   // PHONE uses the same persistent navigator renderer as every other screen.
   // The previous separate ClayPhonePop created a second WebGL context and a
   // larger 176px object, so it could never match the other tab objects.
@@ -260,16 +283,26 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // and keeps every knob — see .codex/prerender-holdmenu-cubes.mjs for the
   // proofing harness that verified it survived.
   'camera-studio': 'poplur_mixer_lite.glb',
-  // SHOW ME is the map's find-it-for-me surface, so it takes the SEARCH cube.
-  // The nearest fit in the supplied set rather than a bespoke mark — say if it
-  // should be something else.
-  'map-show-me': 'poplur_cube_search.glb',
+  // SHOW ME is the map's find-it-for-me surface, so it takes a magnifying
+  // model of its own now. Replaced poplur_cube_search.glb (the old bare-cube
+  // stand-in), which now has no references.
+  'map-show-me': 'poplur_cube_showme.glb',
+  // AVATAR had no object of its own — the hold menu opened straight to
+  // AvatarScreen and the navigator just kept whatever the profile tab was
+  // already wearing. A printer, because this is where you fabricate the cube.
+  'profile-avatar': 'poplur_cube_printer.glb',
+  // IPOD, likewise previously unwired.
+  'map-ipod': 'poplur_cube_ipod.glb',
   // In the bundle and deliberately unwired, for want of a screen to stand on:
   // ar, video, search, directions, map, tour, comment, live, cameraroll,
   // heypoplur. 'camera-capture' in particular is NOT a destination — PHOTO,
   // VIDEO, AR and DETECT all carry that id for inspectability while acting on
   // the live camera, so nothing can wear a cube there.
   // Still awaiting a model: camera-studio, feed-games.
+  //
+  // poplur_cube_fork_knife.glb is ALSO in the bundle and deliberately
+  // unwired: it is staged for a future "food ad in feed" surface that does
+  // not exist yet, not an orphan left behind by this pass.
 }
 
 /** Resolve a subscreen object from its screen identity in one place. Keeping
@@ -360,6 +393,19 @@ interface MapHudContext {
   onlineUsers: number
 }
 
+/** The count-up is the stat card's swap-in flourish: `active` goes true when the
+ *  card rotates RADIUS/ONLINE into view (and false with chrome-idle), and the
+ *  number counts up from zero. What it was ALSO doing was replaying that whole
+ *  880ms volley every time the value merely CHANGED, because `radius`/`value`
+ *  sit in the dependency array — and the feed hands these a new radius on every
+ *  clip advance. Measured 21 Aug on the shipped bundle: five clip changes drove
+ *  1236 DOM mutations and 940 style recalculations, 84% of everything the screen
+ *  touched, at 14.8% of a core against 1.6% when settled.
+ *
+ *  So animate on ARRIVAL only — the false->true edge, which is the swap-in the
+ *  effect was designed for — and snap to the new figure when the value changes
+ *  under a card that is already showing. The flourish anyone actually looks at
+ *  is unchanged; only the accidental replay is gone. */
 function AnimatedRadiusMetrics({
   radius,
   ceiling,
@@ -377,11 +423,16 @@ function AnimatedRadiusMetrics({
 }) {
   const [progress, setProgress] = useState(active ? 0 : 1)
   const [counting, setCounting] = useState(active)
+  const wasActive = useRef(false)
 
   useEffect(() => {
+    // Only the false->true edge is an arrival; a value change under a card that
+    // is already showing snaps instead of replaying the whole count.
+    const arriving = active && !wasActive.current
+    wasActive.current = active
     let raf = 0
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!active || reduced) {
+    if (!active || reduced || !arriving) {
       setProgress(1)
       setCounting(false)
       return
@@ -442,11 +493,16 @@ function AnimatedRadiusMetrics({
 function AnimatedOnlineCount({ value, active }: { value: number; active: boolean }) {
   const [progress, setProgress] = useState(active ? 0 : 1)
   const [counting, setCounting] = useState(active)
+  const wasActive = useRef(false)
 
   useEffect(() => {
+    // Only the false->true edge is an arrival; a value change under a card that
+    // is already showing snaps instead of replaying the whole count.
+    const arriving = active && !wasActive.current
+    wasActive.current = active
     let raf = 0
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!active || reduced) {
+    if (!active || reduced || !arriving) {
       setProgress(1)
       setCounting(false)
       return
@@ -488,11 +544,16 @@ function AnimatedOnlineCount({ value, active }: { value: number; active: boolean
 function AnimatedPostCount({ value, active }: { value: number; active: boolean }) {
   const [progress, setProgress] = useState(active ? 0 : 1)
   const [counting, setCounting] = useState(active)
+  const wasActive = useRef(false)
 
   useEffect(() => {
+    // Only the false->true edge is an arrival; a value change under a card that
+    // is already showing snaps instead of replaying the whole count.
+    const arriving = active && !wasActive.current
+    wasActive.current = active
     let raf = 0
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!active || reduced) {
+    if (!active || reduced || !arriving) {
       setProgress(1)
       setCounting(false)
       return
@@ -1078,6 +1139,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const onCapture = (e: Event) => setProfileCapture(Boolean((e as CustomEvent<boolean>).detail))
     window.addEventListener('poplur-profile-capture', onCapture)
     return () => window.removeEventListener('poplur-profile-capture', onCapture)
+  }, [])
+  // MAIL's open-thread face, announced by MailScreen the same way ProfileTwin
+  // announces its capture screen above — MailScreen has no prop channel to
+  // the cube either, and SUBSCREEN_CUBE_MODEL only carries one model per
+  // screen id, so the mailbox/envelope split has to travel outside it.
+  const [mailThreadOpen, setMailThreadOpen] = useState(false)
+  useEffect(() => {
+    const onThread = (e: Event) => setMailThreadOpen(Boolean((e as CustomEvent<boolean>).detail))
+    window.addEventListener('poplur-mail-thread-open', onThread)
+    return () => window.removeEventListener('poplur-mail-thread-open', onThread)
+  }, [])
+  // The director board: announced by PostComposer while an actual editing
+  // step (Filters, VFX Studio) is on screen, same route as the two above.
+  const [composerEditing, setComposerEditing] = useState(false)
+  useEffect(() => {
+    const onEditing = (e: Event) => setComposerEditing(Boolean((e as CustomEvent<boolean>).detail))
+    window.addEventListener('poplur-composer-editing', onEditing)
+    return () => window.removeEventListener('poplur-composer-editing', onEditing)
   }, [])
   // The post composer is a full-screen modal, but it lives inside .contentLayer
   // (z-index 4) so it can never stack above the home chrome at 260 — the radius
@@ -2901,13 +2980,26 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // STUDIO showed a camcorder instead of its mixing desk. The navigator has to
   // name the screen you are standing on, so the override now applies only when
   // there is no subscreen open.
-  const requestedCubeModel = activeTab === 'post' && cubeScreen == null
+  // The director board outranks even the camcorder: composerEditing only
+  // goes true once capture has already stopped and PostComposer has taken
+  // over (Filters/VFX Studio), but cameraCaptureMode can still read 'video'
+  // from the shot you just took, and that stale mode must not win the cube
+  // back from the editor that is actually on screen.
+  const requestedCubeModel = composerOpen && composerEditing
+    ? DIRECTOR_BOARD_MODEL
+    : activeTab === 'post' && cubeScreen == null
     && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
     : (avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? PROFILE_CAMERA_MODEL : undefined)
+      ?? (cubeScreen === 'profile-messages' && mailThreadOpen ? MAIL_ENVELOPE_OPEN_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
+      // PHOTO's own lens, only when nothing above already claimed the cube —
+      // CAMERA_LENS_MODEL is a face of its own, never PROFILE_CAMERA_MODEL,
+      // so the POST-tab default and the profile-capture overlay above stay
+      // exactly as they were.
+      ?? (activeTab === 'post' && cubeScreen == null && cameraCaptureMode === 'photo' ? CAMERA_LENS_MODEL : undefined)
       ?? tabNavigatorModel(activeTab))
 
   // Keep one likely destination decoded but detached. The tab ring's forward

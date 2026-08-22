@@ -210,6 +210,19 @@ export default function PostComposer({
     setPreviewStill(null)
   }, [media.kind, media.src])
 
+  // Tell the shell when an actual editing step is up (Filters, VFX Studio) so
+  // the cube can wear the director board while you work — the same
+  // window-event route ProfileTwin and MailScreen use for their own screen
+  // state, since PostComposer has no prop channel to the cube either. Choice,
+  // AI and channel are past the editing phase, so they don't claim it.
+  useEffect(() => {
+    const editing = step === 'edit' || step === 'effects'
+    window.dispatchEvent(new CustomEvent('poplur-composer-editing', { detail: editing }))
+    return () => {
+      if (editing) window.dispatchEvent(new CustomEvent('poplur-composer-editing', { detail: false }))
+    }
+  }, [step])
+
   const basePreviewOwnsMedia = !editorOpen && (step === 'edit' || step === 'choice')
 
   // A captured video loops for as long as the base preview owns it — no play
