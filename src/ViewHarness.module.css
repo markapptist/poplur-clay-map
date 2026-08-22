@@ -400,11 +400,23 @@
 
 /* Now a TabControlRail child — the rail's own `.rail > *` rule already forces
    the 44×44 box and the column position, so this only carries the button's
-   own look, not placement. */
+   own look, not placement.
+   Shaped like a tube TV — bulged corners on a rounded screen, not a flat
+   square thumbnail — with the same animated shader-gradient ring the LIVE
+   text and zoom presets already wear, so this reads as a Poplur object
+   (a little screen showing you what you just shot) rather than a generic
+   icon button. The two-background trick paints the button's own fill inside
+   the border and lets the gradient show only in the border itself: a
+   transparent border with `background-clip: padding-box, border-box` on two
+   layered images. */
 .camRollBtn {
-  border: 0;
-  border-radius: 8px;
-  background: rgba(22, 6, 15, 0.52);
+  border: 2.5px solid transparent;
+  border-radius: 42% / 34%;
+  background:
+    linear-gradient(rgba(22, 6, 15, 0.72), rgba(22, 6, 15, 0.72)) padding-box,
+    linear-gradient(105deg, #ff80be 0%, #ffffff 27%, #7fe3ff 52%, #ffffff 72%, #ff80be 100%) border-box;
+  background-size: 100% 100%, 260% 100%;
+  animation: camRollShaderSweep 5.6s linear infinite;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow:
@@ -414,17 +426,20 @@
   place-items: center;
   overflow: hidden;
   cursor: pointer;
-  transition: transform 120ms ease, background 120ms ease;
+  transition: transform 120ms ease;
 }
-.camRollBtn:active {
-  transform: scale(0.88);
-  background: rgba(255, 138, 198, 0.28);
+.camRollBtn:active { transform: scale(0.88); }
+@keyframes camRollShaderSweep {
+  to { background-position: 0 0, -260% 0; }
 }
 .camRollBtnThumb {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: 40% / 32%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .camRollBtn { animation-duration: .001ms; }
 }
 
 /* The LIVE control: text in the same shader-clip technique as the zoom
