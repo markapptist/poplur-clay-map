@@ -39,6 +39,15 @@ import {
   rememberSelectedAppIcon,
   type AppIconOption,
 } from './appIcons'
+import {
+  VERIFICATION_CATEGORIES,
+  readVerification,
+  submitVerificationRequest,
+  withdrawVerificationRequest,
+  type VerificationCategoryID,
+  type VerificationState,
+  type VerificationStatus,
+} from './profileVerification'
 
 // Settings, and the one thing in it that is a feature rather than a switch:
 // REFER A FRIEND. Radius is earned slowly and decays; a referral hands you the
@@ -54,7 +63,7 @@ import {
 // lives under Radio. Pages with nothing to set yet still get a row — a gap in
 // the list would read as "this page has no settings screen", which is a
 // different claim from "there is nothing to set here yet".
-type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'app' | 'profile'
+type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'app' | 'profile' | 'verify'
 
 const PAGE_TITLE: Record<Page, string> = {
   home: 'HOME',
@@ -64,6 +73,13 @@ const PAGE_TITLE: Record<Page, string> = {
   radio: 'RADIO',
   app: 'APP ICON',
   profile: 'PROFILE',
+  verify: 'VERIFICATION',
+}
+
+const VERIFICATION_LABEL: Record<VerificationStatus, string> = {
+  unverified: 'Not requested',
+  pending: 'Pending',
+  verified: 'Verified',
 }
 
 const RADIO_LABEL: Record<RadioScope, string> = {
@@ -111,6 +127,8 @@ export default function SettingsScreen({ bindBack }: {
   const [profileTheme, setProfileThemeState] = useState<ProfileTheme>(readSelectedProfileTheme)
   const [appIcon, setAppIcon] = useState<AppIconOption>(readSelectedAppIcon)
   const [gender, setGenderState] = useState<ProfileGender>(readProfileGender)
+  const [verification, setVerification] = useState<VerificationState>(readVerification)
+  const [verifyChoice, setVerifyChoice] = useState<VerificationCategoryID | null>(null)
   // null is the root list. The cube still closes Settings outright, so this only
   // ever has to walk back one level.
   const [page, setPage] = useState<Page | null>(null)
@@ -200,6 +218,37 @@ export default function SettingsScreen({ bindBack }: {
     if (isNativeShell()) postNativeEvent({ type: 'requestAppIcon' })
     return () => window.removeEventListener('poplur-native-app-icon', onNativeIcon)
   }, [])
+
+  // Tell the shell which page of Settings is up, so the navigator cube can wear
+  // the paint bucket on the two appearance pages and the verification cube on
+  // VERIFICATION — the same one-screen-many-faces route WalletScreen uses for
+  // SEND and CASH OUT (see poplur-wallet-page).
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('poplur-settings-page', { detail: page ?? 'root' }))
+  }, [page])
+  // Unmount only. Folding this into the effect above would dispatch 'root' on
+  // the way out of every page change and flicker the cube back to the gear
+  // between one face and the next.
+  useEffect(() => () => {
+    window.dispatchEvent(new CustomEvent('poplur-settings-page', { detail: 'root' }))
+  }, [])
+
+  const requestVerification = () => {
+    if (!verifyChoice) return
+    playPop()
+    const { state, relayed } = submitVerificationRequest(verifyChoice)
+    setVerification(state)
+    say(relayed
+      ? 'Verification requested. You will hear back in the app.'
+      : 'Request saved on this device — review opens when verification goes live.')
+  }
+
+  const cancelVerification = () => {
+    playPop()
+    setVerification(withdrawVerificationRequest())
+    setVerifyChoice(null)
+    say('Verification request withdrawn.')
+  }
 
   const say = (message: string) => {
     setNote(message)
@@ -355,6 +404,15 @@ export default function SettingsScreen({ bindBack }: {
                   <i>Choose how Poplur appears on this device.</i>
                 </span>
                 <span className={styles.rowValue}>{appIcon.displayName}</span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className={styles.row} onClick={() => openPage('verify')}>
+                <span className={styles.rowText}>
+                  <b>Verification</b>
+                  <i>Ask for the badge that marks this profile as the real one.</i>
+                </span>
+                <span className={styles.rowValue}>{VERIFICATION_LABEL[verification.status]}</span>
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
             </div>
@@ -603,6 +661,69 @@ export default function SettingsScreen({ bindBack }: {
               })}
             </div>
             <p className={styles.themeFootnote}>Saved on this device. The operating system may take a moment to refresh the Home Screen.</p>
+          </article>
+        )}
+
+        {page === 'verify' && (
+          <article className={styles.themeGroup} aria-label="Profile verification">
+            <div className={styles.themeHeading}>
+              <div>
+                <b>Verify this profile</b>
+                <span>The badge tells people the account is the real one.</span>
+              </div>
+              <strong>{VERIFICATION_LABEL[verification.status]}</strong>
+            </div>
+
+            {verification.status === 'verified' ? (
+              <p className={styles.verifyState}>
+                This profile is verified. Poplur shows the blue badge beside your name.
+              </p>
+            ) : verification.status === 'pending' ? (
+              <>
+                <p className={styles.verifyState}>
+                  Request sent{verification.requestedAt
+                    ? ` on ${new Date(verification.requestedAt).toLocaleDateString()}`
+                    : ''}. Nothing else is needed from you.
+                </p>
+                <button type="button" className={styles.verifyCancel} onClick={cancelVerification}>
+                  WITHDRAW REQUEST
+                </button>
+              </>
+            ) : (
+              <>
+                <div className={styles.verifyGrid} role="radiogroup" aria-label="What is this profile?">
+                  {VERIFICATION_CATEGORIES.map(category => {
+                    const selected = verifyChoice === category.id
+                    return (
+                      <button
+                        type="button"
+                        key={category.id}
+                        role="radio"
+                        aria-checked={selected}
+                        className={selected ? `${styles.verifyTile} ${styles.verifyTileSelected}` : styles.verifyTile}
+                        onClick={() => { playPop(); setVerifyChoice(category.id) }}
+                      >
+                        <b>{category.displayName}</b>
+                        <i>{category.blurb}</i>
+                      </button>
+                    )
+                  })}
+                </div>
+                <button
+                  type="button"
+                  className={styles.invite}
+                  disabled={!verifyChoice}
+                  onClick={requestVerification}
+                >
+                  REQUEST VERIFICATION
+                </button>
+              </>
+            )}
+
+            <p className={styles.themeFootnote}>
+              Requests are reviewed by a person. Your profile picture and username are
+              what get checked, so make sure both are current before you ask.
+            </p>
           </article>
         )}
 

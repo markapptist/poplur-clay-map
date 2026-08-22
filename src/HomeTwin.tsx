@@ -113,6 +113,14 @@ const FACETIME_CONTACT_MODEL = 'poplur_cube_contact.glb'
 // one-screen-two-states route MAIL's envelope uses.
 const WALLET_SEND_MODEL = 'poplur_cube_coin_stack.glb'
 const WALLET_CASHOUT_MODEL = 'poplur_cube_cash_stack.glb'
+// Settings' inner pages, over poplur-settings-page. PROFILE (background) and
+// APP ICON are both "change how this looks", so they share one paint bucket
+// rather than two near-identical cubes; VERIFICATION gets its own. Supplied
+// Meshy exports at 79MB and 81MB, decimated by the recipe this whole set uses
+// (Draco + simplify 0.0005 + 256px webp) to 411KB and 296KB — in line with the
+// newspaper's 385KB, which is the heaviest thing already in the set.
+const SETTINGS_APPEARANCE_MODEL = 'poplur_cube_paint_bucket.glb'
+const SETTINGS_VERIFY_MODEL = 'poplur_cube_verification.glb'
 
 // ── Last-page memory ─────────────────────────────────────────────────────────
 /** Where the app is standing: the tab, the hold-menu page on it (null = the
@@ -1196,6 +1204,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     window.addEventListener('poplur-wallet-page', onPage)
     return () => window.removeEventListener('poplur-wallet-page', onPage)
+  }, [])
+  // Which page of Settings is up: 'root' (the list), or one of its sub-pages.
+  // Only three of them change the cube; the rest fall through to the gear.
+  const [settingsPage, setSettingsPage] = useState<string>('root')
+  useEffect(() => {
+    const onPage = (e: Event) => setSettingsPage((e as CustomEvent<string>).detail || 'root')
+    window.addEventListener('poplur-settings-page', onPage)
+    return () => window.removeEventListener('poplur-settings-page', onPage)
   }, [])
   // The profile head follows the gender setting live — Settings flips it and
   // the cube re-molds without a relaunch. The state's value is unused; its
@@ -3078,6 +3094,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // The wallet's inner pages: coins for SEND, cash for CASH OUT.
       ?? (cubeScreen === 'profile-wallet' && walletPage === 'send' ? WALLET_SEND_MODEL : undefined)
       ?? (cubeScreen === 'profile-wallet' && walletPage === 'cashout' ? WALLET_CASHOUT_MODEL : undefined)
+      // Settings' inner pages: the paint bucket for the two appearance pages,
+      // the check for VERIFICATION. Everything else in Settings keeps the gear.
+      ?? (cubeScreen === 'profile-settings' && (settingsPage === 'profile' || settingsPage === 'app')
+        ? SETTINGS_APPEARANCE_MODEL : undefined)
+      ?? (cubeScreen === 'profile-settings' && settingsPage === 'verify'
+        ? SETTINGS_VERIFY_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
       // PHOTO mode wears the Kodak, same as the POST tab's idle default.
