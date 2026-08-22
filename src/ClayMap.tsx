@@ -1832,6 +1832,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     map.getContainer().addEventListener('pointerdown', stopOrbit)
     map.getContainer().addEventListener('wheel', stopOrbit, { passive: true })
 
+    // The last cull actually applied. `Map.setFilter` calls `_update(true)`
+    // UNCONDITIONALLY — even when `Style.setFilter` has already early-returned
+    // because `deepEqual` found the filter identical — so re-asserting an
+    // unchanged filter still marks the style dirty and forces a repaint. This
+    // runs on every `moveend`, and the idle orbit fires a synchronous `moveend`
+    // per ambient frame, so an untouched map was paying two forced whole-scene
+    // frames per orbit step for filters that had not changed. A bearing or
+    // pitch move leaves the centre exactly alone, which is precisely the case
+    // this catches; a real pan changes it and still applies normally.
+    let lastCull: { lng: number; lat: number; building: number; venue: number } | null = null
     const updateLabelCull = () => {
       if (!map.isStyleLoaded()) return
       const zoom = map.getZoom()
@@ -1840,6 +1850,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const tightStreet = streetViewRef.current || pitch >= 74
       const buildingRadius = tightStreet ? 260 : zoom >= 17 ? 760 : zoom >= 15.5 ? 1500 : 4200
       const venueRadius = tightStreet ? 460 : zoom >= 17 ? 1050 : zoom >= 15.5 ? 2100 : 5600
+      if (lastCull
+        && lastCull.lng === center.lng && lastCull.lat === center.lat
+        && lastCull.building === buildingRadius && lastCull.venue === venueRadius) return
+      lastCull = { lng: center.lng, lat: center.lat, building: buildingRadius, venue: venueRadius }
       const buildingFilter = ['all', ['has', 'name'], ['within', circlePolygon(center, buildingRadius)]] as never
       const venueFilter = ['all', ['has', 'name'], ['within', circlePolygon(center, venueRadius)]] as never
       if (map.getLayer('clay-building-name-labels')) {

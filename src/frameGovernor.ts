@@ -138,6 +138,56 @@ let ambientSleeping = false
 // Set the first time ambient decoration sleeps; only consulted on LOW_TIER.
 let ambientShowcaseFinished = false
 
+// ── arrival vs RETURN ────────────────────────────────────────────────────────
+// A surface coming front for the first time is an ARRIVAL: it has nothing on
+// screen yet, and the authored showcase — traffic, boats, the idle orbit — is
+// the thing it arrived to show. Coming front again is a RETURN, and a return is
+// a different event entirely: the camera has not moved, the tiles are resident,
+// the style is built and `mapIdleSnapshot` is holding a pixel-accurate still of
+// the exact frame the user left.
+//
+// setSurfaceFront treated both the same and granted a fresh AMBIENT_IDLE_MS
+// lease either way, which is what made a return expensive (measured 21 Aug on
+// the shipped bundle: ~5800ms of renderer CPU and ~290 Mapbox frames over 30s
+// for a camera that never moved). Almost none of that was waking up. It was the
+// decoration layer replaying its showcase: traffic is a SYMBOL layer over a
+// GeoJSON source, so each 4Hz `setData` re-tiles the source, re-runs symbol
+// placement, and every finished tile independently calls Map._update() ->
+// triggerRepaint(). 52 traffic updates produced 728 tile loads and 781 of the
+// window's 843 repaints, on a scene that was already composed and correct.
+//
+// So a return no longer buys a showcase. It buys exactly enough RENDERER time
+// to replace the retained still with a live WebGL frame and park again — the
+// governor already separates those two decisions (see rendererParked below),
+// and a bounded managed operation is the primitive that un-parks the renderer
+// without waking a single ambient subscriber. The first real touch runs
+// wakeAmbient() through onGestureStart and the world comes back at full rate,
+// which is the same bargain LOW_TIER hardware has always had.
+//
+// Long enough that a person who came back to look, and has not touched anything
+// yet, is looking at the live canvas rather than at the retained still. It buys
+// no extra frames: Mapbox is event-driven, so once the wake frame is painted
+// and the map goes idle it draws nothing further for the rest of the lease —
+// measured identical (one frame) at 500ms and at 2500ms.
+const SURFACE_RESUME_RENDER_MS = 2_500
+// "Has the showcase played?" is deliberately NOT just "has this surface ever
+// been front". A React effect that re-runs tears down and re-establishes the
+// front signal inside a single tick, and the performance manager can flip a
+// renderer inactive and active again just as fast. Either would otherwise count
+// as a completed visit and rob the real arrival of its showcase. Only a visit
+// long enough for the showcase to actually have been watched counts.
+const SHOWCASE_MIN_VISIT_MS = 3_000
+let surfaceShowcasePlayed = false
+// Zero means "no visit is being timed", and only a POSITIVELY observed front
+// state starts the clock. Not a false->true edge: `surfaceFront` initialises to
+// true ("assume front until a shell says otherwise"), so a document that mounts
+// already-front never produces that edge and its first visit would go
+// uncredited, handing the second visit a showcase it had already had. And not a
+// module-init timestamp either: a shell that mounts the map hidden may take
+// longer than SHOWCASE_MIN_VISIT_MS to boot and post front:false, which would
+// credit a visit that never happened and rob the real first visit instead.
+let surfaceFrontSince = 0
+
 // Decoration asleep and the map renderer parked are NOT the same decision, and
 // conflating them cost us a frozen map. A parked map has its private
 // `_triggerFrame` patched out, so it cannot draw its own pans and zooms either —
@@ -698,13 +748,24 @@ export function boostFrames(ms = 400): void {
 export function setSurfaceFront(front: boolean): void {
   surfaceFront = front
   if (typeof document !== 'undefined') {
+    if (front && surfaceFrontSince === 0) surfaceFrontSince = performance.now()
     document.documentElement.dataset.poplurSurfaceFront = front && !document.hidden ? '1' : '0'
     if (front && !document.hidden) {
       window.clearTimeout(ambientSleepTimer)
       const lease = effectiveQualityCeiling() <= 0
         ? 0
         : effectiveQualityCeiling() <= 1 ? 4_000 : AMBIENT_IDLE_MS
-      if (lease <= 0) {
+      if (surfaceShowcasePlayed) {
+        // A RETURN. Keep decoration asleep and hand the renderer a short,
+        // bounded lease instead: it un-parks, Mapbox repaints the unchanged
+        // camera once, the retained still is swapped out for the live canvas,
+        // and the lease expires straight back into the parked state. No
+        // source is mutated, so nothing re-tiles and nothing re-places.
+        ambientAwakeUntil = 0
+        setAmbientSleeping(true)
+        ambientSleepTimer = 0
+        if (lease > 0) setManagedOperation(SURFACE_RESUME_RENDER_MS)
+      } else if (lease <= 0) {
         ambientAwakeUntil = 0
         setAmbientSleeping(true)
         ambientSleepTimer = 0
@@ -725,6 +786,13 @@ export function setSurfaceFront(front: boolean): void {
       setAmbientSleeping(true)
       window.clearTimeout(ambientSleepTimer)
       ambientSleepTimer = 0
+      // Leaving is what makes the next arrival a return: whatever the showcase
+      // had to say, it has now had a whole visit to say it.
+      if (surfaceFrontSince > 0
+        && performance.now() - surfaceFrontSince >= SHOWCASE_MIN_VISIT_MS) {
+        surfaceShowcasePlayed = true
+      }
+      surfaceFrontSince = 0
     }
   }
   sync()
