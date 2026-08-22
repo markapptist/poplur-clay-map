@@ -1,6 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './CasinoScreen.module.css'
 import { playPop } from './pop'
+import {
+  beginCasinoAudio,
+  endCasinoAudio,
+  playCasinoLever,
+  playCasinoNoWin,
+  playCasinoReelStop,
+  playCasinoSpin,
+  playCasinoWin,
+} from './casinoAudio'
 import { creditBalance, grantCasinoWin, onCreditsChange } from './poplurCredits'
 
 // POPLUR CASINO — the feed's daily slots channel. One free spin a day; the
@@ -58,6 +67,9 @@ const REELS = 5
     the component knowing the pixel size. */
 const REEL_DUR_BASE = 1400
 const REEL_DUR_STEP = 260
+/** When each reel settles, in ms from the start of travel — the CSS transition
+    durations, handed to the whirr so it thins out one voice per reel. */
+const REEL_STOPS_MS = Array.from({ length: REELS }, (_, i) => REEL_DUR_BASE + i * REEL_DUR_STEP)
 
 // ── daily gate ───────────────────────────────────────────────────────────────
 // Device-local, keyed like the app's other persisted prefs. SERVER-SIDE
@@ -158,7 +170,9 @@ function buildStrips(from: Faces, to: Faces): Faces {
   })
 }
 
-interface SpinResult { amount: number; line: string }
+/** `count` is the tier that paid (0 = nothing), which is what sizes the
+    payout chime — three bells for a small hit, a fanfare for the top line. */
+interface SpinResult { amount: number; line: string; count: 0 | 3 | 4 | 5 }
 
 // The cabinet's payline number chips — the colored circles running down both
 // sides of the reference's reel panel, top to bottom. Decorative hardware
@@ -188,6 +202,14 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const pendingRef = useRef<SpinResult | null>(null)
 
   useEffect(() => onCreditsChange(() => setCredits(creditBalance())), [])
+
+  // The cabinet's voice exists only while the cabinet is on screen: this opens
+  // the casino's AudioContext lazily and CLOSES it on unmount, stopping
+  // anything still in flight. Nothing here can outlive the screen.
+  useEffect(() => {
+    beginCasinoAudio()
+    return endCasinoAudio
+  }, [])
 
   // Same contract as GamesScreen: ask HomeTwin to clear its wordmark and stat
   // row while this screen is up (the jackpot sign lives where the wordmark
@@ -226,9 +248,12 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     finalFacesRef.current = null
     setStrips(null)
     setPhase('idle')
-    const shown = pendingRef.current ?? { amount: 0, line: '' }
+    const shown = pendingRef.current ?? { amount: 0, line: '', count: 0 as const }
     settleGrant()
     setResult(shown)
+    // The machine tells you before the readout does.
+    if (shown.amount > 0 && shown.count !== 0) playCasinoWin(shown.amount, shown.count)
+    else playCasinoNoWin()
   }
   const finishRef = useRef(finish)
   finishRef.current = finish
@@ -240,7 +265,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
 
   const spin = () => {
     if (phase !== 'idle' || used) return
-    playPop()
+    playCasinoLever() // the arm, not the app's UI pop — and it carries the haptic
     setResult(null)
     setPaysOpen(false)
     const outcome = rollOutcome()
@@ -254,6 +279,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
       : {
           amount: outcome.symbol.pays[outcome.count - 3],
           line: `Slots ${outcome.count}× ${outcome.symbol.name}`,
+          count: outcome.count,
         }
     // The spin is SPENT when the reels are committed, not when they stop —
     // closing the screen mid-spin must not re-arm today's spin.
@@ -276,12 +302,22 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   // transition to run.
   useEffect(() => {
     if (phase !== 'armed') return
-    const raf = window.requestAnimationFrame(() => setPhase('rolling'))
+    // governor-ok: one frame, cancelled on unmount — never re-armed.
+    const raf = window.requestAnimationFrame(() => {
+      setPhase('rolling')
+      // Started HERE and not at the press, because this is the frame the CSS
+      // transitions actually commit on — so the whirr's per-reel drop-outs sit
+      // on the same clock the reels do. Bounded by those durations; see
+      // casinoAudio for why nothing here can outlive them.
+      playCasinoSpin(REEL_STOPS_MS)
+    })
     return () => window.cancelAnimationFrame(raf)
   }, [phase])
 
   const onReelLanded = () => {
-    playPop() // one pop per reel as it thunks in, like the wheel's notches
+    // A reel dropping into its detent, not a UI pop. The pitch walks up with
+    // the index so five stops read as one settling sequence.
+    playCasinoReelStop(landedRef.current, REELS)
     landedRef.current += 1
     if (landedRef.current >= REELS) finish()
   }
