@@ -179,6 +179,16 @@ export function installNearLandmark3D(
         g => {
           if (!scene) { disposeModel(g.scene); return }
           const built = g.scene
+          // Skin the model in the clay building-cap cream (#efe9df) so it
+          // reads as a special landmark, not another OSM extrusion. The
+          // muted PBR gray shipped in the GLBs (~#948f8a) blended into the
+          // surrounding cream buildings — visually the model was there but
+          // indistinguishable, which reads as "nothing changed" to the user.
+          const claySkin = new THREE.MeshLambertMaterial({ color: 0xefe9df })
+          built.traverse(o => {
+            const mesh = o as THREE.Mesh
+            if (mesh.isMesh) mesh.material = claySkin
+          })
           const box = new THREE.Box3().setFromObject(built)
           const size = new THREE.Vector3()
           box.getSize(size)
