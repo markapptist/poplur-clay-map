@@ -18,7 +18,11 @@
 }
 
 .controls {
-  flex: 1 1 auto;
+  /* Docked at the bottom: the stage above flex-grows, this deck takes only
+     what its content needs, capped at half the studio so the video always
+     keeps the upper share of the screen. Within the cap it scrolls. */
+  flex: 0 1 auto;
+  max-height: 52%;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -46,7 +50,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 9px 12px;
+  /* .studio fills the whole composer, which is a fixed inset-0 modal — on a
+     notched phone this header's top edge is the SCREEN's top edge, and
+     without the inset the Done button sat underneath the status bar where
+     taps land on system UI, not on it. */
+  padding: max(9px, env(safe-area-inset-top)) 12px 9px;
   border-bottom: 1px solid #e4cbd6;
   background: linear-gradient(180deg, #fff9fc, #f3e3ea);
   box-shadow: 0 4px 14px rgba(60, 20, 43, .1);
@@ -80,16 +88,13 @@
 
 .stage {
   position: relative;
-  /* A percentage flex-basis resolves against .studio's own box, whatever
-     that box is — a real phone viewport, or a desktop-sized device frame in
-     a review harness. `vh` was used here before and measures the actual
-     browser viewport instead, which is the real device screen on a phone
-     but breaks out to the full desktop window's height inside a harness
-     that draws a phone-sized box on a much taller page — pushing the
-     header/Done button far off-screen instead of pinning them at the top. */
-  flex: 0 0 42%;
-  min-height: 200px;
-  max-height: 340px;
+  /* The video FILLS whatever the controls don't take, so the editing deck
+     reads as docked at the BOTTOM of the screen — not floating mid-video
+     with dead space under it. (An earlier fix gave this a fixed 42% basis,
+     which pinned the controls to the vertical middle instead; the ask was
+     always video on top, controls at the bottom.) */
+  flex: 1 1 auto;
+  min-height: 160px;
   overflow: hidden;
   background: #171115;
   isolation: isolate;
