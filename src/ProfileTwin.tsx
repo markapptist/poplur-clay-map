@@ -1248,6 +1248,11 @@ export default function ProfileTwin({
     // Nothing answers in the browser preview and the grid keeps what it has —
     // the gesture stays honest rather than pretending to have reloaded.
     postNativeEvent({ type: 'requestProfilePosts' })
+    // Identity too: the selfie video and photo arrive over the same bridge and
+    // the mount-time request is one-shot — if the shell's Firestore load was
+    // still in flight then, the selfie simply never appears (user-reported on
+    // device, 22 Aug). The pull is the natural retry.
+    postNativeEvent({ type: 'requestProfile' })
   }, [])
 
   usePullToRefresh({
