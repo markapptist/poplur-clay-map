@@ -2050,6 +2050,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // off-screen marker count is low there anyway.
       if (map.getZoom() < CULL_MIN_ZOOM) {
         container.querySelectorAll<HTMLElement>('.mapboxgl-marker').forEach(el => {
+          // Preserve the zoom-hidden flag — otherwise this early-out un-hides
+          // every landmark the moment we drop below CULL_MIN_ZOOM, which is the
+          // exact zoom range where WORLD_LANDMARKS is meant to be hidden. The
+          // main cull below already respects this flag; the shortcut has to too.
+          if (el.dataset.zoomHidden === '1') return
           if (el.style.display === 'none') el.style.display = ''
         })
         return
