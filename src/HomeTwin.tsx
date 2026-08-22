@@ -3639,11 +3639,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         className={`${styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeChromeGone ? ` ${styles.chromeHidden}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
-        {/* Visible only while the governor's thermal park is engaged (the
-            html data-poplur-thermal stamp) — parked used to be pixel-identical
-            to broken. Static on purpose: it appears exactly when the contract
-            is to spend nothing. */}
-        <span className={styles.coolingCue} aria-hidden="true">❄ COOLING</span>
         <div
           style={{
             ['--cube-swap-x' as string]: cubeSwapVec.x,

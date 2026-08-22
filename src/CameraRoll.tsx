@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import styles from './ViewHarness.module.css'
 import { playPop } from './pop'
-import { listCaptures, onCameraStore, isSelected, toggleSelected, selectedCount } from './cameraStore'
+import { listCaptures, onCameraStore, isSelected, toggleSelected, selectedCount, setLibraryNewest } from './cameraStore'
 import PermissionAlert from './PermissionAlert'
 
 // Camera Roll — the camera's upper page (channel-up pushes the whole camera
@@ -132,8 +132,14 @@ export default function CameraRoll({
     }
     w.poplurCameraRoll = payload => {
       if (Array.isArray(payload)) {
-        setNativeRoll(payload.filter((it): it is RollItem =>
-          !!it && typeof (it as RollItem).src === 'string'))
+        const items = payload.filter((it): it is RollItem =>
+          !!it && typeof (it as RollItem).src === 'string')
+        setNativeRoll(items)
+        // The shell sends newest-first. Hand the top item to the store so the
+        // camera's roll button can show the last thing actually taken, even
+        // before this session has captured anything of its own.
+        const newest = items.find(it => it.kind === 'photo' || it.kind === 'video')
+        setLibraryNewest(newest ? { kind: newest.kind as 'photo' | 'video', src: newest.src } : null)
       } else if (payload && typeof payload === 'object' && (payload as { denied?: boolean }).denied) {
         onDeny?.()
       }

@@ -1371,29 +1371,6 @@
   filter: saturate(0.55);
 }
 
-.coolingCue {
-  position: absolute;
-  top: -16px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
-  display: none;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(10, 16, 26, 0.78);
-  border: 1px solid rgba(140, 200, 255, 0.45);
-  color: #bfe2ff;
-  font: 700 10px/1.2 system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.12em;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-:global(html[data-poplur-thermal='serious']) .coolingCue,
-:global(html[data-poplur-thermal='critical']) .coolingCue {
-  display: block;
-}
-
 /* ── Incoming call banner ──────────────────────────────────────────────── */
 .incomingCallBanner {
   position: absolute;
