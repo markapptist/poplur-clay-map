@@ -76,35 +76,43 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The RADIO subscreen is back (station deck, real geo-searched stations) —
     // what stayed removed is the radio woven into the map experience itself
     // (tour beds, stingers, ticker readout). The AI voice remains the map's
-    // own narrator; the radio is a destination you tune deliberately.
-    { icon: 'Music', title: 'RADIO', screen: 'map-radio', native: true },
+    // own narrator; the radio is a destination you tune deliberately. Its own
+    // icon now (a supplied clay radio render) rather than borrowing a generic
+    // music note shared with IPOD and STUDIO — three different objects.
+    { icon: 'Radio', title: 'RADIO', screen: 'map-radio', native: true },
     // The music the map is carrying: Poplur's own tracks, left on the ground
     // like any other pop, and pickable only where your radius reaches them.
-    { icon: 'Music', title: 'IPOD', screen: 'map-ipod', native: true, glyph: '♪' },
+    { icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true, glyph: '♪' },
     { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true, glyph: '✓' },
     { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
   feed: [
+    // The supplied clay TV render — the tab's own object, not the remote that
+    // TV GUIDE wears below it. Two different props for two different things.
     { icon: 'TVGuide', title: 'TV', screen: 'feed-home', glyph: 'TV', home: true },
     // Feed engagement lives in its visible clay rail: share, comment controls,
     // comment composer, and heart must be reachable while watching.
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
     { icon: 'News', title: 'NEWS', screen: 'feed-news', native: true },
-    { icon: 'TVGuide', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
+    // TV GUIDE wears the remote — what you'd actually reach for to change the
+    // channel — rather than a second copy of the TV set above.
+    { icon: 'TvRemote', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
     // The daily casino: one free slots spin a day, paid in Poplur Credits.
     // It lives in the feed like TV and NEWS — a channel you visit, not a
-    // tool — and the '7' glyph stands in until a clay chip mark is drawn.
-    { icon: 'Games', title: 'CASINO', screen: 'feed-casino', native: true, glyph: '7' },
+    // tool. Its own icon now (a supplied clay slot machine).
+    { icon: 'Casino', title: 'CASINO', screen: 'feed-casino', native: true, glyph: '7' },
     // The mini-app folder: everything this account has made with the AI
     // builder, seeded with Poplur Flashlight. See miniApps.ts for the schema.
-    { icon: 'Create', title: 'APPS', screen: 'feed-apps', native: true, glyph: '▦' },
+    { icon: 'Apps', title: 'APPS', screen: 'feed-apps', native: true, glyph: '▦' },
   ],
   post: [
     // PHOTO and VIDEO select which physical camera object the navigator wears.
     // The object itself remains the shutter: tap the photo camera to shoot, or
     // tap the camcorder to start/stop recording. PHOTO is the default mode.
-    { icon: 'Create', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
+    // The tile now wears the supplied flash camera render — its own object,
+    // not the generic CREATE mark it used to share with AVATAR/APPS/AI chat.
+    { icon: 'Photo', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
     // VIDEO has its own cube now. It used to borrow TVGuide's mark, which meant
     // the two tiles were indistinguishable in the wheel — and it also meant the
     // VIDEO cube could not be dropped in without silently restyling TV GUIDE.
@@ -115,22 +123,29 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // the live viewfinder.
     // CREATE opens the existing Poplur AI chat. iOS presents the native
     // PoplurAIChatView; browser and Android use its interactive shared twin.
-    { icon: 'Create', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
+    // Wears the supplied laptop render — the screen this actually runs through.
+    { icon: 'CreateAI', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
     // Games is a working in-home screen on every target (including RN and
     // Android). Sending it to the old native-only route left it as a no-op on
     // those hosts, so it stays in the shared surface like News and TV Guide.
     { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true },
     // STUDIO is the camera for sound: record a take, let the AI build it into
-    // a song, post it to your radius like any other capture.
-    { icon: 'Music', title: 'STUDIO', screen: 'camera-studio', native: true },
+    // a song, post it to your radius like any other capture. Wears the
+    // supplied mixing-desk render, matching the screen's own object
+    // (camera-studio's cube is poplur_mixer_lite.glb).
+    { icon: 'Studio', title: 'STUDIO', screen: 'camera-studio', native: true },
   ],
   profile: [
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', glyph: 'P', home: true },
+    // Wears the supplied mailbox render — the same object the screen's own
+    // navigator cube wears at rest (poplur_cube_mailbox.glb).
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', native: true },
     { icon: 'Store', title: 'STORE', screen: 'profile-store' },
     // The account's money face: credit balance, the Store's cards, send and
     // cash-out. A window onto the poplurCredits ledger, never a second one.
-    { icon: 'Store', title: 'WALLET', screen: 'profile-wallet', native: true, glyph: 'W' },
+    // Its own icon now — the supplied clay wallet, matching the screen's own
+    // navigator cube (poplur_cube_wallet.glb) — rather than borrowing STORE's.
+    { icon: 'Wallet', title: 'WALLET', screen: 'profile-wallet', native: true, glyph: 'W' },
     // The React PhoneScreen, not the Rough Copy twin: who you can call is a
     // live radius question in both directions, and a static capture cannot
     // answer it or place a call. `native: true` routes this tile to
@@ -148,17 +163,16 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats', native: true },
     // The wall of trophies this account has collected. STATS is the numbers;
     // TROPHIES is what the numbers have won you — the library, predicates and
-    // earned-date ratchet live in trophies.ts. The tile icon is the supplied
-    // globe-cup sticker (public/holdmenu/Trophy.png), from the same artwork
-    // set the wall itself hangs.
+    // earned-date ratchet live in trophies.ts. The tile now wears the supplied
+    // clay trophy render, matching the rest of this refreshed icon set.
     { icon: 'Trophy', title: 'TROPHIES', screen: 'profile-trophies', native: true },
     // AVATAR makes the cube you wear on this tab out of a picture you supply —
     // a logo, a face, a product. Meshy sculpts it (Poplur credits) or the app
     // presses the image onto a clay cube for free. It sits next to SETTINGS
     // because both change what Profile IS rather than showing you something.
-    // The CREATE mark stands in until an avatar mark is drawn; nothing here
-    // invents one.
-    { icon: 'Create', title: 'AVATAR', screen: 'profile-avatar', native: true },
+    // Wears the supplied printer render, matching the screen's own navigator
+    // cube (poplur_cube_printer.glb) — this is where the cube gets fabricated.
+    { icon: 'Avatar', title: 'AVATAR', screen: 'profile-avatar', native: true },
     // A real screen now, not a Rough Copy capture: Settings holds REFER A
     // FRIEND, which gives away a day of worldwide radius and therefore has to
     // actually work.
@@ -264,6 +278,7 @@ export default function HoldMenuTwin({
   currentFeedChannelId,
   onTuneFeedChannel,
   onSubscreenChange,
+  onWheelFocusChange,
   initialScreen,
   wheelOverNonce = 0,
   bindGoBack,
@@ -295,6 +310,12 @@ export default function HoldMenuTwin({
       app. `unmounting` marks the close that comes from the menu itself leaving
       (a tab switch) rather than from the person closing the page. */
   onSubscreenChange?: (open: boolean, screen?: string, unmounting?: boolean) => void
+  /** The wheel slot currently centered — before anything is pressed. Lets the
+      shell preview a tile's own object on the live navigator cube while you
+      are still scrolling toward it (see DIRECTIONS: an action tile with no
+      subscreen of its own, so this is the only moment its arrow ever shows).
+      Fires on every settle, including null once the wheel closes. */
+  onWheelFocusChange?: (screen: string | null) => void
   /** Open directly on this subscreen, wheel skipped — how HomeTwin resumes the
       page you were on when you left the tab. Backing out of it still lands on
       the wheel, so the rest of the menu stays one gesture away. */
@@ -399,6 +420,17 @@ export default function HoldMenuTwin({
     // resume keeps its record through the former and drops it on the latter.
     return () => onSubscreenChange?.(false, undefined, true)
   }, [activeScreen, onSubscreenChange])
+
+  // Report the centered wheel slot so the shell can preview its object on
+  // the navigator cube before anything is committed — an action tile (like
+  // DIRECTIONS) never opens a subscreen, so scrolling to it is the only
+  // moment its own object gets to appear at all. Silent while a page is
+  // open over the wheel: that page already owns the cube.
+  const focusedScreen = activeScreen ? null : items[selected]?.screen ?? null
+  useEffect(() => {
+    onWheelFocusChange?.(focusedScreen)
+    return () => onWheelFocusChange?.(null)
+  }, [focusedScreen, onWheelFocusChange])
 
   // The cube no longer unwinds an open PAGE — pages are places the tab
   // stands, not layers to escape (they are remembered and resumed, so

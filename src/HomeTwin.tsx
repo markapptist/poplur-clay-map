@@ -113,6 +113,10 @@ const FACETIME_CONTACT_MODEL = 'poplur_cube_contact.glb'
 // one-screen-two-states route MAIL's envelope uses.
 const WALLET_SEND_MODEL = 'poplur_cube_coin_stack.glb'
 const WALLET_CASHOUT_MODEL = 'poplur_cube_cash_stack.glb'
+// DIRECTIONS is an action tile (mapAction, no subscreen), so this is worn
+// only as a wheel-focus PREVIEW — see wheelFocusScreen below — never as
+// committed cubeScreen state.
+const DIRECTIONS_ARROW_MODEL = 'poplur_cube_directions_arrow.glb'
 // Settings' inner pages, over poplur-settings-page. PROFILE (background) and
 // APP ICON are both "change how this looks", so they share one paint bucket
 // rather than two near-identical cubes; VERIFICATION gets its own. Supplied
@@ -1213,6 +1217,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-wallet-page', onPage)
     return () => window.removeEventListener('poplur-wallet-page', onPage)
   }, [])
+  // The hold-menu wheel's centered slot, reported live as it scrolls — not
+  // committed state, just a preview. DIRECTIONS is an action tile with no
+  // subscreen of its own (see SUBSCREEN_CUBE_MODEL's comment on that
+  // category), so scrolling past it in the wheel is the only moment its
+  // arrow object ever gets to appear on the cube.
+  const [wheelFocusScreen, setWheelFocusScreen] = useState<string | null>(null)
   // Which page of Settings is up: 'root' (the list), or one of its sub-pages.
   // Only three of them change the cube; the rest fall through to the gear.
   const [settingsPage, setSettingsPage] = useState<string>('root')
@@ -3129,6 +3139,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         ? STUDIO_MIC_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
+      // DIRECTIONS: the only preview in this chain rather than committed
+      // state — it fires straight from the wheel's centered slot, not from
+      // cubeScreen, because the tile never opens a subscreen (see
+      // SUBSCREEN_CUBE_MODEL's note on action tiles). Lowest priority: any
+      // real committed state above still wins.
+      ?? (wheelFocusScreen === 'map-directions' ? DIRECTIONS_ARROW_MODEL : undefined)
       // PHOTO mode wears the Kodak, same as the POST tab's idle default.
       // The lens is kept as its own constant but is not used as PHOTO's face
       // any more — the user asked PHOTO to read as "take the picture" rather
@@ -3981,6 +3997,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           currentFeedChannelId={CHANNELS[chanIndex]?.id}
           onTuneFeedChannel={tuneFeedChannel}
           onSubscreenChange={handleSubscreenChange}
+          onWheelFocusChange={setWheelFocusScreen}
           bindArrows={bindSubscreenArrows}
           bindGoBack={fn => { goBackRef.current = fn }}
           incomingCall={incomingCall}

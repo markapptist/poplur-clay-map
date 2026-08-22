@@ -282,9 +282,15 @@ const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> 
   // eyepiece and controls toward you. At identity the GLB stands body-level
   // with the lens out to the LEFT (-X) and the side LCD square to the viewer,
   // so a quarter turn about Y sends the lens to -Z (into the screen) and
-  // brings the rear face to the camera. The entry also keeps the
-  // poplur_cube_* rule below from tipping it onto its back.
+  // brings the rear face to the camera.
   [CAMCORDER_MODEL]: { x: 0, y: -Math.PI / 2, z: 0 },
+  // Meshy's image-to-3d only ever saw one side of the source photo — the
+  // opposite face is its own guess, and the guess is a bumpy, illegible mess
+  // (confirmed by a 9-pose render probe: roll0/roll180/yaw180 all show the
+  // artifacted face, yawP90 alone is the clean glossy one the photo actually
+  // specified). At identity the clean face sits roughly a quarter turn away
+  // from camera-forward, so a +90° yaw brings it square.
+  'poplur_cube_directions_arrow.glb': { x: 0, y: Math.PI / 2, z: 0 },
 }
 
 /** The Meshy-exported cube models (mailbox, TV remote, laptop, printer, gear,
