@@ -792,6 +792,9 @@ export default function HoldMenuTwin({
       if (count <= 1) return
       if (draggingRef.current) return
 
+      // dt-independent ease factor: 0.22 per frame at 60fps, scaled to real dt.
+      const ease = 1 - Math.pow(1 - 0.22, dt * 60)
+
       // Tap-to-spin: ease the wheel to the tapped item along the shortest arc.
       if (snapIndexRef.current !== null) {
         boostFrames(160)
@@ -800,7 +803,7 @@ export default function HoldMenuTwin({
         if (d > count / 2) d -= count
         if (d <= -count / 2) d += count
         if (Math.abs(d) < 0.001) { applyOffsetDelta(d); snapIndexRef.current = null }
-        else applyOffsetDelta(d * 0.22)
+        else applyOffsetDelta(d * ease)
         return
       }
 
@@ -823,7 +826,7 @@ export default function HoldMenuTwin({
           // The settle into the notch is the most visible part of the whole
           // gesture, so it is boosted too rather than easing at ambient rate.
           if (Math.abs(remaining) >= 0.001) boostFrames(160)
-          applyOffsetDelta(Math.abs(remaining) < 0.001 ? remaining : remaining * 0.22)
+          applyOffsetDelta(Math.abs(remaining) < 0.001 ? remaining : remaining * ease)
         }
       }
     }, 'ambient')
