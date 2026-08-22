@@ -2,6 +2,7 @@ import mapboxgl from 'mapbox-gl'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
+import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 
 // ── The Statue of Liberty as a TRUE 3D model ──────────────────────────────────
 //
@@ -12,12 +13,29 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 // that one landmark and back to globe the moment you leave. Everywhere else the
 // globe experience is untouched.
 //
-// THERMAL: the three.js render loop only exists while the layer is on the map
-// (render() calls triggerRepaint()). When inactive the layer is removed, so no
-// three.js frame runs at all. The renderer shares the MAP's own GL context
-// (like ClayBuildings3D), so it must NOT be routed through releaseWebGL —
-// losing that context would take the whole map down. Removing the layer +
-// disposing three's own geometry/materials is the correct teardown.
+// THERMAL. This layer used to end every render() with map.triggerRepaint(),
+// copied from Mapbox's three.js sample — which animates its model and therefore
+// needs a repaint every frame. The statue does not move. Measured on the
+// workbench at Liberty Island zoom 15.2, over a 12s window with the map idle,
+// the governor's renderer park engaged and Mapbox reporting idle():
+//
+//     with the per-frame repaint : 718 map renders (59.8/s), 8,164ms renderer CPU
+//     60km away, layer inactive  :   0 map renders,              2ms renderer CPU
+//
+// The park flag was set and meant nothing: the repaint re-armed itself from
+// inside the frame it was drawing, so the map never stopped and the whole
+// idle/park/ambient-sleep architecture was defeated for as long as you stood
+// near the statue. A static model only needs to draw when the map draws, which
+// Mapbox already does for every camera change; the only frames this layer has
+// to ask for are the ones nothing else knows about (the GLB arriving, the lease
+// being granted). Everything else is the map's own repaint schedule.
+//
+// The renderer shares the MAP's own GL context (like ClayBuildings3D), so it
+// must NOT be routed through releaseWebGL — losing that context would take the
+// whole map down. Removing the layer + disposing three's own geometry and
+// materials is the correct teardown. It also holds a real
+// PoplurPerformanceManager lease while it is showing, so a warm phone can drop
+// it back to the flat sprite instead of carrying a second scene forever.
 
 const LIBERTY: [number, number] = [-74.0445, 40.6892]
 const LAYER_ID = 'liberty-3d'
@@ -56,7 +74,15 @@ export function installLibertyLandmark(
     onActiveChange?: (active: boolean) => void
   } = {},
 ): LibertyLandmark {
-  let active = false
+  // What the CAMERA wants: near Liberty Island and zoomed in.
+  let wanted = false
+  // What the performance manager ALLOWS. Starts false and is only ever set by
+  // an actual grant: reconcile() calls back on every change of a renderer's
+  // active state, so a lease it refuses (light budget full on a warm phone)
+  // stays silent — and optimism here would draw the statue without one.
+  let leaseGranted = false
+  // What is actually on the map right now — `wanted && leaseGranted`.
+  let shown = false
   let disposed = false
 
   // The projection the map wants when NOT near Liberty (globe for the normal
@@ -140,11 +166,19 @@ export function installLibertyLandmark(
           built.position.y -= box2.min.y // sit the base on the ground
           model = built
           scene.add(built)
+          // The one frame the map cannot know it needs: the model arrived
+          // after the camera settled. Ask for exactly one, not for all of them.
+          map.triggerRepaint()
         },
         undefined,
         err => console.warn('[liberty glb]', err),
       )
 
+      // This creates NO WebGL context — it wraps the MAP's own canvas and gl
+      // (the ClayBuildings3D pattern), so there is no second context to lease,
+      // park or lose, and releaseWebGL on it would kill the map. What IS
+      // leased is the layer, which is the thing that actually costs frames.
+      // governor-ok: shares the map's context; the layer holds a PoplurPerformanceManager lease (`perf` below) only while it is on the map, and draws only inside Mapbox's own render pass — it asks for no frames of its own
       renderer = new THREE.WebGLRenderer({
         canvas: m.getCanvas(),
         context: gl,
@@ -173,7 +207,9 @@ export function installLibertyLandmark(
       cam.projectionMatrix = new THREE.Matrix4().fromArray(matrix).multiply(l)
       renderer.resetState()
       renderer.render(scene, cam)
-      map.triggerRepaint()
+      // NO triggerRepaint here. See the THERMAL note at the top of the file:
+      // asking for the next frame from inside this one is an ungoverned loop
+      // that no park, thermal ceiling or ambient gate can reach.
     },
   }
 
@@ -201,16 +237,57 @@ export function installLibertyLandmark(
     opts.onActiveChange?.(false)
   }
 
+  /** Bring the map in line with `wanted && leaseGranted`. Idempotent. */
+  const sync = () => {
+    if (disposed) return
+    const next = wanted && leaseGranted
+    if (next === shown) return
+    shown = next
+    if (shown) activate()
+    else deactivate()
+  }
+
+  // A LEASE, not a registration-for-life. `heavy: false` is deliberate and
+  // load-bearing: the manager keeps exactly ONE heavy renderer active, and that
+  // one is ClayMap3D — registering heavy here would evict the map itself. It
+  // stays invisible/undemanded while the statue is not showing, so it costs a
+  // light slot only for as long as it is actually drawing, and a warm phone
+  // (LOW_POWER drops the light budget to 2, SURVIVAL to 1) drops it back to the
+  // flat sprite rather than carrying a second scene through the whole visit.
+  const perf: PoplurRendererHandle = PoplurPerformanceManager.registerRenderer({
+    id: 'LibertyLandmark3D',
+    heavy: false,
+    priority: 60,
+    visible: false,
+    demanded: false,
+    onActiveChange: active => {
+      leaseGranted = active
+      sync()
+      // A re-grant has to redraw: the camera has not moved, so nothing else
+      // will ask Mapbox for the frame that puts the statue back.
+      if (active && shown) map.triggerRepaint()
+    },
+    releaseInactiveResources: () => {
+      // onRemove (via deactivate) already freed the scene; this covers a
+      // manager-driven release that raced ahead of the layer removal.
+      if (model) { disposeModel(model); model = null }
+    },
+  })
+
   const update = () => {
     if (disposed) return
     const zoom = map.getZoom()
     const c = map.getCenter()
     const near = distanceKm([c.lng, c.lat], LIBERTY) <= NEAR_KM
-    const shouldBeActive = near && zoom >= NEAR_ZOOM
-    if (shouldBeActive === active) return
-    active = shouldBeActive
-    if (active) activate()
-    else deactivate()
+    const next = near && zoom >= NEAR_ZOOM
+    if (next === wanted) return
+    wanted = next
+    // Order matters: setVisible/setDemand reconcile SYNCHRONOUSLY and can call
+    // onActiveChange -> sync() before returning, so `wanted` must already be
+    // current when they run.
+    perf.setVisible(next)
+    perf.setDemand(next)
+    sync()
   }
 
   map.on('move', update)
@@ -218,21 +295,25 @@ export function installLibertyLandmark(
 
   return {
     update,
-    isActive: () => active,
+    isActive: () => shown,
     dispose: () => {
       if (disposed) return
-      disposed = true
       map.off('move', update)
       map.off('zoom', update)
+      // Before the disposed latch: the handle's dispose() runs
+      // releaseInactiveResources, and the layer must still be removable.
+      perf.dispose()
+      disposed = true
       if (map.getLayer(LAYER_ID)) {
         try { map.removeLayer(LAYER_ID) } catch { /* map already torn down */ }
       }
-      if (active && baseProjection !== 'mercator') {
+      if (shown && baseProjection !== 'mercator') {
         try {
           if (currentProjection() !== baseProjection) map.setProjection(baseProjection)
         } catch { /* map already torn down */ }
       }
-      active = false
+      wanted = false
+      shown = false
     },
   }
 }
