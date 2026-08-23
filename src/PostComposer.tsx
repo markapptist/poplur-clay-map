@@ -169,6 +169,13 @@ export default function PostComposer({
   // declined autoplay is silent — no error, no event, just a video that never
   // moves. Asking explicitly once the data is there is what actually starts it.
   const previewVideoRef = useRef<HTMLVideoElement | null>(null)
+  // A capture-only decoder for exactly the gap above: whenever the governor
+  // has not (yet, or ever, this visit) allowed the looping preview to play,
+  // this hidden element still loads the same source just far enough to hand
+  // stillFromVideo a real frame — one decode, never played, released the
+  // moment the still lands. Without it there is no path to a still at all
+  // and the preview renders nothing.
+  const captureVideoRef = useRef<HTMLVideoElement | null>(null)
   const filterRailRef = useRef<HTMLDivElement | null>(null)
   const [previewPlaying, setPreviewPlaying] = useState(() =>
     incomingMedia.kind === 'video'
@@ -280,6 +287,16 @@ export default function PostComposer({
       releasePreviewVideo(v)
     }
   }, [basePreviewOwnsMedia, media.kind, media.src, previewPlaying, retirePreview])
+
+  // Releases the capture-only decoder as soon as it has done its one job, or
+  // on unmount if the still never lands (screen closed mid-decode).
+  useEffect(() => {
+    if (previewStill || media.kind !== 'video') return
+    return () => {
+      const v = captureVideoRef.current
+      if (v) releasePreviewVideo(v)
+    }
+  }, [previewStill, media.kind])
 
   const backRef = useRef({ step, usedAI, onClose })
   backRef.current = { step, usedAI, onClose }
@@ -499,7 +516,22 @@ export default function PostComposer({
               alt="Your video preview"
               style={{ filter: filterCss === 'none' ? undefined : filterCss }}
             />
-          ) : null}
+          ) : (
+            <video
+              key={media.src}
+              ref={captureVideoRef}
+              src={media.src}
+              muted
+              playsInline
+              preload="auto"
+              style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+              aria-hidden="true"
+              onLoadedData={event => {
+                const still = stillFromVideo(event.currentTarget)
+                if (still) setPreviewStill(still)
+              }}
+            />
+          )}
         </>
       ) : (
         <img
