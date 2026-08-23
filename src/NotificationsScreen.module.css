@@ -14,6 +14,10 @@
      halfway up the page at others. */
   display: flex;
   flex-direction: column;
+  /* Containing block for the pull-to-refresh curtain (.panel is absolute) —
+     without it the sheet anchors to the nearest positioned ancestor instead
+     of this scroll host, the same trap Chats' .threadList comment documents. */
+  position: relative;
   padding:
     calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px)
     16px
@@ -25,6 +29,18 @@
      app's theme, and the brief for this screen is a white page. */
   background: #fff;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+
+/* Everything the curtain reveals over — header included, the same shape the
+   news page's masthead takes, since this screen never had Chats' separate
+   fixed nav bar to hold out of the pull. Reproduces .screen's own former
+   flex-column-with-margin-auto-DONE exactly, one level deeper: min-height so
+   DONE still parks at the visual bottom when the list is short, and still
+   grows past it (letting .screen scroll) when the list runs long. */
+.pullInner {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
 }
 
 .header {

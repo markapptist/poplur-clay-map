@@ -162,7 +162,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // already on screen. Now that the list is a PAGE of its own (white, the
     // whole history, SHOW ME's shape) it belongs in the wheel like every other
     // page, and the bell opens the same screen via `poplur-open-notifications`.
-    { icon: 'Notifications', format: 'svg', title: 'NOTIFICATIONS', screen: 'profile-notifications', native: true },
+    { icon: 'Notifications', title: 'NOTIFICATIONS', screen: 'profile-notifications', native: true },
     { icon: 'Stats', title: 'STATS', screen: 'profile-stats', native: true },
     // The wall of trophies this account has collected. STATS is the numbers;
     // TROPHIES is what the numbers have won you — the library, predicates and
