@@ -1,5 +1,5 @@
-/* The recognition ring — the voice assistant's rainbow, worn by the camera.
-   Same conic recipe and rotating-angle mechanic as PoplurVoiceAssistant's wake
+/* The recognition ring — the Poplur rainbow, worn by the camera. The conic
+   recipe and rotating-angle mechanic came from the retired Hey Poplur wake
    ring; hollow via the border mask; glow is box-shadow (filter would promote
    and re-rasterize — the 6 Aug device trace is why that rule exists). */
 

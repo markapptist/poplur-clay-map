@@ -55,10 +55,9 @@ interface Item {
   nativeAction?: string
   /** performed on the live MAP behind the menu — no subscreen opens */
   mapAction?: 'search' | 'locate' | 'directions' | 'tour' | 'mapMode'
-  /** dispatches an app event and dismisses — no subscreen opens. `voice` wakes
-   *  the Poplur assistant (skipping the wake phrase); `notifications` springs
-   *  down the real notifications dropdown owned by Profile. */
-  event?: 'voice' | 'notifications'
+  /** dispatches an app event and dismisses — no subscreen opens.
+   *  `notifications` opens the notifications subscreen owned by Profile. */
+  event?: 'notifications'
   /** the tab's own main page: dismisses everything back to the live tab.
    *  Exists because tabs now RESUME the last open subscreen (HomeTwin), so
    *  the root needs an explicit door of its own — the camera always had one
@@ -474,7 +473,7 @@ export default function HoldMenuTwin({
   //
   // Only tiles that actually OPEN something are in the walk. Roughly half the
   // menu acts on the live screen behind it (LIKE, PHOTO, the map tools) or
-  // fires an event (NOTIFICATIONS, HEY POPLUR); stepping onto one of those
+  // fires an event (NOTIFICATIONS); stepping onto one of those
   // would fire it rather than move you, so the arrows skip them.
   useEffect(() => {
     if (!bindArrows) return
@@ -734,13 +733,11 @@ export default function HoldMenuTwin({
       onClose('action')
       return
     }
-    // HEY POPLUR / NOTIFICATIONS fire an app event and dismiss — the result (the
-    // voice ring, the notifications dropdown) is owned by another component.
+    // NOTIFICATIONS fires an app event and dismisses — the result (the
+    // notifications subscreen) is owned by another component.
     if (item.event) {
       playPop()
-      window.dispatchEvent(new CustomEvent(
-        item.event === 'voice' ? 'poplur-voice-request' : 'poplur-open-notifications',
-      ))
+      window.dispatchEvent(new CustomEvent('poplur-open-notifications'))
       onClose('action')
       return
     }

@@ -20,7 +20,6 @@ import PermissionAlert from './PermissionAlert'
 import {
   MOTION_REQUEST_EVENT, motionNeedsAsking, requestMotionFromGesture, declineMotion,
 } from './motionPermission'
-import PoplurVoiceAssistant from './PoplurVoiceAssistant'
 import InCallBar from './InCallBar'
 import WebSignIn from './WebSignIn'
 import { acceptCall } from './webCall'
@@ -1518,16 +1517,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     setActiveTab('feed')
     setHoldOpen(false)
   }, [])
-  const tuneFeedChannelFromVoice = useCallback((query: string) => {
-    const normalized = query.trim().toLowerCase()
-    const numeric = Number.parseInt(normalized.replace(/\D/g, ''), 10)
-    const channel = CHANNELS.find(candidate => (
-      candidate.id.toLowerCase() === normalized
-      || candidate.name.toLowerCase() === normalized
-      || (Number.isFinite(numeric) && candidate.number === numeric)
-    ))
-    if (channel) tuneFeedChannel(channel.id)
-  }, [tuneFeedChannel])
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
@@ -3905,11 +3894,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* No tab pills. The cube IS the navigation — a row of buttons beside it
           was a testing shortcut that kept leaking into views of the app. Turn
           the cube, or long-press it for the hold menu. */}
-
-      <PoplurVoiceAssistant
-        onTabRequest={tab => setActiveTab(tab)}
-        onChannelRequest={tuneFeedChannelFromVoice}
-      />
 
       {/* InCallBar removed — active call UI lives inside PhoneScreen's LCD */}
       <WebSignIn />

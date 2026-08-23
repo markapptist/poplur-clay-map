@@ -52,7 +52,6 @@ import { takeProfileMode } from './profileMode'
 //   expands a post fullscreen, and the clay channel arrows browse posts there
 //   (otherwise they scroll the grid).
 // - The bell springs down a pink notifications banner.
-// - "Hey Poplur" asks the AI; the reply is shown and spoken (audio-gated).
 
 interface Post {
   id?: string
@@ -450,18 +449,6 @@ type TorchVideoTrack = MediaStreamTrack & {
   getCapabilities?: () => { torch?: boolean }
 }
 
-// Canned Poplur AI — stands in for the backend until it exists.
-export function aiAnswer(q: string, username: string): string {
-  const lower = q.toLowerCase()
-  if (/radius|big|far|stat|analytic/.test(lower)) {
-    const stats = radiusStats()
-    return `${username}, your radius is ${stats.radiusKm.toFixed(1)} km. ${stats.views} completed views and ${stats.profileVisits} profile visits added ${stats.gains.toFixed(1)} km; dislikes and inactive posts removed ${stats.losses.toFixed(1)} km.`
-  }
-  if (/pop|post/.test(lower)) return 'Your last pop claimed 3 km of downtown. Drop one at Union Station — it is live right now.'
-  if (/trend/.test(lower)) return 'Skyline shots by the harbourfront are trending inside your radius.'
-  return `On it, ${username} — I will keep growing your world and let you know when a venue heats up.`
-}
-
 // Handles → the spoof pictures we already ship (same set as the share sheet).
 const AVATAR_BY_HANDLE: Record<string, string> = {
   '@sauceboss': 'feed/posters/ad-food.jpg',
@@ -701,9 +688,6 @@ export default function ProfileTwin({
   const [mailingUser, setMailingUser] = useState(false)
   const [mailText, setMailText] = useState('')
   const [shareNote, setShareNote] = useState<string | null>(null)
-  const [askOpen, setAskOpen] = useState(false)
-  const [askText, setAskText] = useState('')
-  const [aiReply, setAiReply] = useState<string | null>(null)
 
   // The avatar loop is a real decoder, not decorative CSS. Keep it only while
   // the avatar itself is the visible experience; fullscreen Profile layers can
@@ -759,20 +743,6 @@ export default function ProfileTwin({
       video.load()
     }
   }, [selfiePlaybackActive, selfieVideo, resumeSelfie])
-
-  // The persistent Home-level microphone controller sends its visible/spoken
-  // reply back here when Profile is front, so the profile still reflects a
-  // voice request made with the equaliser instead of becoming a separate flow.
-  useEffect(() => {
-    const receiveVoiceReply = (event: Event) => {
-      const reply = (event as CustomEvent<{ reply?: string }>).detail?.reply
-      if (!reply) return
-      setAskOpen(false)
-      setAiReply(reply)
-    }
-    window.addEventListener('poplur-voice-response', receiveVoiceReply)
-    return () => window.removeEventListener('poplur-voice-response', receiveVoiceReply)
-  }, [])
 
   // ── Identity: the REAL username + account type. Native shells answer over
   // the bridge; the browser twin honours ?username= / ?business=1 and
@@ -1186,10 +1156,10 @@ export default function ProfileTwin({
   // Kept in a ref-read closure so the handler registers once and still sees
   // current state.
   const backStateRef = useRef({
-    shareOpen, askOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+    shareOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
   })
   backStateRef.current = {
-    shareOpen, askOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+    shareOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
   }
   const onBackToOwnRef = useRef(onBackToOwn)
   onBackToOwnRef.current = onBackToOwn
@@ -1200,7 +1170,6 @@ export default function ProfileTwin({
     bindGoBack(() => {
       const s = backStateRef.current
       if (s.shareOpen) { setShareOpen(false); return true }
-      if (s.askOpen) { setAskOpen(false); return true }
       if (s.viewerIdx != null) { setViewerIdx(null); return true }
       if (s.capturing) { setCapturing(false); return true }
       if (s.showNotifs) { closeNotifsRef.current(); return true }
@@ -1722,21 +1691,6 @@ export default function ProfileTwin({
     }
   }
 
-  const ask = () => {
-    const q = askText.trim()
-    if (!q) return
-    playPop()
-    const reply = aiAnswer(q, username)
-    setAiReply(reply)
-    setAskText('')
-    // Speak it — the shared gate still owns audibility (mute, background).
-    try {
-      const u = new SpeechSynthesisUtterance(reply)
-      u.rate = 0.98
-      window.speechSynthesis.speak(u)
-    } catch { /* no synthesis */ }
-  }
-
   // Viewer audio follows the gate (mute button, backgrounding).
   useEffect(() => {
     if (viewerIdx == null) return
@@ -1855,19 +1809,6 @@ export default function ProfileTwin({
             <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
           </button>
         )}
-        {!visiting && (
-          <button
-            type="button"
-            className={styles.heyPoplurButton}
-            onClick={() => {
-              playPop()
-              window.dispatchEvent(new CustomEvent('poplur-voice-request'))
-            }}
-            aria-label="Hey Poplur"
-          >
-            <ClaySwayObject url="poplur_mic_lite.glb" pitch={0} size={512} alt="" />
-          </button>
-        )}
       </TabControlRail>
       <div className={styles.header}>
         <div className={styles.avatarWrap}>
@@ -1927,27 +1868,6 @@ export default function ProfileTwin({
             </div>
           )}
         </div>
-
-        {/* Voice replies stay anchored to the profile while the dedicated mic
-            button in the control rail owns assistant activation. */}
-        {(askOpen || aiReply) && (
-          <div className={styles.askWrap}>
-            {askOpen && (
-              <div className={styles.askRow}>
-                <input
-                  className={styles.askInput}
-                  value={askText}
-                  placeholder="Hey Poplur…"
-                  onChange={e => setAskText(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') ask() }}
-                  autoFocus
-                />
-                <button className={styles.askSend} onClick={ask} aria-label="Ask">→</button>
-              </div>
-            )}
-            {aiReply && <p className={styles.aiReply}>{aiReply}</p>}
-          </div>
-        )}
 
         <h1 className={styles.username}>
           {editingName && !visiting ? (

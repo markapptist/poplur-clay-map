@@ -1,13 +1,12 @@
 import React from 'react'
 import styles from './RecognitionAura.module.css'
 
-// The camera's recognition feedback: the Hey Poplur rainbow, not a tracker HUD.
+// The camera's recognition feedback: the Poplur rainbow, not a tracker HUD.
 //
-// Green boxes said "surveillance footage"; the wake ring already says "Poplur
-// heard you". Recognition now speaks the same language: when the model locks
-// onto something, the EDGES of the viewfinder light up with the exact conic
-// rainbow the voice assistant wears (PoplurVoiceAssistant.module.css), and
-// fade back out when the frame is empty. When the face it recognises is YOURS
+// Green boxes said "surveillance footage". When the model locks onto
+// something, the EDGES of the viewfinder light up with the Poplur conic
+// rainbow (originally the Hey Poplur wake ring, which outlived the voice
+// assistant), and fade back out when the frame is empty. When the face it recognises is YOURS
 // — matched against your profile picture, on-device — the ring burns brighter
 // and faster: the camera knows its owner.
 //
