@@ -224,21 +224,28 @@ export function installNearLandmark3D(
           // legible against the clay ground. It is model-space geometry, not
           // a screen-fixed badge, so it stays at the landmark's coordinate.
           const footprintRadius = Math.min(
-            0.9,
-            Math.max(0.18, Math.max(size.x, size.z) * 0.58),
+            0.5,
+            Math.max(0.1, Math.max(size.x, size.z) * 0.34),
           )
           const contact = new THREE.Mesh(
             new THREE.CircleGeometry(footprintRadius, 40),
-            new THREE.MeshLambertMaterial({
-              color: 0x79616c,
+            // A basic material deliberately ignores the bright landmark
+            // lights. Lambert shading turned the transparent contact patch
+            // white, which looked like another floating piece of geometry.
+            new THREE.MeshBasicMaterial({
+              color: 0x3b2a34,
               transparent: true,
-              opacity: 0.28,
+              opacity: 0.24,
               depthWrite: false,
             }),
           )
           contact.name = 'landmark-ground-contact'
-          contact.rotation.x = Math.PI / 2
-          contact.position.y = box.min.y + 0.002
+          // `built` has already converted the source's Z-up mesh to Three Y;
+          // its child positions remain in the mesh's own coordinates. Keep
+          // the circle in its default XY plane and place it at the source Z
+          // floor. Rotating it here made the contact shadow stand upright as
+          // a floating-looking disc beside low landmarks.
+          contact.position.z = box.min.y + 0.002
           built.add(contact)
           model = built
           modelReady = true

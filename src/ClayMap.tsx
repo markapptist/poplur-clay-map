@@ -690,8 +690,10 @@ export function landmarkCameraFrame(id: string): LandmarkCameraFrame | null {
   if (!landmark) return null
   return {
     zoom: landmarkCameraZoom(landmark.heightM),
-    // Tall towers need a lower pitch to keep their base and crown in frame.
-    pitch: landmark.heightM >= 500 ? 34 : landmark.heightM >= 300 ? 38 : 44,
+    // A near-top-down view makes an upright tower read as though it is lying
+    // across the map. Keep a deliberately oblique, ground-revealing angle;
+    // the size-aware zoom above leaves both base and crown inside the frame.
+    pitch: landmark.heightM >= 500 ? 54 : landmark.heightM >= 300 ? 56 : 58,
   }
 }
 

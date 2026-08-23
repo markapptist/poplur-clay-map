@@ -387,6 +387,11 @@ const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
 // Keep that small settle tail inside the finite lease instead of reopening the
 // map's ambient renderer for an arbitrary window.
 const MANAGED_CAMERA_SETTLE_MS = 400
+// Closing a search overlay in an embedded WebView can deliver its source
+// pointer to Mapbox long after the 3.4s landmark flight has landed. Keep that
+// stale click out of the map long enough that it cannot replace the selected
+// landmark with the coordinate behind the search control.
+const SEARCH_MAP_CLICK_GUARD_MS = 12_000
 // Tour pacing. The tour flight is not a short hop: it rises all the way out to
 // the globe and dives back into the next city (minZoom 0.9, curve 1.7 in
 // flyToCenter), so it needs real time to read as a camera move rather than a
@@ -427,6 +432,10 @@ const TRIP_TOTAL_MS = TRIP_CLIMB_MS - 60 + TRIP_CROSS_MS
 // per window, never while a hand is on the map, and never to somewhere the
 // camera is already standing.
 const ENGAGEMENT_FLY_COOLDOWN_MS = 25_000
+// A person who has deliberately searched for a destination owns the camera.
+// Do not let the browser demo's background engagement stream immediately pull
+// them back to a local post while the destination is being viewed.
+const MANUAL_DESTINATION_ENGAGEMENT_GRACE_MS = 30_000
 /** Hands-off window after the last touch/drag/wheel on the map. */
 const ENGAGEMENT_GESTURE_GRACE_MS = 6_000
 /** Close enough that flying there would be a lurch, not a journey. */
@@ -708,6 +717,7 @@ export default function App() {
   // When the user last had their hands on the map. Engagement will not take a
   // camera someone is already driving (see traverseToEngagement).
   const lastGestureRef = useRef(0)
+  const manualDestinationGuardUntilRef = useRef(0)
   // The traversal itself is defined much further down, next to the trip it
   // flies. Reach it through a ref so the chips below start ONCE, at boot,
   // instead of restarting every time a dependency of that callback changes.
@@ -951,6 +961,7 @@ export default function App() {
   const flyToPlace = useCallback((center: [number, number], name: string) => {
     playPop(0.3)
     searchInterruptRef.current()
+    manualDestinationGuardUntilRef.current = Date.now() + MANUAL_DESTINATION_ENGAGEMENT_GRACE_MS
     setCurrentPlace(displayPlaceName(name))
     // Keep the scrim through its exit animation. Closing it synchronously
     // removed the button underneath the user's finger, so the same tap could
@@ -978,7 +989,7 @@ export default function App() {
       // The landing is 3.4s, and embedded WebViews can deliver the source
       // pointer after that animation has already settled. Keep the canvas and
       // its markers inert through that short settling window.
-      map.__suppressNextMapClickUntil = Date.now() + 8_000
+      map.__suppressNextMapClickUntil = Date.now() + SEARCH_MAP_CLICK_GUARD_MS
     }
     map?.__claimCamera?.()
     map?.__stopOrbit?.()
@@ -2373,6 +2384,7 @@ export default function App() {
     const api = map as unknown as { __tripping?: boolean; __streetView?: boolean }
     if (api.__tripping || api.__streetView || tourOnRef.current) return
     const now = Date.now()
+    if (now < manualDestinationGuardUntilRef.current) return
     if (now - lastGestureRef.current < ENGAGEMENT_GESTURE_GRACE_MS) return
     // Already standing on it. Checked BEFORE the cooldown is spent, so a burst
     // of likes on the pop you are parked over does not eat the window that the
