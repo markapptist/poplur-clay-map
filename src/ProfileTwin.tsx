@@ -658,7 +658,6 @@ export default function ProfileTwin({
   // stayed black. Grid previews are stills; video belongs to the viewer only.
   const [staticGone, setStaticGone] = useState<Set<string>>(() => new Set())
   const [capturing, setCapturing] = useState(false)
-  const [launchingCamera, setLaunchingCamera] = useState(false)
   // The profile picture, PERSISTED. This tab unmounts every time the cube
   // turns (HomeTwin gates it on committedTab), so plain state meant a photo
   // you had just taken was gone the moment you left the screen and the card
@@ -714,7 +713,6 @@ export default function ProfileTwin({
     selfieVideo
     && selfiePolicyAllowsPlayback
     && !capturing
-    && !launchingCamera
     && viewerIdx == null
     && !showNotifs
     && !faceAsk
@@ -1377,7 +1375,7 @@ export default function ProfileTwin({
   // moment to say so. "Use my face" opts in; "Skip face ID" still takes the
   // photo — recognition simply stays off.
   const openCapture = () => {
-    if (launchingCamera || capturing) return
+    if (capturing) return
     let asked = false
     try { asked = window.localStorage.getItem('poplur.faceid.asked') === '1' } catch { /* embedded */ }
     if (!asked) { playPop(); setFaceAsk(true); return }
@@ -1394,17 +1392,16 @@ export default function ProfileTwin({
   }
 
   const beginCapture = () => {
-    if (launchingCamera || capturing) return
+    if (capturing) return
     playPop()
     // Poplur's own alert asks, and fires the platform call from its Allow
     // button — which is the user gesture iOS requires.
     askForMotion()
-    setLaunchingCamera(true)
-    window.setTimeout(() => {
-      setCaptureSource('camera')
-      setCapturing(true)
-      setLaunchingCamera(false)
-    }, 380)
+    // Straight to capture. The camera used to bloom out of its side control on
+    // a 380ms spring (camBtnPop + camEject); the side controls are a pop now,
+    // not a launch animation, so a press opens the viewfinder immediately.
+    setCaptureSource('camera')
+    setCapturing(true)
   }
 
   const commitSelfieVideo = (source: string, preview: string, nativePayload?: Record<string, unknown>) => {
@@ -1556,6 +1553,18 @@ export default function ProfileTwin({
     }, SELFIE_DURATION_SECONDS * 1_000)
   }
 
+  // The cube is the shutter during capture: HomeTwin turns a cube tap into this
+  // event (recordSelfie is redefined each render, so a ref keeps the listener
+  // pointed at the current one). recordSelfie already ignores a repeat tap
+  // while recording, so the fixed ten-second clip is safe.
+  const recordSelfieRef = useRef(recordSelfie)
+  recordSelfieRef.current = recordSelfie
+  useEffect(() => {
+    const onShutter = () => recordSelfieRef.current()
+    window.addEventListener('poplur-profile-shutter', onShutter)
+    return () => window.removeEventListener('poplur-profile-shutter', onShutter)
+  }, [])
+
   const toggleTorch = async () => {
     playPop()
     const track = streamRef.current?.getVideoTracks()[0] as TorchVideoTrack | undefined
@@ -1601,20 +1610,6 @@ export default function ProfileTwin({
         ) : (
           <video ref={videoRef} className={facingMode === 'user' ? styles.video : `${styles.video} ${styles.videoBack}`} playsInline muted />
         )}
-        <div className={styles.captureTop}>
-          {/* 3D clay flash / flip — the same extruded-clay marks as the post
-              camera, instead of flat glyph buttons. */}
-          {captureSource === 'camera' ? (
-            <ClayCornerButton kind="flash" active={torchOn} label={torchOn ? 'Turn flash off' : 'Turn flash on'} onPress={toggleTorch} size={44} />
-          ) : <span />}
-          <div className={styles.captureHead}>
-            {captureSource === 'camera' ? 'Profile selfie' : 'Selfie videos'}
-            <small>CHANNEL BUTTONS SWITCH SOURCE</small>
-          </div>
-          {captureSource === 'camera' ? (
-            <ClayCornerButton kind="flip" label="Switch camera" onPress={() => { playPop(); setFacingMode(mode => mode === 'user' ? 'environment' : 'user') }} size={44} />
-          ) : <span />}
-        </div>
         {captureSource === 'camera' && <div className={styles.vfRing} />}
         <div className={styles.captureBar}>
           {captureSource === 'camera' && cameraRollThumb && (
@@ -1628,10 +1623,11 @@ export default function ProfileTwin({
           )}
           {captureSource === 'camera' && !cameraRollThumb && <div className={styles.captureSpacer} aria-hidden="true" />}
           {captureSource === 'camera' ? (
+            // The cube (a camcorder now) is the record button — tap it to shoot
+            // the ten-second selfie. This spot only reports the state.
             <div className={`${styles.captureAction} ${styles.captureActionPrimary}`}>
-              <ClayCornerButton kind="capture" label="Record 10 second selfie" onPress={recordSelfie} size={108} activateOnClick />
               <span className={styles.captureActionLabel}>
-                {selfieRecording ? `${selfieSecondsLeft}s left` : savingPhoto ? 'Saving selfie' : 'Record 10s'}
+                {selfieRecording ? `${selfieSecondsLeft}s left` : savingPhoto ? 'Saving selfie' : 'Tap the cube to record'}
               </span>
             </div>
           ) : <div className={styles.captureLibraryHint}>{savingPhoto ? 'SAVING SELFIE VIDEO' : 'TAP A VIDEO'}</div>}
@@ -1792,6 +1788,15 @@ export default function ProfileTwin({
             {unreadNotifs > 0 && <span className={styles.bellDot} />}
           </button>
         )}
+        {!visiting && (
+          <button
+            className={styles.gearBtn}
+            onClick={() => { playPop(); window.dispatchEvent(new CustomEvent('poplur-open-settings')) }}
+            aria-label="Settings"
+          >
+            <ClaySwayObject url="poplur_cube_gear.glb" pitch={14} size={256} alt="" />
+          </button>
+        )}
         {visiting ? (
           <ClayCornerButton
             kind="mail"
@@ -1805,7 +1810,7 @@ export default function ProfileTwin({
             onPress={() => { playPop(); setMailingUser(true) }}
           />
         ) : (
-          <button ref={camBtnRef} className={launchingCamera ? `${styles.camBtn} ${styles.camBtnPop}` : styles.camBtn} onClick={openCapture} aria-label="Record profile selfie video">
+          <button ref={camBtnRef} className={styles.camBtn} onClick={openCapture} aria-label="Record profile selfie video">
             <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
           </button>
         )}
@@ -1861,12 +1866,6 @@ export default function ProfileTwin({
             )
           )}
 
-          {!visiting && launchingCamera && (
-            <div className={styles.camEject} aria-hidden="true">
-              <i />
-              <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} alt="" />
-            </div>
-          )}
         </div>
 
         <h1 className={styles.username}>

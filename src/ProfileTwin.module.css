@@ -268,6 +268,27 @@
 
 .camBtn:active { transform: scale(0.9); }
 
+/* The Settings shortcut — a clay gear the same 44px as the bell and camera,
+   sitting between them on the control rail. */
+.gearBtn {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease;
+}
+.gearBtn:active { transform: scale(0.9); }
+.gearBtn img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 8px rgba(60, 20, 44, 0.35));
+  user-select: none;
+}
+
 .camBtnPop {
   animation: cameraOriginPop 380ms cubic-bezier(0.2, 1.35, 0.35, 1) both;
 }

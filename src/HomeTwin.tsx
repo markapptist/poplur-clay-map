@@ -1199,6 +1199,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-open-notifications', onOpen)
     return () => window.removeEventListener('poplur-open-notifications', onOpen)
   }, [])
+  // The profile's gear shortcut opens Settings — the same subscreen the hold
+  // menu's SETTINGS tile does, reached without the wheel.
+  useEffect(() => {
+    const onOpenSettings = () => {
+      setActiveTab('profile')
+      setResume(current => ({ screen: 'profile-settings', n: current.n + 1 }))
+      setHoldOpen(true)
+    }
+    window.addEventListener('poplur-open-settings', onOpenSettings)
+    return () => window.removeEventListener('poplur-open-settings', onOpenSettings)
+  }, [])
   useEffect(() => {
     if (notifOpenNonce === 0) return
     setResume(current => ({ screen: 'profile-notifications', n: current.n + 1 }))
@@ -3143,7 +3154,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
     : (avatarPreview
-      ?? (activeTab === 'profile' && profileCapture ? PROFILE_CAMERA_MODEL : undefined)
+      ?? (activeTab === 'profile' && profileCapture ? CAMCORDER_MODEL : undefined)
       ?? (cubeScreen === 'profile-messages' && mailThreadOpen ? MAIL_ENVELOPE_OPEN_MODEL : undefined)
       // FaceTime video call — the cube wears the contact card while the call
       // overlay is up: the person, not the apparatus. Same shape as
@@ -3380,6 +3391,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // The feed's comment box is the same kind of layer — no ✕ of its own, so
     // the cube is how you leave it.
     if (activeTab === 'feed' && feedBackRef.current?.()) { playPop(); return }
+    // During the profile selfie capture the cube is the SHUTTER, wearing the
+    // camcorder: a tap records the ten-second selfie. ProfileTwin answers this
+    // and auto-closes when the clip is saved. (The middle record button was
+    // removed; the cube is the one control.)
+    if (activeTab === 'profile' && profileCapture) {
+      window.dispatchEvent(new CustomEvent('poplur-profile-shutter'))
+      return
+    }
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
