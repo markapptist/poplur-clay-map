@@ -251,6 +251,17 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
     }
   }, [dismissible])
 
+  // With the native map experiment, taps outside explicit web HUD regions go
+  // straight to MapKit and never enter this document. Native mirrors a settled
+  // map tap back as this event so the established tap-anywhere dismissal rule
+  // still holds without making the full-screen popup host a hit target.
+  useEffect(() => {
+    if (!dismissible) return
+    const dismissFromNativeMap = () => { playPop(); clearPopups() }
+    window.addEventListener('poplur-native-map-tap', dismissFromNativeMap)
+    return () => window.removeEventListener('poplur-native-map-tap', dismissFromNativeMap)
+  }, [dismissible])
+
   if (!live.length) return null
 
   return (
@@ -261,6 +272,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
       {live.map(item => (
         <div
           key={item.id}
+          data-poplur-native-hit-region={item.kind === 'engagement' ? '' : undefined}
           className={item.kind === 'engagement'
             ? styles.engage
             : item.kind === 'mapContent'
@@ -293,6 +305,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
           ) : item.kind === 'mapContent' && item.content ? (
             <article
               className={styles.mapContent}
+              data-poplur-native-hit-region
               role="dialog"
               aria-modal="true"
               aria-label={`Post at ${item.content.name}`}

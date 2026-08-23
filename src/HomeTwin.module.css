@@ -93,6 +93,79 @@
    actually in front — Feed and Profile were losing most of their frames to it. */
 .mapLayerIdle { display: none; }
 
+/* Native MapKit experiment: the web document still owns the approved clay
+   HUD, so its replacement zoom rail uses the exact pre-rendered clay objects
+   shipped by the map. Only the black/pink track is CSS; it is static between
+   touches and costs no compositor animation. */
+.nativeMapChrome { display: contents; }
+
+.nativeMapZoom {
+  position: absolute;
+  z-index: 48;
+  top: max(226px, calc(env(safe-area-inset-top, 0px) + 190px));
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(132px, calc(env(safe-area-inset-bottom, 0px) + 116px));
+  width: 56px;
+  min-height: 250px;
+  display: grid;
+  grid-template-rows: 52px minmax(132px, 1fr) 52px;
+  justify-items: center;
+  align-items: center;
+  filter: drop-shadow(0 7px 10px rgba(38, 3, 22, 0.56));
+  pointer-events: auto;
+}
+
+.nativeMapZoom input {
+  appearance: none;
+  -webkit-appearance: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 22px;
+  height: 100%;
+  min-height: 132px;
+  margin: 0;
+  border: 2px solid #ef62a6;
+  border-radius: 14px;
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.12), transparent 35%, rgba(0,0,0,0.38)),
+    #17131a;
+  box-shadow:
+    inset 0 2px 3px rgba(255,255,255,0.18),
+    inset 0 -2px 4px rgba(0,0,0,0.72),
+    0 0 0 1px rgba(55, 4, 30, 0.82),
+    0 0 10px rgba(246,59,154,0.42);
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.nativeMapZoom input::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(255, 225, 241, 0.92);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 25%, #ffd9ec 0 11%, transparent 13%),
+    linear-gradient(145deg, #ff8ac6, #d51973 68%, #83103f);
+  box-shadow:
+    inset 0 2px 2px rgba(255,255,255,0.45),
+    inset 0 -4px 5px rgba(84,0,38,0.42),
+    0 3px 7px rgba(45,0,23,0.62);
+}
+
+.nativeMapZoomCity,
+.nativeMapZoomGlobe {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
+.nativeMapZoomCity { transform: scale(1.05); }
+.nativeMapZoomGlobe { transform: scale(1.08); }
+
 /* Feed / Camera / Profile are explicitly above the always-mounted map.
    pointer-events: the layer itself must be transparent to touch — on the MAP
    tab it is empty but still full-screen, and it was swallowing every map

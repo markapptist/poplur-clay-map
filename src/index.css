@@ -117,6 +117,29 @@ html.camera-live,
   visibility: hidden !important;
 }
 
+/* ── native-map-live (iOS experiment only) ────────────────────────────────
+   Home remains the approved web HUD, while MKMapView renders beneath this
+   document. Clear only the full-screen structural grounds; cards, controls,
+   labels and clay objects retain their own materials. The iframe is never
+   mounted in this mode, so no hidden WebGL context survives underneath. */
+html.native-map-live,
+.native-map-live body,
+.native-map-live #root,
+.native-map-live [class*="stage"],
+.native-map-live [class*="phone"],
+.native-map-live [class*="viewport"],
+.native-map-live [class*="screenSurface"],
+.native-map-live [class*="contentLayer"],
+.native-map-live [class*="home"] {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.native-map-live [class*="backdrop"] {
+  visibility: hidden !important;
+}
+
 /* ── perf-lite, feed layer (native app shell) ──────────────────────────────
    The feed stacks three full-screen per-frame effects over the playing video:
    scenePulse (animates `filter` on the video layer — the compositor re-filters

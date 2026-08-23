@@ -8,7 +8,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { primeMotionAudio } from './motionEffectsAudio'
 import { preloadPop, primePopAudio } from './pop'
 import { askForMotion } from './motionPermission'
-import { isNativeShell } from './nativeBridge'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 declare global {
@@ -140,6 +140,16 @@ const CAMCORDER_MOTION_GAIN = 1.15
 /** …and it arrives while you are still moving. The parallax spring's weight is
     the whole point on a clay cube and completely wrong on a viewfinder. */
 const CAMCORDER_MOTION_SMOOTHING = 62
+/** Sensor/event/render cadence follows what the navigator object means. Small
+ *  clay parallax is legible at 20 Hz; the camcorder remains display-rate because
+ *  it is aimed directly with the handset. */
+const NAVIGATOR_PARALLAX_FPS = 20
+const CAMCORDER_AIMING_FPS = 60
+
+function reportNavigatorMotionDemand(aiming: boolean): void {
+  if (!isNativeShell()) return
+  postNativeEvent({ type: 'navigatorMotionDemandChanged', aiming })
+}
 
 /** True-heading facing, layered ON TOP of the parallax envelope above rather
  *  than replacing it. The parallax response (motionYaw/motionPitch) is
@@ -783,10 +793,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let lastRawHeading = 0
     // The visible navigator is allowed to be genuinely smooth while it is
     // changing, but never owns a display-rate loop merely because it exists.
-    // FULL mode therefore renders motion/pops at 60fps on every shell; lower
-    // thermal modes step that finite work down. This costs less than the old
-    // permanent 12fps globe because the renderer reaches zero draws once the
-    // object and handset are still.
+    // FULL mode therefore leaves direct gestures and camera aiming at 60fps;
+    // ordinary parallax/ambient motion is capped separately below. Lower
+    // thermal modes step even that finite work down.
     const fpsForMode = (mode: typeof initialNavigatorPolicy.mode) => (
       mode === 'FULL' ? 60
         : mode === 'REDUCED' ? 48
@@ -796,16 +805,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let navigatorFPS = fpsForMode(initialNavigatorPolicy.mode)
     let navigatorFrameMs = 1000 / navigatorFPS
     let globeSpinUntil = performance.now() + 8000
-    /// Keeps the render loop scheduled for a tail after the last motion sample,
-    /// on EVERY tab. Without it the cube parked the instant its smoothing
-    /// converged, so a slow tilt — whose per-sample delta falls under
-    /// applyMotionTarget's epsilon — moved nothing and the cube read as frozen
-    /// while the handset was plainly moving. armGlobeSpin() could not cover
-    /// this: it returns early unless the map globe is on screen.
-    /// This schedules frames, it does NOT force a draw; `needsRender` still
-    /// gates rendering, so a still phone costs no-op callbacks rather than
-    /// renders, and the loop parks entirely once the tail expires.
-    const MOTION_KEEPALIVE_MS = 8000
+    /// Bridge samples wake the loop themselves. A short tail only spans the gap
+    /// between accepted samples; an eight-second tail kept callbacks alive long
+    /// after the handset stopped and became sustained work on every tab.
+    const MOTION_KEEPALIVE_MS = 250
     let motionActiveUntil = 0
     // The wardrobe tee's cloth spring (see the tick in the render loop).
     let clothSwingVelX = 0
@@ -960,13 +963,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
      *  NOT bounded like the parallax target above, and NOT sprung directly;
      *  it only advances the continuous, unwrapped `headingTargetYaw` the
      *  render loop's own per-frame smoothing chases. */
-    const applyHeadingTarget = (headingRad: number) => {
+    const applyHeadingTarget = (headingRad: number): boolean => {
       if (headingOrigin === null) {
         // First sample: calibrate "no turn yet" to here, so the object does
         // not jump the moment a heading reading arrives.
         headingOrigin = headingRad
         lastRawHeading = headingRad
-        return
+        return false
       }
       // Shortest angular step from the LAST raw reading, not from the origin
       // — accumulating steps is what lets the target pass through +-PI
@@ -975,10 +978,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       let delta = headingRad - lastRawHeading
       delta -= Math.round(delta / (Math.PI * 2)) * (Math.PI * 2)
       lastRawHeading = headingRad
-      if (delta === 0) return
+      if (delta === 0) return false
       headingTargetYaw += delta * CUBE_HEADING_DIRECTION
       needsRender = true
       wakeLoopRef.current()
+      return true
     }
     const reconcileLatestMotion = () => {
       const latest = window.__poplurLatestCubeMotion
@@ -1019,6 +1023,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
           fitIntoGroup(model, group, requestedUrl, navigatorAnisotropy, shaderPrecision)
           modelNodeRef.current = model
           loadedUrlRef.current = requestedUrl
+          reportNavigatorMotionDemand(requestedUrl === CAMCORDER_MODEL)
           armGlobeSpin(8000)
           setLoadedModel(requestedUrl)
           setSceneReadyVersion(version => version + 1)
@@ -1284,31 +1289,30 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       if (document.visibilityState !== 'visible') return
       const headingDeg = readCompassHeadingDeg(event)
       if (event.gamma == null && event.beta == null) {
-        if (headingDeg != null) applyHeadingTarget(THREE.MathUtils.degToRad(headingDeg))
+        if (headingDeg != null && applyHeadingTarget(THREE.MathUtils.degToRad(headingDeg))) {
+          motionActiveUntil = performance.now() + MOTION_KEEPALIVE_MS
+        }
         return
       }
       const now = performance.now()
-      // 30Hz is plenty for a clay object leaning against the light. A
-      // viewfinder is aimed, and at 30Hz the lag between the handset turning
-      // and the camcorder following is visible, so it samples every frame.
-      // (The native shell posts through onNativeMotion below and is not
-      // throttled here at all — Core Motion sets its own rate.)
-      if (now - lastMotionAt < (isAiming() ? 16 : 33)) return
+      // Ordinary clay parallax is a small 176px affordance. Reserve display-rate
+      // sampling for the camcorder, whose whole purpose is following the aim.
+      const sampleIntervalMs = 1000 / (isAiming() ? CAMCORDER_AIMING_FPS : NAVIGATOR_PARALLAX_FPS)
+      if (now - lastMotionAt < sampleIntervalMs) return
       lastMotionAt = now
-      // Before the epsilon gate below, so a movement too small to shift the
-      // target still proves the phone is in hand and keeps the loop warm.
-      motionActiveUntil = now + MOTION_KEEPALIVE_MS
       // beta runs from the tabletop hold (0°) to upright (90°). The folded
       // pitch response keeps the navigator flat at either end of that range.
       const roll = THREE.MathUtils.degToRad(event.gamma ?? 0)
       const devicePitch = THREE.MathUtils.degToRad(event.beta ?? 0)
       window.__poplurLatestCubeMotion = { roll, pitch: devicePitch }
-      applyMotionTarget(
+      const motionChanged = applyMotionTarget(
         roll,
         devicePitch,
         THREE.MathUtils.degToRad(0.2),
       )
-      if (headingDeg != null) applyHeadingTarget(THREE.MathUtils.degToRad(headingDeg))
+      const headingChanged = headingDeg != null
+        && applyHeadingTarget(THREE.MathUtils.degToRad(headingDeg))
+      if (motionChanged || headingChanged) motionActiveUntil = now + MOTION_KEEPALIVE_MS
     }
     const onNativeMotion = (event: Event) => {
       const detail = (event as CustomEvent<{ roll?: number; pitch?: number; heading?: number }>).detail
@@ -1318,31 +1322,28 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // in degrees, clockwise from north. The native host (Core Motion /
       // Android's fused sensor) does not send it yet, so this stays a no-op
       // until that side is wired up — everything else here is unchanged.
-      if (typeof detail?.heading === 'number') {
-        applyHeadingTarget(THREE.MathUtils.degToRad(detail.heading))
-      }
-      if (typeof roll !== 'number' && typeof devicePitch !== 'number') return
+      const hasHeading = typeof detail?.heading === 'number'
+      if (typeof roll !== 'number' && typeof devicePitch !== 'number' && !hasHeading) return
       const next = { roll: roll ?? 0, pitch: devicePitch ?? 0 }
-      window.__poplurLatestCubeMotion = next
+      if (typeof roll === 'number' || typeof devicePitch === 'number') {
+        window.__poplurLatestCubeMotion = next
+      }
       if (document.visibilityState !== 'visible') return
-      // Same keepalive as the web deviceorientation path — native Core Motion
-      // is the only motion source inside the app shell.
       const nativeNow = performance.now()
-      motionActiveUntil = nativeNow + MOTION_KEEPALIVE_MS
-      // …and the same 30Hz throttle, which this path did not have. Core Motion
-      // sets its own rate and the cube redrew on EVERY sample: a phone merely
-      // held in the hand tremors well past the epsilon below, so the navigator
-      // ran a continuous ~53fps WebGL render on every tab for as long as the
-      // handset was in a hand. Measured on the built surface, not reasoned:
-      // 0.4° of tremor at 60Hz drew 319 frames in 6s where a resting phone
-      // drew 0. The reasoning for 30Hz is the web path's, one screen up, and
-      // applies here identically — the aiming carve-out included.
-      if (nativeNow - lastMotionAt < (isAiming() ? 16 : 33)) return
+      const sampleIntervalMs = 1000 / (isAiming() ? CAMCORDER_AIMING_FPS : NAVIGATOR_PARALLAX_FPS)
+      if (nativeNow - lastMotionAt < sampleIntervalMs) return
       lastMotionAt = nativeNow
       // 0.2°, matching the web path. At the navigator's ~176px size a degree
       // of yaw moves the silhouette about 1.5px, so 0.08° was a fifth of a
       // pixel — below anything a person can see, and it was forcing a draw.
-      applyMotionTarget(next.roll, next.pitch, THREE.MathUtils.degToRad(0.2))
+      const motionChanged = typeof roll === 'number' || typeof devicePitch === 'number'
+        ? applyMotionTarget(next.roll, next.pitch, THREE.MathUtils.degToRad(0.2))
+        : false
+      const headingChanged = hasHeading
+        && applyHeadingTarget(THREE.MathUtils.degToRad(detail.heading as number))
+      if (motionChanged || headingChanged) {
+        motionActiveUntil = nativeNow + MOTION_KEEPALIVE_MS
+      }
     }
     const onMotionTuning = (event: Event) => {
       const detail = (event as CustomEvent<MotionTuning>).detail
@@ -1609,7 +1610,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // parking between samples and stuttering.
       const motionLive = now < motionActiveUntil
       if (active || globeAnimating || motionLive || clothSettling) {
-        // Parallax gets 30Hz; a gesture keeps the full rate.
+        // Ambient navigator work gets 20Hz; a direct gesture and camera aim
+        // keep the full policy rate.
         //
         // The loop parks correctly when a phone is PUT DOWN, but a phone in a
         // hand never stops sending motion, so `motionLive` stays true and the
@@ -1618,18 +1620,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         // the sustained load behind the heat, and it is invisible to the
         // thermal gate, which measures a page nobody is holding.
         //
-        // 30Hz is not a compromise here: it is the rate the deviceorientation
-        // path above already calls "plenty for a clay object leaning against
-        // the light", with the same carve-out for the aimed camcorder. A drag
-        // is a direct gesture and keeps whatever the policy allows.
-        // NOT `!active`: the spring counts as active for as long as it is
-        // settling, and under continuous hand motion it always is — so that
-        // test never fired. What matters is WHY the loop is running: a tab
-        // change (pitchTarget), a drag, or the globe keep the full rate; hand
-        // motion and the spring chasing it are parallax.
-        const parallaxOnly = motionLive && pitchTarget === null && !globeAnimating && !dragging
-        const loopFPS = parallaxOnly && !isAiming()
-          ? Math.min(navigatorFPS, 30)
+        // The 176px clay objects, cloth settling, globe turn, and parallax all
+        // read cleanly at 20Hz. Only an actual pointer gesture or the camcorder
+        // is presentation-critical; keeping the globe at 60 merely because it
+        // is authored motion recreated a permanent display-rate WebGL loop.
+        const ambientOnly = pitchTarget === null && !dragging && !isAiming()
+        const loopFPS = ambientOnly
+          ? Math.min(navigatorFPS, NAVIGATOR_PARALLAX_FPS)
           : navigatorFPS
         // Arm shortly before the desired presentation edge, then let rAF align
         // the actual draw. This prevents an Android 60/120Hz display from
@@ -1644,7 +1641,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     const wake = () => {
       const now = performance.now()
       // WebKit may discard a pending callback across app lifecycle changes.
-      // Replace only a genuinely stale request; incoming 30Hz motion samples
+      // Replace only a genuinely stale request; incoming motion samples
       // otherwise share the already-scheduled frame instead of raising FPS.
       if ((raf || frameTimer)
         && now - Math.max(lastLoopCallbackAt, scheduledAt) > Math.max(250, navigatorFrameMs * 4)) {
@@ -1696,6 +1693,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       canvas.removeEventListener('webglcontextlost', onContextLost)
       disposeModel(scene)
       releaseWebGL(renderer)
+      reportNavigatorMotionDemand(false)
       groupRef.current = null
       modelNodeRef.current = null
       loadedUrlRef.current = null
@@ -1806,6 +1804,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       }
       modelNodeRef.current = model
       loadedUrlRef.current = modelUrl
+      reportNavigatorMotionDemand(modelUrl === CAMCORDER_MODEL)
       armGlobeSpinRef.current(8000)
       setLoadedModel(modelUrl)
       updateCameraFlashRef.current(cameraFlashArmedRef.current, false)

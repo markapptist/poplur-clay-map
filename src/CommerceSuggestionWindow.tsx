@@ -135,6 +135,7 @@ export default function CommerceSuggestionWindow({
 
   return (
     <section
+      data-poplur-native-hit-region
       className={[
         styles.window,
         variant === 'camera' ? styles.camera : styles.popup,

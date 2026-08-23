@@ -8,6 +8,10 @@ import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import ClayChannelArrows from './ClayChannelArrows'
+import ClayCornerButton from './ClayCornerButton'
+import ClayMuteButton from './ClayMuteButton'
+import TabControlRail from './TabControlRail'
+import mapStyles from './App.module.css'
 import { cubeTransition, onTransitionChanged, screenTransition, type CubeTransition, type ScreenTransition } from './cubeTransitions'
 import { startEngagementChips, engagementVerb } from './engagement'
 import { onEngagementLogged } from './engagementLog'
@@ -706,6 +710,14 @@ const CLAY_MAP_SRC = (() => {
     ? `${window.location.origin}/?map=1&front=${front}${modeQuery}${fallbackQuery}${liteQuery}${locationQuery}`
     : `index.html?map=1&front=${front}${modeQuery}${fallbackQuery}${liteQuery}${locationQuery}`
 })()
+
+// iOS experiment: keep this Home document and its approved clay HUD, but let
+// the native shell own the actual map renderer. The flag is supplied by the
+// shell so browser/Android twins and the one-command web fallback are unchanged.
+const NATIVE_ADAPTIVE_MAP =
+  typeof window !== 'undefined'
+  && isIOSNativeShell()
+  && new URLSearchParams(window.location.search).get('nativeMap') === '1'
 
 // Android app shell (PoplurNative bridge). Budget GPUs get a shorter map grace
 // than iOS (ANDROID_MAP_GRACE_MS) rather than the unconditional drop-on-leave
@@ -1543,16 +1555,27 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
+  const sendMapAction = useCallback((action: string, detail: Record<string, unknown> = {}) => {
+    if (NATIVE_ADAPTIVE_MAP) {
+      postNativeEvent({ type: 'poplur-map-action', action, ...detail })
+      return
+    }
+    mapFrameRef.current?.contentWindow?.postMessage({
+      type: 'poplur-map-action',
+      action,
+      ...detail,
+    }, '*')
+  }, [])
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
-  const [mapReady, setMapReady] = useState(false)
+  const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)
   const droppedClaimsRef = useRef<Array<Record<string, unknown>>>([])
   // The map iframe mounts on the first Map visit (starts mounted only when
   // Home opens directly on the map). Leaving the map PARKS it — hidden,
   // display:none, embed clock stopped — for MAP_GRACE_MS before it is torn
   // down, so the rapid map↔feed↔camera bouncing of real use does not pay a
   // full Mapbox reboot per return. Android drops on leave (its shell trade).
-  const [mapMounted, setMapMounted] = useState(initialTab === 'map')
+  const [mapMounted, setMapMounted] = useState(!NATIVE_ADAPTIVE_MAP && initialTab === 'map')
 
   // ── Engagement must not depend on the map being mounted ───────────────────
   //
@@ -1691,7 +1714,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // lifts on the map's first postMessage, which cannot arrive before its
   // document has rendered. The globe boot stays visible; only the pre-CSS gap
   // is hidden.
-  const [mapPainted, setMapPainted] = useState(false)
+  const [mapPainted, setMapPainted] = useState(NATIVE_ADAPTIVE_MAP)
   const [loadingMessage, setLoadingMessage] = useState(0)
   const [messageShown, setMessageShown] = useState(true)
   const [loadingMuted, setLoadingMuted] = useState(isUserMuted)
@@ -2528,7 +2551,144 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       sequence: feedAdSequenceRef.current,
     })
   }, [])
-  const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>(() => initialMapMode())
+  const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>(() =>
+    NATIVE_ADAPTIVE_MAP ? '2d' : initialMapMode()
+  )
+  const [nativeMapZoom, setNativeMapZoom] = useState(0.42)
+  const nativeZoomFrameRef = useRef<number | null>(null)
+  const pendingNativeZoomRef = useRef(nativeMapZoom)
+  const nativeHitSignatureRef = useRef('')
+  const setNativeZoom = useCallback((next: number) => {
+    const zoom = Math.max(0, Math.min(1, next))
+    pendingNativeZoomRef.current = zoom
+    setNativeMapZoom(zoom)
+    if (!NATIVE_ADAPTIVE_MAP || nativeZoomFrameRef.current !== null) return
+    // governor-ok: one coalesced frame per user slider burst; never self-rearms or runs while idle
+    nativeZoomFrameRef.current = window.requestAnimationFrame(() => {
+      nativeZoomFrameRef.current = null
+      sendMapAction('setZoom', { zoom: pendingNativeZoomRef.current })
+    })
+  }, [sendMapAction])
+  useEffect(() => () => {
+    if (nativeZoomFrameRef.current !== null) window.cancelAnimationFrame(nativeZoomFrameRef.current)
+  }, [])
+
+  // Native MapKit publishes its settled camera state back into the same HUD
+  // state the iframe used. The title, 2D/3D clay mark, and zoom rail therefore
+  // remain the existing Poplur controls even though no WebGL map is mounted.
+  useEffect(() => {
+    if (!NATIVE_ADAPTIVE_MAP) return
+    const onState = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        mode?: unknown
+        zoom?: unknown
+        place?: unknown
+      }>).detail
+      if (detail?.mode === '2d' || detail?.mode === '3d') setLiveMapMode(detail.mode)
+      if (typeof detail?.zoom === 'number' && Number.isFinite(detail.zoom)) {
+        const zoom = Math.max(0, Math.min(1, detail.zoom))
+        pendingNativeZoomRef.current = zoom
+        setNativeMapZoom(zoom)
+      }
+      if (typeof detail?.place === 'string' && detail.place.trim()) setMapPlace(detail.place.trim())
+    }
+    window.addEventListener('poplur-native-map-state', onState)
+    return () => window.removeEventListener('poplur-native-map-state', onState)
+  }, [])
+
+  // A transparent WKWebView is still a full-screen UIKit hit target. Report
+  // the real, currently visible HUD rectangles to native; its managed WebView
+  // keeps those regions interactive and passes every other point through to
+  // the MKMapView underneath. Full-screen menus/modals temporarily take back
+  // the whole WebView so their drags and dismissal gestures remain unchanged.
+  useEffect(() => {
+    if (!NATIVE_ADAPTIVE_MAP) return
+    const mapVisible = activeTab === 'map' && committedTab === 'map' && surfaceVisible
+    const webOwnsWholeSurface = holdOpen || overlayOpen || activePermission !== null
+      || subscreenFullscreen || composerOpen || feedAdSlotOpen || Boolean(incomingCall)
+    document.documentElement.classList.toggle('native-map-live', mapVisible)
+    if (mapVisible) setMapPlace(previous => previous ?? 'Current area')
+
+    let settleTimer = 0
+    let frame = 0
+    const publishRegions = () => {
+      frame = 0
+      const selector = [
+        '[data-poplur-cube]', '[data-poplur-channel-arrows]',
+        '[data-poplur-control-rail]', '[data-poplur-native-hit-region]',
+      ].join(',')
+      const regions = !mapVisible || webOwnsWholeSurface ? [] : Array.from(
+        document.querySelectorAll<HTMLElement>(selector),
+      ).flatMap(element => {
+        if (element instanceof HTMLButtonElement && element.disabled) return []
+        const style = window.getComputedStyle(element)
+        const rect = element.getBoundingClientRect()
+        let ancestor: HTMLElement | null = element.parentElement
+        let hiddenByAncestor = false
+        while (ancestor && ancestor !== document.body) {
+          const ancestorStyle = window.getComputedStyle(ancestor)
+          if (ancestorStyle.display === 'none' || ancestorStyle.visibility === 'hidden'
+            || Number(ancestorStyle.opacity) <= 0.02) {
+            hiddenByAncestor = true
+            break
+          }
+          ancestor = ancestor.parentElement
+        }
+        if (style.display === 'none' || style.visibility === 'hidden'
+          || style.pointerEvents === 'none' || Number(style.opacity) <= 0.02
+          || hiddenByAncestor || rect.width < 2 || rect.height < 2) return []
+        const padding = 5
+        return [{
+          x: Math.max(0, rect.left - padding),
+          y: Math.max(0, rect.top - padding),
+          width: Math.min(window.innerWidth, rect.right + padding) - Math.max(0, rect.left - padding),
+          height: Math.min(window.innerHeight, rect.bottom + padding) - Math.max(0, rect.top - padding),
+        }]
+      })
+      const viewport = window.visualViewport
+      const payload = {
+        type: 'nativeMapPresentation',
+        active: mapVisible,
+        passthrough: mapVisible && !webOwnsWholeSurface,
+        viewportWidth: viewport?.width ?? window.innerWidth,
+        viewportHeight: viewport?.height ?? window.innerHeight,
+        viewportOffsetX: viewport?.offsetLeft ?? 0,
+        viewportOffsetY: viewport?.offsetTop ?? 0,
+        regions,
+      }
+      const signature = JSON.stringify(payload)
+      if (signature === nativeHitSignatureRef.current) return
+      nativeHitSignatureRef.current = signature
+      postNativeEvent(payload)
+    }
+    const schedule = () => {
+      if (frame) window.cancelAnimationFrame(frame)
+      // governor-ok: one-shot layout read after an observed HUD change; publishRegions never re-arms it
+      frame = window.requestAnimationFrame(publishRegions)
+    }
+    schedule()
+    settleTimer = window.setTimeout(schedule, 360)
+    window.addEventListener('resize', schedule)
+    window.visualViewport?.addEventListener('resize', schedule)
+    window.visualViewport?.addEventListener('scroll', schedule)
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule)
+    resizeObserver?.observe(document.documentElement)
+    const mutationObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(schedule)
+    if (document.body) mutationObserver?.observe(document.body, { childList: true, subtree: true })
+    return () => {
+      document.documentElement.classList.remove('native-map-live')
+      window.removeEventListener('resize', schedule)
+      window.visualViewport?.removeEventListener('resize', schedule)
+      window.visualViewport?.removeEventListener('scroll', schedule)
+      resizeObserver?.disconnect()
+      mutationObserver?.disconnect()
+      window.clearTimeout(settleTimer)
+      if (frame) window.cancelAnimationFrame(frame)
+      nativeHitSignatureRef.current = ''
+      postNativeEvent({ type: 'nativeMapPresentation', active: false, passthrough: false, regions: [] })
+    }
+  }, [activePermission, activeTab, committedTab, composerOpen, feedAdSlotOpen, holdOpen, incomingCall, overlayOpen, subscreenFullscreen, surfaceVisible])
+
   const [mapTourTopics, setMapTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
   const handleMapTourTopicsChange = useCallback((topics: MapTourTopic[]) => {
     const next = writeMapTourTopics(topics)
@@ -2601,6 +2761,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Clearing mapReady on teardown puts the map's own loading screen back, so a
   // remounted map shows the loading globe instead of a blank layer.
   useEffect(() => {
+    if (NATIVE_ADAPTIVE_MAP) {
+      setMapMounted(false)
+      setMapReady(true)
+      setMapPainted(true)
+      return
+    }
     let dropTimer = 0
     const drop = () => {
       const mapWindow = mapFrameRef.current?.contentWindow as (Window & {
@@ -2683,6 +2849,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // covered in the same commit that attaches the iframe — there is no frame in
   // which the new subframe is visible before its document has painted.
   useEffect(() => {
+    if (NATIVE_ADAPTIVE_MAP) { setMapPainted(true); return }
     if (!mapMounted) { setMapPainted(false); return }
     const fallback = window.setTimeout(() => setMapPainted(true), MAP_COVER_MAX_MS)
     return () => window.clearTimeout(fallback)
@@ -2896,10 +3063,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const action = pendingMapActionRef.current
     if (!action) return
     pendingMapActionRef.current = null
-    mapFrameRef.current?.contentWindow?.postMessage(
-      { type: 'poplur-map-action', action }, '*',
-    )
-  }, [activeTab, holdOpen, mapReady])
+    sendMapAction(action)
+  }, [activeTab, holdOpen, mapReady, sendMapAction])
 
   // null = your own profile; a handle = that user's profile.
   const [viewingUser, setViewingUser] = useState<string | null>(null)
@@ -3138,9 +3303,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const opts: AddEventListenerOptions = { passive: true, capture: true }
     const events = ['pointerdown', 'touchstart', 'wheel', 'keydown'] as const
     for (const type of events) document.addEventListener(type, wake, opts)
+    window.addEventListener('poplur-native-map-tap', wake)
     return () => {
       window.clearTimeout(timer)
       for (const type of events) document.removeEventListener(type, wake, opts)
+      window.removeEventListener('poplur-native-map-tap', wake)
     }
   }, [])
 
@@ -3505,6 +3672,85 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         </>
       )}
 
+      {/* Native renderer, original skin. These are the same clay controls the
+          Mapbox document used; only their action target changes to the iOS
+          bridge. The right rail deliberately keeps the tall Poplur zoom
+          silhouette from the approved map instead of replacing it with
+          MapKit's stock buttons. */}
+      {NATIVE_ADAPTIVE_MAP && activeTab === 'map' && committedTab === 'map'
+        && !overlayOpen && activePermission === null && (
+        <div className={`${styles.nativeMapChrome}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}>
+          <TabControlRail side="left" label="Map controls">
+            <ClayMuteButton
+              muted={loadingMuted}
+              size={44}
+              onToggle={() => {
+                const next = !loadingMuted
+                setUserMuted(next)
+                setLoadingMuted(next)
+                if (!next) playPop(0.2)
+              }}
+            />
+            <button
+              type="button"
+              className={mapStyles.mapModeToggle}
+              data-mode={liveMapMode}
+              aria-label={`Switch to ${liveMapMode === '2d' ? '3D' : '2D'} map`}
+              aria-pressed={liveMapMode === '3d'}
+              onClick={() => {
+                playPop(0.25)
+                const next = liveMapMode === '2d' ? '3d' : '2d'
+                setLiveMapMode(next)
+                sendMapAction('mapMode', { mode: next })
+              }}
+            >
+              <span className={mapStyles.mapModeClay} aria-hidden="true">
+                <span className={mapStyles.mapModeClayDepth}>{liveMapMode.toUpperCase()}</span>
+                <span className={mapStyles.mapModeClayFace}>{liveMapMode.toUpperCase()}</span>
+              </span>
+            </button>
+            <ClayCornerButton
+              kind="locate"
+              label="Go to my location"
+              size={44}
+              still
+              activateOnClick
+              onPress={() => { playPop(0.25); sendMapAction('locate') }}
+            />
+          </TabControlRail>
+          <label
+            className={styles.nativeMapZoom}
+            aria-label="Map zoom"
+            data-poplur-native-hit-region
+          >
+            <img
+              className={styles.nativeMapZoomCity}
+              src={`${import.meta.env.BASE_URL}sprites/zoom_buildings_y25_p14_s256.png`}
+              alt=""
+              aria-hidden="true"
+              draggable="false"
+            />
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.005}
+              value={nativeMapZoom}
+              onInput={event => setNativeZoom(Number(event.currentTarget.value))}
+              onChange={event => setNativeZoom(Number(event.currentTarget.value))}
+              aria-label="Map zoom"
+            />
+            <img
+              className={styles.nativeMapZoomGlobe}
+              src={`${import.meta.env.BASE_URL}sprites/zoom_globe_y20_p12_s256.png`}
+              alt=""
+              aria-hidden="true"
+              draggable="false"
+            />
+          </label>
+        </div>
+      )}
+
       <div
         className={[
           styles.contentLayer,
@@ -3799,6 +4045,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           {mapAreaPops && (
             <button
               type="button"
+              data-poplur-native-hit-region
               key={`area-${mapAreaPops.overall ? 'world' : 'local'}-${mapAreaPops.count}-${mapAreaPops.ids[0] ?? ''}`}
               className={styles.mapAreaPops}
               disabled={mapAreaPops.ids.length === 0}
@@ -4073,9 +4320,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               setHoldOpen(false)
               return
             }
-            mapFrameRef.current?.contentWindow?.postMessage(
-              { type: 'poplur-map-action', action }, '*',
-            )
+            sendMapAction(action)
           }}
           tourOn={mapTourOn}
           mapMode={liveMapMode}
