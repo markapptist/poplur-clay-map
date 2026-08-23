@@ -16,7 +16,12 @@ import {
 import { anchorOffset } from './wardrobeTransforms'
 import { resolveWardrobeTransforms } from './wardrobeCommands'
 import { poplurFromAppearance } from './wardrobeCharacter'
-import { defaultCharacter, type PoplurCharacter } from '../characterStore'
+import type { PoplurCharacter } from '../characterStore'
+import {
+  REFERENCE_WARDROBE_ASSETS,
+  referenceWardrobeCharacter,
+  wardrobeInitialCharacter,
+} from '../ReferenceWardrobeCharacter'
 import WardrobeRenderer from './WardrobeRenderer'
 import { playPop } from '../pop'
 import styles from './WardrobeBuilder.module.css'
@@ -154,7 +159,7 @@ function copyPseudo(
 
 /** Clone the already-rendered preview and freeze every computed style. This
     preserves code-native fallbacks, radial lights, tint masks, and the live
-    ClayCharacter SVG/layers instead of rebuilding a second, lossy renderer. */
+    supplied-character SVG/layers instead of rebuilding a second renderer. */
 async function cloneStageForCapture(stage: HTMLElement): Promise<HTMLElement> {
   await settleStage(stage)
   const inlined = await inlineImageSources(stage)
@@ -278,7 +283,7 @@ function normaliseCaptureColours(clonedDocument: Document, clonedRoot?: HTMLElem
 /** Render the live stage with a DOM-aware canvas renderer. Unlike drawing a
     foreignObject SVG, this path keeps the output origin-clean in WebKit and
     Chromium while preserving CSS gradients, borders, shadows, pseudo-elements
-    and the inline ClayCharacter SVG. The dependency is lazy so the editor's
+    and the inline supplied-character SVG. The dependency is lazy so the editor's
     normal open/edit path does not pay for thumbnail rendering. */
 async function captureStageDom(
   stage: HTMLElement,
@@ -386,61 +391,59 @@ function drawLight(
   ctx.fillRect(-width / 2, -height / 2, width, height)
 }
 
-function drawClayCharacter(
+function drawReferenceCharacter(
   ctx: CanvasRenderingContext2D,
   module: WardrobeModule,
   width: number,
   height: number,
+  images: Map<string, HTMLImageElement>,
 ): void {
   const raw = module.properties?.appearance
-  const character: PoplurCharacter = raw && typeof raw === 'object'
+  const character: PoplurCharacter = wardrobeInitialCharacter(raw && typeof raw === 'object'
     ? poplurFromAppearance(raw as WardrobeCharacterAppearance)
-    : defaultCharacter()
-  const characterWidth = Math.min(width, height * (2 / 3))
+    : referenceWardrobeCharacter())
+  const base = images.get(REFERENCE_WARDROBE_ASSETS.base)
+  if (!base) return
+  const characterWidth = Math.min(width, height * (206 / 295))
+  const characterHeight = characterWidth * (295 / 206)
+  const left = -characterWidth / 2
+  const top = -characterHeight / 2
   ctx.save()
-  ctx.translate(-characterWidth / 2, -height / 2)
-  ctx.scale(characterWidth / 64, height / 96)
-  ctx.fillStyle = character.bottomColor
-  roundedRect(ctx, 21.5, 72, 8.5, 18, 4)
-  ctx.fill()
-  roundedRect(ctx, 34, 72, 8.5, 18, 4)
-  ctx.fill()
-  ctx.fillStyle = character.topColor
-  roundedRect(ctx, 18.5, 46, 27, 29, 9)
-  ctx.fill()
-  roundedRect(ctx, 12, 48, 7.5, 20, 3.75)
-  ctx.fill()
-  roundedRect(ctx, 44.5, 48, 7.5, 20, 3.75)
-  ctx.fill()
-  ctx.fillStyle = character.skinTone
-  for (const [x, y, radius] of [[13.5, 69, 3.4], [50.5, 69, 3.4], [32, 28, 16]]) {
-    ctx.beginPath()
-    ctx.arc(x, y, radius, 0, Math.PI * 2)
-    ctx.fill()
+  ctx.drawImage(
+    base,
+    left + characterWidth * (3 / 206),
+    top,
+    characterWidth * (200 / 206),
+    characterHeight,
+  )
+  if (character.outfit?.hairFront !== 'none') {
+    const hair = images.get(REFERENCE_WARDROBE_ASSETS.hair)
+    if (hair) {
+      ctx.drawImage(
+        hair,
+        left + characterWidth * (1 / 206),
+        top,
+        characterWidth * (204 / 206),
+        characterHeight,
+      )
+    }
   }
-  ctx.fillStyle = character.hairColor
-  ctx.beginPath()
-  ctx.arc(32, 23, character.hairStyle === 'buzz' ? 13 : 15, Math.PI, Math.PI * 2)
-  ctx.fill()
-  if (character.hairStyle === 'long' || character.hairStyle === 'curly') {
-    roundedRect(ctx, 16, 18, 8, 31, 4)
-    ctx.fill()
-    roundedRect(ctx, 40, 18, 8, 31, 4)
-    ctx.fill()
+  if (character.outfit?.glasses !== 'none') {
+    const glasses = images.get(REFERENCE_WARDROBE_ASSETS.glasses)
+    if (glasses) {
+      ctx.drawImage(
+        glasses,
+        24,
+        91,
+        166,
+        73,
+        left + characterWidth * (72 / 206),
+        top + characterHeight * (64 / 295),
+        characterWidth * (62 / 206),
+        characterHeight * (28 / 295),
+      )
+    }
   }
-  ctx.fillStyle = character.eyeColor
-  for (const x of [26.5, 37.5]) {
-    ctx.beginPath()
-    ctx.arc(x, 27, 2.4, 0, Math.PI * 2)
-    ctx.fill()
-  }
-  ctx.strokeStyle = '#d85a30'
-  ctx.lineWidth = 2
-  ctx.lineCap = 'round'
-  ctx.beginPath()
-  ctx.moveTo(27.5, 34.5)
-  ctx.quadraticCurveTo(32, 38.5, 36.5, 34.5)
-  ctx.stroke()
   ctx.restore()
 }
 
@@ -467,7 +470,13 @@ async function loadSceneImages(scene: WardrobeScene): Promise<Map<string, HTMLIm
     : undefined
   if (background && hasWardrobeAssetArt(background)) sources.add(assetSource(background))
   for (const module of scene.modules) {
-    if (module.visible === false || module.type === 'light' || module.type === 'character') continue
+    if (module.visible === false || module.type === 'light') continue
+    if (module.type === 'character') {
+      sources.add(REFERENCE_WARDROBE_ASSETS.base)
+      sources.add(REFERENCE_WARDROBE_ASSETS.hair)
+      sources.add(REFERENCE_WARDROBE_ASSETS.glasses)
+      continue
+    }
     const asset = getWardrobeAsset(module.assetId)
     if (asset && hasWardrobeAssetArt(asset)) sources.add(assetSource(asset))
   }
@@ -526,7 +535,7 @@ async function paintSceneFallback(
     if (module.type === 'light') {
       drawLight(ctx, module, moduleWidth, moduleHeight)
     } else if (module.type === 'character') {
-      drawClayCharacter(ctx, module, moduleWidth, moduleHeight)
+      drawReferenceCharacter(ctx, module, moduleWidth, moduleHeight, images)
     } else {
       const image = asset && hasWardrobeAssetArt(asset)
         ? images.get(assetSource(asset))

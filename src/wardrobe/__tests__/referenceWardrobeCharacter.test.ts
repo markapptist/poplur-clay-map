@@ -27,21 +27,32 @@ describe('reference wardrobe character', () => {
     expect(isReferenceWardrobeCharacter(restored)).toBe(true)
   })
 
-  it('migrates only the untouched legacy neutral seed inside Wardrobe', () => {
+  it('migrates legacy generic identities onto the supplied character without losing colours', () => {
     const legacy = { ...defaultCharacter(), updatedAt: 987654 }
-    expect(isReferenceWardrobeCharacter(wardrobeInitialCharacter(legacy))).toBe(true)
+    const migrated = wardrobeInitialCharacter(legacy)
+    expect(isReferenceWardrobeCharacter(migrated)).toBe(true)
+    expect(migrated).toMatchObject({
+      gender: 'female',
+      hairStyle: 'long',
+      hairColor: legacy.hairColor,
+      eyeColor: legacy.eyeColor,
+      topColor: legacy.topColor,
+      bottomColor: legacy.bottomColor,
+    })
 
     const customized = { ...legacy, eyeColor: '#185FA5' }
-    expect(wardrobeInitialCharacter(customized)).toBe(customized)
+    expect(wardrobeInitialCharacter(customized).eyeColor).toBe('#185FA5')
+    expect(isReferenceWardrobeCharacter(wardrobeInitialCharacter(customized))).toBe(true)
     expect(wardrobeInitialCharacter(null)).toEqual(referenceWardrobeCharacter())
   })
 
-  it('falls back as soon as a customization diverges', () => {
+  it('keeps supported customizations on the supplied reference renderer', () => {
     const reference = referenceWardrobeCharacter()
     expect(isReferenceWardrobeCharacter({ ...reference, gender: 'male' })).toBe(false)
     expect(isReferenceWardrobeCharacter({ ...reference, hairStyle: 'curly' })).toBe(false)
-    expect(isReferenceWardrobeCharacter({ ...reference, eyeColor: '#185FA5' })).toBe(false)
-    expect(isReferenceWardrobeCharacter({ ...reference, outfit: { top: 'custom-hoodie' } })).toBe(false)
+    expect(isReferenceWardrobeCharacter({ ...reference, eyeColor: '#185FA5' })).toBe(true)
+    expect(isReferenceWardrobeCharacter({ ...reference, hairColor: '#D4537E' })).toBe(true)
+    expect(isReferenceWardrobeCharacter({ ...reference, outfit: { glasses: 'none' } })).toBe(true)
   })
 
   it('registers every supplied transparent reference part at a rooted URL', () => {

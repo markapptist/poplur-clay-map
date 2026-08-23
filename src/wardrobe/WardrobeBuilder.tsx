@@ -423,10 +423,10 @@ export default function WardrobeBuilder({ initialScene, character, onClose }: {
             autoFocus
             type='button'
             className={styles.barButton}
-            aria-label='Close wardrobe builder'
-            onClick={tap(() => onClose?.())}
-          >
-            &#8249;
+          aria-label='Close wardrobe builder'
+          onClick={tap(() => onClose?.())}
+        >
+            <BuilderIcon name='back' />
           </button>
           <h1 className={styles.title}>My Wardrobe</h1>
         </header>
@@ -488,7 +488,7 @@ export default function WardrobeBuilder({ initialScene, character, onClose }: {
           aria-label='Close wardrobe builder'
           onClick={tap(() => onClose?.())}
         >
-          &#8249;
+          <BuilderIcon name='back' />
         </button>
         <h1 className={styles.title}>{scene.name}</h1>
         <button
@@ -498,7 +498,7 @@ export default function WardrobeBuilder({ initialScene, character, onClose }: {
           disabled={!state.canUndo}
           onClick={tap(() => wardrobeEditor.undo())}
         >
-          &#8630;
+          <BuilderIcon name='undo' />
         </button>
         <button
           type='button'
@@ -507,7 +507,7 @@ export default function WardrobeBuilder({ initialScene, character, onClose }: {
           disabled={!state.canRedo}
           onClick={tap(() => wardrobeEditor.redo())}
         >
-          &#8631;
+          <BuilderIcon name='redo' />
         </button>
         <button
           type='button'
@@ -515,7 +515,7 @@ export default function WardrobeBuilder({ initialScene, character, onClose }: {
           aria-label='Preview wardrobe'
           onClick={tap(() => wardrobeEditor.setMode('preview'))}
         >
-          &#9654;
+          <BuilderIcon name='preview' />
         </button>
         <button
           type='button'
@@ -655,5 +655,29 @@ export default function WardrobeBuilder({ initialScene, character, onClose }: {
         <WardrobePreview scene={scene} onExit={() => wardrobeEditor.setMode('edit')} />
       )}
     </div>
+  )
+}
+
+function BuilderIcon({ name }: { name: 'back' | 'undo' | 'redo' | 'preview' }) {
+  if (name === 'back') {
+    return (
+      <svg width='20' height='20' viewBox='0 0 20 20' aria-hidden='true'>
+        <path d='M12.8 4.5 7.2 10l5.6 5.5' fill='none' stroke='currentColor' strokeWidth='2.1' strokeLinecap='round' strokeLinejoin='round' />
+      </svg>
+    )
+  }
+  if (name === 'preview') {
+    return (
+      <svg width='20' height='20' viewBox='0 0 20 20' aria-hidden='true'>
+        <path d='M2.7 10s2.7-4.5 7.3-4.5 7.3 4.5 7.3 4.5-2.7 4.5-7.3 4.5S2.7 10 2.7 10Z' fill='none' stroke='currentColor' strokeWidth='1.7' />
+        <circle cx='10' cy='10' r='2.2' fill='currentColor' />
+      </svg>
+    )
+  }
+  const redo = name === 'redo'
+  return (
+    <svg width='20' height='20' viewBox='0 0 20 20' aria-hidden='true' style={redo ? { transform: 'scaleX(-1)' } : undefined}>
+      <path d='M6.2 7.1H3.4V4.3M3.7 7c1.2-2 3.3-3.2 5.7-3.2 3.7 0 6.7 3 6.7 6.7s-3 6.7-6.7 6.7c-2.5 0-4.7-1.4-5.8-3.4' fill='none' stroke='currentColor' strokeWidth='1.8' strokeLinecap='round' strokeLinejoin='round' />
+    </svg>
   )
 }

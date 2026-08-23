@@ -1,33 +1,23 @@
-/* Shared bottom-sheet chrome for the wardrobe editor panels. The wardrobe
-   commits to one look in both themes: glossy black, hot-pink (#FF2D9A)
-   highlights, rounded controls, 44px+ touch targets. */
+/* Panel contents live inside WardrobeBuilder's Poplur clay sheet. They do not
+   create a second fixed black modal or a competing visual system. */
 
 .sheet {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 60;
+  position: relative;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  max-height: 55vh;
-  border-radius: 22px 22px 0 0;
-  color: #f5f3f7;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 38%),
-    #0d0d12;
-  box-shadow:
-    0 -14px 44px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  min-height: 0;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  color: #fff7fb;
+  background: transparent;
+  box-shadow: none;
 }
 
 .handle {
-  flex: none;
-  width: 100%;
-  padding: 10px 0 6px;
-  border: none;
-  background: none;
-  cursor: pointer;
+  display: none;
 }
 
 .handle::before {
@@ -45,15 +35,17 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 16px 8px;
+  padding: 2px 8px 9px;
 }
 
 .title {
   flex: 1;
   margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  color: #ff73ba;
+  font-size: 14px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .closeBtn {
@@ -76,7 +68,7 @@
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0 16px 20px;
+  padding: 0 8px 12px;
 }
 
 .hint {
@@ -439,4 +431,51 @@
   font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Poplur-native finishing layer shared by all three tools. */
+.closeBtn,
+.chip,
+.search,
+.card,
+.iconBtn,
+.renameInput,
+.numInput,
+.selectInput,
+.textInput,
+.pillBtn {
+  color: #fff7fb;
+  border-color: rgba(255, 255, 255, 0.16);
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.chipActive,
+.pillBtnOn {
+  color: #fff;
+  border-color: rgba(255, 188, 221, 0.92);
+  background: linear-gradient(180deg, #ff62b2, #c90e72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 4px 11px rgba(86, 0, 42, 0.3);
+}
+
+.card,
+.prefabCard {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11), transparent 58%),
+    rgba(255, 255, 255, 0.055);
+}
+
+.rowSelected {
+  background: rgba(246, 59, 154, 0.2);
+  box-shadow: inset 0 0 0 1px var(--poplur-theme-accent, #f63b9a);
+}
+
+.sectionTitle,
+.prefabGlyph { color: var(--poplur-theme-accent, #f63b9a); }
+
+.search:focus,
+.renameInput:focus,
+.numInput:focus,
+.selectInput:focus,
+.textInput:focus {
+  outline-color: var(--poplur-theme-accent-2, #5fe1ea);
 }
