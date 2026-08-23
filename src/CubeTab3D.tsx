@@ -207,6 +207,7 @@ export interface CubeTab3DProps {
 export const DEFAULT_CUBE_MODEL = 'poplur_cube_v4.glb'
 const CUBE_MODEL = DEFAULT_CUBE_MODEL
 const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
+const TSHIRT_MODEL = 'poplur_cube_tshirt.glb'
 
 /** The clay GLBs use Draco or Meshopt compression depending on which asset
     pipeline produced them. A bare GLTFLoader downloads either format and then
@@ -360,6 +361,54 @@ function fitIntoGroup(
         standard.emissive.set(0xffffff)
         standard.emissiveIntensity = Math.max(0.62, standard.emissiveIntensity || 0)
         standard.needsUpdate = true
+      })
+    })
+  }
+  // Cloth for the wardrobe tee — accelerometer-driven, but a vertex-shader
+  // response rather than a cloth sim. A real per-vertex solver on 38K verts
+  // would burn the thermal budget the moment the screen opened. Instead the
+  // render loop runs one extra under-damped spring (uClothSwing) that chases
+  // the tilt the navigator's own motion spring already tracks — so only the
+  // lower hem lags behind the phone's movement and wobbles back when it
+  // stops. The upper two-thirds of the shirt, including both sleeves, stays
+  // rigid with the cube so the navigator never feels delayed or rubbery.
+  // uWindTime adds a faint resting ripple so the fabric never reads frozen.
+  // Both uniforms tick only while the shirt is the loaded object and the
+  // chrome is awake, so the whole effect parks with everything else.
+  if (url === TSHIRT_MODEL) {
+    const cloth = { time: { value: 0 }, swing: { value: new THREE.Vector2(0, 0) } }
+    model.userData.poplurCloth = cloth
+    model.traverse(child => {
+      const mesh = child as THREE.Mesh
+      if (!mesh.isMesh) return
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      materials.forEach(material => {
+        if (!material) return
+        material.customProgramCacheKey = () => 'poplur-tshirt-cloth'
+        material.onBeforeCompile = shader => {
+          shader.uniforms.uWindTime = cloth.time
+          shader.uniforms.uClothSwing = cloth.swing
+          shader.vertexShader = shader.vertexShader
+            .replace('#include <common>', '#include <common>\nuniform float uWindTime;\nuniform vec2 uClothSwing;')
+            .replace('#include <begin_vertex>', `#include <begin_vertex>
+              {
+                // The source mesh spans roughly y=-0.94..0.93. Keep every
+                // vertex above -0.28 completely rigid and feather the effect
+                // into the last third of the shirt, reaching full strength
+                // only at the very bottom edge. No x/"limb" term: sleeve ends
+                // must move with the cube, not trail behind it.
+                float clothMask = 1.0 - smoothstep(-0.86, -0.28, position.y);
+                float drive = length(uClothSwing);
+                float ripple = sin(uWindTime * 2.3 + position.y * 4.0 + position.x * 2.0) * 0.55
+                  + sin(uWindTime * 3.9 + position.x * 6.0) * 0.3
+                  + sin(uWindTime * 1.4 + position.z * 5.0 + position.y * 2.0) * 0.15;
+                float rippleAmp = 0.006 + min(drive, 1.0) * 0.028;
+                transformed += objectNormal * (ripple * clothMask * rippleAmp);
+                transformed.x += uClothSwing.x * clothMask * 0.085;
+                transformed.z += uClothSwing.y * clothMask * 0.06;
+              }`)
+        }
+        material.needsUpdate = true
       })
     })
   }
@@ -718,6 +767,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     /// renders, and the loop parks entirely once the tail expires.
     const MOTION_KEEPALIVE_MS = 8000
     let motionActiveUntil = 0
+    // The wardrobe tee's cloth spring (see the tick in the render loop).
+    let clothSwingVelX = 0
+    let clothSwingVelY = 0
     const requestDisplayFrame = window.requestAnimationFrame.bind(window)
     const cancelDisplayFrame = window.cancelAnimationFrame.bind(window)
     const mapGlobeIsVisible = () =>
@@ -1405,6 +1457,59 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         needsRender = true
       }
 
+      // The wardrobe tee's cloth response. Its spring chases the tilt the
+      // motion spring above already resolved — inverted, because fabric lags
+      // the body — with a velocity kick so a fast flick swings the hem
+      // further than a slow lean. Under-damped on purpose: when the phone
+      // stops, the hem wobbles past rest and settles, which is the whole
+      // "cloth" read. Gated like the globe spin (visible + display + chrome
+      // awake + the shirt actually loaded) so it parks with everything else.
+      const shirtLoaded = loadedUrlRef.current === TSHIRT_MODEL
+      const clothUniforms = shirtLoaded
+        ? (modelNodeRef.current?.userData.poplurCloth as
+          { time: { value: number }, swing: { value: THREE.Vector2 } } | undefined)
+        : undefined
+      const clothAvailable = shirtLoaded
+        && document.visibilityState === 'visible'
+        && (window.__poplurDisplayActive?.() ?? true)
+        && window.__poplurChromeIdle !== true
+      let clothSettling = false
+      if (clothUniforms) {
+        const swing = clothUniforms.swing.value
+        // When the chrome sleeps mid-swing the target drops to rest and the
+        // fabric settles before the loop parks, instead of freezing mid-air.
+        const stillMoving = Math.abs(swing.x) > 0.002 || Math.abs(swing.y) > 0.002
+          || Math.abs(clothSwingVelX) > 0.0005 || Math.abs(clothSwingVelY) > 0.0005
+        // Do not keep the renderer alive for a perpetual resting ripple. The
+        // hem wakes for live sensor input, returns promptly to neutral, then
+        // lets the normal demand-driven loop park again.
+        const clothDriven = clothAvailable && (
+          now < motionActiveUntil
+          || Math.abs(motionYawVelocity) > 0.0002
+          || Math.abs(motionPitchVelocity) > 0.0002
+        )
+        if (clothDriven || stillMoving) {
+          const targetX = clothDriven
+            ? THREE.MathUtils.clamp(-motionYaw * 2.2 - motionYawVelocity * 30, -1, 1) : 0
+          const targetY = clothDriven
+            ? THREE.MathUtils.clamp(-motionPitch * 2.2 - motionPitchVelocity * 30, -1, 1) : 0
+          // Same 60Hz-reference substepping as the motion spring above, so the
+          // wobble feels identical at 120Hz and after a long WebKit frame.
+          let remainingSteps = Math.min(3, dt * 60)
+          while (remainingSteps > 0.0001) {
+            const step = Math.min(1, remainingSteps)
+            clothSwingVelX = (clothSwingVelX + (targetX - swing.x) * 0.16 * step) * Math.pow(0.78, step)
+            clothSwingVelY = (clothSwingVelY + (targetY - swing.y) * 0.16 * step) * Math.pow(0.78, step)
+            swing.x += clothSwingVelX * step
+            swing.y += clothSwingVelY * step
+            remainingSteps -= step
+          }
+          if (clothDriven) clothUniforms.time.value += dt
+          clothSettling = true
+          needsRender = true
+        }
+      }
+
       if (needsRender) {
         // The globe's authored entrance turn and live device response share
         // one rotation. Every other object stays front-facing and moves only
@@ -1432,7 +1537,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // scheduled and pick the next one up on the very next frame instead of
       // parking between samples and stuttering.
       const motionLive = now < motionActiveUntil
-      if (active || globeAnimating || motionLive) {
+      if (active || globeAnimating || motionLive || clothSettling) {
         // Parallax gets 30Hz; a gesture keeps the full rate.
         //
         // The loop parks correctly when a phone is PUT DOWN, but a phone in a

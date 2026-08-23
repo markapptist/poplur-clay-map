@@ -326,6 +326,10 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // AvatarScreen and the navigator just kept whatever the profile tab was
   // already wearing. A printer, because this is where you fabricate the cube.
   'profile-avatar': 'poplur_cube_printer.glb',
+  // The WARDROBE wears the Poplur tee. Supplied Meshy export was 83MB;
+  // decimated by the standard recipe (Draco + simplify 0.0005 + 256px webp)
+  // to 419KB — same weight class as the trophy and slot machine.
+  'profile-wardrobe': 'poplur_cube_tshirt.glb',
   // IPOD, likewise previously unwired.
   'map-ipod': 'poplur_cube_ipod.glb',
   // The wallet itself; its SEND/CASH OUT pages swap to the coin and cash

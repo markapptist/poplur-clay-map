@@ -159,6 +159,14 @@ export function packBase(packId: string, fallback: string): string {
   return fallback
 }
 
+export function feedUrl(file: string): string {
+  return `${packBase('feed', 'feed')}/${file.replace(/^feed\//, '')}`
+}
+
+export function channelUrl(file: string): string {
+  return `${packBase('channels', 'channels')}/${file.replace(/^channels\//, '')}`
+}
+
 /** Resolve a file inside a pack to a URL the app can use, cached or not. */
 export function packUrl(pack: AssetPack, file: string): string {
   const local = manifest?.localPaths?.[pack.id]

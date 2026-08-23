@@ -18,6 +18,14 @@
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
 }
 
+/* Closet design is a true app modal. WebSignIn normally owns a deliberately
+   high global layer, so suppress it only while this modal is present; its
+   state stays mounted and returns untouched when the builder closes. */
+:global(body[data-wardrobe-builder-open='true']) .pill,
+:global(body[data-wardrobe-builder-open='true']) .card {
+  display: none;
+}
+
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #37d67a; }
 .dotOff { background: #f6b73b; }
 .who { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

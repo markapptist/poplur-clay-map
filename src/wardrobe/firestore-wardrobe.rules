@@ -1,0 +1,103 @@
+// Firestore security rules for the wardrobe system.
+//
+// Example block — merge into the project's deployed firestore.rules inside the
+// existing `match /databases/{database}/documents` scope. The layout mirrors
+// WARDROBE_COLLECTIONS in wardrobeTypes.ts and the document shapes written by
+// wardrobeRepository.ts.
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // A request carries a signed-in Firebase Auth user.
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // The request comes from the user whose subtree is being touched.
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    // The client derives this declaration from the canonical asset registry;
+    // it is required on every wardrobe write. The current catalogue has one
+    // premium asset. Add future ids here together with their inventory exists
+    // check (a single-document write permits at most 10 access calls).
+    function hasValidWardrobePremiumEntitlements(userId) {
+      return request.resource.data.premiumAssetIds is list
+        && request.resource.data.premiumAssetIds.size() <= 1
+        && request.resource.data.premiumAssetIds.hasOnly(['poplur_trophy'])
+        && (!request.resource.data.premiumAssetIds.hasAny(['poplur_trophy'])
+          || exists(/databases/$(database)/documents/users/$(userId)/wardrobeInventory/poplur_trophy));
+    }
+
+    // ------------------------------------------------------------------
+    // Catalog collections — shared, read-only content.
+    // ------------------------------------------------------------------
+
+    // Asset registry: every client (signed in or not) may read the catalog
+    // so the module library renders pre-login previews.
+    match /wardrobeAssets/{assetId} {
+      allow read: if true;
+      // Admin-only write placeholder: catalog content ships via the Admin SDK
+      // (which bypasses rules). Swap `false` for a custom-claim check
+      // (request.auth.token.admin == true) if a console-based editor lands.
+      allow write: if false;
+    }
+
+    // Prefab catalog: same public-read / server-write policy as assets.
+    match /wardrobePrefabs/{prefabId} {
+      allow read: if true;
+      // Admin-only write placeholder — Admin SDK bypasses rules.
+      allow write: if false;
+    }
+
+    // Starter templates: same public-read / server-write policy as assets.
+    match /wardrobeTemplates/{templateId} {
+      allow read: if true;
+      // Admin-only write placeholder — Admin SDK bypasses rules.
+      allow write: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // Per-user wardrobes — WardrobeDocument fields + inline `scene`.
+    // ------------------------------------------------------------------
+
+    match /users/{userId}/wardrobes/{wardrobeId} {
+      // The owner reads their own wardrobes; anyone signed in may read a
+      // wardrobe the owner has flagged public (sharing/showcase).
+      allow read: if isOwner(userId)
+        || (signedIn() && resource.data.isPublic == true);
+
+      // Only the owner writes, and every write must:
+      //  - stamp ownerId with the caller's own uid (no spoofed ownership),
+      //  - carry a numeric sceneVersion (the migration anchor),
+      //  - carry a string name under 100 chars (listing/UI budget).
+      allow create, update: if isOwner(userId)
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.scene.ownerId == request.auth.uid
+        && request.resource.data.sceneVersion is number
+        && request.resource.data.name is string
+        && request.resource.data.name.size() < 100
+        && hasValidWardrobePremiumEntitlements(userId);
+
+      // Only the owner deletes their wardrobes.
+      allow delete: if isOwner(userId);
+    }
+
+    // ------------------------------------------------------------------
+    // Premium entitlements — existence of a doc IS ownership.
+    // ------------------------------------------------------------------
+
+    match /users/{userId}/wardrobeInventory/{itemId} {
+      // The owner may read their entitlements (ownsPremiumAsset checks
+      // document existence).
+      allow read: if isOwner(userId);
+      // Server-only write: entitlements are granted by the purchase backend
+      // through the Admin SDK (which bypasses rules). No client — not even
+      // the owner — may mint their own entitlement.
+      allow write: if false;
+    }
+  }
+}

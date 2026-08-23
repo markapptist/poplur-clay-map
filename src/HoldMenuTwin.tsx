@@ -14,6 +14,7 @@ import MapShowMe from './MapShowMe'
 import NotificationsScreen from './NotificationsScreen'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
+import CharacterEditor from './CharacterEditor'
 import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
 import MailScreen from './MailScreen'
@@ -179,6 +180,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // A real screen now, not a Rough Copy capture: Settings holds REFER A
     // FRIEND, which gives away a day of worldwide radius and therefore has to
     // actually work.
+    { icon: 'Wardrobe', title: 'WARDROBE', screen: 'profile-wardrobe', native: true },
     { icon: 'Settings', title: 'SETTINGS', screen: 'profile-settings', native: true },
   ],
 }
@@ -1036,6 +1038,13 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Stats">
           <StatsScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-wardrobe') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Wardrobe">
+          <CharacterEditor />
         </div>
       )
     }
