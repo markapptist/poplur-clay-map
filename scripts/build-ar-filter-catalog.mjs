@@ -8,13 +8,17 @@
  * one JSON catalog that ships from Cloud Storage like every other pack, so a
  * new filter is a catalog entry plus a thumbnail — no app release.
  *
- * This generator exists so the first catalog is provably identical to what
- * already ships: it PARSES the two current sources rather than transcribing
- * them by hand. Run it once to seed the catalog; after that the catalog is the
- * source and this is only a re-verification tool.
+ * SEEDING IS DONE. This parsed both shipping sources so the first catalog was
+ * provably identical to what was already on devices; ARFilters.tsx no longer
+ * holds ids, so that path cannot run again and does not need to.
  *
- *   node scripts/build-ar-filter-catalog.mjs           # write + verify
- *   node scripts/build-ar-filter-catalog.mjs --check   # verify only, exit 1 on drift
+ * What remains is the drift that outlives the migration: the catalog's grades
+ * and iOS's compiled fallback table must agree. They are two copies of the
+ * same numbers, and a phone falls back to the Swift table whenever a pick
+ * arrives without a streamed grade — so a silent divergence means a filter
+ * that looks one way in the browser and another on the device.
+ *
+ *   node scripts/build-ar-filter-catalog.mjs --check   # exit 1 on drift
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -24,25 +28,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const IOS = '/Users/matrix/Developer/Poplur2025-iOS/Poplur2025/ARFilterManager.swift'
 const checkOnly = process.argv.includes('--check')
 
-// ── web: id / label / css / thumbnail ────────────────────────────────────────
-const web = readFileSync(resolve(root, 'src/ARFilters.tsx'), 'utf8')
-const arrayBody = web.slice(
-  web.indexOf('export const AR_FILTERS'),
-  web.indexOf('\n]', web.indexOf('export const AR_FILTERS')),
-)
-const webFilters = []
-const entryRe = /\{\s*id:\s*'([^']+)',\s*label:\s*'([^']+)',\s*css:\s*'([^']*)',\s*thumbnail:\s*'([^']+)'\s*\}/g
-for (const m of arrayBody.matchAll(entryRe)) {
-  webFilters.push({ id: m[1], label: m[2], css: m[3], thumbnail: m[4] })
-}
-if (webFilters.length === 0) throw new Error('parsed zero filters from ARFilters.tsx')
+// ── the catalog is the source ────────────────────────────────────────────────
+const catalogPath = resolve(root, 'src/arFilterCatalog.json')
+const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'))
 
 // ── native: rawValue -> Grade(...) ───────────────────────────────────────────
 const ios = readFileSync(IOS, 'utf8')
-// enum case  ->  rawValue     e.g.  case webPop3D = "pop-3d"
 const caseToId = {}
 for (const m of ios.matchAll(/case\s+(web[A-Za-z0-9]+)\s*=\s*"([^"]+)"/g)) caseToId[m[1]] = m[2]
-// grade table  e.g.  case .webPop3D: return Grade(saturation: 1.1, bloom: 0.2, anaglyph: 3)
 const grades = {}
 for (const m of ios.matchAll(/case\s+\.(web[A-Za-z0-9]+):\s*return\s+Grade\(([^)]*)\)/g)) {
   const id = caseToId[m[1]]
@@ -55,40 +48,33 @@ for (const m of ios.matchAll(/case\s+\.(web[A-Za-z0-9]+):\s*return\s+Grade\(([^)
   grades[id] = g
 }
 
-// ── merge ────────────────────────────────────────────────────────────────────
-const filters = webFilters.map(f => ({
-  id: f.id,
-  label: f.label,
-  thumbnail: f.thumbnail,
-  css: f.css,
-  // Absent for `none`, which is the absence of a filter rather than a grade.
-  ...(grades[f.id] ? { grade: grades[f.id] } : {}),
-}))
-
-const missingGrade = filters.filter(f => f.id !== 'none' && !f.grade).map(f => f.id)
-const orphanGrade = Object.keys(grades).filter(id => !filters.some(f => f.id === id))
-
-const catalog = {
-  // Bumped when entries change; the app prefers the highest version it can reach.
-  version: 1,
-  filters,
+if (Object.keys(grades).length === 0) {
+  console.error('FAIL  parsed zero grades from ARFilterManager.swift — this check cannot verify anything')
+  process.exit(1)
 }
-const json = JSON.stringify(catalog, null, 2) + '\n'
 
-const dest = resolve(root, 'src/arFilterCatalog.json')
-const published = resolve(root, 'public/ar-filters/catalog.json')
-
-if (checkOnly) {
-  const current = readFileSync(dest, 'utf8')
-  if (current !== json) {
-    console.error('ar-filter catalog DRIFT: src/arFilterCatalog.json no longer matches the code it was seeded from')
-    process.exit(1)
+let drift = 0
+for (const f of catalog.filters) {
+  if (f.id === 'none') continue
+  const native = grades[f.id]
+  if (!native) {
+    // Not drift: a filter published after the last release has no native case,
+    // which is exactly what the streamed grade exists to cover.
+    continue
   }
-  console.log(`ar-filter catalog: ${filters.length} filters, no drift`)
-} else {
-  writeFileSync(dest, json)
-  writeFileSync(published, json)
-  console.log(`ar-filter catalog: wrote ${filters.length} filters`)
+  const mine = f.grade ?? {}
+  const keys = [...new Set([...Object.keys(mine), ...Object.keys(native)])]
+  for (const k of keys) {
+    if ((mine[k] ?? 0) !== (native[k] ?? 0)) {
+      console.error(`DRIFT  ${f.id}.${k}: catalog ${mine[k] ?? 0} vs native ${native[k] ?? 0}`)
+      drift++
+    }
+  }
 }
-if (missingGrade.length) console.warn(`  no native grade: ${missingGrade.join(', ')}`)
-if (orphanGrade.length) console.warn(`  native-only grade: ${orphanGrade.join(', ')}`)
+
+const compared = catalog.filters.filter(f => f.id !== 'none' && grades[f.id]).length
+if (drift) {
+  console.error(`\n${drift} grade value(s) drifted across ${compared} filters`)
+  process.exit(1)
+}
+console.log(`ar-filter catalog: ${catalog.filters.length} filters, ${compared} grades match native exactly`)
