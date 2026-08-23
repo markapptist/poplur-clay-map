@@ -14,21 +14,29 @@ import { fileURLToPath } from 'node:url'
 // in-bundle fallback path. Baking the base in makes that resolution correct
 // from the first tick, which is the precondition for shipping the packs out
 // of the bundle at all (see PUBLISHED_PACK_DIRS below).
-const ASSET_PACK_BASE: string = (() => {
+const MANIFEST: { baseUrl?: string, localPaths?: Record<string, string> } = (() => {
   try {
     const manifestPath = fileURLToPath(new URL('./public/asset-manifest.json', import.meta.url))
-    const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
-      baseUrl?: string
-      localPaths?: Record<string, string>
-    }
-    // localPaths wins in the manifest too, and means "these are not published
-    // anywhere yet" — so it must not switch on the exclusion below.
-    if (parsed.localPaths && Object.keys(parsed.localPaths).length) return ''
-    return typeof parsed.baseUrl === 'string' ? parsed.baseUrl : ''
+    return JSON.parse(readFileSync(manifestPath, 'utf8'))
   } catch {
-    return ''
+    return {}
   }
 })()
+
+const ASSET_PACK_BASE: string = typeof MANIFEST.baseUrl === 'string' ? MANIFEST.baseUrl : ''
+
+// Packs pinned to their bundled path because they are built but NOT uploaded.
+// These must stay IN the build — they are the only copy — while every other
+// published pack is still dropped.
+//
+// This used to be all-or-nothing: ANY localPaths entry zeroed ASSET_PACK_BASE
+// and switched the exclusion off entirely. Pinning one small unpublished pack
+// therefore put 91MB of already-published content back into the bundle
+// (measured: the iOS bundle went 116MB -> 207MB), which is the opposite of
+// what pinning one pack should mean. The pin is per-pack now. localPaths
+// VALUES are public/ paths, so they compare directly against the dirs below;
+// in fully-local mode baseUrl is empty and the exclusion is off anyway.
+const LOCALLY_PINNED = new Set(Object.values(MANIFEST.localPaths ?? {}))
 
 // Directories whose contents the manifest publishes. They are dropped from the
 // build ONLY while ASSET_PACK_BASE is set: with no published base the bundled
@@ -95,7 +103,8 @@ function boundedPublicAssets() {
           // from the bucket. Copying it as well means a phone carries the
           // bytes AND can download them again.
           if (ASSET_PACK_BASE
-            && PUBLISHED_PACK_DIRS.some(dir => path === dir || path.startsWith(`${dir}/`))) {
+            && PUBLISHED_PACK_DIRS.some(dir =>
+              !LOCALLY_PINNED.has(dir) && (path === dir || path.startsWith(`${dir}/`)))) {
             return false
           }
           return true
