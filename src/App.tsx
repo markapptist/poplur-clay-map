@@ -392,6 +392,10 @@ const MANAGED_CAMERA_SETTLE_MS = 400
 // stale click out of the map long enough that it cannot replace the selected
 // landmark with the coordinate behind the search control.
 const SEARCH_MAP_CLICK_GUARD_MS = 12_000
+// A landmark's Draco decode can complete well after the 3.4s camera flight on
+// a cold phone. Keep the map awake through one finite arrival window; the 3D
+// layer also renews this briefly when the mesh itself becomes ready.
+const LANDMARK_RENDER_SETTLE_MS = 9_000
 // Tour pacing. The tour flight is not a short hop: it rises all the way out to
 // the globe and dives back into the next city (minZoom 0.9, curve 1.7 in
 // flyToCenter), so it needs real time to read as a camera move rather than a
@@ -1002,7 +1006,9 @@ export default function App() {
       distanceMeters(center, destination.coords) <= 550,
     )
     const landmarkFrame = landmark ? landmarkCameraFrame(landmark.id) : null
-    wakeManagedRendering(3400 + MANAGED_CAMERA_SETTLE_MS)
+    wakeManagedRendering(3400 + (landmarkFrame
+      ? LANDMARK_RENDER_SETTLE_MS
+      : MANAGED_CAMERA_SETTLE_MS))
     map.easeTo({
       center,
       zoom: landmarkFrame?.zoom ?? 15.4,

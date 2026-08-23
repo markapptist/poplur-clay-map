@@ -634,19 +634,19 @@ function notALandmarkBuilding() {
   ]]
 }
 
-const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; heightM: number; yaw?: number }[] = [
-  { id: 'burj-khalifa', coords: [55.2744, 25.1972], width: 720, heightM: 828 },
-  { id: 'cn-tower', coords: [-79.3871, 43.6426], width: 640, heightM: 553 },
-  { id: 'eiffel', coords: [2.2945, 48.8584], width: 520, heightM: 330 },
-  { id: 'space-needle', coords: [-122.3493, 47.6205], width: 420, heightM: 184 },
-  { id: 'golden-gate', coords: [-122.4783, 37.8199], width: 560, heightM: 227, yaw: 12 },
-  { id: 'statue-liberty', coords: [-74.0445, 40.6892], width: 320, heightM: 93 },
-  { id: 'big-ben', coords: [-0.1246, 51.5007], width: 320, heightM: 96 },
-  { id: 'giza', coords: [31.1342, 29.9792], width: 420, heightM: 139 },
-  { id: 'taj-mahal', coords: [78.0421, 27.1751], width: 380, heightM: 73 },
-  { id: 'colosseum', coords: [12.4922, 41.8902], width: 380, heightM: 48 },
-  { id: 'sydney-opera', coords: [151.2153, -33.8568], width: 380, heightM: 65 },
-  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], width: 260, heightM: 38 },
+const WORLD_LANDMARKS: { id: string; coords: [number, number]; heightM: number; frameSpanM: number; color: number; yaw?: number }[] = [
+  { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xf0b75f },
+  { id: 'cn-tower', coords: [-79.3871, 43.6426], heightM: 553, frameSpanM: 553, color: 0x7fc9f4 },
+  { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0xef7495 },
+  { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0x87d2b6 },
+  { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xed765e, yaw: 12 },
+  { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93, frameSpanM: 93, color: 0x7cc8a5 },
+  { id: 'big-ben', coords: [-0.1246, 51.5007], heightM: 96, frameSpanM: 96, color: 0xd7ab59 },
+  { id: 'giza', coords: [31.1342, 29.9792], heightM: 139, frameSpanM: 300, color: 0xe0b065 },
+  { id: 'taj-mahal', coords: [78.0421, 27.1751], heightM: 73, frameSpanM: 85, color: 0xf0d7e3 },
+  { id: 'colosseum', coords: [12.4922, 41.8902], heightM: 48, frameSpanM: 95, color: 0xc99570 },
+  { id: 'sydney-opera', coords: [151.2153, -33.8568], heightM: 65, frameSpanM: 150, color: 0xe8bfd8 },
+  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0x9dc7f2 },
 ]
 
 // Landmarks are discoveries at street level, not distant navigation pins.
@@ -660,7 +660,7 @@ const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; he
 const LANDMARK_3D_REVEAL_KM = 0.3
 const LANDMARK_REFERENCE_HEIGHT_M = 330 // Eiffel Tower: the reference frame.
 const LANDMARK_MIN_FRAME_ZOOM = 13.5
-const LANDMARK_MAX_FRAME_ZOOM = 15.5
+const LANDMARK_MAX_FRAME_ZOOM = 16.0
 // Arriving at an exact camera zoom can end a fraction below its requested
 // value. Start loading just before the frame target so the grounded model is
 // already visible when the flight settles, rather than requiring a manual
@@ -668,13 +668,14 @@ const LANDMARK_MAX_FRAME_ZOOM = 15.5
 const LANDMARK_REVEAL_ZOOM_BUFFER = 0.3
 
 /**
- * A fixed zoom crops the Burj and CN Tower while leaving smaller landmarks too
- * distant. Scale the street-level frame logarithmically with real height: a
- * structure twice as tall lands one zoom level farther out. The cap leaves
- * a generous safety margin rather than letting a small model fill the screen.
+ * A fixed zoom crops large or wide landmarks while leaving a short tower too
+ * distant. Scale the street-level frame logarithmically with the largest real
+ * mesh span: a structure twice as large lands one zoom level farther out.
+ * This makes every landmark legible while retaining its complete, grounded
+ * silhouette inside the view.
  */
-function landmarkCameraZoom(heightM: number): number {
-  const scaled = 14.75 - Math.log2(Math.max(1, heightM) / LANDMARK_REFERENCE_HEIGHT_M)
+function landmarkCameraZoom(frameSpanM: number): number {
+  const scaled = 15.3 - Math.log2(Math.max(1, frameSpanM) / LANDMARK_REFERENCE_HEIGHT_M)
   return Math.max(LANDMARK_MIN_FRAME_ZOOM, Math.min(LANDMARK_MAX_FRAME_ZOOM, scaled))
 }
 
@@ -689,7 +690,7 @@ export function landmarkCameraFrame(id: string): LandmarkCameraFrame | null {
   const landmark = WORLD_LANDMARKS.find(candidate => candidate.id === id)
   if (!landmark) return null
   return {
-    zoom: landmarkCameraZoom(landmark.heightM),
+    zoom: landmarkCameraZoom(landmark.frameSpanM),
     // A near-top-down view makes an upright tower read as though it is lying
     // across the map. Keep a deliberately oblique, ground-revealing angle;
     // the size-aware zoom above leaves both base and crown inside the frame.
@@ -2173,7 +2174,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (flagged.__tripping) return
       if (flagged.__cinematic) {
         flagged.__cinematic = false
-        startOrbit()
+        // A user-selected destination has already claimed the camera (search,
+        // landmark tour or bridge request). Do not immediately hand it back to
+        // the ambient orbit: even a gentle background turn can make a carefully
+        // framed, grounded landmark feel like it is sliding away. The passive
+        // launch still starts its orbit because it has not claimed the camera.
+        if (!mapCamera.__poplurCameraClaimed) startOrbit()
       }
     })
 
@@ -3221,8 +3227,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           id: mark.id,
           coords: mark.coords,
           heightM: mark.heightM,
+          color: mark.color,
           nearKm: LANDMARK_3D_REVEAL_KM,
-          nearZoom: landmarkCameraZoom(mark.heightM) - LANDMARK_REVEAL_ZOOM_BUFFER,
+          nearZoom: landmarkCameraZoom(mark.frameSpanM) - LANDMARK_REVEAL_ZOOM_BUFFER,
         })
         landmarks3dRef.current.set(mark.id, h)
         // Evaluate once for the current camera (the app may already be near

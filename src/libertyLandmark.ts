@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
+import { wakeManagedRendering } from './nativeBridge'
 
 // ── World landmarks as TRUE 3D map models ────────────────────────────────────
 //
@@ -72,6 +73,8 @@ export interface NearLandmark3DConfig {
   nearZoom?: number
   /** Priority for the performance lease. Default 60. */
   perfPriority?: number
+  /** Clay accent applied to this landmark's actual 3D mesh. */
+  color?: number
 }
 
 export interface NearLandmark3D {
@@ -153,6 +156,12 @@ export function installNearLandmark3D(
   let model: THREE.Object3D | null = null
   let modelReady = false
   let modelRendered = false
+  let popFrame: number | null = null
+
+  const stopPop = () => {
+    if (popFrame != null) window.cancelAnimationFrame(popFrame)
+    popFrame = null
+  }
 
   const disposeModel = (obj: THREE.Object3D) => {
     obj.traverse(node => {
@@ -187,6 +196,33 @@ export function installNearLandmark3D(
       scene.add(b)
       scene.add(new THREE.AmbientLight(0xffffff, 1.0))
 
+      const playArrivalPop = (
+        built: THREE.Object3D,
+        fullScale: number,
+        groundY: number,
+      ) => {
+        // The only animation a landmark owns is this short arrival beat. It
+        // asks Mapbox for frames for less than half a second, then stops
+        // completely; the model remains a static, planted map object.
+        stopPop()
+        const start = performance.now()
+        const duration = 360
+        const frame = (now: number) => {
+          if (disposed || !model || model !== built) return
+          const t = Math.min(1, (now - start) / duration)
+          const eased = 1 - (1 - t) ** 3
+          const scale = fullScale * (0.72 + 0.28 * eased)
+          built.scale.setScalar(scale)
+          // Scaling around the origin would lift the base off the ground.
+          // Recompute its offset from the model's local floor every frame.
+          built.position.y = -groundY * scale
+          map.triggerRepaint()
+          if (t < 1) popFrame = window.requestAnimationFrame(frame)
+          else popFrame = null
+        }
+        popFrame = window.requestAnimationFrame(frame)
+      }
+
       const loader = new GLTFLoader()
       const draco = new DRACOLoader()
       draco.setDecoderPath(dracoPath)
@@ -196,17 +232,19 @@ export function installNearLandmark3D(
         g => {
           if (!scene) { disposeModel(g.scene); return }
           const built = g.scene
-          // Meshy's supplied GLBs store their tall axis in Z and carry a +90°
-          // X root rotation. Make their up-axis positive Three Y here; the
-          // Mapbox-layer transform above then carries Y into Mapbox's Z-up
-          // world. Keeping either conversion out laid the geometry flat.
-          built.rotation.x = -Math.PI / 2
+          // Meshy's supplied GLBs carry their own +90° X mesh-node rotation.
+          // Leave that conversion intact: Mapbox's layer transform turns its
+          // Three-Y height into Mapbox-Z and reverses the source vertical axis
+          // so the model's broad base, not its crown, meets the ground. A
+          // second root rotation either laid the mesh flat or stood it upside
+          // down.
+          built.rotation.x = 0
           // Skin the model in the clay building-cap cream (#efe9df) so it
           // reads as a special landmark, not another OSM extrusion. The
           // muted PBR gray shipped in the GLBs (~#948f8a) blended into the
           // surrounding cream buildings — visually the model was there but
           // indistinguishable, which reads as "nothing changed" to the user.
-          const claySkin = new THREE.MeshLambertMaterial({ color: 0xefe9df })
+          const claySkin = new THREE.MeshLambertMaterial({ color: cfg.color ?? 0xefe9df })
           built.traverse(o => {
             const mesh = o as THREE.Mesh
             if (mesh.isMesh) mesh.material = claySkin
@@ -219,6 +257,8 @@ export function installNearLandmark3D(
           const s = cfg.heightM / (size.y || 1)
           built.scale.setScalar(s)
           const box2 = new THREE.Box3().setFromObject(built)
+          // Keep the model's local floor on the map plane. The shared layer
+          // transform carries Three Y into Mapbox Z after this placement.
           built.position.y -= box2.min.y
           // A subtle contact shadow on the actual map plane makes the base
           // legible against the clay ground. It is model-space geometry, not
@@ -240,17 +280,21 @@ export function installNearLandmark3D(
             }),
           )
           contact.name = 'landmark-ground-contact'
-          // `built` has already converted the source's Z-up mesh to Three Y;
-          // its child positions remain in the mesh's own coordinates. Keep
-          // the circle in its default XY plane and place it at the source Z
-          // floor. Rotating it here made the contact shadow stand upright as
-          // a floating-looking disc beside low landmarks.
-          contact.position.z = box.min.y + 0.002
+          // The model's local ground is XZ. Rotate the default XY circle into
+          // that plane, then park it at the mesh's local floor.
+          contact.rotation.x = Math.PI / 2
+          contact.position.y = box.min.y + 0.002
           built.add(contact)
           model = built
           modelReady = true
           modelRendered = false
           scene.add(built)
+          // A compressed GLB may finish decoding after the camera's own
+          // flight lease has ended. Wake the map briefly so this first,
+          // grounded frame and its arrival pop cannot be hidden behind a
+          // stale parked snapshot.
+          wakeManagedRendering(1200)
+          playArrivalPop(built, s, box.min.y)
           opts.onModelReady?.()
           map.triggerRepaint()
         },
@@ -267,6 +311,7 @@ export function installNearLandmark3D(
       renderer.autoClear = false
     },
     onRemove() {
+      stopPop()
       if (model) { disposeModel(model); model = null }
       modelReady = false
       modelRendered = false
@@ -311,6 +356,13 @@ export function installNearLandmark3D(
       }
       cam.projectionMatrix = new THREE.Matrix4().fromArray(matrix).multiply(l)
       renderer.resetState()
+      // The corresponding base-building footprint is normally removed by the
+      // map style. Some live tile sources omit its height, though, so their
+      // generic extrusion can still occupy the landmark's depth buffer (Big
+      // Ben at Westminster is the canonical case). The landmark is anchored
+      // by its model transform, not screen space; clearing only depth here
+      // lets that grounded replacement remain visible above stale base mesh.
+      renderer.clearDepth()
       renderer.render(scene, cam)
       if (modelReady && !modelRendered) {
         modelRendered = true
@@ -370,6 +422,7 @@ export function installNearLandmark3D(
       if (active && shown) map.triggerRepaint()
     },
     releaseInactiveResources: () => {
+      stopPop()
       if (model) { disposeModel(model); model = null }
       modelReady = false
       modelRendered = false
