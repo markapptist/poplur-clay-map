@@ -1106,6 +1106,11 @@ const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doo
 // 17.4 floor the street-reveal ease already uses, so the two agree instead of
 // fighting. Well under ZOOM_MAX, so pinching further is still available.
 const INTRO_LANDING_ZOOM = 17.6
+// The iPhone fallback now opens the way the native experiment does: a quiet,
+// flat city view which becomes the clay flyover only after the person zooms
+// closer. It stays just below HYBRID_ZOOM, so the existing camera policy owns
+// the 2D -> 3D transition and a deliberate zoom-out still reveals the globe.
+const ADAPTIVE_IOS_LAUNCH_ZOOM = 12.1
 // Journey mode intentionally drops below the manual diorama ceiling so the
 // clay roads and buildings read from an eye-level chase camera.
 const STREET_VIEW_MAX_ZOOM = 19
@@ -1156,6 +1161,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     : new URLSearchParams(window.location.search)
   const radiusPreviewLaunch = launchParams.get('radiusReview') === '1'
   const focusedPostLaunch = launchParams.get('pickSpot') === '1' || radiusPreviewLaunch
+  const adaptiveIOSLaunch = !MAP_2D && !focusedPostLaunch && (
+    launchParams.get('iosTier') === '1'
+    || (isIOSNativeShell() && launchParams.get('iosTier') !== '0')
+  )
   const deferInitialGeolocation = launchParams.get('deferLocation') === '1'
   const requestedPickLatRaw = launchParams.get('pickLat')
   const requestedPickLngRaw = launchParams.get('pickLng')
@@ -2335,12 +2344,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         }, firstLayerId)
       }
 
-      // The 3D experience keeps its globe-to-city reveal. 2D also starts fully
-      // zoomed out and glides into useful ground so the launch reads as an
-      // approach rather than a snap-to; only a focused post-launch (opening
-      // directly onto a specific pin) still jumps straight to the target.
+      // Desktop 3D keeps its globe-to-city reveal. The iPhone fallback opens
+      // flat and local, matching the native experiment: no automatic trip out
+      // to space and back, while the existing zoom policy still brings in the
+      // clay flyover close-up. A focused post launch remains a direct task.
       const focusedCenter = nativeLocationRef.current ?? HOME_CENTER
-      const launchZoom = focusedPostLaunch ? INTRO_LANDING_ZOOM : 0.85
+      const launchZoom = focusedPostLaunch
+        ? INTRO_LANDING_ZOOM
+        : adaptiveIOSLaunch ? ADAPTIVE_IOS_LAUNCH_ZOOM : 0.85
       if (focusedPostLaunch) initialCameraInteractionRef.current = true
       wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
       map.jumpTo({
@@ -2353,16 +2364,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       zoomTargetRef.current = launchZoom
       setZoomValue(launchZoom)
 
-      // Reveal HERE — with the globe on screen and drawn. Waiting for the dive
-      // to finish meant the Loading screen covered the entire launch and lifted
-      // on a street-level city, so the globe was never seen.
+      // Reveal the chosen launch shot once it has drawn. On desktop this is the
+      // globe; on iPhone it is the flat regional map. Waiting for the old dive
+      // to finish hid the entire arrival behind the Loading screen.
       //
       // 'idle' alone is NOT safe to gate on: the idle-orbit spins the camera
       // every frame, so a map that has started orbiting never idles (and never
-      // emits moveend either). Race it against a deadline that still lands
-      // inside the pre-dive hold, so the reveal always happens at globe zoom.
+      // emits moveend either). Race it against a deadline so neither launch
+      // shot can be stranded behind the loading layer.
       let revealed = false
-      const revealAtGlobe = () => {
+      const revealLaunch = () => {
         if (revealed) return
         revealed = true
         onGlobeReady?.()
@@ -2370,10 +2381,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (focusedPostLaunch) {
         // This is a task surface, not a destination reveal. Report ready on the
         // next turn after the direct local camera has painted; never show space.
-        later(revealAtGlobe, 0)
+        later(revealLaunch, 0)
       } else {
-        map.once('idle', revealAtGlobe)
-        later(revealAtGlobe, 1200)
+        map.once('idle', revealLaunch)
+        later(revealLaunch, 1200)
       }
 
       let introDone = false
@@ -2387,6 +2398,25 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       const landOn = (center: [number, number]) => {
         if (initialCameraInteractionRef.current || mapCamera.__poplurCameraClaimed) {
           finishInterruptedIntro()
+          return
+        }
+        // iPhone's web fallback shares the native renderer's adaptive arrival:
+        // stay flat at city scale and let a real pinch/rail gesture cross the
+        // existing HYBRID_ZOOM boundary into 3D. This removes the former cold
+        // street -> globe -> street double load without removing any clay art,
+        // close-up buildings, pins, HUD, or the deliberately reachable globe.
+        if (adaptiveIOSLaunch) {
+          wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
+          map.jumpTo({
+            center,
+            zoom: ADAPTIVE_IOS_LAUNCH_ZOOM,
+            pitch: 0,
+            bearing: 0,
+          })
+          if (!introDone) {
+            introDone = true
+            onIntroComplete?.(center)
+          }
           return
         }
         // 2D also flies from the fully zoomed-out world into useful ground so
@@ -2493,7 +2523,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       }
       const startIntro = () => later(
         () => landOn(introTarget()),
-        MAP_2D ? 120 : 1400,
+        MAP_2D || adaptiveIOSLaunch ? 120 : 1400,
       )
       if (!focusedPostLaunch) {
         if (!deferInitialGeolocation && !nativeLocationRef.current && navigator.geolocation) {
@@ -2506,7 +2536,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
               // Only recentre on the fix if there was no claim to land on —
               // otherwise a slow Core Location answer would yank the camera off
               // your biggest pop moments after it arrived there.
-              if (MAP_2D && introDone && !largestOwnClaim()) landOn(landingCenter)
+              if ((MAP_2D || adaptiveIOSLaunch) && introDone && !largestOwnClaim()) landOn(landingCenter)
             },
             () => { /* fallback already scheduled */ },
             { timeout: 1200, maximumAge: 300000 },

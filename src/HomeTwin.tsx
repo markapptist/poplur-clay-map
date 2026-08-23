@@ -2295,15 +2295,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         radiusKm?: unknown; place?: unknown
       } | null
       if (!d || !Array.isArray(d.coords) || d.coords.length !== 2) return
-      mapFrameRef.current?.contentWindow?.postMessage({
-        type: 'poplur-map-action',
-        action: 'engagement',
+      sendMapAction('engagement', {
         user: d.user,
         kind: d.kind,
         coords: d.coords,
         radiusKm: d.radiusKm,
         place: d.place,
-      }, '*')
+      })
     }
     const onEngagementEvent = (e: Event) => forward((e as CustomEvent).detail)
     const onEngagementMessage = (e: MessageEvent) => {
@@ -2318,7 +2316,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.removeEventListener('poplur-engagement', onEngagementEvent)
       window.removeEventListener('message', onEngagementMessage)
     }
-  }, [])
+  }, [sendMapAction])
 
   // Dismiss the native/embedding loading screen as soon as the HOME has painted.
   // This used to ride on the map's `poplur-map-ready`, but the map now mounts
@@ -3838,9 +3836,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 ...droppedClaimsRef.current.filter(claim => claim.id !== droppedClaim.id),
                 droppedClaim,
               ].slice(-24)
-              if (mapReady && mapFrameRef.current?.contentWindow) {
-                mapFrameRef.current.contentWindow.postMessage(droppedClaim, '*')
-              }
+              if (mapReady) sendMapAction('dropClaim', droppedClaim)
               setActiveTab('map')
             }}
           />
