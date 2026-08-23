@@ -71,9 +71,13 @@ export interface NearLandmark3DConfig {
   nearKm?: number
   /** …and zoomed past this level. Default 13. */
   nearZoom?: number
+  /** Clockwise rotation around the model's vertical axis, in degrees. */
+  yaw?: number
+  /** Clear stale basemap depth before drawing. Default true for legacy models. */
+  clearDepth?: boolean
   /** Priority for the performance lease. Default 60. */
   perfPriority?: number
-  /** Clay accent applied to this landmark's actual 3D mesh. */
+  /** Clay fallback for legacy GLBs that contain no authored textures. */
   color?: number
 }
 
@@ -106,6 +110,130 @@ function distanceKm(a: [number, number], b: [number, number]): number {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+function texturesForMaterial(material: THREE.Material): THREE.Texture[] {
+  const textures = new Set<THREE.Texture>()
+  // GLTFLoader exposes every glTF PBR texture (base colour, ORM, normal,
+  // emissive and extension maps) as a direct material property. Looking for
+  // Texture instances keeps this compatible with MeshStandardMaterial and
+  // MeshPhysicalMaterial extensions without maintaining a fragile map list.
+  for (const value of Object.values(material)) {
+    if (value && (value as THREE.Texture).isTexture) {
+      textures.add(value as THREE.Texture)
+    }
+  }
+  return [...textures]
+}
+
+/**
+ * Keep the material graph authored into a textured GLB. Older landmark files
+ * in this repository have only neutral, textureless Meshy placeholder
+ * materials; those retain the existing clay-colour fallback so the rollout of
+ * PBR assets can happen one landmark at a time.
+ */
+function prepareLandmarkMaterials(
+  root: THREE.Object3D,
+  fallbackColor: number,
+  maxAnisotropy: number,
+): void {
+  const meshes: THREE.Mesh[] = []
+  const authoredMaterials = new Set<THREE.Material>()
+
+  root.traverse(node => {
+    const mesh = node as THREE.Mesh
+    if (!mesh.isMesh) return
+    meshes.push(mesh)
+    const materials = Array.isArray(mesh.material)
+      ? mesh.material
+      : mesh.material
+        ? [mesh.material]
+        : []
+    materials.forEach(material => authoredMaterials.add(material))
+  })
+
+  const authoredTextures = new Set<THREE.Texture>()
+  authoredMaterials.forEach(material => {
+    texturesForMaterial(material).forEach(texture => authoredTextures.add(texture))
+  })
+  // Toronto's deterministic Blender pipeline also marks intentionally
+  // authored scalar-only PBR zones with this prefix. Preserve those even if a
+  // later mobile LOD omits its image maps; legacy Meshy placeholders are named
+  // only `Material`, `Material_0`, etc.
+  const hasAuthoredPbrMarker = [...authoredMaterials].some(material =>
+    material.name.startsWith('PoplurPBR_'),
+  )
+  const hasAuthoredPbr = authoredTextures.size > 0 || hasAuthoredPbrMarker
+
+  // Two samples per pixel is a useful oblique-angle improvement for map
+  // landmarks without the bandwidth cost of desktop-grade 8x/16x filtering.
+  const mobileAnisotropy = Math.max(1, Math.min(2, maxAnisotropy))
+  authoredTextures.forEach(texture => {
+    if (texture.anisotropy === mobileAnisotropy) return
+    texture.anisotropy = mobileAnisotropy
+    texture.needsUpdate = true
+  })
+
+  let fallback: THREE.MeshStandardMaterial | null = null
+  const fallbackMaterial = () => {
+    fallback ??= new THREE.MeshStandardMaterial({
+      color: fallbackColor,
+      roughness: 0.82,
+      metalness: 0.02,
+    })
+    return fallback
+  }
+
+  meshes.forEach(mesh => {
+    // Landmark lighting is baked/authored. Never allocate dynamic shadow maps
+    // for a model that becomes completely static after its short arrival pop.
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    if (!hasAuthoredPbr || !mesh.material) {
+      mesh.material = fallbackMaterial()
+    }
+  })
+
+  if (!hasAuthoredPbr) {
+    // These materials were detached from every mesh above. Dispose their GPU
+    // programs now instead of leaving them alive until the GLB scene is freed.
+    authoredMaterials.forEach(material => material.dispose())
+  }
+}
+
+function disposeLandmarkModel(root: THREE.Object3D): void {
+  const geometries = new Set<THREE.BufferGeometry>()
+  const materials = new Set<THREE.Material>()
+  const textures = new Set<THREE.Texture>()
+  const imageSources = new Set<object>()
+
+  root.traverse(node => {
+    const mesh = node as THREE.Mesh
+    if (!mesh.isMesh) return
+    if (mesh.geometry) geometries.add(mesh.geometry)
+    const meshMaterials = Array.isArray(mesh.material)
+      ? mesh.material
+      : mesh.material
+        ? [mesh.material]
+        : []
+    meshMaterials.forEach(material => materials.add(material))
+  })
+
+  materials.forEach(material => {
+    texturesForMaterial(material).forEach(texture => textures.add(texture))
+  })
+  geometries.forEach(geometry => geometry.dispose())
+  materials.forEach(material => material.dispose())
+  textures.forEach(texture => {
+    const source = texture.source?.data as { close?: () => void } | undefined
+    if (source && !imageSources.has(source)) {
+      imageSources.add(source)
+      // GLTFLoader may use ImageBitmapLoader. ImageBitmap pixel storage is not
+      // released by Texture.dispose(), so close it when this landmark leaves.
+      source.close?.()
+    }
+    texture.dispose()
+  })
 }
 
 /**
@@ -163,24 +291,6 @@ export function installNearLandmark3D(
     popFrame = null
   }
 
-  const disposeModel = (obj: THREE.Object3D) => {
-    obj.traverse(node => {
-      const mesh = node as THREE.Mesh
-      mesh.geometry?.dispose()
-      const mats = Array.isArray(mesh.material)
-        ? mesh.material
-        : mesh.material
-          ? [mesh.material]
-          : []
-      for (const m of mats) {
-        for (const value of Object.values(m)) {
-          if (value && (value as THREE.Texture).isTexture) (value as THREE.Texture).dispose()
-        }
-        m.dispose()
-      }
-    })
-  }
-
   const customLayer: mapboxgl.CustomLayerInterface = {
     id: layerId,
     type: 'custom',
@@ -188,13 +298,16 @@ export function installNearLandmark3D(
     onAdd(m, gl) {
       cam = new THREE.Camera()
       scene = new THREE.Scene()
-      const a = new THREE.DirectionalLight(0xffffff, 2.2)
+      // A small, fixed light rig makes authored concrete, glass, metal and
+      // emissive maps readable without environment probes, real-time shadows,
+      // or any animation that would prevent Mapbox from parking at idle.
+      const a = new THREE.DirectionalLight(0xfff7ee, 2.4)
       a.position.set(0, -70, 100).normalize()
       scene.add(a)
-      const b = new THREE.DirectionalLight(0xffffff, 1.6)
+      const b = new THREE.DirectionalLight(0xdce8ff, 1.15)
       b.position.set(0, 70, 100).normalize()
       scene.add(b)
-      scene.add(new THREE.AmbientLight(0xffffff, 1.0))
+      scene.add(new THREE.HemisphereLight(0xfff8f2, 0x3b2a43, 1.25))
 
       const playArrivalPop = (
         built: THREE.Object3D,
@@ -217,9 +330,11 @@ export function installNearLandmark3D(
           // Recompute its offset from the model's local floor every frame.
           built.position.y = -groundY * scale
           map.triggerRepaint()
+          // governor-ok: bounded 360ms arrival animation; it never rearms once t reaches 1
           if (t < 1) popFrame = window.requestAnimationFrame(frame)
           else popFrame = null
         }
+        // governor-ok: starts the same bounded 360ms arrival animation described above
         popFrame = window.requestAnimationFrame(frame)
       }
 
@@ -230,7 +345,8 @@ export function installNearLandmark3D(
       loader.load(
         glbUrl,
         g => {
-          if (!scene) { disposeModel(g.scene); return }
+          draco.dispose()
+          if (!scene) { disposeLandmarkModel(g.scene); return }
           const built = g.scene
           // Meshy's supplied GLBs carry their own +90° X mesh-node rotation.
           // Leave that conversion intact: Mapbox's layer transform turns its
@@ -239,16 +355,15 @@ export function installNearLandmark3D(
           // second root rotation either laid the mesh flat or stood it upside
           // down.
           built.rotation.x = 0
-          // Skin the model in the clay building-cap cream (#efe9df) so it
-          // reads as a special landmark, not another OSM extrusion. The
-          // muted PBR gray shipped in the GLBs (~#948f8a) blended into the
-          // surrounding cream buildings — visually the model was there but
-          // indistinguishable, which reads as "nothing changed" to the user.
-          const claySkin = new THREE.MeshLambertMaterial({ color: cfg.color ?? 0xefe9df })
-          built.traverse(o => {
-            const mesh = o as THREE.Mesh
-            if (mesh.isMesh) mesh.material = claySkin
-          })
+          built.rotation.y = THREE.MathUtils.degToRad(cfg.yaw ?? 0)
+          // Preserve the complete authored glTF PBR graph when textures are
+          // present. Legacy textureless models retain their cream clay skin,
+          // allowing new real-world materials to ship landmark-by-landmark.
+          prepareLandmarkMaterials(
+            built,
+            cfg.color ?? 0xefe9df,
+            renderer?.capabilities.getMaxAnisotropy() ?? 1,
+          )
           const box = new THREE.Box3().setFromObject(built)
           const size = new THREE.Vector3()
           box.getSize(size)
@@ -263,10 +378,11 @@ export function installNearLandmark3D(
           // A subtle contact shadow on the actual map plane makes the base
           // legible against the clay ground. It is model-space geometry, not
           // a screen-fixed badge, so it stays at the landmark's coordinate.
-          const footprintRadius = Math.min(
-            0.5,
-            Math.max(0.1, Math.max(size.x, size.z) * 0.34),
-          )
+          // Keep the contact patch proportional after the model is scaled to
+          // real-world height. The old 0.5-unit ceiling happened to suit the
+          // normalised Meshy models, but collapsed a metre-authored stadium's
+          // shadow to a pinprick.
+          const footprintRadius = Math.max(0.1, Math.max(size.x, size.z) * 0.34)
           const contact = new THREE.Mesh(
             new THREE.CircleGeometry(footprintRadius, 40),
             // A basic material deliberately ignores the bright landmark
@@ -299,7 +415,10 @@ export function installNearLandmark3D(
           map.triggerRepaint()
         },
         undefined,
-        err => console.warn(`[${cfg.id} glb]`, err),
+        err => {
+          draco.dispose()
+          console.warn(`[${cfg.id} glb]`, err)
+        },
       )
 
       // governor-ok: shares the map's context; the layer holds a PoplurPerformanceManager lease only while it is on the map, and draws only inside Mapbox's own render pass — it asks for no frames of its own
@@ -309,10 +428,14 @@ export function installNearLandmark3D(
         antialias: true,
       })
       renderer.autoClear = false
+      renderer.outputColorSpace = THREE.SRGBColorSpace
+      renderer.toneMapping = THREE.ACESFilmicToneMapping
+      renderer.toneMappingExposure = 1.0
+      renderer.shadowMap.enabled = false
     },
     onRemove() {
       stopPop()
-      if (model) { disposeModel(model); model = null }
+      if (model) { disposeLandmarkModel(model); model = null }
       modelReady = false
       modelRendered = false
       scene = null
@@ -362,7 +485,7 @@ export function installNearLandmark3D(
       // Ben at Westminster is the canonical case). The landmark is anchored
       // by its model transform, not screen space; clearing only depth here
       // lets that grounded replacement remain visible above stale base mesh.
-      renderer.clearDepth()
+      if (cfg.clearDepth ?? true) renderer.clearDepth()
       renderer.render(scene, cam)
       if (modelReady && !modelRendered) {
         modelRendered = true
@@ -382,14 +505,30 @@ export function installNearLandmark3D(
   const reattachOnStyleLoad = () => {
     if (!shown || disposed) return
     if (!map.getLayer(layerId)) {
-      try { map.addLayer(customLayer) } catch (e) { console.warn(`[${cfg.id}] readdLayer`, e) }
+      try {
+        const before = map.getLayer('clay-building-name-labels')
+          ? 'clay-building-name-labels'
+          : map.getLayer('clay-venue-labels')
+            ? 'clay-venue-labels'
+            : undefined
+        map.addLayer(customLayer, before)
+      } catch (e) { console.warn(`[${cfg.id}] readdLayer`, e) }
     }
   }
   map.on('style.load', reattachOnStyleLoad)
 
   const activate = () => {
     if (!map.getLayer(layerId)) {
-      try { map.addLayer(customLayer) } catch (e) { console.warn(`[${cfg.id}] addLayer`, e); return }
+      try {
+        // Labels remain above the landmark, matching Snapchat's readable POI
+        // treatment even when a tall mesh occupies the same screen area.
+        const before = map.getLayer('clay-building-name-labels')
+          ? 'clay-building-name-labels'
+          : map.getLayer('clay-venue-labels')
+            ? 'clay-venue-labels'
+            : undefined
+        map.addLayer(customLayer, before)
+      } catch (e) { console.warn(`[${cfg.id}] addLayer`, e); return }
     }
     opts.onActiveChange?.(true)
   }
@@ -423,7 +562,7 @@ export function installNearLandmark3D(
     },
     releaseInactiveResources: () => {
       stopPop()
-      if (model) { disposeModel(model); model = null }
+      if (model) { disposeLandmarkModel(model); model = null }
       modelReady = false
       modelRendered = false
     },

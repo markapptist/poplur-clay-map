@@ -581,6 +581,7 @@ function CelestialBody({ model, size, rotateDeg = 0 }: {
 const LANDMARK_BUILDING_IDS: number[] = [
   137147715, 137153144, 137153142, 137153143, 137147712, 137153131, // burj-khalifa
   32742038, 288273461, 288273460, 288273459, 288273458,             // cn-tower
+  7969701,                                                          // rogers-centre / SkyDome
   5013364,                                                          // eiffel
   229651145, 229651144, 229651143,                                  // statue-liberty
   123557148,                                                        // big-ben
@@ -611,6 +612,7 @@ const LANDMARK_BUILDING_IDS: number[] = [
 const LANDMARK_FOOTPRINT_CUTS: { at: [number, number]; cutM: number; cutMinH: number }[] = [
   { at: [55.2744, 25.1972], cutM: 260, cutMinH: 80 },  // burj-khalifa (Dubai Mall is low + far)
   { at: [-79.3871, 43.6426], cutM: 120, cutMinH: 100 }, // cn-tower (Rogers Centre dome 86m survives)
+  { at: [-79.38918212, 43.64161058], cutM: 30, cutMinH: 80 }, // rogers-centre (inside its 86m Overture footprint)
   { at: [2.2945, 48.8584], cutM: 140, cutMinH: 50 },   // eiffel
   { at: [-122.3493, 47.6205], cutM: 90, cutMinH: 60 }, // space-needle (MoPOP stays)
   { at: [-74.0445, 40.6892], cutM: 120, cutMinH: 20 }, // statue-liberty (museum on the island stays)
@@ -634,9 +636,35 @@ function notALandmarkBuilding() {
   ]]
 }
 
-const WORLD_LANDMARKS: { id: string; coords: [number, number]; heightM: number; frameSpanM: number; color: number; yaw?: number }[] = [
+const WORLD_LANDMARKS: {
+  id: string
+  coords: [number, number]
+  heightM: number
+  frameSpanM: number
+  color: number
+  yaw?: number
+  clearDepth?: boolean
+  frameCenter?: [number, number]
+  framePitch?: number
+  frameZoom?: number
+  revealZoom?: number
+  frameBearing?: number
+}[] = [
   { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xf0b75f },
-  { id: 'cn-tower', coords: [-79.3871, 43.6426], heightM: 553, frameSpanM: 553, color: 0x7fc9f4 },
+  {
+    id: 'cn-tower', coords: [-79.3871, 43.6426], heightM: 553,
+    frameSpanM: 553, color: 0x7fc9f4,
+    frameCenter: [-79.38793285, 43.64220423],
+    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0,
+  },
+  // CN Tower and SkyDome share the same arrival frame and reveal threshold:
+  // either search result should land on the complete Toronto landmark pair.
+  {
+    id: 'rogers-centre', coords: [-79.38918212, 43.64161058], heightM: 60,
+    frameSpanM: 553, color: 0xe4e6e8, yaw: 15.9, clearDepth: false,
+    frameCenter: [-79.38834927, 43.64200635],
+    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0,
+  },
   { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0xef7495 },
   { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0x87d2b6 },
   { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xed765e, yaw: 12 },
@@ -682,6 +710,8 @@ function landmarkCameraZoom(frameSpanM: number): number {
 export interface LandmarkCameraFrame {
   zoom: number
   pitch: number
+  center?: [number, number]
+  bearing?: number
 }
 
 /** Shared by the tour and the 3D reveal gate, so the camera never lands at a
@@ -690,11 +720,14 @@ export function landmarkCameraFrame(id: string): LandmarkCameraFrame | null {
   const landmark = WORLD_LANDMARKS.find(candidate => candidate.id === id)
   if (!landmark) return null
   return {
-    zoom: landmarkCameraZoom(landmark.frameSpanM),
+    zoom: landmark.frameZoom ?? landmarkCameraZoom(landmark.frameSpanM),
+    center: landmark.frameCenter,
+    bearing: landmark.frameBearing,
     // A near-top-down view makes an upright tower read as though it is lying
     // across the map. Keep a deliberately oblique, ground-revealing angle;
     // the size-aware zoom above leaves both base and crown inside the frame.
-    pitch: landmark.heightM >= 500 ? 54 : landmark.heightM >= 300 ? 56 : 58,
+    pitch: landmark.framePitch
+      ?? (landmark.heightM >= 500 ? 54 : landmark.heightM >= 300 ? 56 : 58),
   }
 }
 
@@ -3258,8 +3291,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           coords: mark.coords,
           heightM: mark.heightM,
           color: mark.color,
+          yaw: mark.yaw,
+          clearDepth: mark.clearDepth,
           nearKm: LANDMARK_3D_REVEAL_KM,
-          nearZoom: landmarkCameraZoom(mark.frameSpanM) - LANDMARK_REVEAL_ZOOM_BUFFER,
+          nearZoom: mark.revealZoom
+            ?? landmarkCameraZoom(mark.frameSpanM) - LANDMARK_REVEAL_ZOOM_BUFFER,
         })
         landmarks3dRef.current.set(mark.id, h)
         // Evaluate once for the current camera (the app may already be near

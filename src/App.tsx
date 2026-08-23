@@ -47,7 +47,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
 import { userUnitsToKm } from './units'
-import ClayMap, { MAP_2D, MAP_LITE, WeatherMark, installComposeRadiusPreview, landmarkCameraFrame, updateComposeRadiusPreview, type PopPin } from './ClayMap'
+import ClayMap, { MAP_2D, MAP_LITE, WeatherMark, installComposeRadiusPreview, landmarkCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
@@ -309,7 +309,7 @@ const TOUR_DESTINATIONS: TourDestination[] = [
   { id: 'ala-moana', name: 'Ala Moana Center', kind: 'mall', coords: [-157.842, 21.2916] },
   { id: 'yorkdale', name: 'Yorkdale Shopping Centre', kind: 'mall', coords: [-79.4522, 43.7255] },
   { id: 'scotiabank-arena', name: 'Scotiabank Arena', kind: 'arena', coords: [-79.3791, 43.6435] },
-  { id: 'rogers-centre', name: 'Rogers Centre', kind: 'arena', coords: [-79.3894, 43.6414] },
+  { id: 'rogers-centre', name: 'Rogers Centre', kind: 'arena', coords: [-79.38918212, 43.64161058] },
   { id: 'madison-square-garden', name: 'Madison Square Garden', kind: 'arena', coords: [-73.9934, 40.7505] },
   { id: 'wembley', name: 'Wembley Stadium', kind: 'arena', coords: [-0.2796, 51.556] },
   { id: 'sofi', name: 'SoFi Stadium', kind: 'arena', coords: [-118.339, 33.9535] },
@@ -351,6 +351,7 @@ const TOUR_DESTINATIONS: TourDestination[] = [
 ]
 
 const INTRO_LANDMARKS = TOUR_DESTINATIONS.filter(destination => destination.kind === 'landmark')
+const TOUR_LANDMARKS = INTRO_LANDMARKS
 
 const SEARCH_SHORTCUT_IDS = [
   'cn-tower',
@@ -545,8 +546,6 @@ function destinationsForTopics(topics: readonly MapTourTopic[]): TourDestination
  *  3D clay model standing on the map (see WORLD_LANDMARKS in ClayMap.tsx), so
  *  the tour visiting all of them is the natural pairing — you see the object,
  *  then you fly to where it stands. */
-const TOUR_LANDMARKS: TourDestination[] = TOUR_DESTINATIONS.filter(d => d.kind === 'landmark')
-
 function displayPlaceName(name: string): string {
   return name.replace(/^the\s+/i, '')
 }
@@ -923,15 +922,22 @@ export default function App() {
     const q = query.trim()
     if (!q) { setSearchHits([]); return }
     // Mapbox's generic geocoder often returns similarly named streets before a
-    // world landmark. Resolve the app's own landmark catalog first so a user
-    // can always get to the real, grounded model by name.
+    // curated destination. Resolve the app's own catalog first so arenas such
+    // as Rogers Centre get the same deliberate 3D framing as world landmarks.
     const normalizedQuery = q.toLocaleLowerCase()
-    const landmarkHits = TOUR_LANDMARKS.filter(destination => {
-      const name = displayPlaceName(destination.name).toLocaleLowerCase()
-      return name.includes(normalizedQuery) || normalizedQuery.includes(name)
-    })
-    if (landmarkHits.length) {
-      setSearchHits(landmarkHits.map(destination => ({
+    const curatedHits = TOUR_DESTINATIONS
+      .filter(destination => {
+        const name = displayPlaceName(destination.name).toLocaleLowerCase()
+        return name.includes(normalizedQuery) || normalizedQuery.includes(name)
+      })
+      .filter((destination, index, matches) => {
+        const name = displayPlaceName(destination.name).toLocaleLowerCase()
+        return matches.findIndex(candidate =>
+          displayPlaceName(candidate.name).toLocaleLowerCase() === name,
+        ) === index
+      })
+    if (curatedHits.length) {
+      setSearchHits(curatedHits.map(destination => ({
         name: displayPlaceName(destination.name),
         center: destination.coords,
       })))
@@ -1002,18 +1008,37 @@ export default function App() {
     map?.__stopOrbit?.()
     map?.stop?.()
     if (!map?.easeTo) return
-    // Search may resolve an official landmark result instead of one of our
-    // curated buttons. Match its coordinate to the landmark catalog so that
-    // a typed "CN Tower" gets the same full-object framing as the tour.
-    const landmark = TOUR_LANDMARKS.find(destination =>
-      distanceMeters(center, destination.coords) <= 550,
+    // Prefer an exact curated name, then the nearest destination that actually
+    // owns a custom 3D model. This keeps Rogers Centre from being mistaken for
+    // the CN Tower merely because the two landmarks are only ~220m apart.
+    const normalizedName = displayPlaceName(name).toLocaleLowerCase()
+    const exactDestination = TOUR_DESTINATIONS.find(destination =>
+      displayPlaceName(destination.name).toLocaleLowerCase() === normalizedName,
     )
-    const landmarkFrame = landmark ? landmarkCameraFrame(landmark.id) : null
+    let framedDestination = exactDestination && landmarkCameraFrame(exactDestination.id)
+      ? exactDestination
+      : null
+    if (!framedDestination) {
+      let nearestDistance = Number.POSITIVE_INFINITY
+      for (const destination of TOUR_DESTINATIONS) {
+        if (!landmarkCameraFrame(destination.id)) continue
+        const distance = distanceMeters(center, destination.coords)
+        if (distance < nearestDistance) {
+          framedDestination = destination
+          nearestDistance = distance
+        }
+      }
+      if (nearestDistance > 550) framedDestination = null
+    }
+    const landmarkFrame = framedDestination
+      ? landmarkCameraFrame(framedDestination.id)
+      : null
     wakeManagedRendering(3400 + (landmarkFrame
       ? LANDMARK_RENDER_SETTLE_MS
       : MANAGED_CAMERA_SETTLE_MS))
     map.easeTo({
-      center,
+      center: landmarkFrame?.center ?? center,
+      ...(landmarkFrame?.bearing == null ? {} : { bearing: landmarkFrame.bearing }),
       zoom: landmarkFrame?.zoom ?? 15.4,
       pitch: landmarkFrame?.pitch ?? 52,
       duration: 3400,
@@ -1312,7 +1337,7 @@ export default function App() {
   const flyToCenter = useCallback((
     center: [number, number],
     duration = 4600,
-    landmarkFrame?: { zoom: number; pitch: number } | null,
+    landmarkFrame?: LandmarkCameraFrame | null,
   ) => {
     const map = mapRef.current
     if (!map) return false
@@ -1328,13 +1353,13 @@ export default function App() {
     mapCamera.__cinematic = true
     wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
     map.flyTo({
-      center,
+      center: landmarkFrame?.center ?? center,
       // Landmarks carry a size-aware frame. It uses just enough zoom to make
       // the object legible while retaining its top, base and surrounding map;
       // ordinary places keep the existing street-view or building framing.
       zoom: landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM),
       pitch: landmarkFrame?.pitch ?? (streetView ? 82 : 64),
-      bearing: map.getBearing() + 36,
+      bearing: landmarkFrame?.bearing ?? map.getBearing() + 36,
       duration,
       // The tour arc rises ALL the way out — the flight peaks at the full
       // globe before diving into the next stop.
@@ -1575,7 +1600,7 @@ export default function App() {
     flyToCenter(
       destination.coords,
       TOUR_FLIGHT_MS,
-      destination.kind === 'landmark' ? landmarkCameraFrame(destination.id) : null,
+      landmarkCameraFrame(destination.id),
     )
     // The ARRIVAL beat. The card and its spoken line land when the camera
     // does, not when it lifts off — announcing a score thirty seconds before
