@@ -1,7 +1,11 @@
 .button {
-  display: block;
-  padding: 7px;
-  margin: -7px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin: 0;
+  box-sizing: border-box;
   border: 0;
   background: none;
   cursor: pointer;

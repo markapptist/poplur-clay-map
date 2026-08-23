@@ -730,7 +730,7 @@ export default function NewsPaper({ onClose, bindBack }: {
           TV screen and the map carry, rather than a hamburger stuck in a
           corner it doesn't share with anything. */}
       <TabControlRail side={controlSide} label="News controls">
-        <button className={styles.burger} onClick={openMenu} aria-label="Open news menu">
+        <button className={styles.burger} onClick={openMenu} aria-label="Open news menu" aria-expanded={menuOpen}>
           <i /><i /><i />
         </button>
         <button

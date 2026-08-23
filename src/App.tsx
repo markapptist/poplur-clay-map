@@ -2798,6 +2798,7 @@ export default function App() {
         />
         <ClayCornerButton
           kind="search"
+          active={searchOpen}
           label={searchOpen ? 'Close search' : 'Search places'}
           size={44}
           still

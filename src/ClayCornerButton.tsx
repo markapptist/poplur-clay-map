@@ -494,7 +494,7 @@ export default function ClayCornerButton({
       <button
         type="button"
         aria-label={label}
-        aria-pressed={kind === 'flash' || kind === 'heart' || kind === 'comments' || kind === 'live' ? active : undefined}
+        aria-pressed={kind === 'flash' || kind === 'heart' || kind === 'comments' || kind === 'live' || kind === 'play' || kind === 'search' ? active : undefined}
         onPointerDown={() => {
           pulse.current = 1
           if (!activateOnClick) onPress()

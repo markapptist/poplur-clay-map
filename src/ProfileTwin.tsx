@@ -1802,10 +1802,7 @@ export default function ProfileTwin({
             kind="mail"
             tone="cream"
             label={`Message ${shownName}`}
-            /* 44 matched the bell, but the bell is a glance and this is the only
-               action you can take on someone else's profile — at 44 it read as a
-               decoration next to a 200px avatar. */
-            size={64}
+            size={44}
             activateOnClick
             onPress={() => { playPop(); setMailingUser(true) }}
           />
