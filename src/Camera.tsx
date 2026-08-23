@@ -1225,7 +1225,11 @@ export default function Camera({
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       applyAnaglyphToCanvas(ctx, anaglyphPx)
     }
-    drawFaceAREffect(ctx, canvas.width, canvas.height, detections, arFilter)
+    // The costume goes on last, over the graded (and, for pop-3d, split)
+    // pixels. It takes the mirror as an argument rather than reading it off the
+    // context: the anaglyph pass above resets the transform, so by here the
+    // context no longer says which way the saved frame faces.
+    drawFaceAREffect(ctx, canvas.width, canvas.height, detections, arFilter, facing === 'user')
     const faceAR = document.querySelector<HTMLCanvasElement>('canvas[data-face-ar-3d]')
     if (faceAR?.width && faceAR.height) {
       ctx.drawImage(faceAR, 0, 0, faceAR.width, faceAR.height, 0, 0, canvas.width, canvas.height)
