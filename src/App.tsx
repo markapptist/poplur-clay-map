@@ -72,7 +72,7 @@ import { ambientAllowed, onAmbientSleepChange, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
-import { localDaylight } from './skyCycle'
+import { localDaylight, skyShadeAt } from './skyCycle'
 import { radiusDeltaForChannel } from './radiusLedger'
 import { listPostings, onPostedContentChange, radiusKmFor, POSTINGS_KEY } from './postedContent'
 
@@ -619,6 +619,9 @@ export default function App() {
   // once it returns, but a missing or slow request must not leave a 1 AM globe
   // in full daylight.
   const [dayTime, setDayTime] = useState(() => localDaylight())
+  // The current sky shade. Same-key updates return the previous object so the
+  // minute cadence below only re-renders while the sky is actually shifting.
+  const [sky, setSky] = useState(() => skyShadeAt())
   // Tour narration stays separate from the visible status. The map header only
   // says where the camera is — the station readout left with the radio.
   const [tourLine, setTourLine] = useState<string | null>(null)
@@ -1153,7 +1156,13 @@ export default function App() {
   // iOS app uses). Fahrenheit only where people actually use it — the US, its
   // territories, and a short list besides; everywhere else gets Celsius.
   useEffect(() => {
-    const syncLocalSky = () => setDayTime(localDaylight())
+    const syncLocalSky = () => {
+      setDayTime(localDaylight())
+      setSky(prev => {
+        const next = skyShadeAt()
+        return next.key === prev.key ? prev : next
+      })
+    }
     const interval = window.setInterval(syncLocalSky, 60_000)
     window.addEventListener('visibilitychange', syncLocalSky)
     return () => {
@@ -2712,6 +2721,7 @@ export default function App() {
         mapRef={mapRef}
         theme={theme}
         dayTime={dayTime}
+        sky={sky}
         ownProfilePhoto={ownAvatar}
         ownProfileSelfieVideo={ownSelfieVideo}
         weatherMode={weatherMode}

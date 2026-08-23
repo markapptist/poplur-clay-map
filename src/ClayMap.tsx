@@ -12,6 +12,7 @@ import { installNearLandmark3D, type NearLandmark3D } from './libertyLandmark'
 import { subsolarPoint, sublunarPoint, moonPhase, CELESTIAL_MODELS } from './celestial'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
+import { skyShadeAt, type SkyShade } from './skyCycle'
 import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
 import {
   fetchRoute,
@@ -38,6 +39,9 @@ export interface ClayMapProps {
   mapRef: React.MutableRefObject<mapboxgl.Map | null>
   theme: MapTheme
   dayTime: boolean
+  /** Current sky shade (skyCycle.skyShadeAt) — the owner re-syncs it on its
+   *  minute cadence; `key` equality decides whether a re-apply happens. */
+  sky?: SkyShade
   weatherMode?: WeatherMode
   /** inline SVG for the current conditions, shown above the zoom rail */
   weatherIcon?: string
@@ -186,10 +190,12 @@ const HOLD_TO_POST_MS = 520
 // at, and a stray tap must not fly the camera somewhere else.
 const MAP_TAP_LANE = 0.25
 
-// Sky follows the real time of day. Keep the globe's atmosphere luminous even
+// Sky follows the real time of day, in nine crossfading shades (skyCycle.ts)
+// instead of a hard day/night flip. Keep the globe's atmosphere luminous even
 // at night: a black "space" pass reads as a missing lower hemisphere in the
-// constrained Mapbox globe view used by the app.
-function applySky(map: mapboxgl.Map, day: boolean) {
+// constrained Mapbox globe view used by the app — the shade table's Deep
+// Night is the sanctioned floor.
+function applySky(map: mapboxgl.Map, shade: SkyShade) {
   // The fallback map is deliberately FLAT. Fog/atmosphere only makes sense on
   // the globe; keeping it on in 2D leaves Mapbox's atmosphere pass alive and
   // was one of the GPU costs that survived after visible animation stopped on
@@ -199,28 +205,16 @@ function applySky(map: mapboxgl.Map, day: boolean) {
     return
   }
   try {
-    map.setConfigProperty('basemap', 'lightPreset', day ? 'day' : 'night')
+    map.setConfigProperty('basemap', 'lightPreset', shade.lightPreset)
   } catch { /* light presets vary by Mapbox style */ }
   try {
-    map.setFog(day ? {
+    map.setFog({
       range: [0.6, 8],
-      color: 'rgba(160, 210, 250, 0.35)',
-      'high-color': '#6db5e8',
-      'horizon-blend': 0.08,
-      'space-color': '#8ec9f2',
-      'star-intensity': 0,
-    } as never : {
-      // Night, but a soft one. The old space-color was near-black (#030512),
-      // which — per the note above — read as a MISSING hemisphere on the
-      // constrained globe rather than as sky. Poplur's globe is a clay toy, not
-      // an astronomy sim, so keep the night sky an actual luminous indigo: the
-      // globe stays whole and legible, just after-dark tinted.
-      range: [0.6, 8],
-      color: 'rgba(40, 48, 104, 0.58)',
-      'high-color': '#3b3a86',
-      'horizon-blend': 0.3,
-      'space-color': '#232a5e',
-      'star-intensity': 0.4,
+      color: shade.hazeColor,
+      'high-color': shade.highColor,
+      'horizon-blend': shade.horizonBlend,
+      'space-color': shade.spaceColor,
+      'star-intensity': shade.starIntensity,
     } as never)
   } catch { /* fog unsupported */ }
 }
@@ -1107,7 +1101,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, weatherForecast = [], pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, weatherForecast = [], pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -1135,6 +1129,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const onPinOpenRef = useRef(onPinOpen)
   onPinOpenRef.current = onPinOpen
   const dayTimeRef = useRef(dayTime)
+  const skyRef = useRef(sky)
+  skyRef.current = sky
   dayTimeRef.current = dayTime
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const worldLandmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1824,6 +1820,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // from outside the frame otherwise, and "does the flight actually fly?"
     // has to be measurable rather than argued about.
     ;(window as unknown as { __poplurMap?: mapboxgl.Map }).__poplurMap = map
+    // Probe/dev hook: force the sky to any moment ("2026-08-22T23:30") or
+    // clear back to the live clock. Same pattern as __poplurSetMapSurface.
+    ;(window as unknown as { __poplurApplySkyAt?: (iso?: string) => string }).__poplurApplySkyAt = (iso?: string) => {
+      const shade = skyShadeAt(iso ? new Date(iso) : new Date())
+      applySky(map, shade)
+      return shade.key
+    }
     ;(window as unknown as { __poplurSpriteCount?: () => number }).__poplurSpriteCount = composedSpriteCount
     // Mapbox 3.7 exposes FOV through the camera transform rather than a
     // public map.setFov() method.
@@ -3917,7 +3920,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       swapSprite(() => flyerMarkersRef.current, 'models/plane.glb', { pitch: 74, size: 256 }, undefined,
         i => FLYERS[i]?.kind === 'plane')
 
-      applySky(map, dayTimeRef.current)
+      applySky(map, skyRef.current ?? skyShadeAt())
 
       if (focusedPostLaunch) {
         const center = nativeLocationRef.current ?? HOME_CENTER
@@ -4426,13 +4429,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     idleSnapshotRef.current?.requestCapture()
   }, [theme, mapEpoch])
 
-  // Day / night sky
+  // Time-of-day sky. `sky.key` only changes while the sky is actually
+  // shifting (band changes and the minute steps of an 18-min crossfade), so
+  // this effect is quiet through the long stable bands.
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
-    applySky(map, dayTime)
+    applySky(map, sky ?? skyShadeAt())
     idleSnapshotRef.current?.requestCapture()
-  }, [dayTime, mapEpoch])
+  }, [sky?.key, mapEpoch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function addMarkers(map: mapboxgl.Map) {
     // NO placeholder pins: the sample-venue markers read as random blinking
