@@ -4,6 +4,7 @@ import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
 import { feedSuggestionFor } from './tourSmarts'
+import { feedUrl, channelUrl } from './assetPacks'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
@@ -104,23 +105,23 @@ function reachLabel(km: number): string {
 }
 
 export const CHANNELS: Channel[] = [
-  { id: 'food', number: 101, name: 'Food', emoji: '🍔', icon: 'poplur_channel_101_food', flag: '🇨🇦', user: '@sauceboss', caption: 'late-night poutine run downtown', lang: 'EN', theme: ['#3a1206', '#c2410c', '#f59e0b'], videos: ['feed/ad-food.mp4'] },
+  { id: 'food', number: 101, name: 'Food', emoji: '🍔', icon: 'poplur_channel_101_food', flag: '🇨🇦', user: '@sauceboss', caption: 'late-night poutine run downtown', lang: 'EN', theme: ['#3a1206', '#c2410c', '#f59e0b'], videos: [feedUrl('ad-food.mp4')] },
   // LIVE is not a genre — it is whoever is broadcasting into your radius right
   // now. Its posts come from liveStore, not from a bundled clip list.
   { id: 'live', number: 116, name: 'Live', emoji: '🔴', icon: 'poplur_channel_109_news', flag: '🇨🇦', user: '@you', caption: 'live in your radius', lang: 'EN', theme: ['#2a0410', '#b91c3c', '#fb7185'] },
   { id: 'beauty', number: 103, name: 'Beauty', emoji: '💄', icon: 'poplur_channel_103_beauty', flag: '🇺🇸', user: '@glowgetter', caption: 'soft glam in 60 seconds', lang: 'EN', theme: ['#2a0620', '#be185d', '#f472b6'] },
-  { id: 'sports', number: 104, name: 'Sports', emoji: '⚽', icon: 'poplur_channel_104_sports', flag: '🇬🇧', user: '@pitchside', caption: 'stoppage-time winner, crowd goes wild', lang: 'EN', theme: ['#052012', '#15803d', '#4ade80'], videos: ['feed/ad-sports.mp4'] },
+  { id: 'sports', number: 104, name: 'Sports', emoji: '⚽', icon: 'poplur_channel_104_sports', flag: '🇬🇧', user: '@pitchside', caption: 'stoppage-time winner, crowd goes wild', lang: 'EN', theme: ['#052012', '#15803d', '#4ade80'], videos: [feedUrl('ad-sports.mp4')] },
   { id: 'modelling', number: 105, name: 'Modelling', emoji: '📸', icon: 'poplur_channel_105_modelling', flag: '🇫🇷', user: '@runwayraw', caption: 'backstage before the show', lang: 'FR', theme: ['#170a2e', '#6d28d9', '#a78bfa'] },
   { id: 'fashion', number: 106, name: 'Fashion', emoji: '👗', icon: 'poplur_channel_106_fashion', flag: '🇮🇹', user: '@fitcheckdaily', caption: 'thrifted fit of the day', lang: 'IT', theme: ['#2a0620', '#a21caf', '#e879f9'] },
-  { id: 'music', number: 107, name: 'Music', emoji: '🎵', icon: 'poplur_channel_107_music', flag: '🇺🇸', user: '@basement.set', caption: 'live from the warehouse', lang: 'EN', theme: ['#12061f', '#7c3aed', '#c084fc'], videos: ['feed/ad-music.mp4'] },
+  { id: 'music', number: 107, name: 'Music', emoji: '🎵', icon: 'poplur_channel_107_music', flag: '🇺🇸', user: '@basement.set', caption: 'live from the warehouse', lang: 'EN', theme: ['#12061f', '#7c3aed', '#c084fc'], videos: [feedUrl('ad-music.mp4')] },
   { id: 'tech', number: 108, name: 'Tech', emoji: '💻', icon: 'poplur_channel_108_tech', flag: '🇯🇵', user: '@shipit', caption: 'desk setup tour 2026', lang: 'JA', theme: ['#04121f', '#0369a1', '#38bdf8'] },
   { id: 'news', number: 109, name: 'News', emoji: '📰', icon: 'poplur_channel_109_news', flag: '🇨🇦', user: '@localwire', caption: 'live at the harbourfront rally', lang: 'EN', theme: ['#0b1220', '#334155', '#94a3b8'] },
-  { id: 'french', number: 110, name: 'French', emoji: '🇫🇷', icon: 'poplur_channel_110_french', flag: '🇫🇷', user: '@paris.pov', caption: 'un café en terrasse', lang: 'FR', theme: ['#0a1030', '#1d4ed8', '#f9a8d4'], videos: ['feed/ad-french.mp4'] },
-  { id: 'spanish', number: 111, name: 'Spanish', emoji: '🇪🇸', icon: 'poplur_channel_111_spanish', flag: '🇪🇸', user: '@vibra.cdmx', caption: 'tacos al pastor a medianoche', lang: 'ES', theme: ['#2a1204', '#dc2626', '#fbbf24'], videos: ['feed/ad-spanish-1.mp4', 'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4'] },
-  { id: 'shopping', number: 112, name: 'Shopping', emoji: '🛍️', icon: 'poplur_channel_112_shopping', flag: '🇺🇸', user: '@hauls', caption: 'sample sale finds, everything under $20', lang: 'EN', theme: ['#2a0a1e', '#db2777', '#fcd34d'], videos: ['feed/ad-shopping.mp4'] },
-  { id: 'cartoon', number: 113, name: 'Cartoon', emoji: '🎨', icon: 'poplur_channel_113_cartoon', flag: '🇰🇷', user: '@doodlecast', caption: 'animating my clay OC', lang: 'KO', theme: ['#0a1a2a', '#0891b2', '#fb7185'], videos: ['feed/ad-cartoon.mp4'] },
-  { id: 'kids', number: 114, name: 'Kids', emoji: '🧸', icon: 'poplur_channel_114_kids', flag: '🇨🇦', user: '@playtime', caption: 'building the biggest blanket fort', lang: 'EN', theme: ['#1a1030', '#7c3aed', '#fbcfe8'], videos: ['feed/ad-kids.mp4'] },
-  { id: 'comedy', number: 115, name: 'Comedy', emoji: '😂', icon: 'poplur_channel_115_comedy', flag: '🇦🇺', user: '@bitmerchant', caption: 'when the barista spells your name wrong', lang: 'EN', theme: ['#2a2404', '#ca8a04', '#fde047'], videos: ['feed/ad-comedy.mp4'] },
+  { id: 'french', number: 110, name: 'French', emoji: '🇫🇷', icon: 'poplur_channel_110_french', flag: '🇫🇷', user: '@paris.pov', caption: 'un café en terrasse', lang: 'FR', theme: ['#0a1030', '#1d4ed8', '#f9a8d4'], videos: [feedUrl('ad-french.mp4')] },
+  { id: 'spanish', number: 111, name: 'Spanish', emoji: '🇪🇸', icon: 'poplur_channel_111_spanish', flag: '🇪🇸', user: '@vibra.cdmx', caption: 'tacos al pastor a medianoche', lang: 'ES', theme: ['#2a1204', '#dc2626', '#fbbf24'], videos: [feedUrl('ad-spanish-1.mp4'), feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4')] },
+  { id: 'shopping', number: 112, name: 'Shopping', emoji: '🛍️', icon: 'poplur_channel_112_shopping', flag: '🇺🇸', user: '@hauls', caption: 'sample sale finds, everything under $20', lang: 'EN', theme: ['#2a0a1e', '#db2777', '#fcd34d'], videos: [feedUrl('ad-shopping.mp4')] },
+  { id: 'cartoon', number: 113, name: 'Cartoon', emoji: '🎨', icon: 'poplur_channel_113_cartoon', flag: '🇰🇷', user: '@doodlecast', caption: 'animating my clay OC', lang: 'KO', theme: ['#0a1a2a', '#0891b2', '#fb7185'], videos: [feedUrl('ad-cartoon.mp4')] },
+  { id: 'kids', number: 114, name: 'Kids', emoji: '🧸', icon: 'poplur_channel_114_kids', flag: '🇨🇦', user: '@playtime', caption: 'building the biggest blanket fort', lang: 'EN', theme: ['#1a1030', '#7c3aed', '#fbcfe8'], videos: [feedUrl('ad-kids.mp4')] },
+  { id: 'comedy', number: 115, name: 'Comedy', emoji: '😂', icon: 'poplur_channel_115_comedy', flag: '🇦🇺', user: '@bitmerchant', caption: 'when the barista spells your name wrong', lang: 'EN', theme: ['#2a2404', '#ca8a04', '#fde047'], videos: [feedUrl('ad-comedy.mp4')] },
 ]
 
 // The feed renders pure channel CONTENT — the channel changer and the
@@ -133,19 +134,17 @@ export type FeedAction = 'like' | 'comment' | 'share' | 'captions' | 'profile'
 // their own creative borrow a stock clip, chosen by channel number, so a
 // channel is never empty and the static never sticks with nothing behind it.
 const STOCK_CLIPS = [
-  'feed/ad-food.mp4', 'feed/ad-sports.mp4', 'feed/ad-music.mp4', 'feed/ad-french.mp4',
-  'feed/ad-shopping.mp4', 'feed/ad-cartoon.mp4', 'feed/ad-kids.mp4', 'feed/ad-comedy.mp4',
-  'feed/ad-spanish-1.mp4', 'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4',
+  feedUrl('ad-food.mp4'), feedUrl('ad-sports.mp4'), feedUrl('ad-music.mp4'), feedUrl('ad-french.mp4'),
+  feedUrl('ad-shopping.mp4'), feedUrl('ad-cartoon.mp4'), feedUrl('ad-kids.mp4'), feedUrl('ad-comedy.mp4'),
+  feedUrl('ad-spanish-1.mp4'), feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4'),
 ]
 
 function posterForFeedClip(source: string): string {
   const localSource = source.split(/[?#]/, 1)[0].replace(/^\/+/, '')
-  if (localSource.startsWith('feed/') && localSource.endsWith('.mp4')) {
-    return localSource.replace(/^feed\//, 'feed/posters/').replace(/\.mp4$/, '.jpg')
+  if ((localSource.startsWith('feed/') || localSource.includes('/feed/')) && localSource.endsWith('.mp4')) {
+    return localSource.replace(/feed\//, 'feed/posters/').replace(/\.mp4$/, '.jpg')
   }
-  // Live/dynamic post URLs do not always ship separate poster metadata. Keep
-  // the Feed visually populated without asking WebKit to open a decoder.
-  return 'feed/posters/ad-food.jpg'
+  return feedUrl('posters/ad-food.jpg')
 }
 
 /**
@@ -287,10 +286,10 @@ function postsFor(channel: Channel): ChannelPost[] {
 // Every bundled ad creative — the pool channels without their own clips draw
 // from. All supplied assets; nothing synthesized.
 const AD_POOL = [
-  'feed/ad-food.mp4', 'feed/ad-sports.mp4', 'feed/ad-music.mp4',
-  'feed/ad-shopping.mp4', 'feed/ad-french.mp4', 'feed/ad-spanish-1.mp4',
-  'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4', 'feed/ad-cartoon.mp4',
-  'feed/ad-comedy.mp4', 'feed/ad-kids.mp4',
+  feedUrl('ad-food.mp4'), feedUrl('ad-sports.mp4'), feedUrl('ad-music.mp4'),
+  feedUrl('ad-shopping.mp4'), feedUrl('ad-french.mp4'), feedUrl('ad-spanish-1.mp4'),
+  feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4'), feedUrl('ad-cartoon.mp4'),
+  feedUrl('ad-comedy.mp4'), feedUrl('ad-kids.mp4'),
 ]
 
 // Captions come from the clip's own audio (transcribed with whisper.cpp), so
@@ -302,17 +301,22 @@ function cuesFor(video: string | undefined, fallback: string) {
 // Comments on the playing post. They roll like end credits above the box.
 // Pictures are spoofed from stills we already ship, same as the share sheet.
 const COMMENT_ROLL = [
-  { who: '@nightmarket', body: 'this is exactly my block 😭', pic: 'feed/posters/ad-food.jpg' },
-  { who: '@poutine.patrol', body: 'the gravy shot at 0:12 is criminal', pic: 'feed/posters/ad-comedy.jpg' },
-  { who: '@harbourfront', body: 'ok but where is this', pic: 'feed/posters/ad-french.jpg' },
-  { who: '@queenwest', body: 'went last week, worth the line', pic: 'feed/posters/ad-shopping.jpg' },
+  { who: '@nightmarket', body: 'this is exactly my block 😭', pic: feedUrl('posters/ad-food.jpg') },
+  { who: '@poutine.patrol', body: 'the gravy shot at 0:12 is criminal', pic: feedUrl('posters/ad-comedy.jpg') },
+  { who: '@harbourfront', body: 'ok but where is this', pic: feedUrl('posters/ad-french.jpg') },
+  { who: '@queenwest', body: 'went last week, worth the line', pic: feedUrl('posters/ad-shopping.jpg') },
   { who: '@the_annex', body: 'adding to my radius right now', pic: 'mark_talk0.png' },
-  { who: '@sauceboss', body: 'reply: open till 4am all weekend', pic: 'feed/posters/ad-food.jpg' },
-  { who: '@kensington_eats', body: 'the curds squeak, i can hear it', pic: 'feed/posters/ad-kids.jpg' },
-  { who: '@basement.set', body: 'soundtrack goes hard btw', pic: 'feed/posters/ad-music.jpg' },
-  { who: '@localwire', body: 'covering this Friday, see you there', pic: 'feed/posters/ad-sports.jpg' },
-  { who: '@hauls', body: 'my whole feed is this place today', pic: 'feed/posters/ad-cartoon.jpg' },
+  { who: '@sauceboss', body: 'reply: open till 4am all weekend', pic: feedUrl('posters/ad-food.jpg') },
+  { who: '@kensington_eats', body: 'the curds squeak, i can hear it', pic: feedUrl('posters/ad-kids.jpg') },
+  { who: '@basement.set', body: 'soundtrack goes hard btw', pic: feedUrl('posters/ad-music.jpg') },
+  { who: '@localwire', body: 'covering this Friday, see you there', pic: feedUrl('posters/ad-sports.jpg') },
+  { who: '@hauls', body: 'my whole feed is this place today', pic: feedUrl('posters/ad-cartoon.jpg') },
 ]
+
+// Clips of unattended autoplay before the feed rests on a tap-to-resume
+// cover. ~6 clips is a couple of minutes — long enough not to interrupt real
+// watching, short enough to stop decoding for a phone left on the feed.
+const AUTOPLAY_REST_AFTER = 6
 
 export default function FeedTwin({
   index: controlledIndex,
@@ -388,6 +392,16 @@ export default function FeedTwin({
   const playerModeRef = useRef(false)
   const [playerPaused, setPlayerPaused] = useState(false)
   const playerPausedByUserRef = useRef(false)
+  // "Are you still watching?" — a feed left on screen autoplays clip after clip
+  // through advanceCompletedContent forever, decoding video the whole time even
+  // when nobody is looking. That is real sustained heat the frame governor
+  // cannot touch (a <video> decoder runs independently of the shared clock).
+  // After a run of auto-advances with no interaction the feed rests on a
+  // tap-to-resume cover instead. The decoder is already released at onEnded, so
+  // resting spends nothing; any touch (noteFeedActivity) brings it back.
+  const [autoplayRested, setAutoplayRested] = useState(false)
+  const autoplayRestedRef = useRef(false)
+  const unattendedAdvancesRef = useRef(0)
   const [playerTime, setPlayerTime] = useState(0)
   const [playerDuration, setPlayerDuration] = useState(0)
   const [playerBuffered, setPlayerBuffered] = useState(0)
@@ -634,7 +648,35 @@ export default function FeedTwin({
   }, [])
 
 
+  // Any real interaction clears the unattended run and, if the feed had rested,
+  // brings autoplay back by re-mounting the current clip.
+  const noteFeedActivity = useCallback(() => {
+    unattendedAdvancesRef.current = 0
+    if (autoplayRestedRef.current) {
+      autoplayRestedRef.current = false
+      setAutoplayRested(false)
+    }
+  }, [])
+
+  // The rest cover's own resume: bring autoplay back by advancing to a fresh
+  // clip (a new <video> mounts and plays; re-rendering the same source would
+  // not restart the retired decoder).
+  const wakeFeed = useCallback(() => {
+    unattendedAdvancesRef.current = 0
+    autoplayRestedRef.current = false
+    setAutoplayRested(false)
+    const count = postsFor(ch).length
+    if (count >= 2) {
+      const cur = contentIdxRef.current[ch.id] ?? 0
+      const nxt = (cur + 1) % count
+      contentIdxRef.current[ch.id] = nxt
+      onContentAdvance?.(ch.id, nxt)
+    }
+    forceContentRender(n => n + 1)
+  }, [ch, onContentAdvance])
+
   const change = useCallback((dir: 1 | -1) => {
+    noteFeedActivity()
     const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
     if (next === index) return
     const currentVideo = adVideoRef.current
@@ -660,6 +702,7 @@ export default function FeedTwin({
   // a channel always starts on the widest-reaching post and swiping left
   // narrows in.
   const changeContent = useCallback((dir: 1 | -1) => {
+    noteFeedActivity()
     const count = postsFor(ch).length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
@@ -680,6 +723,15 @@ export default function FeedTwin({
   const advanceCompletedContent = useCallback(() => {
     const count = postsFor(ch).length
     if (count < 2) return
+    // Autoplaying to an empty room is pure heat. After AUTOPLAY_REST_AFTER
+    // clips with no touch, rest on a cover rather than decode another; the
+    // decoder was released at onEnded, so this is free until a tap resumes it.
+    if (unattendedAdvancesRef.current >= AUTOPLAY_REST_AFTER) {
+      autoplayRestedRef.current = true
+      setAutoplayRested(true)
+      return
+    }
+    unattendedAdvancesRef.current += 1
     const current = contentIdxRef.current[ch.id] ?? 0
     const next = (current + 1) % count
     contentIdxRef.current[ch.id] = next
@@ -1272,6 +1324,7 @@ export default function FeedTwin({
   }
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return
+    noteFeedActivity()
     const target = e.target
     const mediaSurface = target instanceof Element
       ? target.closest('[data-feed-media="true"]')
@@ -1603,6 +1656,33 @@ export default function FeedTwin({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
+      {/* The "are you still watching?" rest. Shown when autoplay has run
+          unattended long enough that the feed stopped decoding; a tap anywhere
+          on it resumes with the next clip. Covers the surface on purpose — the
+          point is to stop, not to keep a control live under a dimmed video. */}
+      {autoplayRested && (
+        <button
+          type="button"
+          onPointerDown={e => e.stopPropagation()}
+          onClick={wakeFeed}
+          aria-label="Resume feed"
+          style={{
+            position: 'absolute', inset: 0, zIndex: 40, border: 'none',
+            display: 'grid', placeItems: 'center', rowGap: '12px',
+            background: 'rgba(6, 3, 10, 0.74)',
+            backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+            color: '#fff', cursor: 'pointer', textAlign: 'center', padding: '24px',
+            font: "600 16px/1.4 system-ui, -apple-system, 'SF Pro Rounded', sans-serif",
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: '34px', lineHeight: 1 }}>▶</span>
+          <span>Still watching?
+            <span style={{ display: 'block', marginTop: '4px', fontSize: '13px', fontWeight: 500, opacity: 0.66 }}>
+              Tap to keep going
+            </span>
+          </span>
+        </button>
+      )}
       {/* Tap the left or right edge to step through the other users posting on
           this channel — the tap twin of the horizontal swipe. Radius reactions
           intentionally live only on the visible thumbs controls in the rail. */}
@@ -1744,7 +1824,7 @@ export default function FeedTwin({
           />
         )}
         <div className={styles.staticIdentity}>
-          <img className={styles.staticLogo} src={`channels/${ch.icon}.png`} alt="" draggable={false} />
+          <img className={styles.staticLogo} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
           <span className={styles.staticCh}>CH {ch.number}</span>
           <span className={styles.staticCat}>{ch.name.toUpperCase()}</span>
         </div>
@@ -1769,13 +1849,31 @@ export default function FeedTwin({
           <ClayCornerButton kind="share" label="Share this post" size={44} still onPress={sharePost} />
           <button
             type="button"
-            className={`${styles.ccButton}${captionsOn ? ` ${styles.ccButtonOn}` : ''}`}
+            className={styles.ccGlyphButton}
             aria-label={captionsOn ? 'Turn closed captions off' : 'Turn closed captions on'}
             aria-pressed={captionsOn}
             onClick={toggleCaptions}
           >
-            <span>CC</span>
-            <small>{captionsOn ? 'ON' : 'OFF'}</small>
+            <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden="true" className={styles.ccGlyph}>
+              <defs>
+                <linearGradient id="ccFace" x1="0" y1="0" x2="1" y2="1">
+                  <stop stopColor="#ffb3d7" /><stop offset=".46" stopColor="#f24c9c" /><stop offset="1" stopColor="#8d124d" />
+                </linearGradient>
+                <linearGradient id="ccEdge" x1="0" y1="0" x2="0" y2="1">
+                  <stop stopColor="#a81558" /><stop offset="1" stopColor="#510725" />
+                </linearGradient>
+                <radialGradient id="ccGlow" cx="35%" cy="20%" r="78%">
+                  <stop stopColor="#d9fbff" /><stop offset=".45" stopColor="#6ee7fa" /><stop offset="1" stopColor="#228bbd" />
+                </radialGradient>
+              </defs>
+              <path d="M9 35 24 43 39 35 24 28Z" fill="rgba(0,0,0,.42)" />
+              <path d="M8 16v19l16 9V25Z" fill="url(#ccEdge)" />
+              <path d="M40 16v19l-16 9V25Z" fill="url(#ccEdge)" />
+              <path d="M24 5 40 14 24 25 8 14Z" fill="url(#ccFace)" />
+              <text x="24" y="18.5" textAnchor="middle" className={styles.ccText} fill={captionsOn ? 'url(#ccGlow)' : '#fff2f8'}>CC</text>
+              <path d="M24 5 40 14 24 25 8 14Z" fill="none" stroke="rgba(20,4,12,.55)" strokeWidth="1" />
+              <path d="M8 14v21l16 9 16-9V14M24 25v19" fill="none" stroke="rgba(20,4,12,.4)" strokeWidth="1" />
+            </svg>
           </button>
           <ClayCornerButton
             kind="comments"
@@ -1783,16 +1881,15 @@ export default function FeedTwin({
             label={commentsAtEnd ? 'Hide end-of-video comments' : 'Show end-of-video comments'}
             size={44}
             still
-            cssOnly
             onPress={toggleCommentsAtEnd}
           />
-          <ClayCornerButton kind="comment" label="Comment on this post" size={44} still cssOnly onPress={openComments} />
+          <ClayCornerButton kind="comment" label="Comment on this post" size={44} still onPress={openComments} />
           <ClayCornerButton
             kind="thumbUp"
             label="Increase this post's radius by one"
             size={44}
             still
-            cssOnly
+            prism
             onPress={likeCurrentPost}
           />
           <ClayCornerButton
@@ -1800,12 +1897,12 @@ export default function FeedTwin({
             label="Reduce this post's radius by one"
             size={44}
             still
-            cssOnly
+            prism
             onPress={dislikeCurrentPost}
           />
         </TabControlRail>
         <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
-          <img className={styles.chIcon} src={`channels/${ch.icon}.png`} alt="" draggable={false} />
+          <img className={styles.chIcon} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
         </div>
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>

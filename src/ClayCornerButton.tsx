@@ -93,7 +93,7 @@ export default function ClayCornerButton({
   activateOnClick = false,
   tone = 'clay',
   still = true,
-  cssOnly = false,
+  prism = false,
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
     | 'heart' | 'thumbUp' | 'thumbDown' | 'comment' | 'comments' | 'play' | 'seekBack' | 'seekFwd'
@@ -109,9 +109,10 @@ export default function ClayCornerButton({
   /** Render once and stop, waking only for state changes and presses. Pass
    *  false only when a screen deliberately budgets for an idle tumble. */
   still?: boolean
-  /** A lightweight puffy-clay control for dense rails. It keeps the tactile
-   *  treatment without reserving another mobile WebGL context. */
-  cssOnly?: boolean
+  /** The faceted isometric-prism shell — the same recipe as the camera's
+   *  Scan/AR buttons — for controls whose content wants a badge-like frame
+   *  instead of a bare floating shape. */
+  prism?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeRef = useRef(active)
@@ -127,7 +128,7 @@ export default function ClayCornerButton({
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (cssOnly || !canvas) return
+    if (prism || !canvas) return
     // This component is instantiated ~26 times across the app, and every
     // instance used to be its own GL context — so a feed or camera visit
     // created and shader-compiled several contexts on every lap, which the
@@ -401,7 +402,7 @@ export default function ClayCornerButton({
       creamMat.dispose()
       releaseClayRenderer(onContextLost)
     }
-  }, [cssOnly, size, kind, tone, still])
+  }, [prism, size, kind, tone, still])
 
   // A parked renderer still has to repaint when flash/heart state changes.
   // This is one finite frame, not a permanent animation loop.
@@ -416,71 +417,41 @@ export default function ClayCornerButton({
     roll: '▤', live: '⦿',
   }
 
-  if (cssOnly) {
-    const pressed = kind === 'heart' || kind === 'comments'
-    const enabled = kind === 'comments' ? active : false
-    const isComment = kind === 'comment'
-    const thumbDirection = kind === 'thumbUp' ? 'up' : kind === 'thumbDown' ? 'down' : null
+  if (prism) {
+    // The camera's Scan/AR shell, generalised: a true isometric prism (top
+    // face + two side edges, clay-pink gradients) carrying a small glyph on
+    // its face instead of the sphere/"AR" text those two use.
+    const flipped = kind === 'thumbDown'
+    const gid = (n: string) => `prism${n}-${kind}`
     return (
       <button
         type="button"
         aria-label={label}
-        aria-pressed={pressed ? active : undefined}
         onPointerDown={() => onPress()}
-        style={{
-          position: 'relative',
-          width: size,
-          height: size,
-          border: 0,
-          padding: 0,
-          background: 'transparent',
-          cursor: 'pointer',
-        }}
+        style={{ position: 'relative', width: size, height: size, border: 0, padding: 0, background: 'transparent', cursor: 'pointer' }}
       >
-        <span
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            left: size * 0.1,
-            top: size * 0.16,
-            width: size * 0.8,
-            height: size * 0.58,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: size * 0.09,
-            borderRadius: size * 0.27,
-            background: enabled
-              ? 'linear-gradient(145deg, #ff9acc, #ef258b 58%, #9d104f)'
-              : 'linear-gradient(145deg, #ff9acc, #ef62a6 58%, #9d104f)',
-            boxShadow: `inset 0 ${size * 0.07}px ${size * 0.1}px rgba(255,255,255,.52), inset 0 -${size * 0.08}px ${size * 0.1}px rgba(77,5,42,.48), 0 ${size * 0.12}px ${size * 0.15}px rgba(20,0,13,.48)`,
-            transform: 'perspective(90px) rotateX(12deg) rotateY(-10deg)',
-          }}
-        >
-          {thumbDirection ? (
-            <svg viewBox="0 0 24 24" width={size * 0.58} height={size * 0.58} fill="none" aria-hidden="true" style={{ transform: thumbDirection === 'down' ? 'rotate(180deg)' : undefined }}>
+        <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true"
+          style={{ display: 'block', filter: 'drop-shadow(0 3px 4px rgba(0,0,0,.62))' }}>
+          <defs>
+            <linearGradient id={gid('Face')} x1="0" y1="0" x2="1" y2="1">
+              <stop stopColor="#ffb3d7" /><stop offset=".46" stopColor="#f24c9c" /><stop offset="1" stopColor="#8d124d" />
+            </linearGradient>
+            <linearGradient id={gid('Edge')} x1="0" y1="0" x2="0" y2="1">
+              <stop stopColor="#a81558" /><stop offset="1" stopColor="#510725" />
+            </linearGradient>
+          </defs>
+          <path d="M9 35 24 43 39 35 24 28Z" fill="rgba(0,0,0,.42)" />
+          <path d="M8 16v19l16 9V25Z" fill={`url(#${gid('Edge')})`} />
+          <path d="M40 16v19l-16 9V25Z" fill={`url(#${gid('Edge')})`} />
+          <path d="M24 5 40 14 24 25 8 14Z" fill={`url(#${gid('Face')})`} />
+          <g transform="translate(24,14) scale(.5) translate(-12,-12)">
+            <g transform={flipped ? 'rotate(180 12 12)' : undefined}>
               <path d="M9 21H5.6a1.6 1.6 0 0 1-1.6-1.6v-7.8A1.6 1.6 0 0 1 5.6 10H9m0 11V10l3.15-6.08A1.8 1.8 0 0 1 15.55 4l-.7 6H19a2 2 0 0 1 1.98 2.28l-1.06 6.9A2 2 0 0 1 17.94 21H9Z" fill="#fff1f8" stroke="#8e174d" strokeWidth="1.25" strokeLinejoin="round" />
-            </svg>
-          ) : isComment ? (
-            <span style={{ width: size * 0.31, height: size * 0.06, borderRadius: size, background: '#fff1f8', boxShadow: `0 ${size * 0.1}px 0 #fff1f8` }} />
-          ) : (
-            [-1, 0, 1].map(dot => <i key={dot} style={{ width: size * 0.1, height: size * 0.1, borderRadius: '50%', background: '#fff1f8', boxShadow: `0 ${size * 0.025}px ${size * 0.04}px rgba(83,6,43,.4)` }} />)
-          )}
-        </span>
-        <span
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            left: size * 0.25,
-            top: size * 0.64,
-            width: 0,
-            height: 0,
-            borderTop: `${size * 0.19}px solid ${enabled ? '#c61569' : '#cf3a7d'}`,
-            borderRight: `${size * 0.14}px solid transparent`,
-            transform: 'rotate(18deg)',
-            filter: 'drop-shadow(0 3px 2px rgba(20,0,13,.38))',
-          }}
-        />
+            </g>
+          </g>
+          <path d="M24 5 40 14 24 25 8 14Z" fill="none" stroke="rgba(20,4,12,.55)" strokeWidth="1" />
+          <path d="M8 14v21l16 9 16-9V14M24 25v19" fill="none" stroke="rgba(20,4,12,.4)" strokeWidth="1" />
+        </svg>
       </button>
     )
   }
