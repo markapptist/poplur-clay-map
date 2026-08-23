@@ -17,6 +17,7 @@ export type CreditEntryKind =
   // so the history says where the credits came from — these are WON, and when
   // the server-side economy lands they become the mirror of a server grant.
   | 'casino-win'
+  | 'referral'
 
 export interface CreditEntry {
   id: string
@@ -136,6 +137,12 @@ export function grantCredits(amount: number, note?: string): void {
 export function grantCasinoWin(amount: number, note?: string): void {
   if (!Number.isFinite(amount) || amount <= 0) return
   append('casino-win', amount, note)
+}
+
+export const REFERRAL_CREDIT_REWARD = 10
+
+export function grantReferralCredits(): void {
+  append('referral', REFERRAL_CREDIT_REWARD, 'Referral reward')
 }
 
 // ── Wallet operations ────────────────────────────────────────────────────────

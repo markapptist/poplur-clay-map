@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { modelUrl } from './modelUrl'
 import { ModelViewerElement } from '@google/model-viewer'
 import styles from './VFXStudio.module.css'
 import { generateMeshyObject, MeshyUnavailable, type MeshyProgress } from './meshy'
 import VFXParticleSystem, { type VFXParticleEffect } from './VFXParticleSystem'
 import { onFrame } from './frameGovernor'
+import { feedUrl } from './assetPacks'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 import { wakeManagedRendering } from './nativeBridge'
 
@@ -244,7 +246,11 @@ export default function VFXStudio({
     [tool],
   )
   const isParticle = selected.group === 'effects'
-  const activeModelUrl = selected.id === 'meshy' ? customAsset?.modelUrl ?? null : selected.model
+  // A built-in VFX object routes through the seam; a Meshy asset is already a
+  // full URL, so modelUrl leaves it untouched (not a pack member).
+  const activeModelUrl = selected.id === 'meshy'
+    ? (customAsset?.modelUrl ?? null)
+    : (selected.model ? modelUrl(selected.model) : null)
   const activeModelPoster = selected.id === 'meshy'
     ? customAsset?.thumbnailUrl ?? '/logo_icon.png'
     : selected.thumb ?? '/logo_icon.png'
@@ -593,7 +599,7 @@ export default function VFXStudio({
         </button>
         <div className={styles.timelineTrack}>
           <div className={styles.frames} aria-hidden="true">
-            {Array.from({ length: 6 }, (_, index) => <img key={index} src="/feed/posters/ad-food.jpg" alt="" />)}
+            {Array.from({ length: 6 }, (_, index) => <img key={index} src={feedUrl('posters/ad-food.jpg')} alt="" />)}
           </div>
           <div className={styles.effectLane} aria-label="Timed VFX layer">
             {value !== 'none' ? (

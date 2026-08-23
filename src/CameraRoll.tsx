@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import styles from './ViewHarness.module.css'
 import { playPop } from './pop'
-import { listCaptures, onCameraStore, isSelected, toggleSelected, selectedCount } from './cameraStore'
+import { feedUrl } from './assetPacks'
+import { listCaptures, onCameraStore, isSelected, toggleSelected, selectedCount, setLibraryNewest } from './cameraStore'
 import PermissionAlert from './PermissionAlert'
 
 // Camera Roll — the camera's upper page (channel-up pushes the whole camera
@@ -47,34 +48,34 @@ const ROLL_ASSET_TIMEOUT_MS = 30_000
 // instead of mounting eleven <video> elements that each decoded a 1280x720
 // frame and then sat holding it — eleven live decoders for eleven thumbnails.
 const posterFor = (src: string): string | undefined => {
-  const clip = /^feed\/([\w.-]+)\.mp4$/.exec(src)
-  return clip ? `feed/posters/${clip[1]}.jpg` : undefined
+  const clip = /feed\/([\w.-]+)\.mp4$/.exec(src)
+  return clip ? feedUrl(`posters/${clip[1]}.jpg`) : undefined
 }
 
 const ROLL: RollItem[] = [
-  { kind: 'video', src: 'feed/ad-food.mp4', length: '0:31' },
+  { kind: 'video', src: feedUrl('ad-food.mp4'), length: '0:31' },
   { kind: 'photo', src: 'clay_buildings.png' },
   { kind: 'photo', src: 'clay_cube.png' },
-  { kind: 'video', src: 'feed/ad-music.mp4', length: '0:24' },
+  { kind: 'video', src: feedUrl('ad-music.mp4'), length: '0:24' },
   { kind: 'photo', src: 'clay_tv.png' },
   { kind: 'photo', src: 'clay_pin.png' },
-  { kind: 'video', src: 'feed/ad-sports.mp4', length: '0:18' },
+  { kind: 'video', src: feedUrl('ad-sports.mp4'), length: '0:18' },
   { kind: 'photo', src: 'clay_stars.png' },
   { kind: 'photo', src: 'cam_object.png' },
-  { kind: 'video', src: 'feed/ad-kids.mp4', length: '0:27' },
+  { kind: 'video', src: feedUrl('ad-kids.mp4'), length: '0:27' },
   { kind: 'photo', src: 'mark_talk2.png' },
-  { kind: 'video', src: 'feed/ad-comedy.mp4', length: '0:21' },
-  { kind: 'video', src: 'feed/ad-french.mp4', length: '0:19' },
+  { kind: 'video', src: feedUrl('ad-comedy.mp4'), length: '0:21' },
+  { kind: 'video', src: feedUrl('ad-french.mp4'), length: '0:19' },
   { kind: 'photo', src: 'clay_pin_small.png' },
-  { kind: 'video', src: 'feed/ad-spanish-1.mp4', length: '0:22' },
+  { kind: 'video', src: feedUrl('ad-spanish-1.mp4'), length: '0:22' },
   { kind: 'photo', src: 'clay_stars.png' },
-  { kind: 'video', src: 'feed/ad-shopping.mp4', length: '0:14' },
+  { kind: 'video', src: feedUrl('ad-shopping.mp4'), length: '0:14' },
   { kind: 'photo', src: 'clay_cube.png' },
-  { kind: 'video', src: 'feed/ad-spanish-2.mp4', length: '0:16' },
+  { kind: 'video', src: feedUrl('ad-spanish-2.mp4'), length: '0:16' },
   { kind: 'photo', src: 'clay_tv.png' },
-  { kind: 'video', src: 'feed/ad-cartoon.mp4', length: '0:29' },
+  { kind: 'video', src: feedUrl('ad-cartoon.mp4'), length: '0:29' },
   { kind: 'photo', src: 'clay_buildings.png' },
-  { kind: 'video', src: 'feed/ad-spanish-3.mp4', length: '0:25' },
+  { kind: 'video', src: feedUrl('ad-spanish-3.mp4'), length: '0:25' },
   { kind: 'photo', src: 'clay_pin.png' },
 ]
 
@@ -132,8 +133,14 @@ export default function CameraRoll({
     }
     w.poplurCameraRoll = payload => {
       if (Array.isArray(payload)) {
-        setNativeRoll(payload.filter((it): it is RollItem =>
-          !!it && typeof (it as RollItem).src === 'string'))
+        const items = payload.filter((it): it is RollItem =>
+          !!it && typeof (it as RollItem).src === 'string')
+        setNativeRoll(items)
+        // The shell sends newest-first. Hand the top item to the store so the
+        // camera's roll button can show the last thing actually taken, even
+        // before this session has captured anything of its own.
+        const newest = items.find(it => it.kind === 'photo' || it.kind === 'video')
+        setLibraryNewest(newest ? { kind: newest.kind as 'photo' | 'video', src: newest.src } : null)
       } else if (payload && typeof payload === 'object' && (payload as { denied?: boolean }).denied) {
         onDeny?.()
       }

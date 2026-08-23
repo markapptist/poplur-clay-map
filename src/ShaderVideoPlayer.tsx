@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback, memo } from 'react'
+import { onFrame } from './frameGovernor'
 
 const VERT = `attribute vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }`
@@ -151,7 +152,6 @@ export default memo(function ShaderVideoPlayer({ src, poster, className }: Props
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const timeRef = useRef<HTMLSpanElement>(null)
   const glCtx = useRef<ReturnType<typeof initGL>>(null)
-  const rafId = useRef(0)
   const showTarget = useRef(0)
   const showAnim = useRef(0)
   const hideTimer = useRef(0)
@@ -177,12 +177,14 @@ export default memo(function ShaderVideoPlayer({ src, poster, className }: Props
     glCtx.current = initGL(canvas)
     if (!glCtx.current) return
 
-    let active = true
-    const render = () => {
-      if (!active) return
+    // Continuous WebGL work belongs to the frame governor, not a self-
+    // rescheduling rAF chain: `ambient` lets this overlay drop rate with the
+    // rest of the app and park outright when the surface goes idle, which a raw
+    // loop cannot do. (scripts/verify-governed-loops.mjs enforces this.)
+    const stop = onFrame(() => {
       const ctx = glCtx.current
       const video = videoRef.current
-      if (!ctx || !video || !canvas) { rafId.current = requestAnimationFrame(render); return }
+      if (!ctx || !video || !canvas) return
 
       const { gl, unis } = ctx
       const dpr = window.devicePixelRatio || 1
@@ -221,13 +223,10 @@ export default memo(function ShaderVideoPlayer({ src, poster, className }: Props
         }
       }
 
-      rafId.current = requestAnimationFrame(render)
-    }
-    rafId.current = requestAnimationFrame(render)
+    })
 
     return () => {
-      active = false
-      cancelAnimationFrame(rafId.current)
+      stop()
       const c = glCtx.current
       if (c) {
         c.gl.deleteBuffer(c.buf)

@@ -4,6 +4,8 @@
 // reaches you only if you are standing inside it. The LIVE channel is not a
 // list of everyone streaming — it is the list of people streaming AT you.
 
+import { feedUrl } from './assetPacks'
+
 export interface Broadcast {
   id: string
   user: string
@@ -37,8 +39,8 @@ const OTHERS: Broadcast[] = [
     coords: near(2, -1.5),
     radiusKm: 18,
     startedAt: 0,
-    video: 'feed/ad-music.mp4',
-    poster: 'feed/posters/ad-music.jpg',
+    video: feedUrl('ad-music.mp4'),
+    poster: feedUrl('posters/ad-music.jpg'),
     viewers: 1240,
   },
   {
@@ -48,8 +50,8 @@ const OTHERS: Broadcast[] = [
     coords: near(-4, 3),
     radiusKm: 26,
     startedAt: 0,
-    video: 'feed/ad-sports.mp4',
-    poster: 'feed/posters/ad-sports.jpg',
+    video: feedUrl('ad-sports.mp4'),
+    poster: feedUrl('posters/ad-sports.jpg'),
     viewers: 6120,
   },
   {
@@ -59,8 +61,8 @@ const OTHERS: Broadcast[] = [
     coords: [2.3522, 48.8566],   // Paris
     radiusKm: 12,
     startedAt: 0,
-    video: 'feed/ad-french.mp4',
-    poster: 'feed/posters/ad-french.jpg',
+    video: feedUrl('ad-french.mp4'),
+    poster: feedUrl('posters/ad-french.jpg'),
     viewers: 880,
   },
 ]

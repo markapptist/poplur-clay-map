@@ -101,6 +101,35 @@ const CUBE_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(20)
 // before the spring ever saw it, so the wider clamp downstream was dead code.
 const CAMCORDER_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(34)
 const CAMCORDER_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(26)
+// Meshy-exported and single-face objects whose back/sides are illegible or
+// blank. They still parallax so they feel alive, but the envelope is tight
+// enough that no side face ever becomes visible.
+const FRONT_ONLY_MOTION_YAW_LIMIT = THREE.MathUtils.degToRad(10)
+const FRONT_ONLY_MOTION_PITCH_LIMIT = THREE.MathUtils.degToRad(8)
+const FRONT_ONLY_MODELS = new Set([
+  'poplur_radio.glb',
+  'poplur_cube_ipod.glb',
+  'poplur_cube_tv_remote.glb',
+  'poplur_newspaper.glb',
+  'poplur_cube_laptop.glb',
+  'poplur_cube_mailbox.glb',
+  'poplur_cube_bargraph.glb',
+  'poplur_cube_shopping_bag.glb',
+  'poplur_cube_gear.glb',
+  'poplur_cube_printer.glb',
+  'poplur_cube_showme.glb',
+  'poplur_cube_tshirt.glb',
+  'poplur_cube_wallet.glb',
+  'poplur_cube_contact.glb',
+  'poplur_cube_coin_stack.glb',
+  'poplur_cube_cash_stack.glb',
+  'poplur_cube_director_board.glb',
+  'poplur_cube_mail_envelope.glb',
+  'poplur_cube_camera_lens.glb',
+  'poplur_cube_verification.glb',
+  'poplur_cube_paint_bucket.glb',
+  'poplur_cube_directions_arrow.glb',
+])
 /** The grip the camcorder reads as level. A handset held to film sits around
     60° off the tabletop, not flat and not upright, so that is the pose that
     should aim straight ahead; tipping up or down from it aims up or down. */
@@ -176,6 +205,17 @@ export interface CubeTab3DProps {
   onVerticalSwipe?: (dir: 1 | -1) => void
   onTap: () => void
   onHold: () => void
+  /** A second tap arriving within `doubleTapWindowMs` of a would-be single tap
+      cancels that pending `onTap` and fires this instead. Only meaningful
+      together with `doubleTapWindowMs`; omit both and every tap still fires
+      `onTap` immediately, exactly as before. */
+  onDoubleTap?: () => void
+  /** How long a single tap is held open awaiting a possible second one, in ms.
+      0 (the default) disables double-tap detection entirely — no tap anywhere
+      in the app should pay a disambiguation delay it never asked for. A host
+      arms this only for the narrow window where a double-tap means something
+      (an incoming call), then disarms it again. */
+  doubleTapWindowMs?: number
   size?: number
   /** Clay model shown in the cube's place. Some screens take the navigator over
       and become the object itself — the TV Guide turns it into the clay TV — so
@@ -477,7 +517,7 @@ function disposeModel(node: THREE.Object3D) {
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, onTap, onHold, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false, motionContextKey }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, onTap, onHold, onDoubleTap, doubleTapWindowMs = 0, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false, motionContextKey }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -494,8 +534,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
   // below. Model swaps need both halves: merely waking a clean loop leaves the
   // old framebuffer on screen until a tap marks it dirty.
   const wakeLoopRef = useRef<() => void>(() => {})
-  const callbacksRef = useRef({ onFaceChange, onVerticalSwipe, onTap, onHold, onModelReady })
-  callbacksRef.current = { onFaceChange, onVerticalSwipe, onTap, onHold, onModelReady }
+  const callbacksRef = useRef({ onFaceChange, onVerticalSwipe, onTap, onHold, onModelReady, onDoubleTap, doubleTapWindowMs })
+  callbacksRef.current = { onFaceChange, onVerticalSwipe, onTap, onHold, onModelReady, onDoubleTap, doubleTapWindowMs }
 
   // Decode the tiny shared sample before the first navigation gesture. The
   // context stays suspended/parks at idle; pointerdown below performs the
@@ -772,6 +812,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let clothSwingVelY = 0
     const requestDisplayFrame = window.requestAnimationFrame.bind(window)
     const cancelDisplayFrame = window.cancelAnimationFrame.bind(window)
+    // A map subscreen keeps `targetTab` on map while replacing the globe with
+    // its own navigator object. Key the world-anchored terms to the object that
+    // is actually loaded, otherwise radio/iPod inherit the globe's accumulated
+    // idle yaw and live compass yaw before their small parallax clamp is added.
+    const isMapGlobe = () =>
+      targetTabRef.current === 'map'
+      && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && (window.__poplurDisplayActive?.() ?? true)
@@ -785,8 +832,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // HomeTwin's own capture-phase wake flips the flag back first, so the
       // very touch that un-ghosts the chrome also restarts the turn.
       && window.__poplurChromeIdle !== true
-      && targetTabRef.current === 'map'
-      && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
+      && isMapGlobe()
     const armGlobeSpin = (durationMs: number) => {
       if (!mapGlobeIsVisible()) return
       globeSpinUntil = Math.max(globeSpinUntil, performance.now() + durationMs)
@@ -799,6 +845,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         disagree about which response is in force — which is exactly how the
         wider camcorder envelope ended up unreachable. */
     const isAiming = () => loadedUrlRef.current === CAMCORDER_MODEL
+    const isFrontOnly = () => !!loadedUrlRef.current && FRONT_ONLY_MODELS.has(loadedUrlRef.current)
 
     /** WHICH WAY AN OBJECT FACES, and why — decided by what the object MEANS
         on the screen it is on, not by listing models that misbehave.
@@ -825,7 +872,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
                     wallet, games, the FaceTime contact card. It keeps the
                     parallax tilt, so it still answers your hand; only the
                     unbounded term is withheld. */
-    const tracksHeading = () => isAiming() || targetTabRef.current === 'map'
+    const tracksHeading = () => isAiming() || isMapGlobe()
 
     const applyMotionDeadZone = (angle: number) => {
       if (Math.abs(angle) <= CUBE_MOTION_DEAD_ZONE) return 0
@@ -858,8 +905,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // way an object in your palm would.
       const direction = 1
       const gain = motionSensitivity * (aiming ? CAMCORDER_MOTION_GAIN : 1)
-      const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
-      const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT
+      const frontOnly = isFrontOnly()
+      const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : frontOnly ? FRONT_ONLY_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
+      const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : frontOnly ? FRONT_ONLY_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT
       // MONOTONIC, not folded.
       //
       // The fold was sin(pitch * 2): zero at a flat hold, zero at an upright
@@ -1002,6 +1050,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let downTime = 0
     let holdTimer: ReturnType<typeof setTimeout> | null = null
     let holdFired = false
+    // Only ever set while doubleTapWindowMs > 0 — see the tap branch below.
+    let pendingTapTimer: ReturnType<typeof setTimeout> | null = null
     // The screen behind the navigator, when it is something that scrolls.
     // The cube floats over the bottom of every tab, and its canvas is a good
     // deal larger than the object drawn in it — so on Profile it covered the
@@ -1112,7 +1162,27 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       const dy = releaseY - startY
       const gestureMoved = moved || Math.hypot(dx, dy) > 8
       if (!gestureMoved) {
-        if (performance.now() - downTime < 350) callbacksRef.current.onTap()
+        if (performance.now() - downTime < 350) {
+          const { onDoubleTap, doubleTapWindowMs } = callbacksRef.current
+          if (onDoubleTap && doubleTapWindowMs > 0) {
+            // A second tap inside the window cancels the first tap's pending
+            // onTap and fires onDoubleTap instead. Ordinary taps never reach
+            // this branch (doubleTapWindowMs is 0 outside the narrow states
+            // that arm it), so nothing else pays this latency.
+            if (pendingTapTimer != null) {
+              clearTimeout(pendingTapTimer)
+              pendingTapTimer = null
+              onDoubleTap()
+            } else {
+              pendingTapTimer = setTimeout(() => {
+                pendingTapTimer = null
+                callbacksRef.current.onTap()
+              }, doubleTapWindowMs)
+            }
+          } else {
+            callbacksRef.current.onTap()
+          }
+        }
         return
       }
       // Whichever axis the finger actually travelled on wins. A vertical drag
@@ -1387,8 +1457,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         // The camcorder aims; everything else parallaxes. See the limits above.
         // These bound the SPRING's overshoot; applyMotionTarget bounds the
         // target it is chasing with the same pair.
-        const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
-        const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT
+        const frontOnly = isFrontOnly()
+        const yawLimit = aiming ? CAMCORDER_MOTION_YAW_LIMIT : frontOnly ? FRONT_ONLY_MOTION_YAW_LIMIT : CUBE_MOTION_YAW_LIMIT
+        const pitchLimit = aiming ? CAMCORDER_MOTION_PITCH_LIMIT : frontOnly ? FRONT_ONLY_MOTION_PITCH_LIMIT : CUBE_MOTION_PITCH_LIMIT
         const boundedYaw = THREE.MathUtils.clamp(motionYaw, -yawLimit, yawLimit)
         const boundedPitch = THREE.MathUtils.clamp(motionPitch, -pitchLimit, pitchLimit)
         if (boundedYaw !== motionYaw) motionYawVelocity = 0
@@ -1514,7 +1585,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         // The globe's authored entrance turn and live device response share
         // one rotation. Every other object stays front-facing and moves only
         // from device tilt; a tab change never carries the globe's yaw into it.
-        group.rotation.y = (targetTabRef.current === 'map' ? yaw : 0) + motionYaw + (tracksHeading() ? headingYaw : 0)
+        group.rotation.y = (isMapGlobe() ? yaw : 0) + motionYaw + (tracksHeading() ? headingYaw : 0)
         pitchGroup.rotation.x = pitch + motionPitch
         renderer.render(scene, camera)
         needsRender = false
@@ -1607,6 +1678,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       stopPerformancePolicy()
       cancelScheduledFrame()
       window.clearTimeout(flashPulseTimer)
+      if (pendingTapTimer != null) clearTimeout(pendingTapTimer)
       canvas.removeEventListener('pointerdown', onPointerDown)
       canvas.removeEventListener('pointermove', onPointerMove)
       canvas.removeEventListener('pointerup', onPointerUp)

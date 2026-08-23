@@ -19,8 +19,9 @@ import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPer
 // green with no buildings anywhere. Rendering in globe keeps the clay city
 // intact and the landmark stands in it.
 //
-// The flat sprite marker stays the default; the 3D model swaps in only when
-// the camera is both near the landmark AND zoomed in.
+// The grounded 3D model appears only when the camera is both near the landmark
+// and sufficiently zoomed in. There is intentionally no distant flat sprite:
+// a fixed-size marker reads as though it is floating above the world.
 //
 // GENERALISED. This started as a Statue of Liberty-only module. The user's
 // video of a hovering CN Tower sprite made the point: a floating sprite the
@@ -78,6 +79,10 @@ export interface NearLandmark3D {
   update: () => void
   /** True while the 3D model is on the map in place of the flat sprite. */
   isActive: () => boolean
+  /** True once the GLB decoded and was added to the grounded render scene. */
+  isReady: () => boolean
+  /** True only after the decoded GLB has drawn in Mapbox's render pass. */
+  isRendered: () => boolean
   /** Remove listeners, the custom layer, and free three.js resources. */
   dispose: () => void
   /** The config passed in — kept so callers can dispatch by id. */
@@ -110,8 +115,12 @@ export function installNearLandmark3D(
   map: mapboxgl.Map,
   cfg: NearLandmark3DConfig,
   opts: {
-    /** Toggle the flat sprite marker for this landmark (hidden while 3D shows). */
+    /** Observe whether the grounded 3D model is active. */
     onActiveChange?: (active: boolean) => void
+    /** Fires once the grounded GLB is available to render. */
+    onModelReady?: () => void
+    /** Fires after the grounded GLB has actually rendered. */
+    onModelRendered?: () => void
   } = {},
 ): NearLandmark3D {
   const nearKm = cfg.nearKm ?? 8
@@ -140,6 +149,8 @@ export function installNearLandmark3D(
   let cam: THREE.Camera | null = null
   let renderer: THREE.WebGLRenderer | null = null
   let model: THREE.Object3D | null = null
+  let modelReady = false
+  let modelRendered = false
 
   const disposeModel = (obj: THREE.Object3D) => {
     obj.traverse(node => {
@@ -196,12 +207,19 @@ export function installNearLandmark3D(
           const box = new THREE.Box3().setFromObject(built)
           const size = new THREE.Vector3()
           box.getSize(size)
+          // The raw mesh is Z-up, but every supplied GLB rotates that axis to
+          // Y on its root node. Box3 includes that node transform, and the
+          // Mapbox custom-layer rotation then maps this final Y axis to map
+          // height. Measure and ground the transformed object on Y.
           const s = cfg.heightM / (size.y || 1)
           built.scale.setScalar(s)
           const box2 = new THREE.Box3().setFromObject(built)
           built.position.y -= box2.min.y
           model = built
+          modelReady = true
+          modelRendered = false
           scene.add(built)
+          opts.onModelReady?.()
           map.triggerRepaint()
         },
         undefined,
@@ -218,6 +236,8 @@ export function installNearLandmark3D(
     },
     onRemove() {
       if (model) { disposeModel(model); model = null }
+      modelReady = false
+      modelRendered = false
       scene = null
       cam = null
       try { renderer?.dispose() } catch { /* already disposed */ }
@@ -257,6 +277,10 @@ export function installNearLandmark3D(
       cam.projectionMatrix = new THREE.Matrix4().fromArray(matrix).multiply(l)
       renderer.resetState()
       renderer.render(scene, cam)
+      if (modelReady && !modelRendered) {
+        modelRendered = true
+        opts.onModelRendered?.()
+      }
     },
   }
 
@@ -307,6 +331,8 @@ export function installNearLandmark3D(
     },
     releaseInactiveResources: () => {
       if (model) { disposeModel(model); model = null }
+      modelReady = false
+      modelRendered = false
     },
   })
 
@@ -354,6 +380,8 @@ export function installNearLandmark3D(
     config: cfg,
     update,
     isActive: () => shown,
+    isReady: () => modelReady,
+    isRendered: () => modelRendered,
     dispose: () => {
       if (disposed) return
       map.off('style.load', reattachOnStyleLoad)

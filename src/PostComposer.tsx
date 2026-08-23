@@ -3,6 +3,7 @@ import styles from './PostComposer.module.css'
 import { awaitNativeUpload, type UploadPhase } from './nativeUpload'
 import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
+import { channelUrl } from './assetPacks'
 import { playPop } from './pop'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { setPendingAICompose, setPendingMapPost, type PendingMapPost } from './cameraStore'
@@ -800,7 +801,7 @@ export default function PostComposer({
                 onClick={() => { playPop(); setChannelId(c.id) }}
                 aria-pressed={c.id === channelId}
               >
-                <img className={styles.chanIcon} src={`channels/${c.icon}.png`} alt="" />
+                <img className={styles.chanIcon} src={channelUrl(`${c.icon}.png`)} alt="" />
                 <span className={styles.chanNum}>CH {c.number}</span>
                 <span className={styles.chanName}>{c.name}</span>
               </button>

@@ -190,8 +190,8 @@
     {
       "id": "subscreens",
       "version": 1,
-      "bytes": 69164606,
-      "digest": "2f6c04fef0bb",
+      "bytes": 69168582,
+      "digest": "e3090f86ad6a",
       "files": [
         "assets/HoldMenu_CameraRoll.imageset/HoldMenu_CameraRoll.png",
         "assets/HoldMenu_Chat.imageset/chat_messages.png",
@@ -312,28 +312,55 @@
       ]
     },
     {
-      "id": "clay-models",
+      "id": "feed",
       "version": 1,
-      "bytes": 6520028,
-      "digest": "ff96941ec3a4",
+      "bytes": 30501012,
+      "digest": "3b7c21791bed",
       "files": [
-        "games/poplurstation/console.glb",
-        "poplur_cube_bargraph.glb",
-        "poplur_cube_folder.glb",
-        "poplur_cube_gear.glb",
-        "poplur_cube_ipod.glb",
-        "poplur_cube_laptop.glb",
-        "poplur_cube_mailbox.glb",
-        "poplur_cube_printer.glb",
-        "poplur_cube_shopping_bag.glb",
-        "poplur_cube_showme.glb",
-        "poplur_cube_slot_machine.glb",
-        "poplur_cube_trophy.glb",
-        "poplur_cube_tv_remote.glb",
-        "poplur_cube_wallet.glb",
-        "poplur_mixer_lite.glb",
-        "poplur_newspaper.glb",
-        "poplur_radio.glb"
+        "ad-cartoon.mp4",
+        "ad-comedy.mp4",
+        "ad-food.mp4",
+        "ad-french.mp4",
+        "ad-kids.mp4",
+        "ad-music.mp4",
+        "ad-shopping.mp4",
+        "ad-spanish-1.mp4",
+        "ad-spanish-2.mp4",
+        "ad-spanish-3.mp4",
+        "ad-sports.mp4",
+        "posters/ad-cartoon.jpg",
+        "posters/ad-comedy.jpg",
+        "posters/ad-food.jpg",
+        "posters/ad-french.jpg",
+        "posters/ad-kids.jpg",
+        "posters/ad-music.jpg",
+        "posters/ad-shopping.jpg",
+        "posters/ad-spanish-1.jpg",
+        "posters/ad-spanish-2.jpg",
+        "posters/ad-spanish-3.jpg",
+        "posters/ad-sports.jpg"
+      ]
+    },
+    {
+      "id": "channels",
+      "version": 1,
+      "bytes": 13688616,
+      "digest": "596ef4eb06ca",
+      "files": [
+        "poplur_channel_101_food.png",
+        "poplur_channel_103_beauty.png",
+        "poplur_channel_104_sports.png",
+        "poplur_channel_105_modelling.png",
+        "poplur_channel_106_fashion.png",
+        "poplur_channel_107_music.png",
+        "poplur_channel_108_tech.png",
+        "poplur_channel_109_news.png",
+        "poplur_channel_110_french.png",
+        "poplur_channel_111_spanish.png",
+        "poplur_channel_112_shopping.png",
+        "poplur_channel_113_cartoon.png",
+        "poplur_channel_114_kids.png",
+        "poplur_channel_115_comedy.png"
       ]
     },
     {
@@ -367,6 +394,33 @@
         "starry-night.jpg",
         "vintage.jpg",
         "warm.jpg"
+      ]
+    },
+    {
+      "id": "clay-models",
+      "version": 1,
+      "bytes": 7021528,
+      "digest": "e75da1c8b1d6",
+      "files": [
+        "games/poplurstation/console.glb",
+        "poplur_cube_bargraph.glb",
+        "poplur_cube_folder.glb",
+        "poplur_cube_gear.glb",
+        "poplur_cube_ipod.glb",
+        "poplur_cube_laptop.glb",
+        "poplur_cube_mailbox.glb",
+        "poplur_cube_printer.glb",
+        "poplur_cube_shopping_bag.glb",
+        "poplur_cube_showme.glb",
+        "poplur_cube_slot_machine.glb",
+        "poplur_cube_trophy.glb",
+        "poplur_cube_tv_remote.glb",
+        "poplur_cube_wallet.glb",
+        "poplur_mixer_lite.glb",
+        "poplur_newspaper.glb",
+        "poplur_radio.glb",
+        "poplur_mic_lite.glb",
+        "poplur_clay_phone_lite.glb"
       ]
     }
   ]

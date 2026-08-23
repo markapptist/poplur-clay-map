@@ -1,3 +1,4 @@
+import { feedUrl } from './assetPacks'
 import type { Detection } from './mlDetect'
 import type { SmartCard } from './tourSmarts'
 
@@ -22,8 +23,8 @@ const CHANNEL_LOOK: Record<string, { accent: string; accent2: string; badge: str
 
 function channelAsset(channel: string) {
   const safe = Object.prototype.hasOwnProperty.call(CHANNEL_LOOK, channel) ? channel : 'shopping'
-  const video = safe === 'spanish' ? 'feed/ad-spanish-1.mp4' : `feed/ad-${safe}.mp4`
-  const poster = safe === 'spanish' ? 'feed/posters/ad-spanish-1.jpg' : `feed/posters/ad-${safe}.jpg`
+  const video = safe === 'spanish' ? feedUrl('ad-spanish-1.mp4') : feedUrl(`ad-${safe}.mp4`)
+  const poster = safe === 'spanish' ? feedUrl('posters/ad-spanish-1.jpg') : feedUrl(`posters/ad-${safe}.jpg`)
   return { safe, video, poster, look: CHANNEL_LOOK[safe] ?? CHANNEL_LOOK.shopping }
 }
 

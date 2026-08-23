@@ -459,3 +459,10 @@ html.camera-live,
     inset 0 -3px 4px rgba(120, 5, 60, 0.5),
     0 2px 10px rgba(255, 95, 174, 0.6);
 }
+
+/* The layered character renderer's speaking indicator (ClayCharacter). Global
+   because CSS modules rename keyframes and the layer stack styles inline. */
+@keyframes poplur-speak-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

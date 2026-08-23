@@ -219,6 +219,26 @@ export default function ARFilters({
     onPickRef.current(AR_FILTERS[notch].id)
   }
 
+  // A chip is an explicit choice, not a scrub.  The rail's pointer-up handler
+  // deliberately settles through momentum for a drag, but using that same
+  // delayed path for a tap left the selected chip and the live viewfinder out
+  // of sync when the ambient frame clock was paused or throttled.  Commit the
+  // exact chip on click; the parent pointer handler may still start a snap,
+  // but this wins with the element React actually received the click from.
+  const pickChip = (index: number) => {
+    if (index < 0 || index >= AR_FILTERS.length) return
+    velocityRef.current = 0
+    snapIndexRef.current = null
+    offsetRef.current = index
+    lastNotchRef.current = index
+    setOffset(index)
+    setSelected(index)
+    if (index === committedRef.current) return
+    committedRef.current = index
+    playPop()
+    onPickRef.current(AR_FILTERS[index].id)
+  }
+
   const scrub = (deltaX: number) => {
     if (Math.abs(deltaX) < 0.25) return
     snapIndexRef.current = null
@@ -308,8 +328,14 @@ export default function ARFilters({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight') { e.preventDefault(); velocityRef.current = 0; snapIndexRef.current = Math.min(AR_FILTERS.length - 1, selected + 1) }
-      else if (e.key === 'ArrowLeft') { e.preventDefault(); velocityRef.current = 0; snapIndexRef.current = Math.max(0, selected - 1) }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        pickChip(Math.min(AR_FILTERS.length - 1, selected + 1))
+      }
+      else if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        pickChip(Math.max(0, selected - 1))
+      }
       else if (e.key === 'Escape') { e.preventDefault(); onClose() }
     }
     window.addEventListener('keydown', onKey)
@@ -349,6 +375,7 @@ export default function ARFilters({
               type="button"
               aria-pressed={on}
               aria-label={f.label}
+              onClick={e => { e.stopPropagation(); pickChip(i) }}
               className={on ? `${styles.chip} ${styles.chipOn}` : styles.chip}
               style={{
                 transform: `translate(-50%, -50%) translateX(${column * SLOT_SPACING}px) scale(${scale})`,

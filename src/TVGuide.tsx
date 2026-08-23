@@ -4,6 +4,7 @@ import { usePullToRefresh } from './usePullToRefresh'
 import ScreenCoach from './ScreenCoach'
 import styles from './TVGuide.module.css'
 import { CHANNELS } from './FeedTwin'
+import { channelUrl, feedUrl } from './assetPacks'
 import { playPop } from './pop'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
@@ -56,9 +57,9 @@ const COMPANIONS: Record<string, string[]> = {
 // channels without one borrow a stock clip, picked by channel number so a given
 // channel always previews the same thing.
 const STOCK_CLIPS = [
-  'feed/ad-food.mp4', 'feed/ad-sports.mp4', 'feed/ad-music.mp4', 'feed/ad-french.mp4',
-  'feed/ad-shopping.mp4', 'feed/ad-cartoon.mp4', 'feed/ad-kids.mp4', 'feed/ad-comedy.mp4',
-  'feed/ad-spanish-1.mp4', 'feed/ad-spanish-2.mp4', 'feed/ad-spanish-3.mp4',
+  feedUrl('ad-food.mp4'), feedUrl('ad-sports.mp4'), feedUrl('ad-music.mp4'), feedUrl('ad-french.mp4'),
+  feedUrl('ad-shopping.mp4'), feedUrl('ad-cartoon.mp4'), feedUrl('ad-kids.mp4'), feedUrl('ad-comedy.mp4'),
+  feedUrl('ad-spanish-1.mp4'), feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4'),
 ]
 function releasePipMedia(video: HTMLVideoElement): void {
   video.pause()
@@ -344,7 +345,7 @@ export default function TVGuide({
             <div className={styles.pipMeta}>
               <div className={styles.pipTop}>
                 <span className={styles.pipIconPad}>
-                  <img className={styles.pipIcon} src={`channels/${preview?.icon}.png`} alt="" draggable="false" />
+                  <img className={styles.pipIcon} src={channelUrl(`${preview?.icon}.png`)} alt="" draggable="false" />
                 </span>
                 <span className={styles.pipCh}>CH {preview?.number}</span>
               </div>
@@ -389,7 +390,7 @@ export default function TVGuide({
               <span className={styles.rowCh}>
                 {/* the logo sits on a moulded clay pad in the channel's colour */}
                 <span className={styles.rowIconPad}>
-                  <img className={styles.rowIcon} src={`channels/${channel.icon}.png`} alt="" draggable="false" />
+                  <img className={styles.rowIcon} src={channelUrl(`${channel.icon}.png`)} alt="" draggable="false" />
                 </span>
                 <span className={styles.rowNum}>{channel.number}</span>
               </span>

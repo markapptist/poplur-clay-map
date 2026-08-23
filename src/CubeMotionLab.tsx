@@ -22,6 +22,7 @@ function postTuning(sensitivity: number, smoothing: number) {
     separately, so tuning this surface is representative of a real handset. */
 export default function CubeMotionLab() {
   const enabled = isMotionLabEnabled()
+  const [closed, setClosed] = useState(false)
   const [roll, setRoll] = useState(0)
   const [pitch, setPitch] = useState(0)
   const [sensitivity, setSensitivity] = useState(DEFAULT_CUBE_MOTION_SENSITIVITY)
@@ -64,7 +65,14 @@ export default function CubeMotionLab() {
     postTuning(DEFAULT_CUBE_MOTION_SENSITIVITY, DEFAULT_CUBE_MOTION_SMOOTHING)
   }, [enabled])
 
-  if (!enabled) return null
+  // Closing hands the cube back to real motion: neutral tilt, stock tuning.
+  const close = () => {
+    postMotion(0, 0)
+    postTuning(DEFAULT_CUBE_MOTION_SENSITIVITY, DEFAULT_CUBE_MOTION_SMOOTHING)
+    setClosed(true)
+  }
+
+  if (!enabled || closed) return null
 
   const tiltX = (roll / MAX_ROLL_RADIANS) * 38
   const tiltY = (pitch / MAX_PITCH_RADIANS) * 38
@@ -76,6 +84,7 @@ export default function CubeMotionLab() {
       <div className={styles.heading}>
         <span>ACCELEROMETER</span>
         <button type="button" className={styles.reset} onClick={reset}>Reset</button>
+        <button type="button" className={styles.close} onClick={close} aria-label="Close motion lab">×</button>
       </div>
       <div className={styles.readout} aria-live="polite">
         <span>ROLL <output>{rollDegrees}°</output></span>

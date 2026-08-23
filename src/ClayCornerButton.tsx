@@ -499,6 +499,15 @@ export default function ClayCornerButton({
           pulse.current = 1
           if (!activateOnClick) onPress()
         }}
+        onKeyDown={event => {
+          // Click-only activation left the rail inaccessible to keyboard users
+          // (and to embedded assistive controls). Handle the standard button
+          // keys directly when an action is intentionally deferred to click.
+          if (!activateOnClick || (event.key !== 'Enter' && event.key !== ' ')) return
+          event.preventDefault()
+          pulse.current = 1
+          onPress()
+        }}
         onClick={() => { if (activateOnClick) onPress() }}
         style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer', padding: 0 }}
       />

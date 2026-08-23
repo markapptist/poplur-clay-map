@@ -14,6 +14,7 @@ import MapShowMe from './MapShowMe'
 import NotificationsScreen from './NotificationsScreen'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
+import PodcastRoom from './PodcastRoom'
 import CharacterEditor from './CharacterEditor'
 import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
@@ -73,7 +74,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   // Rough Copy capture any more — a tile that shows you a picture of search
   // is not search.
   map: [
-    { icon: 'Map', title: 'MAP', screen: 'map-home', glyph: 'M', home: true },
+    { icon: 'Map', title: 'MAP', screen: 'map-home', home: true },
     // The RADIO subscreen is back (station deck, real geo-searched stations) —
     // what stayed removed is the radio woven into the map experience itself
     // (tour beds, stingers, ticker readout). The AI voice remains the map's
@@ -83,15 +84,15 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Radio', title: 'RADIO', screen: 'map-radio', native: true },
     // The music the map is carrying: Poplur's own tracks, left on the ground
     // like any other pop, and pickable only where your radius reaches them.
-    { icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true, glyph: '♪' },
-    { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true, glyph: '✓' },
+    { icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true },
+    { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true },
     { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
   feed: [
     // The supplied clay TV render — the tab's own object, not the remote that
     // TV GUIDE wears below it. Two different props for two different things.
-    { icon: 'TVGuide', title: 'TV', screen: 'feed-home', glyph: 'TV', home: true },
+    { icon: 'TVGuide', title: 'TV', screen: 'feed-home', home: true },
     // Feed engagement lives in its visible clay rail: share, comment controls,
     // comment composer, and heart must be reachable while watching.
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
@@ -102,10 +103,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The daily casino: one free slots spin a day, paid in Poplur Credits.
     // It lives in the feed like TV and NEWS — a channel you visit, not a
     // tool. Its own icon now (a supplied clay slot machine).
-    { icon: 'Casino', title: 'CASINO', screen: 'feed-casino', native: true, glyph: '7' },
+    { icon: 'Casino', title: 'CASINO', screen: 'feed-casino', native: true },
     // The mini-app folder: everything this account has made with the AI
     // builder, seeded with Poplur Flashlight. See miniApps.ts for the schema.
-    { icon: 'Apps', title: 'APPS', screen: 'feed-apps', native: true, glyph: '▦' },
+    { icon: 'Apps', title: 'APPS', screen: 'feed-apps', native: true },
   ],
   post: [
     // PHOTO and VIDEO select which physical camera object the navigator wears.
@@ -130,14 +131,17 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // Android). Sending it to the old native-only route left it as a no-op on
     // those hosts, so it stays in the shared surface like News and TV Guide.
     { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true },
-    // STUDIO is the camera for sound: record a take, let the AI build it into
+    // MUSIC is the camera for sound: record a take, let the AI build it into
     // a song, post it to your radius like any other capture. Wears the
     // supplied mixing-desk render, matching the screen's own object
     // (camera-studio's cube is poplur_mixer_lite.glb).
     { icon: 'Studio', title: 'STUDIO', screen: 'camera-studio', native: true },
+    // PODCAST is a live room where you invite people within your radius.
+    // Record together and go live at a location. Cube becomes the mic.
+    { icon: 'Mic', title: 'PODCAST', screen: 'camera-podcast', native: true, format: 'svg' },
   ],
   profile: [
-    { icon: 'Home', title: 'PROFILE', screen: 'profile-home', glyph: 'P', home: true },
+    { icon: 'Home', title: 'PROFILE', screen: 'profile-home', home: true },
     // Wears the supplied mailbox render — the same object the screen's own
     // navigator cube wears at rest (poplur_cube_mailbox.glb).
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', native: true },
@@ -146,7 +150,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // cash-out. A window onto the poplurCredits ledger, never a second one.
     // Its own icon now — the supplied clay wallet, matching the screen's own
     // navigator cube (poplur_cube_wallet.glb) — rather than borrowing STORE's.
-    { icon: 'Wallet', title: 'WALLET', screen: 'profile-wallet', native: true, glyph: 'W' },
+    { icon: 'Wallet', title: 'WALLET', screen: 'profile-wallet', native: true },
     // The React PhoneScreen, not the Rough Copy twin: who you can call is a
     // live radius question in both directions, and a static capture cannot
     // answer it or place a call. `native: true` routes this tile to
@@ -1031,6 +1035,13 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Studio">
           <StudioScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'camera-podcast') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Podcast">
+          <PodcastRoom />
         </div>
       )
     }

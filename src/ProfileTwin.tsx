@@ -5,6 +5,7 @@ import styles from './ProfileTwin.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { OTHER_POPS } from './data'
+import { feedUrl } from './assetPacks'
 import { playPop } from './pop'
 import { isGateMuted, onGateChange } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -72,21 +73,21 @@ interface NativeProfilePost {
 }
 
 const POSTS: Post[] = [
-  { ch: 'CH 101', title: 'late-night poutine run downtown', video: 'feed/ad-food.mp4' },
-  { ch: 'CH 104', title: 'stoppage-time winner', video: 'feed/ad-sports.mp4' },
-  { ch: 'CH 107', title: 'live from the warehouse', video: 'feed/ad-music.mp4' },
-  { ch: 'CH 110', title: 'un café en terrasse', video: 'feed/ad-french.mp4' },
-  { ch: 'CH 112', title: 'sample sale finds under $20', video: 'feed/ad-shopping.mp4' },
-  { ch: 'CH 113', title: 'animating my clay OC', video: 'feed/ad-cartoon.mp4' },
-  { ch: 'CH 114', title: 'the biggest blanket fort', video: 'feed/ad-kids.mp4' },
-  { ch: 'CH 115', title: 'when the barista spells your name wrong', video: 'feed/ad-comedy.mp4' },
-  { ch: 'CH 111', title: 'tacos al pastor a medianoche', video: 'feed/ad-spanish-1.mp4' },
-  { ch: 'CH 118', title: 'mercado de flores', video: 'feed/ad-spanish-2.mp4' },
-  { ch: 'CH 121', title: 'la banda del barrio', video: 'feed/ad-spanish-3.mp4' },
-  { ch: 'CH 124', title: 'crowd goes clay', video: 'feed/ad-sports.mp4' },
-  { ch: 'CH 127', title: 'midnight ramen counter', video: 'feed/ad-food.mp4' },
-  { ch: 'CH 130', title: 'rooftop DJ set', video: 'feed/ad-music.mp4' },
-  { ch: 'CH 133', title: 'thrift haul hall of fame', video: 'feed/ad-shopping.mp4' },
+  { ch: 'CH 101', title: 'late-night poutine run downtown', video: feedUrl('ad-food.mp4') },
+  { ch: 'CH 104', title: 'stoppage-time winner', video: feedUrl('ad-sports.mp4') },
+  { ch: 'CH 107', title: 'live from the warehouse', video: feedUrl('ad-music.mp4') },
+  { ch: 'CH 110', title: 'un café en terrasse', video: feedUrl('ad-french.mp4') },
+  { ch: 'CH 112', title: 'sample sale finds under $20', video: feedUrl('ad-shopping.mp4') },
+  { ch: 'CH 113', title: 'animating my clay OC', video: feedUrl('ad-cartoon.mp4') },
+  { ch: 'CH 114', title: 'the biggest blanket fort', video: feedUrl('ad-kids.mp4') },
+  { ch: 'CH 115', title: 'when the barista spells your name wrong', video: feedUrl('ad-comedy.mp4') },
+  { ch: 'CH 111', title: 'tacos al pastor a medianoche', video: feedUrl('ad-spanish-1.mp4') },
+  { ch: 'CH 118', title: 'mercado de flores', video: feedUrl('ad-spanish-2.mp4') },
+  { ch: 'CH 121', title: 'la banda del barrio', video: feedUrl('ad-spanish-3.mp4') },
+  { ch: 'CH 124', title: 'crowd goes clay', video: feedUrl('ad-sports.mp4') },
+  { ch: 'CH 127', title: 'midnight ramen counter', video: feedUrl('ad-food.mp4') },
+  { ch: 'CH 130', title: 'rooftop DJ set', video: feedUrl('ad-music.mp4') },
+  { ch: 'CH 133', title: 'thrift haul hall of fame', video: feedUrl('ad-shopping.mp4') },
 ]
 // LIKED is other people's work, not yours — that is the whole difference from
 // the Media grid, and why it carries a handle. It was "Saved", built by
@@ -95,12 +96,12 @@ const POSTS: Post[] = [
 // surface uses); the handles are the feed's own cast.
 interface LikedPost extends Post { who: string }
 const LIKED: LikedPost[] = [
-  { who: 'kensington_eats', ch: 'CH 133', title: 'thrift haul hall of fame', video: 'feed/ad-shopping.mp4' },
-  { who: 'harbourfront', ch: 'CH 130', title: 'rooftop DJ set', video: 'feed/ad-music.mp4' },
-  { who: 'queenwest', ch: 'CH 127', title: 'midnight ramen counter', video: 'feed/ad-food.mp4' },
-  { who: 'the_annex', ch: 'CH 124', title: 'crowd goes clay', video: 'feed/ad-sports.mp4' },
-  { who: 'kensington_eats', ch: 'CH 121', title: 'la banda del barrio', video: 'feed/ad-spanish-3.mp4' },
-  { who: 'harbourfront', ch: 'CH 118', title: 'mercado de flores', video: 'feed/ad-spanish-2.mp4' },
+  { who: 'kensington_eats', ch: 'CH 133', title: 'thrift haul hall of fame', video: feedUrl('ad-shopping.mp4') },
+  { who: 'harbourfront', ch: 'CH 130', title: 'rooftop DJ set', video: feedUrl('ad-music.mp4') },
+  { who: 'queenwest', ch: 'CH 127', title: 'midnight ramen counter', video: feedUrl('ad-food.mp4') },
+  { who: 'the_annex', ch: 'CH 124', title: 'crowd goes clay', video: feedUrl('ad-sports.mp4') },
+  { who: 'kensington_eats', ch: 'CH 121', title: 'la banda del barrio', video: feedUrl('ad-spanish-3.mp4') },
+  { who: 'harbourfront', ch: 'CH 118', title: 'mercado de flores', video: feedUrl('ad-spanish-2.mp4') },
 ]
 
 // ── The profile picture, on disk ────────────────────────────────────────────
@@ -213,7 +214,7 @@ const VISITING_TILE_BY_POP_ID: Record<string, number> = Object.fromEntries(
 // from the clips themselves). A <video> per tile meant a decoder per tile —
 // sixteen of them dragged the screen to single-digit fps. Video is for the
 // fullscreen viewer only.
-const posterFor = (video: string) => video.replace('feed/', 'feed/posters/').replace('.mp4', '.jpg')
+const posterFor = (video: string) => video.replace(/feed\//, 'feed/posters/').replace('.mp4', '.jpg')
 const CHANNEL_NUMBER: Record<string, number> = {
   food: 101, beauty: 103, sports: 104, modelling: 105, fashion: 106,
   music: 107, tech: 108, news: 109, french: 110, spanish: 111,
@@ -250,7 +251,7 @@ function postIsVideo(post: Post): boolean {
 function postPoster(post: Post): string {
   if (post.poster) return post.poster
   if (!postIsVideo(post)) return post.video
-  if (post.video.startsWith('feed/')) return posterFor(post.video)
+  if (post.video.includes('/feed/') || post.video.startsWith('feed/')) return posterFor(post.video)
   return 'logo_icon.png'
 }
 const postTileKey = (post: Post, index: number) => `${post.id ?? post.video}-${index}`
@@ -269,9 +270,9 @@ function releaseViewerMedia(video: HTMLVideoElement): void {
 // are spoofed from stills we already ship (the ad posters and the Mark head)
 // until real accounts exist; nothing here is invented artwork.
 const FRIENDS = [
-  { handle: 'kensington_eats', name: 'Kensington', avatar: 'feed/posters/ad-food.jpg' },
-  { handle: 'harbourfront', name: 'Harbour', avatar: 'feed/posters/ad-comedy.jpg' },
-  { handle: 'queenwest', name: 'Queen W', avatar: 'feed/posters/ad-shopping.jpg' },
+  { handle: 'kensington_eats', name: 'Kensington', avatar: feedUrl('posters/ad-food.jpg') },
+  { handle: 'harbourfront', name: 'Harbour', avatar: feedUrl('posters/ad-comedy.jpg') },
+  { handle: 'queenwest', name: 'Queen W', avatar: feedUrl('posters/ad-shopping.jpg') },
   { handle: 'the_annex', name: 'Annex', avatar: 'mark_talk0.png' },
 ]
 
@@ -451,20 +452,20 @@ type TorchVideoTrack = MediaStreamTrack & {
 
 // Handles → the spoof pictures we already ship (same set as the share sheet).
 const AVATAR_BY_HANDLE: Record<string, string> = {
-  '@sauceboss': 'feed/posters/ad-food.jpg',
-  '@nightmarket': 'feed/posters/ad-food.jpg',
-  '@poutine.patrol': 'feed/posters/ad-comedy.jpg',
-  '@glowgetter': 'feed/posters/ad-shopping.jpg',
-  '@pitchside': 'feed/posters/ad-sports.jpg',
-  '@runwayraw': 'feed/posters/ad-french.jpg',
-  '@basement.set': 'feed/posters/ad-music.jpg',
-  '@localwire': 'feed/posters/ad-sports.jpg',
-  '@paris.pov': 'feed/posters/ad-french.jpg',
-  '@vibra.cdmx': 'feed/posters/ad-spanish-1.jpg',
-  '@hauls': 'feed/posters/ad-shopping.jpg',
-  '@doodlecast': 'feed/posters/ad-cartoon.jpg',
-  '@playtime': 'feed/posters/ad-kids.jpg',
-  '@bitmerchant': 'feed/posters/ad-comedy.jpg',
+  '@sauceboss': feedUrl('posters/ad-food.jpg'),
+  '@nightmarket': feedUrl('posters/ad-food.jpg'),
+  '@poutine.patrol': feedUrl('posters/ad-comedy.jpg'),
+  '@glowgetter': feedUrl('posters/ad-shopping.jpg'),
+  '@pitchside': feedUrl('posters/ad-sports.jpg'),
+  '@runwayraw': feedUrl('posters/ad-french.jpg'),
+  '@basement.set': feedUrl('posters/ad-music.jpg'),
+  '@localwire': feedUrl('posters/ad-sports.jpg'),
+  '@paris.pov': feedUrl('posters/ad-french.jpg'),
+  '@vibra.cdmx': feedUrl('posters/ad-spanish-1.jpg'),
+  '@hauls': feedUrl('posters/ad-shopping.jpg'),
+  '@doodlecast': feedUrl('posters/ad-cartoon.jpg'),
+  '@playtime': feedUrl('posters/ad-kids.jpg'),
+  '@bitmerchant': feedUrl('posters/ad-comedy.jpg'),
 }
 
 function ProfileCallOverlay({ who, video, onEnd }: { who: string; video: boolean; onEnd: () => void }) {

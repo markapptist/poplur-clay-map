@@ -26,6 +26,7 @@ import {
   referralLink,
   worldRadiusRemainingMs,
 } from './referral'
+import { grantReferralCredits, REFERRAL_CREDIT_REWARD } from './poplurCredits'
 import { readRadioScope, setRadioScope, type RadioScope } from './mapRadio'
 import { readControlSide, setControlSide, type ControlSide } from './controlPlacement'
 import { readProfileGender, writeProfileGender, type ProfileGender } from './profileGender'
@@ -53,6 +54,8 @@ import {
   type VerificationStatus,
 } from './profileVerification'
 
+
+
 // Settings, and the one thing in it that is a feature rather than a switch:
 // REFER A FRIEND. Radius is earned slowly and decays; a referral hands you the
 // entire planet for a day, which is the only place in the app where reach is
@@ -78,6 +81,7 @@ const PAGE_TITLE: Record<Page, string> = {
   ringtone: 'RINGTONE',
   app: 'APP ICON',
   profile: 'PROFILE',
+
   verify: 'VERIFICATION',
 }
 
@@ -288,7 +292,7 @@ export default function SettingsScreen({ bindBack }: {
     playPop()
     const payload = {
       title: 'Poplur',
-      text: `Join me on Poplur — use my code ${code} and we both get the whole map.`,
+      text: `Join me on Poplur — use my code ${code} and we both get credits and the whole map.`,
       url: link,
     }
     let sent = false
@@ -310,9 +314,10 @@ export default function SettingsScreen({ bindBack }: {
     }
     if (!sent) return
     const until = grantWorldRadius()
+    grantReferralCredits()
     setActive(true)
     setRemaining(until - Date.now())
-    say(`Worldwide radius on for ${WORLD_RADIUS_HOURS} hours.`)
+    say(`+${REFERRAL_CREDIT_REWARD} credits — worldwide radius on for ${WORLD_RADIUS_HOURS} hours.`)
   }
 
   const copyCode = async () => {
@@ -429,6 +434,8 @@ export default function SettingsScreen({ bindBack }: {
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
 
+
+
               <button type="button" className={styles.row} onClick={() => openPage('app')}>
                 <span className={styles.rowText}>
                   <b>App Icon</b>
@@ -488,8 +495,8 @@ export default function SettingsScreen({ bindBack }: {
 
           <p className={styles.referLine}>
             {active
-              ? 'Your radius covers the whole world right now. Refer another friend to add a day.'
-              : 'Bring someone in and your radius covers the entire world for 24 hours.'}
+              ? `Your radius covers the whole world right now. Refer another friend for +${REFERRAL_CREDIT_REWARD} credits and another day.`
+              : `Bring someone in and earn ${REFERRAL_CREDIT_REWARD} credits plus 24 hours of worldwide radius.`}
           </p>
 
           <button type="button" className={styles.code} onClick={copyCode} aria-label={`Copy your code, ${code.split('').join(' ')}`}>
@@ -783,6 +790,7 @@ export default function SettingsScreen({ bindBack }: {
             </p>
           </article>
         )}
+
 
         {note && <p className={styles.note} role="status">{note}</p>}
 

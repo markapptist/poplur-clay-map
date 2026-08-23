@@ -63,11 +63,12 @@ acquire_publish_lock() {
 node scripts/verify-tab-model-quality.mjs
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/vite build --outDir "$BUILD_DIR"
-# Phones never receive models/ (the rsync and the RN zip below both exclude
-# it). Drop it from the snapshot now so everything downstream of this line —
-# including the thermal gate's measurement — sees exactly the bytes a device
-# will run.
-rm -rf "$BUILD_DIR/models"
+# Phones never receive source models or the published feed/channel packs (the
+# rsync and RN archive below exclude them too). Drop them from the snapshot now
+# so everything downstream of this line — including the thermal gate's
+# measurement — sees exactly the bytes a device will run. AR filters stay
+# bundled while that pack is explicitly pinned as unpublished.
+rm -rf "$BUILD_DIR/models" "$BUILD_DIR/feed" "$BUILD_DIR/channels"
 # ripgrep is not installed on every machine that runs this script; fall back
 # to plain grep for the same fixed-string check rather than failing the
 # release with a misleading "token was not embedded" error.
@@ -156,9 +157,15 @@ acquire_publish_lock
 sync_to() {
   local dest="$1"
   mkdir -p "$dest"
-  rm -rf "$dest/models"
-  rsync -a --delete --exclude 'models/' "$BUILD_DIR/" "$dest/"
-  rm -rf "$dest/models"
+  # rsync protects excluded paths from --delete, so clear any copies left by
+  # an older sync both before and after publishing the new snapshot.
+  rm -rf "$dest/models" "$dest/feed" "$dest/channels"
+  rsync -a --delete \
+    --exclude 'models/' \
+    --exclude 'feed/' \
+    --exclude 'channels/' \
+    "$BUILD_DIR/" "$dest/"
+  rm -rf "$dest/models" "$dest/feed" "$dest/channels"
   shasum -a 256 public/logo_icon.png "$dest/logo_icon.png" | awk 'NR == 1 { expected = $1 } NR == 2 && $1 != expected { exit 1 }'
 }
 
@@ -171,7 +178,10 @@ sync_to "$ANDROID_DEST"
 rm -f "$RN_TMP"
 (
   cd "$BUILD_DIR"
-  zip -qr "$RN_TMP" . -x 'models/*'
+  zip -qr "$RN_TMP" . \
+    -x 'models/*' \
+    -x 'feed/*' \
+    -x 'channels/*'
 )
 unzip -tq "$RN_TMP" >/dev/null
 mv -f "$RN_TMP" "$RN_DEST"

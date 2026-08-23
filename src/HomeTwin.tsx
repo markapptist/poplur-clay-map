@@ -1,4 +1,5 @@
 import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
@@ -24,7 +25,9 @@ import InCallBar from './InCallBar'
 import WebSignIn from './WebSignIn'
 import { acceptCall } from './webCall'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
-import { playPop } from './pop'
+import { playPop, popHaptic } from './pop'
+import { startRingtone, stopRingtone } from './phoneRingtones'
+import IncomingCallPopup from './IncomingCallPopup'
 import { clearPendingMapPost, onCameraStore, selectedCount } from './cameraStore'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import {
@@ -91,6 +94,11 @@ const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 // The cube's recording face. Bundle ROOT, not models/ — same reason as every
 // other navigator here (sync-mobile strips models/ from the phone bundles).
 const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
+// The cube's ringing face. Same asset as SUBSCREEN_CUBE_MODEL's
+// 'profile-phone' entry below (the phone screen's own object) — an incoming
+// call outranks everything else the cube could be doing, so it is checked
+// first rather than through that map.
+const PHONE_RING_MODEL = 'poplur_clay_phone_lite.glb'
 // PHOTO's own lens, distinct from PROFILE_CAMERA_MODEL above: that constant is
 // shared by the POST tab's idle default AND the profile-capture overlay, so it
 // cannot be repointed here without also changing those. This is a third,
@@ -1784,10 +1792,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           callerId: event.data.callerId ?? '',
           callerName: event.data.callerName ?? 'Unknown',
         })
-        incomingCallTimer.current = window.setTimeout(() => setIncomingCall(null), 30_000)
+        startRingtone()
+        // A few real haptic taps, not a loop: most phones buzz a handful of
+        // times and let the visual ring (and the cube's own shake) carry the
+        // rest, rather than draining the battery buzzing for the full 30s.
+        // `popHaptic` is the same cross-platform tap `playPop` already uses —
+        // vibrate on Android WebView, a native impact on iOS/WKWebView, no
+        // audible sound either way — so this needs no native code at all.
+        popHaptic()
+        window.setTimeout(popHaptic, 260)
+        window.setTimeout(popHaptic, 520)
+        incomingCallTimer.current = window.setTimeout(() => { stopRingtone(); setIncomingCall(null) }, 30_000)
       }
       if (event.data.type === 'poplurCallEnded') {
         if (incomingCallTimer.current) { window.clearTimeout(incomingCallTimer.current); incomingCallTimer.current = null }
+        stopRingtone()
         setIncomingCall(null)
       }
     }
@@ -1800,6 +1819,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   const acceptIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string }) => {
     playPop()
+    stopRingtone()
     // acceptCall opens the mic + peer connection and sends callAccept itself,
     // so the answer actually negotiates media rather than only flipping the
     // Firestore status. The InCallBar then owns the live-call UI.
@@ -1809,6 +1829,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   const declineIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string }) => {
     playPop()
+    stopRingtone()
     postNativeEvent({ type: 'callDecline', callId: call.callId })
     setIncomingCall(null)
   }, [])
@@ -3146,7 +3167,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // over (Filters/VFX Studio), but cameraCaptureMode can still read 'video'
   // from the shot you just took, and that stale mode must not win the cube
   // back from the editor that is actually on screen.
-  const requestedCubeModel = composerOpen && composerEditing
+  const requestedCubeModel = incomingCall
+    // A ringing call outranks anything else the cube is wearing or doing —
+    // recording, editing, zooming, a visited profile. Nothing below this
+    // matters until the call is answered or declined.
+    ? PHONE_RING_MODEL
+    : composerOpen && composerEditing
     ? DIRECTOR_BOARD_MODEL
     // Zooming pops the navigator to the bare lens and back. Deliberately ABOVE
     // the video branch: zoom is the glass doing the work whether you are
@@ -3360,6 +3386,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [activeTab])
 
   const popCube = () => {
+    // A ringing call outranks every other meaning the tap has ever had here —
+    // FPS fire, back, the shutter, all of it. Declining is the double-tap,
+    // wired directly on CubeTab3D rather than through this chain (see
+    // onDoubleTap below); nothing else in the app uses that gesture yet.
+    if (incomingCall) { acceptIncomingCall(incomingCall); return }
     // FPS cube mode: tap fires the weapon
     if (fpsCubeModeRef.current) {
       window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'fire', pressed: true } }))
@@ -3793,18 +3824,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           over whatever content is active. Its face tracks the current tab. */}
       {/* The HUD used to duck out while the composer was up. It stays now: the
           capture preview is a home surface — cube back, arrows flip filters. */}
-      <div className={`${styles.groundGlow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeChromeGone ? ` ${styles.chromeHidden}` : ''}`} />
+      <div className={`${styles.groundGlow} ${styles.overSubscreen}${!incomingCall && chromeFaded ? ` ${styles.chromeIdle}` : ''}${!incomingCall && cubeChromeGone ? ` ${styles.chromeHidden}` : ''}`} />
       <div
         data-poplur-cube
         data-poplur-cube-swap={cubeSwapPhase}
-        className={`${styles.cubeWrap} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${cubeChromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        // A ringing call must never fade to idle or hide behind a fullscreen
+        // subscreen/ad the way the ordinary chrome does — it forces both off
+        // and adds the halo/shake treatment instead.
+        className={`${styles.cubeWrap} ${styles.overSubscreen}${!incomingCall && chromeFaded ? ` ${styles.chromeIdle}` : ''}${!incomingCall && cubeChromeGone ? ` ${styles.chromeHidden}` : ''}${incomingCall ? ` ${styles.cubeRinging}` : ''}`}
         style={{ width: cubeSize, height: cubeSize }}
       >
-        {/* Visible only while the governor's thermal park is engaged (the
-            html data-poplur-thermal stamp) — parked used to be pixel-identical
-            to broken. Static on purpose: it appears exactly when the contract
-            is to spend nothing. */}
-        <span className={styles.coolingCue} aria-hidden="true">❄ COOLING</span>
+        {incomingCall && (
+          <>
+            <div className={styles.cubeCallHalo} aria-hidden="true" />
+            <div className={`${styles.cubeCallRing} ${styles.cubeCallRing1}`} aria-hidden="true" />
+            <div className={`${styles.cubeCallRing} ${styles.cubeCallRing2}`} aria-hidden="true" />
+          </>
+        )}
         <div
           style={{
             ['--cube-swap-x' as string]: cubeSwapVec.x,
@@ -3838,7 +3874,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             else if (e.animationName.includes('Pop')) setPopping(false)
           }}
         >
-          <div className={styles.cubeModelStage}>
+          <div className={incomingCall ? `${styles.cubeModelStage} ${styles.cubeGlowing}` : styles.cubeModelStage}>
             <CubeTab3D
               key={`cube-${uiRecoveryKey}`}
               size={cubeSize}
@@ -3870,6 +3906,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               onFaceChange={switchTabByGesture}
               onVerticalSwipe={verticalSwipe}
               onTap={popCube}
+              onDoubleTap={incomingCall ? () => declineIncomingCall(incomingCall) : undefined}
+              // Armed only while ringing — every other tap in the app stays
+              // as instant as it has always been (see CubeTab3D's own note on
+              // why this defaults to 0).
+              doubleTapWindowMs={incomingCall ? 260 : 0}
               onHold={() => {
                 // FPS mode: long-press pauses
                 if (fpsCubeModeRef.current) {
@@ -3921,26 +3962,27 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* InCallBar removed — active call UI lives inside PhoneScreen's LCD */}
       <WebSignIn />
 
-      {incomingCall && !holdOpen && (
-        <div className={styles.incomingCallBanner} role="alertdialog" aria-label={`Incoming call from ${incomingCall.callerName}`}>
-          <div className={styles.incomingCallInfo}>
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-              <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24 11.36 11.36 0 0 0 3.58.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z" fill="currentColor"/>
-            </svg>
-            <div>
-              <strong>{incomingCall.callerName}</strong>
-              <span>Poplur Call</span>
-            </div>
-          </div>
-          <div className={styles.incomingCallActions}>
-            <button type="button" className={styles.incomingDecline} onClick={() => declineIncomingCall(incomingCall)} aria-label="Decline">
-              Decline
-            </button>
-            <button type="button" className={styles.incomingAccept} onClick={() => acceptIncomingCall(incomingCall)} aria-label="Accept">
-              Accept
-            </button>
-          </div>
-        </div>
+      {/* A ringing call interrupts anything, including the hold menu — unlike
+          the banner this replaces, it is not conditioned on `!holdOpen`. The
+          cube underneath (still reachable: this stops well above the dock,
+          see IncomingCallPopup.module.css) is doing the actual shaking/
+          glowing/buzzing and is the primary accept/decline control; this card
+          is the explicit version of the same two actions.
+
+          Portalled to <body>, same as FeedTwin's captions — mounting it here
+          in the JSX (inside .home) put it several ancestors deep in the
+          harness's own phone-frame wrapper (.stage/.phone/.viewport), each a
+          candidate to start a NEW stacking context; a z-index inside one of
+          those never gets compared against PopupHost's ad card, which is
+          mounted at the true document root specifically so nothing can trap
+          it. A call interrupting the app has to win that same way. */}
+      {incomingCall && typeof document !== 'undefined' && createPortal(
+        <IncomingCallPopup
+          call={incomingCall}
+          onAccept={() => acceptIncomingCall(incomingCall)}
+          onDecline={() => declineIncomingCall(incomingCall)}
+        />,
+        document.body,
       )}
 
       {/* Auth routing owns WHERE the primer appears. Signed-out users receive

@@ -1714,10 +1714,7 @@ function phoneVibrate(pattern = 18) {
 // ── The phone's address book ────────────────────────────────────────────────
 // The Contacts menu was three hardcoded rows ending in "Add contact — coming
 // soon". Real contacts come from native: favourites first, then people you
-// have a chat with or have crossed radii with, then — last, and ordered by
-// distance — anyone your radius REACHES right now. That last tier is what
-// makes the phone usable on a new account: with history alone, two people who
-// have never interacted can never find each other.
+// have a chat with, then people your radius has actually crossed.
 let phoneContacts = null;      // null = native has not answered yet
 let phoneContactsAsked = false;
 
@@ -1758,8 +1755,8 @@ function phoneContactItems() {
   }
   if (phoneContacts.length === 0) {
     return [{
-      title: 'Nobody in range',
-      detail: 'grow your radius, or chat with someone',
+      title: 'No contacts yet',
+      detail: 'chat with someone, or cross their radius',
       glyph: '·',
       action: 'noop',
     }];

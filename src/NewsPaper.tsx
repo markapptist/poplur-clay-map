@@ -3,6 +3,7 @@ import styles from './NewsPaper.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
+import { feedUrl } from './assetPacks'
 import { requestProfileMode } from './profileMode'
 import { localDaylight } from './skyCycle'
 import ScreenCoach from './ScreenCoach'
@@ -63,9 +64,9 @@ export interface Entry {
 }
 
 const AVATARS = [
-  'feed/posters/ad-food.jpg', 'feed/posters/ad-comedy.jpg', 'feed/posters/ad-shopping.jpg',
-  'feed/posters/ad-music.jpg', 'feed/posters/ad-sports.jpg', 'feed/posters/ad-french.jpg',
-  'mark_talk0.png', 'feed/posters/ad-kids.jpg', 'feed/posters/ad-cartoon.jpg',
+  feedUrl('posters/ad-food.jpg'), feedUrl('posters/ad-comedy.jpg'), feedUrl('posters/ad-shopping.jpg'),
+  feedUrl('posters/ad-music.jpg'), feedUrl('posters/ad-sports.jpg'), feedUrl('posters/ad-french.jpg'),
+  'mark_talk0.png', feedUrl('posters/ad-kids.jpg'), feedUrl('posters/ad-cartoon.jpg'),
 ]
 
 const WRITERS = [
@@ -111,13 +112,13 @@ function seeded(n: number) {
 }
 
 const SAMPLE_POSTERS = [
-  'feed/posters/ad-food.jpg', 'feed/posters/ad-comedy.jpg',
-  'feed/posters/ad-shopping.jpg', 'feed/posters/ad-music.jpg',
-  'feed/posters/ad-sports.jpg', 'feed/posters/ad-french.jpg',
+  feedUrl('posters/ad-food.jpg'), feedUrl('posters/ad-comedy.jpg'),
+  feedUrl('posters/ad-shopping.jpg'), feedUrl('posters/ad-music.jpg'),
+  feedUrl('posters/ad-sports.jpg'), feedUrl('posters/ad-french.jpg'),
 ]
 const SAMPLE_CLIPS = [
-  'feed/ad-food.mp4', 'feed/ad-comedy.mp4',
-  'feed/ad-music.mp4', 'feed/ad-sports.mp4',
+  feedUrl('ad-food.mp4'), feedUrl('ad-comedy.mp4'),
+  feedUrl('ad-music.mp4'), feedUrl('ad-sports.mp4'),
 ]
 
 function sampleMedia(seed: number): NewsMediaAttachment[] | undefined {

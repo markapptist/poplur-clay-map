@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES, OTHER_POPS, PALETTE, type PopLevel } from './data'
+import { feedUrl } from './assetPacks'
 
 /** Takeover test mode — `?takeover=1`.
  *
@@ -46,7 +47,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
 import { userUnitsToKm } from './units'
-import ClayMap, { MAP_2D, MAP_LITE, WeatherMark, installComposeRadiusPreview, updateComposeRadiusPreview, type PopPin } from './ClayMap'
+import ClayMap, { MAP_2D, MAP_LITE, WeatherMark, installComposeRadiusPreview, landmarkCameraFrame, updateComposeRadiusPreview, type PopPin } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
@@ -904,6 +905,22 @@ export default function App() {
   const runPlaceSearch = useCallback(async (query: string) => {
     const q = query.trim()
     if (!q) { setSearchHits([]); return }
+    // Mapbox's generic geocoder often returns similarly named streets before a
+    // world landmark. Resolve the app's own landmark catalog first so a user
+    // can always get to the real, grounded model by name.
+    const normalizedQuery = q.toLocaleLowerCase()
+    const landmarkHits = TOUR_LANDMARKS.filter(destination => {
+      const name = displayPlaceName(destination.name).toLocaleLowerCase()
+      return name.includes(normalizedQuery) || normalizedQuery.includes(name)
+    })
+    if (landmarkHits.length) {
+      setSearchHits(landmarkHits.map(destination => ({
+        name: displayPlaceName(destination.name),
+        center: destination.coords,
+      })))
+      setSearching(false)
+      return
+    }
     setSearching(true)
     try {
       const res = await fetch(
@@ -935,23 +952,50 @@ export default function App() {
     playPop(0.3)
     searchInterruptRef.current()
     setCurrentPlace(displayPlaceName(name))
-    setSearchOpen(false)
-    setSearchClosing(false)
-    setSearchText('')
-    setSearchHits([])
+    // Keep the scrim through its exit animation. Closing it synchronously
+    // removed the button underneath the user's finger, so the same tap could
+    // fall through to the map and replace a landmark flight with a local pop.
+    setSearchClosing(true)
+    window.setTimeout(() => {
+      setSearchOpen(false)
+      setSearchClosing(false)
+      setSearchText('')
+      setSearchHits([])
+    }, 320)
     const map = mapRef.current as unknown as {
       stop?: () => void
       easeTo?: (o: Record<string, unknown>) => void
       __stopOrbit?: () => void
+      __claimCamera?: () => void
+      __poplurCameraClaimed?: boolean
+      __suppressNextMapClickUntil?: number
     } | null
+    if (map) {
+      map.__poplurCameraClaimed = true
+      // The search button sits above the canvas. Preserve its click long
+      // enough for Mapbox's trailing synthetic click to be ignored instead of
+      // replacing this destination with whichever coordinate lies beneath it.
+      // The landing is 3.4s, and embedded WebViews can deliver the source
+      // pointer after that animation has already settled. Keep the canvas and
+      // its markers inert through that short settling window.
+      map.__suppressNextMapClickUntil = Date.now() + 8_000
+    }
+    map?.__claimCamera?.()
     map?.__stopOrbit?.()
     map?.stop?.()
     if (!map?.easeTo) return
+    // Search may resolve an official landmark result instead of one of our
+    // curated buttons. Match its coordinate to the landmark catalog so that
+    // a typed "CN Tower" gets the same full-object framing as the tour.
+    const landmark = TOUR_LANDMARKS.find(destination =>
+      distanceMeters(center, destination.coords) <= 550,
+    )
+    const landmarkFrame = landmark ? landmarkCameraFrame(landmark.id) : null
     wakeManagedRendering(3400 + MANAGED_CAMERA_SETTLE_MS)
     map.easeTo({
       center,
-      zoom: 15.4,
-      pitch: 52,
+      zoom: landmarkFrame?.zoom ?? 15.4,
+      pitch: landmarkFrame?.pitch ?? 52,
       duration: 3400,
       easing: (t: number) => t * t * (3 - 2 * t),
       essential: true,
@@ -1245,15 +1289,31 @@ export default function App() {
     return () => { delete w.__poplurNative }
   }, [applySoundState, streetView])
 
-  const flyToCenter = useCallback((center: [number, number], duration = 4600) => {
+  const flyToCenter = useCallback((
+    center: [number, number],
+    duration = 4600,
+    landmarkFrame?: { zoom: number; pitch: number } | null,
+  ) => {
     const map = mapRef.current
     if (!map) return false
-    ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
+    const mapCamera = map as unknown as {
+      __cinematic?: boolean
+      __claimCamera?: () => void
+      __poplurCameraClaimed?: boolean
+      __suppressNextMapClickUntil?: number
+    }
+    mapCamera.__poplurCameraClaimed = true
+    mapCamera.__suppressNextMapClickUntil = Date.now() + duration + 500
+    mapCamera.__claimCamera?.()
+    mapCamera.__cinematic = true
     wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
     map.flyTo({
       center,
-      zoom: streetView ? 18.9 : BUILDING_REVEAL_ZOOM,
-      pitch: streetView ? 82 : 64,
+      // Landmarks carry a size-aware frame. It uses just enough zoom to make
+      // the object legible while retaining its top, base and surrounding map;
+      // ordinary places keep the existing street-view or building framing.
+      zoom: landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM),
+      pitch: landmarkFrame?.pitch ?? (streetView ? 82 : 64),
       bearing: map.getBearing() + 36,
       duration,
       // The tour arc rises ALL the way out — the flight peaks at the full
@@ -1492,7 +1552,11 @@ export default function App() {
       dwellMs: TOUR_DWELL_MS,
     })
     speakMapLine(line, stations)
-    flyToCenter(destination.coords, TOUR_FLIGHT_MS)
+    flyToCenter(
+      destination.coords,
+      TOUR_FLIGHT_MS,
+      destination.kind === 'landmark' ? landmarkCameraFrame(destination.id) : null,
+    )
     // The ARRIVAL beat. The card and its spoken line land when the camera
     // does, not when it lifts off — announcing a score thirty seconds before
     // you can see the arena reads as noise. Tracked in tourTimers so stopping
@@ -1928,8 +1992,8 @@ export default function App() {
       // Every POI channel ships a clip, so this never falls back to a still.
       media: {
         kind: 'video' as const,
-        src: `feed/ad-${poi.channel}.mp4`,
-        poster: `feed/posters/ad-${poi.channel}.jpg`,
+        src: feedUrl(`ad-${poi.channel}.mp4`),
+        poster: feedUrl(`posters/ad-${poi.channel}.jpg`),
         alt: `Your post at ${poi.name}`,
       },
       world: false,
@@ -1963,6 +2027,13 @@ export default function App() {
   const openMapPinContent = useCallback((pin: PopPin) => {
     // Never substitute an ad or cube for a post whose media record is missing.
     if (!pin.media) return
+    // Destination actions own the camera through their landing settle. This is
+    // a second guard at the consumer boundary, so a late Mapbox marker event
+    // cannot cover the landmark even if it bypasses the marker's DOM handler.
+    const mapInteractionState = mapRef.current as unknown as {
+      __suppressNextMapClickUntil?: number
+    } | null
+    if ((mapInteractionState?.__suppressNextMapClickUntil ?? 0) > Date.now()) return
     if (placeSuggestionTimerRef.current != null) {
       window.clearTimeout(placeSuggestionTimerRef.current)
       placeSuggestionTimerRef.current = null
@@ -2535,8 +2606,8 @@ export default function App() {
               channel: ownSource.channel,
               media: {
                 kind: 'video',
-                src: `feed/ad-${ownSource.channel}.mp4`,
-                poster: `feed/posters/ad-${ownSource.channel}.jpg`,
+                src: feedUrl(`ad-${ownSource.channel}.mp4`),
+                poster: feedUrl(`posters/ad-${ownSource.channel}.jpg`),
                 alt: `Your post at ${ownSource.name}`,
               },
               mine: true,
@@ -2662,8 +2733,8 @@ export default function App() {
         channel: poi.channel,
         media: {
           kind: 'video',
-          src: `feed/ad-${poi.channel}.mp4`,
-          poster: `feed/posters/ad-${poi.channel}.jpg`,
+          src: feedUrl(`ad-${poi.channel}.mp4`),
+          poster: feedUrl(`posters/ad-${poi.channel}.jpg`),
           alt: `Your post at ${poi.name}`,
         },
         world: false,
@@ -2859,7 +2930,22 @@ export default function App() {
             placeholder="Search places…"
             autoFocus
             onChange={e => { setSearchText(e.target.value); void runPlaceSearch(e.target.value) }}
-            onKeyDown={e => { if (e.key === 'Enter') void runPlaceSearch(searchText) }}
+            onKeyDown={e => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              // Enter should take an exact landmark result, just as tapping
+              // its row does. Besides being the expected keyboard behaviour,
+              // this keeps a destination action above the map canvas.
+              const normalizedSearch = searchText.trim().toLocaleLowerCase()
+              const exactHit = searchHits.find(hit =>
+                hit.name.toLocaleLowerCase() === normalizedSearch,
+              )
+              if (exactHit) {
+                flyToPlace(exactHit.center, exactHit.name)
+                return
+              }
+              void runPlaceSearch(searchText)
+            }}
           />
           {!searching && searchText.trim() === '' && (
             <div className={styles.searchShortcuts}>
@@ -2885,7 +2971,11 @@ export default function App() {
               key={hit.name}
               type="button"
               className={styles.searchHit}
-              onClick={() => flyToPlace(hit.center, hit.name)}
+              onPointerDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation()
+                flyToPlace(hit.center, hit.name)
+              }}
             >
               {hit.name}
             </button>

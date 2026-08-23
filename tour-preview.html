@@ -1,0 +1,60 @@
+<meta charset="utf-8">
+<title>Poplur tour · 12 landmarks</title>
+<style>
+  html, body { margin: 0; background: #0e1116; color: #e6e3dc; font: 14px system-ui, -apple-system, sans-serif; }
+  h1 { margin: 0; padding: 22px 24px 4px; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .sub { padding: 0 24px 22px; color: #8a8f99; max-width: 720px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    padding: 0 24px 40px;
+  }
+  .card {
+    position: relative;
+    background: #1a1f27;
+    border-radius: 12px;
+    overflow: hidden;
+    aspect-ratio: 1 / 1.15;
+    display: flex;
+    flex-direction: column;
+  }
+  .num {
+    position: absolute; top: 8px; left: 10px;
+    background: #f63b9a; color: #fff;
+    width: 24px; height: 24px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-weight: 800; font-size: 12px;
+  }
+  .art {
+    flex: 1; display: grid; place-items: center;
+    background: radial-gradient(120% 60% at 50% 30%, #2a3140, #12151b 70%);
+  }
+  .art img { max-width: 78%; max-height: 78%; object-fit: contain; }
+  .label { padding: 10px 12px 12px; border-top: 1px solid #0e1116; }
+  .name { font-weight: 700; font-size: 14px; margin: 0 0 3px; }
+  .city { font-size: 12px; color: #9aa3b2; margin: 0 0 4px; }
+  .coord { font-size: 10.5px; color: #6a7280; font-family: ui-monospace, monospace; letter-spacing: -0.02em; }
+  .loop {
+    grid-column: 1 / -1;
+    text-align: center; padding: 16px; color: #6a7280;
+    font-size: 12px; letter-spacing: 0.1em;
+  }
+</style>
+<h1>Tour · 12 world landmarks</h1>
+<p class="sub">The order the tour flies through, one stop every ~5 minutes. Each frame is the sprite the map uses for that landmark (from public/sprites/) — the same clay art you'll see standing on the ground at every stop. Round-robin — after Christ the Redeemer it loops back to Burj Khalifa.</p>
+<div class="grid">
+  <div class="card"><span class="num">1</span><div class="art"><img src="/sprites/burj-khalifa_y18_p10_s320.png"></div><div class="label"><p class="name">Burj Khalifa</p><p class="city">Dubai · 828 m</p><p class="coord">55.274°E · 25.197°N</p></div></div>
+  <div class="card"><span class="num">2</span><div class="art"><img src="/sprites/cn-tower_y18_p10_s320.png"></div><div class="label"><p class="name">CN Tower</p><p class="city">Toronto · 553 m</p><p class="coord">79.387°W · 43.643°N</p></div></div>
+  <div class="card"><span class="num">3</span><div class="art"><img src="/sprites/eiffel_y18_p10_s320.png"></div><div class="label"><p class="name">Eiffel Tower</p><p class="city">Paris · 330 m</p><p class="coord">2.295°E · 48.858°N</p></div></div>
+  <div class="card"><span class="num">4</span><div class="art"><img src="/sprites/space-needle_y18_p10_s320.png"></div><div class="label"><p class="name">Space Needle</p><p class="city">Seattle · 184 m</p><p class="coord">122.349°W · 47.621°N</p></div></div>
+  <div class="card"><span class="num">5</span><div class="art"><img src="/sprites/golden-gate_y12_p10_s320.png"></div><div class="label"><p class="name">Golden Gate</p><p class="city">San Francisco · 227 m</p><p class="coord">122.478°W · 37.820°N</p></div></div>
+  <div class="card"><span class="num">6</span><div class="art"><img src="/sprites/statue-liberty_y18_p10_s320.png"></div><div class="label"><p class="name">Statue of Liberty</p><p class="city">New York · 93 m</p><p class="coord">74.045°W · 40.689°N</p></div></div>
+  <div class="card"><span class="num">7</span><div class="art"><img src="/sprites/big-ben_y18_p10_s320.png"></div><div class="label"><p class="name">Big Ben</p><p class="city">London · 96 m</p><p class="coord">0.125°W · 51.501°N</p></div></div>
+  <div class="card"><span class="num">8</span><div class="art"><img src="/sprites/giza_y18_p10_s320.png"></div><div class="label"><p class="name">Giza Pyramids</p><p class="city">Cairo · 139 m</p><p class="coord">31.134°E · 29.979°N</p></div></div>
+  <div class="card"><span class="num">9</span><div class="art"><img src="/sprites/taj-mahal_y18_p10_s320.png"></div><div class="label"><p class="name">Taj Mahal</p><p class="city">Agra · 73 m</p><p class="coord">78.042°E · 27.175°N</p></div></div>
+  <div class="card"><span class="num">10</span><div class="art"><img src="/sprites/colosseum_y18_p10_s320.png"></div><div class="label"><p class="name">Colosseum</p><p class="city">Rome · 48 m</p><p class="coord">12.492°E · 41.890°N</p></div></div>
+  <div class="card"><span class="num">11</span><div class="art"><img src="/sprites/sydney-opera_y18_p10_s320.png"></div><div class="label"><p class="name">Sydney Opera House</p><p class="city">Sydney · 65 m</p><p class="coord">151.215°E · 33.857°S</p></div></div>
+  <div class="card"><span class="num">12</span><div class="art"><img src="/sprites/christ-redeemer_y18_p10_s320.png"></div><div class="label"><p class="name">Christ the Redeemer</p><p class="city">Rio de Janeiro · 38 m</p><p class="coord">43.211°W · 22.952°S</p></div></div>
+  <div class="loop">↻ Loops back to Burj Khalifa</div>
+</div>

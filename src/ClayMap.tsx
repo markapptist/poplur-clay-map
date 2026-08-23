@@ -649,6 +649,53 @@ const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; he
   { id: 'christ-redeemer', coords: [-43.2105, -22.9519], width: 260, heightM: 38 },
 ]
 
+// Landmarks are discoveries at street level, not distant navigation pins.
+// Showing a large, screen-fixed sprite from city or globe zoom makes it look
+// as though it floats above the map.  The grounded custom layer is the only
+// presentation now, and it becomes eligible only once the camera is directly
+// over the site at building-reveal zoom.
+// A landmark is a destination, not background scenery.  Keep it hidden until
+// the camera is genuinely at its site; the former 1.25 km radius exposed a
+// cropped tower at the edge of nearby venues, which read as floating.
+const LANDMARK_3D_REVEAL_KM = 0.3
+const LANDMARK_REFERENCE_HEIGHT_M = 330 // Eiffel Tower: the reference frame.
+const LANDMARK_MIN_FRAME_ZOOM = 13.0
+const LANDMARK_MAX_FRAME_ZOOM = 15.5
+// Arriving at an exact camera zoom can end a fraction below its requested
+// value. Start loading just before the frame target so the grounded model is
+// already visible when the flight settles, rather than requiring a manual
+// extra pinch.
+const LANDMARK_REVEAL_ZOOM_BUFFER = 0.3
+const LANDMARK_CLOSE_FALLBACK_MAX_PX = 240
+
+/**
+ * A fixed zoom crops the Burj and CN Tower while leaving smaller landmarks too
+ * distant. Scale the street-level frame logarithmically with real height: a
+ * structure twice as tall lands one zoom level farther out. The cap leaves
+ * a generous safety margin rather than letting a small model fill the screen.
+ */
+function landmarkCameraZoom(heightM: number): number {
+  const scaled = 14.2 - Math.log2(Math.max(1, heightM) / LANDMARK_REFERENCE_HEIGHT_M)
+  return Math.max(LANDMARK_MIN_FRAME_ZOOM, Math.min(LANDMARK_MAX_FRAME_ZOOM, scaled))
+}
+
+export interface LandmarkCameraFrame {
+  zoom: number
+  pitch: number
+}
+
+/** Shared by the tour and the 3D reveal gate, so the camera never lands at a
+ * zoom that hides the model or crops it out of view. */
+export function landmarkCameraFrame(id: string): LandmarkCameraFrame | null {
+  const landmark = WORLD_LANDMARKS.find(candidate => candidate.id === id)
+  if (!landmark) return null
+  return {
+    zoom: landmarkCameraZoom(landmark.heightM),
+    // Tall towers need a lower pitch to keep their base and crown in frame.
+    pitch: landmark.heightM >= 500 ? 34 : landmark.heightM >= 300 ? 38 : 44,
+  }
+}
+
 const CITY_TREES: { coords: [number, number]; width: number; palm?: boolean }[] = [
   { coords: [-79.4139, 43.6465], width: 34 },  // Trinity Bellwoods
   { coords: [-79.4105, 43.6502], width: 28 },
@@ -1883,9 +1930,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       })
       ;[treeMarkersRef, boatMarkersRef, carMarkersRef].forEach(ref =>
         ref.current.forEach(mk => setZoomVisible(mk.getElement(), isCity)))
-      // Landmarks earn a wider band than street props: you should see the
-      // Eiffel Tower while still reading Paris, and they must not clutter the
-      // globe, where the claim blooms already speak.
+      // Landmarks intentionally have no distant marker state. A compact,
+      // ground-anchored image is permitted only while its nearby 3D mesh is
+      // still decoding; it prevents a blank arrival without bringing back the
+      // old city/globe-scale floating landmark markers.
       // Drive every 3D landmark handle from THIS pass, not from twelve of
       // their own move/zoom subscribers — those cost a real ~600ms on
       // map-arrival at 24 listeners × ~60fps × 30s, and the gate rejected the
@@ -1894,15 +1942,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       landmarks3dRef.current.forEach(h => h.update())
       worldLandmarkMarkersRef.current.forEach(mk => {
         const el = mk.getElement()
-        // While a landmark's real 3D model is on the map, its flat sprite
-        // hides — the two must never share the pixel. Same pattern the Liberty
-        // one-off used; now driven by whichever of the twelve is near-camera.
         const id = el.dataset.landmarkId
-        if (id && landmarks3dRef.current.get(id)?.isActive()) {
-          setZoomVisible(el, false)
-          return
-        }
-        setZoomVisible(el, zoom >= 9.5)
+        const landmark = WORLD_LANDMARKS.find(mark => mark.id === id)
+        const handle = id ? landmarks3dRef.current.get(id) : undefined
+        const closeEnough = landmark
+          && map.getCenter().distanceTo(new mapboxgl.LngLat(...landmark.coords)) <= LANDMARK_3D_REVEAL_KM * 1000
+          && zoom >= landmarkCameraZoom(landmark.heightM) - LANDMARK_REVEAL_ZOOM_BUFFER
+        const fallbackAvailable = el.dataset.landmarkSpriteReady === '1'
+        // Do not remove the ground-anchored fallback just because a GLB has
+        // decoded: low-profile models can still wait on their first Mapbox
+        // render frame. The swap happens only after a real draw.
+        setZoomVisible(el, Boolean(closeEnough && fallbackAvailable && !handle?.isRendered()))
       })
       markersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? 'none' : ''
@@ -1919,7 +1969,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // handle. moveend rather than move: the 3D swap is a projection/layer
     // event, expensive to thrash during a gesture, and the update() lat gate
     // above keeps this cheap.
-    map.on('moveend', () => landmarks3dRef.current.forEach(h => h.update()))
+    map.on('moveend', updateLandmarks)
 
     // Pins near the horizon (top of a pitched view) hover over the sky and
     // read as "floating in space" — hide them until the camera brings their
@@ -1942,7 +1992,23 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (stopOrbitFrames) { stopOrbitFrames(); stopOrbitFrames = null }
     }
     stopOrbitRef.current = stopOrbit
-    ;(map as unknown as { __stopOrbit?: () => void }).__stopOrbit = stopOrbit
+    const mapCamera = map as unknown as {
+      __stopOrbit?: () => void
+      __claimCamera?: () => void
+      __poplurCameraClaimed?: boolean
+      __cinematic?: boolean
+      __suppressNextMapClickUntil?: number
+    }
+    mapCamera.__stopOrbit = stopOrbit
+    // A search, tour or bridge-driven destination is just as intentional as a
+    // drag. Claim the camera so a delayed launch intro cannot fly back to the
+    // default city after a user has selected a landmark.
+    mapCamera.__claimCamera = () => {
+      initialCameraInteractionRef.current = true
+      mapCamera.__poplurCameraClaimed = true
+      mapCamera.__cinematic = false
+      stopOrbit()
+    }
     // A flat constant-rate spin reads as a turntable. Left alone, the camera
     // should behave like an operator: ease into a move, drift, breathe on the
     // pitch, ease out, hold, then glide to the next subject. Every value is
@@ -2328,7 +2394,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         onIntroComplete?.([center.lng, center.lat])
       }
       const landOn = (center: [number, number]) => {
-        if (initialCameraInteractionRef.current) {
+        if (initialCameraInteractionRef.current || mapCamera.__poplurCameraClaimed) {
           finishInterruptedIntro()
           return
         }
@@ -2395,7 +2461,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         let started = false
         const startOnce = () => {
           if (started) return
-          if (initialCameraInteractionRef.current) {
+          if (initialCameraInteractionRef.current || mapCamera.__poplurCameraClaimed) {
             finishInterruptedIntro()
             return
           }
@@ -3157,40 +3223,34 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       })
 
       // ── World landmarks ───────────────────────────────────────────────────
-      // Nothing else draws these: show3dLandmarks is a Standard-style config
-      // and this style is Dark. No SVG placeholder either — a landmark has no
-      // generic shape the way a tree or a boat does, so it simply appears when
-      // its sprite is ready.
+      // The shell stays hidden until the camera is directly above the site.
+      // It gives users a grounded image while the matching custom-layer GLB
+      // decodes, then yields immediately to the true 3D mesh.
       worldLandmarkMarkersRef.current.forEach(mk => mk.remove())
       worldLandmarkMarkersRef.current = WORLD_LANDMARKS.map(mark => {
         const el = document.createElement('div')
         el.className = styles.landmark
-        el.style.width = `${mark.width}px`
+        el.style.width = `${Math.min(mark.width, LANDMARK_CLOSE_FALLBACK_MAX_PX)}px`
         el.dataset.landmarkId = mark.id
+        el.dataset.zoomHidden = '1'
+        el.style.display = 'none'
         el.innerHTML = `<div class="${styles.landmarkInner}"></div>`
-        // Start correct for the CURRENT zoom. updateLandmarks only runs on the
-        // 'zoom' event, and the app opens at globe zoom — so without this the
-        // landmarks are born visible and stand over the planet until the user
-        // happens to zoom. Same flag the zoom pass uses, so the viewport cull
-        // leaves them alone too.
-        if (map.getZoom() < 9.5) {
-          el.dataset.zoomHidden = '1'
-          el.style.display = 'none'
-        }
-        modelSprite(`landmarks/${mark.id}.glb`, { yaw: mark.yaw ?? 18, pitch: 10, size: 720 })
+        modelSprite(`landmarks/${mark.id}.glb`, { yaw: mark.yaw ?? 18, pitch: 10, size: 512 })
           .then(uri => {
+            el.dataset.landmarkSpriteReady = '1'
             el.innerHTML = `<div class="${styles.landmarkInner}"><img src="${uri}" style="width:100%" alt=""/></div>`
+            try { updateLandmarks() } catch { /* map may already be tearing down */ }
           })
-          .catch(() => { /* a missing landmark must never break the map */ })
+          .catch(() => { /* the decoded mesh remains available as the primary */ })
         return new mapboxgl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat(mark.coords)
           .addTo(map)
       })
 
-      // ── Statue of Liberty: swap the flat sprite for a real 3D model ─────────
-      // Near a landmark AND zoomed in, flip to mercator and render its GLB as
-      // a three.js custom layer (globe has no custom-layer support). The
-      // sprite hides while the model shows; both revert on the way back out.
+      // ── Grounded 3D landmarks ──────────────────────────────────────────────
+      // At street-level zoom directly around a site, render its GLB as a
+      // mercator custom layer. Globe mode has no custom-layer support, which
+      // is fine: landmarks deliberately remain absent until this close view.
       // Twelve leases held at heavy:false, invisible and undemanded until the
       // camera is close, cost nothing to hold and reconcile individually on
       // move/zoom — the same pattern that had been proven on Liberty alone.
@@ -3201,19 +3261,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           id: mark.id,
           coords: mark.coords,
           heightM: mark.heightM,
+          nearKm: LANDMARK_3D_REVEAL_KM,
+          nearZoom: landmarkCameraZoom(mark.heightM) - LANDMARK_REVEAL_ZOOM_BUFFER,
         }, {
-          onActiveChange: active3d => {
-            const mk = worldLandmarkMarkersRef.current.find(
-              m => m.getElement().dataset.landmarkId === mark.id,
-            )
-            if (!mk) return
-            const el = mk.getElement()
-            if (active3d) {
-              el.dataset.zoomHidden = '1'
-              el.style.display = 'none'
-            } else {
-              setZoomVisible(el, map.getZoom() >= 9.5)
-            }
+          onActiveChange: () => {
+            try { updateLandmarks() } catch { /* map may be tearing down */ }
+          },
+          onModelReady: () => {
+            try { updateLandmarks() } catch { /* map may be tearing down */ }
+          },
+          onModelRendered: () => {
+            try { updateLandmarks() } catch { /* map may be tearing down */ }
           },
         })
         landmarks3dRef.current.set(mark.id, h)
@@ -3592,6 +3650,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         map.on('movestart', cancelHold)
 
         map.on('click', (e) => {
+          // A panel action can finish with a browser-generated map click once
+          // its overlay begins to close. It must never replace the selected
+          // search/tour landmark with a pin at that accidental coordinate.
+          const mapClickState = map as unknown as { __suppressNextMapClickUntil?: number }
+          if ((mapClickState.__suppressNextMapClickUntil ?? 0) > Date.now()) {
+            return
+          }
+          delete mapClickState.__suppressNextMapClickUntil
           // Mapbox synthesizes its map click from the pointer sequence before
           // every marker's DOM click has fully settled. Without this guard,
           // tapping a real pop could both open its post and open the empty-
@@ -3974,6 +4040,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       ownedRafs.forEach(id => window.cancelAnimationFrame(id))
       ownedRafs.clear()
       stopOrbit()
+      const mapCameraOnDispose = map as unknown as {
+        __claimCamera?: () => void
+        __poplurCameraClaimed?: boolean
+        __suppressNextMapClickUntil?: number
+      }
+      delete mapCameraOnDispose.__claimCamera
+      delete mapCameraOnDispose.__poplurCameraClaimed
+      delete mapCameraOnDispose.__suppressNextMapClickUntil
       stopFlyerFrames?.()
       stopRendererParking?.()
       stopRendererParking = null
@@ -4359,6 +4433,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // still answers "which of these are mine" without reading faces.
       if (pin.mine) el.classList.add(styles.popPinMine)
       el.addEventListener('click', event => {
+        // A search/tour selection owns the map during its camera flight. A
+        // delayed pointer event must not open the pin now under the old touch
+        // position and replace the landmark that was just selected.
+        const mapInteractionState = map as unknown as { __suppressNextMapClickUntil?: number }
+        if ((mapInteractionState.__suppressNextMapClickUntil ?? 0) > Date.now()) {
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
         event.stopPropagation()
         playPop()
         onPinOpenRef.current?.(pin)

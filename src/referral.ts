@@ -24,6 +24,8 @@
 // access is guarded: an embedded or partitioned shell can throw on
 // localStorage, and a referral is never worth a thrown error.
 
+import { grantReferralCredits } from './poplurCredits'
+
 const CODE_KEY = 'poplur.referral.code'
 const UNTIL_KEY = 'poplur.worldRadiusUntil'
 
@@ -121,7 +123,7 @@ export function startReferralWire(): () => void {
     }, remaining + 250)
   }
 
-  const accept = () => { grantWorldRadius(); armExpiry() }
+  const accept = () => { grantWorldRadius(); grantReferralCredits(); armExpiry() }
   const onEvent = () => accept()
   const onMessage = (e: MessageEvent) => {
     if ((e.data as { type?: string } | null)?.type === 'poplur-referral-accepted') accept()
