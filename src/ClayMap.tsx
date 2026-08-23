@@ -666,7 +666,6 @@ const LANDMARK_MAX_FRAME_ZOOM = 15.5
 // already visible when the flight settles, rather than requiring a manual
 // extra pinch.
 const LANDMARK_REVEAL_ZOOM_BUFFER = 0.3
-const LANDMARK_CLOSE_FALLBACK_MAX_PX = 240
 
 /**
  * A fixed zoom crops the Burj and CN Tower while leaving smaller landmarks too
@@ -1180,7 +1179,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   skyRef.current = sky
   dayTimeRef.current = dayTime
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
-  const worldLandmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
   const landmarks3dRef = useRef<Map<string, NearLandmark3D>>(new Map())
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1930,30 +1928,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       })
       ;[treeMarkersRef, boatMarkersRef, carMarkersRef].forEach(ref =>
         ref.current.forEach(mk => setZoomVisible(mk.getElement(), isCity)))
-      // Landmarks intentionally have no distant marker state. A compact,
-      // ground-anchored image is permitted only while its nearby 3D mesh is
-      // still decoding; it prevents a blank arrival without bringing back the
-      // old city/globe-scale floating landmark markers.
+      // Landmark GLBs are custom layers only. Screen-facing Mapbox markers
+      // are deliberately forbidden here: with a pitched camera they read as
+      // floating billboards, not objects placed on the ground.
       // Drive every 3D landmark handle from THIS pass, not from twelve of
       // their own move/zoom subscribers — those cost a real ~600ms on
       // map-arrival at 24 listeners × ~60fps × 30s, and the gate rejected the
       // build (see libertyLandmark's own note). One forEach at the same beat
       // Mapbox already fires this handler on.
       landmarks3dRef.current.forEach(h => h.update())
-      worldLandmarkMarkersRef.current.forEach(mk => {
-        const el = mk.getElement()
-        const id = el.dataset.landmarkId
-        const landmark = WORLD_LANDMARKS.find(mark => mark.id === id)
-        const handle = id ? landmarks3dRef.current.get(id) : undefined
-        const closeEnough = landmark
-          && map.getCenter().distanceTo(new mapboxgl.LngLat(...landmark.coords)) <= LANDMARK_3D_REVEAL_KM * 1000
-          && zoom >= landmarkCameraZoom(landmark.heightM) - LANDMARK_REVEAL_ZOOM_BUFFER
-        const fallbackAvailable = el.dataset.landmarkSpriteReady === '1'
-        // Do not remove the ground-anchored fallback just because a GLB has
-        // decoded: low-profile models can still wait on their first Mapbox
-        // render frame. The swap happens only after a real draw.
-        setZoomVisible(el, Boolean(closeEnough && fallbackAvailable && !handle?.isRendered()))
-      })
       markersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? 'none' : ''
       })
@@ -3222,31 +3205,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           .addTo(map)
       })
 
-      // ── World landmarks ───────────────────────────────────────────────────
-      // The shell stays hidden until the camera is directly above the site.
-      // It gives users a grounded image while the matching custom-layer GLB
-      // decodes, then yields immediately to the true 3D mesh.
-      worldLandmarkMarkersRef.current.forEach(mk => mk.remove())
-      worldLandmarkMarkersRef.current = WORLD_LANDMARKS.map(mark => {
-        const el = document.createElement('div')
-        el.className = styles.landmark
-        el.style.width = `${Math.min(mark.width, LANDMARK_CLOSE_FALLBACK_MAX_PX)}px`
-        el.dataset.landmarkId = mark.id
-        el.dataset.zoomHidden = '1'
-        el.style.display = 'none'
-        el.innerHTML = `<div class="${styles.landmarkInner}"></div>`
-        modelSprite(`landmarks/${mark.id}.glb`, { yaw: mark.yaw ?? 18, pitch: 10, size: 512 })
-          .then(uri => {
-            el.dataset.landmarkSpriteReady = '1'
-            el.innerHTML = `<div class="${styles.landmarkInner}"><img src="${uri}" style="width:100%" alt=""/></div>`
-            try { updateLandmarks() } catch { /* map may already be tearing down */ }
-          })
-          .catch(() => { /* the decoded mesh remains available as the primary */ })
-        return new mapboxgl.Marker({ element: el, anchor: 'bottom' })
-          .setLngLat(mark.coords)
-          .addTo(map)
-      })
-
       // ── Grounded 3D landmarks ──────────────────────────────────────────────
       // At street-level zoom directly around a site, render its GLB as a
       // mercator custom layer. Globe mode has no custom-layer support, which
@@ -3263,16 +3221,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           heightM: mark.heightM,
           nearKm: LANDMARK_3D_REVEAL_KM,
           nearZoom: landmarkCameraZoom(mark.heightM) - LANDMARK_REVEAL_ZOOM_BUFFER,
-        }, {
-          onActiveChange: () => {
-            try { updateLandmarks() } catch { /* map may be tearing down */ }
-          },
-          onModelReady: () => {
-            try { updateLandmarks() } catch { /* map may be tearing down */ }
-          },
-          onModelRendered: () => {
-            try { updateLandmarks() } catch { /* map may be tearing down */ }
-          },
         })
         landmarks3dRef.current.set(mark.id, h)
         // Evaluate once for the current camera (the app may already be near
@@ -4062,7 +4010,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       popFrameStops.clear()
       landmarks3dRef.current.forEach(h => h.dispose())
       landmarks3dRef.current.clear()
-      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef, worldLandmarkMarkersRef].forEach(ref => {
+      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef].forEach(ref => {
         ref.current.forEach(mk => mk.remove())
         ref.current = []
       })
