@@ -598,9 +598,46 @@ const LANDMARK_BUILDING_IDS: number[] = [
   4420397,                                                          // giza
 ]
 
+/** Where the id list cannot reach: the OSM way ids above only exist on the
+ *  DEV building source (`clay-streets`, the composite OSM tiles). Built
+ *  bundles — the device, GCL, :8099 — draw buildings from the Overture
+ *  PMTiles source instead, whose feature ids are synthetic uint64s (the
+ *  Eiffel arrives as id 16179058926084706000, not way 5013364), so on every
+ *  shipped surface the id cut matched nothing and the user's video showed the
+ *  model standing inside the map's own 330m slab again.
+ *
+ *  Each landmark therefore also cuts by GEOMETRY: any building feature whose
+ *  footprint comes within `cutM` metres of the landmark point AND stands at
+ *  least `cutMinH` metres tall is dropped, on whichever source is live.
+ *  `distance` (unlike `within`, see above) accepts Polygon features. The
+ *  height floor is what keeps attached neighbours standing — Big Ben's clock
+ *  tower adjoins the Palace of Westminster, so a pure radius cut would drop
+ *  the whole Palace; requiring ≥55m keeps the Palace (~30m) and cuts only the
+ *  96m tower the model replaces. */
+const LANDMARK_FOOTPRINT_CUTS: { at: [number, number]; cutM: number; cutMinH: number }[] = [
+  { at: [55.2744, 25.1972], cutM: 260, cutMinH: 80 },  // burj-khalifa (Dubai Mall is low + far)
+  { at: [-79.3871, 43.6426], cutM: 120, cutMinH: 100 }, // cn-tower (Rogers Centre dome 86m survives)
+  { at: [2.2945, 48.8584], cutM: 140, cutMinH: 50 },   // eiffel
+  { at: [-122.3493, 47.6205], cutM: 90, cutMinH: 60 }, // space-needle (MoPOP stays)
+  { at: [-74.0445, 40.6892], cutM: 120, cutMinH: 20 }, // statue-liberty (museum on the island stays)
+  { at: [-0.1246, 51.5007], cutM: 60, cutMinH: 55 },   // big-ben (Palace of Westminster stays)
+  { at: [31.1342, 29.9792], cutM: 200, cutMinH: 60 },  // giza (Khafre is its own pyramid, 470m off)
+  { at: [78.0421, 27.1751], cutM: 120, cutMinH: 30 },  // taj-mahal (flanking mosque ~20m stays)
+  { at: [12.4922, 41.8902], cutM: 110, cutMinH: 25 },  // colosseum
+  { at: [151.2153, -33.8568], cutM: 160, cutMinH: 15 }, // sydney-opera (all pavilions)
+  { at: [-43.2105, -22.9519], cutM: 80, cutMinH: 15 }, // christ-redeemer (alone on Corcovado)
+]
+
 /** Filter clause dropping every feature that a 3D landmark model replaces. */
 function notALandmarkBuilding() {
-  return ['!', ['in', ['id'], ['literal', LANDMARK_BUILDING_IDS]]]
+  const featureHeight = ['coalesce', ['to-number', ['get', 'height'], 0], 0]
+  return ['!', ['any',
+    ['in', ['id'], ['literal', LANDMARK_BUILDING_IDS]],
+    ...LANDMARK_FOOTPRINT_CUTS.map(c => ['all',
+      ['<', ['distance', { type: 'Point', coordinates: c.at }], c.cutM],
+      ['>=', featureHeight, c.cutMinH],
+    ]),
+  ]]
 }
 
 const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; heightM: number; yaw?: number }[] = [
