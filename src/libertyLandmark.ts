@@ -141,7 +141,7 @@ export function installNearLandmark3D(
     x: origin.x,
     y: origin.y,
     z: origin.z,
-    rotateX: Math.PI / 2,
+    rotateX: 0,
     scale: origin.meterInMercatorCoordinateUnits(),
   }
 
@@ -194,6 +194,11 @@ export function installNearLandmark3D(
         g => {
           if (!scene) { disposeModel(g.scene); return }
           const built = g.scene
+          // Meshy's supplied GLBs carry a +90° X rotation on their root node
+          // even though their geometry is already authored Z-up. Cancel it
+          // once here, then use Mapbox's native Z-up axis directly; applying
+          // both rotations was what made the landmark hover or sink.
+          built.rotation.x = -Math.PI / 2
           // Skin the model in the clay building-cap cream (#efe9df) so it
           // reads as a special landmark, not another OSM extrusion. The
           // muted PBR gray shipped in the GLBs (~#948f8a) blended into the
@@ -207,14 +212,31 @@ export function installNearLandmark3D(
           const box = new THREE.Box3().setFromObject(built)
           const size = new THREE.Vector3()
           box.getSize(size)
-          // The raw mesh is Z-up, but every supplied GLB rotates that axis to
-          // Y on its root node. Box3 includes that node transform, and the
-          // Mapbox custom-layer rotation then maps this final Y axis to map
-          // height. Measure and ground the transformed object on Y.
-          const s = cfg.heightM / (size.y || 1)
+          // With the Meshy root rotation normalized above, Z is the genuine
+          // height axis in both the model and Mapbox coordinate spaces.
+          const s = cfg.heightM / (size.z || 1)
           built.scale.setScalar(s)
           const box2 = new THREE.Box3().setFromObject(built)
-          built.position.y -= box2.min.y
+          built.position.z -= box2.min.z
+          // A subtle contact shadow on the actual map plane makes the base
+          // legible against the clay ground. It is model-space geometry, not
+          // a screen-fixed badge, so it stays at the landmark's coordinate.
+          const footprintRadius = Math.min(
+            0.9,
+            Math.max(0.18, Math.max(size.x, size.y) * 0.58),
+          )
+          const contact = new THREE.Mesh(
+            new THREE.CircleGeometry(footprintRadius, 40),
+            new THREE.MeshLambertMaterial({
+              color: 0x79616c,
+              transparent: true,
+              opacity: 0.28,
+              depthWrite: false,
+            }),
+          )
+          contact.name = 'landmark-ground-contact'
+          contact.position.z = box.min.z + 0.002
+          built.add(contact)
           model = built
           modelReady = true
           modelRendered = false
@@ -279,7 +301,12 @@ export function installNearLandmark3D(
       renderer.render(scene, cam)
       if (modelReady && !modelRendered) {
         modelRendered = true
-        opts.onModelRendered?.()
+        // Marker DOM updates during Mapbox's render pass can invalidate its
+        // placement state. Yield the one-time sprite→mesh handoff until the
+        // pass has completed instead.
+        window.setTimeout(() => {
+          if (!disposed) opts.onModelRendered?.()
+        }, 0)
       }
     },
   }

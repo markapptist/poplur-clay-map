@@ -70,7 +70,7 @@ export default function CharacterEditor() {
 
   if (buildingCloset && typeof document !== 'undefined') {
     return createPortal(
-      <div className={styles.builderHost} data-wardrobe-builder-modal='true' role='dialog' aria-modal='true' aria-label='Closet designer'>
+      <div className={styles.builderHost} data-wardrobe-builder-modal='true' role='region' aria-label='Closet designer'>
         <Suspense fallback={<div className={styles.builderLoading}>Opening closet builder…</div>}>
           <WardrobeBuilder character={character} onClose={() => {
             setBuildingCloset(false)
@@ -84,12 +84,14 @@ export default function CharacterEditor() {
 
   return (
     <div className={styles.wardrobe}>
-      <div className={styles.doorLeft}>
-        <div className={styles.doorPanel} />
-        <div className={styles.doorPanel} />
-        <div className={styles.doorPanel} />
-        <div className={styles.doorKnob} />
-      </div>
+      {!sceneReady && (
+        <div className={styles.doorLeft}>
+          <div className={styles.doorPanel} />
+          <div className={styles.doorPanel} />
+          <div className={styles.doorPanel} />
+          <div className={styles.doorKnob} />
+        </div>
+      )}
 
       <div className={styles.closetInterior}>
         {/* The wardrobe room render (public/character/wardrobe-room.png,
@@ -102,7 +104,10 @@ export default function CharacterEditor() {
           className={styles.sceneArt}
           draggable={false}
           onLoad={() => setSceneReady(true)}
-          onError={event => { (event.target as HTMLImageElement).style.display = 'none' }}
+          onError={event => {
+            setSceneReady(false)
+            event.currentTarget.style.display = 'none'
+          }}
         />
         <div className={styles.editorToolbar}>
           <div className={styles.editorToolbarCopy}>
@@ -237,12 +242,14 @@ export default function CharacterEditor() {
         </div>
       </div>
 
-      <div className={styles.doorRight}>
-        <div className={styles.doorPanel} />
-        <div className={styles.doorPanel} />
-        <div className={styles.doorPanel} />
-        <div className={styles.doorKnob} />
-      </div>
+      {!sceneReady && (
+        <div className={styles.doorRight}>
+          <div className={styles.doorPanel} />
+          <div className={styles.doorPanel} />
+          <div className={styles.doorPanel} />
+          <div className={styles.doorKnob} />
+        </div>
+      )}
     </div>
   )
 }

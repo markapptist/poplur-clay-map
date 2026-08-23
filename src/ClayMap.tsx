@@ -659,7 +659,7 @@ const WORLD_LANDMARKS: { id: string; coords: [number, number]; width: number; he
 // cropped tower at the edge of nearby venues, which read as floating.
 const LANDMARK_3D_REVEAL_KM = 0.3
 const LANDMARK_REFERENCE_HEIGHT_M = 330 // Eiffel Tower: the reference frame.
-const LANDMARK_MIN_FRAME_ZOOM = 13.0
+const LANDMARK_MIN_FRAME_ZOOM = 13.5
 const LANDMARK_MAX_FRAME_ZOOM = 15.5
 // Arriving at an exact camera zoom can end a fraction below its requested
 // value. Start loading just before the frame target so the grounded model is
@@ -675,7 +675,7 @@ const LANDMARK_CLOSE_FALLBACK_MAX_PX = 240
  * a generous safety margin rather than letting a small model fill the screen.
  */
 function landmarkCameraZoom(heightM: number): number {
-  const scaled = 14.2 - Math.log2(Math.max(1, heightM) / LANDMARK_REFERENCE_HEIGHT_M)
+  const scaled = 14.75 - Math.log2(Math.max(1, heightM) / LANDMARK_REFERENCE_HEIGHT_M)
   return Math.max(LANDMARK_MIN_FRAME_ZOOM, Math.min(LANDMARK_MAX_FRAME_ZOOM, scaled))
 }
 

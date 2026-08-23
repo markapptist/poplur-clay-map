@@ -53,6 +53,19 @@ export function harnessViewFromLocation(): HarnessView | null {
   return ROUTES.includes(normalized as HarnessView) ? normalized as HarnessView : null
 }
 
+type HomeHarnessView = Exclude<HarnessView, 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle'>
+
+export function holdMenuBaseViewFromLocation(): HomeHarnessView {
+  const screen = new URLSearchParams(window.location.search).get('holdScreen')?.toLowerCase() ?? ''
+
+  if (screen.startsWith('profile-')) return 'profile'
+  if (screen.startsWith('feed-')) return 'feed'
+  if (screen.startsWith('camera-')) return 'camera'
+  if (screen.startsWith('map-')) return 'map'
+
+  return 'home'
+}
+
 export default function ViewHarness({ initialView }: { initialView: HarnessView }) {
   const [view, setView] = useState<HarnessView>(initialView)
 
@@ -76,12 +89,11 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     setView(next)
   }
 
-  // The hold menu is a cube long-press OVERLAY, not a standalone screen — it
-  // floats over the live home view behind a semi-transparent scrim, and closing
-  // it returns you to that home. So ?view=holdmenu keeps the home (map) mounted
-  // underneath rather than swapping it out.
-  const baseView: Exclude<HarnessView, 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle'> = view === 'holdmenu'
-    ? 'home'
+  // The hold menu is a cube long-press OVERLAY, not a standalone screen. Direct
+  // links keep the owning tab mounted beneath the requested subscreen so a
+  // profile screen never appears to float over a feed-owned shell.
+  const baseView: HomeHarnessView = view === 'holdmenu'
+    ? holdMenuBaseViewFromLocation()
     : view === 'uploadflows'
       ? 'camera'
       // Arcade returns its own surface below and never reaches HomeTwin, but
