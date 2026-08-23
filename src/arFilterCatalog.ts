@@ -109,3 +109,58 @@ export function loadARFilterCatalog(): Promise<ARFilterCatalog> {
   })()
   return loaded
 }
+
+/**
+ * The chain for the LIVE viewfinder.
+ *
+ * `css` alone cannot express a channel split: `drop-shadow()` draws entirely
+ * behind an opaque video frame, so pop-3d's two shadows contributed exactly
+ * 0.00/255 — measured — and picking it looked identical to picking nothing.
+ * Native fixed this with a real Core Image offset; the web needs an SVG filter
+ * primitive, which CSS `filter` can reference by url.
+ */
+export function arFilterLiveCss(entry: ARFilterEntry | undefined): string {
+  if (!entry || entry.css === 'none') return 'none'
+  const anaglyph = entry.grade?.anaglyph ?? 0
+  return anaglyph > 0 ? `url(#${anaglyphFilterId(entry.id)}) ${entry.css}` : entry.css
+}
+
+export function anaglyphFilterId(id: string): string {
+  return `poplur-anaglyph-${id}`
+}
+
+/** Filters needing an SVG primitive rendered into the page. */
+export function arFiltersNeedingSvg(): ARFilterEntry[] {
+  return current.filters.filter(f => (f.grade?.anaglyph ?? 0) > 0)
+}
+
+/**
+ * Split red from cyan on a CAPTURED frame, in pixels.
+ *
+ * The still path cannot reuse the viewfinder's SVG reference: `ctx.filter`
+ * does not accept `url(#…)` in Safari, so a capture would silently drop the
+ * only part of this filter anyone can see. Offsetting the channels directly
+ * costs one pass over a photo that is already being written once.
+ */
+export function applyAnaglyphToCanvas(ctx: CanvasRenderingContext2D, offsetPx: number): void {
+  const { width, height } = ctx.canvas
+  if (width === 0 || height === 0) return
+  // The grade's offset is quoted at the web's ~390pt reference width, the same
+  // convention native rescales by, so a 4K still separates as far as it looks.
+  const dx = Math.max(1, Math.round(offsetPx * (width / 390)))
+  const frame = ctx.getImageData(0, 0, width, height)
+  const src = new Uint8ClampedArray(frame.data)
+  const px = frame.data
+  for (let y = 0; y < height; y++) {
+    const row = y * width * 4
+    for (let x = 0; x < width; x++) {
+      const i = row + x * 4
+      const redX = Math.min(width - 1, Math.max(0, x - dx))
+      const cyanX = Math.min(width - 1, Math.max(0, x + dx))
+      px[i] = src[row + redX * 4]              // R from the left-shifted copy
+      px[i + 1] = src[row + cyanX * 4 + 1]     // G and B from the right-shifted one
+      px[i + 2] = src[row + cyanX * 4 + 2]
+    }
+  }
+  ctx.putImageData(frame, 0, 0)
+}

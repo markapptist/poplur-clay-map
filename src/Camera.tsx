@@ -15,7 +15,13 @@ import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
 import ARFilters, { AR_FILTERS } from './ARFilters'
-import { arFilterCatalog } from './arFilterCatalog'
+import {
+  arFilterCatalog,
+  arFilterLiveCss,
+  anaglyphFilterId,
+  arFiltersNeedingSvg,
+  applyAnaglyphToCanvas,
+} from './arFilterCatalog'
 import FaceAROverlay, { drawFaceAREffect } from './FaceAROverlay'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
 import PermissionAlert from './PermissionAlert'
@@ -377,7 +383,11 @@ export default function Camera({
       ...(entry?.grade ? { grade: entry.grade } : {}),
     })
   }, [arFilter])
-  const filterCss = AR_FILTERS.find(f => f.id === arFilter)?.css ?? 'none'
+  const filterEntry = arFilterCatalog().filters.find(f => f.id === arFilter)
+  const filterCss = filterEntry?.css ?? 'none'
+  // The viewfinder gets the SVG-backed chain; the capture canvas cannot use it
+  // (`ctx.filter` rejects `url(#…)` in Safari) and does the split in pixels.
+  const filterLiveCss = arFilterLiveCss(filterEntry)
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
@@ -1205,6 +1215,16 @@ export default function Camera({
       canvas.width,
       canvas.height,
     )
+    // The grade rode in on ctx.filter; the channel split cannot, so it lands
+    // here on the drawn pixels. Without it a captured Pop 3D shot is just a
+    // 10% saturation lift — the same invisibility the live view had.
+    const anaglyphPx = arFilterCatalog().filters
+      .find(f => f.id === arFilter)?.grade?.anaglyph ?? 0
+    if (anaglyphPx > 0) {
+      ctx.filter = 'none'
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      applyAnaglyphToCanvas(ctx, anaglyphPx)
+    }
     drawFaceAREffect(ctx, canvas.width, canvas.height, detections, arFilter)
     const faceAR = document.querySelector<HTMLCanvasElement>('canvas[data-face-ar-3d]')
     if (faceAR?.width && faceAR.height) {
@@ -1592,6 +1612,32 @@ export default function Camera({
               style={{ backgroundImage: `url(${wideBackdrop})` }}
             />
           )}
+          {/* Filter primitives CSS cannot express. Rendered once, referenced by
+              url() from the video's filter chain; zero-sized so it never lays
+              anything out. Driven by the catalog, so a filter published with an
+              anaglyph value gets its primitive without an app change. */}
+          <svg width="0" height="0" aria-hidden="true" style={{ position: 'absolute' }}>
+            <defs>
+              {arFiltersNeedingSvg().map(f => {
+                const dx = f.grade?.anaglyph ?? 0
+                return (
+                  <filter key={f.id} id={anaglyphFilterId(f.id)} x="0" y="0" width="100%" height="100%">
+                    <feOffset in="SourceGraphic" dx={-dx} dy="0" result="shiftL" />
+                    <feColorMatrix
+                      in="shiftL" result="redOnly" type="matrix"
+                      values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0"
+                    />
+                    <feOffset in="SourceGraphic" dx={dx} dy="0" result="shiftR" />
+                    <feColorMatrix
+                      in="shiftR" result="cyanOnly" type="matrix"
+                      values="0 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0"
+                    />
+                    <feBlend in="redOnly" in2="cyanOnly" mode="screen" />
+                  </filter>
+                )
+              })}
+            </defs>
+          </svg>
           <video
             ref={videoRef}
             className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
@@ -1605,7 +1651,7 @@ export default function Camera({
               // reaches this element at all: its preview is a native layer
               // behind a transparent WebView, which is why the same choice also
               // has to travel over the bridge — see applyARFilter.)
-              filter: filterCss,
+              filter: filterLiveCss,
               // Device zoom changes the track itself. Unsupported browsers use
               // this crop fallback; disabling the old drift keeps the requested
               // zoom stable beneath the HUD.

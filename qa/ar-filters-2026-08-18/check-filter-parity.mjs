@@ -8,13 +8,22 @@
 // This is the cheap guard against that whole bug class: every id the rail can
 // send must exist natively, and every grade must be translated.
 import { readFileSync } from 'node:fs'
-const WEB = '/Users/matrix/Developer/poplur-clay-map/src/ARFilters.tsx'
+// The rail's ids moved OUT of ARFilters.tsx and into the streamed catalog when
+// filters stopped being compiled in. This guard kept regexing the .tsx, found
+// zero ids, and reported PASS on an empty set — the exact silent-failure shape
+// it was written to catch. It reads the catalog now, and refuses to pass on an
+// empty parse.
+const WEB = '/Users/matrix/Developer/poplur-clay-map/src/arFilterCatalog.json'
 const IOS = '/Users/matrix/Developer/Poplur2025-iOS/Poplur2025/ARFilterManager.swift'
 
-const web = readFileSync(WEB, 'utf8')
 const ios = readFileSync(IOS, 'utf8')
 
-const webIDs = [...web.matchAll(/\{ id: '([a-z0-9-]+)'/g)].map(m => m[1])
+const catalog = JSON.parse(readFileSync(WEB, 'utf8'))
+const webIDs = catalog.filters.map(f => f.id)
+if (webIDs.length === 0) {
+  console.error('FAIL  the catalog parsed to zero filters — this guard cannot verify anything')
+  process.exit(1)
+}
 const iosRaw = [...ios.matchAll(/^\s+case [a-zA-Z0-9]+ = "([^"]+)"/gm)].map(m => m[1])
 // Which ids the Core Image translation actually covers.
 const graded = [...ios.matchAll(/case \.web[A-Za-z0-9]+:\s+return Grade\(/g)].length
@@ -38,9 +47,21 @@ check('the native pickers still list only the nine with bundled artwork',
   && !/availableFilters: \[ARFilter\] = ARFilter\.allCases/.test(ios))
 
 // The grade must not be gated on a face: most of these grade the whole picture.
+// The grade lookup became `currentGrade(for:)` when filters started streaming
+// (it prefers a recipe sent with the pick over the compiled table). The
+// property being guarded is unchanged: the grade must be applied BEFORE any
+// face-observation guard, or fourteen whole-frame filters do nothing unless a
+// face happens to be in shot.
+const GRADE_CALL = 'if let grade = currentGrade(for: activeFilter)'
 check('the grade applies without a detected face',
-  /if let grade = activeFilter\.grade \{[\s\S]{0,160}?return applyGrade/.test(ios)
-  && ios.indexOf('if let grade = activeFilter.grade') < ios.indexOf('guard let faceObservation'))
+  new RegExp(`${GRADE_CALL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{[\\s\\S]{0,160}?return applyGrade`).test(ios)
+  && ios.indexOf(GRADE_CALL) < ios.indexOf('guard let faceObservation'))
+
+// A filter published after this binary shipped must still render. Without a
+// case that survives an unknown rawValue, the streamed recipe arrives and both
+// render entry points discard the frame on `.none` before consulting it.
+check('an unknown streamed id can still render',
+  ios.includes('case streamed = "__streamed"'))
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed')
 process.exit(failures ? 1 : 0)
