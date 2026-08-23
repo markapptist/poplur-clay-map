@@ -1,11 +1,14 @@
 import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  readCharacter, saveCharacter, clearCharacter, defaultCharacter,
+  readCharacter, saveCharacter, clearCharacter,
   SKIN_TONES, HAIR_COLORS, HAIR_STYLES, EYE_COLORS, TOP_COLORS, BOTTOM_COLORS,
   type PoplurCharacter, type HairStyle,
 } from './characterStore'
-import ClayCharacter from './ClayCharacter'
+import ReferenceWardrobeCharacter, {
+  referenceWardrobeCharacter,
+  wardrobeInitialCharacter,
+} from './ReferenceWardrobeCharacter'
 import { MANIFEST, WARDROBE_SCENE_SRC, type PartSlot } from './characterParts'
 import { playPop } from './pop'
 import { setPopupsSuppressed } from './popups'
@@ -28,7 +31,9 @@ const OUTFIT_RACKS: { slot: PartSlot, label: string }[] = [
 // closet, racks of swatches around it, every change saved as it is made.
 export default function CharacterEditor() {
   const [character, setCharacter] = useState<PoplurCharacter>(
-    () => readCharacter() ?? defaultCharacter(),
+    // Wardrobe owns this visual seed; global defaults elsewhere in Poplur
+    // remain the familiar neutral male character.
+    () => wardrobeInitialCharacter(readCharacter()),
   )
   const [buildingCloset, setBuildingCloset] = useState(false)
   const [builderPortalRoot, setBuilderPortalRoot] = useState<HTMLElement | null>(null)
@@ -60,7 +65,7 @@ export default function CharacterEditor() {
   const reset = useCallback(() => {
     playPop()
     clearCharacter()
-    setCharacter(defaultCharacter())
+    setCharacter(referenceWardrobeCharacter())
   }, [])
 
   if (buildingCloset && typeof document !== 'undefined') {
@@ -150,13 +155,13 @@ export default function CharacterEditor() {
             on the CSS rug instead. */}
         {!sceneReady && (
           <div className={styles.stage}>
-            <ClayCharacter character={character} height={230} />
+            <ReferenceWardrobeCharacter character={character} height={230} />
             <div className={styles.floorShadow} />
           </div>
         )}
         {sceneReady && (
           <div className={styles.sceneCharacter} aria-hidden="true">
-            <ClayCharacter character={character} height={200} />
+            <ReferenceWardrobeCharacter character={character} height={260} />
           </div>
         )}
         {sceneReady && <div className={styles.sceneSpacer} />}

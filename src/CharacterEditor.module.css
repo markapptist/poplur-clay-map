@@ -103,14 +103,16 @@
 .sceneCharacter {
   position: absolute;
   left: 50%;
-  top: 30vh;
+  top: clamp(118px, 18vh, 180px);
   transform: translateX(-50%);
-  z-index: 1;
+  z-index: 2;
   pointer-events: none;
   filter: drop-shadow(0 10px 10px rgba(0, 0, 0, 0.45));
 }
 
-.sceneArt ~ * {
+/* Keep ordinary editor siblings above the room art without changing the
+   character's absolute positioning back to normal flow. */
+.sceneArt ~ :not(.sceneCharacter) {
   position: relative;
   z-index: 1;
 }

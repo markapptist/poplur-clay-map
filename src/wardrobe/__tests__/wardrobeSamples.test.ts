@@ -46,8 +46,9 @@ describe('wardrobeAssetRegistry', () => {
     expect(wardrobeFallbackGlyph(frame.type)).not.toBe('')
   })
 
-  it('only declares art paths for supplied modular assets', () => {
+  it('only declares art paths for the supplied room and modular cuts', () => {
     const expectedArt = new Set([
+      'poplur_wardrobe_room',
       'black_poplur_jacket',
       'black_pink_shoes',
       'black_poplur_pants',
@@ -64,10 +65,13 @@ describe('wardrobeAssetRegistry', () => {
     expect(new Set(actual)).toEqual(expectedArt)
   })
 
-  it('never registers the opaque wardrobe-room reference as module art', () => {
-    const sources = Object.values(wardrobeAssetRegistry).map(def => def.source)
-    expect(sources).not.toContain('character/wardrobe-room.png')
-    expect(sources).not.toContain('character/wardrobe-room.jpg')
+  it('registers the photographic room only as a canvas background', () => {
+    const room = wardrobeAssetRegistry['poplur_wardrobe_room']
+    expect(room.type).toBe('background')
+    expect(room.source).toBe('character/wardrobe-room.png')
+    expect(room.resizable).toBe(false)
+    expect(room.rotatable).toBe(false)
+    expect(wardrobeAssetRegistry['empty_wardrobe_frame'].source).toBe('')
   })
 
   it('gives every registered asset a visible CSS fallback', () => {
@@ -82,19 +86,16 @@ describe('pinkStarterCloset', () => {
   const scene = pinkStarterCloset()
   const byId = new Map(scene.modules.map(m => [m.id, m]))
 
-  it('is a current-version scene with at least 18 modules', () => {
+  it('is a current-version scene with a focused set of modular overlays', () => {
     expect(scene.version).toBe(CURRENT_SCENE_VERSION)
     expect(scene.id).toBe('wardrobe_pink_starter_01')
-    expect(scene.modules.length).toBeGreaterThanOrEqual(18)
+    expect(scene.modules.length).toBe(9)
   })
 
-  it('uses reference styling as scene data and stages every supplied modular cut', () => {
-    expect(byId.get('psc_door_left')?.properties?.side).toBe('left')
-    expect(byId.get('psc_door_right')?.properties?.side).toBe('right')
-    expect(byId.get('psc_led_strip')?.properties?.shape).toBe('strip')
-    expect(byId.get('psc_heart_light_1')?.properties?.shape).toBe('heart')
-    expect(byId.get('psc_spotlight_1')?.properties?.shape).toBe('spot')
-    expect(byId.get('psc_rail')?.properties?.hangerCount).toBe(7)
+  it('uses the exact reference aspect/background and stages every supplied modular cut', () => {
+    expect(scene.canvas.width).toBe(625)
+    expect(scene.canvas.height).toBe(753)
+    expect(scene.canvas.backgroundAssetId).toBe('poplur_wardrobe_room')
 
     const usedAssets = new Set(scene.modules.map(module => module.assetId))
     for (const assetId of [
@@ -109,6 +110,15 @@ describe('pinkStarterCloset', () => {
     ]) {
       expect(usedAssets.has(assetId), assetId).toBe(true)
     }
+  })
+
+  it('does not double-paint photographic structure as starter modules', () => {
+    const bakedTypes = new Set([
+      'wardrobeFrame', 'wardrobeDoor', 'divider', 'shelf', 'drawer',
+      'cabinet', 'rail', 'hook', 'floor', 'rug', 'light',
+    ])
+    expect(scene.modules.some(module => bakedTypes.has(module.type))).toBe(false)
+    expect(scene.modules.some(module => module.assetId === 'poplur_wardrobe_room')).toBe(false)
   })
 
   it('has unique module ids', () => {
@@ -133,7 +143,6 @@ describe('pinkStarterCloset', () => {
 
   it('attaches only to real siblings at real points that allow the type', () => {
     const attached = scene.modules.filter(m => m.attachment)
-    expect(attached.length).toBeGreaterThan(0)
     for (const m of attached) {
       const parent = byId.get(m.attachment!.parentId)
       expect(parent, `${m.id} attachment parent ${m.attachment!.parentId}`).toBeDefined()

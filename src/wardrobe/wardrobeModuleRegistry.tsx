@@ -13,7 +13,7 @@ import {
   wardrobeFallbackTone,
 } from './wardrobeAssets'
 import { poplurFromAppearance } from './wardrobeCharacter'
-import ClayCharacter from '../ClayCharacter'
+import ReferenceWardrobeCharacter from '../ReferenceWardrobeCharacter'
 import styles from './WardrobeRenderer.module.css'
 
 /** Contract between WardrobeRenderer and every module view. The renderer owns
@@ -185,7 +185,7 @@ function LightModule({ module, mode }: WardrobeModuleViewProps) {
   )
 }
 
-/** ClayCharacter draws at a fixed pixel height, but the module box is sized
+/** The character draws at a fixed pixel height, but the module box is sized
     in fractions of the stage — a ResizeObserver (event-driven, no loops)
     supplies the pixel height. Nothing renders until the first measurement so
     the character never flashes at a wrong size. */
@@ -208,7 +208,7 @@ function CharacterModule({ module }: WardrobeModuleViewProps) {
     : null
   return (
     <div ref={boxRef} className={styles.characterBox}>
-      {boxHeight > 0 && <ClayCharacter character={character} height={boxHeight} />}
+      {boxHeight > 0 && <ReferenceWardrobeCharacter character={character} height={boxHeight} />}
     </div>
   )
 }

@@ -92,17 +92,20 @@ order) — parentage does not affect z-order.
 
 Set `source: ''` when production art does not exist yet. The module and its
 library card then render their code-native fallback immediately — no broken
-request, duplicate baked room, or invisible selection box. The starter frame
-deliberately uses this path: `wardrobe-room.png` is an opaque editor reference,
-not a modular frame, because its shelves/doors/props could not be deleted.
+request or invisible selection box. The code-native `empty_wardrobe_frame`
+still uses this path. The starter scene intentionally registers
+`wardrobe-room.png` as a **canvas background** (`poplur_wardrobe_room`) to
+match the supplied reference literally. It is rendered before all modules,
+has no pointer events, and is never inserted as a selectable frame module.
+The clothing, accessories, and live character above it remain independent.
 
 The shipped transparent cuts (`hoodie.png`, `pants.png`, `shoes.png`,
 `hair.png`, `glasses.png`, `necklace.png`, `earrings.png`, and `phone.png`)
 are registered as independent assets and staged in the starter closet. The
 live app character remains the character module; `character-base.png` is not
-substituted for it. Code-native visuals take their variants from scene data
-(`properties.side`, `properties.shape`, `properties.visualStyle`) rather than
-asset-id checks, so saved scenes retain the same styling after rearrangement.
+substituted for it. Code-native modules users add later still take variants
+from scene data (`properties.side`, `properties.shape`,
+`properties.visualStyle`) rather than asset-id checks.
 
 ### Asset preparation rules
 
@@ -225,10 +228,10 @@ importing them under node never throws.
   simulation; a CSS-only treatment is future work).
 - **Thumbnail capture needs the DOM** — scene `thumbnailURL` generation can't
   run in node tests or headless import contexts.
-- **The art library is partial** — supplied transparent hoodie, shoe, necklace,
-  character and accessory cuts are present. Definitions without suitable art
-  use explicit CSS fallbacks; wrong non-empty paths still surface via `<img>`
-  `onError`, not fetch status.
+- **The art library is partial** — the supplied photographic room and eight
+  transparent clothing/accessory cuts are present. Definitions without
+  suitable art use explicit CSS fallbacks; wrong non-empty paths still surface
+  via `<img>` `onError`, not fetch status.
 
 ## Recommended next improvements
 

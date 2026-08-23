@@ -1,10 +1,9 @@
 import type { WardrobeAssetDefinition, WardrobeModuleType } from './wardrobeTypes'
 
-// Use supplied art only where it is a genuine, tightly-cropped module. An
-// empty source is intentional: the stage/library render the code-native CSS
-// fallback immediately, without requesting a speculative PNG. In particular,
-// the opaque wardrobe-room reference must never masquerade as the frame — it
-// contains shelves, doors, drawers and props that would survive deletion.
+// Use supplied art wherever it matches the registered role. The photographic
+// room is a canvas background, never a selectable wardrobeFrame module; the
+// transparent clothing/accessory cuts remain independent editable overlays.
+// Empty sources intentionally use the code-native CSS fallback immediately.
 
 const SHELF_SURFACE_TYPES: WardrobeModuleType[] = [
   'foldedClothing', 'shoe', 'handbag', 'jewelry', 'trophy',
@@ -12,6 +11,19 @@ const SHELF_SURFACE_TYPES: WardrobeModuleType[] = [
 ]
 
 const definitions: WardrobeAssetDefinition[] = [
+  {
+    assetId: 'poplur_wardrobe_room',
+    name: 'Poplur Wardrobe Room',
+    type: 'background',
+    source: 'character/wardrobe-room.png',
+    defaultWidth: 625,
+    defaultHeight: 753,
+    resizable: false,
+    rotatable: false,
+    tintable: false,
+    category: 'backgrounds',
+    tags: ['wardrobe', 'room', 'reference', 'wood', 'pink'],
+  },
   {
     assetId: 'empty_wardrobe_frame',
     name: 'Wardrobe Frame',
