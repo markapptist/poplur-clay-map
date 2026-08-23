@@ -5,7 +5,7 @@
   position: absolute;
   top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 12px);
   right: max(12px, env(safe-area-inset-right));
-  bottom: calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+  bottom: calc(18px + var(--cube-size, 176px) + 14px);
   left: max(12px, env(safe-area-inset-left));
   max-width: 720px;
   margin-inline: auto;
@@ -77,10 +77,12 @@
      wordmark/cube/radius chrome visible around a contained lacquer panel. */
   top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 12px);
   right: max(12px, env(safe-area-inset-right));
-  bottom: calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+  bottom: calc(18px + var(--cube-size, 176px) + 14px);
   left: max(12px, env(safe-area-inset-left));
   max-width: 720px;
   margin-inline: auto;
+  --wardrobe-safe-top: 0px;
+  --wardrobe-safe-bottom: 0px;
   /* Stay inside the Poplur shell: the persistent wordmark, cube navigation,
      radius readout and side controls live at 260-270 and must remain visible
      above every subscreen. The builder is still above the subscreen stage

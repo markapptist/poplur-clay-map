@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   readCharacter, saveCharacter, clearCharacter,
@@ -37,6 +37,8 @@ export default function CharacterEditor() {
   )
   const [buildingCloset, setBuildingCloset] = useState(false)
   const [builderPortalRoot, setBuilderPortalRoot] = useState<HTMLElement | null>(null)
+  const builderLaunchRef = useRef<HTMLButtonElement | null>(null)
+  const restoreLaunchFocusRef = useRef(false)
   // The supplied wardrobe render carries its own closet, rail, rug — and for
   // now its own resident character. While it loads, the CSS furniture and the
   // SVG stand-in step aside; if it is missing (Vite 200s missing public files
@@ -51,6 +53,12 @@ export default function CharacterEditor() {
       setPopupsSuppressed(false)
       if (typeof document !== 'undefined') delete document.body.dataset.wardrobeBuilderOpen
     }
+  }, [buildingCloset])
+
+  useEffect(() => {
+    if (buildingCloset || !restoreLaunchFocusRef.current) return
+    restoreLaunchFocusRef.current = false
+    builderLaunchRef.current?.focus()
   }, [buildingCloset])
 
   const apply = useCallback((patch: Partial<PoplurCharacter>) => {
@@ -68,14 +76,17 @@ export default function CharacterEditor() {
     setCharacter(referenceWardrobeCharacter())
   }, [])
 
+  const closeBuilder = useCallback(() => {
+    restoreLaunchFocusRef.current = true
+    setBuildingCloset(false)
+    setBuilderPortalRoot(null)
+  }, [])
+
   if (buildingCloset && typeof document !== 'undefined') {
     return createPortal(
       <div className={styles.builderHost} data-wardrobe-builder-modal='true' role='region' aria-label='Closet designer'>
         <Suspense fallback={<div className={styles.builderLoading}>Opening closet builder…</div>}>
-          <WardrobeBuilder character={character} onClose={() => {
-            setBuildingCloset(false)
-            setBuilderPortalRoot(null)
-          }} />
+          <WardrobeBuilder character={character} onClose={closeBuilder} />
         </Suspense>
       </div>,
       builderPortalRoot ?? document.body,
@@ -115,12 +126,14 @@ export default function CharacterEditor() {
             <span>Style your character or design the whole closet.</span>
           </div>
           <button
+            ref={builderLaunchRef}
             type="button"
             className={styles.builderLaunch}
             onClick={event => {
               playPop()
               setBuilderPortalRoot(
-                event.currentTarget.closest('section')
+                event.currentTarget.closest<HTMLElement>('[role="dialog"]')
+                ?? event.currentTarget.closest('section')
                 ?? event.currentTarget.closest('main')
                 ?? document.body,
               )

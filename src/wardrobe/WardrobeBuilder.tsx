@@ -420,6 +420,7 @@ export default function WardrobeBuilder({ initialScene, character, onClose }: {
       <div className={styles.root} aria-busy='true'>
         <header className={styles.topBar}>
           <button
+            autoFocus
             type='button'
             className={styles.barButton}
             aria-label='Close wardrobe builder'
@@ -481,6 +482,7 @@ export default function WardrobeBuilder({ initialScene, character, onClose }: {
     <div className={styles.root}>
       <header className={styles.topBar}>
         <button
+          autoFocus
           type='button'
           className={styles.barButton}
           aria-label='Close wardrobe builder'

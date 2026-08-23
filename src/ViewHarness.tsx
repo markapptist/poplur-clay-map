@@ -58,6 +58,9 @@ type HomeHarnessView = Exclude<HarnessView, 'holdmenu' | 'uploadflows' | 'arcade
 export function holdMenuBaseViewFromLocation(): HomeHarnessView {
   const screen = new URLSearchParams(window.location.search).get('holdScreen')?.toLowerCase() ?? ''
 
+  // Games lives in the Camera/Post hold menu even though its legacy screen ID
+  // predates that ownership and still carries the feed prefix.
+  if (screen === 'feed-games') return 'camera'
   if (screen.startsWith('profile-')) return 'profile'
   if (screen.startsWith('feed-')) return 'feed'
   if (screen.startsWith('camera-')) return 'camera'
