@@ -141,7 +141,9 @@ export function installNearLandmark3D(
     x: origin.x,
     y: origin.y,
     z: origin.z,
-    rotateX: 0,
+    // Mapbox's custom-layer world is Z-up while the renderer's scene is
+    // Y-up. This is the standard Mapbox → three.js axis conversion.
+    rotateX: Math.PI / 2,
     scale: origin.meterInMercatorCoordinateUnits(),
   }
 
@@ -194,10 +196,10 @@ export function installNearLandmark3D(
         g => {
           if (!scene) { disposeModel(g.scene); return }
           const built = g.scene
-          // Meshy's supplied GLBs carry a +90° X rotation on their root node
-          // even though their geometry is already authored Z-up. Cancel it
-          // once here, then use Mapbox's native Z-up axis directly; applying
-          // both rotations was what made the landmark hover or sink.
+          // Meshy's supplied GLBs store their tall axis in Z and carry a +90°
+          // X root rotation. Make their up-axis positive Three Y here; the
+          // Mapbox-layer transform above then carries Y into Mapbox's Z-up
+          // world. Keeping either conversion out laid the geometry flat.
           built.rotation.x = -Math.PI / 2
           // Skin the model in the clay building-cap cream (#efe9df) so it
           // reads as a special landmark, not another OSM extrusion. The
@@ -212,18 +214,18 @@ export function installNearLandmark3D(
           const box = new THREE.Box3().setFromObject(built)
           const size = new THREE.Vector3()
           box.getSize(size)
-          // With the Meshy root rotation normalized above, Z is the genuine
-          // height axis in both the model and Mapbox coordinate spaces.
-          const s = cfg.heightM / (size.z || 1)
+          // After normalising the Meshy root, Three Y is the model's genuine
+          // height axis. It is converted to Mapbox Z during rendering.
+          const s = cfg.heightM / (size.y || 1)
           built.scale.setScalar(s)
           const box2 = new THREE.Box3().setFromObject(built)
-          built.position.z -= box2.min.z
+          built.position.y -= box2.min.y
           // A subtle contact shadow on the actual map plane makes the base
           // legible against the clay ground. It is model-space geometry, not
           // a screen-fixed badge, so it stays at the landmark's coordinate.
           const footprintRadius = Math.min(
             0.9,
-            Math.max(0.18, Math.max(size.x, size.y) * 0.58),
+            Math.max(0.18, Math.max(size.x, size.z) * 0.58),
           )
           const contact = new THREE.Mesh(
             new THREE.CircleGeometry(footprintRadius, 40),
@@ -235,7 +237,8 @@ export function installNearLandmark3D(
             }),
           )
           contact.name = 'landmark-ground-contact'
-          contact.position.z = box.min.z + 0.002
+          contact.rotation.x = Math.PI / 2
+          contact.position.y = box.min.y + 0.002
           built.add(contact)
           model = built
           modelReady = true
@@ -262,7 +265,10 @@ export function installNearLandmark3D(
       modelRendered = false
       scene = null
       cam = null
-      try { renderer?.dispose() } catch { /* already disposed */ }
+      // This renderer uses Mapbox's canvas and WebGL context. Disposing it
+      // here also tears down shared GL state; the next landmark then gets a
+      // blank map rather than a fresh custom layer. The model's own geometry
+      // and materials above are the resources this layer owns.
       renderer = null
     },
     // Mapbox 3.x passes the extra globe arguments whenever the projection is
