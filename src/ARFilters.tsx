@@ -189,6 +189,7 @@ export default function ARFilters({
   const velocityRef = useRef(0)
   const lastScrubRef = useRef(0)
   const lastNotchRef = useRef(startIndex)
+  const committedRef = useRef(startIndex)
   const draggingRef = useRef(false)
   const dragXRef = useRef(0)
   const snapIndexRef = useRef<number | null>(null)
@@ -213,8 +214,21 @@ export default function ARFilters({
       lastNotchRef.current = notch
       setSelected(notch)
       playPop()
-      onPickRef.current(AR_FILTERS[notch].id)
     }
+  }
+
+  // Committing the pick per NOTCH is what made this wheel hang, exactly as the
+  // hold menu's did. On iOS every commit crosses the native bridge to
+  // applyARFilter, which touches the capture session; a flick past a dozen
+  // filters queued a dozen session reconfigurations behind the gesture. The
+  // wheel now moves and pops freely and commits ONCE, when it settles — which
+  // is also the only moment the choice is real. HoldMenuTwin's applyOffsetDelta
+  // has never done more than setSelected + playPop for the same reason.
+  const commitSettled = () => {
+    const notch = Math.round(offsetRef.current)
+    if (notch === committedRef.current) return
+    committedRef.current = notch
+    onPickRef.current(AR_FILTERS[notch].id)
   }
 
   const scrub = (deltaX: number) => {
@@ -239,7 +253,7 @@ export default function ARFilters({
 
       if (snapIndexRef.current !== null) {
         const d = snapIndexRef.current - offsetRef.current
-        if (Math.abs(d) < 0.001) { applyOffsetDelta(d); snapIndexRef.current = null }
+        if (Math.abs(d) < 0.001) { applyOffsetDelta(d); snapIndexRef.current = null; commitSettled() }
         else applyOffsetDelta(d * 0.22)
         return
       }
@@ -254,7 +268,9 @@ export default function ARFilters({
         const remaining = target - offsetRef.current
         if (v !== 0 || remaining !== 0) {
           velocityRef.current = 0
-          applyOffsetDelta(Math.abs(remaining) < 0.001 ? remaining : remaining * 0.22)
+          const settling = Math.abs(remaining) < 0.001
+          applyOffsetDelta(settling ? remaining : remaining * 0.22)
+          if (settling) commitSettled()
         }
       }
     }, 'ambient')
