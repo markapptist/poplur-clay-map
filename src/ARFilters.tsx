@@ -2,6 +2,13 @@ import React, { useEffect, useRef, useState } from 'react'
 import styles from './ARFilters.module.css'
 import { playPop } from './pop'
 import { onFrame } from './frameGovernor'
+import {
+  arFilterCatalog,
+  arFilterThumbnailUrl,
+  loadARFilterCatalog,
+  onARFilterCatalogChange,
+  type ARFilterEntry,
+} from './arFilterCatalog'
 
 // AR filters — the web twin of ARFilterManager.swift, carrying the same set it
 // ships (none · Smooth · Beauty · Brighten · Glow · Sharpen · Warm · Cool ·
@@ -49,42 +56,23 @@ export interface ARFilterDef {
 // FaceAROverlay. `fisheye-fun` is the one that CSS genuinely cannot express —
 // a real barrel distortion needs a shader pass, not a filter chain — so what
 // is here is a stand-in bulge, marked as such.
-export const AR_FILTERS: ARFilterDef[] = [
-  { id: 'none', label: 'None', css: 'none', thumbnail: 'ar-filters/none.jpg' },
-  // 1 — the blur is tiny and paired with a contrast lift: skin softens, edges hold.
-  { id: 'smooth-glow', label: 'Smooth Glow', css: 'blur(1.1px) brightness(1.07) contrast(1.05) saturate(1.06) drop-shadow(0 0 10px rgba(255,214,236,0.45))', thumbnail: 'ar-filters/smooth-glow.jpg' },
-  // 2 — anaglyph by offset shadows: not a true channel split, but it reads as
-  // the red/cyan glasses on the tile and costs one filter chain.
-  { id: 'pop-3d', label: 'Pop 3D', css: 'saturate(1.1) drop-shadow(-3px 0 0 rgba(255,0,64,0.45)) drop-shadow(3px 0 0 rgba(0,224,255,0.45))', thumbnail: 'ar-filters/pop-3d.jpg' },
-  // 3 — warm and soft under the ears/nose/hearts costume.
-  { id: 'puppy-love', label: 'Puppy Love', css: 'brightness(1.08) saturate(1.14) contrast(1.02) sepia(0.1)', thumbnail: 'ar-filters/puppy-love.jpg' },
-  // 4 — tape, not film: oversaturated, slightly crushed, pushed green-blue.
-  { id: 'retro-vhs', label: 'Retro VHS', css: 'saturate(1.45) contrast(1.18) hue-rotate(-6deg) brightness(0.96)', thumbnail: 'ar-filters/retro-vhs.jpg' },
-  // 5 — full desaturation plus a hard contrast curve is what reads as metal.
-  { id: 'chrome-shine', label: 'Chrome Shine', css: 'grayscale(1) contrast(1.55) brightness(1.12) drop-shadow(0 0 8px rgba(210,238,255,0.5))', thumbnail: 'ar-filters/chrome-shine.jpg' },
-  // 6 — pastel lift so the wings sit on something soft.
-  { id: 'butterfly-dream', label: 'Butterfly Dream', css: 'brightness(1.1) saturate(1.22) contrast(0.98) hue-rotate(6deg)', thumbnail: 'ar-filters/butterfly-dream.jpg' },
-  // 7 — posterised: heavy contrast and saturation, the ink-and-flat-colour look.
-  { id: 'comic-pop', label: 'Comic Pop', css: 'contrast(1.85) saturate(1.7) brightness(1.04)', thumbnail: 'ar-filters/comic-pop.jpg' },
-  // 8 — the frame goes dark and warm so the eye glow has somewhere to burn.
-  { id: 'inferno-eyes', label: 'Inferno Eyes', css: 'brightness(0.82) contrast(1.3) saturate(1.35) sepia(0.25) hue-rotate(-18deg)', thumbnail: 'ar-filters/inferno-eyes.jpg' },
-  // 9 — bright and pink; the crown does the rest.
-  { id: 'heart-crown', label: 'Heart Crown', css: 'brightness(1.1) saturate(1.25) contrast(1.02) hue-rotate(-8deg)', thumbnail: 'ar-filters/heart-crown.jpg' },
-  // 10 — STAND-IN. A real fisheye is a barrel warp per pixel; a filter chain
-  // cannot move pixels. This only widens and vignettes so the entry is not
-  // dead, and it wants a shader pass to be honest to its name.
-  { id: 'fisheye-fun', label: 'Fisheye Fun', css: 'contrast(1.12) saturate(1.15) brightness(1.04)', thumbnail: 'ar-filters/fisheye-fun.jpg' },
-  // 11 — iridescence: the hue is animated in CSS, this is the base grade.
-  { id: 'oil-slick', label: 'Oil Slick', css: 'saturate(2.2) contrast(1.25) hue-rotate(150deg) brightness(1.05)', thumbnail: 'ar-filters/oil-slick.jpg' },
-  // 12 — night sky: pushed blue and dimmed, stars drawn over the top.
-  { id: 'starry-night', label: 'Starry Night', css: 'brightness(0.72) contrast(1.2) saturate(1.3) hue-rotate(205deg)', thumbnail: 'ar-filters/starry-night.jpg' },
-  // 13 — green cast under the hood.
-  { id: 'dino-hood', label: 'Dino Hood', css: 'saturate(1.2) hue-rotate(-14deg) brightness(1.04) contrast(1.05)', thumbnail: 'ar-filters/dino-hood.jpg' },
-  // 14 — blown out and soft, the way a halo shot is lit.
-  { id: 'angel', label: 'Angel', css: 'brightness(1.24) contrast(0.94) saturate(1.05) blur(0.6px) drop-shadow(0 0 16px rgba(255,240,190,0.6))', thumbnail: 'ar-filters/angel.jpg' },
-  // 15 — warm garden light beneath the flowers.
-  { id: 'flower-crown', label: 'Flower Crown', css: 'brightness(1.09) saturate(1.28) sepia(0.12) contrast(1.02)', thumbnail: 'ar-filters/flower-crown.jpg' },
-]
+// The set now comes from the streamed catalog (src/arFilterCatalog.ts), whose
+// bundled fallback holds exactly these fifteen. `AR_FILTERS` stays a live view
+// of it so the existing call sites keep working, and it repopulates when a
+// published catalog with more filters arrives.
+export const AR_FILTERS: ARFilterDef[] = arFilterCatalog().filters.map(toDef)
+
+function toDef(entry: ARFilterEntry): ARFilterDef {
+  return { id: entry.id, label: entry.label, css: entry.css, thumbnail: entry.thumbnail }
+}
+
+// Adopt a newer published catalog in place. Mutating the SAME array (rather
+// than rebinding it) is what lets modules that captured `AR_FILTERS` at import
+// time — PostComposer's channel stepper, Camera's css lookup — see new filters
+// without every one of them having to subscribe.
+onARFilterCatalogChange(next => {
+  AR_FILTERS.splice(0, AR_FILTERS.length, ...next.filters.map(toDef))
+})
 
 /**
  * The costume, drawn on the swatch.
@@ -277,6 +265,17 @@ export default function ARFilters({
     return stop
   }, [])
 
+  // Pull the published catalog when the rail is first opened — not at app
+  // start: someone who never opens AR filters should never pay for the fetch.
+  // The bundled fallback is already on screen, so this only ever ADDS.
+  const [, forceCatalogRender] = useState(0)
+  useEffect(() => {
+    let live = true
+    const stop = onARFilterCatalogChange(() => { if (live) forceCatalogRender(n => n + 1) })
+    void loadARFilterCatalog()
+    return () => { live = false; stop() }
+  }, [])
+
   const onPointerDown = (e: React.PointerEvent) => {
     e.stopPropagation()
     draggingRef.current = true
@@ -365,7 +364,7 @@ export default function ARFilters({
                   className={styles.swatch}
                   style={{
                     filter: f.css === 'none' ? undefined : f.css,
-                    backgroundImage: `url(${f.thumbnail})`,
+                    backgroundImage: `url(${arFilterThumbnailUrl(f.thumbnail)})`,
                   }}
                 />
                 {/* No EffectMark here any more. It drew the costume onto a plain

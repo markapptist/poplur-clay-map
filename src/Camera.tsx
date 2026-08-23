@@ -15,6 +15,7 @@ import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
 import ARFilters, { AR_FILTERS } from './ARFilters'
+import { arFilterCatalog } from './arFilterCatalog'
 import FaceAROverlay, { drawFaceAREffect } from './FaceAROverlay'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
 import PermissionAlert from './PermissionAlert'
@@ -360,8 +361,21 @@ export default function Camera({
   // CSS chain below styles a <video> that is never rendered. The filter has to
   // be handed to the native pipeline instead — see WebHomeCameraLayer's
   // "filter" control. Harmless elsewhere: postNativeEvent no-ops off-shell.
+  // The GRADE travels with the id. iOS used to look the id up in a compiled-in
+  // table, which meant a filter published to the catalog after an app release
+  // resolved to nothing on the native viewfinder — the exact ceiling that made
+  // this library un-growable. Sending the recipe makes a new filter work on a
+  // phone whose binary has never heard of it; native still falls back to its
+  // own table when no grade is supplied.
   useEffect(() => {
-    if (isNativeShell()) postNativeEvent({ type: 'cameraControl', control: 'filter', id: arFilter })
+    if (!isNativeShell()) return
+    const entry = arFilterCatalog().filters.find(f => f.id === arFilter)
+    postNativeEvent({
+      type: 'cameraControl',
+      control: 'filter',
+      id: arFilter,
+      ...(entry?.grade ? { grade: entry.grade } : {}),
+    })
   }, [arFilter])
   const filterCss = AR_FILTERS.find(f => f.id === arFilter)?.css ?? 'none'
   // The capture currently in the post composer (photo taken, video recorded, or

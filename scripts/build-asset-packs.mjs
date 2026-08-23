@@ -29,6 +29,10 @@ const PACKS = [
   { id: 'profile-themes', from: 'profile-themes',    version: 1 },
   { id: 'feed',           from: 'feed',              version: 1 },
   { id: 'channels',       from: 'channels',          version: 1 },
+  // The filter library: thumbnails AND catalog.json, so a new filter is a
+  // publish rather than an app release. Small today (~450KB), and the whole
+  // reason it is a pack is that it grows every time a filter is added.
+  { id: 'ar-filters',     from: 'ar-filters',        version: 1 },
   // The clay-models pack is a FILE LIST, not a directory: the models it moves
   // out of the bundle are scattered top-level GLBs, not one folder. Keep this
   // list identical to CLAY_MODELS_PACK in src/modelUrl.ts — the app's resolver
@@ -99,11 +103,21 @@ const BUCKET = 'https://storage.googleapis.com/poplur2025-assets/asset-packs'
 const LOCAL = { 'arcade-art': 'games/arcade/art', subscreens: 'subscreens', 'profile-themes': 'profile-themes', feed: 'feed', channels: 'channels' }
 const useBucket = process.env.POPLUR_PACK_BASE === 'bucket'
 
+// Packs that are BUILT but not yet uploaded. Without this, registering a pack
+// silently breaks it: `packBase` would hand out a bucket url for files that
+// only exist in the bundle, and every thumbnail 404s the moment the manifest
+// names a baseUrl. Pinning the pack to its bundled path keeps it working
+// until someone deliberately runs the publish, which is also the step that
+// should remove it from this list and add it to vite's PUBLISHED_PACK_DIRS.
+const UNPUBLISHED = { 'ar-filters': 'ar-filters' }
+
 const manifest = {
   baseUrl: useBucket ? BUCKET : '',
   // Local mode serves each pack from where it already lives in public/, so
   // nothing has to move before the upload happens.
-  localPaths: useBucket ? undefined : LOCAL,
+  // Bucket mode pins ONLY the unpublished packs; everything else comes from
+  // the bucket. Local mode pins everything, as it always did.
+  localPaths: useBucket ? { ...UNPUBLISHED } : { ...LOCAL, ...UNPUBLISHED },
   packs,
 }
 writeFileSync(join(PUBLIC, 'asset-manifest.json'), JSON.stringify(manifest, null, 2))

@@ -1,5 +1,8 @@
 {
   "baseUrl": "https://storage.googleapis.com/poplur2025-assets/asset-packs",
+  "localPaths": {
+    "ar-filters": "ar-filters"
+  },
   "packs": [
     {
       "id": "arcade-art",
@@ -331,6 +334,39 @@
         "poplur_mixer_lite.glb",
         "poplur_newspaper.glb",
         "poplur_radio.glb"
+      ]
+    },
+    {
+      "id": "ar-filters",
+      "version": 1,
+      "bytes": 423800,
+      "digest": "e9b5155c8fc8",
+      "files": [
+        "angel.jpg",
+        "beauty.jpg",
+        "brighten.jpg",
+        "butterfly-dream.jpg",
+        "catalog.json",
+        "chrome-shine.jpg",
+        "comic-pop.jpg",
+        "cool.jpg",
+        "dino-hood.jpg",
+        "fisheye-fun.jpg",
+        "flower-crown.jpg",
+        "glow.jpg",
+        "heart-crown.jpg",
+        "inferno-eyes.jpg",
+        "none.jpg",
+        "oil-slick.jpg",
+        "pop-3d.jpg",
+        "puppy-love.jpg",
+        "retro-vhs.jpg",
+        "sharpen.jpg",
+        "smooth-glow.jpg",
+        "smooth.jpg",
+        "starry-night.jpg",
+        "vintage.jpg",
+        "warm.jpg"
       ]
     }
   ]
