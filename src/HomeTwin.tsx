@@ -2361,6 +2361,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // chrome IS the screen — fading it there just makes the app look like it
   // vanished — so the fade only applies while a subscreen is covering the app.
   const chromeFaded = chromeIdle && overlayOpen
+  // The Times keeps its channel changer and radius readout as persistent
+  // navigation. On cream newsprint the generic 10%-opacity subscreen fade made
+  // both controls look removed after 30 seconds. Keep the HUD visually present
+  // there while `chromeIdle` still parks its counters, audio and animations.
+  const bottomHudFaded = chromeFaded && cubeScreen !== 'feed-news'
   // The feed's long-press fullscreen player: the FEED asks, the shell obeys —
   // cube, HUD row and stat cards leave entirely (chromeHidden, not the idle
   // ghost) so the clip truly owns the screen. FeedTwin resets this on exit and
@@ -3911,7 +3916,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           floated and the arrows and radius label it sits between vanished
           underneath. The whole HUD is one piece of home chrome. */}
       <div
-        className={`${styles.bottomRow} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        className={`${styles.bottomRow} ${styles.overSubscreen}${bottomHudFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
