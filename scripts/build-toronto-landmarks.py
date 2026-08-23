@@ -398,25 +398,43 @@ def add_tower_fin(
 ) -> bpy.types.Object:
     """Create one of the CN Tower's three tapered concrete buttress fins."""
 
-    z0, z1 = 2.0, 248.0
+    # The three outer foot centres form a 50.9 m equilateral support triangle
+    # (29.387 m circumradius).  Five profiles keep the characteristic Y-shaped
+    # legs visible all the way to the main pod while adding only 36 triangles
+    # per fin.  The final profile overlaps the deck underside so there is no
+    # implausible gap when viewed at the map's low, oblique camera angle.
+    profiles = (
+        # z, inner radius, outer radius, half width
+        (2.0, -4.0, 29.387, 4.6),
+        (110.0, -3.3, 21.7, 3.7),
+        (245.0, -2.2, 12.2, 2.4),
+        (326.0, -1.4, 7.0, 1.45),
+        (337.2, -1.15, 4.9, 1.15),
+    )
     vertices = [
-        (-1.8, -2.7, z0),
-        (10.8, -2.7, z0),
-        (10.8, 2.7, z0),
-        (-1.8, 2.7, z0),
-        (-1.0, -1.35, z1),
-        (4.2, -1.35, z1),
-        (4.2, 1.35, z1),
-        (-1.0, 1.35, z1),
+        vertex
+        for z, inner, outer, half_width in profiles
+        for vertex in (
+            (inner, -half_width, z),
+            (outer, -half_width, z),
+            (outer, half_width, z),
+            (inner, half_width, z),
+        )
     ]
-    faces = [
-        (0, 1, 2, 3),
-        (4, 7, 6, 5),
-        (0, 4, 5, 1),
-        (1, 5, 6, 2),
-        (2, 6, 7, 3),
-        (4, 0, 3, 7),
-    ]
+    faces: list[tuple[int, ...]] = [(0, 1, 2, 3)]
+    for profile_index in range(len(profiles) - 1):
+        lower = profile_index * 4
+        upper = lower + 4
+        faces.extend(
+            (
+                (lower, upper, upper + 1, lower + 1),
+                (lower + 1, upper + 1, upper + 2, lower + 2),
+                (lower + 2, upper + 2, upper + 3, lower + 3),
+                (lower + 3, upper + 3, upper, lower),
+            )
+        )
+    last = (len(profiles) - 1) * 4
+    faces.append((last, last + 3, last + 2, last + 1))
     mesh = bpy.data.meshes.new(f"{name}_Mesh")
     mesh.from_pydata(vertices, [], faces)
     mesh.update()
@@ -563,6 +581,8 @@ def build_cn_tower() -> bpy.types.Object:
     root["poplur_pbr"] = "snaplike-toronto-v1"
     root["landmark"] = "CN Tower"
     root["height_m"] = 553.0
+    root["support_triangle_side_m"] = 50.9
+    root["main_pod_diameter_m"] = 42.5
     root["static_scene"] = True
     root["up_axis"] = "Y after glTF export"
     bpy.context.collection.objects.link(root)
@@ -573,21 +593,22 @@ def build_cn_tower() -> bpy.types.Object:
     for index, angle in enumerate((0.0, TAU / 3.0, 2.0 * TAU / 3.0), start=1):
         pieces.append(add_tower_fin(f"CN_Buttress_Fin_{index}", angle, mats["concrete"]))
 
-    # Main observation deck: concrete/metal structure, opaque glazing and a
-    # narrow pink underside glow.  The proportions follow the real silhouette.
+    # Main observation deck: a 42.5 m maximum diameter restores the CN Tower's
+    # broad, instantly recognisable pod while retaining the material zoning,
+    # opaque glazing and narrow pink underside glow used by the map aesthetic.
     pieces.extend(
         [
-            add_cone("CN_Deck_Lower_Collar", 5.2, 10.8, 5.0, 331.5, mats["metal"], vertices=32),
-            add_cone("CN_Deck_Lower_Skirt", 10.8, 13.0, 4.0, 336.0, mats["metal"], vertices=32),
-            add_cylinder("CN_Deck_Pink_Underside", 13.25, 0.72, 338.35, mats["pink"], vertices=32),
-            add_cylinder("CN_Deck_Observation_Glass", 13.0, 5.6, 341.5, mats["glass"], vertices=32),
-            add_cylinder("CN_Deck_Metal_Mullion", 13.1, 0.55, 344.25, mats["metal"], vertices=32),
-            add_cylinder("CN_Deck_Restaurant_Glass", 11.7, 4.2, 346.7, mats["glass"], vertices=32),
-            add_cone("CN_Deck_Roof", 11.7, 7.0, 4.0, 350.8, mats["metal"], vertices=32),
+            add_cone("CN_Deck_Lower_Collar", 6.2, 17.6, 5.0, 331.5, mats["metal"], vertices=32),
+            add_cone("CN_Deck_Lower_Skirt", 17.6, 20.7, 4.0, 336.0, mats["metal"], vertices=32),
+            add_cylinder("CN_Deck_Pink_Underside", 21.25, 0.72, 338.35, mats["pink"], vertices=32),
+            add_cylinder("CN_Deck_Observation_Glass", 21.0, 5.6, 341.5, mats["glass"], vertices=32),
+            add_cylinder("CN_Deck_Metal_Mullion", 21.15, 0.55, 344.25, mats["metal"], vertices=32),
+            add_cylinder("CN_Deck_Restaurant_Glass", 19.2, 4.2, 346.7, mats["glass"], vertices=32),
+            add_cone("CN_Deck_Roof", 19.2, 10.5, 4.0, 350.8, mats["metal"], vertices=32),
         ]
     )
 
-    pieces.append(add_cone("CN_Upper_Shaft", 2.15, 1.55, 93.0, 399.5, mats["concrete"], vertices=14))
+    pieces.append(add_cone("CN_Upper_Shaft", 4.8, 1.75, 93.0, 399.5, mats["concrete"], vertices=14))
     pieces.extend(
         [
             add_cone("CN_SkyPod_Lower", 2.0, 4.6, 2.6, 445.6, mats["metal"], vertices=24),

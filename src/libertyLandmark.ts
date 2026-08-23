@@ -294,6 +294,11 @@ export function installNearLandmark3D(
   const customLayer: mapboxgl.CustomLayerInterface = {
     id: layerId,
     type: 'custom',
+    // Mapbox Standard orders custom data by named slots.  The clay building
+    // extrusions already live in `top`; keeping landmarks in that same slot
+    // makes the before-label insertion below authoritative instead of letting
+    // downtown buildings be reordered over the tower's pod and supports.
+    slot: 'top',
     renderingMode: '3d',
     onAdd(m, gl) {
       cam = new THREE.Camera()

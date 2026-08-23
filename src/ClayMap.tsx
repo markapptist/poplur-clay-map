@@ -644,6 +644,7 @@ const WORLD_LANDMARKS: {
   color: number
   yaw?: number
   clearDepth?: boolean
+  nearKm?: number
   frameCenter?: [number, number]
   framePitch?: number
   frameZoom?: number
@@ -653,15 +654,19 @@ const WORLD_LANDMARKS: {
   { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xf0b75f },
   {
     id: 'cn-tower', coords: [-79.3871, 43.6426], heightM: 553,
-    frameSpanM: 553, color: 0x7fc9f4,
-    frameCenter: [-79.38793285, 43.64220423],
-    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0,
+    frameSpanM: 553, color: 0x7fc9f4, nearKm: 0.5,
+    frameCenter: [-79.38677, 43.64418],
+    // Keep the real 553 m proportions but present the pod and three Y-shaped
+    // supports at a phone-legible size. The slight rotation also moves the
+    // Ritz-Carlton label off the observation deck without losing SkyDome.
+    framePitch: 42, frameZoom: 15.6, revealZoom: 15.0, frameBearing: 22,
   },
-  // CN Tower and SkyDome share the same arrival frame and reveal threshold:
-  // either search result should land on the complete Toronto landmark pair.
+  // Both Toronto models stay eligible throughout either destination frame;
+  // CN uses the tighter readability angle while SkyDome keeps its roof-first
+  // stadium view, and either search result still lands on the complete pair.
   {
     id: 'rogers-centre', coords: [-79.38918212, 43.64161058], heightM: 60,
-    frameSpanM: 553, color: 0xe4e6e8, yaw: 15.9, clearDepth: false,
+    frameSpanM: 553, color: 0xe4e6e8, yaw: 15.9, clearDepth: false, nearKm: 0.5,
     frameCenter: [-79.38834927, 43.64200635],
     framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0,
   },
@@ -3293,7 +3298,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           color: mark.color,
           yaw: mark.yaw,
           clearDepth: mark.clearDepth,
-          nearKm: LANDMARK_3D_REVEAL_KM,
+          nearKm: mark.nearKm ?? LANDMARK_3D_REVEAL_KM,
           nearZoom: mark.revealZoom
             ?? landmarkCameraZoom(mark.frameSpanM) - LANDMARK_REVEAL_ZOOM_BUFFER,
         })
