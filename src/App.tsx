@@ -47,7 +47,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
 import { userUnitsToKm } from './units'
-import ClayMap, { MAP_LITE, WeatherMark, installComposeRadiusPreview, landmarkCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
+import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, WeatherMark, installComposeRadiusPreview, landmarkCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
@@ -384,6 +384,10 @@ const RECOMMENDATIONS: ((destination: TourDestination) => string)[] = [
 // 19.5 and always was, so that note was describing a constant that had moved.)
 const BUILDING_REVEAL_ZOOM = 17.6
 const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
+// Cross-country movement on Mercator stays regional and top-down. At zoom 4
+// the finite world sheet remains well outside a phone viewport even while the
+// camera traverses high-latitude destinations.
+const FLAT_TRAVEL_MIN_ZOOM = Math.max(MAP_MIN_ZOOM, 4)
 // Mapbox resolves its final camera frame just after the advertised duration.
 // Keep that small settle tail inside the finite lease instead of reopening the
 // map's ambient renderer for an arbitrary window.
@@ -409,6 +413,10 @@ const TOUR_SPEED = (() => {
 })()
 const TOUR_FLIGHT_MS = Math.round(10_000 / TOUR_SPEED)
 const TOUR_DWELL_MS = Math.round(5_000 / TOUR_SPEED)
+// Captured from the user's live map slider at the requested Statue of Liberty
+// framing. Tour uses this exact closeness for every stop; search keeps the
+// existing size-aware full-landmark frames.
+const TOUR_LANDMARK_ZOOM = 18.18
 const MAP_TOTAL_OWN_POSTS = 128
 const MAP_GLOBAL_ONLINE = 1_200_000
 
@@ -567,6 +575,21 @@ export default function App() {
   const focusedPostPicker = params.get('pickSpot') === '1'
   const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
   const mapRef = useRef<mapboxgl.Map | null>(null)
+  // Generation guard for the flat-map camera's three stages. Any new flight,
+  // touch, stop, or background transition invalidates the outstanding stage
+  // listener before it can pull the camera away again.
+  const stagedCameraFlightRef = useRef({ serial: 0 })
+  const cancelStagedCameraFlight = useCallback(() => {
+    stagedCameraFlightRef.current.serial += 1
+    const map = mapRef.current as (mapboxgl.Map & {
+      __cinematic?: boolean
+      __tripping?: boolean
+    }) | null
+    if (map) {
+      map.__cinematic = false
+      map.__tripping = false
+    }
+  }, [])
   const placeSuggestionTimerRef = useRef<number | null>(null)
   useEffect(() => onFoodSuggestionVisibilityChange(visible => {
     if (window.parent === window) return
@@ -1348,32 +1371,90 @@ export default function App() {
     if (!map) return false
     const mapCamera = map as unknown as {
       __cinematic?: boolean
+      __tripping?: boolean
       __claimCamera?: () => void
       __poplurCameraClaimed?: boolean
       __suppressNextMapClickUntil?: number
     }
+    cancelStagedCameraFlight()
+    // Retire any older Mapbox animation before arming this generation. Its
+    // moveend listener sees the invalid serial and cannot launch another stage.
+    map.stop()
+    const flightSerial = stagedCameraFlightRef.current.serial
+    const ownsFlight = () => stagedCameraFlightRef.current.serial === flightSerial
+    const targetCenter = landmarkFrame?.center ?? center
+    const targetZoom = landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM)
+    const targetPitch = landmarkFrame?.pitch ?? (streetView ? 82 : 64)
+    const targetBearing = landmarkFrame?.bearing ?? map.getBearing() + 36
+    const flattenMs = Math.min(700, Math.max(320, Math.round(duration * 0.08)))
+    const arrivalMs = Math.min(1100, Math.max(520, Math.round(duration * 0.12)))
+    const travelMs = Math.max(800, duration - flattenMs - arrivalMs)
     mapCamera.__poplurCameraClaimed = true
     mapCamera.__suppressNextMapClickUntil = Date.now() + duration + 500
     mapCamera.__claimCamera?.()
     mapCamera.__cinematic = true
+    mapCamera.__tripping = true
+    // Close adaptive views normally lock pitch into the 3D band. Temporarily
+    // release that floor so the first beat can genuinely flatten.
+    map.setMinPitch(0)
+    map.setMaxPitch(85)
     wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-    map.flyTo({
-      center: landmarkFrame?.center ?? center,
-      // Landmarks carry a size-aware frame. It uses just enough zoom to make
-      // the object legible while retaining its top, base and surrounding map;
-      // ordinary places keep the existing street-view or building framing.
-      zoom: landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM),
-      pitch: landmarkFrame?.pitch ?? (streetView ? 82 : 64),
-      bearing: landmarkFrame?.bearing ?? map.getBearing() + 36,
-      duration,
-      // The tour arc rises ALL the way out — the flight peaks at the full
-      // globe before diving into the next stop.
-      minZoom: 0.9,
-      curve: 1.7,
-      essential: true,
+
+    // Beat 1: flatten while still close to the ground. No world edge can enter
+    // the frustum because the map has not pulled back yet.
+    map.once('moveend', () => {
+      if (!ownsFlight()) return
+      window.setTimeout(() => {
+        if (!ownsFlight()) return
+        mapCamera.__cinematic = true
+        mapCamera.__tripping = true
+        map.setMinPitch(0)
+        map.setMaxPitch(0)
+
+        // Beat 2: cross the world top-down. The old globe-era shot combined
+        // zoom 0.9 with a 60-degree pitch, which literally looked beyond the
+        // finite Mercator sheet and produced the black triangle.
+        map.once('moveend', () => {
+          if (!ownsFlight()) return
+          window.setTimeout(() => {
+            if (!ownsFlight()) return
+            mapCamera.__cinematic = true
+            mapCamera.__tripping = true
+            map.setMaxPitch(Math.max(targetPitch, streetView ? 85 : 60))
+            map.setMinPitch(0)
+
+            // Beat 3: only restore the landmark's hero angle after the camera
+            // is back at its close target zoom, where the map fills the view.
+            map.once('moveend', () => {
+              if (!ownsFlight()) return
+              mapCamera.__tripping = false
+              mapCamera.__cinematic = false
+            })
+            map.easeTo({
+              center: targetCenter,
+              zoom: targetZoom,
+              pitch: targetPitch,
+              bearing: targetBearing,
+              duration: arrivalMs,
+              essential: true,
+            })
+          }, 0)
+        })
+        map.flyTo({
+          center: targetCenter,
+          zoom: targetZoom,
+          pitch: 0,
+          bearing: 0,
+          duration: travelMs,
+          minZoom: FLAT_TRAVEL_MIN_ZOOM,
+          curve: 1.35,
+          essential: true,
+        })
+      }, 0)
     })
+    map.easeTo({ pitch: 0, bearing: 0, duration: flattenMs, essential: true })
     return true
-  }, [streetView])
+  }, [cancelStagedCameraFlight, streetView])
 
   /**
    * Travelling between pops, as distinct from the ambient tour.
@@ -1516,6 +1597,7 @@ export default function App() {
   // outright — has to say so, or the menu keeps offering STOP for a tour that
   // is no longer running.
   const stopTour = useCallback(() => {
+    cancelStagedCameraFlight()
     clearTourTimers()
     tourPauseAfterStopRef.current = false
     tourFlightInProgressRef.current = false
@@ -1533,7 +1615,7 @@ export default function App() {
       map.__tripping = false
       map.stop()
     }
-  }, [clearTourTimers])
+  }, [cancelStagedCameraFlight, clearTourTimers])
   tourStopRef.current = stopTour
   searchInterruptRef.current = stopTour
   useEffect(() => clearTourTimers, [clearTourTimers])
@@ -1603,10 +1685,14 @@ export default function App() {
       dwellMs: TOUR_DWELL_MS,
     })
     speakMapLine(line, stations)
+    const landmarkFrame = landmarkCameraFrame(destination.id)
+    const tourFrame = landmarkFrame
+      ? { ...landmarkFrame, zoom: TOUR_LANDMARK_ZOOM }
+      : landmarkFrame
     flyToCenter(
       destination.coords,
       TOUR_FLIGHT_MS,
-      landmarkCameraFrame(destination.id),
+      tourFrame,
     )
     // The ARRIVAL beat. The card and its spoken line land when the camera
     // does, not when it lifts off — announcing a score thirty seconds before
@@ -1786,6 +1872,7 @@ export default function App() {
       // Ambient camera work always yields to a real person. Previously an
       // active tour ignored touch, so a pan or slider move could visibly land
       // and then be pulled away by the next tour camera beat.
+      cancelStagedCameraFlight()
       if (tourOnRef.current) stopTour()
       scheduleTourIdle()
     }
@@ -1797,7 +1884,7 @@ export default function App() {
     return () => {
       for (const type of events) document.removeEventListener(type, bump, opts)
     }
-  }, [scheduleTourIdle, stopTour])
+  }, [cancelStagedCameraFlight, scheduleTourIdle, stopTour])
 
   tourIdleRef.current = { schedule: scheduleTourIdle, cancel: cancelTourIdle }
 

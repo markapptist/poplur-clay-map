@@ -213,6 +213,16 @@ function applySky(map: mapboxgl.Map, shade: SkyShade) {
   // was one of the GPU costs that survived after visible animation stopped on
   // iPhone. It also produced the stray launch halo.
   if (MAP_2D || SHARED_ADAPTIVE_MAP) {
+    // A Mercator map is a finite sheet. Match every surface beneath it to the
+    // live sky palette so cold-start/transition gaps can never flash black;
+    // the viewport-aligned style backdrop installed below covers the same edge
+    // once the clay style is ready, without restoring fog or globe rendering.
+    map.getContainer().style.backgroundColor = shade.spaceColor
+    map.getCanvasContainer().style.backgroundColor = shade.spaceColor
+    map.getCanvas().style.backgroundColor = shade.spaceColor
+    if (map.getLayer('clay-sky-backdrop')) {
+      map.setPaintProperty('clay-sky-backdrop', 'background-color', shade.highColor)
+    }
     try { map.setFog(null) } catch { /* fog unsupported */ }
     return
   }
@@ -1161,7 +1171,11 @@ const TOUR_SUBJECTS: Array<[number, number]> = [
   [-122.4783, 37.8199],// Golden Gate, SF
 ]
 
-const ZOOM_MIN = 1
+// At globe-scale zoom a pitched Mercator camera can see past the finite
+// north/south map plane. Keep the sheet larger than a phone/tablet viewport;
+// App uses this same floor for every programmatic cross-country flight.
+export const MAP_MIN_ZOOM = MAP_2D || SHARED_ADAPTIVE_MAP ? 3 : 1
+const ZOOM_MIN = MAP_MIN_ZOOM
 // Slider top end. Zoom 16.x still reads like a satellite overview; 18.x gets
 // close enough for Mapbox Standard's 3D building massing to be obvious.
 const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doorstep
@@ -1735,6 +1749,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         zoom: 14.8,
         // Hard ceiling: pinch/scroll can't go deeper than the toy-diorama level.
         maxZoom: ZOOM_MAX,
+        // Unlike the old globe, Mercator has a real north/south edge. Clamp
+        // gestures and programmatic cameras to the same safe regional floor.
+        minZoom: MAP_MIN_ZOOM,
         pitch: MAP_2D || SHARED_ADAPTIVE_MAP ? 0 : 62,
         bearing: MAP_2D || SHARED_ADAPTIVE_MAP ? 0 : -18,
         // MSAA is a browser-only luxury: on phone GPUs it multiplies the
@@ -2340,7 +2357,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           settleAdaptiveCamera(55, -18)
         }
       } else {
-        if (map.getMinPitch() !== 0) { map.setMinPitch(0); map.setMaxPitch(85) }
+        // Wide Mercator views are strictly top-down. Letting the former 3D
+        // max-pitch survive here allows a pinch-out to look past the finite
+        // world sheet before the settle callback can flatten it.
+        if (map.getMinPitch() !== 0) map.setMinPitch(0)
+        if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
         // Pulling back returns to the light, north-up 2D map. This prevents a
         // close-up 3D camera from persisting after the buildings have culled.
         if (SHARED_ADAPTIVE_MAP && (map.getPitch() > 0.5 || Math.abs(map.getBearing()) > 0.5)) {
@@ -2411,6 +2432,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       }
 
       const firstLayerId = map.getStyle()?.layers?.[0]?.id
+      if (!map.getLayer('clay-sky-backdrop')) {
+        const backdropShade = skyRef.current ?? skyShadeAt()
+        map.addLayer({
+          id: 'clay-sky-backdrop',
+          type: 'background',
+          paint: {
+            'background-color': backdropShade.highColor,
+            'background-opacity': 1,
+            // A viewport-aligned quad remains behind the finite Mercator sheet
+            // even while its map-aligned land layer tilts during a transition.
+            'background-pitch-alignment': 'viewport',
+          },
+        }, map.getLayer('clay-land-background') ? 'clay-land-background' : firstLayerId)
+      }
       if (!map.getLayer('clay-land-background')) {
         map.addLayer({
           id: 'clay-land-background',
