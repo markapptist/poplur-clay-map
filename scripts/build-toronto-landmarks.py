@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Poplur's mobile Toronto landmark GLBs in Blender 4.5.
+"""Build Poplur's compact PBR landmark GLBs in Blender 4.5.
 
 The geometry, UVs and tiny embedded PBR maps are generated deterministically;
 there are no external source files and no network calls.  Run through Blender:
@@ -45,6 +45,24 @@ RGBA = tuple[float, float, float, float]
 PixelFn = Callable[[int, int, int], RGBA]
 
 
+# Toronto uses custom multi-material geometry. The world-tour meshes retain
+# their existing geometry and scale, then receive the same compact embedded
+# PBR treatment so they render tactile and colourful rather than flat.
+LEGACY_WORLD_ASSETS: dict[str, dict[str, object]] = {
+    "big-ben": {"base": (0.843, 0.671, 0.349), "kind": "concrete", "metallic": 0.03, "roughness": 0.76, "normal_kind": "concrete"},
+    "burj-khalifa": {"base": (0.941, 0.718, 0.373), "kind": "metal", "metallic": 0.46, "roughness": 0.31, "normal_kind": "metal"},
+    "christ-redeemer": {"base": (0.616, 0.780, 0.949), "kind": "concrete", "metallic": 0.01, "roughness": 0.74, "normal_kind": "concrete"},
+    "colosseum": {"base": (0.788, 0.584, 0.439), "kind": "concrete", "metallic": 0.02, "roughness": 0.78, "normal_kind": "concrete"},
+    "eiffel": {"base": (0.937, 0.455, 0.584), "kind": "metal", "metallic": 0.62, "roughness": 0.43, "normal_kind": "metal"},
+    "giza": {"base": (0.878, 0.690, 0.396), "kind": "concrete", "metallic": 0.01, "roughness": 0.82, "normal_kind": "concrete"},
+    "golden-gate": {"base": (0.929, 0.463, 0.369), "kind": "metal", "metallic": 0.38, "roughness": 0.47, "normal_kind": "metal"},
+    "space-needle": {"base": (0.529, 0.824, 0.714), "kind": "metal", "metallic": 0.48, "roughness": 0.34, "normal_kind": "metal"},
+    "statue-liberty": {"base": (0.486, 0.784, 0.647), "kind": "metal", "metallic": 0.35, "roughness": 0.48, "normal_kind": "metal"},
+    "sydney-opera": {"base": (0.910, 0.749, 0.847), "kind": "roof", "metallic": 0.18, "roughness": 0.33, "normal_kind": "concrete"},
+    "taj-mahal": {"base": (0.941, 0.843, 0.890), "kind": "concrete", "metallic": 0.01, "roughness": 0.48, "normal_kind": "concrete"},
+}
+
+
 def blender_args() -> list[str]:
     """Return arguments following Blender's required ``--`` separator."""
 
@@ -55,9 +73,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--asset",
-        choices=("all", "cn-tower", "rogers-centre"),
+        choices=("all", "world", "cn-tower", "rogers-centre", *LEGACY_WORLD_ASSETS),
         default="all",
-        help="Asset to generate (default: both).",
+        help="Asset to generate (default: Toronto and world-tour assets).",
     )
     parser.add_argument(
         "--output-dir",
@@ -780,10 +798,10 @@ def ensure_mesh_contract() -> None:
                 raise RuntimeError(f"{obj.name} uses unmarked material {material.name}")
 
 
-def export_glb(path: Path) -> None:
+def export_glb(path: Path, *, pipeline: str = "toronto-landmarks-v1") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     ensure_mesh_contract()
-    bpy.context.scene["poplur_pipeline"] = "toronto-landmarks-v1"
+    bpy.context.scene["poplur_pipeline"] = pipeline
     bpy.context.scene["static_scene"] = True
     result = bpy.ops.export_scene.gltf(
         filepath=str(path),
@@ -796,6 +814,16 @@ def export_glb(path: Path) -> None:
         export_tangents=False,
         export_materials="EXPORT",
         export_image_format="AUTO",
+        # The original world meshes are Draco-compressed. Keep that contract
+        # when adding their tiny material maps so the mobile archive remains
+        # small enough to ship rather than ballooning from decoded geometry.
+        export_draco_mesh_compression_enable=True,
+        export_draco_mesh_compression_level=6,
+        export_draco_position_quantization=14,
+        export_draco_normal_quantization=10,
+        export_draco_texcoord_quantization=12,
+        export_draco_color_quantization=10,
+        export_draco_generic_quantization=12,
         export_keep_originals=False,
         export_cameras=False,
         export_lights=False,
@@ -846,7 +874,7 @@ def world_bounds(objects: Iterable[bpy.types.Object]) -> tuple[Vector, Vector]:
     return minimum, maximum
 
 
-def validate_glb(path: Path) -> dict:
+def validate_glb(path: Path, *, require_floor: bool = True) -> dict:
     path = path.resolve()
     if not path.exists():
         raise FileNotFoundError(path)
@@ -891,7 +919,7 @@ def validate_glb(path: Path) -> dict:
         raise RuntimeError(f"{path.name}: one or more imported meshes lost UVs")
 
     minimum, maximum = world_bounds(mesh_objects)
-    if abs(minimum.z) > 0.02:
+    if require_floor and abs(minimum.z) > 0.02:
         raise RuntimeError(f"{path.name}: Blender round-trip floor is {minimum.z:.4f}, expected 0")
     dimensions = maximum - minimum
     sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -944,18 +972,85 @@ def build_asset(asset: str, output_dir: Path) -> Path:
     return output
 
 
+def ensure_uv_map(obj: bpy.types.Object) -> None:
+    """Add a stable lightmap-style UV layout only when the import has none."""
+
+    if obj.data.uv_layers:
+        return
+    set_active(obj)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66.0), island_margin=0.03)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def build_legacy_world_asset(asset: str, output_dir: Path) -> Path:
+    """Texture a legacy world-tour GLB without changing its geometry or pose."""
+
+    source = output_dir / f"{asset}.glb"
+    if not source.exists():
+        raise FileNotFoundError(source)
+
+    reset_scene()
+    bpy.ops.import_scene.gltf(filepath=str(source), import_pack_images=True)
+    mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+    if not mesh_objects:
+        raise RuntimeError(f"{source.name}: imported asset has no mesh objects")
+
+    spec = LEGACY_WORLD_ASSETS[asset]
+    material = make_pbr_material(
+        f"PoplurPBR_World_{asset.replace('-', '_').title().replace('_', '')}",
+        spec["base"],  # type: ignore[arg-type]
+        spec["kind"],  # type: ignore[arg-type]
+        metallic=float(spec["metallic"]),
+        roughness=float(spec["roughness"]),
+        normal_kind=spec["normal_kind"],  # type: ignore[arg-type]
+    )
+    for obj in mesh_objects:
+        # Keep every imported transform exactly as-is: LibertyLandmark grounds
+        # and frames the resulting root from its live Three.js bounds.
+        ensure_uv_map(obj)
+        assign_material(obj, material)
+
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{asset}-pbr-", suffix=".glb", dir=output_dir, delete=False
+    ) as temporary_file:
+        temporary_output = Path(temporary_file.name)
+    try:
+        export_glb(temporary_output, pipeline="world-landmarks-v1")
+        # Never replace the working source with a partial or untextured export.
+        validate_glb(temporary_output, require_floor=False)
+        temporary_output.replace(source)
+        source.chmod(0o644)
+    finally:
+        if temporary_output.exists():
+            temporary_output.unlink()
+    return source
+
+
 def main() -> None:
     args = parse_args()
     if args.validate_only:
         for path in args.validate_only:
-            validate_glb(path if path.is_absolute() else REPO_ROOT / path)
+            resolved = path if path.is_absolute() else REPO_ROOT / path
+            validate_glb(resolved, require_floor=resolved.stem not in LEGACY_WORLD_ASSETS)
         return
 
-    selected = ("cn-tower", "rogers-centre") if args.asset == "all" else (args.asset,)
+    if args.asset == "all":
+        selected = ("cn-tower", "rogers-centre", *LEGACY_WORLD_ASSETS)
+    elif args.asset == "world":
+        selected = tuple(LEGACY_WORLD_ASSETS)
+    else:
+        selected = (args.asset,)
     output_dir = args.output_dir if args.output_dir.is_absolute() else REPO_ROOT / args.output_dir
-    built = [build_asset(asset, output_dir) for asset in selected]
-    for path in built:
-        validate_glb(path)
+    built = [
+        build_legacy_world_asset(asset, output_dir)
+        if asset in LEGACY_WORLD_ASSETS
+        else build_asset(asset, output_dir)
+        for asset in selected
+    ]
+    for asset, path in zip(selected, built):
+        validate_glb(path, require_floor=asset not in LEGACY_WORLD_ASSETS)
 
 
 if __name__ == "__main__":
