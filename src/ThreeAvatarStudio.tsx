@@ -6,7 +6,11 @@ import { releaseWebGL } from './threeCleanup'
 import type { PoplurCharacter } from './characterStore'
 import styles from './ThreeAvatarStudio.module.css'
 
-const MODEL_ROOT = '/models/avatars/quaternius/'
+// Mobile publishing intentionally omits public/models because that tree also
+// contains the very large map prop sources. Keep the five wardrobe runtime
+// models in their own compact, self-contained bundle so iOS/Android ship the
+// same avatar the browser preview loads.
+const MODEL_ROOT = '/wardrobe-models/'
 let avatarRendererSequence = 0
 
 type AvatarRuntime = { avatar: THREE.Group, scale: number, minY: number, centerX: number, centerZ: number, render: () => void }
@@ -26,12 +30,12 @@ function disposeAvatarObject(object: THREE.Object3D) {
 }
 
 function bodyFile(character: PoplurCharacter) {
-  return character.gender === 'female' ? 'Poplur_Female_Morph.gltf' : 'Poplur_Male_Morph.gltf'
+  return character.gender === 'female' ? 'Poplur_Female_Morph.glb' : 'Poplur_Male_Morph.glb'
 }
 
 function hairFile(character: PoplurCharacter) {
-  if (character.hairStyle === 'long' || character.hairStyle === 'curly') return 'Hair_Long.gltf'
-  return character.gender === 'female' ? 'Hair_BuzzedFemale.gltf' : 'Hair_SimpleParted.gltf'
+  if (character.hairStyle === 'long' || character.hairStyle === 'curly') return 'Hair_Long.glb'
+  return character.gender === 'female' ? 'Hair_BuzzedFemale.glb' : 'Hair_SimpleParted.glb'
 }
 
 /** Actual WebGL avatar preview. It intentionally renders only on load, resize,
