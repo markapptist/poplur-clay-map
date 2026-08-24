@@ -15,8 +15,7 @@ import MapShowMe from './MapShowMe'
 import NotificationsScreen from './NotificationsScreen'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
-import WardrobeBuilder from './wardrobe/WardrobeBuilder'
-import { readCharacter } from './characterStore'
+import CharacterEditor from './CharacterEditor'
 import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
 import MailScreen from './MailScreen'
@@ -384,6 +383,7 @@ export default function HoldMenuTwin({
   // subscreen and appearing to ignore the second cube change.
   const activeScreenRef = useRef(activeScreen)
   activeScreenRef.current = activeScreen
+  const wardrobeCubeActionRef = useRef<(() => boolean) | null>(null)
   // Read through refs for the same reason `items` is: the arrows effect must
   // not unbind and rebind whenever a caller passes a fresh inline closure.
   const onCloseRef = useRef(onClose)
@@ -453,6 +453,9 @@ export default function HoldMenuTwin({
       // The native pages nest too, and they answer for themselves. One level
       // per tap, innermost first, exactly like the embeds above.
       if (activeScreen && nativeBackRef.current?.()) return true
+      // The wardrobe is an editor, so its cube is the intentional studio
+      // control: one press opens its draft panel, the next saves and closes it.
+      if (activeScreen?.screen === 'profile-wardrobe' && wardrobeCubeActionRef.current?.()) return true
       // Studio's own handler has already returned to its chooser when it is
       // inside Music or Podcast. At that chooser there is no deeper Studio
       // state left, so this next tap leaves Studio for Camera rather than ever
@@ -1073,10 +1076,7 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'profile-wardrobe') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Wardrobe">
-          <WardrobeBuilder
-            character={readCharacter()}
-            onClose={() => { playPop(); onClose() }}
-          />
+          <CharacterEditor bindCubePress={handler => { wardrobeCubeActionRef.current = handler }} />
         </div>
       )
     }

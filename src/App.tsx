@@ -65,11 +65,10 @@ import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 // payload still carries station cues for the iOS AI stack (PoplurAIStack reads
 // stationName), which is data, not web playback.
 import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus } from './voiceAudio'
-import { smartCardFor, type SmartCard } from './tourSmarts'
-import { suggestionForMapPlace } from './commerceSuggestions'
+import { smartCardFor } from './tourSmarts'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed, currentQuality, onAmbientSleepChange, onQualityChange, onTick } from './frameGovernor'
-import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
+import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange } from './popups'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import { skyShadeAt } from './skyCycle'
@@ -512,26 +511,6 @@ function cityNameForDestination(destination: TourDestination): string {
 // walk. 2km is tuned to the demo geography — downtown pops cluster (2-4 in an
 // area) while Distillery stands alone (1) — and will be revisited when real
 // posts land in Aug 2026.
-/**
- * An AMBIENT card shows its poster, never a running video.
- *
- * `creative()` attaches kind:'video' to every suggestion, which is right for a
- * card the user asked for and wrong for one that arrives on its own: the tour
- * lands on a stop nobody is watching and a decoder starts on an idle map. The
- * thermal gate fails a build for exactly that (map budget: 0 playing videos),
- * and it is the one metric a busy machine cannot fake — a decoder is a decoder.
- *
- * The still carries the same creative, so the card looks the same; it just
- * stops costing a video pipeline until someone actually asks for it.
- */
-function stillOnly(card: SmartCard): SmartCard {
-  if (card.media?.kind !== 'video') return card
-  return {
-    ...card,
-    media: { kind: 'image', src: card.media.poster ?? card.media.src, alt: card.media.alt },
-  }
-}
-
 const POPS_NEARBY_M = 2_000
 /** How many pops stand around this one — counted from the pool the caller is
  *  travelling, so the "N pops in this area" line agrees with the level on
@@ -626,14 +605,10 @@ export default function App() {
       map.__tripping = false
     }
   }, [])
-  const placeSuggestionTimerRef = useRef<number | null>(null)
   useEffect(() => onFoodSuggestionVisibilityChange(visible => {
     if (window.parent === window) return
     window.parent.postMessage({ type: 'poplur-food-ad-visibility', visible }, '*')
   }), [])
-  useEffect(() => () => {
-    if (placeSuggestionTimerRef.current != null) window.clearTimeout(placeSuggestionTimerRef.current)
-  }, [])
   const [selectedId, setSelectedId] = useState<string | null>('queen')
   // Theme switching lives in the app's Profile → Settings; the prototype
   // ships the default clay skin with the infrastructure in place.
@@ -687,9 +662,6 @@ export default function App() {
   // Tour narration stays separate from the visible status. The map header only
   // says where the camera is — the station readout left with the radio.
   const [tourLine, setTourLine] = useState<string | null>(null)
-  // What the AI knows about the CURRENT stop — scores, sales, departures, the
-  // dish to order. Set on arrival, cleared on departure and when the tour ends.
-  const [smartCard, setSmartCard] = useState<SmartCard | null>(null)
   const [currentPlace, setCurrentPlace] = useState('Toronto')
   // The pops-in-this-area readout: set on every pop arrival (channel arrows,
   // engagement trips). The EMBEDDED shell renders it from poplur-map-pop and
@@ -1658,8 +1630,12 @@ export default function App() {
     tourStartedRef.current = false
     tourOnRef.current = false
     setTourOn(false)
-    setSmartCard(null)
-    ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = false
+    const debugWindow = window as unknown as {
+      __poplurTourOn?: boolean
+      __poplurSmartCard?: unknown
+    }
+    debugWindow.__poplurTourOn = false
+    delete debugWindow.__poplurSmartCard
     const map = mapRef.current as (mapboxgl.Map & {
       __cinematic?: boolean
       __tripping?: boolean
@@ -1725,9 +1701,9 @@ export default function App() {
     }
     setCurrentPlace(displayPlaceName(destination.name))
     setTourLine(line)
-    // Departure clears the previous stop's card immediately — a sale from the
-    // last city must not ride along on the flight to the next one.
-    setSmartCard(null)
+    // Tour metadata remains available to native/headless consumers, but the
+    // map no longer raises commerce windows merely because its camera arrived.
+    delete (window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard
     const smart = smartCardFor(destination)
     postNativeEvent({
       type: 'tourStop',
@@ -1754,19 +1730,11 @@ export default function App() {
       tourFrame,
       true,
     )
-    // The ARRIVAL beat. The card and its spoken line land when the camera
-    // does, not when it lifts off — announcing a score thirty seconds before
-    // you can see the arena reads as noise. Tracked in tourTimers so stopping
-    // the tour mid-flight cancels the landing too.
+    // The ARRIVAL beat keeps the narration/native metadata, but does not open
+    // an ad. Popups on the map now belong exclusively to a tapped post.
     scheduleTourTimer(() => {
       tourFlightInProgressRef.current = false
       if (!tourOnRef.current) return
-      // Through the shared popup layer: centred, and it LEAVES on its own.
-      // setSmartCard alone had no timer — the card was only ever cleared when
-      // the next trip started, so on a stop that was never followed by another
-      // flight it simply stayed on screen for the rest of the session.
-      showPopup({ kind: 'suggestion', card: stillOnly(smart) })
-      setSmartCard(smart)
       // Headless drives read these; the UI never does.
       ;(window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard = smart
       speakMapLine(smart.line, stations)
@@ -1854,16 +1822,10 @@ export default function App() {
     tourStartedRef.current = true
     tourOnRef.current = true
     setTourOn(true)
-    // A tour is landmark viewing, not a continuation of the last post. Clear
-    // any delayed/post content before the first flight so it cannot cover the
-    // landmark or reappear while the user steps with the arrows.
-    if (placeSuggestionTimerRef.current != null) {
-      window.clearTimeout(placeSuggestionTimerRef.current)
-      placeSuggestionTimerRef.current = null
-    }
+    // A tour is landmark viewing, not a continuation of the last post.
     clearPopups('suggestion')
     clearPopups('mapContent')
-    setSmartCard(null)
+    delete (window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard
     ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = true
     let currentStopIndex = -1
     const runStopAt = (requestedIndex: number) => {
@@ -1980,61 +1942,6 @@ export default function App() {
 
   const [mapLive, setMapLive] = useState(0)
 
-  // ── An ad is never allowed to be why the map stutters ─────────────────────
-  //
-  // Reported as a freeze on launch, right as the camera dives into your
-  // location — and it is the ad, not the flight. A suggestion card mounts a
-  // window, then fetches and decodes a product or place image, on the main
-  // thread, in the same frames the camera is interpolating a long flyTo and
-  // Mapbox is loading tiles for a whole new region. The flight is the one
-  // moment the map can least afford company, and it was exactly when the card
-  // arrived.
-  //
-  // So commerce is gated on the camera being still. Not throttled, not
-  // deferred by a guessed delay: suppressed outright while the camera moves,
-  // released once the map goes idle and has held still for a beat. Suppressing
-  // also clears anything already up, so a card cannot ride through a flight it
-  // was showing before the camera left.
-  //
-  // 'idle' rather than 'moveend': moveend fires when the CAMERA stops, while
-  // idle waits for tiles and labels to finish too, and it is that tail —
-  // decoding a new region — that the image work would land on top of.
-  //
-  // Engagement is deliberately NOT gated. A like arriving mid-flight is one
-  // line of text with no fetch behind it, and silencing news about the user to
-  // protect a frame budget would be fixing the wrong thing.
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !mapLive) return
-    let settle: number | null = null
-    const hold = () => {
-      if (settle != null) { window.clearTimeout(settle); settle = null }
-      setPopupKindSuppressed('suggestion', true)
-    }
-    const release = () => {
-      if (settle != null) window.clearTimeout(settle)
-      // A short beat after idle, so a card does not appear on the very frame
-      // the camera lands — that reads as the arrival stuttering.
-      settle = window.setTimeout(() => {
-        settle = null
-        setPopupKindSuppressed('suggestion', false)
-      }, 650)
-    }
-    map.on('movestart', hold)
-    map.on('zoomstart', hold)
-    map.on('idle', release)
-    // The camera may already be flying when this binds (the launch dive starts
-    // before the style settles), so assume moving until idle says otherwise.
-    hold()
-    return () => {
-      if (settle != null) window.clearTimeout(settle)
-      map.off('movestart', hold)
-      map.off('zoomstart', hold)
-      map.off('idle', release)
-      setPopupKindSuppressed('suggestion', false)
-    }
-  }, [mapLive])
-
   // ── The pops EXIST on the map, always ────────────────────────────────────
   // Your posts are territory, and territory does not appear only when a camera
   // flies at it. Every pop is seeded as a standing claim: painted ground at
@@ -2096,6 +2003,9 @@ export default function App() {
   }, [])
   const popLevelRef = useRef(popLevel)
   popLevelRef.current = popLevel
+  // Only a marker click writes this. Camera arrivals and arrow traversal never
+  // acquire popup ownership.
+  const openedPinRef = useRef<string | null>(null)
 
   /**
    * Home records reactions in radiusLedger, then sends the signed record down
@@ -2127,7 +2037,7 @@ export default function App() {
         setClaim(map, { id: claimId, center: poi.coords as [number, number], radiusKm: nextRadiusKm })
       } catch { /* style can be rebuilding; persisted value is used on remount */ }
     }
-    if (arrivedPinRef.current === claimId) {
+    if (openedPinRef.current === claimId) {
       window.parent?.postMessage({ type: 'poplur-map-radius', popId: claimId, radiusKm: nextRadiusKm }, '*')
     }
   }, [showPinRadiusPulse])
@@ -2292,7 +2202,7 @@ export default function App() {
     return [...others, ...mine, ...published]
   }, [popLevel, ownAvatar, ownSelfieVideo, myColor, publishedPins, radiusLedgerRevision, pinRadiusPulse])
 
-  const openMapPinContent = useCallback((pin: PopPin) => {
+  const openClickedMapPinContent = useCallback((pin: PopPin) => {
     // Never substitute an ad or cube for a post whose media record is missing.
     if (!pin.media) return
     // Destination actions own the camera through their landing settle. This is
@@ -2302,12 +2212,9 @@ export default function App() {
       __suppressNextMapClickUntil?: number
     } | null
     if ((mapInteractionState?.__suppressNextMapClickUntil ?? 0) > Date.now()) return
-    if (placeSuggestionTimerRef.current != null) {
-      window.clearTimeout(placeSuggestionTimerRef.current)
-      placeSuggestionTimerRef.current = null
-    }
     clearPopups('suggestion')
     clearPopups('mapContent')
+    openedPinRef.current = pin.id
     setCurrentPlace(displayPlaceName(pin.name))
 
     const ownNearby = POIS.filter(poi => distanceMeters(poi.coords, pin.coords) <= POPS_NEARBY_M)
@@ -2348,51 +2255,8 @@ export default function App() {
     })
   }, [])
 
-  // ── Arriving on a pop plays what is standing there ────────────────────────
-  // Zooming into a holder's pin — yours or anyone else's — raises their post.
-  // That is the product read: the ground is owned BY a piece of content, so
-  // getting close enough to read the ground should show you the content.
-  //
-  // Fires on SETTLE only (moveend), never per frame, and only when the pin
-  // under the camera CHANGES: panning around one city must not re-raise the
-  // same window, and the guard is what stops a pan turning into a slideshow.
-  const arrivedPinRef = useRef<string | null>(null)
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
-  useEffect(() => {
-    // The upload picker is choosing ground, not arriving at content. Its direct
-    // local jump/radius fit must never raise a nearby post over the prompt.
-    if (focusedPostPicker) return
-    const map = mapRef.current
-    if (!map || !mapLive) return
-    // Close enough that the pop is the subject of the shot, not scenery.
-    const ARRIVE_ZOOM = 11
-    const ARRIVE_M = 420
-    const onSettle = () => {
-      if (!mapFrontRef.current || document.visibilityState !== 'visible') return
-      const api = map as unknown as { __tripping?: boolean; __streetView?: boolean }
-      if (api.__streetView) return
-      // An arrival the AUTO-TOUR flew to is not one you asked for. Same rule as
-      // the tour's own card: nothing ambient starts a video decoder.
-      if (tourOnRef.current) return
-      if (map.getZoom() < ARRIVE_ZOOM) { arrivedPinRef.current = null; return }
-      const c = map.getCenter()
-      let best: (typeof mapPinsRef.current)[number] | null = null
-      let bestM = Infinity
-      for (const pin of mapPinsRef.current) {
-        const d = distanceMeters([c.lng, c.lat], pin.coords)
-        if (d < bestM) { bestM = d; best = pin }
-      }
-      // Left the pop you were on: arm the next arrival, including a return to
-      // this same one.
-      if (!best || bestM > ARRIVE_M) { arrivedPinRef.current = null; return }
-      if (arrivedPinRef.current === best.id) return
-      arrivedPinRef.current = best.id
-      openMapPinContent(best)
-    }
-    map.on('moveend', onSettle)
-    return () => { map.off('moveend', onSettle) }
-  }, [focusedPostPicker, mapLive, openMapPinContent])
 
   // ── One map context drives every line in the shell HUD ───────────────────
   // Report only on settled camera states. This keeps the title/counters stable
@@ -2538,24 +2402,11 @@ export default function App() {
       if (!growing || !posting) return
       const tip = `Nearby, ${growing.name} is growing fast — a ${growing.radiusKm} kilometre radius. `
         + `People are posting around ${posting.name}. Use the channel buttons to visit them.`
-      const card = {
-        // The nearby callout is also a real ad window: use the place resolver
-        // for approved fallback media, sponsor treatment and an HTTPS detail
-        // destination, then retain the radius-specific headline and rows.
-        ...suggestionForMapPlace(growing),
-        title: 'Growing near you',
-        headline: `${growing.name} · ${growing.radiusKm} km and climbing`,
-        rows: [
-          { label: 'GROWING', value: `${growing.name} · ${growing.radiusKm} km` },
-          { label: 'POSTING', value: `${posting.name} · ${posting.likes} recent` },
-        ],
-        line: tip,
-      }
+      // Keep this as optional spoken map context. It must not materialize a
+      // commerce card merely because the launch camera finished moving.
       scheduleTourTimer(() => {
         if (tourStartedRef.current) return
         if (mapAudioFrontRef.current && !isGateMuted()) {
-          showPopup({ kind: 'suggestion', card: stillOnly(card) })
-          setSmartCard(card)
           speakMapLine(tip)
         } else {
           pendingSpeechRef.current.push(tip)
@@ -2894,63 +2745,9 @@ export default function App() {
             setPopPosition({ n: next + 1, of: route.length })
             const nearby = popsNearby(poi, route)
             setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
-            const renderedPin = mapPinsRef.current.find(pin =>
-              pin.id === poi.id || pin.id === `pop-${poi.id}`,
-            )
-            const ownSource = poi.mine ? POIS.find(candidate => candidate.id === poi.id) : undefined
-            const otherSource = !poi.mine ? OTHER_POPS.find(candidate => candidate.id === poi.id) : undefined
-            const contentPin: PopPin | undefined = renderedPin ?? (ownSource ? {
-              id: `pop-${ownSource.id}`,
-              user: null,
-              name: ownSource.name,
-              coords: ownSource.coords,
-              radiusKm: ownSource.radiusKm,
-              color: myColor,
-              avatar: null,
-              selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
-              channel: ownSource.channel,
-              media: {
-                kind: 'video',
-                src: feedUrl(`ad-${ownSource.channel}.mp4`),
-                poster: feedUrl(`posters/ad-${ownSource.channel}.jpg`),
-                alt: `Your post at ${ownSource.name}`,
-              },
-              mine: true,
-            } : otherSource ? {
-              id: otherSource.id,
-              user: otherSource.user,
-              name: otherSource.name,
-              coords: otherSource.coords,
-              radiusKm: otherSource.radiusKm,
-              color: otherSource.color,
-              avatar: otherSource.avatar,
-              channel: otherSource.channel,
-              media: otherSource.video
-                ? { kind: 'video', src: otherSource.video, poster: otherSource.avatar, alt: `${otherSource.user} post at ${otherSource.name}` }
-                : { kind: 'image', src: otherSource.avatar, alt: `${otherSource.user} post at ${otherSource.name}` },
-              world: otherSource.world === true,
-              mine: false,
-            } : undefined)
-            let revealed = false
-            const revealContent = () => {
-              if (revealed || !contentPin) return
-              revealed = true
-              if (placeSuggestionTimerRef.current != null) {
-                window.clearTimeout(placeSuggestionTimerRef.current)
-                placeSuggestionTimerRef.current = null
-              }
-              arrivedPinRef.current = contentPin.id
-              openMapPinContent(contentPin)
-            }
-            if (placeSuggestionTimerRef.current != null) {
-              window.clearTimeout(placeSuggestionTimerRef.current)
-            }
-            flyToPop(poi.coords as [number, number], revealContent)
-            // The native WebView can park Mapbox's renderer between frames;
-            // in that case the destination changes but the SDK never emits
-            // the final moveend. The trip has a fixed duration, so reveal once
-            // on that clock if the preferred completion callback did not run.
-            placeSuggestionTimerRef.current = window.setTimeout(revealContent, TRIP_TOTAL_MS + 320)
+            // Traversal only moves the camera and updates context. The person
+            // can tap the visible post marker to open that exact post.
+            flyToPop(poi.coords as [number, number])
             // Tell the shell WHICH pop this is. The channel arrows used to count
             // POST_COUNT (128) locally while the map flew through POIS, so the
             // number between the arrows described a different list from the one
@@ -2995,7 +2792,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [applyRadiusDelta, handleGoToCurrentLocation, handleToggleStreetView, startExplicitTourLoop, stopTour, flyToCenter, flyToPop, myColor, openMapPinContent, ownAvatar, theme, traverseToEngagement])
+  }, [applyRadiusDelta, handleGoToCurrentLocation, handleToggleStreetView, startExplicitTourLoop, stopTour, flyToCenter, flyToPop, myColor, ownAvatar, theme, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -3017,36 +2814,11 @@ export default function App() {
     const poi = POIS.find(p => p.id === id)
     if (!poi) return
     setCurrentPlace(displayPlaceName(poi.name))
-    if (placeSuggestionTimerRef.current != null) window.clearTimeout(placeSuggestionTimerRef.current)
     clearPopups('suggestion')
     clearPopups('mapContent')
     flyToCenter(poi.coords, 4600)
-    // Every POI in this list is one of the user's standing pops. Build its
-    // content pin independently of the current map level so Level 2 cannot
-    // accidentally turn a hidden real post into a generated place ad.
-    placeSuggestionTimerRef.current = window.setTimeout(() => {
-      placeSuggestionTimerRef.current = null
-      openMapPinContent({
-        id: `pop-${poi.id}`,
-        user: null,
-        name: poi.name,
-        coords: poi.coords,
-        radiusKm: livePoiRadiusKm(poi),
-        color: myColor,
-        avatar: null,
-        selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
-        channel: poi.channel,
-        media: {
-          kind: 'video',
-          src: feedUrl(`ad-${poi.channel}.mp4`),
-          poster: feedUrl(`posters/ad-${poi.channel}.jpg`),
-          alt: `Your post at ${poi.name}`,
-        },
-        world: false,
-        mine: true,
-      })
-    }, 4_700)
-  }, [flyToCenter, myColor, openMapPinContent, ownAvatar, ownSelfieVideo])
+    // Selection moves to the post; only its marker button opens its content.
+  }, [flyToCenter])
 
   if (harnessView) {
     return (
@@ -3094,7 +2866,7 @@ export default function App() {
         token={TOKEN}
         pois={POIS}
         pins={tourOn ? NO_MAP_PINS : mapPins}
-        onPinOpen={openMapPinContent}
+        onPinOpen={openClickedMapPinContent}
         selectedId={selectedId}
         onSelectPoi={handleSelectPoi}
         mapRef={mapRef}
@@ -3315,22 +3087,12 @@ export default function App() {
         </div>
       )}
 
-      {/* The AI's smart card for the current tour stop — scores at the arena,
-          the sale inside the mall, the next trains, the dish to order. Lands
-          with the camera (arrival beat in activateTourDestination) and leaves
-          with it. Entrance is transform/opacity only. */}
-      {/* The tour suggestion is rendered by the shared popup layer now, which
-          centres it and gives it a TTL. smartCard state is kept only because
-          headless drives read __poplurSmartCard from it. */}
-
       {/* Locate + Street View moved into the HOLD MENU (declutter): they now
           arrive as poplur-map-action messages — see the listener effect. */}
 
       {/* Pop traversal, ON the map and under the pin.
-          Tapping a pop directly is unreliable: a pin is a small target on a
-          pitched 3D surface, it moves while the camera settles, and a miss
-          reads as the map ignoring you. These sit within thumb reach of where
-          you are already looking and always hit.
+          These controls move the camera to a post without opening anything;
+          its marker remains the deliberate, exact content action.
 
           Same clay component as the channel buttons, laid on its side -- they
           ARE those buttons, not a lookalike, which is why a new orientation was

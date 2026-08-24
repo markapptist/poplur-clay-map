@@ -128,7 +128,7 @@ export const CHANNELS: Channel[] = [
 // RADIUS⇄TRENDING label live in the home HUD (HomeTwin), which controls the
 // channel index from its clay arrows. Standalone (?view=feed) it manages its
 // own index.
-export type FeedAction = 'like' | 'comment' | 'share' | 'captions' | 'profile'
+export type FeedAction = 'like' | 'comment' | 'share' | 'captions' | 'profile' | 'suggestion'
 
 // A channel is a stack of POSTS by different users. Channels that don't ship
 // their own creative borrow a stock clip, chosen by channel number, so a
@@ -544,34 +544,13 @@ export default function FeedTwin({
     }
   }, [])
 
-  // The AI's quiet offer for the post you are watching — the feed twin of the
-  // tour's smart card. Appears after you have SETTLED on a channel (3.5s: a
-  // zap-through must never flash cards), holds ~9s, and leaves. Never speaks:
-  // the post's own soundtrack owns the floor here. Dismissed by tap, and
-  // suppressed with everything else when News / TV Guide / the hold menu is
-  // over the feed.
-  // The channel suggestion goes through the shared popup layer: centred like
-  // engagement, and self-expiring. It used to be a bottom-left card owned by
-  // this component alone, which meant the two kinds of transient notice in the
-  // app appeared in different places and obeyed different lifetime rules.
+  // A manually opened suggestion belongs to the post that was on screen when
+  // the TV cube was tapped. Changing post/channel or covering the feed clears
+  // it; there is deliberately no timer that can raise one on its own.
   useEffect(() => {
     clearPopups('suggestion')
-    if (!mediaUnlocked) return
-    // Not while you are writing. An ad landing on top of the comment box is
-    // interrupting the one thing on this screen that takes real attention —
-    // and it covers the box you are typing into.
-    if (suppressed || playerMode || commentOpen) return
-    const show = window.setTimeout(() => {
-      const channel = CHANNELS[index]
-      const channelPosts = postsFor(channel)
-      const current = channelPosts[(contentIdxRef.current[channel.id] ?? 0) % channelPosts.length]
-      showPopup({
-        kind: 'suggestion',
-        card: feedSuggestionFor({ ...channel, place: current?.place }),
-      })
-    }, 3_500)
-    return () => { window.clearTimeout(show); clearPopups('suggestion') }
-  }, [index, contentRevision, suppressed, playerMode, commentOpen, mediaUnlocked])
+    return () => clearPopups('suggestion')
+  }, [index, contentRevision, suppressed, playerMode, commentOpen])
 
   // The feed used to silence the shared engagement kind outright for as long as
   // it was mounted, which is why likes, views and comments only ever appeared on
@@ -1452,6 +1431,19 @@ export default function FeedTwin({
   const chRef = useRef(ch)
   chRef.current = ch
 
+  const showCurrentSuggestion = useCallback(() => {
+    // The cube is not reachable over most of these layers, but keep the feed
+    // boundary fail-closed for native/menu callers too.
+    if (suppressedRef.current || playerModeRef.current || commentOpen) return
+    clearPopups('suggestion')
+    const channel = chRef.current
+    const current = postRef.current
+    showPopup({
+      kind: 'suggestion',
+      card: feedSuggestionFor({ ...channel, place: current?.place }),
+    })
+  }, [commentOpen])
+
   const reactToCurrentPost = useCallback((direction: 'up' | 'down') => {
     const id = radiusPostId(ch.id, postRef.current)
     const amountKm = usesMiles() ? 1 / 0.621371 : 1
@@ -1555,6 +1547,7 @@ export default function FeedTwin({
       if (action === 'comment') { openComments(); return }
       if (action === 'share') { sharePost(); return }
       if (action === 'captions') { toggleCaptions(); return }
+      if (action === 'suggestion') { showCurrentSuggestion(); return }
       if (action === 'profile') {
         // whoever posted the video you are watching
         playPop()
@@ -1563,7 +1556,7 @@ export default function FeedTwin({
       }
     })
     return () => bindActions(null)
-  }, [bindActions, ch.id, ch.user, likeCurrentPost, onOpenProfile, openComments, sharePost, toggleCaptions])
+  }, [bindActions, ch.id, ch.user, likeCurrentPost, onOpenProfile, openComments, sharePost, showCurrentSuggestion, toggleCaptions])
 
   // Tapping outside sends the window back up the way it came, then unmounts.
   const closeComments = () => {

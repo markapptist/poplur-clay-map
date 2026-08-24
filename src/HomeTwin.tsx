@@ -3800,6 +3800,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // The feed's comment box is the same kind of layer — no ✕ of its own, so
     // the cube is how you leave it.
     if (activeTab === 'feed' && feedBackRef.current?.()) { playPop(); return }
+    // On the unobstructed Feed, the TV cube is the deliberate ad action. The
+    // playing post supplies the suggestion; passive playback never opens it.
+    if (activeTab === 'feed') {
+      playPop()
+      setPopping(true)
+      feedActionsRef.current?.('suggestion')
+      return
+    }
     // On the map the globe is an affirmative action, not a decorative tab
     // badge: it drops the post composer onto the point already in view. The
     // map surface keeps ordinary taps free for looking around and its edge

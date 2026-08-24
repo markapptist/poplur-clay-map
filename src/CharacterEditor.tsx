@@ -1,6 +1,6 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  readCharacter, saveCharacter, clearCharacter,
+  readCharacter, saveCharacter,
   type BodyShape, type FaceStyle, type HairStyle, type PoplurCharacter,
 } from './characterStore'
 import { STUDIO_OPTIONS, studioInitialCharacter, type StudioCategory } from './AvatarStudioCharacter'
@@ -24,19 +24,22 @@ const CATEGORY_HINTS: Record<StudioCategory, string> = {
 }
 
 type OutfitSlot = 'top' | 'bottom' | 'accessory'
+type CubePressBinder = (handler: (() => boolean) | null) => void
 
 /** Full-screen, original local character creator. Every choice is rendered
     on-device; it does not require a paid avatar API. */
-export default function CharacterEditor() {
+export default function CharacterEditor({ bindCubePress }: { bindCubePress?: CubePressBinder }) {
   const [character, setCharacter] = useState<PoplurCharacter>(() => studioInitialCharacter(readCharacter()))
+  const characterRef = useRef(character)
   const [activeCategory, setActiveCategory] = useState<StudioCategory>('body')
   const [sceneReady, setSceneReady] = useState(false)
+  const [studioOpen, setStudioOpen] = useState(false)
 
   const apply = useCallback((patch: Partial<PoplurCharacter>) => {
     playPop()
     setCharacter(current => {
       const next = studioInitialCharacter({ ...current, ...patch, updatedAt: Date.now() })
-      saveCharacter(next)
+      characterRef.current = next
       return next
     })
   }, [])
@@ -45,16 +48,15 @@ export default function CharacterEditor() {
     playPop()
     setCharacter(current => {
       const next = studioInitialCharacter({ ...current, outfit: { ...current.outfit, [slot]: id }, updatedAt: Date.now() })
-      saveCharacter(next)
+      characterRef.current = next
       return next
     })
   }, [])
 
   const reset = useCallback(() => {
     playPop()
-    clearCharacter()
     const next = studioInitialCharacter(null)
-    saveCharacter(next)
+    characterRef.current = next
     setCharacter(next)
   }, [])
 
@@ -75,10 +77,31 @@ export default function CharacterEditor() {
         },
         updatedAt: Date.now(),
       })
-      saveCharacter(next)
+      characterRef.current = next
       return next
     })
   }, [])
+
+  const toggleStudioFromCube = useCallback(() => {
+    if (studioOpen) {
+      const next = studioInitialCharacter({ ...characterRef.current, updatedAt: Date.now() })
+      characterRef.current = next
+      saveCharacter(next)
+      setCharacter(next)
+      setStudioOpen(false)
+      return true
+    }
+    const saved = studioInitialCharacter(readCharacter())
+    characterRef.current = saved
+    setCharacter(saved)
+    setStudioOpen(true)
+    return true
+  }, [studioOpen])
+
+  useEffect(() => {
+    bindCubePress?.(toggleStudioFromCube)
+    return () => bindCubePress?.(null)
+  }, [bindCubePress, toggleStudioFromCube])
 
   return (
     <main className={styles.wardrobe} data-wardrobe-surface='poplur-fullscreen'>
@@ -89,19 +112,13 @@ export default function CharacterEditor() {
 
       <div className={styles.characterStage}>
         <ThreeAvatarStudio character={character} mode='3d' />
-        <div className={styles.avatarHeightControl}>
-          <ScaleKnobControl label='Height' value={character.heightScale ?? 0.95} vertical onChange={value => apply({ heightScale: value })} />
-        </div>
-        <div className={styles.avatarStatureControl}>
-          <ScaleKnobControl label='Stature' value={character.statureScale ?? 0.96} onChange={value => apply({ statureScale: value })} />
-        </div>
         <span className={styles.characterShadow} aria-hidden='true' />
       </div>
 
-      <div className={styles.studioScroll}>
+      {studioOpen && <aside className={styles.studioPopup} aria-label='Character studio'>
       <section className={styles.styleDock} aria-label='Build your character'>
         <div className={styles.dockHeading}>
-          <div><strong>Character studio</strong><span>{CATEGORY_HINTS[activeCategory]}</span></div>
+          <strong>Character studio</strong>
           <div className={styles.dockActions}>
             <button type='button' className={styles.shuffleButton} onClick={shuffle}>Shuffle</button>
             <button type='button' className={styles.resetButton} onClick={reset}>Reset</button>
@@ -147,7 +164,17 @@ export default function CharacterEditor() {
           </>}
         </div>
       </section>
+      <div className={styles.studioScaleControls} aria-label='Character size controls'>
+        <div className={styles.avatarHeightControl}>
+          <ScaleKnobControl label='Height' value={character.heightScale ?? 0.95} vertical onChange={value => apply({ heightScale: value })} />
+        </div>
+        <div className={styles.avatarStatureControl}>
+          <ScaleKnobControl label='Stature' value={character.statureScale ?? 0.96} onChange={value => apply({ statureScale: value })} />
+        </div>
       </div>
+      <span className={`${styles.scaleExteriorLabel} ${styles.heightExteriorLabel}`} aria-hidden='true'>Height</span>
+      <span className={`${styles.scaleExteriorLabel} ${styles.statureExteriorLabel}`} aria-hidden='true'>Stature</span>
+      </aside>}
     </main>
   )
 }
