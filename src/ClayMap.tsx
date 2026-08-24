@@ -1340,6 +1340,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   onPinOpenRef.current = onPinOpen
   const skyRef = useRef(sky)
   skyRef.current = sky
+  // A retained idle frame means the Mapbox renderer must stay truly still.
+  // The clock can advance while the map is parked, so keep the latest
+  // appearance here and apply it once the next legitimate interaction wakes
+  // the live canvas instead of letting a minute tick dirty the hidden renderer.
+  const rendererParkedRef = useRef(false)
+  const deferredSkyRef = useRef<SkyShade | null>(null)
+  const deferredMapAppearanceRef = useRef(false)
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const landmarks3dRef = useRef<Map<string, NearLandmark3D>>(new Map())
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1908,9 +1915,23 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     const profiledWindow = window as typeof window & { __poplurMapRenderCount?: number }
     profiledWindow.__poplurMapRenderCount = 0
     let rendererParked = false
+    rendererParkedRef.current = false
     map.on('render', () => {
       profiledWindow.__poplurMapRenderCount = (profiledWindow.__poplurMapRenderCount ?? 0) + 1
     })
+
+    const applyDeferredMapAppearance = () => {
+      if (!deferredMapAppearanceRef.current) return
+      const shade = deferredSkyRef.current ?? skyRef.current ?? skyShadeAt()
+      deferredMapAppearanceRef.current = false
+      deferredSkyRef.current = null
+      // This is called only after the retained still has been lifted for an
+      // explicit wake. Keep the sky and its matching day/night palette in the
+      // same Mapbox turn so there is one bounded redraw, not a background tick.
+      applySky(map, shade)
+      applyTheme(map, themeRef.current, shade.lightPreset === 'night')
+      idleSnapshot.requestCapture()
+    }
 
     // Install this before the clay world boots. A partial style build can throw
     // before the later traffic/prop setup is reached; putting the energy gate
@@ -1932,6 +1953,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         if (!map.idle() || !map.frameReady()) return
         idleSnapshot.park()
         rendererParked = true
+        rendererParkedRef.current = true
         // Mapbox is event-driven by default. Do not call stop(), rewrite
         // repaint, or intercept triggerRepaint here: each can strand a pending
         // placement continuation even though the public map looked settled.
@@ -1956,10 +1978,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           parkRequestSerial += 1
           if (rendererParked) {
             rendererParked = false
+            rendererParkedRef.current = false
             // Keep the retained 2D frame over the canvas until Mapbox confirms
             // that WebGL has actually painted its first wake frame.
             idleSnapshot.wake()
             delete document.documentElement.dataset.poplurMapPark
+            applyDeferredMapAppearance()
             map.triggerRepaint()
           }
           return
@@ -4257,6 +4281,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       stopFlyerFrames?.()
       stopRendererParking?.()
       stopRendererParking = null
+      rendererParkedRef.current = false
+      deferredMapAppearanceRef.current = false
+      deferredSkyRef.current = null
       if (finishRendererParkOnIdle) map.off('idle', finishRendererParkOnIdle)
       finishRendererParkOnIdle = null
       stopClaimRoadPaint?.()
@@ -4717,6 +4744,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
+    if (rendererParkedRef.current) {
+      deferredMapAppearanceRef.current = true
+      deferredSkyRef.current = sky ?? skyShadeAt()
+      return
+    }
     applyTheme(map, theme, nightMode)
     idleSnapshotRef.current?.requestCapture()
   }, [theme, mapEpoch, nightMode])
@@ -4727,7 +4759,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
-    applySky(map, sky ?? skyShadeAt())
+    const shade = sky ?? skyShadeAt()
+    if (rendererParkedRef.current) {
+      deferredMapAppearanceRef.current = true
+      deferredSkyRef.current = shade
+      return
+    }
+    applySky(map, shade)
     idleSnapshotRef.current?.requestCapture()
   }, [sky?.key, mapEpoch]) // eslint-disable-line react-hooks/exhaustive-deps
 

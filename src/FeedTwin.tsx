@@ -8,11 +8,11 @@ import { feedUrl, channelUrl } from './assetPacks'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
-// hands back on its own; background radio is a standing choice the user made
-// on the radio deck — in both cases the feed keeps its picture running muted
-// and waits for the release (null) to resume sounding.
+// hands back on its own; background Radio or iPod is a standing choice the
+// user made in Audio settings — in all cases the feed keeps its picture
+// running muted and waits for the release (null) to resume sounding.
 const deferToOwner = (owner: AudioOwner | null): boolean =>
-  owner === 'voice' || owner === 'radio'
+  owner === 'voice' || owner === 'radio' || owner === 'ipod'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import TabControlRail from './TabControlRail'
@@ -1286,12 +1286,10 @@ export default function FeedTwin({
         video.muted = true
         return
       }
-      // Background radio holds the floor across page changes by design — the
-      // user tuned a station and then went browsing. The feed is the picture
-      // under it, not a competitor: keep playing, muted, and do not reclaim.
-      // When the radio stops it releases the floor (null), and the reassert
-      // branch below brings the feed's sound back without another gesture.
-      if (owner === 'radio') {
+      // Background Radio/iPod holds the floor across page changes only after
+      // the listener enabled that setting. Feed remains the picture under it,
+      // muted, until the music source releases the floor (null).
+      if (owner === 'radio' || owner === 'ipod') {
         video.muted = true
         return
       }

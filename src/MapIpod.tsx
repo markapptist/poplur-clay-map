@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './MapIpod.module.css'
 import { OTHER_POPS, POIS } from './data'
-import { loadTrackBuffer, trackSource, type Track } from './musicLibrary'
+import { trackSource, type Track } from './musicLibrary'
 import {
   musicShelf,
   startMusicPostIntake,
@@ -10,8 +10,7 @@ import {
   MUSIC_POSTS_CHANGE_EVENT,
 } from './musicPosts'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
-import { registerAudioOwner, requestAudioFocus, releaseAudioFocus } from './audioFocus'
-import { isGateMuted, onGateChange } from './audioGate'
+import { isGateMuted } from './audioGate'
 import { playPop } from './pop'
 import { HOME, haversineKm } from './reach'
 import { readSelectedProfileTheme, PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
@@ -26,6 +25,14 @@ import {
   SOUNDCLOUD_MIN_PLAYBACKS,
   type NearbySoundCloudTrack,
 } from './soundcloudDiscovery'
+import {
+  getIpodPlaybackSnapshot,
+  ipodPlaybackProgress,
+  playIpodTrack,
+  setIpodScreenVisible,
+  stopIpodPlayback,
+  subscribeIpodPlayback,
+} from './ipodPlayback'
 
 /** The canvas the skin art is exported at. Its ratio drives the device box,
  *  so the normalised geometry lands on the same pixels at any render size. */
@@ -166,7 +173,8 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   /** the listing you started playing from; Now Playing steps through THIS */
   const [queue, setQueue] = useState<Pickup[]>([])
   const [trackIndex, setTrackIndex] = useState(0)
-  const [playingId, setPlayingId] = useState<string | null>(null)
+  const [playback, setPlayback] = useState(getIpodPlaybackSnapshot)
+  const playingId = playback.playingId
   const [progress, setProgress] = useState(0)
   const [status, setStatus] = useState('')
   const [reach, setReach] = useState(() => radiusKm())
@@ -299,35 +307,19 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   }, [location, reach])
 
   // ── audio ────────────────────────────────────────────────────────────────
-  // One context and one source for the whole screen. The app's focus system
-  // owns who is allowed to make sound, so the iPod registers as an owner and
-  // stops when anything else takes the floor.
-  const ctxRef = useRef<AudioContext | null>(null)
-  const sourceRef = useRef<AudioBufferSourceNode | null>(null)
-  const startedAtRef = useRef(0)
-  const durationRef = useRef(0)
-
-  const stopPlayback = useCallback((release = true) => {
-    const source = sourceRef.current
-    sourceRef.current = null
-    if (source) {
-      try { source.onended = null; source.stop() } catch { /* already ended */ }
-    }
-    setPlayingId(null)
-    setProgress(0)
-    if (release) releaseAudioFocus('radio')
+  // The player lives outside this component so an explicitly opted-in
+  // background session survives closing the hold menu. In the default
+  // screen-only scope, the visibility cleanup disposes it immediately.
+  useEffect(() => subscribeIpodPlayback(() => setPlayback(getIpodPlaybackSnapshot())), [])
+  useEffect(() => {
+    setIpodScreenVisible(true)
+    return () => setIpodScreenVisible(false)
   }, [])
 
-  // Anything else claiming the floor stops the iPod, and leaving stops it too:
-  // a handheld that keeps playing after its screen is gone is a leak.
-  useEffect(() => registerAudioOwner('radio', () => stopPlayback(false)), [stopPlayback])
-  useEffect(() => () => {
-    stopPlayback()
-    void ctxRef.current?.close().catch(() => {})
-    ctxRef.current = null
-  }, [stopPlayback])
-
-  useEffect(() => onGateChange(() => { if (isGateMuted()) stopPlayback() }), [stopPlayback])
+  const stopPlayback = useCallback((release = true) => {
+    stopIpodPlayback({ release })
+    setProgress(0)
+  }, [])
 
   const play = useCallback(async (pickup: Pickup) => {
     if (!unlocked(pickup)) {
@@ -336,44 +328,12 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       return
     }
     if (isGateMuted()) { setStatus('Sound is muted'); return }
-    stopPlayback(false)
-
-    try {
-      const ctx = ctxRef.current ?? new AudioContext()
-      ctxRef.current = ctx
-      if (ctx.state === 'suspended') await ctx.resume()
-      requestAudioFocus('radio')
-      const buffer = await loadTrackBuffer(ctx, pickup.track)
-      // Focus can move while the buffer decodes; do not start over whoever
-      // took it in the meantime.
-      if (ctxRef.current !== ctx) return
-      const source = ctx.createBufferSource()
-      source.buffer = buffer
-      // The synthesised stand-ins are a few seconds of bass, pad and hat, and
-      // musicLibrary's own contract is that they "loop to fill" the track's
-      // stated duration. Without this the handheld played for ~3s and stopped,
-      // which reads as broken rather than as a placeholder. A real track that
-      // already runs its full length is not looped.
-      const target = pickup.track.duration
-      const looping = buffer.duration < target - 0.5
-      source.loop = looping
-      source.connect(ctx.destination)
-      source.onended = () => { if (sourceRef.current === source) stopPlayback() }
-      source.start()
-      // AFTER start(). Scheduling a stop on a source that has not started
-      // throws InvalidStateError, which the catch below turned into "that
-      // track would not open" — the handheld looked like it refused to play.
-      if (looping) source.stop(ctx.currentTime + target)
-      sourceRef.current = source
-      startedAtRef.current = ctx.currentTime
-      durationRef.current = looping ? target : buffer.duration
-      setPlayingId(pickup.track.id)
+    if (await playIpodTrack(pickup.track)) {
       setStatus(`Picked up ${pickup.track.title} at ${pickup.place}`)
-    } catch {
+    } else {
       setStatus('That track would not open')
-      releaseAudioFocus('radio')
     }
-  }, [reach, stopPlayback, unlocked])
+  }, [reach, unlocked])
 
   // Progress for the now-playing bar, off the context clock rather than a timer
   // that would drift away from the audio — but sampled through the governor at
@@ -385,13 +345,20 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   useEffect(() => {
     if (!playingId) return
     return onTick(() => {
-      const ctx = ctxRef.current
-      if (ctx && durationRef.current > 0) {
-        const elapsed = ctx.currentTime - startedAtRef.current
-        setProgress(Math.max(0, Math.min(1, elapsed / durationRef.current)))
-      }
+      setProgress(ipodPlaybackProgress())
     }, 250)
   }, [playingId])
+
+  // A re-opened iPod can inherit the background track from a previous menu
+  // instance. Rebuild a minimal queue so its next/previous controls continue
+  // to act on that visible track rather than presenting a disconnected deck.
+  useEffect(() => {
+    if (!playingId || queue.some(item => item.track.id === playingId)) return
+    const active = pickups.find(item => item.track.id === playingId)
+    if (!active) return
+    setQueue([active])
+    setTrackIndex(0)
+  }, [pickups, playingId, queue])
 
   // A discovery endpoint can be temporarily unavailable (or simply not yet
   // deployed for a build). Never label these as SoundCloud: they are nearby,

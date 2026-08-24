@@ -6,12 +6,14 @@ import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import RadioBoot from './RadioBootScreen'
 import {
-  isRadioBackgroundEnabled,
   listLocalRadioStations,
   listPoplurLiveStations,
+  onLiveStationChange,
   playStation,
   readRadioContentSource,
+  setRadioScreenVisible,
   setRadioContentSource,
+  startRadioForVisibleScreen,
   stopMapRadio,
   nowPlayingStation,
   type LocalStation,
@@ -104,6 +106,25 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
   const stations = stationSet?.locationKey === locationKey ? stationSet.items : null
   const error = errors[source] ?? null
 
+  // Default scope is screen-only, so opening this physical deck is the moment
+  // an automatic nearby station is allowed to come on. The visibility marker
+  // also lets a preference change stop a previously backgrounded station as
+  // soon as this deck is no longer in front of the listener.
+  useEffect(() => {
+    setRadioScreenVisible(true)
+    return () => setRadioScreenVisible(false)
+  }, [])
+
+  useEffect(() => {
+    startRadioForVisibleScreen(location?.lat, location?.lng)
+  }, [location?.lat, location?.lng])
+
+  // The automatic tune can complete after the deck's initial render. Keep the
+  // LCD in step with it just as it is with a manual dial selection.
+  useEffect(() => onLiveStationChange(() => {
+    setTunedUrl(nowPlayingStation()?.url ?? null)
+  }), [])
+
   // Location is acquired once by useNearbyLocation. Changing the source only
   // aborts/starts its directory fetch; it never re-enters the permission flow.
   useEffect(() => {
@@ -170,16 +191,6 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
       observer.disconnect()
       window.removeEventListener('pageshow', hush)
     }
-  }, [])
-
-  // Closing the deck takes it off the air — unless Settings says the radio may
-  // play in the background (default off). With the setting on, the station
-  // keeps the audio floor after the deck closes: FeedTwin defers (its picture
-  // runs muted) and the map's ambience stays out of the way, so "hear both at
-  // once" — the failure that made this stop unconditional — cannot recur; the
-  // floor still has exactly one voice on it.
-  useEffect(() => () => {
-    if (!isRadioBackgroundEnabled()) stopMapRadio()
   }, [])
 
   useEffect(() => {

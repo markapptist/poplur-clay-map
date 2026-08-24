@@ -954,15 +954,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const activeTabRef = useRef(activeTab)
   activeTabRef.current = activeTab
   const activeStoreCheckoutRequestRef = useRef<string | null>(null)
-  // Preserve the best location across a map iframe remount. The radio needs
-  // to reassert its app-wide focus when that child becomes ready, without
-  // falling back to the generic home coordinate and replacing a nearby tune.
+  // Preserve the best location across a map iframe remount. An already-active
+  // opt-in radio session can reassert itself when that child becomes ready,
+  // without falling back to the generic home coordinate or retuning a station.
   const radioLocationRef = useRef<{ lat: number; lng: number } | null>(null)
-  // Radio is a real app-level station now, not a page that happens to have a
-  // radio-shaped screen. Start its safe fallback immediately, then replace it
-  // with a nearby live stream if the shell has already supplied a location.
-  // Do not request OS location here: location permission remains an explicit
-  // map/iPod action; this merely consumes any location the shell already has.
+  // Do not request OS location here: opening Radio owns the automatic nearby
+  // tune. Home merely lets an already-active, explicitly opted-in session
+  // reassert its focus after a map remount.
   useEffect(() => {
     type NativeLocation = { latitude?: unknown; longitude?: unknown; detail?: unknown }
     const applyLocation = (value: unknown) => {

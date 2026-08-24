@@ -188,7 +188,7 @@ export function startRegionAudio() {
   // would broadcast into the parent and stop the user's station mid-song for
   // the sake of wind and crickets — stay quiet instead, and the next region
   // change after the radio releases (null prompts a resume) starts the bed.
-  if (currentRemoteOwner() === 'radio') return
+  if (currentRemoteOwner() === 'radio' || currentRemoteOwner() === 'ipod') return
   contextGeneration += 1
   const c = ensureCtx(); if (!c) return
   // The map's bed is a voice too — starting it quiets the feed and the radio.

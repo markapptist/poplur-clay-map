@@ -14,7 +14,7 @@
 // counter's pips). It never CLAIMS the floor — it is a texture on top of
 // whatever is playing — but it must be reachable by silenceAllAudio, because
 // otherwise it is a sound source no page change can switch off.
-export type AudioOwner = 'feed' | 'radio' | 'map' | 'studio' | 'voice' | 'ui'
+export type AudioOwner = 'feed' | 'radio' | 'ipod' | 'map' | 'studio' | 'voice' | 'ui'
 
 /**
  * What a listener is being told.

@@ -1,5 +1,5 @@
 import { isGateMuted, onGateChange } from './audioGate'
-import { holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
+import { currentAudioOwner, holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { musicShelf } from './musicPosts'
 import { HOME } from './reach'
@@ -40,6 +40,10 @@ let fallbackAudio: HTMLAudioElement | null = null
 let fallbackFadeTimer: number | null = null
 let unlockInstalled = false
 let soundWanted = false
+// The deck tells the player when it is actually on screen. This lets a
+// preference change turn off a background session immediately without stopping
+// a station that is still in front of the listener.
+let radioScreenVisible = false
 let targetRadioLevel = RADIO_IDLE_LEVEL
 let lastPublishedRadioState: 'off' | 'muted' | 'fallback' | 'live' = 'off'
 /** Increments whenever a person (or a newer boot-location fix) changes the
@@ -72,24 +76,29 @@ let masterVolume = (() => {
 })()
 
 // ── Background radio ────────────────────────────────────────────────────────
-// A first launch starts a station automatically and gives it the app scope.
-// Once a listener changes this setting, their choice wins on every later
-// launch. App/outside scope keeps the station on the app's one audio floor
-// while the feed runs muted-with-picture underneath it (FeedTwin defers) and
-// map ambience stays out of its way. This governs IN-APP navigation only;
-// minimizing the app still silences everything through audioGate's visibility
-// gate.
+// Screen scope is the clean-install default: Radio only sounds while its deck
+// is visible. App/outside scope is the explicit background-audio preference;
+// it keeps the station on the app's one audio floor while Feed runs
+// muted-with-picture underneath it and map ambience stays out of its way.
+// Outside scope additionally survives app backgrounding through audioGate.
 const RADIO_BG_KEY = 'poplur.radio.background'
 const RADIO_SCOPE_KEY = 'poplur.radio.scope'
+// Before screen-only became the default, app launch wrote `scope=app` on
+// behalf of every listener. Keep a separate opt-in bit so that old automatic
+// value cannot masquerade as a person choosing background playback.
+const RADIO_SCOPE_EXPLICIT_KEY = 'poplur.radio.scope.explicit.v1'
 export type RadioScope = 'screen' | 'app' | 'outside'
 
 export function readRadioScope(): RadioScope {
   try {
     const scope = window.localStorage.getItem(RADIO_SCOPE_KEY)
-    if (scope === 'screen' || scope === 'app' || scope === 'outside') return scope
-    // Preserve the legacy boolean setting when it exists, but keep radio on
-    // its own screen for a new user who has never chosen a persistence scope.
-    return window.localStorage.getItem(RADIO_BG_KEY) === '1' ? 'app' : 'screen'
+    const explicit = window.localStorage.getItem(RADIO_SCOPE_EXPLICIT_KEY) === '1'
+    if (scope === 'screen' || scope === 'outside') return scope
+    if (scope === 'app') return explicit ? 'app' : 'screen'
+    // A boolean-only "on" was also written by the old automatic boot path,
+    // so it gets the same migration. An explicit setting always writes both
+    // the scope and the marker above.
+    return window.localStorage.getItem(RADIO_BG_KEY) === '1' && explicit ? 'app' : 'screen'
   } catch { return 'screen' }
 }
 
@@ -97,8 +106,14 @@ export function setRadioScope(scope: RadioScope) {
   try {
     window.localStorage.setItem(RADIO_SCOPE_KEY, scope)
     window.localStorage.setItem(RADIO_BG_KEY, scope === 'screen' ? '0' : '1')
+    window.localStorage.setItem(RADIO_SCOPE_EXPLICIT_KEY, '1')
   } catch { /* embedded */ }
   window.dispatchEvent(new CustomEvent('poplur-radio-scope', { detail: { scope } }))
+  // If the listener turns background playback off while the deck is already
+  // closed, the station must not wait for an unrelated future navigation to
+  // honour that choice. A visible deck is allowed to finish its current
+  // interaction and is stopped by its normal unmount path.
+  if (scope === 'screen' && !radioScreenVisible && soundWanted) stopMapRadio()
   if (isNativeShell()) {
     postNativeEvent({ type: 'radioPlayback', state: lastPublishedRadioState, scope })
   }
@@ -118,23 +133,13 @@ export function setRadioBackgroundEnabled(on: boolean) {
   setRadioScope(on ? 'app' : 'screen')
 }
 
-function hasExplicitRadioScope(): boolean {
-  try {
-    const scope = window.localStorage.getItem(RADIO_SCOPE_KEY)
-    return scope === 'screen' || scope === 'app' || scope === 'outside'
-      || window.localStorage.getItem(RADIO_BG_KEY) !== null
-  } catch {
-    return false
-  }
-}
-
 function validRadioCoordinates(lat: number, lng: number): boolean {
   return Number.isFinite(lat) && Number.isFinite(lng)
     && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
 }
 
 /**
- * Start a useful radio session as the post-login home comes up.
+ * Start a useful background radio session as the post-login home comes up.
  *
  * The bed/fallback starts immediately so native shells can play at once. A
  * real nearby Radio Browser station is selected as soon as its directory
@@ -147,10 +152,9 @@ function validRadioCoordinates(lat: number, lng: number): boolean {
  * retunes once to the listener's actual area. Calls for the same area are
  * deduplicated, including React StrictMode's development remount.
  */
-export function startRadioOnBoot(lat = HOME[1], lng = HOME[0]): void {
+function startAutomaticRadioSession(lat = HOME[1], lng = HOME[0]): void {
   if (typeof window === 'undefined') return
 
-  if (!hasExplicitRadioScope()) setRadioScope('app')
   // Boot playback deliberately stays on detached HTML media elements. It can
   // still start a real nearby stream (or the packaged fallback bed) on a
   // native shell, but it does not create a permanent WebAudio render thread
@@ -184,6 +188,31 @@ export function startRadioOnBoot(lat = HOME[1], lng = HOME[0]): void {
       // The immediate bed/fallback deliberately remains the radio experience
       // while a public directory is offline. Nothing needs to surface here.
     })
+}
+
+/**
+ * Home calls this after its map frame is recreated. It may reassert a station
+ * the listener already has playing under an opted-in background scope, but it
+ * must never create a fresh station simply because the app launched. The
+ * retained coordinates keep old callers source-compatible; tuning belongs to
+ * the visible Radio deck or to an existing active session.
+ */
+export function startRadioOnBoot(_lat = HOME[1], _lng = HOME[0]): void {
+  if (!soundWanted || !isRadioBackgroundEnabled()) return
+  const owner = currentAudioOwner()
+  if (owner && owner !== 'radio') return
+  startMapRadio({ mediaOnly: true })
+}
+
+/** Start Radio when its physical deck is on screen, regardless of scope. */
+export function startRadioForVisibleScreen(lat = HOME[1], lng = HOME[0]): void {
+  startAutomaticRadioSession(lat, lng)
+}
+
+/** Called by RadioScreen so scope changes can stop a hidden session at once. */
+export function setRadioScreenVisible(visible: boolean): void {
+  radioScreenVisible = visible
+  if (!visible && !isRadioBackgroundEnabled()) stopMapRadio()
 }
 
 function isRadioGateMuted(): boolean {

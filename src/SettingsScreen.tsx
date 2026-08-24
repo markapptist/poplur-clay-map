@@ -63,11 +63,11 @@ import {
 
 // Settings is an index of screens, not one long control panel: the root is a
 // list, and each row opens the screen that owns those controls. It grew past a
-// single page once Camera, Radio and Controls all landed in it, and a flat page
+// single page once Camera, Audio playback and Controls all landed in it, and a flat page
 // put the last rows under the home chrome where they could not be tapped.
 // One row per page of the app, so a setting is looked up where you met it:
-// what the camera says lives under Camera, how far the station follows you
-// lives under Radio. Pages with nothing to set yet still get a row — a gap in
+// what the camera says lives under Camera, how far Radio and iPod follow you
+// lives under Audio playback. Pages with nothing to set yet still get a row — a gap in
 // the list would read as "this page has no settings screen", which is a
 // different claim from "there is nothing to set here yet".
 type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'ringtone' | 'app' | 'profile' | 'verify'
@@ -77,7 +77,7 @@ const PAGE_TITLE: Record<Page, string> = {
   map: 'MAP',
   feed: 'FEED',
   camera: 'CAMERA',
-  radio: 'RADIO',
+  radio: 'AUDIO',
   ringtone: 'RINGTONE',
   app: 'APP ICON',
   profile: 'PROFILE',
@@ -92,9 +92,9 @@ const VERIFICATION_LABEL: Record<VerificationStatus, string> = {
 }
 
 const RADIO_LABEL: Record<RadioScope, string> = {
-  screen: 'Radio screen',
+  screen: 'This screen only',
   app: 'Across Poplur',
-  outside: 'Outside app',
+  outside: 'Radio outside app',
 }
 
 const SIDE_LABEL: Record<ControlSide, string> = {
@@ -174,7 +174,10 @@ export default function SettingsScreen({ bindBack }: {
     playPop()
     setRadioScope(scope)
     setRadioScopeState(scope)
-    postNativeEvent({ type: 'radioScope', scope })
+    // RadioScope remains the canonical wire format because it preserves the
+    // existing "outside" choice. The boolean makes the shared intent explicit
+    // to native shells: it applies to Radio and iPod together.
+    postNativeEvent({ type: 'radioScope', scope, backgroundAudioEnabled: scope !== 'screen' })
     if (window.parent !== window) window.parent.postMessage({ poplurRadioScope: scope }, '*')
   }
   const chooseControlSide = (side: ControlSide) => {
@@ -226,6 +229,23 @@ export default function SettingsScreen({ bindBack }: {
   }, [])
 
   useEffect(() => onProfileThemeChange(setProfileThemeState), [])
+
+  // The installed shells persist the shared playback preference independently
+  // of WebView storage. Ask when Settings opens rather than assuming an event
+  // sent during page bootstrap was still waiting for this screen to mount.
+  useEffect(() => {
+    const onNativeBackgroundAudio = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled?: boolean; scope?: string }>).detail
+      const scope = detail?.scope === 'screen' || detail?.scope === 'app' || detail?.scope === 'outside'
+        ? detail.scope
+        : detail?.enabled ? 'app' : 'screen'
+      setRadioScope(scope)
+      setRadioScopeState(scope)
+    }
+    window.addEventListener('poplur-native-background-audio', onNativeBackgroundAudio)
+    if (isNativeShell()) postNativeEvent({ type: 'requestBackgroundAudio' })
+    return () => window.removeEventListener('poplur-native-background-audio', onNativeBackgroundAudio)
+  }, [])
 
   useEffect(() => {
     const onNativeIcon = (event: Event) => {
@@ -407,8 +427,8 @@ export default function SettingsScreen({ bindBack }: {
 
               <button type="button" className={styles.row} onClick={() => openPage('radio')}>
                 <span className={styles.rowText}>
-                  <b>Radio</b>
-                  <i>How far the station follows you.</i>
+                  <b>Audio playback</b>
+                  <i>Where Radio and iPod keep playing.</i>
                 </span>
                 <span className={styles.rowValue}>{RADIO_LABEL[radioScope]}</span>
                 <span className={styles.chev} aria-hidden="true">›</span>
@@ -557,8 +577,8 @@ export default function SettingsScreen({ bindBack }: {
         )}
 
         {page === 'radio' && (
-        <article className={styles.group} aria-label="Radio playback">
-          <div className={styles.radioScope} role="radiogroup" aria-label="Where radio keeps playing">
+        <article className={styles.group} aria-label="Audio playback">
+          <div className={styles.radioScope} role="radiogroup" aria-label="Where Radio and iPod keep playing">
             {(Object.entries(RADIO_LABEL) as Array<[RadioScope, string]>).map(([scope, label]) => (
               <button
                 type="button"
@@ -573,9 +593,9 @@ export default function SettingsScreen({ bindBack }: {
             ))}
           </div>
           <p className={styles.radioScopeNote}>
-            {radioScope === 'screen' && 'Stops when you leave the Radio screen.'}
-            {radioScope === 'app' && 'Keeps playing while you browse Poplur.'}
-            {radioScope === 'outside' && 'Keeps the station playing when Poplur is in the background.'}
+            {radioScope === 'screen' && 'Radio and iPod stop when you leave their screens.'}
+            {radioScope === 'app' && 'Radio and iPod keep playing while you browse Poplur.'}
+            {radioScope === 'outside' && 'Radio keeps playing outside Poplur. iPod stops when Poplur is backgrounded.'}
           </p>
         </article>
         )}
