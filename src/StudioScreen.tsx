@@ -11,6 +11,7 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { addPostedTrack } from './musicPosts'
 import { radiusKm } from './radiusLedger'
 import { addBroadcast, type PoplurBroadcast } from './mapRadio'
+import StudioSynthwave from './StudioSynthwave'
 
 /** Focus and blur can leave the page scrolled under the keyboard; one deferred
  *  frame puts it back. governor-ok: a single frame per event, no loop, cannot
@@ -71,10 +72,12 @@ const KEYS = [
   { name: 'F1', black: false }, { name: 'C1', black: false },
 ]
 const STEPS = 16
-// The take is a performance, not a clip: up to three minutes, hard stop. Long
+// The Studio take is a performance, not a clip: up to three minutes, hard stop. Long
 // enough for a verse-and-hook pass — and exactly the span the AI builder
 // consumes. (It was 30 seconds when the take was only a hook seed.)
 const MAX_TAKE_MS = 180_000
+/** MUSIC starts with a concise hook, then hands the artist to Studio. */
+const MAX_MUSIC_CAPTURE_MS = 60_000
 const MAX_PODCAST_MS = 10 * 60_000
 
 const PODCAST_GENRES = ['Talk', 'Interview', 'Story', 'News', 'Culture', 'Comedy', 'Music Talk'] as const
@@ -92,7 +95,15 @@ const bar = (seed: number, i: number) => {
   return 26 + Math.abs(n - Math.floor(n)) * 74
 }
 
-export default function StudioScreen({ onClose }: { onClose: () => void }) {
+export default function StudioScreen({
+  onClose,
+  entry = 'studio',
+}: {
+  onClose: () => void
+  /** MUSIC records a one-minute hook before it opens the normal Studio flow. */
+  entry?: 'studio' | 'music-capture'
+}) {
+  const isMusicCapture = entry === 'music-capture'
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recMs, setRecMs] = useState(0)
@@ -115,7 +126,9 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   // transport. Landing cold on a DAW full of empty lanes was the old, terrible
   // version of this screen.
   const [mode, setMode] = useState<'music' | 'podcast'>('music')
-  const [stage, setStage] = useState<'choose' | 'mic' | 'style' | 'drop' | 'studio'>('choose')
+  const [stage, setStage] = useState<'choose' | 'mic' | 'style' | 'drop' | 'studio'>(
+    isMusicCapture ? 'mic' : 'choose',
+  )
   const [podcastGenre, setPodcastGenre] = useState<string>('Talk')
   const [aiEnhance, setAiEnhance] = useState(false)
   const [dropping, setDropping] = useState(false)
@@ -640,10 +653,14 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, genre])
 
-  const maxRecMs = mode === 'podcast' ? MAX_PODCAST_MS : MAX_TAKE_MS
+  const maxRecMs = mode === 'podcast'
+    ? MAX_PODCAST_MS
+    : isMusicCapture
+      ? MAX_MUSIC_CAPTURE_MS
+      : MAX_TAKE_MS
   useEffect(() => {
     if (!recording) return
-    const limit = mode === 'podcast' ? MAX_PODCAST_MS : MAX_TAKE_MS
+    const limit = maxRecMs
     const from = performance.now() - recMs
     const id = window.setInterval(() => {
       const ms = performance.now() - from
@@ -658,7 +675,7 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
     }, 50)
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording, mode])
+  }, [recording, mode, maxRecMs])
 
   // The AI build, reported as real progress rather than a spinner that lies.
   useEffect(() => {
@@ -750,6 +767,9 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
 
   const startCapture = async () => {
     stopCapture(true)
+    // Retained peaks belong to the previous take. Clear them before the
+    // permission sheet so the new landscape cannot claim to hear stale audio.
+    setLevels([])
     const generation = ++captureGenerationRef.current
     captureWantedRef.current = true
     let stream: MediaStream | null = null
@@ -796,7 +816,6 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
       ctx.createMediaStreamSource(stream).connect(analyser)
       analyserRef.current = analyser
       const buf = new Uint8Array(analyser.frequencyBinCount)
-      setLevels([])
       levelTimer.current = window.setInterval(() => {
         const a = analyserRef.current
         if (!a) return
@@ -934,27 +953,55 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   if (stage === 'choose') {
     return (
       <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
-        <div className={styles.styleStage}>
-          <span className={styles.styleKicker}>POPLUR STUDIO</span>
-          <h1 className={styles.styleTitle}>What are you making?</h1>
-          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '24px' }}>
+        <div className={styles.chooseStage}>
+          <header className={styles.choosePrompt}>
+            <span className={styles.chooseKicker}>POPLUR STUDIO</span>
+            <h1 className={styles.chooseTitle}>Choose your path</h1>
+          </header>
+          <div className={styles.chooseSplit} role="group" aria-label="Choose what you want to make">
             <button
-              className={styles.styleGo}
+              className={`${styles.choosePath} ${styles.chooseMusic}`}
               type="button"
-              style={{ flex: 1, maxWidth: '160px' }}
+              aria-label="Make music"
               onClick={() => { playPop(); setMode('music'); setStage('mic') }}
             >
-              🎵 MUSIC
+              <img
+                className={styles.chooseImage}
+                src="studio/music-path-v1.jpg"
+                alt=""
+                aria-hidden="true"
+                draggable="false"
+                decoding="async"
+                loading="eager"
+              />
+              <span className={styles.chooseCopy}>
+                <span className={styles.chooseLabel}>MUSIC</span>
+                <span className={styles.chooseHint}>MAKE A TRACK</span>
+              </span>
             </button>
             <button
-              className={styles.styleGo}
+              className={`${styles.choosePath} ${styles.choosePodcast}`}
               type="button"
-              style={{ flex: 1, maxWidth: '160px' }}
+              aria-label="Start a podcast"
               onClick={() => { playPop(); setMode('podcast'); setStage('mic') }}
             >
-              🎙 PODCAST
+              <img
+                className={styles.chooseImage}
+                src="studio/podcast-path-v1.jpg"
+                alt=""
+                aria-hidden="true"
+                draggable="false"
+                decoding="async"
+                loading="eager"
+              />
+              <span className={styles.chooseCopy}>
+                <span className={styles.chooseLabel}>PODCAST</span>
+                <span className={styles.chooseHint}>START A SESSION</span>
+              </span>
             </button>
           </div>
+          <span className={styles.chooseDivider} aria-hidden="true" />
+          <span className={styles.chooseOr} aria-hidden="true">OR</span>
         </div>
       </div>
     )
@@ -963,63 +1010,51 @@ export default function StudioScreen({ onClose }: { onClose: () => void }) {
   // ── stage 1: the mic. The session starts by SINGING, not by staring at
   // lanes. One button, up to three minutes, then the style question. ────────
   if (stage === 'mic') {
+    const signalLive = recording
+      && levels.length > 0
+      && analyserRef.current !== null
+      && streamRef.current?.active === true
+      && micCtxRef.current?.state === 'running'
     return (
       <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
         <div className={styles.micStage}>
-          {/* The 3D microphone is the CUBE now — the bottom navigator wears
-              poplur_mic_lite.glb for this whole stage (poplur-studio-stage
-              above), so drawing the same object big in the middle of the
-              screen would just be it twice. What stays is the part the cube
-              cannot do: the halo and voice arcs breathing with the LIVE
-              signal, compacted from the old full-height mic pedestal into a
-              glow the recording controls sit under. */}
-          <div
-            className={recording
-              ? `${styles.micScene} ${styles.micSceneCompact} ${styles.micSceneLive}`
-              : `${styles.micScene} ${styles.micSceneCompact}`}
-            style={{ '--mic-energy': micEnergy } as React.CSSProperties}
-          >
-            <span className={styles.micHalo} aria-hidden="true" />
-            <span className={`${styles.voiceArc} ${styles.voiceArcLeft}`} aria-hidden="true"><i /><i /><i /></span>
-            <span className={`${styles.voiceArc} ${styles.voiceArcRight}`} aria-hidden="true"><i /><i /><i /></span>
-          </div>
-          <div className={styles.micWave} aria-hidden="true">
-            {levels.slice(-40).map((h, i) => (
-              <span key={i} style={{ height: `${Math.min(100, h)}%` }} />
-            ))}
-          </div>
-          <div className={styles.micTime}>
-            {mmssms(recMs)} <span>/ {mode === 'podcast' ? '10:00.00' : '03:00.00'}</span>
-          </div>
-          <button className={recording ? `${styles.micBtn} ${styles.micBtnLive}` : styles.micBtn} type="button" onClick={micTap}>
-            {recording ? '■ FINISH' : '● RECORD'}
-          </button>
-          <span className={styles.micHint}>
-            {micDenied
-              ? 'Microphone refused — allow access in settings.'
-              : mode === 'podcast'
-                ? (recording ? 'Recording your podcast. Tap finish when done.' : 'Tap record to start your podcast.')
-                : (recording ? 'Three minutes max. Make it count.' : 'Tap record and give it a hook.')}
-          </span>
-          {mode === 'podcast' ? (
-            <button className={styles.micSkip} type="button" onClick={() => {
-              playPop()
-              stopCapture(true)
-              setRecording(false)
-              setStage('drop')
-            }}>
-              SKIP — GO LIVE INSTEAD
+          <StudioSynthwave active={signalLive} energy={micEnergy} levels={levels} />
+          <div className={styles.synthControls}>
+            <div className={styles.micTime}>
+              {mmssms(recMs)} <span>/ {mmssms(maxRecMs)}</span>
+            </div>
+            <button className={recording ? `${styles.micBtn} ${styles.micBtnLive}` : styles.micBtn} type="button" onClick={micTap}>
+              {recording ? '■ FINISH' : '● RECORD'}
             </button>
-          ) : (
-            <button className={styles.micSkip} type="button" onClick={() => {
-              playPop()
-              stopCapture(true)
-              setRecording(false)
-              setStage('style')
-            }}>
-              SKIP — NO VOCAL
-            </button>
-          )}
+            <span className={styles.micHint}>
+              {micDenied
+                ? 'Microphone refused — allow access in settings.'
+                : mode === 'podcast'
+                  ? (recording ? 'Your voice is shaping the horizon.' : 'Tap record to start your podcast.')
+                  : isMusicCapture
+                    ? (recording ? 'Your sound is driving the landscape.' : 'Record a hook, then take it into Studio.')
+                    : (recording ? 'Your sound is driving the landscape.' : 'Tap record and give it a hook.')}
+            </span>
+            {mode === 'podcast' ? (
+              <button className={styles.micSkip} type="button" onClick={() => {
+                playPop()
+                stopCapture(true)
+                setRecording(false)
+                setStage('drop')
+              }}>
+                SKIP — GO LIVE INSTEAD
+              </button>
+            ) : (
+              <button className={styles.micSkip} type="button" onClick={() => {
+                playPop()
+                stopCapture(true)
+                setRecording(false)
+                setStage('style')
+              }}>
+                SKIP — NO VOCAL
+              </button>
+            )}
+          </div>
         </div>
       </div>
     )

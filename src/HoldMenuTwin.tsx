@@ -10,11 +10,11 @@ import MapIpod from './MapIpod'
 import PhoneScreen from './PhoneScreen'
 import GamesScreen from './GamesScreen'
 import CasinoScreen from './CasinoScreen'
+import { primeCasinoAudio } from './casinoAudio'
 import MapShowMe from './MapShowMe'
 import NotificationsScreen from './NotificationsScreen'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
-import PodcastRoom from './PodcastRoom'
 import CharacterEditor from './CharacterEditor'
 import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
@@ -119,7 +119,6 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // the two tiles were indistinguishable in the wheel — and it also meant the
     // VIDEO cube could not be dropped in without silently restyling TV GUIDE.
     { icon: 'Video', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
-    { icon: 'YouTube', title: 'LIVE', screen: 'camera-live', action: 'live' },
     // ML scan and AR are persistent camera-side controls. They do not belong
     // in the hold menu, where they duplicate controls that remain visible on
     // the live viewfinder.
@@ -131,14 +130,13 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // Android). Sending it to the old native-only route left it as a no-op on
     // those hosts, so it stays in the shared surface like News and TV Guide.
     { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true },
-    // MUSIC is the camera for sound: record a take, let the AI build it into
-    // a song, post it to your radius like any other capture. Wears the
-    // supplied mixing-desk render, matching the screen's own object
-    // (camera-studio's cube is poplur_mixer_lite.glb).
+    // STUDIO is where you make a track: record a take, build it into a song,
+    // then publish it to your radius. It is deliberately separate from MUSIC,
+    // which is where posted tracks are heard.
     { icon: 'Studio', title: 'STUDIO', screen: 'camera-studio', native: true },
-    // PODCAST is a live room where you invite people within your radius.
-    // Record together and go live at a location. Cube becomes the mic.
-    { icon: 'Mic', title: 'PODCAST', screen: 'camera-podcast', native: true, format: 'svg' },
+    // MUSIC is the short capture entrance: record a hook for up to a minute,
+    // then continue into Studio to shape it with the AI.
+    { icon: 'Music', title: 'MUSIC', screen: 'camera-music', native: true },
   ],
   profile: [
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', home: true },
@@ -747,6 +745,10 @@ export default function HoldMenuTwin({
       onClose('action')
       return
     }
+    // The daily Casino spin starts on the next render. Prime its AudioContext
+    // while this tile click is still a trusted gesture so iOS can play the
+    // mechanical reel sounds when the opening shuffle begins.
+    if (item.screen === 'feed-casino') primeCasinoAudio()
     playPop()
     setActiveScreen(item)
   }
@@ -1038,10 +1040,10 @@ export default function HoldMenuTwin({
         </div>
       )
     }
-    if (activeScreen.native && activeScreen.screen === 'camera-podcast') {
+    if (activeScreen.native && activeScreen.screen === 'camera-music') {
       return (
-        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Podcast">
-          <PodcastRoom />
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Music">
+          <StudioScreen entry="music-capture" onClose={() => { playPop(); onClose() }} />
         </div>
       )
     }

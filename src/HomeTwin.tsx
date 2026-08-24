@@ -330,6 +330,9 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // and keeps every knob — see .codex/prerender-holdmenu-cubes.mjs for the
   // proofing harness that verified it survived.
   'camera-studio': 'poplur_mixer_lite.glb',
+  // MUSIC is the one-minute capture entrance to Studio. It starts with the
+  // same desk as Studio, then swaps to the mic while recording below.
+  'camera-music': 'poplur_mixer_lite.glb',
   // SHOW ME is the map's find-it-for-me surface, so it takes a magnifying
   // model of its own now. Replaced poplur_cube_search.glb (the old bare-cube
   // stand-in), which now has no references.
@@ -2560,6 +2563,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [nativeMapZoom, setNativeMapZoom] = useState(0.42)
   const nativeZoomFrameRef = useRef<number | null>(null)
   const pendingNativeZoomRef = useRef(nativeMapZoom)
+  // MapKit reports every settled camera position back to this WebView.  While
+  // the user owns the rail, an older report must never pull the thumb back
+  // under their finger.  Keep the immediate, local slider response and accept
+  // native's authoritative value once its last coalesced camera update lands.
+  const nativeZoomDraggingRef = useRef(false)
+  const nativeZoomSyncHoldUntilRef = useRef(0)
   const nativeHitSignatureRef = useRef('')
   const setNativeZoom = useCallback((next: number) => {
     const zoom = Math.max(0, Math.min(1, next))
@@ -2575,6 +2584,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => () => {
     if (nativeZoomFrameRef.current !== null) window.cancelAnimationFrame(nativeZoomFrameRef.current)
   }, [])
+  const beginNativeZoomGesture = useCallback(() => {
+    nativeZoomDraggingRef.current = true
+  }, [])
+  const finishNativeZoomGesture = useCallback(() => {
+    nativeZoomDraggingRef.current = false
+    // The native camera is deliberately non-animated while this rail moves.
+    // A short hold still filters any already-queued state from before release.
+    nativeZoomSyncHoldUntilRef.current = performance.now() + 220
+    if (!NATIVE_ADAPTIVE_MAP) return
+    if (nativeZoomFrameRef.current !== null) {
+      window.cancelAnimationFrame(nativeZoomFrameRef.current)
+      nativeZoomFrameRef.current = null
+    }
+    sendMapAction('setZoom', { zoom: pendingNativeZoomRef.current })
+  }, [sendMapAction])
 
   // Native MapKit publishes its settled camera state back into the same HUD
   // state the iframe used. The title, 2D/3D clay mark, and zoom rail therefore
@@ -2590,8 +2614,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (detail?.mode === '2d' || detail?.mode === '3d') setLiveMapMode(detail.mode)
       if (typeof detail?.zoom === 'number' && Number.isFinite(detail.zoom)) {
         const zoom = Math.max(0, Math.min(1, detail.zoom))
-        pendingNativeZoomRef.current = zoom
-        setNativeMapZoom(zoom)
+        if (!nativeZoomDraggingRef.current && performance.now() >= nativeZoomSyncHoldUntilRef.current) {
+          pendingNativeZoomRef.current = zoom
+          setNativeMapZoom(zoom)
+        }
       }
       if (typeof detail?.place === 'string' && detail.place.trim()) setMapPlace(detail.place.trim())
     }
@@ -2908,11 +2934,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // it (opening reuses setResume + setHoldOpen, the same handoff every other
   // tab's page-list branch performs).
   //
-  // This function owns the WHOLE ring, the three subscreen stops included.
+  // This function owns the WHOLE ring, the four subscreen stops included.
   // The first version handed arrow presses to the wheel's own walker once a
   // subscreen was open, but that walker only knows the three page tiles plus
   // its door — so after visiting CREATE the ring collapsed to
-  // live→create→games→studio→live and VIDEO, PHOTO and ROLL became
+  // live→create→games→studio→music→live and VIDEO, PHOTO and ROLL became
   // unreachable going forward. Now an open ring subscreen is simply the
   // ring's current stop: stepping off it closes the menu and lands on the
   // neighbouring mode, so every stop cycles in both directions, always.
@@ -2923,16 +2949,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // arrive at — it is a control on the video screen now. Leaving them in made
   // the arrows walk through two capture modes that are not destinations before
   // reaching anything that is.
-  const CAMERA_CYCLE = ['photo', 'video', 'create', 'games', 'studio'] as const
+  const CAMERA_CYCLE = ['photo', 'video', 'create', 'games', 'studio', 'music'] as const
   const CAMERA_CYCLE_SCREEN = {
     create: 'camera-ai-chat',
     games: 'feed-games',
     studio: 'camera-studio',
+    music: 'camera-music',
   } as const
-  const CAMERA_STOP_BY_SCREEN: Record<string, 'create' | 'games' | 'studio'> = {
+  const CAMERA_STOP_BY_SCREEN: Record<string, 'create' | 'games' | 'studio' | 'music'> = {
     'camera-ai-chat': 'create',
     'feed-games': 'games',
     'camera-studio': 'studio',
+    'camera-music': 'music',
   }
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
@@ -2948,7 +2976,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
-    if (next === 'create' || next === 'games' || next === 'studio') {
+    if (next === 'create' || next === 'games' || next === 'studio' || next === 'music') {
       if (onRoll) setCameraStep(step => step + 1)
       setResume(current => ({ screen: CAMERA_CYCLE_SCREEN[next], n: current.n + 1 }))
       setHoldOpen(true)
@@ -3373,7 +3401,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // take is being sung — the screen's own big mic sprite came out in the
       // same change, so this is the only mic on the stage. Every other studio
       // stage falls through to the mixing desk in SUBSCREEN_CUBE_MODEL.
-      ?? (cubeScreen === 'camera-studio' && studioStage === 'mic'
+      ?? ((cubeScreen === 'camera-studio' || cubeScreen === 'camera-music') && studioStage === 'mic'
         ? STUDIO_MIC_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
@@ -3725,6 +3753,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             className={styles.nativeMapZoom}
             aria-label="Map zoom"
             data-poplur-native-hit-region
+            onPointerDown={beginNativeZoomGesture}
+            onPointerUp={finishNativeZoomGesture}
+            onPointerCancel={finishNativeZoomGesture}
           >
             <img
               className={styles.nativeMapZoomCity}
@@ -3741,6 +3772,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               value={nativeMapZoom}
               onInput={event => setNativeZoom(Number(event.currentTarget.value))}
               onChange={event => setNativeZoom(Number(event.currentTarget.value))}
+              onKeyDown={beginNativeZoomGesture}
+              onKeyUp={finishNativeZoomGesture}
+              onBlur={finishNativeZoomGesture}
               aria-label="Map zoom"
             />
             <img

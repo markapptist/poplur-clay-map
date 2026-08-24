@@ -11,6 +11,7 @@ import {
   playCasinoWin,
 } from './casinoAudio'
 import { creditBalance, grantCasinoWin, onCreditsChange } from './poplurCredits'
+import { postNativeEvent } from './nativeBridge'
 
 // POPLUR CASINO — the feed's daily slots channel. One free spin a day; the
 // middle line pays, and wins land in the poplurCredits ledger (the same one
@@ -92,6 +93,13 @@ function spinUsedToday(): boolean {
 function markSpinUsed(): void {
   try { window.localStorage.setItem(LAST_SPIN_KEY, todayStamp()) }
   catch { /* private mode — component state still gates this visit */ }
+}
+
+/** Friday is a real, applied house promotion — it never advertises a bonus
+    that the credit ledger does not actually award. Local time matches the
+    daily-spin reset above, so the offer flips with the same calendar day. */
+function isDoubleCreditDay(): boolean {
+  return new Date().getDay() === 5
 }
 
 // ── outcome ──────────────────────────────────────────────────────────────────
@@ -195,11 +203,19 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const [credits, setCredits] = useState(() => creditBalance())
   const [result, setResult] = useState<SpinResult | null>(null)
   const [paysOpen, setPaysOpen] = useState(false)
+  const [promoOpen, setPromoOpen] = useState(false)
 
   const landedRef = useRef(0)
   const ceilingRef = useRef<number | null>(null)
   const finalFacesRef = useRef<Faces | null>(null)
   const pendingRef = useRef<SpinResult | null>(null)
+  // Entering the casino spends today's free spin immediately. Keep this as a
+  // ref rather than state so the effect cannot re-arm itself when `spin()`
+  // advances through armed → rolling → idle.
+  const openingSpinStartedRef = useRef(false)
+  // A visitor who already spent today's spin still gets the Casino offers;
+  // a fresh daily visitor gets them after the opening reels have settled.
+  const openedAfterDailySpinRef = useRef(spinUsedToday())
 
   useEffect(() => onCreditsChange(() => setCredits(creditBalance())), [])
 
@@ -209,6 +225,14 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     beginCasinoAudio()
     return endCasinoAudio
+  }, [])
+
+  useEffect(() => {
+    const delay = openedAfterDailySpinRef.current
+      ? 850
+      : REEL_DUR_BASE + REEL_DUR_STEP * (REELS - 1) + 620
+    const id = window.setTimeout(() => setPromoOpen(true), delay)
+    return () => window.clearTimeout(id)
   }, [])
 
   // Same contract as GamesScreen: ask HomeTwin to clear its wordmark and stat
@@ -274,11 +298,12 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     const bottom = buildDressingRow()
     const final: Faces = Array.from({ length: REELS }, (_, i) => [top[i], line[i], bottom[i]])
     finalFacesRef.current = final
+    const multiplier = isDoubleCreditDay() ? 2 : 1
     pendingRef.current = outcome.count === 0
       ? null
       : {
-          amount: outcome.symbol.pays[outcome.count - 3],
-          line: `Slots ${outcome.count}× ${outcome.symbol.name}`,
+          amount: outcome.symbol.pays[outcome.count - 3] * multiplier,
+          line: `Slots ${outcome.count}× ${outcome.symbol.name}${multiplier > 1 ? ' · Friday 2× credits' : ''}`,
           count: outcome.count,
         }
     // The spin is SPENT when the reels are committed, not when they stop —
@@ -296,6 +321,19 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
       REEL_DUR_BASE + REEL_DUR_STEP * (REELS - 1) + 900,
     )
   }
+
+  // The cabinet welcomes the player by running the daily spin as soon as the
+  // screen opens. `LAST_SPIN_KEY` is day-stamped, so a fresh visit after local
+  // midnight gets a newly rolled result while repeat visits that day leave the
+  // settled machine alone. This routes through the same spin path as the
+  // buttons, preserving the mechanical start/whirr/reel-stop sounds whenever
+  // the platform allows playback for the navigation gesture.
+  useEffect(() => {
+    if (openingSpinStartedRef.current || used || phase !== 'idle') return
+    openingSpinStartedRef.current = true
+    const id = window.setTimeout(spin, 180)
+    return () => window.clearTimeout(id)
+  }, [phase, used])
 
   // governor-ok: a single deferred frame per spin press, no loop — the strips
   // must mount at rest before the transform that travels them, or there is no
@@ -328,6 +366,28 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     : used
       ? 'COME BACK TOMORROW — ONE FREE SPIN A DAY'
       : 'YOUR FREE DAILY SPIN IS READY'
+  const promo = isDoubleCreditDay()
+    ? {
+        eyebrow: 'POPLUR PROMOTION · TODAY ONLY',
+        title: '2× CREDIT FRIDAY',
+        body: 'Every winning line pays double Poplur Credits today. Your daily spin is ready at midnight.',
+        cta: 'PLAY THE PROMO',
+      }
+    : {
+        eyebrow: 'POPLUR PROMOTION',
+        title: 'A FREE SPIN, EVERY DAY',
+        body: 'Your Casino spin resets at local midnight. Friday wins are automatically worth 2× Credits.',
+        cta: 'KEEP PLAYING',
+      }
+
+  const openNearbyCasinos = () => {
+    // Deliberately search rather than inventing a named "nearby" advertiser:
+    // Google Maps resolves the player's current area only after they ask.
+    const url = 'https://www.google.com/maps/search/?api=1&query=casinos%20near%20me'
+    playPop()
+    setPromoOpen(false)
+    if (!postNativeEvent({ type: 'openInAppBrowser', url })) window.location.assign(url)
+  }
 
   return (
     <div className={styles.stage} data-win={result && result.amount > 0 ? 'true' : undefined}>
@@ -526,6 +586,33 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
           >
             CLOSE
           </button>
+        </div>
+      )}
+
+      {promoOpen && !paysOpen && (
+        <div className={styles.promoScrim} role="presentation">
+          <section className={styles.promoCard} role="dialog" aria-modal="true" aria-label="Casino promotion">
+            <button
+              type="button"
+              className={styles.promoClose}
+              aria-label="Close casino promotion"
+              onClick={() => { playPop(); setPromoOpen(false) }}
+            >×</button>
+            <span className={styles.promoEyebrow}>{promo.eyebrow}</span>
+            <strong className={styles.promoTitle}>{promo.title}</strong>
+            <p className={styles.promoBody}>{promo.body}</p>
+            <button type="button" className={styles.promoPrimary} onClick={() => { playPop(); setPromoOpen(false) }}>
+              {promo.cta}
+            </button>
+            <div className={styles.nearbyPromo}>
+              <span className={styles.nearbyTag}>DISCOVER NEAR YOU</span>
+              <strong>Casinos around your current area</strong>
+              <p>Find venues, hours, and events near you without leaving Poplur.</p>
+              <button type="button" className={styles.nearbyAction} onClick={openNearbyCasinos}>
+                FIND CASINOS NEAR ME
+              </button>
+            </div>
+          </section>
         </div>
       )}
     </div>

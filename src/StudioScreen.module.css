@@ -801,7 +801,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .micOn, .tBtnRecOn, .buildFill, .micArt3d { animation: none; }
+  .micOn, .tBtnRecOn, .buildFill, .micArt3d, .micBtnLive { animation: none; }
+  .chooseImage, .choosePath::after { transition: none; }
 }
 
 .playTake {
@@ -819,6 +820,209 @@
 
 .micDenied { color: #ff6b6b; font-weight: 800; }
 
+/* ── choose a path ────────────────────────────────────────────────────────
+   Each photograph is the control itself. The static veils keep the shared
+   Poplur wordmark and choice labels legible without adding another card. */
+
+.chooseStage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: #050208;
+}
+
+.chooseSplit {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.choosePath {
+  appearance: none;
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #09050d;
+  color: #fff;
+  cursor: pointer;
+  isolation: isolate;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.choosePath::before,
+.choosePath::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  content: '';
+}
+
+.choosePath::before {
+  background:
+    linear-gradient(180deg, rgba(4, 2, 8, .68) 0%, rgba(4, 2, 8, .14) 34%, rgba(4, 2, 8, .17) 57%, rgba(4, 2, 8, .92) 100%),
+    linear-gradient(90deg, rgba(246, 59, 154, .16), transparent 60%);
+}
+
+.choosePodcast::before {
+  background:
+    linear-gradient(180deg, rgba(4, 2, 8, .68) 0%, rgba(4, 2, 8, .14) 34%, rgba(4, 2, 8, .17) 57%, rgba(4, 2, 8, .92) 100%),
+    linear-gradient(270deg, rgba(164, 75, 255, .18), transparent 60%);
+}
+
+.choosePath::after {
+  opacity: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(246, 59, 154, .18));
+  transition: opacity 180ms ease;
+}
+
+.chooseImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 54% center;
+  filter: saturate(.92) contrast(1.06) brightness(.84);
+  transform: scale(1.015);
+  transition: filter 220ms ease, transform 320ms cubic-bezier(.2, .75, .25, 1);
+  pointer-events: none;
+}
+
+.choosePodcast .chooseImage { object-position: 20% center; }
+
+.choosePrompt {
+  position: absolute;
+  z-index: 4;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 24px);
+  left: 18px;
+  right: 18px;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.chooseKicker {
+  font: 950 10px/1 system-ui, sans-serif;
+  letter-spacing: 3.4px;
+  color: #ff8ac6;
+  text-shadow: 0 2px 16px #000, 0 0 18px rgba(246, 59, 154, .55);
+}
+
+.chooseTitle {
+  margin: 0;
+  font: 950 clamp(25px, 7vw, 34px)/1.02 system-ui, 'SF Pro Rounded', sans-serif;
+  letter-spacing: -.8px;
+  color: #fff;
+  text-wrap: balance;
+  text-shadow: 0 3px 24px rgba(0, 0, 0, .95), 0 1px 3px #000;
+}
+
+.chooseCopy {
+  position: absolute;
+  z-index: 3;
+  left: 8px;
+  right: 8px;
+  bottom: calc(18px + var(--cube-size, 176px) + 30px + env(safe-area-inset-bottom, 0px));
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.chooseLabel {
+  font: 950 clamp(22px, 6.4vw, 31px)/1 system-ui, 'SF Pro Rounded', sans-serif;
+  letter-spacing: clamp(.8px, .5vw, 2px);
+  text-shadow: 0 3px 18px #000, 0 1px 3px #000;
+}
+
+.chooseHint {
+  padding: 7px 10px 6px;
+  border: 1px solid rgba(255, 255, 255, .48);
+  border-radius: 999px;
+  background: rgba(5, 2, 8, .72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 4px 16px rgba(0, 0, 0, .35);
+  font: 900 clamp(7px, 2.2vw, 10px)/1 system-ui, sans-serif;
+  letter-spacing: clamp(1px, .5vw, 2px);
+  white-space: nowrap;
+}
+
+.chooseDivider {
+  position: absolute;
+  z-index: 4;
+  top: 4%;
+  bottom: 5%;
+  left: 50%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, .5) 30%, rgba(255, 122, 191, .78) 68%, transparent);
+  box-shadow: 0 0 18px rgba(246, 59, 154, .38);
+  pointer-events: none;
+}
+
+.chooseOr {
+  position: absolute;
+  z-index: 5;
+  bottom: calc(18px + var(--cube-size, 176px) + 58px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .65);
+  border-radius: 50%;
+  background: rgba(5, 2, 8, .9);
+  box-shadow: 0 0 22px rgba(246, 59, 154, .38);
+  transform: translateX(-50%);
+  color: rgba(255, 255, 255, .86);
+  font: 950 7px/1 system-ui, sans-serif;
+  letter-spacing: .7px;
+  pointer-events: none;
+}
+
+.choosePath:focus-visible {
+  z-index: 6;
+  outline: 3px solid #fff;
+  outline-offset: -5px;
+  box-shadow: inset 0 0 0 7px #f63b9a;
+}
+
+.choosePath:active .chooseImage { transform: scale(1.045); }
+.choosePath:active::after { opacity: 1; }
+
+@media (hover: hover) {
+  .choosePath:hover .chooseImage {
+    filter: saturate(1.05) contrast(1.08) brightness(.94);
+    transform: scale(1.045);
+  }
+  .choosePath:hover::after { opacity: 1; }
+}
+
+@media (max-height: 600px) {
+  .choosePrompt {
+    top: calc(var(--header-title-top, 20px) + var(--header-title-height, 32px) + 8px);
+    gap: 4px;
+  }
+  .chooseTitle { font-size: 23px; }
+  .chooseCopy {
+    top: calc(var(--header-title-top, 20px) + var(--header-title-height, 32px) + 92px);
+    bottom: auto;
+  }
+  .chooseOr {
+    top: calc(var(--header-title-top, 20px) + var(--header-title-height, 32px) + 112px);
+    bottom: auto;
+  }
+}
+
 /* ── the staged flow: mic → style → editor ─────────────────────────────────
    The session starts at the microphone, not at the lanes. Both stages sit on
    the same near-black stage as the games boot so the pipeline feels like one
@@ -833,6 +1037,43 @@
   background:
     radial-gradient(72% 54% at 50% 40%, rgba(246, 59, 154, 0.16), transparent 70%),
     #07040c;
+}
+
+.micStage {
+  display: block;
+  padding: 0;
+  background: #05020b;
+}
+
+.synthControls {
+  position: absolute;
+  z-index: 4;
+  left: max(18px, env(safe-area-inset-left, 0px));
+  right: max(18px, env(safe-area-inset-right, 0px));
+  bottom: calc(18px + var(--cube-size, 176px) + env(safe-area-inset-bottom, 0px));
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .synthControls {
+    top: calc(var(--header-title-top, 20px) + var(--header-title-height, 32px) + 12px);
+    right: max(18px, env(safe-area-inset-right, 0px));
+    bottom: auto;
+    left: calc(50% + 100px);
+    gap: 7px;
+  }
+  .synthControls .micTime { font-size: 18px; }
+  .synthControls .micTime span { font-size: 11px; }
+  .synthControls .micBtn {
+    min-width: min(160px, 100%);
+    min-height: 50px;
+    padding: 13px 22px;
+    font-size: 13px;
+  }
+  .synthControls .micHint { max-width: 220px; font-size: 11px; }
 }
 
 .micScene {

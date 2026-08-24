@@ -292,6 +292,25 @@ export function beginCasinoAudio(): void {
   subscriptions.push(registerAudioOwner('ui', () => { silenceAll(); parkNow() }))
 }
 
+/**
+ * Called from the Casino tile's real pointer/click gesture before the screen
+ * mounts. Mobile WebKit will otherwise allow the visual auto-spin but reject
+ * the AudioContext resume that arrives a moment later in a React effect.
+ *
+ * It produces no sound by itself and keeps the context awake for only a short
+ * hand-off window; `playCasinoSpin()` takes over that lease once the daily
+ * opening spin begins.
+ */
+export function primeCasinoAudio(): void {
+  if (isGateMuted()) return
+  const c = context()
+  if (!c) return
+  armPark(1200)
+  if (c.state === 'suspended') {
+    void c.resume().catch(() => { /* a later user gesture can retry */ })
+  }
+}
+
 /** Call on unmount. Stops every voice and CLOSES the context — a screen that is
  *  gone owns no audio clock. */
 export function endCasinoAudio(): void {
