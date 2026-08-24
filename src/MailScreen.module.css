@@ -5,10 +5,13 @@
   flex-direction: column;
   background: #fef0f5;
   overflow: hidden;
-  /* Clear the Poplur wordmark via the header vars (they carry the device
-     safe-area) — the old flat 68px sat under the logo on phones. */
-  padding-top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 8px);
-  padding-bottom: 120px;
+  /* Mail owns its complete interaction area. The home chrome stands down
+     while a chat is open, so leaving a huge reserved logo/dock gutter here
+     would just strand the conversation and composer in the middle of a phone.
+     Safe-area padding preserves the system status/home indicators without
+     letting the persistent cube and radius card cover the actual message UI. */
+  padding-top: max(58px, calc(env(safe-area-inset-top, 0px) + 16px));
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
 }
 
 /* ── Thread list (Chats) ───────────────────────────────────────────────── */
@@ -295,10 +298,39 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.dmCallButton:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
 .dmCallButton svg {
   width: 18px;
   height: 18px;
   fill: currentColor;
+}
+
+.threadBack {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(36, 20, 29, 0.06);
+  color: #24141d;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.threadBack svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .conversation {
@@ -380,6 +412,11 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.sendBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ── FaceTime call surface ─────────────────────────────────────────────── */
 .ftOverlay {
   position: fixed;
@@ -392,9 +429,72 @@
   flex-direction: column;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 18%, rgba(241, 62, 161, 0.24), transparent 34%),
-    linear-gradient(165deg, #24101f, #070509 62%);
+    radial-gradient(circle at 50% 8%, rgba(255, 112, 190, 0.3), transparent 27%),
+    radial-gradient(circle at 50% 38%, rgba(101, 28, 88, 0.32), transparent 46%),
+    linear-gradient(165deg, #351126, #110714 54%, #050408);
   color: #fff;
+}
+
+.ftOverlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.24;
+  background-image:
+    linear-gradient(rgba(255, 177, 220, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 177, 220, 0.08) 1px, transparent 1px);
+  background-size: 30px 30px;
+  mask-image: linear-gradient(to bottom, #000, transparent 67%);
+}
+
+.ftHeader {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: max(10px, env(safe-area-inset-top, 0px)) 18px 8px;
+  border-bottom: 1px solid rgba(255, 174, 220, 0.18);
+  background: linear-gradient(90deg, rgba(66, 15, 47, 0.74), rgba(15, 5, 17, 0.26));
+  backdrop-filter: blur(14px);
+}
+
+.ftBrandMark {
+  width: 28px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 219, 240, 0.74);
+  border-radius: 9px;
+  color: #fff;
+  background: radial-gradient(circle at 31% 22%, #ffcee5, #f53196 54%, #7c1447);
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.55), 0 0 14px rgba(255, 54, 157, 0.42);
+  font: 950 19px/1 Georgia, serif;
+}
+
+.ftHeader > span:nth-child(2) { display: grid; gap: 2px; }
+.ftHeader b { font: 950 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.16em; }
+.ftHeader small { color: rgba(255, 221, 239, 0.62); font: 800 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.13em; }
+
+.ftLiveLamp {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: rgba(255, 220, 238, 0.86);
+  font: 900 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .12em;
+}
+
+.ftLiveLamp i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4dff93;
+  box-shadow: 0 0 9px #4dff93;
 }
 
 /* A call starts as a call, not two empty camera rectangles. The same surface
@@ -408,7 +508,7 @@
   align-content: center;
   justify-items: center;
   gap: 11px;
-  padding: max(96px, calc(env(safe-area-inset-top, 0px) + 70px)) 28px 24px;
+  padding: 44px 28px 24px;
   text-align: center;
   overflow: hidden;
 }
@@ -438,6 +538,68 @@
   letter-spacing: 0.04em;
 }
 
+/* The caller is a small Poplur contact cube, not a generic operating-system
+   avatar. The real persistent navigator also swaps to the DM contact cube;
+   this keeps the call screen itself recognisably Poplur if the shell chrome is
+   unavailable during a permission prompt. */
+.ftContactCube {
+  position: relative;
+  z-index: 1;
+  width: clamp(112px, 31vw, 148px);
+  aspect-ratio: 1;
+  margin-bottom: 9px;
+  transform: rotateX(7deg) rotateY(-13deg);
+  filter: drop-shadow(0 18px 24px rgba(255, 31, 147, 0.32));
+}
+
+.ftCubeFace,
+.ftCubeTop,
+.ftCubeSide {
+  position: absolute;
+  display: grid;
+  place-items: center;
+}
+
+.ftCubeFace {
+  inset: 7% 12% 13% 6%;
+  z-index: 2;
+  border: 2px solid rgba(255, 224, 243, 0.76);
+  border-radius: 24%;
+  color: #fff;
+  background:
+    radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.72), transparent 19%),
+    radial-gradient(circle at 68% 70%, rgba(151, 20, 92, 0.52), transparent 40%),
+    linear-gradient(145deg, #ff91c9, #f32288 56%, #70133f);
+  box-shadow: inset 0 4px 11px rgba(255, 255, 255, 0.42), inset 0 -7px 12px rgba(100, 7, 53, 0.45), 0 0 28px rgba(248, 46, 146, 0.58);
+  font: 950 clamp(43px, 11vw, 57px)/1 Georgia, serif;
+}
+
+.ftCubeTop {
+  top: 0;
+  left: 13%;
+  width: 73%;
+  height: 24%;
+  z-index: 1;
+  transform: skewX(-42deg);
+  border: 2px solid rgba(255, 226, 244, 0.7);
+  border-bottom: 0;
+  border-radius: 18% 23% 4% 5%;
+  background: linear-gradient(135deg, #ffe2f1, #ff76bb 62%, #be1a65);
+}
+
+.ftCubeSide {
+  top: 11%;
+  right: 0;
+  width: 22%;
+  height: 69%;
+  z-index: 1;
+  transform: skewY(-42deg);
+  border: 2px solid rgba(255, 202, 232, 0.56);
+  border-left: 0;
+  border-radius: 0 18% 16% 0;
+  background: linear-gradient(180deg, #b70e59, #4f0d31);
+}
+
 .ftRingingAvatar {
   width: clamp(116px, 31vw, 150px);
   aspect-ratio: 1;
@@ -450,10 +612,11 @@
   letter-spacing: -0.03em;
 }
 
-.ftRinging > span {
+.ftCallKind {
   color: rgba(255, 255, 255, 0.76);
-  font-size: 15px;
-  font-weight: 760;
+  font-size: 12px;
+  font-weight: 840;
+  letter-spacing: .04em;
 }
 
 .ftRinging > b {
@@ -559,13 +722,15 @@
 }
 
 .ftStatus {
+  position: relative;
+  z-index: 2;
   flex: none;
   min-height: 18px;
   text-align: center;
   padding: 10px 0 4px;
   font: 800 12px/1 ui-monospace, monospace;
   letter-spacing: .08em;
-  color: rgba(255, 255, 255, .72);
+  color: rgba(255, 203, 231, .82);
 }
 
 /* Reserve the home dock. Now that .ftOverlay sits UNDER the chrome, the home
@@ -583,6 +748,8 @@
    176 would push the controls ~31px higher than the dock really needs. The
    clamp below is that same expression in CSS. */
 .ftControls {
+  position: relative;
+  z-index: 2;
   flex: none;
   display: flex;
   justify-content: center;
@@ -597,22 +764,33 @@
   height: 54px;
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 2px;
   border: 0;
   border-radius: 50%;
   color: #fff;
-  background: rgba(255, 255, 255, .18);
+  background: linear-gradient(145deg, rgba(255, 255, 255, .26), rgba(123, 55, 93, .38));
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, .3), 0 5px 0 rgba(14, 4, 11, .46);
   cursor: pointer;
 }
 
 .ftControls svg {
-  width: 24px;
-  height: 24px;
+  width: 21px;
+  height: 21px;
   fill: currentColor;
   stroke: currentColor;
   stroke-width: 1.5;
 }
 
-.ftEnd { background: #e63b50 !important; }
+.ftControls button span {
+  font: 900 6px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .06em;
+}
+
+.ftEnd {
+  background: linear-gradient(145deg, #ff6e8d, #ed254b 60%, #a20d32) !important;
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, .32), 0 5px 0 #6c0823 !important;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .ftRingingHalo { animation: none; }

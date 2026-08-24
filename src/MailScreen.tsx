@@ -4,6 +4,7 @@ import styles from './MailScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
+import { isNativeShell } from './nativeBridge'
 import {
   placeCall,
   hangup as hangupCall,
@@ -17,12 +18,28 @@ import {
 
 interface Thread {
   id: string
+  /** The actual Poplur account on the other side of this conversation. */
+  otherId?: string
   initials: string
   title: string
   preview: string
   when: string
   unread: number
   messages: Array<{ from: 'me' | 'them'; text: string }>
+}
+
+interface NativeThreadPayload {
+  id?: unknown
+  otherId?: unknown
+  initials?: unknown
+  title?: unknown
+  preview?: unknown
+  unread?: unknown
+}
+
+interface NativeMessagePayload {
+  from?: unknown
+  text?: unknown
 }
 
 const THREADS: Thread[] = [
@@ -73,6 +90,48 @@ const THREADS: Thread[] = [
     ],
   },
 ]
+
+function nativeThreads(value: unknown): Thread[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((raw): Thread[] => {
+    if (!raw || typeof raw !== 'object') return []
+    const thread = raw as NativeThreadPayload
+    const id = typeof thread.id === 'string' ? thread.id.trim() : ''
+    const otherId = typeof thread.otherId === 'string' ? thread.otherId.trim() : ''
+    if (!id || !otherId) return []
+    const title = typeof thread.title === 'string' && thread.title.trim()
+      ? thread.title.trim()
+      : 'Poplur chat'
+    const initials = typeof thread.initials === 'string' && thread.initials.trim()
+      ? thread.initials.trim().slice(0, 2).toUpperCase()
+      : title.slice(0, 2).toUpperCase()
+    return [{
+      id,
+      otherId,
+      initials,
+      title,
+      preview: typeof thread.preview === 'string' && thread.preview.trim()
+        ? thread.preview.trim()
+        : 'No messages yet',
+      when: 'now',
+      unread: typeof thread.unread === 'number' && Number.isFinite(thread.unread)
+        ? Math.max(0, Math.floor(thread.unread))
+        : 0,
+      messages: [],
+    }]
+  })
+}
+
+function nativeMessages(value: unknown): Thread['messages'] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((raw): Thread['messages'] => {
+    if (!raw || typeof raw !== 'object') return []
+    const message = raw as NativeMessagePayload
+    const text = typeof message.text === 'string' ? message.text.trim() : ''
+    if (!text) return []
+    return [{ from: message.from === 'me' ? 'me' : 'them', text }]
+  })
+}
 
 /** Deleted chats stay deleted across visits. The list is seeded locally (the
     DM bridge fills real threads on device), so without a durable tombstone a
@@ -219,7 +278,15 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
  * mounts this same surface for an accepted incoming FaceTime call so neither
  * direction falls back to the phone's audio-only LCD.
  */
-export function FaceTimeOverlay({ who, onEnd }: { who: string; onEnd: () => void }) {
+export function FaceTimeOverlay({
+  who,
+  direction = 'outgoing',
+  onEnd,
+}: {
+  who: string
+  direction?: 'incoming' | 'outgoing'
+  onEnd: () => void
+}) {
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const [callSnap, setCallSnap] = useState<CallSnapshot | null>(null)
@@ -314,9 +381,31 @@ export function FaceTimeOverlay({ who, onEnd }: { who: string; onEnd: () => void
     : callSnap?.phase === 'connecting'
       ? 'CONNECTING…'
       : 'CALLING…'
+  const isRinging = callSnap?.phase === 'calling'
+  const statusLabel = connected
+    ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
+    : phaseLabel
+  const callHeading = connected
+    ? 'CONNECTED'
+    : isRinging
+      ? direction === 'incoming' ? 'INCOMING VIDEO CALL' : 'CALLING FROM DM'
+      : 'CONNECTING VIDEO'
+  const callDetail = connected
+    ? 'Secure Poplur video'
+    : isRinging
+      ? direction === 'incoming' ? `${who} is calling you` : `Waiting for ${who} to answer`
+      : 'Setting up the call securely'
 
   return createPortal(
     <section className={styles.ftOverlay} role="dialog" aria-modal="true" aria-label={`FaceTime with ${who}`}>
+      <header className={styles.ftHeader}>
+        <span className={styles.ftBrandMark} aria-hidden="true">P</span>
+        <span>
+          <b>POPLUR CALL</b>
+          <small>DM · VIDEO</small>
+        </span>
+        <span className={styles.ftLiveLamp}><i aria-hidden="true" />LIVE</span>
+      </header>
       {connected ? (
         <div className={styles.ftSplit}>
           <div className={styles.ftRemotePane}>
@@ -358,25 +447,32 @@ export function FaceTimeOverlay({ who, onEnd }: { who: string; onEnd: () => void
       ) : (
         <div className={styles.ftRinging}>
           <div className={styles.ftRingingHalo} aria-hidden="true" />
-          <div className={styles.ftRingingAvatar} aria-hidden="true">{initial}</div>
+          <div className={styles.ftContactCube} aria-hidden="true">
+            <span className={styles.ftCubeTop} />
+            <span className={styles.ftCubeSide} />
+            <span className={styles.ftCubeFace}>{initial}</span>
+          </div>
           <strong>{who}</strong>
-          <span>FaceTime video</span>
-          <b>{phaseLabel}</b>
-          <small>{callSnap?.phase === 'calling' ? 'Waiting for them to answer' : 'Setting up your secure call'}</small>
+          <span className={styles.ftCallKind}>FaceTime video via Poplur DM</span>
+          <b>{callHeading}</b>
+          <small>{callDetail}</small>
         </div>
       )}
       <div className={styles.ftStatus}>
-        {connected ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}` : phaseLabel}
+        {statusLabel}
       </div>
       <div className={styles.ftControls}>
         <button type="button" aria-label={callSnap?.muted ? 'Unmute' : 'Mute'} aria-pressed={callSnap?.muted} onClick={toggleMute}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
+          <span>{callSnap?.muted ? 'UNMUTE' : 'MUTE'}</span>
         </button>
         <button type="button" aria-label={cameraOn ? 'Camera off' : 'Camera on'} aria-pressed={!cameraOn} onClick={toggleCamera}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
+          <span>{cameraOn ? 'CAMERA' : 'CAMERA OFF'}</span>
         </button>
         <button type="button" className={styles.ftEnd} aria-label="End call" onClick={() => { playPop(); hangupCall(); onEnd() }}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14c5-4 11-4 16 0l-3 4-4-2H11l-4 2z" /></svg>
+          <span>END</span>
         </button>
       </div>
     </section>,
@@ -390,9 +486,11 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
 }) {
   const [activeThread, setActiveThread] = useState<Thread | null>(null)
   const [faceTimeWith, setFaceTimeWith] = useState<{ id: string; name: string } | null>(null)
+  const [liveThreads, setLiveThreads] = useState<Thread[] | null>(null)
+  const [composerText, setComposerText] = useState('')
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => readDeletedThreads())
   const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null)
-  const threads = THREADS.filter(t => !deletedIds.has(t.id))
+  const threads = (liveThreads ?? THREADS).filter(t => !deletedIds.has(t.id))
 
   // Pull to refresh, on the thread list only.
   //
@@ -418,6 +516,52 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'requestDMThreads' } }))
     setDeletedIds(readDeletedThreads())
   }, [])
+
+  // The rendered DM card is not enough information to place a call: its
+  // participant id must be the real Poplur uid. Native supplies that with the
+  // live thread list, then supplies messages for the one opened conversation.
+  // Keeping both in this page closes the old gap where the pretty placeholder
+  // card could only ever ring a placeholder id.
+  useEffect(() => {
+    const onResult = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail
+      if (!detail || typeof detail.type !== 'string') return
+      if (detail.type === 'poplurDMThreads') {
+        const next = nativeThreads(detail.threads)
+        setLiveThreads(next)
+        setActiveThread(current => {
+          if (!current) return null
+          const replacement = next.find(thread => thread.id === current.id)
+          return replacement ? { ...replacement, messages: current.messages } : null
+        })
+        return
+      }
+      if (detail.type === 'poplurDMMessages' && typeof detail.threadId === 'string') {
+        const threadId = detail.threadId
+        const messages = nativeMessages(detail.messages)
+        setActiveThread(current => current?.id === threadId
+          ? { ...current, messages }
+          : current)
+        return
+      }
+      if (detail.type === 'poplurDMSendFailed' && typeof detail.text === 'string') {
+        const failedText = detail.text
+        setComposerText(current => current || failedText)
+      }
+    }
+    window.addEventListener('poplur-dm-result', onResult)
+    // The preview has no server-backed DM transport. Its Home shell answers a
+    // request with an explicit empty list so a genuine native screen does not
+    // hang, but asking there would mount the demo inbox and immediately tear
+    // it back down. Only a native shell can deliver the live participant ids
+    // that calls need, so keep the preview stable and avoid that needless
+    // first-visit render.
+    if (isNativeShell()) refreshThreads()
+    return () => {
+      window.removeEventListener('poplur-dm-result', onResult)
+      window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
+    }
+  }, [refreshThreads])
 
   usePullToRefresh({
     scrollRef: pullHost,
@@ -446,17 +590,19 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
   }, [])
 
   const startPhoneCall = useCallback((thread: Thread) => {
+    if (!thread.otherId) return
     playPop()
-    onCallViaPhone?.(thread.id, thread.title)
+    onCallViaPhone?.(thread.otherId, thread.title)
   }, [onCallViaPhone])
 
   const startFaceTime = useCallback((thread: Thread) => {
+    if (!thread.otherId) return
     playPop()
     setFaceTimeWith({ id: thread.id, name: thread.title })
     // FaceTime owns the media it displays: ask the shared peer connection for
     // video before the ringing screen appears, instead of opening a duplicate
     // preview that can never be the remote caller.
-    void placeCall(thread.id, thread.title, undefined, { video: true })
+    void placeCall(thread.otherId, thread.title, undefined, { video: true })
   }, [])
 
   const endFaceTime = useCallback(() => {
@@ -474,14 +620,21 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     }
   }, [faceTimeWith])
 
-  // The cube is the back button for the thread — clicking it pops from the
-  // conversation back to the thread list. HomeTwin dispatches
-  // poplur-mail-back when the cube is tapped and MAIL is open on a thread.
+  const closeThread = useCallback(() => {
+    setFaceTimeWith(null)
+    setComposerText('')
+    setActiveThread(null)
+    window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
+  }, [])
+
+  // Retain the cube gesture as a convenient back route, but Messages also has
+  // an ordinary visible back control now. The home chrome no longer has to sit
+  // on top of the composer just to keep this escape hatch available.
   useEffect(() => {
-    const onBack = () => setActiveThread(null)
+    const onBack = () => closeThread()
     window.addEventListener('poplur-mail-back', onBack)
     return () => window.removeEventListener('poplur-mail-back', onBack)
-  }, [])
+  }, [closeThread])
 
   useEffect(() => { installCallBridge() }, [])
 
@@ -497,22 +650,43 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     }
   }, [activeThread])
 
+  const openThread = useCallback((thread: Thread) => {
+    setComposerText('')
+    setActiveThread(thread)
+    if (thread.otherId) {
+      window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+        detail: { type: 'openDMThread', threadId: thread.id },
+      }))
+    }
+  }, [])
+
+  const sendMessage = useCallback(() => {
+    const text = composerText.trim()
+    if (!text || !activeThread?.otherId) return
+    playPop()
+    setComposerText('')
+    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+      detail: { type: 'sendDM', otherId: activeThread.otherId, text },
+    }))
+  }, [activeThread?.otherId, composerText])
+
   if (activeThread) {
+    const canCall = Boolean(activeThread.otherId)
     return (
       <div className={styles.screen}>
         <div className={styles.toolbar}>
-          {/* No back button — the cube (below the screen) is how you leave
-              this thread. HomeTwin fires poplur-mail-back on cube tap, and
-              the effect above closes the thread. */}
+          <button type="button" className={styles.threadBack} aria-label="Back to chats" onClick={() => { playPop(); closeThread() }}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19l-7-7 7-7" /></svg>
+          </button>
           <div className={styles.avatar}>{activeThread.initials}</div>
           <div className={styles.toolbarInfo}>
             <h1>{activeThread.title}</h1>
             <span>Active in your Poplur radius</span>
           </div>
-          <button type="button" className={styles.dmCallButton} aria-label={`Call ${activeThread.title}`} onClick={() => startPhoneCall(activeThread)}>
+          <button type="button" className={styles.dmCallButton} aria-label={`Call ${activeThread.title}`} disabled={!canCall} onClick={() => startPhoneCall(activeThread)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3l3 5-2 2c1.5 3 3 4.5 6 6l2-2 5 3-1 4c-8 1-16-7-17-15z" /></svg>
           </button>
-          <button type="button" className={styles.dmCallButton} aria-label={`FaceTime ${activeThread.title}`} onClick={() => startFaceTime(activeThread)}>
+          <button type="button" className={styles.dmCallButton} aria-label={`FaceTime ${activeThread.title}`} disabled={!canCall} onClick={() => startFaceTime(activeThread)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
           </button>
         </div>
@@ -523,12 +697,18 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
             </div>
           ))}
         </div>
-        <form className={styles.compose} onSubmit={e => { e.preventDefault(); playPop() }}>
-          <input name="message" autoComplete="off" placeholder={`Message ${activeThread.title}`} />
-          <button type="submit" className={styles.sendBtn}>Send</button>
+        <form className={styles.compose} onSubmit={e => { e.preventDefault(); sendMessage() }}>
+          <input
+            name="message"
+            autoComplete="off"
+            value={composerText}
+            onChange={event => setComposerText(event.currentTarget.value.slice(0, 2000))}
+            placeholder={`Message ${activeThread.title}`}
+          />
+          <button type="submit" className={styles.sendBtn} disabled={!composerText.trim() || !activeThread.otherId}>Send</button>
         </form>
         {faceTimeWith && (
-          <FaceTimeOverlay who={faceTimeWith.name} onEnd={endFaceTime} />
+          <FaceTimeOverlay who={faceTimeWith.name} direction="outgoing" onEnd={endFaceTime} />
         )}
       </div>
     )
@@ -563,7 +743,7 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
             thread={t}
             open={swipeOpenId === t.id}
             onOpenChange={setSwipeOpenId}
-            onOpenThread={setActiveThread}
+            onOpenThread={openThread}
             onDelete={deleteThread}
           />
         ))}
@@ -577,7 +757,7 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
         </div>
       </div>
       {faceTimeWith && (
-        <FaceTimeOverlay who={faceTimeWith.name} onEnd={endFaceTime} />
+        <FaceTimeOverlay who={faceTimeWith.name} direction="outgoing" onEnd={endFaceTime} />
       )}
     </div>
   )

@@ -2643,16 +2643,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-native-feed-ad', onFeedAd)
     return () => window.removeEventListener('poplur-native-feed-ad', onFeedAd)
   }, [])
+  // Mail now owns an ordinary close/back route and its own safe-area-aware
+  // composer. Keeping the persistent home chrome over it made the cube and
+  // radius counter intercept the bottom of a DM; hide that chrome for Mail
+  // itself. A video call is the exception: it deliberately keeps the contact
+  // cube visible, and the call overlay reserves the dock around it.
+  const mailChromeGone = cubeScreen === 'profile-messages' && overlayOpen && !faceTimeActive
   /** Chrome fully away — the feed's player mode, a subscreen, an ad slot,
    *  or the post composer (trapped inside contentLayer z-index 4, so the
    *  chrome at 260 must stand down for the composer to be tappable). */
-  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || composerOpen
+  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || composerOpen || mailChromeGone
   /** The cube's own version of chromeGone, composerOpen excluded: the capture
    *  preview and post composer are a home surface, not a takeover, and
    *  PostComposer/VFXStudio already reserve --composer-home-clearance so the
    *  cube has room to sit below them unobstructed — the cube going with the
    *  rest of the chrome left nothing there to reserve room for. */
-  const cubeChromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen
+  const cubeChromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || mailChromeGone
   // Games run full-bleed under the HUD (GamesScreen.module.css), so the
   // wordmark and the bottom stat row sat on top of the console art the whole
   // time a game was open. Unlike subscreenFullscreen this does NOT take the
@@ -3856,7 +3862,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* The wordmark stays up on EVERY subscreen, Settings included: it belongs
           to the home view. Settings reserves room for it in its own top padding
           rather than hiding it. */}
-      <div className={`${styles.universalTitle}${gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}>
+      <div className={`${styles.universalTitle}${gamesChromeMuted || mailChromeGone ? ` ${styles.chromeHidden}` : ''}`}>
         <TopChrome />
       </div>
       {/* The map iframe mounts on first Map visit and survives a tab leave in
@@ -4515,6 +4521,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {incomingFaceTime && (
         <FaceTimeOverlay
           who={incomingFaceTime.callerName}
+          direction="incoming"
           onEnd={() => setIncomingFaceTime(null)}
         />
       )}
