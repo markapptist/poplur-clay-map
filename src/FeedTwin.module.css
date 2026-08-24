@@ -9,6 +9,49 @@
   background: #050407;
 }
 
+/* Keep the resume affordance as one centered group.  The previous grid put
+   its two children in separate, equally tall implicit rows, so the play glyph
+   landed above centre while the copy fell below it. */
+.stillWatching {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  border: 0;
+  padding: 24px;
+  color: #fff;
+  background: rgba(6, 3, 10, 0.74);
+  cursor: pointer;
+  font: 600 16px/1.4 system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+  text-align: center;
+}
+
+.stillWatchingCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.stillWatchingPlay {
+  display: grid;
+  width: auto;
+  height: auto;
+  place-items: center;
+  padding-left: 3px;
+  font-size: 44px;
+  line-height: 1;
+}
+
+.stillWatchingCopy > span {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+
 .video {
   position: absolute;
   inset: 0;

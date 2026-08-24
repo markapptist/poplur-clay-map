@@ -1,0 +1,120 @@
+.avatar {
+  position: relative;
+  width: calc(var(--studio-height) * 0.667);
+  height: var(--studio-height);
+  overflow: visible;
+  transform-origin: 50% 100%;
+  transition: transform 260ms cubic-bezier(.2, .9, .2, 1), filter 220ms ease;
+}
+
+.avatar > img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  user-select: none;
+  transition: filter 220ms ease;
+}
+
+.slim { transform: scaleX(.94); }
+.athletic { transform: scaleX(1.035); }
+.curvy { transform: scaleX(1.085); }
+
+.topDye,
+.bottomDye,
+.hairDye {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  pointer-events: none;
+  mix-blend-mode: color;
+  opacity: .58;
+  transition: background 180ms ease, opacity 180ms ease;
+}
+
+.female .topDye {
+  top: 25.2%;
+  left: 25.5%;
+  width: 49%;
+  height: 18%;
+  background: var(--top-tint);
+  clip-path: polygon(12% 0, 88% 0, 100% 22%, 87% 100%, 13% 100%, 0 22%);
+}
+
+.male .topDye {
+  top: 18%;
+  left: 17%;
+  width: 66%;
+  height: 31%;
+  background: var(--top-tint);
+  clip-path: polygon(17% 0, 83% 0, 100% 22%, 87% 100%, 13% 100%, 0 22%);
+}
+
+.female .bottomDye {
+  top: 47.5%;
+  left: 28%;
+  width: 44%;
+  height: 43%;
+  background: var(--bottom-tint);
+  clip-path: polygon(5% 0, 95% 0, 83% 100%, 58% 100%, 50% 12%, 42% 100%, 17% 100%);
+}
+
+.male .bottomDye {
+  top: 47%;
+  left: 28%;
+  width: 44%;
+  height: 43%;
+  background: var(--bottom-tint);
+  clip-path: polygon(5% 0, 95% 0, 83% 100%, 57% 100%, 50% 14%, 43% 100%, 17% 100%);
+}
+
+.female .hairDye {
+  top: 7%;
+  left: 24%;
+  width: 52%;
+  height: 30%;
+  background: var(--hair-tint);
+  opacity: .38;
+  clip-path: polygon(37% 0, 63% 0, 89% 17%, 100% 59%, 87% 100%, 75% 41%, 25% 41%, 13% 100%, 0 59%, 11% 17%);
+}
+
+.male .hairDye {
+  top: 3%;
+  left: 29%;
+  width: 42%;
+  height: 19%;
+  background: var(--hair-tint);
+  opacity: .48;
+  clip-path: ellipse(44% 47% at 50% 45%);
+}
+
+.shortHair .hairDye { height: 16%; clip-path: ellipse(47% 44% at 50% 41%); }
+.curlyHair .hairDye { opacity: .6; clip-path: polygon(12% 21%, 29% 2%, 50% 0, 71% 2%, 88% 21%, 100% 55%, 81% 81%, 67% 49%, 50% 62%, 33% 49%, 19% 81%, 0 55%); }
+.buzzHair .hairDye { top: 5%; height: 12%; opacity: .62; clip-path: ellipse(44% 44% at 50% 45%); }
+
+.freckles,
+.wink,
+.glasses,
+.cap,
+.chain {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  color: #2d1524;
+  text-align: center;
+}
+
+.female .freckles { top: 20.3%; left: 38%; width: 24%; color: #89513d; font-size: calc(var(--studio-height) * .032); font-weight: 900; letter-spacing: .14em; }
+.male .freckles { top: 14.8%; left: 38%; width: 24%; color: #71422c; font-size: calc(var(--studio-height) * .028); font-weight: 900; letter-spacing: .14em; }
+.female .wink { top: 17.7%; left: 53%; font-size: calc(var(--studio-height) * .06); font-weight: 900; transform: rotate(-12deg); }
+.male .wink { top: 12.2%; left: 53%; font-size: calc(var(--studio-height) * .053); font-weight: 900; transform: rotate(-12deg); }
+.female .glasses { top: 17.1%; left: 33%; width: 34%; color: rgba(20, 13, 23, .86); font-size: calc(var(--studio-height) * .072); letter-spacing: -.16em; }
+.male .glasses { top: 11.5%; left: 33%; width: 34%; color: rgba(20, 13, 23, .86); font-size: calc(var(--studio-height) * .065); letter-spacing: -.16em; }
+.cap { top: 6%; left: 29%; width: 42%; height: 10%; background: var(--top-tint); border: 3px solid rgba(33, 20, 37, .75); border-radius: 50% 50% 26% 26%; box-shadow: 0 5px 0 -2px rgba(33, 20, 37, .5); }
+.cap::after { content: ''; position: absolute; right: -18%; bottom: -17%; width: 58%; height: 25%; border-radius: 0 90% 90% 0; background: var(--top-tint); border: 2px solid rgba(33, 20, 37, .68); transform: rotate(8deg); }
+.female .chain { top: 34.4%; left: 46%; color: #f7d46a; font-size: calc(var(--studio-height) * .08); text-shadow: 0 1px 1px #52350a; }
+.male .chain { top: 30.5%; left: 46%; color: #f7d46a; font-size: calc(var(--studio-height) * .075); text-shadow: 0 1px 1px #52350a; }
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar, .avatar > img, .topDye, .bottomDye, .hairDye { transition: none; }
+}

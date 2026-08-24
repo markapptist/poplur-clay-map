@@ -165,6 +165,55 @@
 .dashSignal i:nth-child(4) { height: 84%; }
 .dashSignal i:nth-child(5) { height: 100%; }
 
+/* The requested source choice is part of the radio chassis, not a floating app
+   control: the same two-position selector changes which tuner is connected. */
+.sourceSwitch {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sourceSwitch button {
+  min-width: 0;
+  min-height: 38px;
+  padding: 6px 8px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 226, 242, 0.54);
+  cursor: pointer;
+}
+
+.sourceSwitch b,
+.sourceSwitch small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourceSwitch b {
+  font: 900 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.1px;
+}
+
+.sourceSwitch small {
+  margin-top: 4px;
+  font: 700 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.35px;
+  opacity: 0.7;
+}
+
+.sourceSwitch .sourceOn {
+  border-color: rgba(246, 59, 154, 0.88);
+  background: linear-gradient(180deg, rgba(246, 59, 154, 0.34), rgba(126, 24, 81, 0.22));
+  color: #fff;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.12), 0 0 14px rgba(246, 59, 154, 0.2);
+}
+
 /* ── the dial: band chips, then genre chips ─────────────────────────────────
    One compact strip between the chassis top and the LCD. It is deliberately
    NOT on the glass: the LCD is the signal (what is on air, the list you can
@@ -187,6 +236,24 @@
 .waveGroup {
   display: flex;
   gap: 6px;
+}
+
+.liveOnly {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  color: rgba(255, 226, 242, 0.75);
+  font: 900 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1.35px;
+}
+
+.liveOnly i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3b79;
+  box-shadow: 0 0 10px rgba(255, 59, 121, 0.85);
 }
 
 .genreGroup {
@@ -515,7 +582,7 @@
 .barIconOn { background: rgba(246, 59, 154, 0.32); color: #fff; }
 
 @media (prefers-reduced-motion: reduce) {
-  .trendBars i, .barWave i { animation: none; height: 50%; }
+  .trendBars i, .barWave i, .lcdWave i { animation: none; height: 50%; }
 }
 
 /* ── on the glass ── */

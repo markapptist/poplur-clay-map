@@ -107,7 +107,7 @@ export default function ReferenceWardrobeCharacter({
   const resolved = wardrobeInitialCharacter(character ?? referenceWardrobeCharacter())
   const width = height * (206 / 295)
   const hairVisible = resolved.outfit?.hairFront !== 'none'
-  const glassesVisible = resolved.outfit?.glasses !== 'none'
+  const glassesVisible = resolved.outfit?.glasses === 'reference-black-glasses'
   const baseFailed = failedLayers.includes('base')
   const fail = (layer: string) => () => setFailedLayers(current => current.includes(layer) ? current : [...current, layer])
 

@@ -6,17 +6,17 @@ import ClayNotifIcon from './ClayNotifIcon'
 import { markEngagementSeen } from './engagementLog'
 import { postNativeEvent } from './nativeBridge'
 import {
+  clearAllNotifications,
   listNotifications,
   onNotificationsChanged,
-  dismissNotification,
-  notificationKey,
   NOTIF_ICON_LABEL,
   type Notification,
 } from './notifications'
 
 // NOTIFICATIONS as a screen of its own, in the hold menu next to MAIL and
 // STATS — the same shape SHOW ME has on the map: a tile, a subscreen stage, a
-// DONE button back out.
+// The cube is the shared way back out; this page's one explicit action is to
+// clear the inbox.
 //
 // It replaces a dropdown that sprang down over the profile and covered it. The
 // list is the point: everything that has happened to your content, all of it
@@ -29,7 +29,7 @@ import {
 // third drawer here would be a third copy of every notice.
 
 export default function NotificationsScreen({
-  onClose,
+  onClose: _onClose,
   onOpenNotification,
 }: {
   onClose: () => void
@@ -84,16 +84,22 @@ export default function NotificationsScreen({
             this list IS stays; only the name goes. */}
         <header className={styles.header}>
           <p>Everything that has happened to your content.</p>
+          <button
+            type="button"
+            className={styles.clearAll}
+            disabled={notifs.length === 0}
+            onClick={clearAllNotifications}
+          >
+            Clear all
+          </button>
         </header>
 
         {notifs.length === 0 ? (
           <p className={styles.empty}>You are all caught up.</p>
         ) : (
           <ul className={styles.list}>
-            {notifs.map(n => {
-              const key = notificationKey(n)
-              return (
-                <li key={key} className={styles.row}>
+            {notifs.map(n => (
+                <li key={n.key ?? n.text} className={styles.row}>
                   <button
                     type="button"
                     className={styles.rowOpen}
@@ -110,23 +116,10 @@ export default function NotificationsScreen({
                       <span className={styles.text}>{n.text}</span>
                     </span>
                   </button>
-                  {/* The dropdown hid this behind a swipe, which is invisible
-                      until you find it. A page has room to just show it. */}
-                  <button
-                    type="button"
-                    className={styles.clear}
-                    aria-label={`Clear notification from ${n.who}`}
-                    onClick={() => dismissNotification(key)}
-                  >
-                    Clear
-                  </button>
                 </li>
-              )
-            })}
+            ))}
           </ul>
         )}
-
-        <button type="button" className={styles.done} onClick={onClose}>DONE</button>
       </div>
     </section>
   )

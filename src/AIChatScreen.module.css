@@ -5,101 +5,63 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
-  /* The composer is the last grid row and the cube floats above it, so some
-     reserve is needed or the cube sits on the message box. A FULL cube height
-     was far more than that: the cube's lower half is off the composer's line
-     anyway, and reserving all of it left a dead band under the input roughly
-     the height of the input itself. Reserve the part that actually overlaps.
-     The conversation is the 1fr row, so everything reclaimed here goes to the
-     chat — which already scrolls (overflow: auto below). */
-  padding-bottom: calc(10px + var(--cube-size, 176px) * 0.56 + env(safe-area-inset-bottom));
-  color: #24141d;
-  background: var(--poplur-ground, #08040a);
+  padding-bottom: calc(10px + var(--cube-size, 176px) * .56 + env(safe-area-inset-bottom));
+  color: #28141e;
+  background:
+    radial-gradient(circle at 13% 18%, rgba(255, 156, 205, .44), transparent 28%),
+    radial-gradient(circle at 85% 64%, rgba(232, 188, 255, .42), transparent 29%),
+    linear-gradient(160deg, #fffdfd 0%, #fff5fa 53%, #f5effd 100%);
   isolation: isolate;
 }
 
-.screen::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  pointer-events: none;
-  border: 1px solid transparent;
-  border-image: conic-gradient(
-    from 0deg,
-    #ff2d96,
-    rgba(255, 45, 150, .1),
-    #ff8ac4,
-    rgba(255, 45, 150, .08),
-    #ff2d96
-  ) 1;
-  animation: shaderBorder 6s linear infinite;
+/* Create home is one page: its composer comes first and the whole surface
+   scrolls underneath the shared cube. The conversation is deliberately a
+   separate state below, where only messages scroll and the composer stays put. */
+.homeScreen {
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: calc(18px + var(--cube-size, 176px) + env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
-.confetti {
+.chatScreen {
+  display: grid;
+  /* This state keeps its composer fixed. Reserve the whole floating cube,
+     not just its lower half, so the composer never sits behind home chrome. */
+  padding-bottom: calc(18px + var(--cube-size, 176px) + env(safe-area-inset-bottom));
+}
+
+.starField {
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: .18;
+  opacity: .48;
   background:
-    radial-gradient(circle, #ff2d96 0 2px, transparent 2.5px) 18px 24px / 92px 86px,
-    radial-gradient(circle, #8f76ff 0 1.5px, transparent 2px) 54px 12px / 126px 118px,
-    radial-gradient(circle, #ff9dca 0 1px, transparent 1.5px) 8px 70px / 104px 96px;
-  animation: confettiDrift 14s linear 2;
+    radial-gradient(circle, #ff9ac9 0 1.5px, transparent 2px) 14px 14px / 102px 104px,
+    radial-gradient(circle, #bda8ff 0 1px, transparent 1.5px) 51px 39px / 131px 121px,
+    radial-gradient(circle, rgba(255,255,255,.95) 0 2px, transparent 2.5px) 80px 80px / 156px 142px;
 }
 
 .header {
   position: relative;
   z-index: 4;
-  min-height: calc(76px + env(safe-area-inset-top));
-  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
+  min-height: 64px;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  /* Start below the Poplur wordmark, which is the title of every subscreen —
-     this bar was sitting straight underneath it. */
-  margin: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 8px) 10px 0;
-  border: 1px solid rgba(255, 255, 255, .8);
-  border-radius: 8px;
-  background:
-    radial-gradient(circle at 26% 10%, rgba(255, 255, 255, .88), transparent 34%),
-    linear-gradient(145deg, rgba(255, 255, 255, .96), rgba(255, 239, 247, .94));
-  box-shadow:
-    inset 0 -8px 14px rgba(150, 84, 113, .08),
-    0 8px 18px rgba(77, 34, 53, .12);
-}
-
-.back,
-.settings,
-.attach,
-.send,
-.attachment button {
-  display: grid;
-  place-items: center;
-  border: 0;
-  color: #fff;
-  background:
-    radial-gradient(circle at 30% 22%, rgba(255, 255, 255, .5), transparent 30%),
-    linear-gradient(145deg, #ff79b9, #f12487 68%, #a81154);
-  box-shadow:
-    inset 0 4px 7px rgba(255, 255, 255, .32),
-    inset 0 -5px 7px rgba(106, 7, 50, .22),
-    0 5px 9px rgba(114, 23, 62, .2);
-}
-
-.back,
-.settings {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  font: 900 24px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-}
-
-.settings {
-  font-size: 14px;
-  letter-spacing: 0;
+  justify-content: space-between;
+  gap: 12px;
+  margin: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 10px) 14px 0;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid rgba(255, 255, 255, .9);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, .68);
+  box-shadow: 0 8px 24px rgba(108, 43, 80, .1), inset 0 1px 0 rgba(255,255,255,.82);
+  backdrop-filter: blur(14px);
 }
 
 .identity {
@@ -109,29 +71,23 @@
   gap: 10px;
 }
 
-.identity > span:last-child {
-  min-width: 0;
-  display: grid;
-}
+.identity > span:last-child { min-width: 0; display: grid; gap: 4px; }
 
 .identity strong {
   color: #28141e;
-  font: 950 21px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  font: 950 20px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   white-space: nowrap;
 }
 
-.identity strong b {
-  color: #ff2d96;
-  text-shadow: 0 1px 0 #fff, 0 3px 6px rgba(199, 19, 101, .28);
-}
+.identity strong b { color: #f02988; }
 
 .identity small {
-  margin-top: 4px;
   overflow: hidden;
-  color: #c42b76;
-  font: 800 10px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-  white-space: nowrap;
+  color: #a03c6f;
+  font: 850 8px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: .12em;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .identity small i {
@@ -140,196 +96,311 @@
   display: inline-block;
   margin-right: 5px;
   border-radius: 50%;
-  background: #26c65c;
-  box-shadow: 0 0 8px rgba(38, 198, 92, .6);
+  background: #24c660;
+  box-shadow: 0 0 8px rgba(36, 198, 96, .55);
+}
+
+.mark,
+.settings,
+.attach,
+.send,
+.attachment button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: #fff;
+  background: linear-gradient(145deg, #ff86c2, #f32988 62%, #b6125e);
+  box-shadow: inset 0 3px 5px rgba(255,255,255,.35), inset 0 -4px 7px rgba(115, 5, 54, .22), 0 5px 11px rgba(174, 22, 88, .22);
 }
 
 .mark {
   flex: 0 0 auto;
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  color: #fff;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
   font: 950 23px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-  background:
-    radial-gradient(circle at 30% 24%, #ff9ccc, #ff2d96 58%, #b20e59);
-  box-shadow:
-    inset 0 6px 8px rgba(255, 255, 255, .3),
-    inset 0 -5px 8px rgba(112, 4, 51, .28),
-    0 0 15px rgba(255, 45, 150, .4);
+}
+
+.settings {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font: 950 14px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: 0;
 }
 
 .settingsPanel {
   position: absolute;
-  top: calc(76px + env(safe-area-inset-top));
-  right: 12px;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 80px);
+  right: 14px;
   z-index: 8;
-  width: 188px;
-  padding: 10px 14px;
-  border: 1px solid rgba(255, 255, 255, .84);
-  border-radius: 14px;
-  background: rgba(255, 248, 252, .98);
-  box-shadow: 0 14px 28px rgba(64, 21, 42, .24);
+  width: 190px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,.9);
+  border-radius: 16px;
+  background: rgba(255, 252, 254, .96);
+  box-shadow: 0 16px 30px rgba(72, 20, 49, .2);
+  backdrop-filter: blur(16px);
 }
 
 .settingsPanel label {
-  min-height: 42px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  color: #3b2430;
-  font: 850 13px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  color: #4a2538;
+  font: 850 12px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
 }
 
-.settingsPanel input {
-  accent-color: #ff2d96;
-}
+.settingsPanel input { accent-color: #f32988; }
 
 .conversation {
   min-height: 0;
-  margin: 8px 10px;
-  padding: 20px 14px;
-  overflow: auto;
+  margin: 10px 14px;
+  padding: 2px;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid rgba(255, 255, 255, .82);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .68);
-  box-shadow:
-    inset 0 0 24px rgba(255, 143, 197, .07),
-    0 8px 18px rgba(76, 28, 50, .08);
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  touch-action: pan-y;
 }
 
-.conversation::-webkit-scrollbar {
-  display: none;
+.conversation::-webkit-scrollbar { display: none; }
+
+.homeScreen .conversation {
+  order: 1;
+  min-height: auto;
+  margin: 12px 14px 0;
+  overflow: visible;
+  touch-action: auto;
+}
+
+.homeScreen .inputBar {
+  order: 2;
+  flex: 0 0 auto;
+  margin: 12px 14px 0;
 }
 
 .welcome {
-  min-height: 100%;
   display: grid;
   align-content: start;
-  justify-items: center;
-  text-align: center;
+  gap: 16px;
+  padding: 14px 0 12px;
+}
+
+.carousel {
+  padding: 4px 0 0;
+}
+
+.introCard {
+  position: relative;
+  min-height: 218px;
+  overflow: hidden;
+  padding: 24px 22px;
+  border: 1px solid rgba(255, 255, 255, .3);
+  border-radius: 27px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 88% 10%, rgba(255, 97, 176, .62), transparent 30%),
+    radial-gradient(circle at 10% 108%, rgba(159, 75, 220, .64), transparent 47%),
+    linear-gradient(145deg, #301125, #190918 66%, #07060f);
+  box-shadow: 0 16px 30px rgba(73, 15, 56, .22), inset 0 1px 0 rgba(255,255,255,.18);
 }
 
 .eyebrow {
-  margin-top: clamp(12px, 4vh, 34px);
-  color: #b52a6d;
-  font: 950 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .14em;
+  display: block;
+  color: #ffa2d0;
+  font: 900 9px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: .18em;
 }
 
-.sparkle {
-  width: 54px;
-  height: 54px;
+.introCard h1 {
+  max-width: 305px;
+  margin: 12px 0 7px;
+  font: 950 clamp(26px, 7.5vw, 37px)/.98 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: -.045em;
+}
+
+.introCard p {
+  max-width: 290px;
+  margin: 0;
+  color: rgba(255,255,255,.76);
+  font: 700 13px/1.38 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.tipPrompt {
+  position: relative;
+  z-index: 1;
+  max-width: calc(100% - 28px);
   display: grid;
-  place-items: center;
-  margin-top: 14px;
-  border-radius: 17px;
+  gap: 4px;
+  margin-top: 13px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 13px;
   color: #fff;
-  background: linear-gradient(145deg, #ff8dc3, #f12786 62%, #9b0b4a);
-  font: 950 27px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-  box-shadow: inset 0 3px 5px rgba(255,255,255,.48), 0 10px 22px rgba(169, 17, 86, .24);
+  background: rgba(255,255,255,.11);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+  font: 750 11px/1.22 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  text-align: left;
 }
 
-.welcome h1 {
-  margin: 14px 0 0;
-  color: #2f1723;
-  font: 950 clamp(25px, 7.6vw, 35px)/.98 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-  letter-spacing: 0;
+.tipPrompt small {
+  color: #ffb3d9;
+  font: 900 7px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: .15em;
 }
 
-.welcome p {
-  margin: 10px 0 22px;
-  color: #8a6476;
-  font: 750 13px/1.25 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-}
-
-.suggestions {
-  width: min(100%, 360px);
+.carouselControls {
+  min-height: 29px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.suggestions button {
-  min-width: 0;
-  min-height: 50px;
-  padding: 7px 10px;
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 29px auto 1fr 29px;
   align-items: center;
   gap: 8px;
-  border: 1px solid rgba(255, 45, 150, .18);
-  border-radius: 7px;
-  color: #5e3448;
-  background: rgba(255,255,255,.92);
-  font: 850 11px/1.05 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  padding: 7px 7px 0;
+}
+
+.carouselControls > button {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(149, 54, 106, .16);
+  border-radius: 50%;
+  color: #b72873;
+  background: rgba(255,255,255,.65);
+  font: 900 20px/.8 system-ui, sans-serif;
+}
+
+.tipCount {
+  color: #a34a74;
+  font: 900 8px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: .1em;
+  white-space: nowrap;
+}
+
+.tipDots { display: flex; justify-content: end; gap: 5px; }
+
+.tipDots button {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(160, 67, 117, .22);
+}
+
+.tipDots .tipDotActive { width: 18px; background: #ee2b86; }
+
+.introSpark {
+  position: absolute;
+  right: -5px;
+  bottom: -27px;
+  color: rgba(255, 162, 208, .92);
+  font: 900 144px/.7 Georgia, serif;
+  transform: rotate(12deg);
+  text-shadow: 0 0 24px rgba(255, 63, 154, .52);
+}
+
+.suggestionHeading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 4px;
+  color: #98426d;
+  font: 900 9px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: .15em;
+}
+
+.suggestionHeading i { flex: 1; height: 1px; background: rgba(143, 57, 104, .18); }
+
+.suggestions {
+  display: flex;
+  gap: 9px;
+  overflow-x: auto;
+  padding: 0 1px 8px;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+}
+
+.suggestions::-webkit-scrollbar { display: none; }
+
+.suggestions button {
+  flex: 0 0 154px;
+  min-height: 106px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 12px 6px;
+  padding: 13px;
+  border: 1px solid rgba(237, 76, 153, .15);
+  border-radius: 20px;
+  color: #4e263a;
+  background: rgba(255,255,255,.76);
+  box-shadow: 0 7px 16px rgba(87, 27, 59, .08), inset 0 1px 0 rgba(255,255,255,.86);
+  font: 900 13px/1.08 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   text-align: left;
-  box-shadow: 0 5px 12px rgba(83, 31, 56, .06);
+  scroll-snap-align: start;
 }
 
 .suggestions button b {
-  width: 34px;
-  height: 34px;
+  width: max-content;
+  min-width: 39px;
+  min-height: 27px;
   display: grid;
   place-items: center;
+  padding: 0 7px;
   border-radius: 9px;
   color: #fff;
-  background: #2b1420;
-  font: 950 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #311424;
+  font: 900 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+.suggestions button span { grid-column: 1 / -1; align-self: end; }
+.suggestions button em { color: #ec2c88; font: 900 17px/1 system-ui, sans-serif; font-style: normal; }
 
 .userMessage,
 .assistantMessage {
   width: fit-content;
-  max-width: 82%;
+  max-width: 83%;
   margin: 0 0 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  font: 750 13px/1.36 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  padding: 11px 13px;
+  border-radius: 18px;
+  font: 750 13px/1.4 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
 }
 
 .messageAuthor {
   display: block;
   margin-bottom: 6px;
-  opacity: .68;
-  font: 950 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .08em;
+  opacity: .67;
+  font: 900 8px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: .1em;
 }
 
 .userMessage {
   margin-left: auto;
-  color: #fff;
   border-bottom-right-radius: 5px;
-  background: linear-gradient(145deg, #ff67ad, #f12686);
-  box-shadow: 0 5px 11px rgba(208, 26, 108, .2);
+  color: #fff;
+  background: linear-gradient(145deg, #ff71b5, #ec2180);
+  box-shadow: 0 6px 13px rgba(214, 27, 108, .2);
 }
 
 .assistantMessage {
-  color: #402531;
-  border: 1px solid rgba(255, 45, 150, .12);
+  border: 1px solid rgba(238, 62, 143, .16);
   border-bottom-left-radius: 5px;
-  background: #fff0f7;
+  color: #482639;
+  background: rgba(255,255,255,.88);
+  box-shadow: 0 5px 12px rgba(71, 19, 47, .07);
 }
 
 .userMessage p,
-.assistantMessage p {
-  margin: 0;
-}
-
+.assistantMessage p { margin: 0; }
 .userMessage img,
-.assistantMessage img {
-  width: min(190px, 100%);
-  max-height: 190px;
-  display: block;
-  margin: 0 0 8px;
-  object-fit: cover;
-  border-radius: 10px;
-}
+.assistantMessage img { width: min(190px, 100%); max-height: 190px; display: block; margin: 0 0 8px; object-fit: cover; border-radius: 10px; }
 
 .typing {
   width: 54px;
@@ -339,73 +410,67 @@
   justify-content: center;
   gap: 4px;
   border-radius: 17px 17px 17px 5px;
-  background: #fff0f7;
+  background: rgba(255,255,255,.86);
 }
 
-.typing i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #ff2d96;
-  animation: typing .9s ease-in-out infinite;
-}
-
+.typing i { width: 6px; height: 6px; border-radius: 50%; background: #f32988; animation: typing .9s ease-in-out infinite; }
 .typing i:nth-child(2) { animation-delay: .12s; }
 .typing i:nth-child(3) { animation-delay: .24s; }
 
 .inputBar {
   position: relative;
   z-index: 4;
-  margin: 0 10px max(8px, env(safe-area-inset-bottom));
+  margin: 0 14px max(8px, env(safe-area-inset-bottom));
   padding: 9px;
-  border: 1px solid rgba(255, 255, 255, .86);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .96);
-  box-shadow: 0 -7px 20px rgba(75, 28, 49, .11);
+  border: 1px solid rgba(255, 255, 255, .92);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, .86);
+  box-shadow: 0 9px 24px rgba(77, 23, 55, .13), inset 0 1px 0 rgba(255,255,255,.84);
+  backdrop-filter: blur(16px);
 }
 
 .controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  grid-template-columns: 38px 38px minmax(0, 1fr) 38px;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 
 .attach,
-.send {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  font: 950 22px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+.send,
+.mic { width: 38px; height: 38px; border-radius: 13px; }
+.attach,
+.send { font: 950 22px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif; }
+
+.mic {
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(243, 43, 135, .22);
+  color: #df277d;
+  background: #fff3f8;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
 }
 
-.send:disabled {
-  opacity: .35;
-  filter: grayscale(.4);
-}
+.mic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+.micActive { color: #fff; border-color: transparent; background: #ee2a85; box-shadow: 0 0 0 4px rgba(242, 42, 133, .16), 0 6px 12px rgba(205, 20, 94, .2); animation: micListening 1.1s ease-in-out infinite; }
+.send:disabled { opacity: .35; filter: grayscale(.4); }
 
 .prompt {
   width: 100%;
   min-width: 0;
   height: 40px;
   padding: 0 12px;
-  border: 1px solid rgba(255, 45, 150, .14);
-  border-radius: 16px;
+  border: 1px solid rgba(243, 43, 135, .13);
+  border-radius: 13px;
   outline: none;
-  color: #341e29;
-  background: #f8f1f5;
+  color: #351d2a;
+  background: rgba(252, 245, 249, .9);
   font: 750 13px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
 }
 
-.prompt:focus {
-  border-color: rgba(255, 45, 150, .48);
-  box-shadow: 0 0 0 3px rgba(255, 45, 150, .08);
-}
-
-.file {
-  display: none;
-}
+.prompt:focus { border-color: rgba(243, 43, 135, .5); box-shadow: 0 0 0 3px rgba(243, 43, 135, .08); }
+.file { display: none; }
 
 .attachment {
   min-height: 38px;
@@ -415,97 +480,63 @@
   gap: 7px;
   margin-bottom: 7px;
   padding: 4px 6px;
-  border-radius: 10px;
-  background: #fff0f7;
+  border-radius: 12px;
   color: #6d3d54;
+  background: #fff0f7;
   font: 800 11px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
 }
 
-.attachment img {
-  width: 28px;
-  height: 28px;
-  object-fit: cover;
-  border-radius: 7px;
-}
+.attachment img { width: 28px; height: 28px; object-fit: cover; border-radius: 7px; }
+.attachment span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment button { width: 24px; height: 24px; border-radius: 50%; font-size: 17px; }
 
-.attachment span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.attachment button {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  font-size: 17px;
+.dictationNote {
+  margin: 7px 4px 0;
+  color: #9c426f;
+  font: 750 10px/1.25 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  text-align: center;
 }
 
 .modes {
-  height: 18px;
+  min-height: 17px;
   display: flex;
   align-items: end;
   justify-content: center;
-  gap: 14px;
-  color: #b899a8;
-  font: 900 8px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  gap: 8px;
+  margin-top: 2px;
+  color: #a98b9b;
+  font: 900 7px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  letter-spacing: .09em;
 }
 
-.modes button {
-  border: 0;
-  padding: 4px 8px;
-  color: inherit;
-  background: none;
-  font: inherit;
-}
-
-.modeOn {
-  color: #f12786;
-  text-shadow: 0 1px 4px rgba(255, 45, 150, .2);
-}
+.modes button { border: 0; padding: 4px 3px; color: inherit; background: none; font: inherit; letter-spacing: inherit; }
+.modeOn { color: #ed2785; }
 
 @keyframes typing {
   0%, 100% { transform: translateY(1px); opacity: .45; }
   50% { transform: translateY(-2px); opacity: 1; }
 }
 
-@keyframes confettiDrift {
-  to { background-position: 110px 120px, -86px 136px, 128px -82px; }
-}
-
-@keyframes shaderBorder {
-  to { filter: hue-rotate(18deg); }
+@keyframes micListening {
+  50% { transform: translateY(-1px); box-shadow: 0 0 0 6px rgba(242, 42, 133, .08), 0 7px 14px rgba(205, 20, 94, .24); }
 }
 
 @media (max-height: 690px) {
-  .header {
-    min-height: calc(66px + env(safe-area-inset-top));
-  }
-
-  .conversation {
-    margin-block: 5px;
-    padding-block: 10px;
-  }
-
-  .welcome p {
-    margin-bottom: 10px;
-  }
-
-  .suggestions button {
-    min-height: 30px;
-  }
+  .introCard { min-height: 181px; padding-block: 17px; }
+  .introCard h1 { margin-top: 9px; font-size: 27px; }
+  .introCard p { font-size: 12px; }
+  .tipPrompt { margin-top: 9px; padding-block: 6px; }
+  .welcome { gap: 10px; }
+  .suggestions button { min-height: 84px; }
 }
 
-@media (max-width: 600px) {
-  .inputBar {
-    margin-bottom: max(112px, calc(env(safe-area-inset-bottom) + 102px));
-  }
+@media (max-width: 360px) {
+  .header, .conversation, .inputBar { margin-left: 10px; margin-right: 10px; }
+  .controls { grid-template-columns: 35px 35px minmax(0, 1fr) 35px; gap: 5px; }
+  .attach, .send, .mic { width: 35px; height: 38px; }
+  .modes { gap: 5px; letter-spacing: .05em; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .screen::after,
-  .confetti,
-  .typing i {
-    animation: none;
-  }
+  .typing i, .micActive { animation: none; }
 }

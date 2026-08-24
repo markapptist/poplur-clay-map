@@ -326,6 +326,7 @@ export default function FeedTwin({
   suppressed = false,
   onPostReach,
   onContentAdvance,
+  onFoodAdChange,
   onPlayerModeChange,
   bindGoBack,
   autoPlayOnMount = false,
@@ -350,6 +351,10 @@ export default function FeedTwin({
   /** A real feed progression (swipe or completed clip), reported to the
       native shell so its ad cadence follows posts rather than channel buttons. */
   onContentAdvance?: (channelId: string, contentIndex: number) => void
+  /** The navigator becomes the food cube only while an actual food creative is
+      visible. This is deliberately about the creative, not the Food channel's
+      static/loading state, so it returns to the TV exactly when the ad leaves. */
+  onFoodAdChange?: (open: boolean) => void
   /** Long-press fullscreen: the shell hides its own chrome (cube, HUD, stat
       cards) while the feed is in player mode, and brings it back on exit. */
   onPlayerModeChange?: (on: boolean) => void
@@ -925,6 +930,19 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('transition') === '1'
   const playbackKey = adSrc ? `${sourceKey}:${adSrc}` : null
   const adReady = Boolean(playbackKey) && readyPlaybackKey === playbackKey
+  // This is the creative identity, not the Food channel. Food can contain a
+  // normal post, a fallback, or its static handoff; only the actual ad film
+  // deserves to change the physical navigator.
+  const foodCreativeVisible = !suppressed
+    && frontMost
+    && !playerMode
+    && adReady
+    && completedAdSrc !== adSrc
+    && /(?:^|\/)ad-food\.mp4(?:[?#].*)?$/i.test(adSrc ?? '')
+  useEffect(() => {
+    onFoodAdChange?.(foodCreativeVisible)
+  }, [foodCreativeVisible, onFoodAdChange])
+  useEffect(() => () => { onFoodAdChange?.(false) }, [onFoodAdChange])
   useEffect(() => {
     if (adReady || post?.stream) recordPostView(postId)
   }, [adReady, post?.stream, postId])
@@ -1666,19 +1684,12 @@ export default function FeedTwin({
           onPointerDown={e => e.stopPropagation()}
           onClick={wakeFeed}
           aria-label="Resume feed"
-          style={{
-            position: 'absolute', inset: 0, zIndex: 40, border: 'none',
-            display: 'grid', placeItems: 'center', rowGap: '12px',
-            background: 'rgba(6, 3, 10, 0.74)',
-            backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
-            color: '#fff', cursor: 'pointer', textAlign: 'center', padding: '24px',
-            font: "600 16px/1.4 system-ui, -apple-system, 'SF Pro Rounded', sans-serif",
-          }}
+          className={styles.stillWatching}
         >
-          <span aria-hidden="true" style={{ fontSize: '34px', lineHeight: 1 }}>▶</span>
-          <span>Still watching?
-            <span style={{ display: 'block', marginTop: '4px', fontSize: '13px', fontWeight: 500, opacity: 0.66 }}>
-              Tap to keep going
+          <span className={styles.stillWatchingCard}>
+            <span className={styles.stillWatchingPlay} aria-hidden="true">▶</span>
+            <span className={styles.stillWatchingCopy}>Still watching?
+              <span>Tap to keep going</span>
             </span>
           </span>
         </button>
@@ -1784,6 +1795,11 @@ export default function FeedTwin({
             retireFeedVideo(event.currentTarget)
             setReadyPlaybackKey(null)
             settledAdRef.current = null
+            // The fork/knife cube is strictly the live food creative. Mark it
+            // complete before asking the channel to advance so Home restores
+            // the TV during the handoff, not after the next post has loaded.
+            setCompletedAdSrc(adSrc)
+            onFoodAdChange?.(false)
             releaseAudioFocus('feed')
             advanceCompletedContent()
           }}

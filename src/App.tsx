@@ -69,7 +69,7 @@ import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus }
 import { smartCardFor, type SmartCard } from './tourSmarts'
 import { suggestionForMapPlace } from './commerceSuggestions'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
-import { ambientAllowed, onAmbientSleepChange, onTick } from './frameGovernor'
+import { ambientAllowed, currentQuality, onAmbientSleepChange, onQualityChange, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, setPopupKindSuppressed } from './popups'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
@@ -397,23 +397,18 @@ const SEARCH_MAP_CLICK_GUARD_MS = 12_000
 // a cold phone. Keep the map awake through one finite arrival window; the 3D
 // layer also renews this briefly when the mesh itself becomes ready.
 const LANDMARK_RENDER_SETTLE_MS = 9_000
-// Tour pacing. The tour flight is not a short hop: it rises all the way out to
-// the globe and dives back into the next city (minZoom 0.9, curve 1.7 in
-// flyToCenter), so it needs real time to read as a camera move rather than a
-// snap. Even 15s rushed the globe reveal and destination approach, so the
-// default now gives the complete move a cinematic 30s.
-//
-// The June iOS tour (MapView.swift) shipped a `tourSpeedMultiplier`, 0.1x–5.0x
-// with a slider, precisely because this wants dialing in — so the multiplier
-// comes back here as `?tour-speed=N` (higher = faster, 1 = the tuned default),
-// and its 30s stop dwell is the reference for how long a stop should hold.
+// Temporary all-landmark showcase pacing. Ten seconds keeps the globe-to-city
+// move readable without making a complete twelve-stop pass take an hour; the
+// five-second hold leaves each model framed long enough to recognise it. Both
+// values share the existing dev speed multiplier so a complete pass remains
+// practical to exercise in browser/device tests.
 const TOUR_SPEED = (() => {
   if (typeof window === 'undefined') return 1
   const raw = Number(new URLSearchParams(window.location.search).get('tour-speed'))
   return Number.isFinite(raw) && raw >= 0.1 && raw <= 5 ? raw : 1
 })()
-const TOUR_FLIGHT_MS = Math.round(30_000 / TOUR_SPEED)
-const TOUR_DWELL_MS = 5 * 60 * 1000
+const TOUR_FLIGHT_MS = Math.round(10_000 / TOUR_SPEED)
+const TOUR_DWELL_MS = Math.round(5_000 / TOUR_SPEED)
 const MAP_TOTAL_OWN_POSTS = 128
 const MAP_GLOBAL_ONLINE = 1_200_000
 
@@ -857,11 +852,23 @@ export default function App() {
   const tourIdleRef = useRef<{ schedule: () => void; cancel: () => void }>({
     schedule: () => {}, cancel: () => {},
   })
+  // The shell can move the always-mounted map iframe behind another tab before
+  // this component's tour callbacks are declared. Route that early lifecycle
+  // message to the current stop function without capturing a stale callback.
+  const tourStopRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    const stopHiddenTour = () => {
+      if (document.visibilityState !== 'visible') tourStopRef.current()
+    }
+    const stopPageTour = () => tourStopRef.current()
+    document.addEventListener('visibilitychange', stopHiddenTour)
+    window.addEventListener('pagehide', stopPageTour)
+    return () => {
+      document.removeEventListener('visibilitychange', stopHiddenTour)
+      window.removeEventListener('pagehide', stopPageTour)
+    }
+  }, [])
   const lastTourDestinationRef = useRef<string | null>(null)
-  /** Round-robin cursor into TOUR_LANDMARKS, so the tour visits ALL of
-   *  them in a predictable sequence rather than dice-rolling among
-   *  destinations. Starts at -1 so the first tourStep lands at 0. */
-  const tourLandmarkCursorRef = useRef(-1)
   useEffect(() => {
     if (harnessView) return
     // Tell the parent the map has been TOUCHED. The screen coach sits over
@@ -1189,6 +1196,7 @@ export default function App() {
       // document, so a harness view must not talk itself into being the map.
       if (event.data?.type === 'poplur-map-front') {
         mapFrontRef.current = mapSurfaceRef.current && event.data.front === true
+        if (!mapFrontRef.current) tourStopRef.current()
         return
       }
       if (event.data?.type === 'poplur-audio-stop') {
@@ -1526,6 +1534,7 @@ export default function App() {
       map.stop()
     }
   }, [clearTourTimers])
+  tourStopRef.current = stopTour
   searchInterruptRef.current = stopTour
   useEffect(() => clearTourTimers, [clearTourTimers])
 
@@ -1619,23 +1628,6 @@ export default function App() {
     }, TOUR_FLIGHT_MS)
   }, [flyToCenter, pauseTourAtCurrentStop, scheduleTourTimer, speakMapLine])
 
-  // ── AI place tour: each stop holds for five minutes after arrival ─────────
-  const tourStep = useCallback((preferredDestination?: TourDestination) => {
-    // The tour visits ALL twelve landmarks in sequence, rather than random-
-    // picking from the SHOW ME topic list. A tour that skips half of them or
-    // repeats the same three feels arbitrary; a fixed round-robin turns each
-    // pass into a complete pilgrimage through the built world. Topics still
-    // exist for the SHOW ME screen, they just no longer bound this loop.
-    if (preferredDestination) {
-      activateTourDestination(preferredDestination)
-      return
-    }
-    const list = TOUR_LANDMARKS
-    if (list.length === 0) return
-    tourLandmarkCursorRef.current = (tourLandmarkCursorRef.current + 1) % list.length
-    activateTourDestination(list[tourLandmarkCursorRef.current])
-  }, [activateTourDestination])
-
   // Whether the tour is running. The hold menu's tile has to read STOP TOUR
   // for as long as it is, so the map owns the truth and reports it upward —
   // the menu can't infer it from a tile it tapped once.
@@ -1692,35 +1684,76 @@ export default function App() {
     clearTourTimers()
     tourPauseAfterStopRef.current = false
     tourFlightInProgressRef.current = false
+    // Low-power/thermal rungs keep direct map gestures available but reject a
+    // new autonomous 3D camera sequence. The button remains usable once the
+    // device recovers instead of committing it to another warm three minutes.
+    if (currentQuality() <= 1) {
+      setTourLine('Landmark tour is paused while the phone protects performance.')
+      return
+    }
+    // One press means one complete pass. If a caller supplies a landmark, start
+    // there and rotate the same catalog so every landmark is still shown once;
+    // a non-landmark first stop is followed by the full landmark catalog.
+    const firstLandmarkIndex = firstDestination
+      ? TOUR_LANDMARKS.findIndex(destination => destination.id === firstDestination.id)
+      : -1
+    const tourOrder = firstLandmarkIndex >= 0
+      ? [
+          ...TOUR_LANDMARKS.slice(firstLandmarkIndex),
+          ...TOUR_LANDMARKS.slice(0, firstLandmarkIndex),
+        ]
+      : firstDestination
+        ? [firstDestination, ...TOUR_LANDMARKS]
+        : [...TOUR_LANDMARKS]
+    if (tourOrder.length === 0) return
     mapIdleDiagnosticsRef.current.explicitTourStarts += 1
     tourStartedRef.current = true
     tourOnRef.current = true
     setTourOn(true)
     ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = true
-    let pendingFirst = firstDestination
+    let nextStopIndex = 0
     const runStop = () => {
       if (!tourOnRef.current) return
+      // Re-check before each expensive flight because the native thermal or
+      // low-power ceiling may have changed while the previous landmark rested.
+      if (currentQuality() <= 1) {
+        pauseTourAtCurrentStop()
+        return
+      }
       tourFlightInProgressRef.current = true
-      tourStep(pendingFirst)
-      pendingFirst = undefined
-      // The next-stop timer is separate from the current arrival timer so an
-      // idle/thermal edge can let this flight land, then pause without waking
-      // the renderer again five minutes later.
-      tourNextTimerRef.current = scheduleTourTimer(runStop, TOUR_FLIGHT_MS + TOUR_DWELL_MS)
+      activateTourDestination(tourOrder[nextStopIndex])
+      nextStopIndex += 1
+      // The sequence is deliberately finite: after the final landmark's hold,
+      // release the camera and reset the button instead of looping forever.
+      const afterStop = nextStopIndex >= tourOrder.length ? stopTour : runStop
+      tourNextTimerRef.current = scheduleTourTimer(afterStop, TOUR_FLIGHT_MS + TOUR_DWELL_MS)
     }
     if (initialDelayMs > 0) {
       tourNextTimerRef.current = scheduleTourTimer(runStop, initialDelayMs)
     } else {
       runStop()
     }
-  }, [clearTourTimers, scheduleTourTimer, tourStep])
+  }, [activateTourDestination, clearTourTimers, pauseTourAtCurrentStop, scheduleTourTimer, stopTour])
 
   useEffect(() => onAmbientSleepChange(sleeping => {
     if (!sleeping || !tourOnRef.current) return
+    // Ordinary 15-second idleness parks decoration during the landmark hold;
+    // it must not cancel a tour the user just asked to watch. Backgrounding,
+    // leaving Map, or a true protection rung still pauses the bounded pass.
+    if (mapFrontRef.current
+      && document.visibilityState === 'visible'
+      && currentQuality() > 1) return
     tourPauseAfterStopRef.current = true
     cancelTourTimer(tourNextTimerRef.current)
     // During a flight, its bounded render lease and arrival beat finish first.
     // During the dwell, the current stop is already complete, so pause now.
+    if (!tourFlightInProgressRef.current) pauseTourAtCurrentStop()
+  }), [cancelTourTimer, pauseTourAtCurrentStop])
+
+  useEffect(() => onQualityChange(quality => {
+    if (quality > 1 || !tourOnRef.current) return
+    tourPauseAfterStopRef.current = true
+    cancelTourTimer(tourNextTimerRef.current)
     if (!tourFlightInProgressRef.current) pauseTourAtCurrentStop()
   }), [cancelTourTimer, pauseTourAtCurrentStop])
 
@@ -1741,7 +1774,15 @@ export default function App() {
   // the document: the map canvas, clay controls and zoom rail all stop
   // propagation on their own handlers, so a bubble listener would miss taps.
   useEffect(() => {
-    const bump = () => {
+    const bump = (event: Event) => {
+      // The tour toggle owns this gesture. Let its click handler read the
+      // current ref and choose START or STOP; pre-emptively stopping here made
+      // an active button stop on pointerdown and immediately restart on click.
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-map-tour-toggle]')) {
+        scheduleTourIdle()
+        return
+      }
       // Ambient camera work always yields to a real person. Previously an
       // active tour ignored touch, so a pan or slider move could visibly land
       // and then be pulled away by the next tour camera beat.
@@ -2927,28 +2968,25 @@ export default function App() {
           activateOnClick
           onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
         />
-        {/* START / STOP TOUR. The same action the hold menu's TOUR tile fires,
-            promoted to the rail because the tour is a map camera control and
-            that is where the map's other camera controls live. Which places it
-            visits is not decided here: tourStep flies destinationsForTopics(),
-            so the SHOW ME screen's checked topics are what the tour shows.
-            `play` rather than a bespoke kind — a tour is the map playing
-            itself, and it lights while running the way LIVE does. */}
-        <ClayCornerButton
-          kind="play"
-          label={tourOn ? 'Stop the tour' : 'Start the tour'}
-          active={tourOn}
-          size={44}
-          still
-          activateOnClick
-          onPress={() => {
-            playPop(0.25)
-            // Read the REF, not the state: same reason the mapAction case does
-            // — this fires timers, and StrictMode double-invokes state updaters.
-            if (tourOnRef.current) stopTour()
-            else startExplicitTourLoop(0)
-          }}
-        />
+        {/* START / STOP TOUR. One press visits the complete landmark catalog in
+            fixed order, then releases the camera after the final hold. */}
+        <span data-map-tour-toggle="" style={{ display: 'contents' }}>
+          <ClayCornerButton
+            kind="play"
+            label={tourOn ? 'Stop the tour' : 'Start the tour'}
+            active={tourOn}
+            size={44}
+            still
+            activateOnClick
+            onPress={() => {
+              playPop(0.25)
+              // Read the REF, not the state: same reason the mapAction case does
+              // — this fires timers, and StrictMode double-invokes state updaters.
+              if (tourOnRef.current) stopTour()
+              else startExplicitTourLoop(0)
+            }}
+          />
+        </span>
         <MapLevelButton
           level={popLevel}
           mode={currentMapMode}

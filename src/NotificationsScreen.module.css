@@ -7,11 +7,8 @@
 .screen {
   width: 100%;
   height: 100%;
-  /* A column, so DONE can take `margin-top: auto` and park just above the cube
-     however long the list is. SHOW ME can stack normally because its six
-     topics are always the same height; this list runs from empty to sixty, and
-     stacked normally DONE landed on top of the cube at some lengths and
-     halfway up the page at others. */
+  /* A column so the inner list can grow naturally while this host keeps the
+     shared cube clear and remains the one scroll surface. */
   display: flex;
   flex-direction: column;
   /* Containing block for the pull-to-refresh curtain (.panel is absolute) —
@@ -33,10 +30,8 @@
 
 /* Everything the curtain reveals over — header included, the same shape the
    news page's masthead takes, since this screen never had Chats' separate
-   fixed nav bar to hold out of the pull. Reproduces .screen's own former
-   flex-column-with-margin-auto-DONE exactly, one level deeper: min-height so
-   DONE still parks at the visual bottom when the list is short, and still
-   grows past it (letting .screen scroll) when the list runs long. */
+   fixed nav bar to hold out of the pull. The minimum height lets the empty
+   state breathe while a long list simply grows into the host scroll. */
 .pullInner {
   display: flex;
   flex-direction: column;
@@ -45,8 +40,12 @@
 
 .header {
   max-width: 460px;
+  width: 100%;
   margin: 0 auto 14px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
 }
 
 .header p {
@@ -55,6 +54,24 @@
   font-size: 13px;
   font-weight: 700;
 }
+
+.clearAll {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(246, 59, 154, 0.22);
+  border-radius: 999px;
+  color: #e62d87;
+  background: #fff1f7;
+  box-shadow: 0 4px 10px rgba(198, 27, 102, 0.08);
+  font: 900 10px/1 inherit;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.clearAll:active { transform: translateY(1px); }
+.clearAll:disabled { opacity: 0.42; cursor: default; }
 
 .list {
   flex: 0 0 auto;
@@ -66,9 +83,7 @@
 }
 
 .row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: block;
   border-bottom: 1px solid rgba(36, 20, 29, 0.09);
 }
 
@@ -139,22 +154,6 @@
   line-height: 1.3;
 }
 
-.clear {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 999px;
-  color: rgba(246, 59, 154, 0.95);
-  background: rgba(246, 59, 154, 0.1);
-  font: 900 10px/1 inherit;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.clear:active { transform: translateY(1px); }
-
 .empty {
   max-width: 460px;
   margin: 40px auto;
@@ -162,31 +161,6 @@
   font-size: 13px;
   font-weight: 800;
   text-align: center;
-}
-
-/* The way out, the same control SHOW ME ends on. `margin-top: auto` keeps it
-   just above the cube on a short list and lets it flow after the rows (the box
-   scrolls) on a long one. */
-.done {
-  flex: 0 0 auto;
-  display: block;
-  width: min(240px, 72vw);
-  min-height: 50px;
-  margin: auto auto 0;
-  border: 1px solid rgba(255, 255, 255, 0.48);
-  border-radius: 999px;
-  color: #fff;
-  background:
-    radial-gradient(circle at 35% 18%, rgba(255, 255, 255, 0.5), transparent 23%),
-    linear-gradient(145deg, #ff75ba, #e12b83 58%, #8b174f);
-  box-shadow:
-    inset 2px 3px 4px rgba(255, 255, 255, 0.38),
-    inset -3px -4px 6px rgba(77, 3, 38, 0.58),
-    0 5px 0 #641039,
-    0 10px 20px rgba(0, 0, 0, 0.28);
-  font: 950 14px/1 inherit;
-  letter-spacing: 0.12em;
-  cursor: pointer;
 }
 
 @media (max-width: 360px) {

@@ -205,6 +205,23 @@
   max-width: 100%;
 }
 
+.soundCloudCredit {
+  max-width: 100%;
+  margin-bottom: 1.2cqw;
+  padding: 0.7cqw 1.3cqw;
+  border-radius: 999px;
+  background: rgba(255, 85, 0, 0.92);
+  color: #fff;
+  font-size: 2.05cqw;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 0 2cqw rgba(255, 85, 0, 0.28);
+}
+
 /* now-playing scrubber */
 .bar {
   margin-top: 1.4cqw;
@@ -331,21 +348,6 @@
   pointer-events: none;
   user-select: none;
   -webkit-user-drag: none;
-}
-
-/* SoundCloud's embedded player, sitting in the iPod's screen. It carries the
-   artist's name and artwork on purpose: an underground artist's track should
-   look like theirs, not like ours. Hidden rather than unmounted while you
-   browse, because unmounting is what actually stops the sound. */
-.scFrame {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  z-index: 4;
-  background: #0d0d0d;
-  transition: opacity 160ms ease;
 }
 
 /* ── boot ─────────────────────────────────────────────────────────────────── */

@@ -224,7 +224,10 @@ export default function StudioSynthwave({ active, energy, levels }: StudioSynthw
       smoothedEnergy += (target - smoothedEnergy) * (activeRef.current ? 0.28 : 0.12)
       if (advance && activeRef.current && !motionQuery.matches) {
         const elapsed = Math.min(0.1, Math.max(0, elapsedMs / 1000))
-        phase += elapsed * (28 + smoothedEnergy * 62)
+        // Deliberately lateral and obvious at the analyser's 55ms sample rate:
+        // this is a continuous scroll while input is open, not a perpetual rAF
+        // animation that keeps the phone warm after the mic is finished.
+        phase += elapsed * (64 + smoothedEnergy * 116)
       }
 
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
@@ -300,7 +303,7 @@ export default function StudioSynthwave({ active, energy, levels }: StudioSynthw
     >
       <canvas ref={canvasRef} className={styles.canvas} />
       <span className={styles.scanlines} />
-      <span className={styles.inputState}>{active ? 'LIVE INPUT' : 'SOUND REACTIVE'}</span>
+      <span className={styles.inputState}>{active ? 'SCROLLING · LIVE INPUT' : 'MIC-REACTIVE SYNTH'}</span>
     </div>
   )
 }

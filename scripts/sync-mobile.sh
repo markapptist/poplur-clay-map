@@ -35,7 +35,13 @@ cleanup() {
   rm -f "$GATE_SERVER_LOG"
   rm -rf "$BUILD_DIR"
   rm -f "$RN_TMP"
-  if [[ "$LOCK_HELD" -eq 1 ]]; then rm -rf "$PUBLISH_LOCK"; fi
+  # A queued release may acquire the same directory immediately after this
+  # process stops owning it. Never let a late cleanup remove that newer
+  # owner's lock.
+  if [[ "$LOCK_HELD" -eq 1 && -f "$PUBLISH_LOCK/pid" ]] \
+    && [[ "$(<"$PUBLISH_LOCK/pid")" == "$$" ]]; then
+    rm -rf "$PUBLISH_LOCK"
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -87,6 +93,13 @@ if js_contains 'Add VITE_MAPBOX_TOKEN' "$BUILD_DIR"; then
   echo "Mobile release verification failed: missing-token UI survived production build." >&2
   exit 1
 fi
+
+# Measure and publish as one serialized release transaction. Running several
+# Chromium thermal probes at once makes otherwise-idle pages miss their park
+# acknowledgement and turns machine contention into an "unmeasurable" failure.
+# Holding the existing lock through both phases also prevents a newer snapshot
+# from being measured first and then overwritten by an older queued publish.
+acquire_publish_lock
 
 # Thermal gate: EVERY build re-measures the surfaces that have burned the
 # phone before (running infinite animations, idle long tasks, WebGL contexts,
@@ -149,10 +162,8 @@ else
   GATE_SERVER_PID=""
 fi
 
-# Watchers can legitimately queue more than one isolated build. Serialize the
-# short publish phase so rsync --delete and the RN archive replacement cannot
-# interleave two otherwise-valid snapshots.
-acquire_publish_lock
+# The release lock was acquired before the thermal gate, so the snapshot being
+# copied here is still the most recently verified release transaction.
 
 sync_to() {
   local dest="$1"

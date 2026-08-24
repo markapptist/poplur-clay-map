@@ -592,7 +592,12 @@
   width: var(--zoom-thumb-size);
   height: var(--zoom-thumb-size);
   margin-left: calc(var(--zoom-thumb-size) / -2);
+  /* The zoom thumb is the object itself: a transparent baked view of the
+     globe/cloud/airplane/city, with no button-shaped backing behind it. */
   background: var(--zoomThumb, none) center / contain no-repeat;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
   pointer-events: none;
   will-change: bottom;

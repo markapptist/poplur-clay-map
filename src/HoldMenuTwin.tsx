@@ -125,7 +125,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // CREATE opens the existing Poplur AI chat. iOS presents the native
     // PoplurAIChatView; browser and Android use its interactive shared twin.
     // Wears the supplied laptop render — the screen this actually runs through.
-    { icon: 'CreateAI', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
+    { icon: 'Create', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
     // Games is a working in-home screen on every target (including RN and
     // Android). Sending it to the old native-only route left it as a no-op on
     // those hosts, so it stays in the shared surface like News and TV Guide.
@@ -1125,7 +1125,7 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'camera-ai-chat') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur AI chat">
-          <AIChatScreen onClose={() => { playPop(); onClose() }} />
+          <AIChatScreen onClose={() => { playPop(); onClose() }} bindBack={bindNativeBack} />
         </div>
       )
     }

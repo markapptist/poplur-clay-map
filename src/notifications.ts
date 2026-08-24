@@ -136,6 +136,16 @@ export function dismissNotification(key: string): void {
   listeners.forEach(fn => fn(snapshot))
 }
 
+/** Clear the shared inbox in one deliberate action.  This takes the same
+ * snapshot the screen is rendering, so incoming notifications after the tap
+ * remain visible instead of being accidentally swallowed. */
+export function clearAllNotifications(): void {
+  const visible = listNotifications()
+  if (visible.length === 0) return
+  visible.forEach(notification => dismissed.add(notificationKey(notification)))
+  listeners.forEach(fn => fn([]))
+}
+
 /** Subscribe to the list. Fires when engagement is recorded and when a row is
  *  cleared. Returns an unsubscribe. */
 export function onNotificationsChanged(fn: (list: Notification[]) => void): () => void {

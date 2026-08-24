@@ -156,6 +156,10 @@ export function WeatherMark({
 // the former globe/always-3D mode.
 export const MAP_2D = false
 const SHARED_ADAPTIVE_MAP = true
+// The adaptive renderer hands buildings from the inexpensive flat footprint
+// layers to real extrusion geometry at one exact boundary. Keeping this shared
+// prevents a flat roof layer from continuing above the 3D buildings.
+const BUILDING_3D_MIN_ZOOM = 14
 const MAP_LITE_REQUESTED =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).get('mapLite') === '1'
@@ -2298,7 +2302,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // clamps into the hybrid band. Zoomed out (globe/region) the camera frees
     // up for the space view. Enforced at gesture end so cinematic flights
     // (which animate pitch themselves) never get snapped mid-flight.
-    const HYBRID_ZOOM = 12.5
+    const HYBRID_ZOOM = BUILDING_3D_MIN_ZOOM
     let adaptiveCameraFrame: number | null = null
     const settleAdaptiveCamera = (pitch: number, bearing: number) => {
       if (adaptiveCameraFrame != null) window.cancelAnimationFrame(adaptiveCameraFrame)
@@ -2306,7 +2310,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // placement. Scheduling the one-shot camera settle for the next paint
       // avoids mutating that placement pass (which can otherwise throw inside
       // Mapbox on the close-zoom handoff). This is gesture-driven, never a
-      // standing render loop.
+      // standing render loop. It also replaces any pending settle.
+      // governor-ok: one-shot, and its callback refuses work after disposal.
       adaptiveCameraFrame = window.requestAnimationFrame(() => {
         adaptiveCameraFrame = null
         if (disposed || !map.isStyleLoaded()) return
@@ -2988,7 +2993,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           // Geometry culling: no extrusions until the camera is close enough
           // to be looking at a neighbourhood, not a whole city. The clay
           // settlement placeholders own everything wider than this.
-          minzoom: 14,
+          minzoom: BUILDING_3D_MIN_ZOOM,
           layout: {
             // Experimental v3 property: rounds every extrusion edge → clay
             'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.9,
@@ -3163,6 +3168,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           source: flatSource,
           'source-layer': 'building',
           minzoom: 13.2,
+          ...(SHARED_ADAPTIVE_MAP ? { maxzoom: BUILDING_3D_MIN_ZOOM } : {}),
           paint: {
             'fill-color': '#604836',
             'fill-opacity': 0.42,
@@ -3177,37 +3183,43 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           source: flatSource,
           'source-layer': 'building',
           minzoom: 13.2,
+          ...(SHARED_ADAPTIVE_MAP ? { maxzoom: BUILDING_3D_MIN_ZOOM } : {}),
           paint: {
             'fill-color': flatBuildingColor() as never,
             'fill-opacity': 0.96,
             'fill-outline-color': '#7b5a43',
           },
         })
-        map.addLayer({
-          id: 'clay-building-name-labels-2d',
-          slot: 'top',
-          type: 'symbol',
-          source: 'clay-streets',
-          'source-layer': 'building',
-          minzoom: 15.2,
-          filter: ['has', 'name'] as never,
-          layout: {
-            'text-field': ['get', 'name'],
-            'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
-            'text-size': ['interpolate', ['linear'], ['zoom'], 15, 9, 18, 12],
-            'text-max-width': 8,
-            'text-padding': 10,
-            'text-allow-overlap': false,
-            'text-ignore-placement': false,
-            'text-optional': true,
-          } as never,
-          paint: {
-            'text-color': '#fff5e8',
-            'text-halo-color': '#4d3428',
-            'text-halo-width': 1.2,
-            'text-halo-blur': 0.4,
-          },
-        })
+        // The adaptive close-up already has labels elevated with the 3D
+        // geometry. Adding this flat label pass as well makes names look
+        // doubled and soft; retain it only for the dedicated flat fallback.
+        if (!SHARED_ADAPTIVE_MAP) {
+          map.addLayer({
+            id: 'clay-building-name-labels-2d',
+            slot: 'top',
+            type: 'symbol',
+            source: 'clay-streets',
+            'source-layer': 'building',
+            minzoom: 15.2,
+            filter: ['has', 'name'] as never,
+            layout: {
+              'text-field': ['get', 'name'],
+              'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+              'text-size': ['interpolate', ['linear'], ['zoom'], 15, 9, 18, 12],
+              'text-max-width': 8,
+              'text-padding': 10,
+              'text-allow-overlap': false,
+              'text-ignore-placement': false,
+              'text-optional': true,
+            } as never,
+            paint: {
+              'text-color': '#fff5e8',
+              'text-halo-color': '#4d3428',
+              'text-halo-width': 1.2,
+              'text-halo-blur': 0.4,
+            },
+          })
+        }
       }
 
       // Neutral daylight for the Standard basemap in realistic mode; warmer

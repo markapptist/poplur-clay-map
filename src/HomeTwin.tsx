@@ -101,6 +101,10 @@ const MAP_RAIL_SUN_ICON = `<svg viewBox="0 0 40 40"><defs><radialGradient id="ho
 // the visible model plus one prepared destination. This keeps Meshy's surface
 // detail without putting the 23-47MB authoring masters on a phone.
 const CLAY_TV_MODEL = 'clay_tv.glb'
+/** The Feed's real food creative temporarily turns the TV navigator into the
+    supplied 3D fork-and-knife cube, then the normal cube-swap path returns it
+    to the TV as soon as the creative is gone. */
+const FOOD_AD_CUBE_MODEL = 'poplur_cube_fork_knife.glb'
 // The flash camera the profile wears while you are taking your picture.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
 const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
@@ -382,9 +386,6 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // the live camera, so nothing can wear a cube there.
   // Still awaiting a model: camera-studio, feed-games.
   //
-  // poplur_cube_fork_knife.glb is ALSO in the bundle and deliberately
-  // unwired: it is staged for a future "food ad in feed" surface that does
-  // not exist yet, not an orphan left behind by this pass.
 }
 
 /** Resolve a subscreen object from its screen identity in one place. Keeping
@@ -2504,6 +2505,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
   useEffect(() => { if (!overlayOpen) setSubscreenFullscreen(false) }, [overlayOpen])
   const feedChromeGone = feedFullscreen && committedTab === 'feed'
+  // FeedTwin reports actual visible food creatives, not merely a selected Food
+  // channel. That makes the fork/knife object a truthful temporary ad state:
+  // the moment the video ends, changes, or the Feed unmounts, it returns to TV.
+  const [foodAdOpen, setFoodAdOpen] = useState(false)
   // A Google feed slot is a NATIVE card the shell lays over the web feed — it
   // cannot be drawn in here. The chrome has to take itself away while it is up,
   // or the cube and HUD would sit on top of an ad, which is exactly the
@@ -3419,6 +3424,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     ? PHONE_RING_MODEL
     : composerOpen && composerEditing
     ? DIRECTOR_BOARD_MODEL
+    : activeTab === 'feed' && committedTab === 'feed' && foodAdOpen
+    ? FOOD_AD_CUBE_MODEL
     // Zooming pops the navigator to the bare lens and back. Deliberately ABOVE
     // the video branch: zoom is the glass doing the work whether you are
     // taking a photo or recording, so the camcorder gets the same pop and
@@ -3891,6 +3898,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onIndexChange={setChanIndex}
             onPostReach={onFeedPostReach}
             onContentAdvance={reportFeedContentAdvance}
+            onFoodAdChange={setFoodAdOpen}
             bindActions={fn => { feedActionsRef.current = fn }}
             bindGoBack={fn => { feedBackRef.current = fn }}
             // The native Google card owns the visible Feed slot while open.

@@ -32,7 +32,7 @@
 .roomBlur,
 .roomBlurReady {
   z-index: 0;
-  object-fit: cover;
+  object-fit: fill;
   object-position: 50% 45%;
   filter: blur(22px) saturate(1.15) brightness(0.72);
   transform: scale(1.12);
@@ -45,11 +45,11 @@
 .roomArt,
 .roomArtReady {
   z-index: 1;
-  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) - 2px);
-  bottom: auto;
-  height: auto;
-  object-fit: contain;
-  object-position: 50% 0%;
+  top: 0;
+  bottom: 0;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 50%;
   filter: saturate(1.04) contrast(1.02);
   opacity: 0;
   transform: scale(1.018);
@@ -65,37 +65,10 @@
     radial-gradient(circle at 50% 26%, rgba(255, 112, 176, 0.12), transparent 36%);
 }
 
-.roomButton {
-  position: absolute;
-  z-index: 6;
-  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 10px);
-  left: max(12px, env(safe-area-inset-left));
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 14px;
-  border: 1px solid rgba(255, 194, 224, 0.88);
-  border-radius: 16px;
-  color: #fff;
-  background: linear-gradient(180deg, #ff65b6 0%, #e31b83 58%, #ae075e 100%);
-  box-shadow:
-    inset 0 2px 0 rgba(255, 255, 255, 0.34),
-    inset 0 -2px 0 rgba(92, 0, 42, 0.28),
-    0 7px 16px rgba(61, 0, 29, 0.38),
-    0 0 15px rgba(255, 44, 151, 0.2);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 950;
-  letter-spacing: 0.075em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.roomButton:active { transform: translateY(1px) scale(0.985); }
-
-.roomButton:focus-visible,
 .resetButton:focus-visible,
+.shuffleButton:focus-visible,
+.previewToggle:focus-visible,
+.previewToggleActive:focus-visible,
 .category:focus-visible,
 .categoryActive:focus-visible,
 .colorChoice:focus-visible,
@@ -109,33 +82,53 @@
 .characterStage {
   position: absolute;
   z-index: 3;
-  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 52px);
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 34px);
   right: 0;
-  bottom: calc(18px + var(--cube-size, 176px) + 196px + env(safe-area-inset-bottom));
+  bottom: 54px;
   left: 0;
-  min-height: 220px;
+  height: auto;
+  min-height: 420px;
+  margin-top: 0;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
-.characterStage > svg {
+.characterStage > svg,
+.characterStage > img,
+.characterStage > [data-avatar-studio] {
   position: relative;
   z-index: 2;
   width: auto;
   height: min(100%, 350px);
   max-width: 72vw;
+  object-fit: contain;
   filter:
     drop-shadow(0 3px 1px rgba(67, 19, 7, 0.25))
     drop-shadow(0 14px 18px rgba(15, 2, 7, 0.42));
 }
 
+/* The WebGL canvas owns the complete stage.  Keep it inside the wardrobe
+   frame instead of treating it like the shorter 2D portrait image. */
+.characterStage > [data-avatar-studio='three-avatar-v1'] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 82px;
+  left: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  filter: none;
+}
+
 .characterShadow {
+  pointer-events: none;
   position: absolute;
   z-index: 1;
   left: 50%;
-  bottom: -4px;
+  bottom: 76px;
   width: min(43vw, 210px);
   height: 22px;
   border-radius: 50%;
@@ -144,12 +137,146 @@
   transform: translateX(-50%);
 }
 
-.styleDock {
+.avatarHeightControl,
+.avatarStatureControl {
+  position: absolute;
+  z-index: 6;
+  pointer-events: auto;
+}
+
+.avatarHeightControl {
+  top: 25%;
+  left: max(9px, 3vw);
+}
+
+.avatarStatureControl {
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Transparent map-style scale rails. The striped fill is the only rail
+   surface; S/M/L/XL are the draggable-looking size notches themselves. */
+.scaleControl,
+.scaleControlVertical {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: transparent;
+}
+
+.scaleControl { width: 142px; height: 34px; }
+.scaleControlVertical { width: 38px; height: 136px; }
+
+.scaleRail {
+  position: relative;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 202, 230, .38);
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: 0 0 9px rgba(255, 78, 171, .22);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.scaleRail::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  border-radius: inherit;
+  background: repeating-linear-gradient(45deg, #ffe1f1 0 11px, #ff86c4 11px 22px, #f53c99 22px 33px);
+  background-size: 47px 47px;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, .55), inset 0 -2px 3px rgba(125, 8, 64, .5);
+  animation: wardrobeBarber 1.1s linear infinite;
+}
+
+.scaleControl .scaleRail { width: 128px; height: 12px; }
+.scaleControl .scaleRail::before { top: 0; bottom: 0; left: 0; width: var(--scale-progress); }
+.scaleControlVertical .scaleRail { width: 12px; height: 128px; }
+.scaleControlVertical .scaleRail::before { right: 0; bottom: 0; left: 0; height: var(--scale-progress); }
+
+.scaleThumb {
+  position: absolute;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  color: #fff;
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: -.04em;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #16010e, 0 0 6px rgba(255, 85, 184, .95);
+}
+
+.scaleControl .scaleThumb { top: 50%; left: var(--scale-position); transform: translate(-50%, -50%); }
+.scaleControlVertical .scaleThumb { bottom: var(--scale-position); left: 50%; transform: translate(-50%, 50%); }
+
+.scaleRail:focus-visible { outline: 2px solid #5fe1ea; outline-offset: 5px; }
+
+@keyframes wardrobeBarber {
+  from { background-position: 0 0; }
+  to { background-position: -47px 0; }
+}
+
+.previewToggle,
+.previewToggleActive {
   position: absolute;
   z-index: 5;
-  right: max(10px, env(safe-area-inset-right));
-  bottom: calc(18px + var(--cube-size, 176px) + 12px + env(safe-area-inset-bottom));
-  left: max(10px, env(safe-area-inset-left));
+  top: 46%;
+  left: max(10px, 4vw);
+  right: auto;
+  width: 48px;
+  height: 54px;
+  display: grid;
+  place-content: center;
+  gap: 1px;
+  padding: 0;
+  border: 1px solid rgba(255, 184, 222, .76);
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(155deg, rgba(79, 25, 61, .94), rgba(20, 11, 37, .96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 8px 17px rgba(30, 2, 21, .35);
+  font: inherit;
+  cursor: pointer;
+}
+
+.previewToggleActive {
+  border-color: #5fe1ea;
+  background: linear-gradient(155deg, #2b5c9b, #24206f);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.27), 0 0 0 2px rgba(95, 225, 234, .26), 0 8px 17px rgba(30, 2, 21, .35);
+}
+
+.previewToggle span,
+.previewToggleActive span { font-size: 15px; font-weight: 950; letter-spacing: .06em; }
+.previewToggle small,
+.previewToggleActive small { font-size: 7px; font-weight: 850; letter-spacing: .12em; }
+
+.studioScroll {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: calc(100dvh - 220px) max(10px, env(safe-area-inset-right)) calc(var(--cube-size, 176px) + 280px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  pointer-events: none;
+  scrollbar-width: none;
+}
+
+.studioScroll::-webkit-scrollbar { display: none; }
+
+.styleDock {
+  position: relative;
+  z-index: 1;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  margin: 0;
+  pointer-events: auto;
   min-height: 166px;
   padding: 10px 10px 12px;
   overflow: hidden;
@@ -182,6 +309,13 @@
   gap: 8px;
 }
 
+.dockActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
 .dockHeading strong {
   color: #ff67b6;
   font-size: 13px;
@@ -211,6 +345,22 @@
   font: inherit;
   font-size: 10px;
   font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.shuffleButton {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 120, 188, 0.78);
+  border-radius: 11px;
+  color: #fff;
+  background: linear-gradient(180deg, #ff62b2, #c91470);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 4px 10px rgba(103, 0, 51, 0.25);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 900;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
@@ -316,6 +466,52 @@
   cursor: pointer;
 }
 
+.zoomChoice,
+.zoomChoiceVertical {
+  position: relative;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 60px;
+  display: grid;
+  grid-template-rows: 12px 1fr 10px;
+  place-items: center;
+  padding: 4px 6px 3px;
+  overflow: hidden;
+  border: 1px solid rgba(95, 225, 234, .42);
+  border-radius: 16px;
+  color: rgba(235, 251, 255, .94);
+  background: linear-gradient(145deg, rgba(48, 103, 147, .34), rgba(45, 23, 67, .52));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16);
+}
+
+.avatarHeightControl .zoomChoiceVertical {
+  width: 58px;
+  height: 132px;
+  grid-template-rows: 14px 1fr 12px;
+  border-radius: 24px;
+}
+
+.avatarHeightControl .zoomRangeVertical { width: 108px; }
+.avatarHeightControl .zoomChoiceVertical > span { font-size: 7px; letter-spacing: .02em; white-space: nowrap; }
+
+.avatarStatureControl .zoomChoice {
+  width: 134px;
+  height: 54px;
+  grid-template-columns: 46px 1fr 26px;
+  grid-template-rows: 1fr;
+  border-radius: 18px;
+}
+
+.avatarStatureControl .zoomChoice > span { align-self: center; }
+.avatarStatureControl .zoomRange { width: 56px; }
+
+.zoomChoice > span,
+.zoomChoiceVertical > span { font-size: 8px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.zoomChoice small,
+.zoomChoiceVertical small { font-size: 8px; font-weight: 850; color: #5fe1ea; }
+.zoomRange { width: 50px; accent-color: #5fe1ea; cursor: ew-resize; }
+.zoomRangeVertical { width: 42px; accent-color: #ff66b5; cursor: ns-resize; transform: rotate(-90deg); }
+
 .layerChoiceActive {
   border: 3px solid var(--poplur-theme-accent-2, #5fe1ea);
   color: #fff;
@@ -347,6 +543,21 @@
   white-space: nowrap;
 }
 
+.choiceGlyph {
+  min-width: 34px;
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0 3px;
+  border-radius: 12px;
+  color: #fff8fc;
+  background: linear-gradient(145deg, rgba(255, 126, 193, 0.36), rgba(70, 42, 111, 0.5));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+}
+
 .noneMark {
   width: 28px;
   height: 28px;
@@ -366,40 +577,16 @@
   transform: rotate(-45deg);
 }
 
-.builderHost {
-  position: absolute;
-  inset: 0;
-  z-index: 250;
-  overflow: hidden;
-  isolation: isolate;
-  overscroll-behavior: contain;
-  background: #2c0c15;
-  --wardrobe-safe-top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 8px);
-  --wardrobe-safe-bottom: calc(18px + var(--cube-size, 176px) + env(safe-area-inset-bottom));
-}
-
-.builderLoading {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: #fff3f9;
-  background:
-    radial-gradient(circle at 50% 32%, rgba(255, 84, 172, 0.27), transparent 30%),
-    linear-gradient(150deg, #6f261d, #220610);
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-
 @media (max-height: 720px) {
   .characterStage {
-    bottom: calc(18px + var(--cube-size, 124px) + 168px + env(safe-area-inset-bottom));
+    bottom: 48px;
+    height: auto;
+    min-height: 350px;
   }
 
   .styleDock {
     min-height: 144px;
-    bottom: calc(18px + var(--cube-size, 124px) + 8px + env(safe-area-inset-bottom));
+    bottom: auto;
     padding-block: 8px;
   }
 
@@ -413,11 +600,16 @@
 
 @media (min-width: 760px) {
   .styleDock {
-    right: max(22px, calc((100vw - 720px) / 2));
-    left: max(22px, calc((100vw - 720px) / 2));
+    right: auto;
+    left: auto;
+    max-width: 676px;
+    margin-right: auto;
+    margin-left: auto;
   }
 
-  .characterStage > svg { max-width: 430px; }
+  .characterStage > svg,
+  .characterStage > img,
+  .characterStage > [data-avatar-studio] { max-width: 430px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

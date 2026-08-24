@@ -71,6 +71,8 @@ function announce() {
 // liability, not a cache. A refresh REPLACES this wholesale, the same way the
 // profile grid replaces its posts.
 let accountTracks: Track[] = []
+let nearbyTracks: Track[] = []
+let nearbyTrackRequest = 0
 
 /** One Firestore row → a Track, or null if it names no playable pointer. */
 function accountTrack(row: Record<string, unknown>): Track | null {
@@ -125,6 +127,42 @@ export function startAccountTrackIntake(): () => void {
   return () => window.removeEventListener('poplur-native-profile-tracks', receive)
 }
 
+/**
+ * Ask the native/authenticated shell for Studio tracks posted by people near
+ * this listener. This is deliberately separate from requestProfileTracks,
+ * which is the signed-in artist's own library and cannot discover anyone else.
+ */
+export function startNearbyTrackIntake(
+  lat: number,
+  lng: number,
+  radiusKm: number,
+): () => void {
+  const requestId = `nearby_tracks_${++nearbyTrackRequest}`
+  nearbyTracks = []
+  announce()
+  const receive = (event: Event) => {
+    const payload = (event as CustomEvent<{ requestId?: unknown; tracks?: unknown }>).detail
+    if (payload?.requestId !== requestId) return
+    const rows = Array.isArray(payload.tracks) ? payload.tracks : []
+    nearbyTracks = rows.flatMap(row => {
+      const track = row && typeof row === 'object' ? accountTrack(row as Record<string, unknown>) : null
+      return track ? [track] : []
+    })
+    announce()
+  }
+  window.addEventListener('poplur-native-nearby-tracks', receive)
+  if (isNativeShell()) {
+    postNativeEvent({
+      type: 'requestNearbyTracks',
+      requestId,
+      latitude: lat,
+      longitude: lng,
+      radiusKm,
+    })
+  }
+  return () => window.removeEventListener('poplur-native-nearby-tracks', receive)
+}
+
 /** What the account has handed back this session. */
 export function accountShelf(): Track[] {
   return accountTracks
@@ -148,7 +186,7 @@ export function musicShelf(): Track[] {
   // copy of the same track, because the account is what other people see.
   const seen = new Set<string>()
   const shelf: Track[] = []
-  for (const track of [...accountTracks, ...postedTracks(), ...TRACKS]) {
+  for (const track of [...nearbyTracks, ...accountTracks, ...postedTracks(), ...TRACKS]) {
     if (seen.has(track.id)) continue
     seen.add(track.id)
     shelf.push(track)

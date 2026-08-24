@@ -10,31 +10,88 @@ type ChatMessage = {
   attachment?: string
 }
 
+type RecognitionAlternative = { transcript: string }
+type RecognitionResult = { [index: number]: RecognitionAlternative }
+type RecognitionEvent = { resultIndex: number; results: ArrayLike<RecognitionResult> }
+type RecognitionErrorEvent = { error: string }
+type VoiceRecognition = {
+  lang: string
+  interimResults: boolean
+  continuous: boolean
+  start: () => void
+  stop: () => void
+  abort: () => void
+  onresult: ((event: RecognitionEvent) => void) | null
+  onerror: ((event: RecognitionErrorEvent) => void) | null
+  onend: (() => void) | null
+}
+type VoiceRecognitionConstructor = new () => VoiceRecognition
+
 const SUGGESTIONS = [
   { label: 'Make this cinematic', icon: 'FILM' },
-  { label: 'Create commercial', icon: 'AD' },
-  { label: 'Make funny', icon: 'LOL' },
-  { label: 'Cartoon style', icon: 'TOON' },
-  { label: '90s TV', icon: 'TV' },
-  { label: 'Add music', icon: 'MIX' },
-  { label: 'Translate', icon: 'A/Z' },
-  { label: 'Make viral', icon: 'UP' },
-  { label: 'Brainstorm', icon: 'IDEA' },
+  { label: 'Write a caption', icon: 'WORD' },
+  { label: 'Find a creative angle', icon: 'IDEA' },
+  { label: 'Build a campaign', icon: 'PLAN' },
 ]
+
+const AI_TIPS = [
+  {
+    eyebrow: 'AI TIP · STORYTELLING',
+    title: 'Turn a moment into a story.',
+    detail: 'Give a photo or clip a mood, a point of view, and an ending people remember.',
+    prompt: 'Make this feel like the opening scene of an indie film.',
+    spark: '✦',
+  },
+  {
+    eyebrow: 'AI TIP · CAPTIONS',
+    title: 'Find the words that stop the scroll.',
+    detail: 'Ask for captions, hooks, or a voice that sounds like you — not a template.',
+    prompt: 'Write three playful captions for this post.',
+    spark: '✎',
+  },
+  {
+    eyebrow: 'AI TIP · CREATIVE PLAN',
+    title: 'Build your next pop from one idea.',
+    detail: 'Turn a place, audience, and feeling into a clear shoot or launch plan.',
+    prompt: 'Build a launch plan for a summer rooftop event.',
+    spark: '◎',
+  },
+  {
+    eyebrow: 'AI TIP · SOUND + EDIT',
+    title: 'Make every beat feel intentional.',
+    detail: 'Ask for an edit rhythm, a music direction, or the perfect final frame.',
+    prompt: 'Suggest a track mood and three edits for this clip.',
+    spark: '♫',
+  },
+]
+
+const LISTENING_NOTE = 'Listening — your words are being added to the message.'
+
+function speechRecognitionConstructor(): VoiceRecognitionConstructor | undefined {
+  const speechWindow = window as Window & {
+    SpeechRecognition?: VoiceRecognitionConstructor
+    webkitSpeechRecognition?: VoiceRecognitionConstructor
+  }
+  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition
+}
 
 function assistantReply(prompt: string): string {
   const lower = prompt.toLowerCase()
   if (lower.includes('cinematic')) return 'I can give it a cinematic grade, wider framing, and a slower final beat. Add a photo or video when you are ready.'
-  if (lower.includes('commercial')) return 'What are we advertising, and should it feel playful, polished, or urgent?'
-  if (lower.includes('translate')) return 'Send the words or media and tell me the language you want.'
+  if (lower.includes('caption')) return 'Tell me the mood and who you want to reach. I will give you a few caption directions.'
+  if (lower.includes('campaign')) return 'Share the product, place, and audience. I will turn that into a sharp creative plan.'
   if (lower.includes('music')) return 'I can build the cut around a track. Upload the clip and describe the energy.'
-  if (lower.includes('brainstorm')) return 'Tell me the place, audience, and feeling. I will turn that into a few strong directions.'
   return 'Got it. Add any media you want me to work with, or tell me one more detail about the result.'
 }
 
-// onClose stays in the contract for hosts that need it; the cube (HoldMenu's
-// universal back) is what actually dismisses this subscreen.
-export default function AIChatScreen({ onClose: _onClose }: { onClose: () => void }) {
+export default function AIChatScreen({
+  onClose: _onClose,
+  bindBack,
+}: {
+  onClose: () => void
+  bindBack?: (fn: (() => boolean) | null) => void
+}) {
+  const [view, setView] = useState<'home' | 'chat'>('home')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [attachment, setAttachment] = useState<{ name: string; url?: string } | null>(null)
@@ -42,35 +99,34 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [smartMode, setSmartMode] = useState(true)
   const [searchMode, setSearchMode] = useState(false)
+  const [dictating, setDictating] = useState(false)
+  const [dictationNote, setDictationNote] = useState('')
+  const [tipIndex, setTipIndex] = useState(0)
   const nextId = useRef(1)
   const replyTimer = useRef<number | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
+  const promptInput = useRef<HTMLInputElement | null>(null)
   const conversation = useRef<HTMLDivElement | null>(null)
+  const screen = useRef<HTMLElement | null>(null)
   const objectUrls = useRef(new Set<string>())
+  const recognition = useRef<VoiceRecognition | null>(null)
+  const dictatedPrefix = useRef('')
   const layoutOrigin = useRef({ x: 0, y: 0 })
 
   useEffect(() => () => {
     if (replyTimer.current) window.clearTimeout(replyTimer.current)
+    recognition.current?.abort()
     objectUrls.current.forEach(url => URL.revokeObjectURL(url))
     objectUrls.current.clear()
   }, [])
 
-  // A capture handed over from the composer's "Generate in Poplur AI".
-  //
-  // The composer stashes it module-side and closes, so by the time this screen
-  // mounts the only trace is that store — read it once, on open. Reading also
-  // clears it, so reopening the chat later does not re-attach a shot the user
-  // already dealt with.
-  //
-  // The URL is NOT registered in objectUrls: this blob belongs to the camera
-  // roll, which still holds the capture, and revoking it on unmount would kill
-  // the roll's own thumbnail too. Only URLs minted in here are ours to revoke.
+  // A capture handed over from the camera's "Generate in Poplur AI" action.
+  // The camera owns its own object URL, so this screen only revokes URLs it
+  // creates from its own attachment picker.
   useEffect(() => {
     const job = takePendingAICompose()
     if (!job) return
     setAttachment({ name: job.media.kind === 'video' ? 'Your recording' : 'Your capture', url: job.media.src })
-    // Their words survive the trip. An empty prompt is fine — arriving with the
-    // picture and nothing typed is a legitimate way to start.
     if (job.prompt.trim()) setInput(job.prompt)
   }, [])
 
@@ -85,10 +141,46 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
     return () => viewport?.removeEventListener('resize', holdHomeLayout)
   }, [])
 
+  // Create home and a live conversation are two levels of the same screen.
+  // Hand the inner level to the shared cube so it returns to Create home
+  // rather than closing the whole camera tab.
+  useEffect(() => {
+    if (!bindBack) return undefined
+    bindBack(() => {
+      if (view !== 'chat') return false
+      if (replyTimer.current) window.clearTimeout(replyTimer.current)
+      replyTimer.current = null
+      recognition.current?.stop()
+      setThinking(false)
+      setMessages([])
+      setInput('')
+      setAttachment(null)
+      setDictationNote('')
+      setView('home')
+      // governor-ok: one-shot post-commit scroll reset; this callback never rearms itself.
+      window.requestAnimationFrame(() => screen.current?.scrollTo({ top: 0 }))
+      return true
+    })
+    return () => bindBack(null)
+  }, [view, bindBack])
+
+  // A leisurely rotation keeps the Create screen useful without a continuous
+  // animation loop. Reduced-motion users keep the first tip and can still use
+  // the explicit previous/next controls.
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined
+    const timer = window.setInterval(() => setTipIndex(index => (index + 1) % AI_TIPS.length), 6500)
+    return () => window.clearInterval(timer)
+  }, [])
+
   const send = (value = input) => {
     const text = value.trim()
     if (!text && !attachment) return
+    recognition.current?.stop()
     playPop()
+    setView('chat')
+    // governor-ok: one-shot post-commit scroll reset; this callback never rearms itself.
+    window.requestAnimationFrame(() => screen.current?.scrollTo({ top: 0 }))
     const userMessage: ChatMessage = {
       id: nextId.current++,
       role: 'user',
@@ -98,32 +190,108 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
     setMessages(current => [...current, userMessage])
     setInput('')
     setAttachment(null)
+    setDictationNote('')
     setThinking(true)
     if (replyTimer.current) window.clearTimeout(replyTimer.current)
     replyTimer.current = window.setTimeout(() => {
       setMessages(current => [
         ...current,
-        {
-          id: nextId.current++,
-          role: 'assistant',
-          text: assistantReply(text || attachment?.name || ''),
-        },
+        { id: nextId.current++, role: 'assistant', text: assistantReply(text || attachment?.name || '') },
       ])
       setThinking(false)
       replyTimer.current = null
     }, 650)
   }
 
+  const dictate = () => {
+    if (recognition.current && dictating) {
+      recognition.current.stop()
+      return
+    }
+
+    const Constructor = speechRecognitionConstructor()
+    if (!Constructor) {
+      setDictationNote('Voice-to-text is not available in this browser. Type your message instead.')
+      promptInput.current?.focus()
+      return
+    }
+
+    const session = new Constructor()
+    let hadError = false
+    dictatedPrefix.current = input.trim()
+    session.lang = navigator.language || 'en-CA'
+    session.interimResults = true
+    session.continuous = false
+    session.onresult = event => {
+      let transcript = ''
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        transcript += event.results[index]?.[0]?.transcript ?? ''
+      }
+      const next = [dictatedPrefix.current, transcript.trim()].filter(Boolean).join(' ')
+      setInput(next)
+    }
+    session.onerror = event => {
+      hadError = true
+      setDictating(false)
+      setDictationNote(event.error === 'not-allowed'
+        ? 'Allow microphone access to use voice-to-text.'
+        : 'Voice-to-text could not hear that. You can try again or type your message.')
+    }
+    session.onend = () => {
+      recognition.current = null
+      setDictating(false)
+      setDictationNote(note => hadError
+        ? note
+        : note === LISTENING_NOTE
+          ? 'Voice-to-text added to your message. Review it, then send when ready.'
+          : note)
+      // governor-ok: one-shot focus after recognition state settles; this callback never rearms itself.
+      window.requestAnimationFrame(() => promptInput.current?.focus())
+    }
+
+    recognition.current = session
+    setDictating(true)
+    setDictationNote(LISTENING_NOTE)
+    try {
+      session.start()
+    } catch {
+      recognition.current = null
+      setDictating(false)
+      setDictationNote('Voice-to-text could not start. Type your message instead.')
+    }
+  }
+
+  const removeAttachment = () => {
+    if (attachment?.url && objectUrls.current.has(attachment.url)) {
+      URL.revokeObjectURL(attachment.url)
+      objectUrls.current.delete(attachment.url)
+    }
+    setAttachment(null)
+  }
+
+  const activeTip = AI_TIPS[tipIndex]
+  const useTipPrompt = () => {
+    playPop()
+    setInput(activeTip.prompt)
+    setDictationNote('')
+    // governor-ok: one-shot focus after the prompt state update; this callback never rearms itself.
+    window.requestAnimationFrame(() => promptInput.current?.focus())
+  }
+
+  const moveTip = (direction: -1 | 1) => {
+    playPop()
+    setTipIndex(index => (index + direction + AI_TIPS.length) % AI_TIPS.length)
+  }
+
   return (
-    <section className={styles.screen} aria-label="Poplur AI chat">
-      <div className={styles.confetti} aria-hidden="true" />
+    <section ref={screen} className={`${styles.screen} ${view === 'home' ? styles.homeScreen : styles.chatScreen}`} aria-label="Poplur AI chat">
+      <div className={styles.starField} aria-hidden="true" />
       <header className={styles.header}>
-        {/* No ‹ back — the cube closes this subscreen like every other. */}
         <div className={styles.identity}>
           <span className={styles.mark} aria-hidden="true">P</span>
           <span>
             <strong>poplur <b>AI</b></strong>
-            <small><i /> READY TO CREATE</small>
+            <small><i /> YOUR CREATIVE COPILOT</small>
           </span>
         </div>
         <button
@@ -139,41 +307,57 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
 
       {settingsOpen && (
         <div className={styles.settingsPanel} role="dialog" aria-label="AI chat settings">
-          <label>
-            <span>Smart mode</span>
-            <input
-              type="checkbox"
-              checked={smartMode}
-              onChange={event => setSmartMode(event.currentTarget.checked)}
-            />
-          </label>
-          <label>
-            <span>Search mode</span>
-            <input
-              type="checkbox"
-              checked={searchMode}
-              onChange={event => setSearchMode(event.currentTarget.checked)}
-            />
-          </label>
+          <label><span>Smart mode</span><input type="checkbox" checked={smartMode} onChange={event => setSmartMode(event.currentTarget.checked)} /></label>
+          <label><span>Search mode</span><input type="checkbox" checked={searchMode} onChange={event => setSearchMode(event.currentTarget.checked)} /></label>
         </div>
       )}
 
-      <div className={styles.conversation} ref={conversation}>
-        {messages.length === 0 && (
-          <div className={styles.welcome}>
-            <span className={styles.eyebrow}>POPLUR CREATIVE AI</span>
-            <span className={styles.sparkle}>P</span>
-            <h1>Make something<br />people stop for.</h1>
-            <p>Start with an idea, or add a photo or video.</p>
-            <div className={styles.suggestions}>
-              {SUGGESTIONS.map(suggestion => (
+      <div
+        className={styles.conversation}
+        ref={conversation}
+        data-clay-scroll
+        tabIndex={0}
+        aria-label="Poplur AI conversation"
+      >
+        {view === 'home' && <section className={styles.carousel} aria-roledescription="carousel" aria-label="Poplur AI tips and example prompts">
+          <article className={styles.introCard} aria-live="off">
+            <span className={styles.eyebrow}>{activeTip.eyebrow}</span>
+            <h1>{activeTip.title}</h1>
+            <p>{activeTip.detail}</p>
+            <button type="button" className={styles.tipPrompt} onClick={useTipPrompt}>
+              <small>TRY THIS PROMPT</small>
+              <span>{activeTip.prompt}</span>
+            </button>
+            <span className={styles.introSpark} aria-hidden="true">{activeTip.spark}</span>
+          </article>
+          <div className={styles.carouselControls}>
+            <button type="button" aria-label="Previous AI tip" onClick={() => moveTip(-1)}>‹</button>
+            <span className={styles.tipCount}>{tipIndex + 1} / {AI_TIPS.length}</span>
+            <div className={styles.tipDots} aria-label={`Tip ${tipIndex + 1} of ${AI_TIPS.length}`}>
+              {AI_TIPS.map((tip, index) => (
                 <button
                   type="button"
-                  key={suggestion.label}
-                  onClick={() => send(suggestion.label)}
-                >
+                  key={tip.eyebrow}
+                  className={index === tipIndex ? styles.tipDotActive : undefined}
+                  aria-label={`Show tip ${index + 1}`}
+                  aria-current={index === tipIndex ? 'true' : undefined}
+                  onClick={() => setTipIndex(index)}
+                />
+              ))}
+            </div>
+            <button type="button" aria-label="Next AI tip" onClick={() => moveTip(1)}>›</button>
+          </div>
+        </section>}
+
+        {view === 'home' && (
+          <div className={styles.welcome}>
+            <div className={styles.suggestionHeading}><span>START A CONVERSATION</span><i /></div>
+            <div className={styles.suggestions}>
+              {SUGGESTIONS.map(suggestion => (
+                <button type="button" key={suggestion.label} onClick={() => send(suggestion.label)}>
                   <b aria-hidden="true">{suggestion.icon}</b>
                   <span>{suggestion.label}</span>
+                  <em aria-hidden="true">↗</em>
                 </button>
               ))}
             </div>
@@ -181,57 +365,26 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
         )}
 
         {messages.map(message => (
-          <article
-            className={message.role === 'user' ? styles.userMessage : styles.assistantMessage}
-            key={message.id}
-          >
+          <article className={message.role === 'user' ? styles.userMessage : styles.assistantMessage} key={message.id}>
             <span className={styles.messageAuthor}>{message.role === 'assistant' ? 'P  POPLUR AI' : 'YOU'}</span>
             {message.attachment && <img src={message.attachment} alt="" />}
             <p>{message.text}</p>
           </article>
         ))}
 
-        {thinking && (
-          <div className={styles.typing} aria-label="Poplur AI is responding">
-            <i />
-            <i />
-            <i />
-          </div>
-        )}
+        {thinking && <div className={styles.typing} aria-label="Poplur AI is responding"><i /><i /><i /></div>}
       </div>
 
-      <form
-        className={styles.inputBar}
-        onSubmit={event => { event.preventDefault(); send() }}
-      >
+      <form className={styles.inputBar} onSubmit={event => { event.preventDefault(); send() }}>
         {attachment && (
           <div className={styles.attachment}>
             {attachment.url && <img src={attachment.url} alt="" />}
             <span>{attachment.name}</span>
-            <button
-              type="button"
-              aria-label="Remove attachment"
-              onClick={() => {
-                if (attachment.url) {
-                  URL.revokeObjectURL(attachment.url)
-                  objectUrls.current.delete(attachment.url)
-                }
-                setAttachment(null)
-              }}
-            >
-              ×
-            </button>
+            <button type="button" aria-label="Remove attachment" onClick={removeAttachment}>×</button>
           </div>
         )}
         <div className={styles.controls}>
-          <button
-            type="button"
-            className={styles.attach}
-            aria-label="Add photo or video"
-            onClick={() => fileInput.current?.click()}
-          >
-            +
-          </button>
+          <button type="button" className={styles.attach} aria-label="Add photo or video" onClick={() => fileInput.current?.click()}>+</button>
           <input
             ref={fileInput}
             className={styles.file}
@@ -241,35 +394,45 @@ export default function AIChatScreen({ onClose: _onClose }: { onClose: () => voi
               const file = event.currentTarget.files?.[0]
               if (!file) return
               setAttachment(current => {
-                if (current?.url) {
+                if (current?.url && objectUrls.current.has(current.url)) {
                   URL.revokeObjectURL(current.url)
                   objectUrls.current.delete(current.url)
                 }
                 const url = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined
                 if (url) objectUrls.current.add(url)
-                return {
-                  name: file.name,
-                  url,
-                }
+                return { name: file.name, url }
               })
               event.currentTarget.value = ''
             }}
           />
+          <button
+            type="button"
+            className={`${styles.mic} ${dictating ? styles.micActive : ''}`}
+            aria-label={dictating ? 'Stop voice-to-text' : 'Dictate message'}
+            aria-pressed={dictating}
+            onClick={dictate}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Zm-6 8a6 6 0 0 0 12 0M12 17v4M8 21h8" /></svg>
+          </button>
           <input
+            ref={promptInput}
             className={styles.prompt}
             value={input}
-            onChange={event => setInput(event.currentTarget.value)}
+            onChange={event => { setInput(event.currentTarget.value); setDictationNote('') }}
             placeholder="Message Poplur AI"
             aria-label="Message Poplur AI"
             onFocus={() => {
               layoutOrigin.current = { x: window.scrollX, y: window.scrollY }
+              // governor-ok: one-shot keyboard-layout scroll correction; this callback never rearms itself.
               window.requestAnimationFrame(() => window.scrollTo(layoutOrigin.current.x, layoutOrigin.current.y))
             }}
           />
           <button type="submit" className={styles.send} aria-label="Send message" disabled={!input.trim() && !attachment}>↑</button>
         </div>
+        {dictationNote && <p className={styles.dictationNote} role="status">{dictationNote}</p>}
         <div className={styles.modes}>
           <button type="button" className={smartMode ? styles.modeOn : undefined} onClick={() => setSmartMode(value => !value)}>SMART</button>
+          <span>VOICE-TO-TEXT · YOU SEND</span>
           <button type="button" className={searchMode ? styles.modeOn : undefined} onClick={() => setSearchMode(value => !value)}>SEARCH</button>
         </div>
       </form>

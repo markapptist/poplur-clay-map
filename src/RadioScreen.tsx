@@ -1,21 +1,29 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './RadioScreen.module.css'
 import { playPop } from './pop'
-import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
+import { isUserMuted, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import RadioBoot from './RadioBootScreen'
-import { isRadioBackgroundEnabled, listLocalStations, playStation, readRadioScope, stopMapRadio, nowPlayingStation, type LocalStation } from './mapRadio'
-import { PoplurPerformanceManager } from './poplurPerformanceManager'
-import { postNativeEvent, isNativeShell } from './nativeBridge'
+import {
+  isRadioBackgroundEnabled,
+  listLocalRadioStations,
+  listPoplurLiveStations,
+  playStation,
+  readRadioContentSource,
+  setRadioContentSource,
+  stopMapRadio,
+  nowPlayingStation,
+  type LocalStation,
+  type RadioContentSource,
+} from './mapRadio'
+import { useNearbyLocation } from './nearbyLocation'
 
 // POPLUR RADIO — the station deck.
 //
-// Every station is REAL and its signal reaches you: the list is geo-searched
-// from the Radio Browser directory around your location and ordered by
-// transmitter distance, the same interception rule the map and feed use.
-// Listener counts and logos are the directory's own; the genre split is
-// computed from the stations actually in range, not invented.
+// The source switch keeps two honest catalogues in one physical deck:
+// Radio Browser internet streams around the listener, and playable LIVE
+// podcasts published through Poplur. They share playback furniture, not data.
 
 const BANDS = [
   { key: 'pop', label: 'POP HITS', tint: '#f63b9a', match: /pop|hits|top 40|chart/i },
@@ -27,8 +35,6 @@ const BANDS = [
   { key: 'classical', label: 'FINE TUNING', tint: '#34d399', match: /classic|baroque|opera|symphon/i },
   { key: 'dance', label: 'AFTER HOURS', tint: '#e879f9', match: /dance|electro|house|techno|trance|edm|club/i },
 ] as const
-
-const HOME: [number, number] = [-79.3832, 43.6532]
 
 /** Which dial a station sits on. */
 type Wave = 'all' | 'fm' | 'am' | 'net'
@@ -79,155 +85,59 @@ function StationArt({ logo }: { logo?: string | null }) {
 const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
 
 export default function RadioScreen({ onClose }: { onClose: () => void }) {
-  const [stations, setStations] = useState<LocalStation[] | null>(null)
+  const location = useNearbyLocation()
+  const [source, setSource] = useState<RadioContentSource>(readRadioContentSource)
+  const [stationSets, setStationSets] = useState<Partial<Record<RadioContentSource, {
+    locationKey: string
+    items: LocalStation[]
+  }>>>({})
+  const [errors, setErrors] = useState<Partial<Record<RadioContentSource, string>>>({})
   const [tunedUrl, setTunedUrl] = useState<string | null>(() => nowPlayingStation()?.url ?? null)
-  const [soundCloudUrl, setSoundCloudUrl] = useState<string | null>(null)
   const [band, setBand] = useState<string | null>(null)
   const [wave, setWave] = useState<Wave>('all')
   const [favourites, setFavourites] = useState<Set<string>>(() => new Set())
   const [muted, setMuted] = useState(isUserMuted)
-  const [outsideScope, setOutsideScope] = useState(() => readRadioScope() === 'outside')
-  const [pageVisible, setPageVisible] = useState(() => !document.hidden)
-  const [gateOpen, setGateOpen] = useState(() => !isGateMuted())
-  const [embeddedPlaybackAllowed, setEmbeddedPlaybackAllowed] = useState(() =>
-    PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed)
   // The set warms up before it plays. 'off' is the collapsing picture.
   const [boot, setBoot] = useState<'on' | 'off' | 'done'>('on')
-  const [error, setError] = useState<string | null>(null)
-  const railRef = useRef<HTMLDivElement>(null)
-  const soundCloudFrameRef = useRef<HTMLIFrameElement>(null)
+  const locationKey = location ? `${location.lat.toFixed(3)},${location.lng.toFixed(3)}` : ''
+  const stationSet = stationSets[source]
+  const stations = stationSet?.locationKey === locationKey ? stationSet.items : null
+  const error = errors[source] ?? null
 
-  const unloadSoundCloudFrame = () => {
-    if (soundCloudFrameRef.current) soundCloudFrameRef.current.src = 'about:blank'
-  }
-
-  // SoundCloud is the one radio path that lives outside the shared
-  // AudioContext/media-element gate. Its iframe therefore follows that gate
-  // explicitly and is destroyed (not merely hidden) with the page.
+  // Location is acquired once by useNearbyLocation. Changing the source only
+  // aborts/starts its directory fetch; it never re-enters the permission flow.
   useEffect(() => {
-    const syncGate = () => {
-      // OUTSIDE bypasses only the page-hidden gate. It must still respect an
-      // explicit user/host mute while Poplur is visible.
-      const outsideBackground = outsideScope && document.hidden
-      const open = outsideBackground || !isGateMuted()
-      if (!open) unloadSoundCloudFrame()
-      setGateOpen(open)
-    }
-    const syncVisibility = () => {
-      const visible = outsideScope || !document.hidden
-      if (!visible) unloadSoundCloudFrame()
-      setPageVisible(visible)
-    }
-    const pageHidden = () => {
-      if (outsideScope) {
-        setPageVisible(true)
-        return
-      }
-      unloadSoundCloudFrame()
-      setPageVisible(false)
-    }
-    syncGate()
-    syncVisibility()
-    const stopGate = onGateChange(syncGate)
-    document.addEventListener('visibilitychange', syncVisibility)
-    window.addEventListener('pagehide', pageHidden)
-    window.addEventListener('pageshow', syncVisibility)
-    return () => {
-      stopGate()
-      document.removeEventListener('visibilitychange', syncVisibility)
-      window.removeEventListener('pagehide', pageHidden)
-      window.removeEventListener('pageshow', syncVisibility)
-    }
-  }, [outsideScope])
-
-  useEffect(() => {
-    const syncScope = () => setOutsideScope(readRadioScope() === 'outside')
-    window.addEventListener('poplur-radio-scope', syncScope)
-    return () => window.removeEventListener('poplur-radio-scope', syncScope)
-  }, [])
-
-  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
-    // An explicit OUTSIDE choice may keep audio alive with the document hidden,
-    // but LOW_POWER/EMERGENCY still retire the cross-origin player.
-    const allowed = snapshot.expensiveVideoBackedTexturesAllowed
-      && (snapshot.isForeground || outsideScope)
-    if (!allowed) unloadSoundCloudFrame()
-    setEmbeddedPlaybackAllowed(allowed)
-  }), [outsideScope])
-
-  useEffect(() => {
-    let alive = true
-    let settled = false
+    if (!location || !locationKey) return
+    if (stationSets[source]?.locationKey === locationKey) return
     const controller = new AbortController()
-    const load = (lat: number, lng: number) => {
-      if (settled) return
-      settled = true
-      listLocalStations(lat, lng, 120_000, controller.signal)
-        .then(found => {
-          if (!alive) return
-          setStations(found)
-          if (!found.length) setError('No signal reaches you right now')
-        })
-        .catch(() => { if (alive) setError('Could not reach the station directory') })
-    }
-    const readNativeLocation = (value: unknown): [number, number] | null => {
-      if (!value || typeof value !== 'object') return null
-      const payload = value as { latitude?: unknown; longitude?: unknown; detail?: unknown }
-      if (payload.detail && typeof payload.detail === 'object') return readNativeLocation(payload.detail)
-      const latitude = Number(payload.latitude)
-      const longitude = Number(payload.longitude)
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
-      return [latitude, longitude]
-    }
-    // The map already asks native for location on launch, through
-    // CLLocationManager/FusedLocationProvider — a request the OS attributes
-    // to Poplur by name. This screen used to call the browser's own
-    // navigator.geolocation unconditionally on mount instead, which is a
-    // SEPARATE grant from WKWebView's JS engine, and iOS surfaces it as a
-    // generic "app" prompt rather than "Poplur" — a second, uglier ask for
-    // permission the user already gave once. Prefer whatever native already
-    // has (synchronously, or via the same broadcast the map listens for) and
-    // only fall back to the browser API if nothing native shows up in time.
-    const existing = readNativeLocation((window as unknown as { __poplurNativeLocation?: unknown }).__poplurNativeLocation)
-    if (existing) {
-      load(existing[0], existing[1])
-    } else {
-      const onNativeLocation = (event: Event) => {
-        const found = readNativeLocation((event as CustomEvent).detail)
-        if (found) load(found[0], found[1])
-      }
-      window.addEventListener('poplur-location', onNativeLocation)
-      window.addEventListener('poplur-native-location', onNativeLocation)
-      // Actively ask native for the fix it already holds, rather than only
-      // waiting for a broadcast that fires when the MAP happens to move. Native
-      // answers with poplur-location, attributed to "Poplur", no new prompt.
-      postNativeEvent({ type: 'requestLocation' })
-      const fallbackTimer = window.setTimeout(() => {
-        if (settled) return
-        // Inside the native shell the OS already granted "Poplur" location, so
-        // calling the WebView's OWN navigator.geolocation is a SECOND, generic
-        // "app" prompt for a permission already given — the ugly duplicate the
-        // user sees. Never ask it here; fall back to the home region and let a
-        // later native broadcast refine it. Only the plain browser, which has
-        // no native fix, legitimately asks the browser.
-        if (!isNativeShell() && navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            pos => load(pos.coords.latitude, pos.coords.longitude),
-            () => load(HOME[1], HOME[0]),
-            { timeout: 4000, maximumAge: 600_000 },
-          )
-        } else load(HOME[1], HOME[0])
-      }, isNativeShell() ? 3500 : 1500)
-      return () => {
-        alive = false
-        controller.abort()
-        window.removeEventListener('poplur-location', onNativeLocation)
-        window.removeEventListener('poplur-native-location', onNativeLocation)
-        window.clearTimeout(fallbackTimer)
-      }
-    }
-    return () => { alive = false; controller.abort() }
-  }, [])
+    setErrors(current => ({ ...current, [source]: undefined }))
+    const request = source === 'local-radio' ? listLocalRadioStations : listPoplurLiveStations
+    request(location.lat, location.lng, 120_000, controller.signal)
+      .then(found => {
+        if (controller.signal.aborted) return
+        setStationSets(current => ({ ...current, [source]: { locationKey, items: found } }))
+        if (!found.length) {
+          setErrors(current => ({
+            ...current,
+            [source]: source === 'local-radio'
+              ? 'No local internet radio streams were found'
+              : 'No live Poplur podcasts are on air nearby',
+          }))
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setErrors(current => ({
+            ...current,
+            [source]: source === 'local-radio'
+              ? 'Could not reach the radio directory'
+              : 'Could not reach Poplur Live',
+          }))
+          setStationSets(current => ({ ...current, [source]: { locationKey, items: [] } }))
+        }
+      })
+    return () => controller.abort()
+  }, [location, locationKey, source, stationSets])
 
   // The deck owns the airwaves. The map runs its own station inside an iframe
   // behind this screen; the home posts gcAudio as overlays open, but the deck
@@ -345,15 +255,9 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
   const inBand = useMemo(() => {
     let list = stations ?? []
     if (band) list = list.filter(s => bandOf(s) === band)
-    if (wave !== 'all') list = list.filter(s => waveOf(s) === wave)
+    if (source === 'local-radio' && wave !== 'all') list = list.filter(s => waveOf(s) === wave)
     return list
-  }, [stations, band, wave])
-
-  // "Trending Now" = the most-listened stations in range.
-  const trending = useMemo(
-    () => [...(stations ?? [])].sort((a, b) => b.listeners - a.listeners).slice(0, 5),
-    [stations],
-  )
+  }, [stations, band, source, wave])
 
   const tuned = stations?.find(s => s.url === tunedUrl) ?? null
 
@@ -362,9 +266,21 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     // Picking a channel IS the intent to listen — tuning while the board is
     // muted otherwise looks like the button did nothing at all.
     if (isUserMuted()) { setUserMuted(false); setMuted(false) }
-    setSoundCloudUrl(null)
     playStation(s)
     setTunedUrl(s.url)
+  }
+
+  const chooseSource = (next: RadioContentSource) => {
+    if (next === source) return
+    playPop()
+    // One deck has one voice. Changing the catalogue stops the previous
+    // station instead of leaving an invisible provider playing underneath.
+    stopMapRadio()
+    setTunedUrl(null)
+    setBand(null)
+    setWave('all')
+    setRadioContentSource(next)
+    setSource(next)
   }
 
   const toggleFav = (id: string) => {
@@ -382,10 +298,6 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     if (!inBand.length) return
     const at = inBand.findIndex(s => s.url === tunedUrl)
     tune(inBand[((at + dir) % inBand.length + inBand.length) % inBand.length])
-  }
-
-  const scrollRail = (dir: 1 | -1) => {
-    railRef.current?.scrollBy({ left: dir * 240, behavior: 'smooth' })
   }
 
   return (
@@ -419,11 +331,36 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
       <div className={styles.dash}>
         <div className={styles.dashChassis}>
           <div className={styles.dashTop}>
-            <span className={styles.dashBadge}>{tuned ? 'LIVE' : 'STANDBY'}</span>
+            <span className={styles.dashBadge}>
+              {tuned ? (tuned.source === 'poplur' ? 'LIVE' : 'ON AIR') : 'STANDBY'}
+            </span>
             <span className={styles.dashCh}>
               CH {tuned ? String(Math.max(1, inBand.indexOf(tuned) + 1)).padStart(3, '0') : '---'}
             </span>
             <span className={styles.dashSignal} aria-hidden="true"><i /><i /><i /><i /><i /></span>
+          </div>
+
+          <div className={styles.sourceSwitch} role="radiogroup" aria-label="Radio source">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={source === 'local-radio'}
+              className={source === 'local-radio' ? styles.sourceOn : undefined}
+              onClick={() => chooseSource('local-radio')}
+            >
+              <b>LOCAL RADIO</b>
+              <small>stations around you</small>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={source === 'poplur-live'}
+              className={source === 'poplur-live' ? styles.sourceOn : undefined}
+              onClick={() => chooseSource('poplur-live')}
+            >
+              <b>POPLUR LIVE</b>
+              <small>live podcasts</small>
+            </button>
           </div>
 
           {/* ── the dial ──────────────────────────────────────────────────────
@@ -438,17 +375,21 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
               carry their real share of the band, so an empty genre never
               appears as a chip that tunes to nothing. */}
           <div className={styles.tuneRail}>
-            <div className={styles.waveGroup} role="group" aria-label="Broadcast band">
-              {WAVES.map(w => (
-                <button
-                  key={w.key}
-                  type="button"
-                  aria-pressed={wave === w.key}
-                  className={wave === w.key ? `${styles.waveChip} ${styles.chipOn}` : styles.waveChip}
-                  onClick={() => { playPop(); setWave(w.key) }}
-                >{w.label}</button>
-              ))}
-            </div>
+            {source === 'local-radio' ? (
+              <div className={styles.waveGroup} role="group" aria-label="Broadcast band">
+                {WAVES.map(w => (
+                  <button
+                    key={w.key}
+                    type="button"
+                    aria-pressed={wave === w.key}
+                    className={wave === w.key ? `${styles.waveChip} ${styles.chipOn}` : styles.waveChip}
+                    onClick={() => { playPop(); setWave(w.key) }}
+                  >{w.label}</button>
+                ))}
+              </div>
+            ) : (
+              <div className={styles.liveOnly}><i aria-hidden="true" /> LIVE PODCASTS ONLY</div>
+            )}
             <div className={styles.genreGroup} role="group" aria-label="Genre">
               <button
                 type="button"
@@ -499,8 +440,12 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
                 <div className={styles.segGenre}>{tuned ? tuned.genre.toUpperCase() : 'SELECT A CHANNEL'}</div>
                 <div className={styles.segStats}>
                   {tuned
-                    ? `${compact(tuned.listeners)} LISTENERS · ${tuned.distanceKm} KM`
-                    : 'BROADCASTS IN YOUR AREA'}
+                    ? tuned.source === 'poplur'
+                      ? `${compact(tuned.listeners)} LISTENERS · ${tuned.distanceKm} KM`
+                      : `${compact(tuned.listeners)} DIRECTORY CLICKS · ${tuned.distanceKm} KM`
+                    : source === 'poplur-live'
+                      ? 'LIVE PODCASTS IN YOUR AREA'
+                      : `INTERNET RADIO AROUND YOU${location?.source === 'fallback' ? ' · TORONTO FALLBACK' : ''}`}
                 </div>
               </div>
             </div>
@@ -529,7 +474,13 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
               <div className={styles.lcdListHead}>
                 <span>CH</span><span>CHANNEL</span><span className={styles.lcdReach}>KM</span>
               </div>
-              {stations === null && <div className={styles.lcdNote}>SCANNING BAND…</div>}
+              {stations === null && (
+                <div className={styles.lcdNote}>
+                  {location
+                    ? source === 'local-radio' ? 'SCANNING LOCAL RADIO…' : 'CHECKING POPLUR LIVE…'
+                    : 'FINDING YOUR AREA…'}
+                </div>
+              )}
               {stations !== null && !inBand.length && <div className={styles.lcdNote}>{(error ?? 'NO SIGNAL').toUpperCase()}</div>}
               {inBand.map((st, i) => (
                 <button
@@ -571,7 +522,11 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
         </div>
         <div className={styles.barBody}>
           <div className={styles.barName}>{tuned?.name ?? 'Nothing tuned'}</div>
-          <div className={styles.barTag}>{tuned ? `${tuned.genre} · ${tuned.distanceKm} km away` : 'Pick a broadcast'}</div>
+          <div className={styles.barTag}>
+            {tuned
+              ? `${tuned.source === 'poplur' ? 'Poplur Live' : 'Internet radio'} · ${tuned.distanceKm} km away`
+              : source === 'poplur-live' ? 'Pick a live podcast' : 'Pick a local station'}
+          </div>
         </div>
         <div className={tuned ? `${styles.barWave} ${styles.barWaveOn}` : styles.barWave} aria-hidden="true">
           {Array.from({ length: 34 }, (_, i) => (

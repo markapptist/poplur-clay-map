@@ -11,12 +11,19 @@ const STORAGE_KEY = 'poplur.character.v2'
 import type { PartSlot } from './characterParts'
 
 export type HairStyle = 'short' | 'long' | 'buzz' | 'curly'
+export type BodyShape = 'slim' | 'athletic' | 'curvy'
+export type FaceStyle = 'smile' | 'wink' | 'freckles'
 
 export interface PoplurCharacter {
   gender: 'male' | 'female'
   skinTone: string
   hairColor: string
   hairStyle: HairStyle
+  bodyShape?: BodyShape
+  /** User-controlled stature multipliers, centred at 1. */
+  heightScale?: number
+  statureScale?: number
+  faceStyle?: FaceStyle
   eyeColor: string
   topColor: string
   bottomColor: string

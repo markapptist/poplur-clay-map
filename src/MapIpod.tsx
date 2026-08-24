@@ -2,8 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './MapIpod.module.css'
 import { OTHER_POPS, POIS } from './data'
 import { loadTrackBuffer, trackSource, type Track } from './musicLibrary'
-import { musicShelf, startMusicPostIntake, startAccountTrackIntake, MUSIC_POSTS_CHANGE_EVENT } from './musicPosts'
-import { attachWidget, widgetSrc, SC_EVENTS, type SCWidget } from './soundcloudWidget'
+import {
+  musicShelf,
+  startMusicPostIntake,
+  startAccountTrackIntake,
+  startNearbyTrackIntake,
+  MUSIC_POSTS_CHANGE_EVENT,
+} from './musicPosts'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { registerAudioOwner, requestAudioFocus, releaseAudioFocus } from './audioFocus'
 import { isGateMuted, onGateChange } from './audioGate'
@@ -14,11 +19,23 @@ import { postNativeEvent } from './nativeBridge'
 import { onTick } from './frameGovernor'
 import { ipodSkinForTheme, ipodSkinById, IPOD_SKINS } from './ipodSkins'
 import ClayChannelArrows from './ClayChannelArrows'
+import { useNearbyLocation } from './nearbyLocation'
+import {
+  discoverNearbySoundCloud,
+  openSoundCloudTrack,
+  SOUNDCLOUD_MIN_PLAYBACKS,
+  type NearbySoundCloudTrack,
+} from './soundcloudDiscovery'
 
 /** The canvas the skin art is exported at. Its ratio drives the device box,
  *  so the normalised geometry lands on the same pixels at any render size. */
 const IPOD_W = 831
 const IPOD_H = 1503
+const compactCount = (value: number) => value >= 1_000_000
+  ? `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`
+  : value >= 1_000
+    ? `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`
+    : String(value)
 
 // The Poplur iPod — the map's music handheld.
 //
@@ -33,9 +50,9 @@ const IPOD_H = 1503
 // somebody left it on ground you can reach. Poplur is SoundCloud for
 // underground artists, and the radius is what replaces the follower graph.
 //
-// The shelf it reads is musicPosts.musicShelf(), NOT the seed array — so the
-// day the studio can post, posted music appears here with no change to this
-// file. Seeded stand-ins get pinned to pops; a real post keeps its own ground.
+// The Poplur side reads musicPosts.musicShelf(), filtered to hosted uploads —
+// so Studio recordings and uploaded songs arrive without a second library.
+// SoundCloud discovery stays a separate, attributed link-out catalogue.
 
 /** A track, and the ground it was left on. */
 interface Pickup {
@@ -46,8 +63,9 @@ interface Pickup {
 }
 
 /**
- * Pin each track to a pop, deterministically — the same track is always in the
- * same place, so reaching a place means reaching a known song.
+ * Pin legacy hosted tracks without coordinates to a pop deterministically —
+ * the same track is always in the same place. A real Studio post keeps the
+ * actual ground where it was published.
  *
  * Deliberately spread across BOTH your own ground and the world pops. Pinning
  * everything locally made the radius rule invisible: every track sat inside
@@ -56,29 +74,34 @@ interface Pickup {
  * some music you can pick up now, some you have to grow into, which is the
  * point of a radius you spend and rebuild.
  */
-function buildPickups(): Pickup[] {
+function buildPickups(origin: [number, number]): Pickup[] {
   const local = POIS
   const far = OTHER_POPS.filter(pop => pop.world)
-  return musicShelf().map((track, index) => {
-    // A posted track already happened somewhere. Never pin it — the place it
-    // was left IS the post, and that is what the radius has to measure.
-    if (track.coords) {
+  // The Poplur side is Poplur-hosted work only: user uploads and Studio
+  // recordings. SoundCloud links live in their own attributed discovery view
+  // and generated placeholders are not presented as somebody's posted music.
+  return musicShelf()
+    .filter(track => trackSource(track).kind === 'upload')
+    .map((track, index) => {
+      // A posted track already happened somewhere. Never pin it — the place it
+      // was left IS the post, and that is what the radius has to measure.
+      if (track.coords) {
+        return {
+          track,
+          place: track.place ?? 'Here',
+          distanceKm: haversineKm(origin, track.coords),
+        }
+      }
+      // Hosted rows predating coordinates get a stable legacy placement.
+      const source = index % 2 === 1 && far.length
+        ? far[Math.floor(index / 2) % far.length]
+        : local[Math.floor(index / 2) % local.length]
       return {
         track,
-        place: track.place ?? 'Here',
-        distanceKm: haversineKm(HOME, track.coords),
+        place: source.name,
+        distanceKm: haversineKm(origin, source.coords as [number, number]),
       }
-    }
-    // Odd seeds go to the world, even ones stay on your own ground.
-    const source = index % 2 === 1 && far.length
-      ? far[Math.floor(index / 2) % far.length]
-      : local[Math.floor(index / 2) % local.length]
-    return {
-      track,
-      place: source.name,
-      distanceKm: haversineKm(HOME, source.coords as [number, number]),
-    }
-  })
+    })
 }
 
 /**
@@ -96,6 +119,8 @@ function buildPickups(): Pickup[] {
 type Frame =
   | { id: 'root' }
   | { id: 'music' }
+  | { id: 'poplur' }
+  | { id: 'soundcloud' }
   | { id: 'artists' }
   | { id: 'genres' }
   | { id: 'places' }
@@ -115,11 +140,16 @@ interface Row {
   /** a track outside your radius */
   locked?: boolean
   shuffle?: boolean
+  /** SoundCloud discovery opens the official experience; it never joins the
+   *  Poplur playback queue. */
+  soundcloud?: NearbySoundCloudTrack
 }
 
 const FRAME_TITLES: Record<Frame['id'], string> = {
   root: 'Poplur',
   music: 'Music',
+  poplur: 'Poplur Studio',
+  soundcloud: 'Nearby Artists',
   artists: 'Artists',
   genres: 'Genres',
   places: 'Places',
@@ -128,6 +158,7 @@ const FRAME_TITLES: Record<Frame['id'], string> = {
 }
 
 export default function MapIpod({ onClose }: { onClose?: () => void }) {
+  const location = useNearbyLocation()
   // Where you are, and where the cursor sat in each frame you came through —
   // backing out of Artists must land on the artist you opened, not the top.
   const [stack, setStack] = useState<Frame[]>([{ id: 'root' }])
@@ -146,11 +177,20 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   const [finish, setFinish] = useState<string | null>(null)
   /** The classic cold start: the mark on a dark screen before the menu. */
   const [booting, setBooting] = useState(true)
+  const [nearbySoundCloud, setNearbySoundCloud] = useState<NearbySoundCloudTrack[]>([])
+  const [soundCloudState, setSoundCloudState] = useState<'idle' | 'loading' | 'ready' | 'unconfigured' | 'error'>('idle')
+  const [soundCloudError, setSoundCloudError] = useState('')
+  const soundCloudQueryRef = useRef('')
+  const frame = stack[stack.length - 1]
 
   // The shelf is live: post a track (studio, or the console hook) and it lands
   // here without a reload, which is the behaviour a posting app has to have.
   const [shelfVersion, setShelfVersion] = useState(0)
-  const pickups = useMemo(buildPickups, [shelfVersion])
+  const origin = useMemo<[number, number]>(
+    () => location ? [location.lng, location.lat] : HOME,
+    [location?.lat, location?.lng],
+  )
+  const pickups = useMemo(() => buildPickups(origin), [origin, shelfVersion])
   const unlocked = useCallback((p: Pickup) => p.distanceKm <= reach, [reach])
 
   useEffect(() => {
@@ -166,6 +206,15 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       stopAccount()
     }
   }, [])
+
+  useEffect(() => {
+    if (!location) return
+    // Include a ring beyond the current reach so the iPod can still show the
+    // next locked songs the listener is growing toward, without requesting a
+    // global music catalogue.
+    const discoveryRadius = Math.max(120, Math.min(2_000, reach * 2))
+    return startNearbyTrackIntake(location.lat, location.lng, discoveryRadius)
+  }, [location, reach])
 
   // A queue that shrank must not leave the cursor past the end.
   useEffect(() => {
@@ -211,6 +260,41 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     }
   }, [])
 
+  // SoundCloud discovery is a single, abortable request when that menu opens.
+  // It is not polled, and it never carries SoundCloud credentials in this
+  // bundle: Poplur's backend returns only opted-in, attributed artist cards.
+  useEffect(() => {
+    if (frame.id !== 'soundcloud' || !location) return
+    const discoveryRadius = Math.max(25, Math.min(250, reach))
+    const queryKey = `${location.lat.toFixed(2)},${location.lng.toFixed(2)}:${Math.round(discoveryRadius)}`
+    const pendingKey = `pending:${queryKey}`
+    if (soundCloudQueryRef.current === queryKey || soundCloudQueryRef.current === pendingKey) return
+    soundCloudQueryRef.current = pendingKey
+    const controller = new AbortController()
+    setSoundCloudState('loading')
+    setSoundCloudError('')
+    setNearbySoundCloud([])
+    void discoverNearbySoundCloud(
+      location.lat,
+      location.lng,
+      discoveryRadius,
+      controller.signal,
+    ).then(result => {
+      if (controller.signal.aborted) return
+      soundCloudQueryRef.current = queryKey
+      setNearbySoundCloud(result.tracks)
+      if (!result.configured) setSoundCloudState('unconfigured')
+      else if (result.error) {
+        setSoundCloudState('error')
+        setSoundCloudError(result.error)
+      } else setSoundCloudState('ready')
+    })
+    return () => {
+      controller.abort()
+      if (soundCloudQueryRef.current === pendingKey) soundCloudQueryRef.current = ''
+    }
+  }, [frame.id, location, reach])
+
   // ── audio ────────────────────────────────────────────────────────────────
   // One context and one source for the whole screen. The app's focus system
   // owns who is allowed to make sound, so the iPod registers as an owner and
@@ -219,10 +303,6 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   const sourceRef = useRef<AudioBufferSourceNode | null>(null)
   const startedAtRef = useRef(0)
   const durationRef = useRef(0)
-  // SoundCloud tracks live outside the audio graph — see soundcloudWidget.ts.
-  const [scPermalink, setScPermalink] = useState<string | null>(null)
-  const scFrameRef = useRef<HTMLIFrameElement | null>(null)
-  const scWidgetRef = useRef<SCWidget | null>(null)
 
   const stopPlayback = useCallback((release = true) => {
     const source = sourceRef.current
@@ -230,12 +310,6 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     if (source) {
       try { source.onended = null; source.stop() } catch { /* already ended */ }
     }
-    // The embedded player is not ours to fade, so pause it. If the Widget API
-    // never loaded we cannot pause anything — drop the iframe instead, because
-    // an audio source nobody can stop is worse than a lost position.
-    const widget = scWidgetRef.current
-    if (widget) { try { widget.pause() } catch { /* frame already gone */ } }
-    else setScPermalink(null)
     setPlayingId(null)
     setProgress(0)
     if (release) releaseAudioFocus('radio')
@@ -252,28 +326,6 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
 
   useEffect(() => onGateChange(() => { if (isGateMuted()) stopPlayback() }), [stopPlayback])
 
-  // Bind the embedded player once its frame is in the document. A null widget
-  // means the Widget API could not load — the track still plays, so say that
-  // rather than leaving the wheel looking dead.
-  useEffect(() => {
-    const frame = scFrameRef.current
-    if (!scPermalink || !frame) { scWidgetRef.current = null; return }
-    let cancelled = false
-    void attachWidget(frame).then(widget => {
-      if (cancelled) return
-      if (!widget) { setStatus("Playing in SoundCloud's own player"); return }
-      scWidgetRef.current = widget
-      // Duration is only answerable once the widget is READY. Asking cold
-      // returns nothing, which read as "no progress bar" for the first
-      // seconds of every SoundCloud track.
-      widget.bind(SC_EVENTS.READY, () => {
-        try { widget.getDuration(ms => { if (ms > 0) durationRef.current = ms / 1000 }) } catch { /* gone */ }
-      })
-      widget.bind(SC_EVENTS.FINISH, () => stopPlayback())
-    })
-    return () => { cancelled = true; scWidgetRef.current = null }
-  }, [scPermalink, stopPlayback])
-
   const play = useCallback(async (pickup: Pickup) => {
     if (!unlocked(pickup)) {
       const need = (pickup.distanceKm - reach).toFixed(1)
@@ -282,24 +334,6 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     }
     if (isGateMuted()) { setStatus('Sound is muted'); return }
     stopPlayback(false)
-
-    const origin = trackSource(pickup.track)
-    if (origin.kind === 'soundcloud') {
-      // Their player, their play count, their link back. The wheel drives it;
-      // it does not pretend to be one of ours.
-      requestAudioFocus('radio')
-      const widget = scWidgetRef.current
-      if (widget && scPermalink === origin.permalink) {
-        try { widget.play() } catch { /* reloading below */ }
-      } else {
-        scWidgetRef.current = null
-        setScPermalink(origin.permalink)
-      }
-      setPlayingId(pickup.track.id)
-      durationRef.current = 0
-      setStatus(`Picked up ${pickup.track.title} at ${pickup.place}`)
-      return
-    }
 
     try {
       const ctx = ctxRef.current ?? new AudioContext()
@@ -336,7 +370,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       setStatus('That track would not open')
       releaseAudioFocus('radio')
     }
-  }, [reach, scPermalink, stopPlayback, unlocked])
+  }, [reach, stopPlayback, unlocked])
 
   // Progress for the now-playing bar, off the context clock rather than a timer
   // that would drift away from the audio — but sampled through the governor at
@@ -348,27 +382,15 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   useEffect(() => {
     if (!playingId) return
     return onTick(() => {
-      const widget = scWidgetRef.current
-      if (scPermalink && widget) {
-        // Position has to be ASKED for out here; there is no clock to read.
-        try {
-          widget.getDuration(total => {
-            if (total > 0) widget.getPosition(at => setProgress(Math.max(0, Math.min(1, at / total))))
-          })
-        } catch { /* frame torn down mid-tick */ }
-        return
-      }
       const ctx = ctxRef.current
       if (ctx && durationRef.current > 0) {
         const elapsed = ctx.currentTime - startedAtRef.current
         setProgress(Math.max(0, Math.min(1, elapsed / durationRef.current)))
       }
     }, 250)
-  }, [playingId, scPermalink])
+  }, [playingId])
 
   // ── the wheel ────────────────────────────────────────────────────────────
-  const frame = stack[stack.length - 1]
-
   const rows: Row[] = useMemo(() => {
     const inReach = pickups.filter(p => p.distanceKm <= reach)
     const songRow = (p: Pickup): Row => ({
@@ -407,12 +429,29 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
         ]
       case 'music':
         return [
+          { key: 'poplur', label: 'Poplur Studio', meta: String(inReach.length), go: { id: 'poplur' } },
+          {
+            key: 'soundcloud',
+            label: 'SoundCloud Nearby',
+            meta: soundCloudState === 'loading' ? '…' : nearbySoundCloud.length ? String(nearbySoundCloud.length) : '↗',
+            go: { id: 'soundcloud' },
+          },
+        ]
+      case 'poplur':
+        return [
           { key: 'artists', label: 'Artists', go: { id: 'artists' } },
           { key: 'songs', label: 'Songs', go: { id: 'songs', title: 'Songs' } },
           { key: 'genres', label: 'Genres', go: { id: 'genres' } },
           // The one the real iPod never had, because it never needed it.
           { key: 'places', label: 'Places', go: { id: 'places' } },
         ]
+      case 'soundcloud':
+        return nearbySoundCloud.map(track => ({
+          key: track.id,
+          label: track.title,
+          meta: compactCount(track.playbackCount),
+          soundcloud: track,
+        }))
       case 'artists': return groupRows(p => p.track.artist, 'artist')
       case 'genres': return groupRows(p => p.track.mood, 'mood')
       case 'places': return groupRows(p => p.place, 'place')
@@ -425,7 +464,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       }
       default: return []
     }
-  }, [frame, pickups, reach])
+  }, [frame, nearbySoundCloud, pickups, reach, soundCloudState])
 
   // Clamped here rather than on every write: rows change under the cursor when
   // the shelf changes, and a stale index would point at the wrong track.
@@ -543,6 +582,13 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     if (!row) return
     if (row.inert) { setStatus(`${row.label} is not on this iPod`); return }
 
+    if (row.soundcloud) {
+      stopPlayback()
+      openSoundCloudTrack(row.soundcloud)
+      setStatus(`Opening ${row.soundcloud.artist} on SoundCloud`)
+      return
+    }
+
     if (row.shuffle) {
       // Only ever picks from what your radius has actually reached.
       const inReach = pickups.filter(unlocked)
@@ -568,6 +614,11 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
 
     if (row.go) {
       if (row.go.id === 'nowplaying' && !playingId) { setStatus('Nothing playing yet'); return }
+      if (row.go.id === 'poplur' || row.go.id === 'soundcloud') {
+        stopPlayback()
+        setQueue([])
+        setTrackIndex(0)
+      }
       push(row.go)
     }
   }, [cursor, frame, pickups, play, playingId, progress, push, queue, rows, stopPlayback, trackIndex, unlocked])
@@ -583,6 +634,13 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
 
   const playPause = useCallback(() => {
     playPop()
+    const soundCloudTrack = rows[cursor]?.soundcloud
+    if (soundCloudTrack) {
+      stopPlayback()
+      openSoundCloudTrack(soundCloudTrack)
+      setStatus(`Opening ${soundCloudTrack.artist} on SoundCloud`)
+      return
+    }
     if (playingId) { stopPlayback(); setStatus('Paused'); return }
     const target = queue[trackIndex] ?? rows[cursor]?.play ?? pickups[0]
     if (target) void play(target)
@@ -602,7 +660,22 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   }, [back, playPause, select, step])
 
   const current = queue[trackIndex] ?? rows[cursor]?.play ?? pickups[0] ?? null
+  const currentSoundCloud = rows[cursor]?.soundcloud ?? nearbySoundCloud[0] ?? null
   const nowPlaying = pickups.find(p => p.track.id === playingId) ?? null
+
+  const emptyLabel = frame.id === 'soundcloud'
+    ? !location
+      ? 'Finding your area…'
+      : soundCloudState === 'loading'
+        ? 'Finding nearby artists…'
+        : soundCloudState === 'unconfigured'
+          ? 'Connect artists first'
+          : soundCloudState === 'error'
+            ? 'Discovery unavailable'
+            : 'No qualifying tracks'
+    : frame.id === 'poplur' || frame.id === 'songs'
+      ? 'No Studio tracks yet'
+      : 'Nothing here yet'
 
   const title = frame.id === 'songs' ? frame.title : FRAME_TITLES[frame.id]
   const screen = frame.id === 'nowplaying' ? (
@@ -613,7 +686,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     <ul className={styles.menu}>
       <li className={styles.menuHead}><span>{title}</span></li>
       {rows.length === 0 && (
-        <li className={`${styles.row} ${styles.rowInert}`}><span>Nothing here yet</span></li>
+        <li className={`${styles.row} ${styles.rowInert}`}><span>{emptyLabel}</span></li>
       )}
       {rows.map((row, index) => (
         <li
@@ -664,6 +737,30 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     top: pct(pod.wheel.cy - pod.wheel.r * (IPOD_W / IPOD_H)),
     width: pct(pod.wheel.r * 2),
   }
+  const artTitle = frame.id === 'root'
+    ? `${pickups.filter(unlocked).length} in reach`
+    : frame.id === 'music'
+      ? 'Choose a source'
+      : frame.id === 'soundcloud'
+        ? currentSoundCloud?.title ?? 'SoundCloud Nearby'
+        : current?.track.title ?? 'No Studio music yet'
+  const artSub = frame.id === 'root'
+    ? `${reach.toFixed(1)} km radius`
+    : frame.id === 'music'
+      ? 'Poplur Studio or nearby artists'
+      : frame.id === 'soundcloud'
+        ? currentSoundCloud
+          ? `${currentSoundCloud.artist} · ${currentSoundCloud.locationLabel}`
+          : soundCloudState === 'unconfigured'
+            ? 'Artists connect to Poplur to appear here'
+            : soundCloudState === 'error'
+              ? soundCloudError || 'Discovery is unavailable'
+              : `Only ${compactCount(SOUNDCLOUD_MIN_PLAYBACKS)}+ play tracks qualify`
+        : current
+          ? unlocked(current)
+            ? `${current.track.artist} · ${current.place}`
+            : `locked · ${current.place}`
+          : 'upload or record one in Poplur Studio'
 
   return (
     <div className={styles.deck} data-poplur-screen="map-ipod" aria-label="Poplur iPod">
@@ -699,38 +796,12 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
           {status && (
             <div className={styles.status} role="status" aria-live="polite">{status}</div>
           )}
-          {scPermalink && (
-            <iframe
-              ref={scFrameRef}
-              className={styles.scFrame}
-              title="SoundCloud player"
-              src={widgetSrc(scPermalink)}
-              allow="autoplay"
-              // Kept mounted while you browse the shelf — unmounting is what
-              // stops the audio, so hiding is not the same as pausing.
-              style={{
-                opacity: frame.id === 'nowplaying' ? 1 : 0,
-                pointerEvents: frame.id === 'nowplaying' ? 'auto' : 'none',
-              }}
-            />
-          )}
           <div className={styles.art}>
-            <div className={styles.artTitle}>
-              {frame.id === 'root'
-                ? `${pickups.filter(unlocked).length} in reach`
-                : current?.track.title ?? 'No music yet'}
-            </div>
-            <div className={styles.artSub}>
-              {frame.id === 'root'
-                ? `${reach.toFixed(1)} km radius`
-                : current
-                  // The artist is the point of the shelf, so it goes on the
-                  // face next to the ground the track was left on.
-                  ? unlocked(current)
-                    ? `${current.track.artist} · ${current.place}`
-                    : `locked · ${current.place}`
-                  : 'post one from the studio'}
-            </div>
+            {frame.id === 'soundcloud' && (
+              <div className={styles.soundCloudCredit}>SOUNDCLOUD ↗ · {compactCount(SOUNDCLOUD_MIN_PLAYBACKS)}+ PLAYS</div>
+            )}
+            <div className={styles.artTitle}>{artTitle}</div>
+            <div className={styles.artSub}>{artSub}</div>
             {nowPlaying && (
               <div className={styles.bar} aria-label="Playback position">
                 <div className={styles.barFill} style={{ width: `${Math.round(progress * 100)}%` }} />

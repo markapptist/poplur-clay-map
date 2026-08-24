@@ -156,10 +156,10 @@ export function setRadioMasterVolume(value: number) {
   setRadioLevel(targetRadioLevel, 0.08)
 }
 
-// ── Poplur Radio: broadcasts and music from artists in your area ────────────
-// No generic internet stations. The radio tunes Poplur content — live podcasts,
-// recorded sessions, and music tracks dropped at locations by artists. The synth
-// bed plays between broadcasts and when nothing is nearby.
+// ── Poplur broadcasts ──────────────────────────────────────────────
+// First-party live podcasts live here. The separate local-radio path below
+// reads the community Radio Browser directory; keeping the providers separate
+// means a Poplur recording can never silently enter the internet-radio dial.
 
 export interface PoplurBroadcast {
   id: string
@@ -372,6 +372,30 @@ async function fetchWithTimeout(
     window.clearTimeout(timer)
     outerSignal?.removeEventListener('abort', abort)
   }
+}
+
+// Radio Browser is a community directory with multiple mirrors. Its official
+// browser example notes that the `all` host can only enumerate mirrors over
+// HTTP, which an HTTPS app cannot call. Use a small randomized HTTPS failover
+// list rather than adding a guaranteed failed/mixed-content request first.
+const RADIO_BROWSER_FALLBACK_HOSTS = [
+  'https://de1.api.radio-browser.info',
+  'https://fi1.api.radio-browser.info',
+  'https://nl1.api.radio-browser.info',
+]
+
+function shuffled<T>(values: readonly T[]): T[] {
+  const copy = [...values]
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(Math.random() * (index + 1))
+    ;[copy[index], copy[swap]] = [copy[swap], copy[index]]
+  }
+  return copy
+}
+
+async function radioBrowserHosts(signal?: AbortSignal): Promise<string[]> {
+  if (signal?.aborted) return []
+  return shuffled(RADIO_BROWSER_FALLBACK_HOSTS)
 }
 
 function getAudioContext(): AudioContext | null {
@@ -990,6 +1014,8 @@ export function stopMapRadio() {
     liveAudio.removeAttribute('src')
     liveAudio.load()
   }
+  liveStation = null
+  publishLiveStation()
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.cancel()
   }
@@ -1095,15 +1121,140 @@ export interface LocalStation {
   url: string
   /** the station's own logo, where it publishes one */
   logo: string | null
-  /** real popularity from the directory — stands in for a listener count */
+  /** Poplur live listeners, or Radio Browser's 24-hour discovery clicks. */
   listeners: number
-  /** km from you — the station's transmitter, so "intercepting" is literal */
+  /** km from the location published for this station/content. */
   distanceKm: number
-  source?: 'poplur'
+  source: 'radio' | 'poplur'
+  contentType?: 'podcast' | 'music'
+  status?: 'live' | 'recorded'
+  /** Radio Browser's click-tracking endpoint, called only after a user tunes. */
+  directoryClickUrl?: string
 }
 
-/** Every broadcast whose signal reaches where you are, nearest first. */
-export async function listLocalStations(
+export type RadioContentSource = 'local-radio' | 'poplur-live'
+const RADIO_CONTENT_SOURCE_KEY = 'poplur.radio.content-source.v1'
+export const RADIO_CONTENT_SOURCE_EVENT = 'poplur-radio-content-source'
+
+export function readRadioContentSource(): RadioContentSource {
+  try {
+    return window.localStorage.getItem(RADIO_CONTENT_SOURCE_KEY) === 'poplur-live'
+      ? 'poplur-live'
+      : 'local-radio'
+  } catch {
+    return 'local-radio'
+  }
+}
+
+export function setRadioContentSource(source: RadioContentSource): void {
+  try { window.localStorage.setItem(RADIO_CONTENT_SOURCE_KEY, source) } catch { /* embedded */ }
+  window.dispatchEvent(new CustomEvent(RADIO_CONTENT_SOURCE_EVENT, { detail: { source } }))
+}
+
+interface RadioBrowserStation {
+  stationuuid?: unknown
+  name?: unknown
+  url_resolved?: unknown
+  codec?: unknown
+  bitrate?: unknown
+  tags?: unknown
+  geo_lat?: unknown
+  geo_long?: unknown
+  geo_distance?: unknown
+  favicon?: unknown
+  clickcount?: unknown
+  votes?: unknown
+  lastcheckok?: unknown
+  ssl_error?: unknown
+}
+
+/**
+ * Real nearby radio streams from Radio Browser, restored from Poplur's earlier
+ * provider. Radio Browser can include online-only stations, so the UI calls
+ * these internet streams rather than pretending every result has an FM tower.
+ */
+export async function listLocalRadioStations(
+  lat: number,
+  lng: number,
+  radiusM = 120_000,
+  signal?: AbortSignal,
+): Promise<LocalStation[]> {
+  if (typeof window === 'undefined' || signal?.aborted) return []
+  const hosts = await radioBrowserHosts(signal)
+  const radii = [...new Set([radiusM, 300_000, 900_000, 1_500_000])]
+
+  for (const radius of radii) {
+    for (const host of hosts) {
+      if (signal?.aborted) return []
+      try {
+        const params = new URLSearchParams({
+          geo_lat: String(lat),
+          geo_long: String(lng),
+          geo_distance: String(radius),
+          has_geo_info: 'true',
+          hidebroken: 'true',
+          is_https: 'true',
+          order: 'clickcount',
+          reverse: 'true',
+          limit: '100',
+        })
+        const response = await fetchWithTimeout(
+          `${host}/json/stations/search?${params}`,
+          { cache: 'no-store', headers: { Accept: 'application/json' } },
+          6_000,
+          signal,
+        )
+        if (!response.ok) continue
+        const rows = await response.json() as RadioBrowserStation[]
+        const stations = rows.flatMap(row => {
+          const id = typeof row.stationuuid === 'string' ? row.stationuuid : ''
+          const url = typeof row.url_resolved === 'string' ? row.url_resolved : ''
+          const codec = typeof row.codec === 'string' ? row.codec : ''
+          if (!id || !url.startsWith('https://') || !/mp3|aac/i.test(codec)) return []
+          if (Number(row.lastcheckok) !== 1 || Number(row.ssl_error) === 1) return []
+
+          const stationLat = Number(row.geo_lat)
+          const stationLng = Number(row.geo_long)
+          const reportedDistance = Number(row.geo_distance)
+          const distanceKm = Number.isFinite(stationLat) && Number.isFinite(stationLng)
+            ? haversineKm(lat, lng, stationLat, stationLng)
+            : Number.isFinite(reportedDistance)
+              ? reportedDistance / 1000
+              : Infinity
+          // The radius parameters are not documented by the public search
+          // table, so enforce their contract locally too.
+          if (!Number.isFinite(distanceKm) || distanceKm > radius / 1000) return []
+
+          const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim() : 'Unnamed station'
+          const tags = typeof row.tags === 'string' ? row.tags : ''
+          const favicon = typeof row.favicon === 'string' && row.favicon.startsWith('https://')
+            ? row.favicon
+            : null
+          return [{
+            id,
+            name,
+            genre: tags.split(',')[0]?.trim() || 'Various',
+            bitrate: Number.isFinite(Number(row.bitrate)) ? Number(row.bitrate) : 0,
+            url,
+            logo: favicon,
+            listeners: Math.max(Number(row.clickcount) || 0, Number(row.votes) || 0),
+            distanceKm: +distanceKm.toFixed(1),
+            source: 'radio' as const,
+            directoryClickUrl: `${host}/json/url/${encodeURIComponent(id)}`,
+          }]
+        })
+          .sort((a, b) => a.distanceKm - b.distanceKm || b.listeners - a.listeners)
+        if (stations.length) return stations
+      } catch {
+        if (signal?.aborted) return []
+      }
+    }
+  }
+  return []
+}
+
+/** Playable Poplur live podcasts near the listener, live sessions first. */
+export async function listPoplurLiveStations(
   lat: number,
   lng: number,
   radiusM = 120_000,
@@ -1116,12 +1267,15 @@ export async function listLocalStations(
     if (signal?.aborted) return []
     const broadcasts = await discoverBroadcasts(lat, lng, radius, signal)
     if (signal?.aborted) return []
-    if (!broadcasts.length) continue
-    return broadcasts.map(b => ({
+    const livePodcasts = broadcasts.filter(b =>
+      b.type === 'podcast'
+      && b.status === 'live'
+      && /^https:\/\//i.test(b.audioUrl),
+    )
+    if (!livePodcasts.length) continue
+    return livePodcasts.map(b => ({
       id: b.id,
-      name: b.type === 'podcast'
-        ? `${b.title} — ${b.artist}`
-        : `${b.artist} — ${b.title}`,
+      name: `${b.title} — ${b.artist}`,
       genre: b.genre,
       bitrate: 0,
       url: b.audioUrl,
@@ -1129,13 +1283,18 @@ export async function listLocalStations(
       listeners: b.listeners,
       distanceKm: b.distanceKm ?? 0,
       source: 'poplur' as const,
+      contentType: 'podcast' as const,
+      status: 'live' as const,
     }))
   }
   return []
 }
 
+/** Backward-compatible name; "local" now means the real-radio source. */
+export const listLocalStations = listLocalRadioStations
+
 /** Tune a specific station picked from the dial. */
-export function playStation(station: { name: string; url: string }): void {
+export function playStation(station: { name: string; url: string; directoryClickUrl?: string }): void {
   const audio = getLiveAudio()
   if (!audio) return
   soundWanted = true
@@ -1144,6 +1303,9 @@ export function playStation(station: { name: string; url: string }): void {
   installUnlock()
   liveStation = { name: station.name, url: station.url }
   publishLiveStation()
+  if (station.directoryClickUrl) {
+    void fetch(station.directoryClickUrl, { cache: 'no-store' }).catch(() => {})
+  }
   audio.src = station.url
   audio.muted = isRadioGateMuted()
   if (radioBed) radioBed.master.gain.value = 0   // the synth stand-in steps aside
