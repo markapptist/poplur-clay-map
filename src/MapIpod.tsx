@@ -260,11 +260,14 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     }
   }, [])
 
-  // SoundCloud discovery is a single, abortable request when that menu opens.
-  // It is not polled, and it never carries SoundCloud credentials in this
-  // bundle: Poplur's backend returns only opted-in, attributed artist cards.
+  // SoundCloud discovery starts as the handheld boots, not after the listener
+  // happens to drill into Nearby Artists. By the time the screen animation has
+  // finished, the iPod's source row can show a real count instead of a blank
+  // promise. It is one abortable request per location/radius and never carries
+  // SoundCloud credentials in this bundle: Poplur/native returns only opted-in,
+  // attributed artist cards.
   useEffect(() => {
-    if (frame.id !== 'soundcloud' || !location) return
+    if (!location) return
     const discoveryRadius = Math.max(25, Math.min(250, reach))
     const queryKey = `${location.lat.toFixed(2)},${location.lng.toFixed(2)}:${Math.round(discoveryRadius)}`
     const pendingKey = `pending:${queryKey}`
@@ -293,7 +296,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       controller.abort()
       if (soundCloudQueryRef.current === pendingKey) soundCloudQueryRef.current = ''
     }
-  }, [frame.id, location, reach])
+  }, [location, reach])
 
   // ── audio ────────────────────────────────────────────────────────────────
   // One context and one source for the whole screen. The app's focus system
@@ -390,6 +393,16 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     }, 250)
   }, [playingId])
 
+  // A discovery endpoint can be temporarily unavailable (or simply not yet
+  // deployed for a build). Never label these as SoundCloud: they are nearby,
+  // Poplur-hosted Studio tracks that the iPod already knows how to play. They
+  // keep Nearby Artists useful without pretending that a local fallback came
+  // from SoundCloud.
+  const nearbyStudioFallback = useMemo(
+    () => pickups.filter(unlocked).slice(0, 12),
+    [pickups, unlocked],
+  )
+
   // ── the wheel ────────────────────────────────────────────────────────────
   const rows: Row[] = useMemo(() => {
     const inReach = pickups.filter(p => p.distanceKm <= reach)
@@ -446,12 +459,25 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
           { key: 'places', label: 'Places', go: { id: 'places' } },
         ]
       case 'soundcloud':
-        return nearbySoundCloud.map(track => ({
-          key: track.id,
-          label: track.title,
-          meta: compactCount(track.playbackCount),
-          soundcloud: track,
-        }))
+        if (nearbySoundCloud.length) {
+          return nearbySoundCloud.map(track => ({
+            key: track.id,
+            label: track.title,
+            meta: compactCount(track.playbackCount),
+            soundcloud: track,
+          }))
+        }
+        // The fallback appears only when discovery is unavailable, never as a
+        // fabricated SoundCloud result and never over a real-but-empty search.
+        if (soundCloudState === 'unconfigured' || soundCloudState === 'error') {
+          return nearbyStudioFallback.map(pickup => ({
+            key: `poplur-studio-${pickup.track.id}`,
+            label: pickup.track.title,
+            meta: 'POPLUR',
+            play: pickup,
+          }))
+        }
+        return []
       case 'artists': return groupRows(p => p.track.artist, 'artist')
       case 'genres': return groupRows(p => p.track.mood, 'mood')
       case 'places': return groupRows(p => p.place, 'place')
@@ -464,7 +490,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       }
       default: return []
     }
-  }, [frame, nearbySoundCloud, pickups, reach, soundCloudState])
+  }, [frame, nearbySoundCloud, nearbyStudioFallback, pickups, reach, soundCloudState])
 
   // Clamped here rather than on every write: rows change under the cursor when
   // the shelf changes, and a stale index would point at the wrong track.
@@ -661,6 +687,9 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
 
   const current = queue[trackIndex] ?? rows[cursor]?.play ?? pickups[0] ?? null
   const currentSoundCloud = rows[cursor]?.soundcloud ?? nearbySoundCloud[0] ?? null
+  const currentStudioFallback = frame.id === 'soundcloud' && !currentSoundCloud
+    ? rows[cursor]?.play ?? nearbyStudioFallback[0] ?? null
+    : null
   const nowPlaying = pickups.find(p => p.track.id === playingId) ?? null
 
   const emptyLabel = frame.id === 'soundcloud'
@@ -669,9 +698,13 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       : soundCloudState === 'loading'
         ? 'Finding nearby artists…'
         : soundCloudState === 'unconfigured'
-          ? 'Connect artists first'
-          : soundCloudState === 'error'
-            ? 'Discovery unavailable'
+          ? nearbyStudioFallback.length
+            ? 'SoundCloud is not connected — nearby Poplur Studio tracks are ready'
+            : 'Connect artists first'
+        : soundCloudState === 'error'
+            ? nearbyStudioFallback.length
+              ? 'Discovery is unavailable — nearby Poplur Studio tracks are ready'
+              : 'Discovery unavailable'
             : 'No qualifying tracks'
     : frame.id === 'poplur' || frame.id === 'songs'
       ? 'No Studio tracks yet'
@@ -742,7 +775,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     : frame.id === 'music'
       ? 'Choose a source'
       : frame.id === 'soundcloud'
-        ? currentSoundCloud?.title ?? 'SoundCloud Nearby'
+        ? currentSoundCloud?.title ?? currentStudioFallback?.track.title ?? 'SoundCloud Nearby'
         : current?.track.title ?? 'No Studio music yet'
   const artSub = frame.id === 'root'
     ? `${reach.toFixed(1)} km radius`
@@ -751,6 +784,8 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       : frame.id === 'soundcloud'
         ? currentSoundCloud
           ? `${currentSoundCloud.artist} · ${currentSoundCloud.locationLabel}`
+          : currentStudioFallback
+            ? `Poplur Studio · ${currentStudioFallback.track.artist} · ${currentStudioFallback.place}`
           : soundCloudState === 'unconfigured'
             ? 'Artists connect to Poplur to appear here'
             : soundCloudState === 'error'
@@ -798,7 +833,13 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
           )}
           <div className={styles.art}>
             {frame.id === 'soundcloud' && (
-              <div className={styles.soundCloudCredit}>SOUNDCLOUD ↗ · {compactCount(SOUNDCLOUD_MIN_PLAYBACKS)}+ PLAYS</div>
+              <div className={styles.soundCloudCredit}>
+                {currentSoundCloud
+                  ? `SOUNDCLOUD ↗ · ${compactCount(SOUNDCLOUD_MIN_PLAYBACKS)}+ PLAYS`
+                  : currentStudioFallback
+                    ? 'POPLUR STUDIO · LOCAL FALLBACK'
+                    : `SOUNDCLOUD ↗ · ${compactCount(SOUNDCLOUD_MIN_PLAYBACKS)}+ PLAYS`}
+              </div>
             )}
             <div className={styles.artTitle}>{artTitle}</div>
             <div className={styles.artSub}>{artSub}</div>

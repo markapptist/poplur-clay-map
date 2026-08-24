@@ -90,6 +90,35 @@ export function wakeManagedRendering(durationMs: number): boolean {
   }
 }
 
+/**
+ * Keep a finite authored animation renderable without promoting it to the
+ * native shell's direct-manipulation frame rate.
+ *
+ * A finger gesture legitimately buys the interactive budget (60fps in the
+ * full iPhone policy). A scripted landmark tour does not: the injected native
+ * scheduler already advances authored rAF work at its decorative budget
+ * (30fps), which is smooth enough for the camera and materially cheaper. The
+ * governor still needs the finite operation lease below so it does not park
+ * Mapbox halfway through the flight.
+ */
+export function sustainManagedRendering(durationMs: number): boolean {
+  try {
+    if (typeof window === 'undefined') return false
+    const requested = Number(durationMs)
+    if (!Number.isFinite(requested) || requested <= 0) return false
+    const total = Math.min(MAX_MANAGED_OPERATION_MS, Math.max(120, Math.ceil(requested)))
+
+    // Retire any older interactive renewal. An interaction lease already
+    // granted by native expires naturally; this function never extends it.
+    clearManagedWakeRenewal()
+    dispatchManagedRenderingOperation(total)
+    return true
+  } catch {
+    cancelManagedRenderingWake()
+    return false
+  }
+}
+
 // True only when the web app is running inside the native iOS/Android shell
 // (a Poplur WebView), false in the plain browser preview. Used to hide
 // preview-only affordances (e.g. the tab pills) when embedded in the app.

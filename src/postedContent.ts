@@ -44,7 +44,8 @@ export interface Posting {
   /** Human place name if the drop knew one ("Queen & Spadina"). */
   place?: string
   postedAt: number
-  /** The account radius at the moment of the drop. History, not a live value. */
+  /** The post's selected radius at publish time (or the account radius when no
+   *  per-post value was supplied). History, not a live value. */
   radiusKmAtPost: number
 }
 
@@ -121,14 +122,19 @@ export function isPosted(kind: PostedKind, itemId: string): boolean {
  * Filtering the item out before appending is the one-location rule: there is
  * no code path that leaves the same app posted in two places, because the row
  * is replaced rather than added to.
+ *
+ * Camera posts can pass their map-selected radius through `options`; existing
+ * callers continue to snapshot the account radius exactly as before.
  */
 export function dropAt(
   kind: PostedKind,
   itemId: string,
   coords: [number, number] = HOME,
   place?: string,
+  options?: { radiusKmAtPost?: number },
 ): Posting {
   const previous = postingFor(kind, itemId)
+  const selectedRadius = options?.radiusKmAtPost
   const posting: Posting = {
     kind,
     itemId,
@@ -138,7 +144,10 @@ export function dropAt(
     // Keep the ORIGINAL snapshot when merely moving: the reach an item earned
     // is a property of the item, not of the last time it was picked up. A move
     // that re-snapshotted would silently rewrite its history to today's number.
-    radiusKmAtPost: previous?.radiusKmAtPost ?? radiusKm(),
+    radiusKmAtPost: previous?.radiusKmAtPost
+      ?? (typeof selectedRadius === 'number' && Number.isFinite(selectedRadius)
+        ? Math.max(0, selectedRadius)
+        : radiusKm()),
   }
   save([posting, ...all().filter(p => !(p.kind === kind && p.itemId === itemId))])
   return posting

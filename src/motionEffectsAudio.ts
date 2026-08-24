@@ -86,7 +86,13 @@ function retireContext() {
 /** Nothing is meant to be sounding: drop the bed and park the audio clock. */
 function goIdle(serial = idleSerial) {
   if (serial !== idleSerial) return
-  if (idleDeadline > 0 && performance.now() < idleDeadline) return
+  if (idleDeadline > 0 && performance.now() < idleDeadline) {
+    // A timer can arrive before its recorded deadline. Re-arm the remaining
+    // lease rather than leaving the effects context awake indefinitely.
+    const remaining = Math.max(0, idleDeadline - performance.now())
+    idleTimer = window.setTimeout(() => goIdle(serial), remaining)
+    return
+  }
   idleTimer = null
   idleDeadline = 0
   stopEngine()

@@ -15,7 +15,8 @@ import MapShowMe from './MapShowMe'
 import NotificationsScreen from './NotificationsScreen'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
-import CharacterEditor from './CharacterEditor'
+import WardrobeBuilder from './wardrobe/WardrobeBuilder'
+import { readCharacter } from './characterStore'
 import SettingsScreen from './SettingsScreen'
 import AvatarScreen from './AvatarScreen'
 import MailScreen from './MailScreen'
@@ -56,7 +57,7 @@ interface Item {
    */
   nativeAction?: string
   /** performed on the live MAP behind the menu — no subscreen opens */
-  mapAction?: 'search' | 'locate' | 'directions' | 'tour' | 'mapMode'
+  mapAction?: 'search' | 'locate' | 'directions' | 'tour'
   /** dispatches an app event and dismisses — no subscreen opens.
    *  `notifications` opens the notifications subscreen owned by Profile. */
   event?: 'notifications'
@@ -279,7 +280,6 @@ export default function HoldMenuTwin({
   onAction,
   onMapAction,
   tourOn,
-  mapMode,
   mapTourTopics,
   onMapTourTopicsChange,
   currentFeedChannelId,
@@ -305,8 +305,6 @@ export default function HoldMenuTwin({
   onMapAction?: (action: NonNullable<Item['mapAction']>) => void
   /** live tour state, reported by the map — the tile must not guess at it */
   tourOn?: boolean
-  /** live rendering mode, reported by the map after each mode change */
-  mapMode?: '2d' | '3d'
   /** June-style checklist controlling which kinds of places the tour visits. */
   mapTourTopics?: MapTourTopic[]
   onMapTourTopicsChange?: (topics: MapTourTopic[]) => void
@@ -344,14 +342,6 @@ export default function HoldMenuTwin({
 }) {
   // The item set is fixed to the tab the menu was opened from.
   const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).map(item => {
-    if (item.mapAction === 'mapMode') {
-      const is3D = mapMode === '3d'
-      return {
-        ...item,
-        title: is3D ? (item.activeTitle ?? item.title) : item.title,
-        glyph: is3D ? '3D' : '2D',
-      }
-    }
     // TOUR reads its label off the map's own state, so it says STOP TOUR for
     // as long as the tour is actually running — including a tour that started
     // itself at launch, which a local toggle would have got backwards.
@@ -502,7 +492,7 @@ export default function HoldMenuTwin({
     // catalogue has, which the artifact answered with its DEFAULT screen: the
     // mock TV Guide. That is the fake TV Guide that appeared on Profile and
     // Feed. Action / mapAction / event tiles stay out entirely: stepping onto
-    // one would FIRE it (LIVE starts a broadcast) rather than move you.
+    // one would fire its camera, feed, or map command rather than move you.
     const pages = live.filter(it => !it.action && !it.mapAction && !it.event && !it.home)
     // The cycle is [DOOR, ...pages] — index 0 is the tab's own live screen.
     // Leaving it out is what made the arrows a one-way trip: paging through
@@ -1083,7 +1073,10 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'profile-wardrobe') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Wardrobe">
-          <CharacterEditor />
+          <WardrobeBuilder
+            character={readCharacter()}
+            onClose={() => { playPop(); onClose() }}
+          />
         </div>
       )
     }
@@ -1233,8 +1226,8 @@ export default function HoldMenuTwin({
                 {it.glyph ? (
                   <span
                     className={
-                      it.mapAction === 'mapMode' || it.screen === 'map-show-me'
-                        ? `${styles.glyph} ${styles.mapModeGlyph}`
+                      it.screen === 'map-show-me'
+                        ? `${styles.glyph} ${styles.actionGlyph}`
                         : styles.glyph
                     }
                     aria-hidden="true"

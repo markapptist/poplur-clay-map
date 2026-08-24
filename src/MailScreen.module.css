@@ -380,26 +380,99 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-/* ── FaceTime split-screen overlay ─────────────────────────────────────── */
+/* ── FaceTime call surface ─────────────────────────────────────────────── */
 .ftOverlay {
   position: fixed;
   inset: 0;
-  /* UNDER the home chrome, not over it. This sat at 1000 — the full-screen
-     modal tier — which painted out the whole home HUD (wordmark at 270,
-     arrows/cube/radius at 260) for the length of a call, taking the navigator
-     with it. A subscreen is what this is, so it belongs just below the chrome
-     every other subscreen sits under.
-     Deliberately NOT solved by promoting the HUD above 1000 instead:
-     PermissionAlert's scrim is also 1000 and documents that consent "must be
-     the front-most interaction". A call opens getUserMedia, so that alert is
-     the one thing guaranteed to appear here — lifting the cube over it would
-     hide the permission card behind the navigator.
-     Still far above .contentLayer (4), where MailScreen itself renders. */
+  /* Keep the persistent navigator above the call: the FaceTime contact cube
+     remains the way back to Mail, while permission alerts retain their own
+     higher modal tier. */
   z-index: 250;
   display: flex;
   flex-direction: column;
-  background: #080509;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(241, 62, 161, 0.24), transparent 34%),
+    linear-gradient(165deg, #24101f, #070509 62%);
   color: #fff;
+}
+
+/* A call starts as a call, not two empty camera rectangles. The same surface
+   remains visible through ICE/permission setup, then hands off to the real
+   peer video only once the connection is live. */
+.ftRinging {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 11px;
+  padding: max(96px, calc(env(safe-area-inset-top, 0px) + 70px)) 28px 24px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.ftRingingHalo {
+  position: absolute;
+  width: min(64vw, 300px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 176, 218, 0.44);
+  border-radius: 50%;
+  box-shadow: 0 0 0 22px rgba(251, 61, 155, 0.07), 0 0 72px rgba(254, 45, 146, 0.48);
+  animation: ftRingPulse 1.55s ease-in-out infinite;
+}
+
+.ftRingingAvatar,
+.ftFallbackAvatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.7), transparent 28%),
+    linear-gradient(145deg, #ffacd5, #f52a91 55%, #60183f);
+  box-shadow: inset 0 3px 9px rgba(255, 255, 255, 0.42), 0 12px 30px rgba(255, 28, 138, 0.34);
+  color: #fff;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+}
+
+.ftRingingAvatar {
+  width: clamp(116px, 31vw, 150px);
+  aspect-ratio: 1;
+  font-size: clamp(45px, 12vw, 60px);
+}
+
+.ftRinging > strong {
+  margin-top: 15px;
+  font-size: clamp(25px, 7vw, 34px);
+  letter-spacing: -0.03em;
+}
+
+.ftRinging > span {
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 15px;
+  font-weight: 760;
+}
+
+.ftRinging > b {
+  color: #ff8bc4;
+  font: 900 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.16em;
+}
+
+.ftRinging > small {
+  max-width: 240px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+@keyframes ftRingPulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.88); }
+  50% { opacity: 1; transform: scale(1.07); }
 }
 
 .ftSplit {
@@ -413,32 +486,59 @@
 .ftRemotePane,
 .ftLocalPane {
   position: relative;
+  display: grid;
+  place-items: center;
   overflow: hidden;
-  background: #1a0e14;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(239, 55, 151, 0.26), transparent 45%),
+    #160b13;
+}
+
+/* Never leave a black, unexplained rectangle while a camera is unavailable,
+   an audio-only peer answers, or WebKit is still presenting its first frame. */
+.ftVideoFallback {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 42px 18px 18px;
+  color: rgba(255, 255, 255, 0.92);
+  text-align: center;
+}
+
+.ftFallbackAvatar {
+  width: 64px;
+  aspect-ratio: 1;
+  font-size: 17px;
+}
+
+.ftVideoFallback strong { font-size: 15px; }
+.ftVideoFallback span {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .ftVideo {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  opacity: 0;
+  transition: opacity 180ms ease;
 }
 
-.ftRemotePane .ftVideo {
-  transform: none;
-}
-
-.ftLocalPane .ftVideo {
-  transform: scaleX(-1);
-}
-
-.ftVideoOff { opacity: 0.08; }
+.ftVideoReady { opacity: 1; }
+.ftRemotePane .ftVideo { transform: none; }
+.ftLocalPane .ftVideo { transform: scaleX(-1); }
 
 /* The TOP pane's label only. The overlay is full-bleed by design — video
    should run under the status bar — but the caller's name is text, and at
-   `top: 12px` it sat directly under the clock and the dynamic island. The
-   local pane's label is mid-screen and needs no inset, so this is scoped to
-   the remote pane rather than padding the whole overlay and letterboxing the
-   video. */
+   `top: 12px` it sat directly under the clock and the dynamic island. */
 .ftRemotePane .ftRemoteLabel {
   top: calc(12px + env(safe-area-inset-top, 0px));
 }
@@ -448,7 +548,7 @@
   position: absolute;
   top: 12px;
   left: 14px;
-  z-index: 1;
+  z-index: 2;
   padding: 4px 12px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.5);
@@ -460,6 +560,7 @@
 
 .ftStatus {
   flex: none;
+  min-height: 18px;
   text-align: center;
   padding: 10px 0 4px;
   font: 800 12px/1 ui-monospace, monospace;
@@ -512,3 +613,8 @@
 }
 
 .ftEnd { background: #e63b50 !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ftRingingHalo { animation: none; }
+  .ftVideo { transition: none; }
+}

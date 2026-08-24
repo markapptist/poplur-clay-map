@@ -21,6 +21,7 @@ import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { isResumablePage, tabPageScreens } from './HoldMenuTwin'
+import { FaceTimeOverlay } from './MailScreen'
 import LoadingGlobe from './LoadingGlobe'
 import TopChrome from './TopChrome'
 import PermissionAlert from './PermissionAlert'
@@ -41,6 +42,7 @@ import {
   hasPendingPodcastMapPick,
 } from './podcastMapDraft'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
+import { startRadioOnBoot } from './mapRadio'
 import {
   cancelManagedRenderingWake,
   isIOSNativeShell,
@@ -49,7 +51,6 @@ import {
   wakeManagedRendering,
 } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
-import type { PoplurMapMode } from './mapMode'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
 import {
   readMapTourTopics,
@@ -57,9 +58,12 @@ import {
   type MapTourTopic,
 } from './mapTourPreferences'
 import { noteNewsMessage } from './newsMessages'
+import { contentPostId, dropAt } from './postedContent'
 import { onProfileGenderChange, profileHeadModel } from './profileGender'
 import { POIS, type PopLevel } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
+import { skyShadeAt } from './skyCycle'
+import { moonPhase } from './celestial'
 import {
   RADIUS_CHANGE_EVENT,
   nextRadiusInactivityAt,
@@ -108,6 +112,12 @@ const FOOD_AD_CUBE_MODEL = 'poplur_cube_fork_knife.glb'
 // The flash camera the profile wears while you are taking your picture.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
 const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
+// At night the Map navigator uses one of the existing mobile-sized moon
+// assets, selected from the weather API's moon phase. Changing this URL flows
+// through the normal one-shot cube POP swap; it does not add another renderer
+// or an idle animation.
+const MAP_NIGHT_MODEL = 'poplur_moon_crescent_lite.glb'
+const MAP_FULL_MOON_MODEL = 'poplur_moon_full_lite.glb'
 // The male head constant lives in profileGender.ts now (MALE_HEAD_MODEL),
 // beside the female head it is chosen against.
 const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
@@ -203,8 +213,15 @@ function writeLastScreen(tab: CubeTab, screen: string | null) {
     wears the head that matches the account's chosen gender (profileGender.ts)
     — the mark head or the female head; profile media belongs in the profile
     frame. */
-function tabNavigatorModel(tab: CubeTab): string {
-  if (tab === 'map') return MAP_GLOBE_MODEL
+function tabNavigatorModel(
+  tab: CubeTab,
+  mapNight = false,
+  mapMoon: 'full' | 'crescent' = 'crescent',
+): string {
+  if (tab === 'map') {
+    if (!mapNight) return MAP_GLOBE_MODEL
+    return mapMoon === 'full' ? MAP_FULL_MOON_MODEL : MAP_NIGHT_MODEL
+  }
   if (tab === 'feed') return CLAY_TV_MODEL
   if (tab === 'post') return PROFILE_CAMERA_MODEL
   return profileHeadModel()
@@ -285,8 +302,8 @@ function wornNavigatorModel(
 // NOTE ON PATHS: these live at the bundle ROOT, not under models/, for the
 // same reason clay_tv.glb does — scripts/sync-mobile.sh excludes models/ from
 // every mobile bundle, so a models/ path resolves on a desktop browser and is
-// simply absent on a phone. (That exclusion is also why the sun and moon,
-// which celestial.ts loads from models/, never appear on device.)
+// simply absent on a phone. The phase-aware moon navigator above therefore
+// uses the decimated root assets too, so it works identically on iOS/Android.
 const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // A supplied remote for the guide itself, decimated the same way as the
   // rest of this set. NOT CLAY_TV_MODEL — that constant is also the feed
@@ -306,7 +323,7 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // the subscreen the cube is answering to, and a hold-menu tile carrying an
   // `action`, `mapAction` or `event` never sets one — it fires, calls
   // onClose() and returns before setActiveScreen (HoldMenuTwin). So
-  // DIRECTIONS, TOUR, LIVE, CAMERA ROLL, COMMENT and HEY POPLUR have
+  // DIRECTIONS, TOUR, CAMERA ROLL, COMMENT and HEY POPLUR have
   // no entry no matter how good their cube is: those tiles act on the live
   // surface behind the menu, which is the whole point of them.
   // The news screen gets an actual newspaper rather than a cube with a news
@@ -710,22 +727,29 @@ const CLAY_MAP_SRC = (() => {
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams()
   const front = '1'
-  const mode = parentParams.get('mapMode')
-  const fallback = parentParams.get('fallback2d')
   const lite = parentParams.get('mapLite')
+  const mapNight = parentParams.get('map-night')
   // The hidden map mounts while Home's custom location primer is visible.
   // Carry that gate into the iframe so its own startup geolocation cannot race
   // ahead and surface a raw browser/OS prompt behind the Poplur consent card.
   const deferLocation = parentParams.get('askLocation') === '1'
     || parentParams.get('permissions') === '1'
-  const modeQuery = mode === '2d' || mode === '3d' ? `&mapMode=${mode}` : ''
-  const fallbackQuery = fallback === '1' ? '&fallback2d=1' : ''
   const liteQuery = lite === '1' ? '&mapLite=1' : ''
+  const nightQuery = mapNight === '1' || mapNight === '0' ? `&map-night=${mapNight}` : ''
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${modeQuery}${fallbackQuery}${liteQuery}${locationQuery}`
-    : `index.html?map=1&front=${front}${modeQuery}${fallbackQuery}${liteQuery}${locationQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${locationQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${locationQuery}`
 })()
+
+function clockMapNight(): boolean {
+  if (typeof window !== 'undefined') {
+    const forced = new URLSearchParams(window.location.search).get('map-night')
+    if (forced === '1') return true
+    if (forced === '0') return false
+  }
+  return skyShadeAt().lightPreset === 'night'
+}
 
 // iOS experiment: keep this Home document and its approved clay HUD, but let
 // the native shell own the actual map renderer. The flag is supplied by the
@@ -909,11 +933,64 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
+  const [mapNight, setMapNight] = useState(clockMapNight)
+  const [mapMoon, setMapMoon] = useState<'full' | 'crescent'>(() => moonPhase(new Date()).model)
+  // The embedded map reports the same state below. Refresh once when a tab
+  // change reaches Map; only the native renderer, which has no iframe report,
+  // needs a minute clock while Map is actually visible.
+  useEffect(() => {
+    const sync = () => setMapNight(clockMapNight())
+    sync()
+    if (!NATIVE_ADAPTIVE_MAP || activeTab !== 'map') return
+    const interval = window.setInterval(sync, 60_000)
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', sync)
+    }
+  }, [activeTab])
   // Message listeners are installed once, so read the current face through a
   // ref instead of capturing the initial tab forever.
   const activeTabRef = useRef(activeTab)
   activeTabRef.current = activeTab
   const activeStoreCheckoutRequestRef = useRef<string | null>(null)
+  // Preserve the best location across a map iframe remount. The radio needs
+  // to reassert its app-wide focus when that child becomes ready, without
+  // falling back to the generic home coordinate and replacing a nearby tune.
+  const radioLocationRef = useRef<{ lat: number; lng: number } | null>(null)
+  // Radio is a real app-level station now, not a page that happens to have a
+  // radio-shaped screen. Start its safe fallback immediately, then replace it
+  // with a nearby live stream if the shell has already supplied a location.
+  // Do not request OS location here: location permission remains an explicit
+  // map/iPod action; this merely consumes any location the shell already has.
+  useEffect(() => {
+    type NativeLocation = { latitude?: unknown; longitude?: unknown; detail?: unknown }
+    const applyLocation = (value: unknown) => {
+      const payload = value as NativeLocation | null
+      const nested = payload?.detail && typeof payload.detail === 'object' ? payload.detail as NativeLocation : payload
+      const lat = Number(nested?.latitude)
+      const lng = Number(nested?.longitude)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return
+      radioLocationRef.current = { lat, lng }
+      startRadioOnBoot(lat, lng)
+    }
+    const onLocation = (event: Event) => applyLocation((event as CustomEvent).detail)
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown } | null
+      if (data?.type === 'poplur-location') applyLocation(data)
+    }
+
+    startRadioOnBoot()
+    applyLocation((window as typeof window & { __poplurNativeLocation?: unknown }).__poplurNativeLocation)
+    window.addEventListener('poplur-location', onLocation)
+    window.addEventListener('poplur-native-location', onLocation)
+    window.addEventListener('message', onMessage)
+    return () => {
+      window.removeEventListener('poplur-location', onLocation)
+      window.removeEventListener('poplur-native-location', onLocation)
+      window.removeEventListener('message', onMessage)
+    }
+  }, [])
   const [permissionQueue, setPermissionQueue] = useState<PostLoginPermission[]>(initialPostLoginPermissions)
   // The tilt is asked for on demand: the cube, the profile card and the sway
   // objects each raise MOTION_REQUEST_EVENT the first time they want it, and
@@ -1287,6 +1364,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-facetime-open', onCall)
     return () => window.removeEventListener('poplur-facetime-open', onCall)
   }, [])
+  // Outgoing FaceTime lives in MailScreen; an accepted incoming FaceTime can
+  // arrive above any tab, so Home owns the same shared stream surface for that
+  // direction.  `faceTimeOpen` remains the Mail-owned outgoing state.
+  const [incomingFaceTime, setIncomingFaceTime] = useState<{ callerId: string; callerName: string } | null>(null)
+  const faceTimeActive = faceTimeOpen || incomingFaceTime !== null
   // Which wallet face is up: home, send (coin stack) or cashout (cash stack).
   const [walletPage, setWalletPage] = useState<'home' | 'send' | 'cashout'>('home')
   useEffect(() => {
@@ -1358,7 +1440,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
 
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
-  const [incomingCall, setIncomingCall] = useState<{ callId: string; callerId: string; callerName: string } | null>(null)
+  const [incomingCall, setIncomingCall] = useState<{
+    callId: string
+    callerId: string
+    callerName: string
+    /** True only for a caller that explicitly requested FaceTime video. */
+    video?: boolean
+  } | null>(null)
 
   /** What the cube was answering to a moment ago; see handleSubscreenChange.
 
@@ -1441,7 +1529,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // the model changes at the expanded peak so the handoff reads as one
   // continuous clay pop rather than a disappearance and reappearance.
   const [appliedCubeScreen, setAppliedCubeScreen] = useState<string | null>(null)
-  const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab))
+  const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab, mapNight, mapMoon))
   // Which swap the navigator uses, chosen in Settings > Cube change. Read live
   // so flipping it there is felt on the very next tab swipe. This setting had
   // no consumer at all: it persisted and read back in Settings while nothing
@@ -1585,6 +1673,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)
+  // The map is a separate document. Its sound-on bootstrap can complete after
+  // the parent radio's first focus broadcast and otherwise claim the floor
+  // back for ambience. Reassert the active boot station after every genuine
+  // map readiness edge, using the same last-known location rather than tuning
+  // over it with the fallback coordinate.
+  useEffect(() => {
+    if (!mapReady) return
+    // Let the map-facing gcAudio effect post its sound-on handshake first;
+    // then this focus message arrives last in the child document and radio
+    // stays the app's foreground voice rather than being overtaken by map
+    // ambience during iframe startup.
+    const reassert = window.setTimeout(() => {
+      const location = radioLocationRef.current
+      if (location) startRadioOnBoot(location.lat, location.lng)
+      else startRadioOnBoot()
+    }, 80)
+    return () => window.clearTimeout(reassert)
+  }, [mapReady])
   const droppedClaimsRef = useRef<Array<Record<string, unknown>>>([])
   // The map iframe mounts on the first Map visit (starts mounted only when
   // Home opens directly on the map). Leaving the map PARKS it — hidden,
@@ -1830,6 +1936,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           callId: event.data.callId ?? '',
           callerId: event.data.callerId ?? '',
           callerName: event.data.callerName ?? 'Unknown',
+          video: event.data.video === true,
         })
         startRingtone()
         // A few real haptic taps, not a loop: most phones buzz a handful of
@@ -1847,6 +1954,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         if (incomingCallTimer.current) { window.clearTimeout(incomingCallTimer.current); incomingCallTimer.current = null }
         stopRingtone()
         setIncomingCall(null)
+        setIncomingFaceTime(null)
       }
     }
     window.addEventListener('message', onCallEvent)
@@ -1856,13 +1964,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [])
 
-  const acceptIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string }) => {
+  const acceptIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string; video?: boolean }) => {
     playPop()
     stopRingtone()
-    // acceptCall opens the mic + peer connection and sends callAccept itself,
-    // so the answer actually negotiates media rather than only flipping the
-    // Firestore status. The InCallBar then owns the live-call UI.
-    void acceptCall(call.callId, call.callerName)
+    // A video intent is explicit on the rendezvous.  Keep ordinary calls on
+    // the phone LCD, but let FaceTime open its shared stream surface while
+    // acceptCall requests camera tracks before the answer is produced.
+    if (call.video) {
+      setIncomingFaceTime({ callerId: call.callerId, callerName: call.callerName })
+    }
+    void acceptCall(call.callId, call.callerName, { video: call.video === true })
     setIncomingCall(null)
   }, [])
 
@@ -2086,6 +2197,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // boot is exactly what this app decided not to do.
       setMapPainted(true)
       if (event.data.type === 'poplur-map-loading') setMapReady(false)
+      if (event.data.type === 'poplur-map-night') {
+        setMapNight(Boolean(event.data.night))
+        if (event.data.moon === 'full' || event.data.moon === 'crescent') {
+          setMapMoon(event.data.moon)
+        }
+      }
       // The map flew to a pop and is telling us which one. This is the only
       // source of truth for the number shown between the channel arrows —
       // counting locally meant the readout and the destination disagreed.
@@ -2163,7 +2280,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
       // The map tells us whether its tour is running; the hold-menu tile
       // mirrors it rather than tracking a toggle of its own.
-      if (event.data.type === 'poplur-map-tour') setMapTourOn(Boolean(event.data.on))
+      if (event.data.type === 'poplur-map-tour') {
+        const on = Boolean(event.data.on)
+        const index = Number(event.data.index)
+        const total = Number(event.data.total)
+        setMapTourOn(on)
+        setMapTourPosition(on
+          && Number.isInteger(index)
+          && Number.isInteger(total)
+          && index >= 0
+          && index < total
+          ? { n: index + 1, of: total }
+          : null)
+      }
       // A pop pin was tapped. The pin is a PERSON before it is a place, so this
       // goes to their profile with the post that took that ground lit up — for
       // your own pins that is your own grid, no visit.
@@ -2189,12 +2318,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // with home chrome mid tab-change.
       if (event.data.type === 'poplur-map-status' && typeof event.data.place === 'string') {
         setMapPlace(event.data.place)
-      }
-      if (
-        event.data.type === 'poplur-map-mode'
-        && (event.data.mode === '2d' || event.data.mode === '3d')
-      ) {
-        setLiveMapMode(event.data.mode)
       }
       if (event.data.type === 'poplur-map-ready') {
         setMapReady(true)
@@ -2557,6 +2680,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-fps-cube-controller', onFpsCube)
   }, [])
   const [mapTourOn, setMapTourOn] = useState(false)
+  const [mapTourPosition, setMapTourPosition] = useState<{ n: number; of: number } | null>(null)
   const [mapPopLevel, setMapPopLevel] = useState<PopLevel>('mine')
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
@@ -2609,7 +2733,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       sequence: feedAdSequenceRef.current,
     })
   }, [])
-  const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>('2d')
   const [nativeMapZoom, setNativeMapZoom] = useState(0.42)
   const nativeZoomFrameRef = useRef<number | null>(null)
   const pendingNativeZoomRef = useRef(nativeMapZoom)
@@ -2651,17 +2774,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [sendMapAction])
 
   // Native MapKit publishes its settled camera state back into the same HUD
-  // state the iframe used. The title, 2D/3D clay mark, and zoom rail therefore
-  // remain the existing Poplur controls even though no WebGL map is mounted.
+  // state the iframe uses. Dimensionality is camera-owned: the user controls
+  // zoom, and the renderer alone decides when close detail becomes 3D.
   useEffect(() => {
     if (!NATIVE_ADAPTIVE_MAP) return
     const onState = (event: Event) => {
       const detail = (event as CustomEvent<{
-        mode?: unknown
         zoom?: unknown
         place?: unknown
       }>).detail
-      if (detail?.mode === '2d' || detail?.mode === '3d') setLiveMapMode(detail.mode)
       if (typeof detail?.zoom === 'number' && Number.isFinite(detail.zoom)) {
         const zoom = Math.max(0, Math.min(1, detail.zoom))
         if (!nativeZoomDraggingRef.current && performance.now() >= nativeZoomSyncHoldUntilRef.current) {
@@ -2959,7 +3080,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [loadingVisible])
 
   // Camera's vertical pager: `step` counts arrow presses (up +1 / down -1);
-  // parity picks the page, so both directions cycle live ⇄ roll.
+  // parity picks the page, so both directions cycle viewfinder ⇄ roll.
   const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
   // The camera's own actions, so the cube and the hold menu can fire them.
   const cameraActionsRef = useRef<CameraActions | null>(null)
@@ -2974,17 +3095,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return requested === 'video' ? 'video' : 'photo'
   })
 
-  // The camera's own channel cycle. PHOTO and VIDEO were already modes; ROLL is
-  // a screen you land on and LIVE was an action that fired the moment it was
-  // touched. Putting all four on one ring is what makes the channel arrows mean
-  // the same thing here as everywhere else.
+  // The camera's own channel cycle. PHOTO and VIDEO are capture modes; ROLL is
+  // a separate screen you land on. The channel arrows keep those destinations
+  // reachable without adding a broadcast action to the camera surface.
   //
   // ROLL is the odd one: it is a page, not an arming state, and the shell
   // toggles it by stepping cameraStep (Camera reads page from step % 2). So the
   // ring reads the roll's open/closed state as its "current" when it is up.
   //
   // CREATE / GAMES / STUDIO used to be reachable only through the long-press
-  // wheel — the arrows stopped at LIVE, so three of the tab's seven tiles were
+  // wheel — the arrows skipped them, so three of the tab's tiles were
   // invisible to anyone who did not know to hold. They join the ring the same
   // way ROLL does: landing on one opens it outright rather than merely arming
   // it (opening reuses setResume + setHoldOpen, the same handoff every other
@@ -2994,17 +3114,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The first version handed arrow presses to the wheel's own walker once a
   // subscreen was open, but that walker only knows the three page tiles plus
   // its door — so after visiting CREATE the ring collapsed to
-  // live→create→games→studio→music→live and VIDEO, PHOTO and ROLL became
+  // create→games→studio→music and VIDEO, PHOTO and ROLL became
   // unreachable going forward. Now an open ring subscreen is simply the
   // ring's current stop: stepping off it closes the menu and lands on the
   // neighbouring mode, so every stop cycles in both directions, always.
   //
-  // photo -> video -> the camera's subscreens -> repeat. ROLL and LIVE came
-  // OUT of the ring: the roll is the camera's own second page (the cube walks
-  // up to it), and going live is a thing you do while filming, not a stop you
-  // arrive at — it is a control on the video screen now. Leaving them in made
-  // the arrows walk through two capture modes that are not destinations before
-  // reaching anything that is.
+  // photo -> video -> the camera's subscreens -> repeat. ROLL stays outside
+  // the ring because it is the camera's own second page (the cube walks up to
+  // it), rather than a capture mode or a destination in this cycle.
   const CAMERA_CYCLE = ['photo', 'video', 'create', 'games', 'studio', 'music'] as const
   const CAMERA_CYCLE_SCREEN = {
     create: 'camera-ai-chat',
@@ -3098,7 +3215,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  type HomeCameraAction = Exclude<keyof CameraActions, 'arrow' | 'composerBack' | 'live'> | 'roll'
+  type HomeCameraAction = Exclude<keyof CameraActions, 'arrow' | 'composerBack'> | 'roll'
   const pendingMenuActionRef = useRef<FeedAction | HomeCameraAction | null>(null)
   const performMenuAction = useCallback((action: FeedAction | HomeCameraAction) => {
     if (action === 'roll') {
@@ -3139,7 +3256,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.cancelAnimationFrame(frame)
   }, [holdOpen, mainSurfaceVisible, performMenuAction])
 
-  type MapHoldAction = 'search' | 'locate' | 'directions' | 'tour' | 'mapMode'
+  type MapHoldAction = 'search' | 'locate' | 'directions' | 'tour'
   const pendingMapActionRef = useRef<MapHoldAction | null>(null)
   useEffect(() => {
     if (holdOpen || !mapReady || activeTab !== 'map') return
@@ -3331,6 +3448,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }
 
   const changeChannel = (dir: 1 | -1) => {
+    // While Map's landmark tour is active, the persistent side arrows belong
+    // to that tour. Route before pushScreen so the same physical press cannot
+    // also enter a page or posted-pop walk in Home.
+    if (activeTab === 'map' && mapTourOn) {
+      sendMapAction('cycleTourLandmark', { dir })
+      return
+    }
     pushScreen(dir)
     // A transient layer INSIDE the tab answers first — it covers the screen,
     // so cycling screens behind it would be invisible. The camera's capture
@@ -3353,7 +3477,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (subscreenArrowsRef.current?.(dir)) return
     // Standing on the camera itself, the arrows walk its capture ring rather
     // than stepping into the tab's page list. Selection only — the cube tap
-    // below is still what fires the shutter, starts the recording or goes live.
+    // below is still what fires the shutter or starts/stops a recording.
     if (activeTab === 'post') { stepCameraMode(dir); return }
     // Standing on the tab's own screen with nothing mounted to answer — this
     // IS the door, so step into the tab's page list. The menu is not mounted
@@ -3435,13 +3559,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     : activeTab === 'post' && cubeScreen == null
     && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
-    : (avatarPreview
+    // FaceTime is an active call, not a profile-preview state.  It must win
+    // over a preview that was still unwinding when the call arrived.
+    : ((faceTimeActive ? FACETIME_CONTACT_MODEL : undefined)
+      ?? avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? CAMCORDER_MODEL : undefined)
       ?? (cubeScreen === 'profile-messages' && mailThreadOpen ? MAIL_ENVELOPE_OPEN_MODEL : undefined)
-      // FaceTime video call — the cube wears the contact card while the call
-      // overlay is up: the person, not the apparatus. Same shape as
-      // mailThreadOpen above.
-      ?? (faceTimeOpen ? FACETIME_CONTACT_MODEL : undefined)
       // The wallet's inner pages: coins for SEND, cash for CASH OUT.
       ?? (cubeScreen === 'profile-wallet' && walletPage === 'send' ? WALLET_SEND_MODEL : undefined)
       ?? (cubeScreen === 'profile-wallet' && walletPage === 'cashout' ? WALLET_CASHOUT_MODEL : undefined)
@@ -3470,7 +3593,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // The lens is kept as its own constant but is not used as PHOTO's face
       // any more — the user asked PHOTO to read as "take the picture" rather
       // than "line up the shot".
-      ?? tabNavigatorModel(activeTab))
+      ?? tabNavigatorModel(activeTab, mapNight, mapMoon))
 
   // Keep one likely destination decoded but detached. The tab ring's forward
   // neighbour matches a left swipe (Camera -> Feed); the model that was just
@@ -3481,8 +3604,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const cubePreparationModel = requestedCubeModel !== appliedCubeModel
     ? requestedCubeModel
     : cubeScreen
-      ? tabNavigatorModel(activeTab)
-      : tabNavigatorModel(TAB_ORDER[nextTabIndex])
+      ? tabNavigatorModel(activeTab, mapNight, mapMoon)
+      : tabNavigatorModel(TAB_ORDER[nextTabIndex], mapNight, mapMoon)
 
   const beginCubeSwapEnter = useCallback((withSound: boolean) => {
     if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
@@ -3679,6 +3802,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // The feed's comment box is the same kind of layer — no ✕ of its own, so
     // the cube is how you leave it.
     if (activeTab === 'feed' && feedBackRef.current?.()) { playPop(); return }
+    // On the map the globe is an affirmative action, not a decorative tab
+    // badge: it drops the post composer onto the point already in view. The
+    // map surface keeps ordinary taps free for looking around and its edge
+    // lanes free for post traversal, while a map subscreen still answers the
+    // earlier back branch above.
+    if (activeTab === 'map') {
+      playPop()
+      setPopping(true)
+      sendMapAction('openComposer')
+      return
+    }
     // During the profile selfie capture the cube is the SHUTTER, wearing the
     // camcorder: a tap records the ten-second selfie. ProfileTwin answers this
     // and auto-closes when the clip is saved. (The middle record button was
@@ -3763,8 +3897,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           bridge. The right rail deliberately keeps the tall Poplur zoom
           silhouette from the approved map instead of replacing it with
           MapKit's stock buttons. */}
-      {/* The reference map keeps its three immediate actions in the HOME
-          chrome: sound, 2D/3D and location.  When the map lives in an iframe,
+      {/* The reference map keeps its immediate actions in the HOME chrome.
+          When the map lives in an iframe,
           drawing a second, larger toolbar inside it made the screen feel like
           two competing apps.  Keep this small rail above either renderer and
           relay its actions down to the map when the WebView is in use. */}
@@ -3783,19 +3917,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 if (!next) playPop(0.2)
               }}
             />
-            <button
-              type="button"
-              className={mapStyles.mapModeToggle}
-              data-mode={liveMapMode}
-              aria-label="Flat map mode"
-              aria-pressed={false}
-              disabled
-            >
-              <span className={mapStyles.mapModeClay} aria-hidden="true">
-                <span className={mapStyles.mapModeClayDepth}>{liveMapMode.toUpperCase()}</span>
-                <span className={mapStyles.mapModeClayFace}>{liveMapMode.toUpperCase()}</span>
-              </span>
-            </button>
             <ClayCornerButton
               kind="locate"
               label="Go to my location"
@@ -3823,7 +3944,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             />
             <MapLevelButton
               level={mapPopLevel}
-              mode={liveMapMode}
               menuSide="left"
               onPick={level => {
                 setMapPopLevel(level)
@@ -3948,18 +4068,30 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}
             onPosted={post => {
-              registerOwnedPost(`owned:${Date.now()}:${post.media.src}`)
+              const itemId = typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`
+              const postId = contentPostId(post.media.kind, itemId)
+              registerOwnedPost(postId)
               // The other half of the map→camera capture flow (May '26
               // CaptureFlowManager): a post bound to a coordinate ends back on
               // the MAP, watching the new territory pop at that spot. The map
               // draws the claim; the tab switch shows it to you.
               if (!post.target) return
+              const radiusKmAtPost = post.target.radiusKm ?? 2
+              dropAt(
+                post.media.kind,
+                itemId,
+                [post.target.lng, post.target.lat],
+                undefined,
+                { radiusKmAtPost },
+              )
               const droppedClaim = {
                 type: 'poplur-map-action',
                 action: 'dropClaim',
-                id: `drop-${post.target.lng.toFixed(4)},${post.target.lat.toFixed(4)}`,
+                id: `posted:${postId}`,
                 center: [post.target.lng, post.target.lat],
-                radiusKm: post.target.radiusKm ?? 2,
+                radiusKm: radiusKmAtPost,
                 media: post.media,
                 channel: post.channelId,
                 caption: post.caption,
@@ -4050,11 +4182,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           <ClayChannelArrows
             key={`channel-arrows-${uiRecoveryKey}`}
             size={cubeSize}
-            number={activeTab === 'map' ? mapPostIdx + 1 : CHANNELS[chanIndex].number}
+            number={activeTab === 'map'
+              ? mapTourPosition?.n ?? mapPostIdx + 1
+              : CHANNELS[chanIndex].number}
             // The camera's two pages are not channels. The slot shows what the
             // roll has selected instead; the recording light belongs on the
             // physical camcorder model rather than beside the channel arrows.
-            label={overlayOpen ? '' : activeTab === 'post' ? (picked ? String(picked) : '') : undefined}
+            label={overlayOpen
+              ? ''
+              : activeTab === 'map' && mapTourOn && mapTourPosition
+                ? `${mapTourPosition.n}/${mapTourPosition.of}`
+                : activeTab === 'post'
+                  ? (picked ? String(picked) : '')
+                  : undefined}
+            upLabel={activeTab === 'map' && mapTourOn ? 'Previous landmark' : 'Channel up'}
+            downLabel={activeTab === 'map' && mapTourOn ? 'Next landmark' : 'Channel down'}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
           />
@@ -4170,7 +4312,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           {/* Your pops standing in this area — same outlined-blue voice as the
               place line, one size down. A tap opens the profile with exactly
               these pops lit up. */}
-          {mapAreaPops && (
+          {!mapTourOn && mapAreaPops && (
             <button
               type="button"
               data-poplur-native-hit-region
@@ -4360,6 +4502,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         document.body,
       )}
 
+      {/* Mail owns outgoing FaceTime.  This is the identical stream surface
+          for a video call accepted from the universal incoming-call prompt,
+          so its ringing/connecting state and real media tiles are present in
+          both directions without changing ordinary phone calls. */}
+      {incomingFaceTime && (
+        <FaceTimeOverlay
+          who={incomingFaceTime.callerName}
+          onEnd={() => setIncomingFaceTime(null)}
+        />
+      )}
+
       {/* Auth routing owns WHERE the primer appears. Signed-out users receive
           the matching sequence on Welcome; returning authenticated users are
           loaded with askLocation/askPhotos flags and receive it here. The real
@@ -4451,7 +4604,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             sendMapAction(action)
           }}
           tourOn={mapTourOn}
-          mapMode={liveMapMode}
           mapTourTopics={mapTourTopics}
           onMapTourTopicsChange={handleMapTourTopicsChange}
           currentFeedChannelId={CHANNELS[chanIndex]?.id}

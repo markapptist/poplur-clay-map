@@ -19,7 +19,7 @@ export default function IncomingCallPopup({
   onAccept,
   onDecline,
 }: {
-  call: { callId: string; callerId: string; callerName: string }
+  call: { callId: string; callerId: string; callerName: string; video?: boolean }
   onAccept: () => void
   onDecline: () => void
 }) {
@@ -32,11 +32,11 @@ export default function IncomingCallPopup({
           <svg className={styles.eyebrowIcon} viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
             <path d={HANDSET_PATH} />
           </svg>
-          <span>Incoming Call</span>
+          <span>{call.video ? 'Incoming FaceTime' : 'Incoming Call'}</span>
         </div>
         <div className={styles.avatar} aria-hidden="true">{initial}</div>
         <div className={styles.name}>{call.callerName}</div>
-        <div className={styles.sub}>Poplur Call</div>
+        <div className={styles.sub}>{call.video ? 'FaceTime video' : 'Poplur Call'}</div>
         <div className={styles.hint}>Tap the cube to accept &middot; double-tap to decline</div>
         <div className={styles.actions}>
           <button type="button" className={styles.decline} onClick={onDecline} aria-label="Decline call">

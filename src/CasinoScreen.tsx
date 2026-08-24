@@ -12,6 +12,7 @@ import {
 } from './casinoAudio'
 import { creditBalance, grantCasinoWin, onCreditsChange } from './poplurCredits'
 import { postNativeEvent } from './nativeBridge'
+import { useNearbyLocation } from './nearbyLocation'
 
 // POPLUR CASINO — the feed's daily slots channel. One free spin a day; the
 // middle line pays, and wins land in the poplurCredits ledger (the same one
@@ -77,6 +78,85 @@ const REEL_STOPS_MS = Array.from({ length: REELS }, (_, i) => REEL_DUR_BASE + i 
 // ENFORCEMENT COMES LATER (see the note at the top of this file); this is
 // honest-player plumbing, not security.
 const LAST_SPIN_KEY = 'poplur.casino.lastSpin.v1'
+
+type CasinoAdvertiser = {
+  name: string
+  detail: string
+  distanceKm?: number
+  /** An OpenStreetMap result is a named, locally resolved venue. */
+  verifiedNearby: boolean
+}
+
+const TORONTO_CASINO_FALLBACK: CasinoAdvertiser = {
+  name: 'Great Canadian Casino Resort Toronto',
+  detail: 'Casino and live entertainment',
+  verifiedNearby: true,
+}
+
+function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const toRad = (value: number) => value * Math.PI / 180
+  const lat = toRad(bLat - aLat)
+  const lng = toRad(bLng - aLng)
+  const sinLat = Math.sin(lat / 2)
+  const sinLng = Math.sin(lng / 2)
+  const haversine = sinLat * sinLat
+    + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * sinLng * sinLng
+  return 6_371 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
+}
+
+/**
+ * Resolve an actual, named casino from the public local directory when a
+ * location is available. This deliberately degrades to a known Toronto venue
+ * instead of inventing a fake advertiser or leaving the ad blank offline.
+ */
+function useNearbyCasinoAdvertiser(): CasinoAdvertiser {
+  const location = useNearbyLocation()
+  const [advertiser, setAdvertiser] = useState<CasinoAdvertiser>(TORONTO_CASINO_FALLBACK)
+
+  useEffect(() => {
+    if (!location) return
+    const controller = new AbortController()
+    const query = `[out:json][timeout:8];(nwr(around:20000,${location.lat},${location.lng})[amenity=casino];);out center 12;`
+    const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`
+
+    void fetch(url, { signal: controller.signal })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error(`directory ${response.status}`)))
+      .then((payload: { elements?: Array<{ lat?: number; lon?: number; center?: { lat?: number; lon?: number }; tags?: Record<string, string> }> }) => {
+        if (controller.signal.aborted) return
+        const results = (payload.elements ?? [])
+          .map((element): CasinoAdvertiser | null => {
+            const lat = element.lat ?? element.center?.lat
+            const lng = element.lon ?? element.center?.lon
+            const name = element.tags?.name
+            if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return null
+            return {
+              name,
+              detail: element.tags?.['addr:city'] || element.tags?.operator || 'Casino and live entertainment',
+              distanceKm: distanceKm(location.lat, location.lng, lat as number, lng as number),
+              verifiedNearby: true,
+            } satisfies CasinoAdvertiser
+          })
+          .filter((result): result is CasinoAdvertiser => result !== null)
+          .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity))
+        if (results[0]) setAdvertiser(results[0])
+        else if (location.source === 'device') {
+          setAdvertiser({
+            name: 'Casinos near your radius',
+            detail: 'Open the local Poplur directory to see today\'s venues',
+            verifiedNearby: false,
+          })
+        }
+      })
+      .catch(() => {
+        // Directory availability never blocks the cabinet; the transparent
+        // fallback is useful while offline and avoids showing a blank ad.
+      })
+
+    return () => controller.abort()
+  }, [location?.lat, location?.lng, location?.source])
+
+  return advertiser
+}
 
 function todayStamp(): string {
   // LOCAL date on purpose: "one a day" should reset at the player's midnight,
@@ -204,6 +284,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const [result, setResult] = useState<SpinResult | null>(null)
   const [paysOpen, setPaysOpen] = useState(false)
   const [promoOpen, setPromoOpen] = useState(false)
+  const advertiser = useNearbyCasinoAdvertiser()
 
   const landedRef = useRef(0)
   const ceilingRef = useRef<number | null>(null)
@@ -234,6 +315,15 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     const id = window.setTimeout(() => setPromoOpen(true), delay)
     return () => window.clearTimeout(id)
   }, [])
+
+  // A Poplur ad is a brief interception, not a blocking casino dialog. It
+  // closes itself and an outside tap treats the user as resuming the game,
+  // matching the feed's sponsored-creative behavior.
+  useEffect(() => {
+    if (!promoOpen || paysOpen) return
+    const id = window.setTimeout(() => setPromoOpen(false), 8_500)
+    return () => window.clearTimeout(id)
+  }, [promoOpen, paysOpen])
 
   // Same contract as GamesScreen: ask HomeTwin to clear its wordmark and stat
   // row while this screen is up (the jackpot sign lives where the wordmark
@@ -366,24 +456,11 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     : used
       ? 'COME BACK TOMORROW — ONE FREE SPIN A DAY'
       : 'YOUR FREE DAILY SPIN IS READY'
-  const promo = isDoubleCreditDay()
-    ? {
-        eyebrow: 'POPLUR PROMOTION · TODAY ONLY',
-        title: '2× CREDIT FRIDAY',
-        body: 'Every winning line pays double Poplur Credits today. Your daily spin is ready at midnight.',
-        cta: 'PLAY THE PROMO',
-      }
-    : {
-        eyebrow: 'POPLUR PROMOTION',
-        title: 'A FREE SPIN, EVERY DAY',
-        body: 'Your Casino spin resets at local midnight. Friday wins are automatically worth 2× Credits.',
-        cta: 'KEEP PLAYING',
-      }
-
   const openNearbyCasinos = () => {
-    // Deliberately search rather than inventing a named "nearby" advertiser:
-    // Google Maps resolves the player's current area only after they ask.
-    const url = 'https://www.google.com/maps/search/?api=1&query=casinos%20near%20me'
+    // The same local advertiser named in the creative is what the call-to-
+    // action opens. Maps resolves the player’s current area if the directory
+    // is offline and the creative is in its transparent fallback state.
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(advertiser.name)}`
     playPop()
     setPromoOpen(false)
     if (!postNativeEvent({ type: 'openInAppBrowser', url })) window.location.assign(url)
@@ -590,28 +667,40 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
       )}
 
       {promoOpen && !paysOpen && (
-        <div className={styles.promoScrim} role="presentation">
-          <section className={styles.promoCard} role="dialog" aria-modal="true" aria-label="Casino promotion">
-            <button
-              type="button"
-              className={styles.promoClose}
-              aria-label="Close casino promotion"
-              onClick={() => { playPop(); setPromoOpen(false) }}
-            >×</button>
-            <span className={styles.promoEyebrow}>{promo.eyebrow}</span>
-            <strong className={styles.promoTitle}>{promo.title}</strong>
-            <p className={styles.promoBody}>{promo.body}</p>
-            <button type="button" className={styles.promoPrimary} onClick={() => { playPop(); setPromoOpen(false) }}>
-              {promo.cta}
+        <div
+          className={styles.promoScrim}
+          role="presentation"
+          onPointerDown={event => {
+            if (event.target === event.currentTarget) { playPop(); setPromoOpen(false) }
+          }}
+        >
+          <section
+            className={styles.promoCard}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Sponsored casino advertisement"
+            onPointerDown={event => event.stopPropagation()}
+          >
+            <span className={styles.adBurst} aria-hidden="true">★ BAM! ★</span>
+            <span className={styles.promoEyebrow}>POPLUR AD · NEAR YOUR RADIUS</span>
+            <strong className={styles.promoTitle}>{advertiser.name}</strong>
+            <p className={styles.promoBody}>
+              {advertiser.distanceKm !== undefined
+                ? `${advertiser.distanceKm < 1 ? '< 1' : advertiser.distanceKm.toFixed(1)} km away · ${advertiser.detail}`
+                : advertiser.detail}
+            </p>
+            <button type="button" className={styles.nearbyAction} onClick={openNearbyCasinos}>
+              {advertiser.verifiedNearby ? 'VIEW THIS CASINO' : 'VIEW CASINOS NEAR ME'}
             </button>
-            <div className={styles.nearbyPromo}>
-              <span className={styles.nearbyTag}>DISCOVER NEAR YOU</span>
-              <strong>Casinos around your current area</strong>
-              <p>Find venues, hours, and events near you without leaving Poplur.</p>
-              <button type="button" className={styles.nearbyAction} onClick={openNearbyCasinos}>
-                FIND CASINOS NEAR ME
+            <div className={styles.playAd} aria-label="Poplur daily spin advertisement">
+              <span className={styles.playAdEyebrow}>POPLUR TV SHOPPING</span>
+              <strong><i aria-hidden="true">✦</i> ONE FREE SPIN <i aria-hidden="true">✦</i></strong>
+              <p>{isDoubleCreditDay() ? 'BAM! Friday wins land with 2× Credits.' : 'BAM! Your next daily spin is always on the house.'}</p>
+              <button type="button" className={styles.promoPrimary} onClick={() => { playPop(); setPromoOpen(false) }}>
+                BACK TO THE REELS
               </button>
             </div>
+            <span className={styles.adDismissHint}>Tap outside to close · closes automatically</span>
           </section>
         </div>
       )}

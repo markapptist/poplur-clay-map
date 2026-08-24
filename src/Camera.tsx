@@ -10,7 +10,6 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
 import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, takePendingMapPost, type PendingMapPost } from './cameraStore'
-import { startBroadcast, stopBroadcast, isLive, onLiveStore, ownBroadcast } from './liveStore'
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
@@ -149,7 +148,7 @@ type NativeCameraBudget = {
   windowMs: number
 }
 
-type DeferredCameraAction = 'photo' | 'video' | 'live'
+type DeferredCameraAction = 'photo' | 'video'
 
 /** The lens preset row above the cube. On a dual-wide iPhone, 0.5× selects
  *  real ultra-wide glass. Browser cameras expose one sensor, so their 0.5×
@@ -165,8 +164,6 @@ export interface CameraActions {
   detect: () => void
   /** open (or close) the AR filter rail */
   ar: () => void
-  /** go live — or come off air */
-  live: () => void
   /** open the Camera Roll from its hold-menu tile */
   roll: () => void
   /** The clay channel arrows, offered to the post composer first; otherwise
@@ -228,10 +225,8 @@ export default function Camera({
   onFlashChange,
 }: {
   step?: number
-  /** Which capture the tab is set to. LIVE is a thing you do while FILMING, so
-   *  its control only exists on the video screen — on the photo screen it was
-   *  offering a broadcast from a camera that was not rolling. */
-  captureMode?: 'photo' | 'video' | 'live'
+  /** Which capture the tab is set to. */
+  captureMode?: 'photo' | 'video'
   /** False while Home keeps this pager mounted behind its hold menu. */
   surfaceVisible?: boolean
   onCloseRoll?: () => void
@@ -294,11 +289,6 @@ export default function Camera({
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  // The stream effect deliberately hands ownership of the camera to a live
-  // broadcast rather than killing the picture mid-air, and clears streamRef
-  // when it does. This ref keeps hold of the tracks so every non-broadcast
-  // hide/unmount path can still release the hardware.
-  const heldStreamRef = useRef<MediaStream | null>(null)
   const deferredCameraActionRef = useRef<DeferredCameraAction | null>(null)
   const [deferredCameraActionToken, setDeferredCameraActionToken] = useState(0)
   const [streamOn, setStreamOn] = useState(false)
@@ -331,7 +321,6 @@ export default function Camera({
 
   // Shared with the hold menu, so the tile and the model can never disagree.
   const detectOn = useSyncExternalStore(onCameraStore, isDetectOn, isDetectOn)
-  const onAir = useSyncExternalStore(onLiveStore, isLive, isLive)
   // The roll button's own thumbnail: whatever was shot most recently this
   // session (captures unshift newest-first). No thumbnail before the first
   // shot — the button falls back to its plain icon rather than showing
@@ -443,7 +432,7 @@ export default function Camera({
   const analysisLeaseRef = useRef<PoplurResourceLease | null>(null)
   const [captureGranted, setCaptureGranted] = useState(false)
   const [analysisGranted, setAnalysisGranted] = useState(false)
-  const captureRequested = liveSurfaceVisible || onAir
+  const captureRequested = liveSurfaceVisible
 
   useEffect(() => {
     if (!captureRequested) {
@@ -608,22 +597,10 @@ export default function Camera({
     if (NATIVE_CAMERA_PREVIEW || !webCaptureRequired) return
     if (ANDROID_SHELL && cameraPermission !== 'granted') return
     let cancelled = false
+    let acquiredStream: MediaStream | null = null
     const start = async () => {
       try {
-        // ON AIR owns its capture stream across Camera remounts. Reuse that
-        // exact stream for the local preview instead of opening a second
-        // sensor/ISP pipeline while the first broadcast is still live.
-        const broadcastStream = isLive() ? ownBroadcast()?.stream : undefined
-        const reusableBroadcastStream = broadcastStream?.getVideoTracks().some(
-          track => track.readyState === 'live',
-        ) ? broadcastStream : undefined
-        if (broadcastStream && !reusableBroadcastStream) {
-          // A broadcast whose physical track has ended is no longer live.
-          // Clear its ownership before opening a replacement local preview so
-          // the effect cleanup can release that replacement normally.
-          stopBroadcast()
-        }
-        const stream = reusableBroadcastStream ?? await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: facing,
             width: { ideal: 1280 },
@@ -643,15 +620,8 @@ export default function Camera({
           audio: false,
         })
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        acquiredStream = stream
         streamRef.current = stream
-        // Release whatever we were holding before taking a new one. While ON AIR
-        // the cleanup below deliberately does NOT stop the outgoing tracks, so
-        // every live<->roll round trip used to acquire a fresh camera stream and
-        // orphan the previous one — a real hardware leak, not just a reference.
-        if (heldStreamRef.current && heldStreamRef.current !== stream) {
-          heldStreamRef.current.getTracks().forEach(t => t.stop())
-        }
-        heldStreamRef.current = stream
         const videoTrack = stream.getVideoTracks()[0]
         const zoomRange = videoTrack?.getCapabilities?.() as ZoomTrackCapabilities | undefined
         const deviceZoom = zoomRange?.zoom
@@ -710,19 +680,8 @@ export default function Camera({
     void start()
     return () => {
       cancelled = true
-      // A live broadcast OWNS the stream once it starts. Paging to the roll or
-      // flipping the camera must not kill it out from under the broadcast —
-      // you would appear on the LIVE channel as a black rectangle. Ending the
-      // broadcast is what releases it. This is a re-run of the effect, NOT the
-      // end of the screen: unmount below releases every stream that is not
-      // explicitly owned by ON AIR.
-      if (!isLive()) {
-        const held = heldStreamRef.current
-        streamRef.current?.getTracks().forEach(t => t.stop())
-        if (held && held !== streamRef.current) held.getTracks().forEach(t => t.stop())
-        heldStreamRef.current = null
-      }
-      streamRef.current = null
+      acquiredStream?.getTracks().forEach(t => t.stop())
+      if (streamRef.current === acquiredStream) streamRef.current = null
       hardwareZoomCapabilityRef.current = false
       hardwareZoomFloorRef.current = 1
       hardwareZoomRef.current = false
@@ -732,9 +691,8 @@ export default function Camera({
     }
   }, [facing, webCaptureRequired, cameraPermission, streamRequest])
 
-  // ON AIR may keep the capture track alive while another camera layer is in
-  // front, but the hidden local <video> must not decode that same stream behind
-  // the composer or hold menu. Reattach only when the viewfinder is front-most.
+  // Do not decode the camera behind the roll, composer, or hold menu. Reattach
+  // only when the viewfinder is actually front-most.
   useEffect(() => {
     if (NATIVE_CAMERA_PREVIEW) return
     const video = videoRef.current
@@ -744,7 +702,7 @@ export default function Camera({
       video.srcObject = null
       return
     }
-    const stream = streamRef.current ?? (isLive() ? heldStreamRef.current : null)
+    const stream = streamRef.current
     if (!stream) return
     video.srcObject = stream
     void video.play().catch(() => {})
@@ -859,7 +817,6 @@ export default function Camera({
   const commerceAllowed = detectOn
     && liveSurfaceVisible
     && recStart === null
-    && !onAir
     && (NATIVE_SHELL || cameraCommerceDemo)
 
   useEffect(() => {
@@ -1341,29 +1298,6 @@ export default function Camera({
     setDeferredCameraActionToken(token => token + 1)
   }, [])
 
-  // Going live hands the LIVE channel this camera's own stream — the feed
-  // plays the broadcast itself, not a recording of it. One implementation for
-  // the LIVE button sitting on the camera and for the bound action, so the two
-  // can never drift.
-  const toggleLive = useCallback(() => {
-    playPop()
-    if (isLive()) {
-      deferredCameraActionRef.current = null
-      stopBroadcast()
-      if (liveSurfaceVisible && !NATIVE_CAMERA_PREVIEW) {
-        setStreamRequest(value => value + 1)
-      }
-      return
-    }
-    if (!liveSurfaceVisible
-      || nativeCameraBudget?.state === 'parked'
-      || (!NATIVE_CAMERA_PREVIEW && !streamRef.current)) {
-      deferCameraAction('live')
-      return
-    }
-    startBroadcast(streamRef.current ?? undefined)
-  }, [deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state])
-
   // Camera actions selected from the hold menu arrive just before that menu's
   // close state commits. The lens is correctly parked at that instant, so keep
   // the deliberate action and run it once the visible surface (and, on web,
@@ -1392,15 +1326,14 @@ export default function Camera({
       deferredCameraActionRef.current = null
       if (!streamReady || !photoReady) return
       if (action === 'photo') capturePhoto()
-      else if (action === 'video') toggleVideo()
-      else startBroadcast(streamRef.current ?? undefined)
+      else toggleVideo()
     }
     timer = window.setTimeout(run, NATIVE_CAMERA_PREVIEW ? 180 : 0)
     return () => window.clearTimeout(timer)
   }, [capturePhoto, deferredCameraActionToken, liveSurfaceVisible, nativeCameraBudget?.state, toggleVideo])
 
-  // A local recording cannot continue under a menu/composer. ON AIR may retain
-  // the capture track, but recording, torch and its high-rate counter stop.
+  // A local recording cannot continue under a menu or composer; stop its
+  // hardware work and high-rate counter as soon as the viewfinder is covered.
   useEffect(() => {
     if (liveSurfaceVisible) return
     const recorder = recorderRef.current
@@ -1442,24 +1375,16 @@ export default function Camera({
     return () => window.clearInterval(timer)
   }, [recStart, onRecordingChange, stopVideo])
 
-  // Nothing this screen started may outlive it. A recording is obvious — but
-  // the BROADCAST was the leak: going live took ownership of the getUserMedia
-  // track so paging and flipping could not black out the air, and then nothing
-  // ever took that ownership back. Leaving the camera tab while ON AIR left the
-  // camera hardware — and the camera light — running with no screen left to
-  // stop it. The screen that owns the broadcast is the screen that ends it.
+  // Nothing this screen starts may outlive it: recording, native capture and
+  // the web viewfinder all release when the Camera unmounts.
   useEffect(() => () => {
     recorderRef.current?.stop()
     if (nativeRecordingRef.current) {
       nativeRecordingRef.current = false
       postNativeEvent({ type: 'cameraControl', control: 'recordStop' })
     }
-    // Strict screen ownership: ON AIR cannot keep the camera sensor, tracks,
-    // and live-store references alive after Camera stops being the active
-    // screen. Leaving Camera ends the broadcast and releases every track.
-    if (isLive()) stopBroadcast()
-    heldStreamRef.current?.getTracks().forEach(t => t.stop())
-    heldStreamRef.current = null
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
   }, [])
 
   useEffect(() => {
@@ -1490,7 +1415,6 @@ export default function Camera({
         // refuses to activate ML on roll/composer pages.
       },
       ar: () => setArOpen(v => !v),
-      live: toggleLive,
       roll: () => onOpenRoll?.(),
       // The capture preview owns the arrows while it is up (filter flipping).
       // Anywhere else on the camera they belong to the shell, which cycles the
@@ -1510,7 +1434,7 @@ export default function Camera({
       },
     })
     return () => bindActions?.(null)
-  }, [applyZoomStep, bindActions, capturePhoto, deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state, onOpenRoll, toggleLive, toggleVideo])
+  }, [applyZoomStep, bindActions, capturePhoto, deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state, onOpenRoll, toggleVideo])
 
   const [pos, setPos] = useState(page === 'live' ? 1 : 2)
   const [animated, setAnimated] = useState(true)
@@ -1732,15 +1656,6 @@ export default function Camera({
           )}
         </div>
       )}
-      {/* A genuine thermal park keeps the last frame visible. A normal tap on
-          the viewfinder already resumes when policy allows; never cover the
-          camera with a synthetic pink button. */}
-      {real && onAir && (
-        <div className={styles.camLiveTag} aria-label="You are live">
-          <span className={styles.camLiveDot} aria-hidden="true" />ON AIR
-        </div>
-      )}
-
       {/* The model's read on the frame — the rainbow the assistant wears,
           not tracker boxes. Owner state: the native matcher sets isUser from
           the profile-picture feature print; until it ships, a recognised
@@ -1953,7 +1868,7 @@ export default function Camera({
           icon="camera"
           label="Camera permission"
           title={'Allow "Poplur" to use your camera?'}
-          copy="Post photos, video and live to the people inside your radius."
+          copy="Post photos and video to the people inside your radius."
           choices={[
             { label: "Don't Allow", onPick: denyCamera },
             { label: 'Allow', grants: true, onPick: allowCamera },

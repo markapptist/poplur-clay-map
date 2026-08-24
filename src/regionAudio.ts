@@ -175,6 +175,10 @@ function buildCrickets(c: AudioContext): Layer {
 
 let isDay = true
 let started = false
+// A focus handoff can stop and restart ambience in adjacent frames. Keep a
+// generation so a late suspend from the yielding session cannot leave a fresh
+// map session muted.
+let contextGeneration = 0
 
 export function startRegionAudio() {
   if (started) return
@@ -185,6 +189,7 @@ export function startRegionAudio() {
   // the sake of wind and crickets — stay quiet instead, and the next region
   // change after the radio releases (null prompts a resume) starts the bed.
   if (currentRemoteOwner() === 'radio') return
+  contextGeneration += 1
   const c = ensureCtx(); if (!c) return
   // The map's bed is a voice too — starting it quiets the feed and the radio.
   requestAudioFocus('map')
@@ -210,12 +215,30 @@ export function setRegionContext(rc: RegionContext) {
 }
 
 export function stopRegionAudio() {
+  const generation = ++contextGeneration
   releaseAudioFocus('map')
   Object.values(layers).forEach(l => l.stop())
   for (const k of Object.keys(layers)) delete layers[k]
   if (sparkTimer != null) { window.clearTimeout(sparkTimer); sparkTimer = null }
   stopPoplurTheme()
   started = false
+  // Stopping every oscillator is not enough: an empty running AudioContext
+  // still owns an audio render thread. Radio and other foreground voices take
+  // this path, so park the clock as part of yielding the audio floor.
+  const context = ctx
+  if (context?.state === 'running') {
+    void context.suspend()
+      .then(() => {
+        // A new map session may have begun while the asynchronous suspend was
+        // completing. Give that newer owner its clock back instead of leaving
+        // freshly created ambience silent.
+        if (contextGeneration !== generation && started && context.state === 'suspended') {
+          return context.resume()
+        }
+        return undefined
+      })
+      .catch(() => {})
+  }
 }
 
 // ── Ducking for the radio host / AI voice ───────────────────────────────────

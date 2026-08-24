@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
-import { wakeManagedRendering } from './nativeBridge'
+import { sustainManagedRendering } from './nativeBridge'
 
 // ── World landmarks as TRUE 3D map models ────────────────────────────────────
 //
@@ -445,10 +445,11 @@ export function installNearLandmark3D(
           modelRendered = false
           scene.add(built)
           // A compressed GLB may finish decoding after the camera's own
-          // flight lease has ended. Wake the map briefly so this first,
-          // grounded frame and its arrival pop cannot be hidden behind a
-          // stale parked snapshot.
-          wakeManagedRendering(1200)
+          // flight lease has ended. Keep the map renderable briefly so this
+          // grounded frame and its arrival pop cannot be hidden behind a stale
+          // parked snapshot, without promoting an authored reveal to iPhone's
+          // 60fps direct-manipulation budget.
+          sustainManagedRendering(1200)
           playArrivalPop(built, s, box.min.y)
           opts.onModelReady?.()
           map.triggerRepaint()

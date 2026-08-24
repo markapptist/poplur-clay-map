@@ -2,6 +2,7 @@ import { isGateMuted, onGateChange } from './audioGate'
 import { holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { musicShelf } from './musicPosts'
+import { HOME } from './reach'
 
 /** Where we last looked for a station, so a dead stream can be replaced. */
 let lastTuneCoords: { lat: number; lng: number } | null = null
@@ -41,6 +42,13 @@ let unlockInstalled = false
 let soundWanted = false
 let targetRadioLevel = RADIO_IDLE_LEVEL
 let lastPublishedRadioState: 'off' | 'muted' | 'fallback' | 'live' = 'off'
+/** Increments whenever a person (or a newer boot-location fix) changes the
+ * station. An in-flight cold-start directory lookup must never tune over a
+ * deliberate station pick that happened while it was loading. */
+let stationSelectionGeneration = 0
+let listenerSelectedStation = false
+let bootTuneGeneration = 0
+let bootTuneLocationKey = ''
 
 function publishRadioState(state: 'off' | 'muted' | 'fallback' | 'live') {
   if (typeof document === 'undefined') return
@@ -64,14 +72,13 @@ let masterVolume = (() => {
 })()
 
 // ── Background radio ────────────────────────────────────────────────────────
-// Default OFF: the radio plays only while the RADIO screen is open, and
-// closing the screen stops it (RadioScreen's unmount). ON: the station keeps
-// playing after you leave — it holds the app's audio floor while you browse,
-// so the feed runs muted-with-picture underneath it (FeedTwin defers) and
-// map ambience stays out of its way (regionAudio defers). The AI voice still
-// interrupts and hands back, exactly as it does over every other source.
-// This governs IN-APP navigation only; minimizing the app still silences
-// everything through audioGate's visibility gate.
+// A first launch starts a station automatically and gives it the app scope.
+// Once a listener changes this setting, their choice wins on every later
+// launch. App/outside scope keeps the station on the app's one audio floor
+// while the feed runs muted-with-picture underneath it (FeedTwin defers) and
+// map ambience stays out of its way. This governs IN-APP navigation only;
+// minimizing the app still silences everything through audioGate's visibility
+// gate.
 const RADIO_BG_KEY = 'poplur.radio.background'
 const RADIO_SCOPE_KEY = 'poplur.radio.scope'
 export type RadioScope = 'screen' | 'app' | 'outside'
@@ -109,6 +116,74 @@ export function isMapRadioActive(): boolean {
 
 export function setRadioBackgroundEnabled(on: boolean) {
   setRadioScope(on ? 'app' : 'screen')
+}
+
+function hasExplicitRadioScope(): boolean {
+  try {
+    const scope = window.localStorage.getItem(RADIO_SCOPE_KEY)
+    return scope === 'screen' || scope === 'app' || scope === 'outside'
+      || window.localStorage.getItem(RADIO_BG_KEY) !== null
+  } catch {
+    return false
+  }
+}
+
+function validRadioCoordinates(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng)
+    && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+}
+
+/**
+ * Start a useful radio session as the post-login home comes up.
+ *
+ * The bed/fallback starts immediately so native shells can play at once. A
+ * real nearby Radio Browser station is selected as soon as its directory
+ * query returns. Browsers that reject cold audio keep that selected station
+ * pending; installUnlock retries it inside the first genuine gesture rather
+ * than faking success or forcing a permission prompt.
+ *
+ * Calling again with a device location is intentional: the first call uses
+ * the home's safe fallback while the shell resolves location, then this
+ * retunes once to the listener's actual area. Calls for the same area are
+ * deduplicated, including React StrictMode's development remount.
+ */
+export function startRadioOnBoot(lat = HOME[1], lng = HOME[0]): void {
+  if (typeof window === 'undefined') return
+
+  if (!hasExplicitRadioScope()) setRadioScope('app')
+  // Boot playback deliberately stays on detached HTML media elements. It can
+  // still start a real nearby stream (or the packaged fallback bed) on a
+  // native shell, but it does not create a permanent WebAudio render thread
+  // just for an idle home screen. The richer WebAudio bed is created only by
+  // an explicit radio/tour interaction below.
+  startMapRadio({ mediaOnly: true })
+
+  // Once the listener has deliberately tuned something, a late device fix
+  // must not replace it with an automatic nearby pick.
+  if (listenerSelectedStation) return
+
+  const safeLat = validRadioCoordinates(lat, lng) ? lat : HOME[1]
+  const safeLng = validRadioCoordinates(lat, lng) ? lng : HOME[0]
+  const locationKey = `${safeLat.toFixed(2)},${safeLng.toFixed(2)}`
+  if (bootTuneLocationKey === locationKey) return
+
+  bootTuneLocationKey = locationKey
+  lastTuneCoords = { lat: safeLat, lng: safeLng }
+  const bootRequest = ++bootTuneGeneration
+  const selectionAtRequest = stationSelectionGeneration
+
+  void listLocalRadioStations(safeLat, safeLng, 120_000)
+    .then(stations => {
+      // A later location fix, stop, or manual tune owns the dial now.
+      if (!soundWanted || bootRequest !== bootTuneGeneration
+        || stationSelectionGeneration !== selectionAtRequest) return
+      const station = stations.find(candidate => /^https:\/\//i.test(candidate.url))
+      if (station) playStation(station, 'boot')
+    })
+    .catch(() => {
+      // The immediate bed/fallback deliberately remains the radio experience
+      // while a public directory is offline. Nothing needs to surface here.
+    })
 }
 
 function isRadioGateMuted(): boolean {
@@ -444,8 +519,12 @@ function installUnlock() {
     // WebAudio alone does not unlock a live station that was selected while
     // autoplay was blocked.
     tryPlayLiveRadio()
-    const ctx = getAudioContext()
-    if (!ctx) {
+    // Do not manufacture an AudioContext merely because the home screen was
+    // tapped. A boot radio session is intentionally HTML-media-only; if a
+    // rich bed already exists, resume it, otherwise retry the media fallback
+    // within this genuine user gesture.
+    const ctx = audioContext
+    if (!ctx || !radioBed) {
       startFallbackRadio()
       return
     }
@@ -702,7 +781,10 @@ function setRadioLevel(value: number, timeConstant = 0.18) {
   // the media element has genuinely started, then yield cleanly to the stream.
   const bedValue = isLiveRadioPlaying() ? 0 : value
   value = bedValue
-  const ctx = getAudioContext()
+  // Reading `audioContext` rather than calling getAudioContext() matters for
+  // radio boot: changing a media element's level must not quietly allocate a
+  // permanently running WebAudio render thread.
+  const ctx = audioContext
   if (!ctx || !radioBed) {
     setFallbackRadioLevel(value, timeConstant)
     return
@@ -853,7 +935,7 @@ function tryPlayLiveRadio(): void {
       // (or its HTML fallback) audible and retry on the next user gesture.
       if (!soundWanted || isRadioGateMuted()) return
       setRadioLevel(targetRadioLevel, 0.12)
-      const ctx = getAudioContext()
+      const ctx = audioContext
       if (!ctx || ctx.state === 'suspended') startFallbackRadio()
       // A genuine stream/codec failure should move to another station. Keep a
       // NotAllowedError selected because the next user gesture can unlock it.
@@ -969,20 +1051,34 @@ export async function tuneLiveRadio(lat: number, lng: number): Promise<string | 
   }
 }
 
-export function startMapRadio(): boolean {
+export function startMapRadio({ mediaOnly = false }: { mediaOnly?: boolean } = {}): boolean {
   soundWanted = true
   cancelRadioSuspend()
   // Tuning in is a claim on the app's one voice: the feed goes quiet and the
   // map's ambience stops rather than playing underneath.
   requestAudioFocus('radio')
   installUnlock()
+  if (mediaOnly) {
+    // Native WebViews can begin HTML media at app launch while desktop
+    // browsers may defer it until the first gesture; installUnlock handles
+    // that retry. Either way, do not allocate WebAudio for passive boot.
+    tryPlayLiveRadio()
+    setRadioLevel(RADIO_IDLE_LEVEL, 0.16)
+    if (!isLiveRadioPlaying() && !isRadioGateMuted()) startFallbackRadio()
+    return true
+  }
   const ctx = getAudioContext()
   if (!ctx || ctx.state === 'closed') return startFallbackRadio()
   if (!radioBed) radioBed = createRadioBed(ctx)
   stopFallbackRadio()
   tryPlayLiveRadio()
   setRadioLevel(RADIO_IDLE_LEVEL, 0.16)
-  void ctx.resume().catch(() => {})
+  void ctx.resume().catch(() => {
+    // iOS/Safari can reject a cold AudioContext even when it permits an
+    // ordinary media element. Try the small HTML fallback now; if that is
+    // blocked too, installUnlock owns the first real gesture retry.
+    if (soundWanted && !isRadioGateMuted()) startFallbackRadio()
+  })
   if (ctx.state === 'suspended' && typeof window !== 'undefined') {
     window.setTimeout(() => {
       if (soundWanted && ctx.state === 'suspended') startFallbackRadio()
@@ -993,6 +1089,9 @@ export function startMapRadio(): boolean {
 
 export function stopMapRadio() {
   soundWanted = false
+  // Do not let a slow launch directory response resurrect a station after the
+  // listener has explicitly stopped the radio.
+  bootTuneGeneration += 1
   liveTuneGeneration += 1
   liveTuneAbort?.abort()
   liveTuneAbort = null
@@ -1294,23 +1393,45 @@ export async function listPoplurLiveStations(
 export const listLocalStations = listLocalRadioStations
 
 /** Tune a specific station picked from the dial. */
-export function playStation(station: { name: string; url: string; directoryClickUrl?: string }): void {
+export function playStation(
+  station: { name: string; url: string; directoryClickUrl?: string },
+  source: 'listener' | 'boot' = 'listener',
+): void {
   const audio = getLiveAudio()
   if (!audio) return
+  if (source === 'listener') {
+    listenerSelectedStation = true
+    stationSelectionGeneration += 1
+  }
   soundWanted = true
   cancelRadioSuspend()
   requestAudioFocus('radio')
   installUnlock()
+  // Cold-start directory selection is passive boot work. Keep it on media
+  // playback unless the listener has explicitly opened/tuned the radio.
+  const ctx = source === 'boot' ? audioContext : getAudioContext()
+  if (ctx && ctx.state !== 'closed' && !radioBed) radioBed = createRadioBed(ctx)
   liveStation = { name: station.name, url: station.url }
   publishLiveStation()
-  if (station.directoryClickUrl) {
+  // Radio Browser's click endpoint is an explicit listener-tune metric, not
+  // telemetry for Poplur selecting a safe cold-start station. Count it only
+  // after the person has chosen the station themselves.
+  if (source === 'listener' && station.directoryClickUrl) {
     void fetch(station.directoryClickUrl, { cache: 'no-store' }).catch(() => {})
   }
   audio.src = station.url
   audio.muted = isRadioGateMuted()
-  if (radioBed) radioBed.master.gain.value = 0   // the synth stand-in steps aside
-  void audio.play().catch(() => { /* until the unlock gesture */ })
+  // Do not mute the bed until the stream's `playing` event proves it is
+  // audible. A cold WebView can reject play() even after selecting the URL;
+  // retaining the bed/fallback is the difference between a recoverable
+  // autoplay block and a dead radio screen.
+  tryPlayLiveRadio()
   setRadioLevel(RADIO_CRUISE_LEVEL, 0.4)
+  if (ctx && !isRadioGateMuted()) {
+    void ctx.resume().catch(() => startFallbackRadio())
+  } else if (!ctx && !isRadioGateMuted()) {
+    startFallbackRadio()
+  }
 }
 
 export function nowPlayingStation(): { name: string; url: string } | null { return liveStation }

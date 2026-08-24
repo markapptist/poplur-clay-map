@@ -4,7 +4,16 @@ import styles from './MailScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
-import { placeCall, hangup as hangupCall, subscribeCall, installCallBridge, type CallSnapshot } from './webCall'
+import {
+  placeCall,
+  hangup as hangupCall,
+  subscribeCall,
+  subscribeCallMedia,
+  toggleMute as toggleCallMute,
+  installCallBridge,
+  type CallMediaSnapshot,
+  type CallSnapshot,
+} from './webCall'
 
 interface Thread {
   id: string
@@ -205,75 +214,162 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
   )
 }
 
-function FaceTimeOverlay({ who, onEnd }: { who: string; onEnd: () => void }) {
+/**
+ * The shared WebRTC call surface.  Mail owns outgoing calls, while HomeTwin
+ * mounts this same surface for an accepted incoming FaceTime call so neither
+ * direction falls back to the phone's audio-only LCD.
+ */
+export function FaceTimeOverlay({ who, onEnd }: { who: string; onEnd: () => void }) {
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
   const [callSnap, setCallSnap] = useState<CallSnapshot | null>(null)
-  const [muted, setMuted] = useState(false)
+  const [media, setMedia] = useState<CallMediaSnapshot>({
+    localStream: null,
+    remoteStream: null,
+    video: true,
+  })
   const [cameraOn, setCameraOn] = useState(true)
-  const [elapsed, setElapsed] = useState(0)
+  const [localVideoReady, setLocalVideoReady] = useState(false)
+  const [remoteVideoReady, setRemoteVideoReady] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+  const callBegan = useRef(false)
   const connected = callSnap?.phase === 'connected'
+  const initial = who.trim().charAt(0).toUpperCase() || '?'
 
   useEffect(() => {
     installCallBridge()
-    const unsub = subscribeCall(setCallSnap)
-    return unsub
-  }, [])
-
-  useEffect(() => {
-    let alive = true
-    navigator.mediaDevices?.getUserMedia({ audio: true, video: true })
-      .then(stream => {
-        if (!alive) { stream.getTracks().forEach(t => t.stop()); return }
-        streamRef.current = stream
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream
-        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream
-      })
-      .catch(() => {})
+    const unsubscribeCall = subscribeCall(setCallSnap)
+    const unsubscribeMedia = subscribeCallMedia(setMedia)
     return () => {
-      alive = false
-      streamRef.current?.getTracks().forEach(t => t.stop())
-      streamRef.current = null
+      unsubscribeCall()
+      unsubscribeMedia()
     }
   }, [])
 
   useEffect(() => {
+    const phase = callSnap?.phase
+    if (phase === 'calling' || phase === 'connecting' || phase === 'connected') callBegan.current = true
+    if (callBegan.current && (phase === 'ended' || phase === 'idle')) onEnd()
+  }, [callSnap?.phase, onEnd])
+
+  useEffect(() => {
+    const video = localVideoRef.current
+    setLocalVideoReady(false)
+    if (!video || !connected || !cameraOn || !media.localStream) return
+    video.srcObject = media.localStream
+    void video.play().catch(() => { /* the labelled camera fallback stays visible */ })
+    return () => {
+      if (video.srcObject === media.localStream) {
+        video.pause()
+        video.srcObject = null
+      }
+    }
+  }, [cameraOn, connected, media.localStream])
+
+  useEffect(() => {
+    const video = remoteVideoRef.current
+    setRemoteVideoReady(false)
+    if (!video || !connected || !media.remoteStream) return
+    video.srcObject = media.remoteStream
+    void video.play().catch(() => { /* remote-media placeholder remains explicit */ })
+    return () => {
+      if (video.srcObject === media.remoteStream) {
+        video.pause()
+        video.srcObject = null
+      }
+    }
+  }, [connected, media.remoteStream])
+
+  useEffect(() => {
     if (!connected) return
-    const timer = window.setInterval(() => setElapsed(s => s + 1), 1_000)
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
   }, [connected])
 
   const toggleMute = () => {
-    const next = !muted
-    streamRef.current?.getAudioTracks().forEach(t => { t.enabled = !next })
-    setMuted(next)
+    toggleCallMute()
     playPop()
   }
   const toggleCamera = () => {
     const next = !cameraOn
-    streamRef.current?.getVideoTracks().forEach(t => { t.enabled = next })
+    media.localStream?.getVideoTracks().forEach(t => { t.enabled = next })
     setCameraOn(next)
     playPop()
   }
 
+  const markLocalVideoReady = (event: React.SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget
+    setLocalVideoReady(video.videoWidth > 0 && video.videoHeight > 0)
+  }
+  const markRemoteVideoReady = (event: React.SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget
+    setRemoteVideoReady(video.videoWidth > 0 && video.videoHeight > 0)
+  }
+  const elapsed = Math.max(0, Math.floor((now - (callSnap?.connectedAt ?? now)) / 1000))
+  const localHasCamera = Boolean(media.localStream?.getVideoTracks().length)
+  const remoteHasCamera = Boolean(media.remoteStream?.getVideoTracks().length)
+  const phaseLabel = callSnap?.phase === 'calling'
+    ? 'RINGING…'
+    : callSnap?.phase === 'connecting'
+      ? 'CONNECTING…'
+      : 'CALLING…'
+
   return createPortal(
     <section className={styles.ftOverlay} role="dialog" aria-modal="true" aria-label={`FaceTime with ${who}`}>
-      <div className={styles.ftSplit}>
-        <div className={styles.ftRemotePane}>
-          <video ref={remoteVideoRef} autoPlay playsInline className={styles.ftVideo} />
-          <div className={styles.ftRemoteLabel}>{who}</div>
+      {connected ? (
+        <div className={styles.ftSplit}>
+          <div className={styles.ftRemotePane}>
+            <div className={styles.ftVideoFallback} aria-hidden="true">
+              <span className={styles.ftFallbackAvatar}>{initial}</span>
+              <strong>{who}</strong>
+              <span>{remoteHasCamera ? 'Waiting for video…' : 'Connected by audio'}</span>
+            </div>
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              onLoadedData={markRemoteVideoReady}
+              onPlaying={markRemoteVideoReady}
+              onEmptied={() => setRemoteVideoReady(false)}
+              className={remoteVideoReady ? `${styles.ftVideo} ${styles.ftVideoReady}` : styles.ftVideo}
+            />
+            <div className={styles.ftRemoteLabel}>{who}</div>
+          </div>
+          <div className={styles.ftLocalPane}>
+            <div className={styles.ftVideoFallback} aria-hidden="true">
+              <span className={styles.ftFallbackAvatar}>YOU</span>
+              <strong>You</strong>
+              <span>{cameraOn ? (localHasCamera ? 'Starting camera…' : 'Camera unavailable') : 'Camera off'}</span>
+            </div>
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              onLoadedData={markLocalVideoReady}
+              onPlaying={markLocalVideoReady}
+              onEmptied={() => setLocalVideoReady(false)}
+              className={localVideoReady && cameraOn ? `${styles.ftVideo} ${styles.ftVideoReady}` : styles.ftVideo}
+            />
+            <div className={styles.ftLocalLabel}>You</div>
+          </div>
         </div>
-        <div className={styles.ftLocalPane}>
-          <video ref={localVideoRef} autoPlay muted playsInline className={cameraOn ? styles.ftVideo : `${styles.ftVideo} ${styles.ftVideoOff}`} />
-          <div className={styles.ftLocalLabel}>You</div>
+      ) : (
+        <div className={styles.ftRinging}>
+          <div className={styles.ftRingingHalo} aria-hidden="true" />
+          <div className={styles.ftRingingAvatar} aria-hidden="true">{initial}</div>
+          <strong>{who}</strong>
+          <span>FaceTime video</span>
+          <b>{phaseLabel}</b>
+          <small>{callSnap?.phase === 'calling' ? 'Waiting for them to answer' : 'Setting up your secure call'}</small>
         </div>
-      </div>
+      )}
       <div className={styles.ftStatus}>
-        {connected ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}` : 'CONNECTING...'}
+        {connected ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}` : phaseLabel}
       </div>
       <div className={styles.ftControls}>
-        <button type="button" aria-label={muted ? 'Unmute' : 'Mute'} aria-pressed={muted} onClick={toggleMute}>
+        <button type="button" aria-label={callSnap?.muted ? 'Unmute' : 'Mute'} aria-pressed={callSnap?.muted} onClick={toggleMute}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
         </button>
         <button type="button" aria-label={cameraOn ? 'Camera off' : 'Camera on'} aria-pressed={!cameraOn} onClick={toggleCamera}>
@@ -357,7 +453,10 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
   const startFaceTime = useCallback((thread: Thread) => {
     playPop()
     setFaceTimeWith({ id: thread.id, name: thread.title })
-    void placeCall(thread.id, thread.title)
+    // FaceTime owns the media it displays: ask the shared peer connection for
+    // video before the ringing screen appears, instead of opening a duplicate
+    // preview that can never be the remote caller.
+    void placeCall(thread.id, thread.title, undefined, { video: true })
   }, [])
 
   const endFaceTime = useCallback(() => {
@@ -365,7 +464,7 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
   }, [])
 
   // Tell the shell when a FaceTime overlay is up so the cube can wear the
-  // camera lens for the duration of the call — same window-event route as
+  // MSN-style contact cube for the duration of the call — same window-event route as
   // poplur-mail-thread-open below.
   useEffect(() => {
     const open = Boolean(faceTimeWith)

@@ -1163,108 +1163,153 @@
   height: 100%;
   padding: 0;
   border: 0;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  /* Keep the map visible behind the forecast. A clear hit layer still lets a
+     tap outside dismiss it without adding another compositing pass. */
+  background: transparent;
 }
 
 .weatherForecast {
   position: absolute;
   z-index: 90;
-  left: 50%;
-  right: auto;
-  top: max(130px, calc(env(safe-area-inset-top) + 96px));
+  /* This is a MAP CARD, not a full-screen weather app: it must sit wholly
+     between the left action axis and the right zoom axis. The positions are
+     derived from the same shared axis variables as those controls. */
+  left: calc(var(--map-mute-center) + 36px);
+  right: calc(100vw - var(--map-search-center) + 40px);
+  /* Clear the logo/location header instead of crowding the top safe area. */
+  top: max(176px, calc(env(safe-area-inset-top) + 142px));
   bottom: auto;
-  /* The forecast is a WINDOW, the same one the ads are.
-     Poplur's one panel style: a light chassis with a real title bar and
-     traffic lights, and the content sunk into a dark screen below it. It was
-     frosted glass, which made it the only floating panel in the app that
-     belonged to no family — the ad window already answers "what does a panel
-     look like here", so the weather uses that answer.
-     Tokens deliberately match CommerceSuggestionWindow.module.css; if that
-     chassis changes, change this with it. */
-  width: min(390px, calc(100vw - 32px));
+  width: auto;
   padding: 0;
-  overflow: hidden;
-  transform: translateX(-50%);
-  color: #171419;
-  background: rgba(238, 235, 233, 0.68);
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: 14px;
-  backdrop-filter: blur(18px) saturate(1.35);
-  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  overflow: visible;
+  color: #fff4fb;
+  background: transparent;
+  border: 1px solid rgba(255, 172, 221, 0.28);
+  border-radius: 19px;
   box-shadow:
-    0 28px 74px rgba(0, 0, 0, 0.68),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    0 8px 22px rgba(5, 0, 12, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .weatherTitleBar {
-  flex: none;
-  min-height: 34px;
-  padding: 0 10px;
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) 34px;
+  min-height: 40px;
+  padding: 8px 10px 3px 12px;
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 5px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(216, 211, 215, 0.62));
-  border-bottom: 1px solid rgba(0, 0, 0, 0.25);
-  box-shadow: inset 0 1px 0 #fff;
+  gap: 8px;
+  background: linear-gradient(90deg, rgba(39, 10, 35, 0.84), rgba(15, 9, 33, 0.72));
+  border-radius: 18px 18px 0 0;
+  border-bottom: 1px solid rgba(255, 174, 221, 0.18);
   user-select: none;
 }
 
-.weatherTraffic { display: flex; align-items: center; gap: 7px; }
-
-.weatherLight {
-  width: 12px;
-  height: 12px;
-  padding: 0;
-  border: 0.5px solid rgba(0, 0, 0, 0.3);
-  border-radius: 50%;
-  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.65);
+.weatherKicker {
+  display: block;
+  color: #ff9ad2;
+  font: 900 10px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 1.25px;
+  text-shadow: 0 2px 4px rgba(5, 0, 12, 0.9);
 }
 
-.weatherForecast button.weatherLight { cursor: pointer; }
-.weatherForecast button.weatherLight:active { transform: scale(0.84); }
+.weatherUpdated {
+  display: block;
+  margin-top: 3px;
+  color: rgba(224, 213, 244, 0.68);
+  font: 700 9px/1 system-ui, -apple-system, sans-serif;
+  text-shadow: 0 2px 4px rgba(5, 0, 12, 0.9);
+}
 
-.weatherClose { background: #ff5f57; }
-/* Amber and green are drawn but inert: this panel has one job and no second
-   size to be. They are chrome, not controls, so they are spans, not buttons —
-   a dead button is worse than a painted one. */
-.weatherMinimize { background: #ffbd2e; opacity: 0.55; }
-.weatherZoom { background: #28c840; opacity: 0.55; }
+.weatherCardClose {
+  width: 25px;
+  height: 25px;
+  flex: none;
+  padding: 0 0 2px;
+  border: 1px solid rgba(255, 135, 205, 0.82);
+  border-radius: 50%;
+  color: #fff3fb;
+  background: linear-gradient(180deg, #f650aa, #a71567);
+  box-shadow: 0 0 10px rgba(255, 63, 169, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  font: 900 19px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.weatherCardClose:active { transform: scale(0.9); }
 
-.weatherTitle {
+.weatherNow {
+  min-height: 80px;
+  padding: 3px 10px 5px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 106px;
+  align-items: center;
+  background:
+    radial-gradient(circle at 78% 50%, rgba(217, 65, 178, 0.22), transparent 45%),
+    linear-gradient(90deg, rgba(13, 7, 24, 0.82), rgba(16, 7, 26, 0.68));
+  border-top: 1px solid rgba(255, 174, 221, 0.12);
+  border-bottom: 1px solid rgba(255, 174, 221, 0.14);
+}
+.weatherNowCopy { min-width: 0; display: grid; gap: 2px; }
+.weatherReading {
+  color: #fff5fc;
+  font: 950 clamp(38px, 11vw, 54px)/0.86 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: -3px;
+  text-shadow: 0 3px 0 #481331, 0 0 14px rgba(255, 61, 171, 0.58);
+}
+.weatherCondition {
   overflow: hidden;
-  color: transparent;
-  background: linear-gradient(180deg, #ff73bd, #7fe3ff 58%, #7856ff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  font: 900 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  text-align: center;
+  color: #ffd3e9;
+  font: 900 12px/1.15 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
-  -webkit-text-stroke: 1.2px rgba(20, 8, 24, 0.82);
-  paint-order: stroke fill;
-  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.72));
+}
+.weatherRange { color: #94dcff; font: 800 10px/1.15 system-ui, sans-serif; }
+
+.weatherSticker {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  background-color: transparent;
+  background-image: url('/weather/poplur-weather-glyphs.png');
+  background-repeat: no-repeat;
+  background-size: 200% 200%;
+  filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.42));
+}
+.weatherStickerSun { background-position: 0 0; }
+.weatherStickerCloud { background-position: 100% 0; }
+.weatherStickerStorm { background-position: 0 100%; }
+.weatherStickerSnow { background-position: 100% 100%; }
+.weatherHeroSticker { width: 106px; justify-self: end; }
+
+.weatherStripMeta {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 12px 5px;
+  color: #fa8bc9;
+  font: 900 9px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.65px;
+  text-transform: uppercase;
+  text-shadow: 0 2px 4px rgba(5, 0, 12, 0.9);
 }
 
-.weatherTag {
-  justify-self: end;
-  color: #6a6669;
-  font: 800 9px/1 ui-monospace, 'SF Mono', monospace;
-  letter-spacing: 0.6px;
-}
-
-/* the screen inside the window — dark, the way the ad's media panel is */
 .weatherDays {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 5px;
-  padding: 13px 12px 14px;
-  background: rgba(16, 11, 18, 0.76);
+  gap: 4px;
+  padding: 0 7px 8px;
   color: #fff2f8;
+  background: linear-gradient(180deg, rgba(16, 7, 25, 0.68), rgba(9, 6, 18, 0.8));
+  border-radius: 0 0 18px 18px;
 }
-.weatherDays article { display: grid; place-items: center; gap: 4px; min-width: 0; }
+.weatherDays article {
+  min-width: 0;
+  padding: 6px 1px 5px;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 3px;
+  border: 1px solid rgba(255, 126, 198, 0.34);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 175, 224, 0.12), rgba(4, 2, 12, 0.22));
+}
 .weatherDays strong {
   color: transparent;
   background: linear-gradient(180deg, #fff, #ff8ac6);
@@ -1272,7 +1317,7 @@
   background-clip: text;
   -webkit-text-stroke: 1px rgba(5, 2, 9, 0.94);
   paint-order: stroke fill;
-  font: 900 10px/1 system-ui, sans-serif;
+  font: 900 8px/1 system-ui, sans-serif;
   text-transform: uppercase;
 }
 .weatherDays article > span:not(.weatherDayIcon) {
@@ -1288,11 +1333,10 @@
   color: #f3ddec;
   -webkit-text-stroke: 0.8px rgba(5, 2, 9, 0.88);
   paint-order: stroke fill;
-  font: 800 11px/1 system-ui, sans-serif;
+  font: 800 10px/1 system-ui, sans-serif;
   font-style: normal;
 }
-.weatherDayIcon { display: block; width: 42px; height: 42px; }
-.weatherDayIcon svg { width: 42px; height: 42px; }
+.weatherDayIcon { display: block; width: min(44px, 100%); height: auto; }
 
 .weatherVisual {
   position: relative;
@@ -1396,21 +1440,6 @@
   filter: drop-shadow(0 0 7px rgba(74, 196, 255, 0.45));
 }
 
-/* Sun by day, moon by night — only while the whole earth is in frame. */
-.celestial {
-  position: absolute;
-  z-index: 24;
-  transform: translate(-50%, -50%);
-  transition: opacity 1.2s ease;
-  pointer-events: none;
-  filter:
-    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
-    drop-shadow(0 8px 14px rgba(0, 0, 0, 0.5));
-}
-
-/* the one below the horizon fades out rather than popping away */
-.celestialDim { opacity: 0.14; }
-
 /* What the wallet just did. */
 .premiumNote {
   position: absolute;
@@ -1469,13 +1498,34 @@
   }
 
   .weatherForecast {
-    left: 50%;
-    right: auto;
-    top: max(118px, calc(env(safe-area-inset-top) + 86px));
+    left: calc(var(--map-mute-center) + 34px);
+    right: calc(100vw - var(--map-search-center) + 36px);
+    top: max(162px, calc(env(safe-area-inset-top) + 130px));
     bottom: auto;
-    width: min(360px, calc(100vw - 24px));
+    width: auto;
     padding: 0;
-    transform: translateX(-50%);
+  }
+
+  .weatherNow {
+    grid-template-columns: minmax(0, 1fr) 82px;
+    min-height: 72px;
+  }
+
+  .weatherHeroSticker { width: 82px; }
+  .weatherReading { font-size: clamp(34px, 10vw, 46px); }
+  .weatherCondition { font-size: 11px; }
+  .weatherDays article { padding-top: 5px; }
+  .weatherDayIcon { width: min(37px, 100%); }
+  .weatherDays article > span:not(.weatherDayIcon) { font-size: 12px; }
+  .weatherDays article > i { font-size: 9px; }
+  .weatherKicker { font-size: 9px; }
+  .weatherUpdated { font-size: 8px; }
+  .weatherStripMeta { padding-top: 6px; font-size: 8px; }
+  .weatherDays { gap: 3px; padding-inline: 6px; }
+  .weatherDays article { border-radius: 8px; }
+  .weatherCardClose { width: 23px; height: 23px; font-size: 17px; }
+  .weatherForecast {
+    border-radius: 16px;
   }
 }
 

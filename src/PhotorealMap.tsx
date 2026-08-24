@@ -134,7 +134,7 @@ export default function PhotorealMap({
   selectedId,
   onSelectPoi,
   mapRef,
-  dayTime,
+  dayTime = true,
   weatherMode,
   onIntroComplete,
   zoomMin,

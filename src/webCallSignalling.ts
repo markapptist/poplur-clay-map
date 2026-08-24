@@ -23,7 +23,7 @@ let callUnsub: (() => void) | null = null
 let candidateUnsub: (() => void) | null = null
 let incomingUnsub: (() => void) | null = null
 
-async function startCall(otherUID: string, callerName?: string): Promise<string | null> {
+async function startCall(otherUID: string, callerName?: string, video = false): Promise<string | null> {
   const uid = currentUid()
   if (!uid || !otherUID || otherUID === uid) return null
   const ref = doc(collection(webDb(), 'calls'))
@@ -35,6 +35,9 @@ async function startCall(otherUID: string, callerName?: string): Promise<string 
       callerName: displayName,
       calleeId: otherUID,
       status: 'ringing',
+      // This is an intent flag, not media.  It lets the receiver choose the
+      // FaceTime surface before the WebRTC offer is relayed.
+      video,
       createdAt: serverTimestamp(),
       provider: 'webrtc',
     })
@@ -145,6 +148,7 @@ export function observeIncoming(): void {
         callId: change.doc.id,
         callerId: (data.callerId as string) ?? '',
         callerName: (data.callerName as string) ?? 'Unknown',
+        video: data.video === true,
       })
     })
   })
@@ -166,10 +170,14 @@ export function stopAll(): void {
  * either transport with the same messages.
  */
 export function handleSignal(message: Record<string, unknown>): void {
-  const m = message as Record<string, string | Record<string, unknown>>
+  const m = message
   switch (m.type) {
     case 'callStart':
-      void startCall(String(m.otherId ?? ''), m.callerName as string | undefined)
+      void startCall(
+        String(m.otherId ?? ''),
+        typeof m.callerName === 'string' ? m.callerName : undefined,
+        m.video === true,
+      )
         .then(id => emit({ type: 'poplurCallStarted', callId: id ?? '', ok: !!id }))
       break
     case 'callAccept': void acceptCall(String(m.callId ?? '')); break

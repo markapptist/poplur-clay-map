@@ -12,7 +12,7 @@
 // with no native shell will later reach the same `calls/` collection through
 // web Firebase (Stage 2). The RTCPeerConnection below does not change when the
 // transport does — the same engine runs on every platform, which is the whole
-// point of doing the media in the page rather than per-native-SDK.
+// point of doing call media in the page rather than per-native-SDK.
 
 import { postNativeEvent, isNativeShell } from './nativeBridge'
 
@@ -20,7 +20,7 @@ export type CallPhase =
   | 'idle'        // nothing happening
   | 'calling'     // caller: ringing the other side
   | 'connecting'  // media negotiating (either side)
-  | 'connected'   // audio is flowing
+  | 'connected'   // call media is flowing
   | 'ended'       // just torn down, about to settle to idle
 
 export interface CallSnapshot {
@@ -32,6 +32,22 @@ export interface CallSnapshot {
   connectedAt: number | null
   /** true while the caller is ringing but not yet answered. */
   outgoing: boolean
+}
+
+/**
+ * The media belonging to the one active call.  Voice calls can leave the
+ * video tracks absent; FaceTime subscribes here rather than opening a second,
+ * unrelated getUserMedia stream just to paint its tiles.
+ */
+export interface CallMediaSnapshot {
+  localStream: MediaStream | null
+  remoteStream: MediaStream | null
+  video: boolean
+}
+
+export interface CallOptions {
+  /** Ask the peer connection for camera tracks as well as the call audio. */
+  video?: boolean
 }
 
 // Public STUN only. A production deployment adds TURN for the ~10% of networks
@@ -63,6 +79,7 @@ function sendSignal(message: Record<string, unknown>): void {
 
 let pc: RTCPeerConnection | null = null
 let localStream: MediaStream | null = null
+let remoteStream: MediaStream | null = null
 let remoteAudio: HTMLAudioElement | null = null
 
 let callId = ''
@@ -72,6 +89,7 @@ let peerName = ''
 let phase: CallPhase = 'idle'
 let muted = false
 let connectedAt: number | null = null
+let videoRequested = false
 
 // The far side's ICE can arrive before its description is set; applying a
 // candidate before setRemoteDescription throws, so hold them until the
@@ -80,6 +98,7 @@ let remoteDescriptionSet = false
 let pendingCandidates: RTCIceCandidateInit[] = []
 
 const listeners = new Set<(s: CallSnapshot) => void>()
+const mediaListeners = new Set<(s: CallMediaSnapshot) => void>()
 
 function snapshot(): CallSnapshot {
   return { phase, callId, peerName, muted, connectedAt, outgoing }
@@ -88,6 +107,15 @@ function snapshot(): CallSnapshot {
 function emit(): void {
   const s = snapshot()
   listeners.forEach(l => { try { l(s) } catch { /* listener's problem */ } })
+}
+
+function mediaSnapshot(): CallMediaSnapshot {
+  return { localStream, remoteStream, video: videoRequested }
+}
+
+function emitMedia(): void {
+  const s = mediaSnapshot()
+  mediaListeners.forEach(l => { try { l(s) } catch { /* listener's problem */ } })
 }
 
 /** Subscribe to call state; fires immediately with the current snapshot. */
@@ -99,6 +127,13 @@ export function subscribeCall(listener: (s: CallSnapshot) => void): () => void {
 
 export function callState(): CallSnapshot {
   return snapshot()
+}
+
+/** Subscribe to the actual media tracks for the active call. */
+export function subscribeCallMedia(listener: (s: CallMediaSnapshot) => void): () => void {
+  mediaListeners.add(listener)
+  listener(mediaSnapshot())
+  return () => { mediaListeners.delete(listener) }
 }
 
 function setPhase(p: CallPhase): void {
@@ -118,13 +153,19 @@ function ensureRemoteAudio(): HTMLAudioElement {
   return el
 }
 
-async function ensureMic(): Promise<MediaStream | null> {
-  if (localStream) return localStream
+async function ensureLocalMedia(video: boolean): Promise<MediaStream | null> {
+  if (localStream && (!video || localStream.getVideoTracks().length > 0)) return localStream
+  // A call cannot upgrade an already-published audio stream in place without
+  // renegotiating. There is only one active call, so clean up the stale stream
+  // before taking the video-capable one requested by FaceTime.
+  localStream?.getTracks().forEach(track => track.stop())
+  localStream = null
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video })
+    emitMedia()
     return localStream
   } catch (err) {
-    console.warn('[webCall] microphone unavailable/denied', err)
+    console.warn(`[webCall] ${video ? 'camera or microphone' : 'microphone'} unavailable/denied`, err)
     return null
   }
 }
@@ -139,9 +180,17 @@ function buildPeer(): RTCPeerConnection {
   }
 
   peer.ontrack = ev => {
+    const stream = ev.streams[0]
+    if (stream) {
+      remoteStream = stream
+    } else {
+      if (!remoteStream) remoteStream = new MediaStream()
+      if (!remoteStream.getTracks().some(track => track.id === ev.track.id)) remoteStream.addTrack(ev.track)
+    }
     const audio = ensureRemoteAudio()
-    audio.srcObject = ev.streams[0] ?? new MediaStream([ev.track])
+    audio.srcObject = remoteStream
     void audio.play?.().catch(() => { /* autoplay policies; user gesture opened the call */ })
+    emitMedia()
   }
 
   peer.onconnectionstatechange = () => {
@@ -170,19 +219,25 @@ function buildPeer(): RTCPeerConnection {
  * then native opens the `calls/` doc and answers with `poplurCallStarted`
  * carrying the id we build the offer against.
  */
-export async function placeCall(peerId: string, name: string, callerName?: string): Promise<void> {
+export async function placeCall(peerId: string, name: string, callerName?: string, options: CallOptions = {}): Promise<void> {
   if (phase !== 'idle') return
   peerName = name
   isCaller = true
   outgoing = true
+  videoRequested = Boolean(options.video)
+  emitMedia()
   setPhase('calling')
 
-  const mic = await ensureMic()
-  if (!mic) { cleanup('ended'); return }
+  const media = await ensureLocalMedia(videoRequested)
+  if (!media) { cleanup('ended'); return }
 
   // Native bridge inside the app; the web Firestore backend in a plain browser.
   // Either way the rendezvous opens and answers with poplurCallStarted.
-  sendSignal({ type: 'callStart', otherId: peerId, callerName })
+  // Persist the media intent with the rendezvous.  The callee needs this
+  // before it has received the SDP offer so an incoming FaceTime can open its
+  // camera and the shared video surface, while ordinary phone calls remain
+  // audio-only.
+  sendSignal({ type: 'callStart', otherId: peerId, callerName, video: videoRequested })
 }
 
 async function onCallStarted(id: string, ok: boolean): Promise<void> {
@@ -190,7 +245,10 @@ async function onCallStarted(id: string, ok: boolean): Promise<void> {
   if (!ok || !id) { cleanup('ended'); return }
   callId = id
   pc = buildPeer()
-  const offer = await pc.createOffer({ offerToReceiveAudio: true })
+  const offer = await pc.createOffer({
+    offerToReceiveAudio: true,
+    offerToReceiveVideo: videoRequested,
+  })
   await pc.setLocalDescription(offer)
   sendSignal({ type: 'callDescription', callId, sdpType: 'offer', sdp: offer.sdp ?? '' })
 }
@@ -199,16 +257,18 @@ async function onCallStarted(id: string, ok: boolean): Promise<void> {
  * Accept an incoming call. Builds the peer and tells native to observe; the
  * caller's offer then arrives as `poplurCallDescription` and we answer it.
  */
-export async function acceptCall(id: string, name: string): Promise<void> {
+export async function acceptCall(id: string, name: string, options: CallOptions = {}): Promise<void> {
   if (phase === 'connected' || phase === 'connecting') return
   callId = id
   peerName = name
   isCaller = false
   outgoing = false
+  videoRequested = Boolean(options.video)
+  emitMedia()
   setPhase('connecting')
 
-  const mic = await ensureMic()
-  if (!mic) { hangup(); return }
+  const media = await ensureLocalMedia(videoRequested)
+  if (!media) { hangup(); return }
 
   pc = buildPeer()
   sendSignal({ type: 'callAccept', callId })
@@ -270,11 +330,14 @@ function cleanup(finalPhase: CallPhase): void {
   localStream?.getTracks().forEach(t => t.stop())
   localStream = null
   if (remoteAudio) remoteAudio.srcObject = null
+  remoteStream = null
   remoteDescriptionSet = false
   pendingCandidates = []
   isCaller = false
   connectedAt = null
   callId = ''
+  videoRequested = false
+  emitMedia()
 
   setPhase(finalPhase)
   // 'ended' is a brief flash so the UI can show "call ended" before it clears;

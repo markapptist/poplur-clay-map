@@ -186,7 +186,10 @@ export function installClaimsLayer(map: mapboxgl.Map) {
       // The GROUND recolors — water stays water (this layer slides in under
       // the clay water fill), streets/buildings colorize per feature.
       'fill-color': claimColor('#D93D89') as never,
-      'fill-opacity': 0.78,
+      // Strongest at planet scale, where a real kilometre radius would
+      // otherwise collapse into a few pixels; settle back to the established
+      // city opacity before the close-up texture and shockwave layers appear.
+      'fill-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.92, 7.5, 0.78],
     },
   }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
 
@@ -195,6 +198,9 @@ if (!liteTier())   map.addLayer({
       slot: 'bottom',
       type: 'fill',
       source: CLAIMS_SOURCE,
+      // A hatch is useful local material detail and unreadable world-scale
+      // overdraw. The solid conquered terrain alone carries the overview.
+      minzoom: 7.5,
       paint: {
         'fill-pattern': CLAIMS_TEXTURE_IMAGE,
         'fill-opacity': 0.66,
@@ -295,6 +301,7 @@ if (!liteTier())   map.addLayer({
       slot: 'middle',
       type: 'line',
       source: CLAIMS_RINGS_SOURCE,
+      minzoom: 7.5,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: {
         'line-color': claimColor('#FFB3D9') as never,
@@ -318,6 +325,7 @@ if (!liteTier())   map.addLayer({
       slot: 'middle',
       type: 'circle',
       source: CLAIMS_POINTS_SOURCE,
+      minzoom: 7.5,
       // Clusters are a planet-zoom concept; the origin bloom belongs to a real
       // single claim, and by the time you can see one the cluster is gone.
       filter: ['!', ['has', 'point_count']] as never,
@@ -332,17 +340,17 @@ if (!liteTier())   map.addLayer({
 
   map.addLayer({
     id: CLAIMS_RIM,
-    slot: 'middle',
+    slot: 'bottom',
     type: 'line',
     source: CLAIMS_SOURCE,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: {
       'line-color': claimColor('#FF8AC6') as never,
-      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.2, 10, 2.5, 16, 5],
-      'line-opacity': 0.92,
-      'line-blur': 0.4,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 2, 7.5, 1.8, 10, 2.5, 16, 5],
+      'line-opacity': 0.96,
+      'line-blur': 0.25,
     },
-  })
+  }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
 }
 
 /**

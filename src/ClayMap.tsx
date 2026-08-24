@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
-import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, wakeManagedRendering } from './nativeBridge'
-import { onFrame, onTick, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
+import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
+import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { installMapIdleSnapshot, type MapIdleSnapshotController } from './mapIdleSnapshot'
 import { CLAY_ROUTES, PALETTE } from './data'
@@ -13,7 +13,6 @@ import {
   type LandmarkArtDirection,
   type NearLandmark3D,
 } from './libertyLandmark'
-import { subsolarPoint, sublunarPoint, moonPhase, CELESTIAL_MODELS } from './celestial'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
 import { skyShadeAt, type SkyShade } from './skyCycle'
@@ -41,7 +40,10 @@ export interface ClayMapProps {
   onSelectPoi: (id: string) => void
   mapRef: React.MutableRefObject<mapboxgl.Map | null>
   theme: MapTheme
-  dayTime: boolean
+  /** Legacy photoreal renderer input. The shared clay map derives night from
+   *  `sky`; optional so its removed celestial decoration cannot force a
+   *  second day/night source back into the active renderer. */
+  dayTime?: boolean
   /** Current sky shade (skyCycle.skyShadeAt) — the owner re-syncs it on its
    *  minute cadence; `key` equality decides whether a re-apply happens. */
   sky?: SkyShade
@@ -61,6 +63,8 @@ export interface ClayMapProps {
     icon: string
     mode: WeatherMode
   }>
+  /** Current local reading, kept separate from the daily high/low strip. */
+  weatherTemp?: number | null
   /** Candidate real-world targets for the first post-globe lock. */
   introDestinations?: { coords: [number, number] }[]
   /** Drops the map to a forward-facing street-level 3D camera. */
@@ -150,6 +154,31 @@ export function WeatherMark({
   )
 }
 
+function weatherConditionLabel(mode: WeatherMode) {
+  switch (mode) {
+    case 'clear': return 'Sunny now'
+    case 'cloudy': return 'Partly cloudy'
+    case 'rain': return 'Rain moving through'
+    case 'thunder':
+    case 'storm': return 'Storm watch'
+    case 'snow':
+    case 'hail': return 'Snow in the air'
+    case 'fog': return 'Soft and foggy'
+    default: return 'Local forecast'
+  }
+}
+
+function WeatherSticker({ mode, className = '' }: { mode: WeatherMode; className?: string }) {
+  const tone = mode === 'thunder' || mode === 'storm' || mode === 'rain'
+    ? 'storm'
+    : mode === 'snow' || mode === 'hail'
+      ? 'snow'
+      : mode === 'clear'
+        ? 'sun'
+        : 'cloud'
+  return <span className={`${styles.weatherSticker} ${styles[`weatherSticker${tone[0].toUpperCase()}${tone.slice(1)}`]} ${className}`} aria-hidden="true" />
+}
+
 // One cross-platform renderer: Mercator and flat at city/region scale, with
 // our scoped clay building extrusions appearing only at close street zoom.
 // This is deliberately distinct from the former flat-only fallback and from
@@ -157,9 +186,13 @@ export function WeatherMark({
 export const MAP_2D = false
 const SHARED_ADAPTIVE_MAP = true
 // The adaptive renderer hands buildings from the inexpensive flat footprint
-// layers to real extrusion geometry at one exact boundary. Keeping this shared
-// prevents a flat roof layer from continuing above the 3D buildings.
-const BUILDING_3D_MIN_ZOOM = 14
+// layers to real extrusion geometry at one exact boundary. At z15, the camera
+// has narrowed to a local district, so Mapbox's viewport-tile culling keeps
+// the active 3D building count bounded. Wider views retain the full city as
+// low-cost flat footprints instead of tessellating a whole downtown at once.
+// Keeping this shared prevents a flat roof layer from continuing above the 3D
+// buildings, camera handoff, or landmark reveal.
+const BUILDING_3D_MIN_ZOOM = 15
 const MAP_LITE_REQUESTED =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).get('mapLite') === '1'
@@ -208,6 +241,12 @@ const MAP_TAP_LANE = 0.25
 // constrained Mapbox globe view used by the app — the shade table's Deep
 // Night is the sanctioned floor.
 function applySky(map: mapboxgl.Map, shade: SkyShade) {
+  // Standard's lighting preset is inexpensive state, not a render loop. Apply
+  // it to the shared flat/3D-adaptive renderer too; the old early return kept
+  // the clay sheet in daytime lighting even while the surrounding sky changed.
+  try {
+    map.setConfigProperty('basemap', 'lightPreset', shade.lightPreset)
+  } catch { /* light presets vary by Mapbox style */ }
   // The fallback map is deliberately FLAT. Fog/atmosphere only makes sense on
   // the globe; keeping it on in 2D leaves Mapbox's atmosphere pass alive and
   // was one of the GPU costs that survived after visible animation stopped on
@@ -227,9 +266,6 @@ function applySky(map: mapboxgl.Map, shade: SkyShade) {
     return
   }
   try {
-    map.setConfigProperty('basemap', 'lightPreset', shade.lightPreset)
-  } catch { /* light presets vary by Mapbox style */ }
-  try {
     map.setFog({
       range: [0.6, 8],
       color: shade.hazeColor,
@@ -241,10 +277,30 @@ function applySky(map: mapboxgl.Map, shade: SkyShade) {
   } catch { /* fog unsupported */ }
 }
 
+// Night changes the existing clay paints once at the day/night boundary. It
+// deliberately darkens only the unclaimed branches: conquered terrain keeps
+// its bright owner colour, so ownership becomes clearer rather than being
+// hidden beneath a screen-wide tint. No overlay and no continuously animated
+// shader means no extra fill-rate while the phone is resting on the map.
+let mapNightModeActive = false
+
+function renderedTheme(theme: MapTheme, night: boolean): MapTheme {
+  if (!night) return theme
+  return {
+    ...theme,
+    land: '#202747',
+    park: '#21453f',
+    water: '#0b234f',
+    road: '#090812',
+    roadRim: '#443454',
+    buildingDark: '#111320',
+  }
+}
+
 
 // Re-colours every themable layer in place — called on theme switch without
 // rebuilding the map. Colour slots mirror the app's cube skins.
-function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
+function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActive) {
   // Native WebViews and Vite refreshes can preserve the Map instance while
   // Mapbox is between style teardown and installation. Even read APIs such as
   // getStyle/getLayer throw in that interval, so let the normal style boot
@@ -254,6 +310,8 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
   } catch {
     return
   }
+  mapNightModeActive = night
+  const palette = renderedTheme(theme, night)
   const cfg = (key: string, value: unknown) => {
     try { map.setConfigProperty('basemap', key, value as never) } catch { /* property absent */ }
   }
@@ -283,12 +341,12 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
   }
   cfg('roadsBrightness', 0.2)
 
-  cfg('colorLand', theme.land)
-  cfg('colorGreenspace', theme.park)
-  cfg('colorWater', theme.water)
-  cfg('colorRoads', theme.road)
-  cfg('colorMotorways', theme.road)
-  cfg('colorTrunks', theme.roadRim)
+  cfg('colorLand', palette.land)
+  cfg('colorGreenspace', palette.park)
+  cfg('colorWater', palette.water)
+  cfg('colorRoads', palette.road)
+  cfg('colorMotorways', palette.road)
+  cfg('colorTrunks', palette.roadRim)
   cfg('colorPlaceLabels', theme.accentHot)
   cfg('colorRoadLabels', PALETTE.white)
   // The clay arteries below are the only roads we want to read; Standard's own
@@ -303,11 +361,11 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
   // These layer ids are present in dark-v11; Standard ignores the calls above
   // through its config properties.
   set('background', 'background-color', PALETTE.bg)
-  set('land', 'background-color', theme.land)
-  set('water', 'fill-color', theme.water)
-  set('waterway', 'line-color', theme.water)
+  set('land', 'background-color', palette.land)
+  set('water', 'fill-color', palette.water)
+  set('waterway', 'line-color', palette.water)
   ;['landcover', 'landuse', 'national-park', 'park', 'pitch'].forEach(id => {
-    set(id, 'fill-color', theme.park)
+    set(id, 'fill-color', palette.park)
     set(id, 'fill-opacity', 1)
   })
 
@@ -356,6 +414,16 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
 }
 
 function flatBuildingColor() {
+  if (mapNightModeActive) {
+    return ['case',
+      ['==', ['%', ['to-number', ['id']], 6], 0], '#35384b',
+      ['==', ['%', ['to-number', ['id']], 6], 1], '#46485a',
+      ['==', ['%', ['to-number', ['id']], 6], 2], '#303448',
+      ['==', ['%', ['to-number', ['id']], 6], 3], '#4c3f57',
+      ['==', ['%', ['to-number', ['id']], 6], 4], '#3d4052',
+      '#34384a',
+    ]
+  }
   return ['case',
     ['==', ['%', ['to-number', ['id']], 6], 0], '#b2916c',
     ['==', ['%', ['to-number', ['id']], 6], 1], '#d6bd96',
@@ -407,29 +475,39 @@ function claimedWithin(): unknown {
 // The 3D building + cap palettes, shared by applyTheme and the colour-circle
 // repaint so the two can never disagree about what a claimed tower wears.
 function building3DColor() {
+  const regular = mapNightModeActive
+    ? ['case',
+        ['==', ['%', ['to-number', ['id']], 9], 0], '#343746',
+        ['==', ['%', ['to-number', ['id']], 9], 4], '#494b5d',
+        '#3c4051',
+      ]
+    : ['case',
+        ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
+        ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
+        '#dbd3c7',
+      ]
   return ['case',
     claimedWithin(), ['case',
       ['==', ['%', ['to-number', ['id']], 9], 0], takeoverTint('#e8368f'),
       ['==', ['%', ['to-number', ['id']], 9], 4], takeoverTint('#f983c1'),
       takeoverTint('#ee3d98'),
     ],
-    ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
-    ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
-    '#dbd3c7',
+    regular,
   ]
 }
 
 function buildingCaps3DColor() {
   return ['case',
-    claimedWithin(), takeoverTint('#ff9ccd'), '#efe9df']
+    claimedWithin(), takeoverTint('#ff9ccd'), mapNightModeActive ? '#55586b' : '#efe9df']
 }
 
-function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
+function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActive) {
   const set = (layer: string, prop: string, value: unknown) => {
     if (!map.getLayer(layer)) return
     try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* layer absent */ }
   }
-  applyStandardConfig(map, theme)
+  applyStandardConfig(map, theme, night)
+  const palette = renderedTheme(theme, night)
 
   // Realistic mode has none of the clay road/coast/building layers, so skip the
   // recolour pass entirely.
@@ -437,20 +515,20 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme) {
 
   set('clay-coast-shadow', 'line-color', '#04121f')
   set('clay-coast-rim', 'line-color', 'rgba(255, 255, 255, 0.55)')
-  set('clay-land-background', 'background-color', theme.land)
-  set('clay-water-fill', 'fill-color', theme.water)
+  set('clay-land-background', 'background-color', palette.land)
+  set('clay-water-fill', 'fill-color', palette.water)
   const claimFeatures = claimsWithinCollection()
   const claimedPaint = (normal: unknown, claimed: unknown) =>
     claimFeatures.features.length
       ? ['case', ['within', claimFeatures], claimed, normal]
       : normal
-  set('clay-grass-fill', 'fill-color', claimedPaint(theme.park, takeoverTint('#D85D96')))
+  set('clay-grass-fill', 'fill-color', claimedPaint(palette.park, takeoverTint('#D85D96')))
   // Claimed territory keeps its takeover colours through every theme/day
   // re-apply: streets fully inside a claim mold in Poplur plum, and claimed
   // buildings re-mold pink — the theme only styles the UNCLAIMED branch.
-  set('clay-minor-roads', 'line-color', claimedPaint(theme.road, takeoverTint('#9c2a6e')))
-  set('clay-real-road-body', 'line-color', claimedPaint(theme.road, takeoverTint('#8a2260')))
-  set('clay-real-road-rim', 'line-color', claimedPaint(theme.roadRim, takeoverTint('#ff9ccd')))
+  set('clay-minor-roads', 'line-color', claimedPaint(palette.road, takeoverTint('#9c2a6e')))
+  set('clay-real-road-body', 'line-color', claimedPaint(palette.road, takeoverTint('#8a2260')))
+  set('clay-real-road-rim', 'line-color', claimedPaint(palette.roadRim, takeoverTint('#ff9ccd')))
   set('clay-real-road-stitches', 'line-color', theme.accentHot)
   set('clay-trail-stitches', 'line-color', theme.accent)
   set('clay-buildings-2d', 'fill-color',
@@ -466,8 +544,9 @@ function applyComposeSurfacePreview(
   preview: GeoJSON.FeatureCollection | null,
   theme: MapTheme,
 ) {
+  const palette = renderedTheme(theme, mapNightModeActive)
   if (!preview?.features.length) {
-    applyTheme(map, theme)
+    applyTheme(map, theme, mapNightModeActive)
     return
   }
   const withinPreview = ['within', preview]
@@ -489,27 +568,22 @@ function applyComposeSurfacePreview(
   }
 
   set('clay-grass-fill', 'fill-color',
-    takeover(theme.park, takeoverTint('#D85D96'), takeoverTint('#ED78AF')))
+    takeover(palette.park, takeoverTint('#D85D96'), takeoverTint('#ED78AF')))
   set('clay-minor-roads', 'line-color',
-    takeover(theme.road, takeoverTint('#9c2a6e'), takeoverTint('#B52572')))
+    takeover(palette.road, takeoverTint('#9c2a6e'), takeoverTint('#B52572')))
   set('clay-real-road-body', 'line-color',
-    takeover(theme.road, takeoverTint('#8a2260'), takeoverTint('#A91D67')))
+    takeover(palette.road, takeoverTint('#8a2260'), takeoverTint('#A91D67')))
   set('clay-real-road-rim', 'line-color',
-    takeover(theme.roadRim, takeoverTint('#ff9ccd'), takeoverTint('#FFD2E8')))
+    takeover(palette.roadRim, takeoverTint('#ff9ccd'), takeoverTint('#FFD2E8')))
   set('clay-buildings-2d', 'fill-color',
     takeover(flatBuildingColor(), claimedFlatBuildingColor(), claimedFlatBuildingColor()))
 
-  const regularBuilding = ['case',
-    claimedWithin(), claimedFlatBuildingColor(),
-    ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
-    ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
-    '#dbd3c7',
-  ]
+  const regularBuilding = building3DColor()
   set('clay-buildings-3d', 'fill-extrusion-color',
     ['case', withinPreview, claimedFlatBuildingColor(), regularBuilding])
   set('clay-building-caps', 'fill-extrusion-color',
     ['case', withinPreview, takeoverTint('#FFD0E6'),
-      claimedWithin(), takeoverTint('#ff9ccd'), '#efe9df'])
+      claimedWithin(), takeoverTint('#ff9ccd'), mapNightModeActive ? '#55586b' : '#efe9df'])
 }
 
 // Clay-style world monuments drawn as inline SVGs, pink/black like the theme.
@@ -532,36 +606,6 @@ const SVG_TREE = `<svg viewBox="0 0 48 64" xmlns="http://www.w3.org/2000/svg"><r
 const SVG_BOAT = `<svg viewBox="0 0 72 60" xmlns="http://www.w3.org/2000/svg"><path d="M10 40 L62 40 L54 52 L18 52 Z" fill="#F63B9A" stroke="#c92e7d" stroke-width="2"/><rect x="34" y="8" width="4" height="32" rx="2" fill="#8a5a2a"/><path d="M38 10 C50 16 54 26 52 36 L38 36 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="2"/><path d="M32 14 C24 20 22 28 24 36 L32 36 Z" fill="#FF8AC6"/><circle cx="24" cy="46" r="2.5" fill="#161116"/><circle cx="36" cy="46" r="2.5" fill="#161116"/><circle cx="48" cy="46" r="2.5" fill="#161116"/></svg>`
 
 // City props: clay trees in the parks, boats in the harbour (Toronto demo)
-/** The sun or the moon, as the clay model rather than a drawn circle. Same
- *  sprite route every other model on this map takes (globe projection has no
- *  custom-layer support), so it is pre-rendered and costs a PNG at runtime.
- *  `rotateDeg` turns the crescent to its bright limb. */
-function CelestialBody({ model, size, rotateDeg = 0 }: {
-  model: string
-  size: number
-  rotateDeg?: number
-}) {
-  const [uri, setUri] = React.useState<string | null>(null)
-  React.useEffect(() => {
-    let live = true
-    modelSprite(model, { yaw: 0, pitch: 0, size: 256 })
-      .then(next => { if (live) setUri(next) })
-      .catch(() => { /* the sky simply stays empty rather than breaking the map */ })
-    return () => { live = false }
-  }, [model])
-  if (!uri) return null
-  return (
-    <img
-      src={uri}
-      width={size}
-      height={size}
-      alt=""
-      draggable={false}
-      style={rotateDeg ? { transform: `rotate(${rotateDeg}deg)` } : undefined}
-    />
-  )
-}
-
 /** World landmarks, as clay models standing at their real coordinates.
  *
  *  WHY THESE EXIST: the style is Mapbox Dark recoloured into clay, and
@@ -735,6 +779,8 @@ const LANDMARK_3D_REVEAL_KM = 0.3
 const LANDMARK_REFERENCE_HEIGHT_M = 330 // Eiffel Tower: the reference frame.
 const LANDMARK_MIN_FRAME_ZOOM = 13.5
 const LANDMARK_MAX_FRAME_ZOOM = 16.0
+const LANDMARK_TOUR_MIN_FRAME_ZOOM = 14.1
+const LANDMARK_TOUR_MAX_FRAME_ZOOM = 17.6
 // Arriving at an exact camera zoom can end a fraction below its requested
 // value. Start loading just before the frame target so the grounded model is
 // already visible when the flight settles, rather than requiring a manual
@@ -748,9 +794,13 @@ const LANDMARK_REVEAL_ZOOM_BUFFER = 0.3
  * This makes every landmark legible while retaining its complete, grounded
  * silhouette inside the view.
  */
-function landmarkCameraZoom(frameSpanM: number): number {
+function landmarkCameraZoom(
+  frameSpanM: number,
+  minZoom = LANDMARK_MIN_FRAME_ZOOM,
+  maxZoom = LANDMARK_MAX_FRAME_ZOOM,
+): number {
   const scaled = 15.3 - Math.log2(Math.max(1, frameSpanM) / LANDMARK_REFERENCE_HEIGHT_M)
-  return Math.max(LANDMARK_MIN_FRAME_ZOOM, Math.min(LANDMARK_MAX_FRAME_ZOOM, scaled))
+  return Math.max(minZoom, Math.min(maxZoom, scaled))
 }
 
 export interface LandmarkCameraFrame {
@@ -774,6 +824,24 @@ export function landmarkCameraFrame(id: string): LandmarkCameraFrame | null {
     // the size-aware zoom above leaves both base and crown inside the frame.
     pitch: landmark.framePitch
       ?? (landmark.heightM >= 500 ? 54 : landmark.heightM >= 300 ? 56 : 58),
+  }
+}
+
+/** The tour needs more breathing room than the former universal z18.18 shot,
+ * but compact monuments still disappear at the search frame's conservative
+ * z16 ceiling. Keep the same real-size calculation, authored center, pitch and
+ * bearing, with a tour-specific 14.1–17.6 window. */
+export function landmarkTourCameraFrame(id: string): LandmarkCameraFrame | null {
+  const landmark = WORLD_LANDMARKS.find(candidate => candidate.id === id)
+  const frame = landmarkCameraFrame(id)
+  if (!landmark || !frame) return null
+  return {
+    ...frame,
+    zoom: landmark.frameZoom ?? landmarkCameraZoom(
+      landmark.frameSpanM,
+      LANDMARK_TOUR_MIN_FRAME_ZOOM,
+      LANDMARK_TOUR_MAX_FRAME_ZOOM,
+    ),
   }
 }
 
@@ -1239,7 +1307,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, dayTime, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, weatherForecast = [], pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, weatherForecast = [], weatherTemp = null, pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -1270,10 +1338,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   // freeze whatever callback identity existed at that moment.
   const onPinOpenRef = useRef(onPinOpen)
   onPinOpenRef.current = onPinOpen
-  const dayTimeRef = useRef(dayTime)
   const skyRef = useRef(sky)
   skyRef.current = sky
-  dayTimeRef.current = dayTime
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const landmarks3dRef = useRef<Map<string, NearLandmark3D>>(new Map())
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1319,30 +1385,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const zoomVelocityRef = useRef(0)
   const zoomAnimationRef = useRef(0)
   const zoomLastFrameRef = useRef(0)
-  // The sky's own clock. Normally the real one; in dev it can be raced so the
-  // sun and moon complete their circuit in a minute instead of a day.
-  const [skyClock, setSkyClock] = useState(() => new Date())
-  useEffect(() => {
-    // OPT-IN, not on by default: this re-renders the map every second, which
-    // is fine for eyeballing the sky and ruinous for frame rate otherwise.
-    const fast = import.meta.env.DEV
-      && new URLSearchParams(window.location.search).get('sky-cycle') === '1'
-    if (!fast) {
-      // A one-minute raw interval kept waking the parked map just to move the
-      // sun/moon by a visually imperceptible fraction of a degree. On the shared
-      // clock it pauses completely at long idle and refreshes on the next touch.
-      return onTick(() => setSkyClock(new Date()), 60_000)
-    }
-    // TEST ONLY: a full day every ~48s, so night, day, moonrise and sunrise can
-    // all be checked without waiting for the sky.
-    let simulated = new Date()
-    const id = window.setInterval(() => {
-      simulated = new Date(simulated.getTime() + 30 * 60 * 1000)
-      setSkyClock(new Date(simulated))
-    }, 1000)
-    return () => window.clearInterval(id)
-  }, [])
-
   const [fovValue, setFovValue] = useState(FOV_DEFAULT)
   // The clay cloud GLB, rendered once to a sprite for the zoom-in cloud band.
   const [cloudSprite, setCloudSprite] = useState<string | null>(null)
@@ -1536,6 +1578,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           return next
         })
       }
+      // The home navigator is the explicit post action on the map. A normal
+      // tap remains a map gesture (or a side-lane pop step), so this starts
+      // the composer at the exact point already framed by the camera instead
+      // of manufacturing a coordinate from an incidental screen tap.
+      if (event.data?.type === 'poplur-map-action' && event.data.action === 'openComposer') {
+        if (!prototypeComposer || radiusPreviewLaunch) return
+        const map = mapRef.current
+        if (!map) return
+        const center = map.getCenter()
+        const point = composeScreenPoint(map, map.project(center))
+        composeOpenRef.current = true
+        setComposeMessage('')
+        setComposeAt({ lng: center.lng, lat: center.lat, x: point.x, y: point.y })
+        playPop(.24)
+      }
     }
     window.addEventListener('poplur-location', onLocation)
     window.addEventListener('poplur-native-location', onLocation)
@@ -1550,7 +1607,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       document.removeEventListener('visibilitychange', syncFrameSurface)
       setSurfaceFront(false)
     }
-  }, [focusedPostLaunch, positionFocusedPostComposer])
+  }, [composeScreenPoint, focusedPostLaunch, mapRef, positionFocusedPostComposer, prototypeComposer, radiusPreviewLaunch])
 
   // Directions: the active route, the routing profile, whether we're mid
   // eye-level navigation, the current turn banner, and a routing-in-flight flag.
@@ -1681,13 +1738,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
     const fallBackAfterWebGLFailure = (error: unknown) => {
       console.warn('[ClayMap] WebGL renderer unavailable', error)
-      if (!MAP_2D) {
-        const fallbackUrl = new URL(window.location.href)
-        fallbackUrl.searchParams.set('mapMode', '2d')
-        fallbackUrl.searchParams.set('fallback2d', '1')
-        window.location.replace(fallbackUrl.toString())
-        return
-      }
       setMapFailure('The map renderer is unavailable on this browser.')
       if (window.parent !== window) {
         window.parent.postMessage({ type: 'poplur-map-failed' }, '*')
@@ -1731,7 +1781,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // its style before its own `load` callback can request the shorter camera
     // leases below. Without this, native may park rAF after the document's
     // three-second burst and strand the map at its initial zoom on a cold load.
-    wakeManagedRendering(15_000)
+    // Style/tile boot is authored work, not a finger gesture. Keep Mapbox
+    // unparked for the bounded startup window without holding iPhone at its
+    // 60fps direct-manipulation rate for all fifteen seconds.
+    sustainManagedRendering(15_000)
     try {
       map = new mapboxgl.Map({
         container: containerRef.current,
@@ -1950,7 +2003,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // clear back to the live clock. Same pattern as __poplurSetMapSurface.
     ;(window as unknown as { __poplurApplySkyAt?: (iso?: string) => string }).__poplurApplySkyAt = (iso?: string) => {
       const shade = skyShadeAt(iso ? new Date(iso) : new Date())
+      const night = shade.lightPreset === 'night'
       applySky(map, shade)
+      applyTheme(map, theme, night)
+      document.documentElement.dataset.poplurMapTime = night ? 'night' : 'day'
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'poplur-map-night', night }, '*')
+      }
       return shade.key
     }
     ;(window as unknown as { __poplurSpriteCount?: () => number }).__poplurSpriteCount = composedSpriteCount
@@ -2349,7 +2408,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       }
       if (map.getZoom() >= HYBRID_ZOOM) {
         const liteMax = MAP_LITE ? 60 : 70
-        if (map.getMinPitch() !== 55) { map.setMinPitch(55); map.setMaxPitch(liteMax) }
+        // Wide mode leaves maxPitch at zero. Raise the ceiling before the
+        // floor: Mapbox rejects minPitch=55 while maxPitch is still zero.
+        if (map.getMaxPitch() !== liteMax) map.setMaxPitch(liteMax)
+        if (map.getMinPitch() !== 55) map.setMinPitch(55)
         // The 3D reveal belongs to close-in exploration only. Settle into its
         // compact flyover angle once per completed zoom gesture—not on a
         // frame loop—so it never spends GPU while the map is resting.
@@ -2371,6 +2433,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }
     map.on('zoomend', enforceHybridPitch)
     map.on('moveend', enforceHybridPitch)
+
+    // A native pinch can cross the 3D threshold long before zoomend. Flatten
+    // at the crossing itself so a still-pitched camera never looks past the
+    // finite Mercator sheet while the fingers are still moving. Cinematic
+    // flights own their own staged pitch policy and are deliberately skipped.
+    const flattenWideDuringGesture = () => {
+      const camera = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
+      if (MAP_2D || camera.__cinematic || camera.__tripping || map.getZoom() >= HYBRID_ZOOM) return
+      if (map.getMinPitch() !== 0) map.setMinPitch(0)
+      if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
+      if (map.getPitch() !== 0) map.setPitch(0)
+    }
+    map.on('zoom', flattenWideDuringGesture)
     map.on('zoomend', updateLabelCull)
     map.on('pitchend', updateLabelCull)
 
@@ -2420,7 +2495,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
 
     const buildClayWorld = () => {
       // Clay palette + landmark/tree toggles on the Standard basemap import.
-      applyStandardConfig(map, theme)
+      const activeShade = skyRef.current ?? skyShadeAt()
+      applyStandardConfig(map, theme, activeShade.lightPreset === 'night')
 
       // Standard has no `composite` source (that's a classic-style source), so
       // the clay layers below get their own Streets vector source.
@@ -2662,17 +2738,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // ── Solid molded earth surface: green clay land, bright grass, blue clay
       //    water. These sit under the roads/buildings and replace any pale
       //    base-style leftovers. ──────────────────────────────────────────────
-      map.addLayer({
-        id: 'clay-water-fill',
-        slot: 'bottom',
-        type: 'fill',
-        source: 'clay-streets',
-        'source-layer': 'water',
-        paint: {
-          'fill-color': theme.water,
-          'fill-opacity': 1,
-        },
-      })
+      // Grass must be established BEFORE claims are inserted under water.
+      // The old water→grass order put the claim fill underneath both layers,
+      // which allowed park polygons to hide conquered ground at world zoom.
       map.addLayer({
         id: 'clay-grass-fill',
         slot: 'bottom',
@@ -2684,6 +2752,17 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
            'hospital', 'school'], true, false] as never,
         paint: {
           'fill-color': theme.park,
+          'fill-opacity': 1,
+        },
+      })
+      map.addLayer({
+        id: 'clay-water-fill',
+        slot: 'bottom',
+        type: 'fill',
+        source: 'clay-streets',
+        'source-layer': 'water',
+        paint: {
+          'fill-color': theme.water,
           'fill-opacity': 1,
         },
       })
@@ -3084,7 +3163,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         type: 'fill-extrusion',
         source: buildingSource,
         'source-layer': 'building',
-        minzoom: 14.5,
+        // A roof-cap is a second extrusion draw pass. It is detail for close
+        // inspection, not a wide-district necessity, so defer it until the
+        // camera is one step closer than the main 3D layer.
+        minzoom: BUILDING_3D_MIN_ZOOM + 0.45,
         filter: ['all',
           ['>=', ['case', ['has', 'height'], ['to-number', ['get', 'height']], 0], 45],
           // Skip the roof cap at each landmark footprint, same reason
@@ -3381,8 +3463,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           yaw: mark.yaw,
           clearDepth: mark.clearDepth,
           nearKm: mark.nearKm ?? LANDMARK_3D_REVEAL_KM,
-          nearZoom: mark.revealZoom
-            ?? landmarkCameraZoom(mark.frameSpanM) - LANDMARK_REVEAL_ZOOM_BUFFER,
+          // True 3D objects never leak into the flat overview. A few wider
+          // landmarks used to reveal just below the building handoff, which
+          // made the map look half-flat and half-extruded at regional zoom.
+          nearZoom: Math.max(
+            BUILDING_3D_MIN_ZOOM,
+            mark.revealZoom
+              ?? landmarkCameraZoom(mark.frameSpanM) - LANDMARK_REVEAL_ZOOM_BUFFER,
+          ),
         })
         landmarks3dRef.current.set(mark.id, h)
         // Evaluate once for the current camera (the app may already be near
@@ -3529,6 +3617,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       let claimPaintQueue = 0
       const applyClaimRoadPaint = () => {
         const fc = claimsWithinCollection()
+        const palette = renderedTheme(theme, mapNightModeActive)
         // No claims of YOUR OWN on the board — switching the pop level to
         // "other pops" is the case that produces this. Bailing here left the
         // last takeover's paint burned into the streets, so the map still read
@@ -3547,10 +3636,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // layer its plain colour directly rather than a case that can never match.
         const claimed = (taken: unknown, plain: unknown) => (held ? ['case', w, taken, plain] : plain)
         const sets: Array<[string, string, unknown]> = [
-          ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), PALETTE.road)],
-          ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), PALETTE.road)],
-          ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), PALETTE.roadHighlight)],
-          ['clay-grass-fill', 'fill-color', claimed(takeoverTint('#D85D96'), theme.park)],
+          ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), palette.road)],
+          ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), palette.road)],
+          ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), palette.roadRim)],
+          ['clay-grass-fill', 'fill-color', claimed(takeoverTint('#D85D96'), palette.park)],
           ['clay-buildings-2d', 'fill-color', claimed(claimedFlatBuildingColor(), flatBuildingColor())],
           ['clay-buildings-3d', 'fill-extrusion-color', building3DColor()],
           ['clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor()],
@@ -3678,7 +3767,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           }, 1200 + i * 420)
         })
       }
-      installRouteLayers(map, 'clay-buildings-3d')
+      // Route layers already live in the middle slot while buildings live in
+      // the top slot. Supplying a cross-slot `beforeId` makes Mapbox attempt an
+      // illegal reorder during symbol placement; slot ordering alone keeps the
+      // route beneath towers.
+      installRouteLayers(map)
       installComposeRadiusPreview(map)
       if (radiusPreviewLaunch) {
         // This screen previews TERRAIN COVERAGE, not claim geometry. Existing
@@ -4098,7 +4191,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       swapSprite(() => flyerMarkersRef.current, 'models/plane.glb', { pitch: 74, size: 256 }, undefined,
         i => FLYERS[i]?.kind === 'plane')
 
-      applySky(map, skyRef.current ?? skyShadeAt())
+      applySky(map, activeShade)
+      applyTheme(map, theme, activeShade.lightPreset === 'night')
 
       if (focusedPostLaunch) {
         const center = nativeLocationRef.current ?? HOME_CENTER
@@ -4616,13 +4710,16 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }
   }, [pinKey, mapEpoch, radiusPreviewLaunch])
 
-  // Re-skin the map whenever the theme changes (matches the app's cube skins)
+  const nightMode = (sky ?? skyShadeAt()).lightPreset === 'night'
+
+  // Re-skin at a theme change or day/night boundary. This writes the existing
+  // paints once; it does not add a layer or wake a per-frame animation.
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
-    applyTheme(map, theme)
+    applyTheme(map, theme, nightMode)
     idleSnapshotRef.current?.requestCapture()
-  }, [theme, mapEpoch])
+  }, [theme, mapEpoch, nightMode])
 
   // Time-of-day sky. `sky.key` only changes while the sky is actually
   // shifting (band changes and the minute steps of an 18-min crossfade), so
@@ -5071,102 +5168,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         </button>
       )}
 
-      {/* Clay zoom slider — bottom-right, street level at the top, globe at the
-          bottom. The thumb IS the zoom-level clay object (globe → cloud →
-          airplane → buildings), swapped by zoom band and re-popped per notch. */}
-      {/* Zoomed all the way out you are looking at the sky, and the sun and the
-          moon are where they REALLY are. This used to put the sun on a clock
-          circle and the moon at sunAngle + 180 — which is only true at full
-          moon, and put the sun over the wrong ocean at noon. celestial.ts has
-          carried the ephemeris for this all along; nothing had ever imported
-          it, so the map drew two flat SVGs instead of the models it already
-          ships. Sub-point in, screen position out: the sun sits over the spot
-          where it is actually overhead, so the daylit half of the globe is the
-          half it is standing on. */}
-      {zoomValue <= 4.4 && (() => {
-        const map = mapRef.current
-        if (!map) return null
-        const centre = map.getCenter()
-        const phase = moonPhase(skyClock)
-
-        // celestial.ts speaks lon, Mapbox speaks lng.
-        //
-        // On the face of the globe a body sits exactly over the spot where it
-        // is overhead. Behind the globe it does NOT simply vanish: it rides the
-        // ring at its true BEARING, dimmed. Vanishing is the more literal
-        // reading, but it empties the sky for hours at a time — at 1am the sun
-        // is over Asia and the moon can be over the Pacific, and a night sky
-        // with nothing in it is a worse lie than a moon held at the horizon.
-        // Either way the DIRECTION is the real one, which is the part the old
-        // clock-circle got wrong.
-        const toRad = Math.PI / 180
-        const place = (point: { lat: number; lon: number }) => {
-          const cosArc = Math.sin(centre.lat * toRad) * Math.sin(point.lat * toRad)
-            + Math.cos(centre.lat * toRad) * Math.cos(point.lat * toRad)
-              * Math.cos((point.lon - centre.lng) * toRad)
-          if (cosArc > 0.08) {
-            const at = map.project([point.lon, point.lat] as mapboxgl.LngLatLike)
-            return { style: { left: `${at.x}px`, top: `${at.y}px` }, behind: false }
-          }
-          // Initial great-circle bearing from the camera's centre to the body.
-          const dLon = (point.lon - centre.lng) * toRad
-          const y = Math.sin(dLon) * Math.cos(point.lat * toRad)
-          const x = Math.cos(centre.lat * toRad) * Math.sin(point.lat * toRad)
-            - Math.sin(centre.lat * toRad) * Math.cos(point.lat * toRad) * Math.cos(dLon)
-          const bearing = Math.atan2(y, x)
-          return {
-            // The ring radius is min(vh, vw), not 40vh. On a portrait phone
-            // 40vh is wider than half the screen, so a body to the east or west
-            // was placed off the side and never seen — which is how the old
-            // clock-circle lost its moon too.
-            style: {
-              left: `calc(50% + ${(Math.sin(bearing) * 38).toFixed(2)} * min(1vh, 1vw))`,
-              top: `calc(50% - ${(Math.cos(bearing) * 38).toFixed(2)} * min(1vh, 1vw))`,
-            },
-            behind: true,
-          }
-        }
-
-        const sunAt = place(subsolarPoint(skyClock))
-        const moonAt = place(sublunarPoint(skyClock))
-        const moonModel = phase.model === 'full'
-          ? CELESTIAL_MODELS.moonFull
-          : CELESTIAL_MODELS.moonCrescent
-
-        return (
-          <>
-            {sunAt && (
-              <div
-                className={dayTime && !sunAt.behind
-                  ? styles.celestial
-                  : `${styles.celestial} ${styles.celestialDim}`}
-                style={sunAt.style}
-                aria-hidden="true"
-              >
-                <CelestialBody model={CELESTIAL_MODELS.sun} size={64} />
-              </div>
-            )}
-            {moonAt && (
-              <div
-                className={!dayTime && !moonAt.behind
-                  ? styles.celestial
-                  : `${styles.celestial} ${styles.celestialDim}`}
-                style={moonAt.style}
-                aria-hidden="true"
-              >
-                {/* The crescent is TURNED to the bright limb. Horns pointing the
-                    wrong way read as broken to anyone who has looked up. */}
-                <CelestialBody
-                  model={moonModel}
-                  size={56}
-                  rotateDeg={phase.model === 'crescent' ? phase.brightLimbAngle : 0}
-                />
-              </div>
-            )}
-          </>
-        )
-      })()}
-
       {weatherOpen && weatherForecast.length > 0 && (
         <button
           type="button"
@@ -5180,29 +5181,38 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         <section
           className={styles.weatherForecast}
           aria-label="Five day weather forecast"
-          onClick={() => { playPop(); onWeatherOpenChange(false) }}
         >
           <header className={styles.weatherTitleBar}>
-            <div className={styles.weatherTraffic} aria-label="Window controls">
-              <button
-                type="button"
-                className={`${styles.weatherLight} ${styles.weatherClose}`}
-                aria-label="Close forecast"
-                onClick={event => { event.stopPropagation(); playPop(); onWeatherOpenChange(false) }}
-              />
-              <span className={`${styles.weatherLight} ${styles.weatherMinimize}`} aria-hidden="true" />
-              <span className={`${styles.weatherLight} ${styles.weatherZoom}`} aria-hidden="true" />
+            <div>
+              <span className={styles.weatherKicker}>LOCAL WEATHER</span>
+              <span className={styles.weatherUpdated}>Live conditions</span>
             </div>
-            <span className={styles.weatherTitle}>5-DAY FORECAST</span>
-            <span className={styles.weatherTag}>WX</span>
+            <button
+              type="button"
+              className={styles.weatherCardClose}
+              aria-label="Close forecast"
+              onClick={() => { playPop(); onWeatherOpenChange(false) }}
+            >
+              ×
+            </button>
           </header>
+          <div className={styles.weatherNow}>
+            <div className={styles.weatherNowCopy}>
+              <span className={styles.weatherReading}>{Math.round(weatherTemp ?? weatherForecast[0].high)}°</span>
+              <span className={styles.weatherCondition}>{weatherConditionLabel(weatherMode)}</span>
+              <span className={styles.weatherRange}>H {Math.round(weatherForecast[0].high)}° · L {Math.round(weatherForecast[0].low)}°</span>
+            </div>
+            <WeatherSticker mode={weatherMode} className={styles.weatherHeroSticker} />
+          </div>
+          <div className={styles.weatherStripMeta}>
+            <span>5-day forecast</span>
+            <span>High / low</span>
+          </div>
           <div className={styles.weatherDays}>
             {weatherForecast.slice(0, 5).map(day => (
               <article key={day.date}>
                 <strong>{new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(`${day.date}T12:00:00`))}</strong>
-                <span className={styles.weatherDayIcon}>
-                  <WeatherMark mode={day.mode} icon={day.icon} cloud={weatherCloud} compact />
-                </span>
+                <WeatherSticker mode={day.mode} className={styles.weatherDayIcon} />
                 <span>{Math.round(day.high)}°</span>
                 <i>{Math.round(day.low)}°</i>
               </article>

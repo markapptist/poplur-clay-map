@@ -23,16 +23,11 @@ export default function MapLevelButton({
   // corner of the map. 44 is the settled size: reads as three distinct sheets
   // at arm's length without crowding the channel arrows under it.
   size = 44,
-  // Kept because callers pass the map's render tier, but the glyph is isometric
-  // in BOTH modes now — see LayerGlyph. The flat variant read as a hamburger.
-  mode = '3d',
   menuSide = 'left',
 }: {
   level: PopLevel
   onPick: (next: PopLevel) => void
   size?: number
-  /** The map's render tier. No longer changes the glyph; see LayerGlyph. */
-  mode?: '2d' | '3d'
   /** Keep the expanded picker inside whichever edge owns the control rail. */
   menuSide?: 'left' | 'right'
 }) {
@@ -90,7 +85,7 @@ export default function MapLevelButton({
                 setMenuOpen(false)
               }}
             >
-              <LayerGlyph level={option.id} size={20} mode={mode} />
+              <LayerGlyph level={option.id} size={20} />
               <span className={styles.itemText}>
                 <span className={styles.itemLabel}>{option.label}</span>
                 <span className={styles.itemBlurb}>{option.blurb}</span>
@@ -128,7 +123,7 @@ export default function MapLevelButton({
           cycle()
         }}
       >
-        <LayerGlyph level={level} size={size} mode={mode} />
+        <LayerGlyph level={level} size={size} />
       </button>
     </div>
   )
@@ -149,7 +144,7 @@ export default function MapLevelButton({
  *   others — the far sheets, yours dark (everyone else's board)
  *   all    — the whole stack
  */
-function LayerGlyph({ level, size, mode }: { level: PopLevel; size: number; mode: '2d' | '3d' }) {
+function LayerGlyph({ level, size }: { level: PopLevel; size: number }) {
   // Each level lights the sheet it MEANS, not a running count: yours is the
   // ground you stand on (near), everyone else's is the ground above it (top
   // and mid), and all is the whole stack. A count-up version read as a signal
@@ -195,10 +190,7 @@ function LayerGlyph({ level, size, mode }: { level: PopLevel; size: number; mode
           hamburger menu no matter how they are spaced or stepped — the control
           stopped saying "layers of world" and started saying "open a menu".
           Restored to slabs at the user's request: the depth IS the meaning
-          here, and it is worth more than matching the map's render tier.
-
-          `mode` is kept on the props because callers pass it and it still
-          drives nothing else; it simply no longer picks a different glyph. */}
+          here, and it is worth more than matching the map's render tier. */}
       {slab(8, lit('top'), 'top')}
       {slab(15, lit('mid'), 'mid')}
       {slab(22, lit('near'), 'near')}

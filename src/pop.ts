@@ -36,7 +36,13 @@ function parkPopNow() {
 
 function parkPopIfCurrent(serial: number) {
   if (serial !== popIdleSerial) return
-  if (popIdleDeadline > 0 && performance.now() < popIdleDeadline) return
+  if (popIdleDeadline > 0 && performance.now() < popIdleDeadline) {
+    // Timers may fire slightly early under a throttled browser. Keep the
+    // current lease alive instead of dropping the only parking callback.
+    const remaining = Math.max(0, popIdleDeadline - performance.now())
+    popIdleTimer = window.setTimeout(() => parkPopIfCurrent(serial), remaining)
+    return
+  }
   popIdleTimer = null
   popIdleDeadline = 0
   if (audioCtx && audioCtx.state === 'running') void audioCtx.suspend().catch(() => { /* parked is best-effort */ })
@@ -67,8 +73,20 @@ if (typeof document !== 'undefined') {
 
 /** Fetch and decode the shared pop without playing it. */
 export function preloadPop() {
+  // Audio playback is enabled on the first genuine page interaction. Avoid
+  // constructing a WebAudio renderer merely to warm a cache at boot: browsers
+  // can leave that renderer running even after a best-effort suspend.
+  if (!hasRecentUserInput()) return
   try {
+    const createdContext = !audioCtx
     audioCtx ??= new AudioContext()
+    // Passive preload is not an audio interaction. Chrome can create a
+    // running context here (including the mobile thermal probe), so park only
+    // a brand-new preload context immediately. Gesture paths resume this
+    // same decoded context when they need to play a pop.
+    if (createdContext && audioCtx.state === 'running') {
+      void audioCtx.suspend().catch(() => { /* parked is best-effort */ })
+    }
     // Environments without a gesture requirement (headless Chrome, some
     // Androids) birth this context RUNNING — and preload plays nothing, so
     // without the nap it would mix silence forever. On iOS it is born
@@ -111,7 +129,7 @@ export function playPop(volume = 0.6) {
   // an inactivity timer. Autonomous effects use playPopAmbient below; making
   // this path depend on ambientAllowed() silenced the hold menu after the old
   // two-second visible-page timeout.
-  if (isGateMuted() || (typeof document !== 'undefined' && document.hidden)) return
+  if (isGateMuted() || (typeof document !== 'undefined' && document.hidden) || !hasRecentUserInput()) return
   try {
     audioCtx ??= new AudioContext()
     let resumeSerial: number | null = null
@@ -165,7 +183,7 @@ let playSerial = 0
  * not a second audio path.
  */
 export function playPopBurst(volume = 0.95) {
-  if (isGateMuted() || (typeof document !== 'undefined' && document.hidden)) return
+  if (isGateMuted() || (typeof document !== 'undefined' && document.hidden) || !hasRecentUserInput()) return
   try {
     audioCtx ??= new AudioContext()
     let resumeSerial: number | null = null
@@ -214,7 +232,10 @@ export function playPopBurst(volume = 0.95) {
 // chirping every few seconds and the audio thread stays parked. This is also
 // what lets the thermal gate's 36s-settled census see a genuinely idle app.
 const AMBIENT_SILENCE_AFTER_MS = 30_000
-let lastUserInputAt = typeof performance !== 'undefined' ? performance.now() : 0
+// A new document has not had an interaction yet. Treating boot time as one
+// made autonomous engagement notices wake WebAudio during the thermal census,
+// even though nobody was there to hear them.
+let lastUserInputAt: number | null = null
 if (typeof document !== 'undefined') {
   const noteInput = () => { lastUserInputAt = performance.now() }
   // CAPTURE phase: most surfaces stop propagation in their own handlers.
@@ -222,6 +243,10 @@ if (typeof document !== 'undefined') {
   for (const type of ['pointerdown', 'touchstart', 'wheel', 'keydown'] as const) {
     document.addEventListener(type, noteInput, opts)
   }
+}
+
+function hasRecentUserInput(): boolean {
+  return lastUserInputAt !== null && performance.now() - lastUserInputAt <= AMBIENT_SILENCE_AFTER_MS
 }
 
 /**
@@ -239,8 +264,10 @@ if (typeof document !== 'undefined') {
  */
 export function playPopAmbient(volume = 0.5) {
   if (isGateMuted() || !ambientAllowed()) return
-  // Nobody has touched the screen in a while: show, don't chirp.
-  if (performance.now() - lastUserInputAt > AMBIENT_SILENCE_AFTER_MS) return
+  // Nobody has touched the screen yet (or in a while): show, don't chirp.
+  // This keeps background demo/engagement events visual-only until a person
+  // has explicitly interacted with the app.
+  if (!hasRecentUserInput()) return
   try {
     audioCtx ??= new AudioContext()
     if (!popBuffer) {

@@ -105,11 +105,13 @@ const LIKED: LikedPost[] = [
 ]
 
 // ── The profile picture, on disk ────────────────────────────────────────────
-// One key, a data URI. The capture is already downscaled to 320px square and
-// re-encoded as JPEG before it is stored (~20-40KB) — a 320px PNG runs to
-// ~250KB, and localStorage is a ~5MB budget shared with everything else the
-// app keeps. Every access is guarded: an embedded/partitioned shell can throw
-// on localStorage access, and a profile picture is never worth a thrown error.
+// One key, normally a data URI. The capture is already downscaled to 320px
+// square and re-encoded as JPEG before it is stored (~20-40KB) — a 320px PNG
+// runs to ~250KB, and localStorage is a ~5MB budget shared with everything
+// else the app keeps. Native may instead hand us its bundled `poplur-clay:`
+// URL or the account's HTTPS URL. Every access is guarded: an
+// embedded/partitioned shell can throw on localStorage access, and a profile
+// picture is never worth a thrown error.
 const PHOTO_KEY = 'poplur.profile.photo'
 const SELFIE_VIDEO_KEY = 'poplur.profile.selfieVideo'
 const SELFIE_DURATION_SECONDS = 10
@@ -129,10 +131,19 @@ function sanitizeUsername(value: string): string {
   return value.replace(/^@/, '').replace(/[^A-Za-z0-9_.]/g, '').slice(0, USERNAME_MAX)
 }
 
+function usableProfilePhoto(value: string | null | undefined): string | null {
+  if (!value) return null
+  const photo = value.trim()
+  return photo.startsWith('data:image/')
+    || /^https:\/\//i.test(photo)
+    || /^poplur-clay:\/\//i.test(photo)
+    ? photo
+    : null
+}
+
 function readStoredPhoto(): string | null {
   try {
-    const raw = window.localStorage.getItem(PHOTO_KEY)
-    return raw && (raw.startsWith('data:image/') || /^https:\/\//i.test(raw)) ? raw : null
+    return usableProfilePhoto(window.localStorage.getItem(PHOTO_KEY))
   } catch { return null }
 }
 
@@ -805,10 +816,11 @@ export default function ProfileTwin({
         try { local = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
         if (local) postNativeEvent({ type: 'saveProfileUsername', username: local })
       }
-      if (prof?.photo && (prof.photo.startsWith('data:image/') || /^https:\/\//i.test(prof.photo))) {
-        setPhoto(prof.photo)
-        writeStoredPhoto(prof.photo)
-        window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: prof.photo } }))
+      const nativePhoto = usableProfilePhoto(prof?.photo)
+      if (nativePhoto) {
+        setPhoto(nativePhoto)
+        writeStoredPhoto(nativePhoto)
+        window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: nativePhoto } }))
       } else {
         // The ACCOUNT has no picture and this device does — lift ours up, the
         // same backfill the username gets above. The photo used to live only
@@ -1184,7 +1196,13 @@ export default function ProfileTwin({
   // The old gesture here was choreography only: it span for 900ms and let go
   // again without asking anyone for anything, so the grid you were shown after
   // a pull was always the grid you had before it.
-  const refreshPosts = useCallback(() => {
+  const refreshPosts = useCallback(async () => {
+    // If the shell has already refreshed its cached account image, pick that
+    // up immediately as well as asking it for the current Firestore record.
+    // This makes a pull useful across the native handoff boundary instead of
+    // waiting for a later Profile remount to rehydrate the picture.
+    setPhoto(current => readStoredPhoto() ?? current)
+    setSelfieVideo(current => readStoredSelfieVideo() ?? current)
     // The grid's posts come from the shell, so refreshing asks for them again.
     // Nothing answers in the browser preview and the grid keeps what it has —
     // the gesture stays honest rather than pretending to have reloaded.
@@ -1192,8 +1210,24 @@ export default function ProfileTwin({
     // Identity too: the selfie video and photo arrive over the same bridge and
     // the mount-time request is one-shot — if the shell's Firestore load was
     // still in flight then, the selfie simply never appears (user-reported on
-    // device, 22 Aug). The pull is the natural retry.
-    postNativeEvent({ type: 'requestProfile' })
+    // device, 22 Aug). The pull is the natural retry. Listen before posting so
+    // a fast cached native answer cannot beat the listener; its finite timeout
+    // also guarantees an offline pull releases normally.
+    if (!isNativeShell()) return
+    await new Promise<void>(resolve => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timeout)
+        window.removeEventListener('poplur-native-profile', receive)
+        resolve()
+      }
+      const receive = () => finish()
+      const timeout = window.setTimeout(finish, 4_000)
+      window.addEventListener('poplur-native-profile', receive)
+      if (!postNativeEvent({ type: 'requestProfile' })) finish()
+    })
   }, [])
 
   usePullToRefresh({

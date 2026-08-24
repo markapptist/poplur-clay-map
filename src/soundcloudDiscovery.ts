@@ -1,4 +1,4 @@
-import { postNativeEvent } from './nativeBridge'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { haversineKm } from './reach'
 
 /** A first popularity floor. Keep it server-configurable later. */
@@ -28,6 +28,10 @@ declare global {
     __poplurSoundCloudNearbyEndpoint?: string
   }
 }
+
+const NATIVE_DISCOVERY_EVENT = 'poplur-native-nearby-soundcloud'
+const NATIVE_DISCOVERY_TIMEOUT_MS = 3_000
+let nativeDiscoveryRequest = 0
 
 const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null
 const finite = (value: unknown) => {
@@ -110,6 +114,89 @@ function normaliseTrack(
   }
 }
 
+function normaliseTracks(
+  rows: unknown[],
+  lat: number,
+  lng: number,
+  radiusKm: number,
+): NearbySoundCloudTrack[] {
+  const origin: [number, number] = [lng, lat]
+  return rows
+    .map(row => normaliseTrack(row, origin, radiusKm))
+    .filter((track): track is NearbySoundCloudTrack => Boolean(track))
+    .sort((a, b) => b.playbackCount - a.playbackCount || (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity))
+}
+
+function rowsFromPayload(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload
+  if (!payload || typeof payload !== 'object') return []
+  const rows = (payload as { tracks?: unknown }).tracks
+  return Array.isArray(rows) ? rows : []
+}
+
+/**
+ * Native is allowed to inject the output of Poplur's server-side discovery
+ * index, but never a SoundCloud credential. This is deliberately a one-shot
+ * bridge request: the iPod owns when it refreshes, and an older response may
+ * not update a newer location's list.
+ *
+ * Native contract:
+ *   request { type: 'requestNearbySoundCloud', requestId, latitude,
+ *             longitude, radiusKm, minimumPlaybackCount }
+ *   event   poplur-native-nearby-soundcloud detail { requestId, tracks,
+ *             configured?: boolean, error?: string }
+ */
+function discoverNearbySoundCloudViaNative(
+  lat: number,
+  lng: number,
+  radiusKm: number,
+  signal?: AbortSignal,
+): Promise<NearbySoundCloudResult | null> {
+  if (!isNativeShell() || signal?.aborted) return Promise.resolve(null)
+
+  const requestId = `nearby_soundcloud_${++nativeDiscoveryRequest}`
+  return new Promise(resolve => {
+    let settled = false
+    let timer = 0
+    const finish = (result: NearbySoundCloudResult | null) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      window.removeEventListener(NATIVE_DISCOVERY_EVENT, onResult)
+      signal?.removeEventListener('abort', abort)
+      resolve(result)
+    }
+    const abort = () => finish(null)
+    const onResult = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        requestId?: unknown
+        tracks?: unknown
+        configured?: unknown
+        error?: unknown
+      }>).detail
+      if (!detail || detail.requestId !== requestId) return
+      const error = text(detail.error)
+      finish({
+        tracks: normaliseTracks(rowsFromPayload(detail), lat, lng, radiusKm),
+        configured: detail.configured !== false,
+        error,
+      })
+    }
+
+    window.addEventListener(NATIVE_DISCOVERY_EVENT, onResult)
+    signal?.addEventListener('abort', abort, { once: true })
+    timer = window.setTimeout(() => finish(null), NATIVE_DISCOVERY_TIMEOUT_MS)
+    if (!postNativeEvent({
+      type: 'requestNearbySoundCloud',
+      requestId,
+      latitude: lat,
+      longitude: lng,
+      radiusKm,
+      minimumPlaybackCount: SOUNDCLOUD_MIN_PLAYBACKS,
+    })) finish(null)
+  })
+}
+
 /**
  * Query Poplur's backend index of artists who opted into nearby discovery.
  * SoundCloud credentials/tokens must stay on that backend; the web/native
@@ -124,7 +211,10 @@ export async function discoverNearbySoundCloud(
 ): Promise<NearbySoundCloudResult> {
   const configuredEndpoint = window.__poplurSoundCloudNearbyEndpoint
     ?? (import.meta.env.VITE_SOUNDCLOUD_NEARBY_ENDPOINT as string | undefined)
-  if (!configuredEndpoint) return { tracks: [], configured: false, error: null }
+  if (!configuredEndpoint) {
+    const nativeResult = await discoverNearbySoundCloudViaNative(lat, lng, radiusKm, signal)
+    return nativeResult ?? { tracks: [], configured: false, error: null }
+  }
 
   let endpoint: URL
   try {
@@ -149,17 +239,7 @@ export async function discoverNearbySoundCloud(
     })
     if (!response.ok) throw new Error(`SoundCloud discovery returned ${response.status}`)
     const body = await response.json() as unknown
-    const rows = Array.isArray(body)
-      ? body
-      : body && typeof body === 'object' && Array.isArray((body as { tracks?: unknown }).tracks)
-        ? (body as { tracks: unknown[] }).tracks
-        : []
-    const origin: [number, number] = [lng, lat]
-    const tracks = rows
-      .map(row => normaliseTrack(row, origin, radiusKm))
-      .filter((track): track is NearbySoundCloudTrack => Boolean(track))
-      .sort((a, b) => b.playbackCount - a.playbackCount || (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity))
-    return { tracks, configured: true, error: null }
+    return { tracks: normaliseTracks(rowsFromPayload(body), lat, lng, radiusKm), configured: true, error: null }
   } catch (error) {
     if (signal?.aborted) return { tracks: [], configured: true, error: null }
     return {
