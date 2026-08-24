@@ -79,6 +79,30 @@ export interface NearLandmark3DConfig {
   perfPriority?: number
   /** Clay fallback for legacy GLBs that contain no authored textures. */
   color?: number
+  /** A small, static lighting recipe that gives each landmark its own sense
+   *  of place without adding particles, a second renderer, or an animation
+   *  loop. It is evaluated only while this near-camera model is visible. */
+  artDirection?: LandmarkArtDirection
+}
+
+export interface LandmarkArtDirection {
+  /** Main sun/hero-light colour and intensity. */
+  keyColor: number
+  keyIntensity?: number
+  /** Cool or warm fill keeps the texture readable on the opposite side. */
+  fillColor: number
+  fillIntensity?: number
+  /** Static sky/ground ambient colours; these act as local atmosphere. */
+  skyColor: number
+  groundColor: number
+  ambientIntensity?: number
+  /** Contact patch is a grounded colour accent, not a live shadow map. */
+  contactColor?: number
+  contactOpacity?: number
+  /** Optional faint mist tints distant parts of the one landmark model only. */
+  mistColor?: number
+  mistDensity?: number
+  exposure?: number
 }
 
 export interface NearLandmark3D {
@@ -305,14 +329,24 @@ export function installNearLandmark3D(
       scene = new THREE.Scene()
       // A small, fixed light rig makes authored concrete, glass, metal and
       // emissive maps readable without environment probes, real-time shadows,
-      // or any animation that would prevent Mapbox from parking at idle.
-      const a = new THREE.DirectionalLight(0xfff7ee, 2.4)
+      // or any animation that would prevent Mapbox from parking at idle. The
+      // per-landmark recipe is deliberately static: it makes Paris read warm,
+      // New York harboury and Giza sun-bleached without a single extra frame.
+      const art = cfg.artDirection
+      const a = new THREE.DirectionalLight(art?.keyColor ?? 0xfff7ee, art?.keyIntensity ?? 2.4)
       a.position.set(0, -70, 100).normalize()
       scene.add(a)
-      const b = new THREE.DirectionalLight(0xdce8ff, 1.15)
+      const b = new THREE.DirectionalLight(art?.fillColor ?? 0xdce8ff, art?.fillIntensity ?? 1.15)
       b.position.set(0, 70, 100).normalize()
       scene.add(b)
-      scene.add(new THREE.HemisphereLight(0xfff8f2, 0x3b2a43, 1.25))
+      scene.add(new THREE.HemisphereLight(
+        art?.skyColor ?? 0xfff8f2,
+        art?.groundColor ?? 0x3b2a43,
+        art?.ambientIntensity ?? 1.25,
+      ))
+      if (art?.mistColor != null && art.mistDensity != null && art.mistDensity > 0) {
+        scene.fog = new THREE.FogExp2(art.mistColor, art.mistDensity)
+      }
 
       const playArrivalPop = (
         built: THREE.Object3D,
@@ -394,9 +428,9 @@ export function installNearLandmark3D(
             // lights. Lambert shading turned the transparent contact patch
             // white, which looked like another floating piece of geometry.
             new THREE.MeshBasicMaterial({
-              color: 0x3b2a34,
+              color: cfg.artDirection?.contactColor ?? 0x3b2a34,
               transparent: true,
-              opacity: 0.24,
+              opacity: cfg.artDirection?.contactOpacity ?? 0.24,
               depthWrite: false,
             }),
           )
@@ -435,7 +469,7 @@ export function installNearLandmark3D(
       renderer.autoClear = false
       renderer.outputColorSpace = THREE.SRGBColorSpace
       renderer.toneMapping = THREE.ACESFilmicToneMapping
-      renderer.toneMappingExposure = 1.0
+      renderer.toneMappingExposure = cfg.artDirection?.exposure ?? 1.0
       renderer.shadowMap.enabled = false
     },
     onRemove() {

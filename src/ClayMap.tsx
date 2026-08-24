@@ -8,7 +8,11 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
-import { installNearLandmark3D, type NearLandmark3D } from './libertyLandmark'
+import {
+  installNearLandmark3D,
+  type LandmarkArtDirection,
+  type NearLandmark3D,
+} from './libertyLandmark'
 import { subsolarPoint, sublunarPoint, moonPhase, CELESTIAL_MODELS } from './celestial'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
@@ -636,6 +640,24 @@ function notALandmarkBuilding() {
   ]]
 }
 
+const LANDMARK_ART_DIRECTIONS: Record<string, LandmarkArtDirection> = {
+  // Static colour scripts give each place an immediate identity while keeping
+  // Mapbox completely idle after the existing 360ms arrival pop has settled.
+  'burj-khalifa': { keyColor: 0xffcb87, fillColor: 0x8fc5e8, skyColor: 0xffddb0, groundColor: 0x604838, contactColor: 0x4c342c, exposure: 1.05 },
+  'cn-tower': { keyColor: 0xffb7d5, fillColor: 0x9bc6ff, skyColor: 0xddeaff, groundColor: 0x34314b, contactColor: 0x2a2940, mistColor: 0xa7bfe4, mistDensity: 0.002, exposure: 1.04 },
+  'rogers-centre': { keyColor: 0xf8eef0, fillColor: 0x9bb9de, skyColor: 0xe6efff, groundColor: 0x40475c, contactColor: 0x30394e, exposure: 1.02 },
+  eiffel: { keyColor: 0xffc58d, fillColor: 0xd8a2cc, skyColor: 0xffd5bd, groundColor: 0x5c3c44, contactColor: 0x4a3039, mistColor: 0xf5b2c8, mistDensity: 0.0015, exposure: 1.05 },
+  'space-needle': { keyColor: 0xdaf6e7, fillColor: 0x8eb8df, skyColor: 0xbfe8e7, groundColor: 0x294952, contactColor: 0x203c45, mistColor: 0x9acdd4, mistDensity: 0.002, exposure: 1.03 },
+  'golden-gate': { keyColor: 0xffbe86, fillColor: 0x8ab8d9, skyColor: 0xffcc96, groundColor: 0x59403b, contactColor: 0x49322e, mistColor: 0xe9b693, mistDensity: 0.0018, exposure: 1.04 },
+  'statue-liberty': { keyColor: 0xb8e3c8, fillColor: 0x9fc6e7, skyColor: 0xc7edf0, groundColor: 0x2f5654, contactColor: 0x254746, mistColor: 0xadd8d4, mistDensity: 0.0022, exposure: 1.02 },
+  'big-ben': { keyColor: 0xffcc87, fillColor: 0xa9b6dd, skyColor: 0xe7d5c2, groundColor: 0x493d4b, contactColor: 0x39303c, mistColor: 0xc6c9d3, mistDensity: 0.0028, exposure: 1.0 },
+  giza: { keyColor: 0xffd18b, fillColor: 0xd5a66d, skyColor: 0xffd8a0, groundColor: 0x744b32, contactColor: 0x5d3928, mistColor: 0xe9be80, mistDensity: 0.0018, exposure: 1.07 },
+  'taj-mahal': { keyColor: 0xffe7ca, fillColor: 0xe5b6e1, skyColor: 0xf3d8ed, groundColor: 0x5b495c, contactColor: 0x473843, mistColor: 0xf4d7ec, mistDensity: 0.0015, exposure: 1.04 },
+  colosseum: { keyColor: 0xffc784, fillColor: 0xd6a97e, skyColor: 0xf0c29b, groundColor: 0x684737, contactColor: 0x52362c, exposure: 1.03 },
+  'sydney-opera': { keyColor: 0xffe6d7, fillColor: 0x9ed4dc, skyColor: 0xd9f0ed, groundColor: 0x36565b, contactColor: 0x2c484e, mistColor: 0xc4e1df, mistDensity: 0.0018, exposure: 1.05 },
+  'christ-redeemer': { keyColor: 0xffe7d4, fillColor: 0xa9d5ef, skyColor: 0xc8e6f7, groundColor: 0x3c5754, contactColor: 0x304642, mistColor: 0xb8dce8, mistDensity: 0.0025, exposure: 1.03 },
+}
+
 const WORLD_LANDMARKS: {
   id: string
   coords: [number, number]
@@ -650,8 +672,9 @@ const WORLD_LANDMARKS: {
   frameZoom?: number
   revealZoom?: number
   frameBearing?: number
+  artDirection?: LandmarkArtDirection
 }[] = [
-  { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xf0b75f },
+  { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xf0b75f, artDirection: LANDMARK_ART_DIRECTIONS['burj-khalifa'] },
   {
     id: 'cn-tower', coords: [-79.3871, 43.6426], heightM: 553,
     frameSpanM: 553, color: 0x7fc9f4, nearKm: 0.5,
@@ -659,7 +682,7 @@ const WORLD_LANDMARKS: {
     // Keep the real 553 m proportions but present the pod and three Y-shaped
     // supports at a phone-legible size. The slight rotation also moves the
     // Ritz-Carlton label off the observation deck without losing SkyDome.
-    framePitch: 42, frameZoom: 15.6, revealZoom: 15.0, frameBearing: 22,
+    framePitch: 42, frameZoom: 15.6, revealZoom: 15.0, frameBearing: 22, artDirection: LANDMARK_ART_DIRECTIONS['cn-tower'],
   },
   // Both Toronto models stay eligible throughout either destination frame;
   // CN uses the tighter readability angle while SkyDome keeps its roof-first
@@ -668,18 +691,18 @@ const WORLD_LANDMARKS: {
     id: 'rogers-centre', coords: [-79.38918212, 43.64161058], heightM: 60,
     frameSpanM: 553, color: 0xe4e6e8, yaw: 15.9, clearDepth: false, nearKm: 0.5,
     frameCenter: [-79.38834927, 43.64200635],
-    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0,
+    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0, artDirection: LANDMARK_ART_DIRECTIONS['rogers-centre'],
   },
-  { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0xef7495 },
-  { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0x87d2b6 },
-  { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xed765e, yaw: 12 },
-  { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93, frameSpanM: 93, color: 0x7cc8a5 },
-  { id: 'big-ben', coords: [-0.1246, 51.5007], heightM: 96, frameSpanM: 96, color: 0xd7ab59 },
-  { id: 'giza', coords: [31.1342, 29.9792], heightM: 139, frameSpanM: 300, color: 0xe0b065 },
-  { id: 'taj-mahal', coords: [78.0421, 27.1751], heightM: 73, frameSpanM: 85, color: 0xf0d7e3 },
-  { id: 'colosseum', coords: [12.4922, 41.8902], heightM: 48, frameSpanM: 95, color: 0xc99570 },
-  { id: 'sydney-opera', coords: [151.2153, -33.8568], heightM: 65, frameSpanM: 150, color: 0xe8bfd8 },
-  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0x9dc7f2 },
+  { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0xef7495, artDirection: LANDMARK_ART_DIRECTIONS.eiffel },
+  { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0x87d2b6, artDirection: LANDMARK_ART_DIRECTIONS['space-needle'] },
+  { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xed765e, yaw: 12, artDirection: LANDMARK_ART_DIRECTIONS['golden-gate'] },
+  { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93, frameSpanM: 93, color: 0x7cc8a5, artDirection: LANDMARK_ART_DIRECTIONS['statue-liberty'] },
+  { id: 'big-ben', coords: [-0.1246, 51.5007], heightM: 96, frameSpanM: 96, color: 0xd7ab59, artDirection: LANDMARK_ART_DIRECTIONS['big-ben'] },
+  { id: 'giza', coords: [31.1342, 29.9792], heightM: 139, frameSpanM: 300, color: 0xe0b065, artDirection: LANDMARK_ART_DIRECTIONS.giza },
+  { id: 'taj-mahal', coords: [78.0421, 27.1751], heightM: 73, frameSpanM: 85, color: 0xf0d7e3, artDirection: LANDMARK_ART_DIRECTIONS['taj-mahal'] },
+  { id: 'colosseum', coords: [12.4922, 41.8902], heightM: 48, frameSpanM: 95, color: 0xc99570, artDirection: LANDMARK_ART_DIRECTIONS.colosseum },
+  { id: 'sydney-opera', coords: [151.2153, -33.8568], heightM: 65, frameSpanM: 150, color: 0xe8bfd8, artDirection: LANDMARK_ART_DIRECTIONS['sydney-opera'] },
+  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0x9dc7f2, artDirection: LANDMARK_ART_DIRECTIONS['christ-redeemer'] },
 ]
 
 // Landmarks are discoveries at street level, not distant navigation pins.
@@ -3296,6 +3319,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           coords: mark.coords,
           heightM: mark.heightM,
           color: mark.color,
+          artDirection: mark.artDirection,
           yaw: mark.yaw,
           clearDepth: mark.clearDepth,
           nearKm: mark.nearKm ?? LANDMARK_3D_REVEAL_KM,
