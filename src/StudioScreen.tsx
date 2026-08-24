@@ -12,6 +12,13 @@ import { addPostedTrack } from './musicPosts'
 import { radiusKm } from './radiusLedger'
 import { addBroadcast, type PoplurBroadcast } from './mapRadio'
 import StudioSynthwave from './StudioSynthwave'
+import {
+  beginPodcastMapPick,
+  consumePodcastMapPick,
+  hasPendingPodcastMapPick,
+  readPodcastMapPick,
+  type PodcastMapPickKind,
+} from './podcastMapDraft'
 
 /** Focus and blur can leave the page scrolled under the keyboard; one deferred
  *  frame puts it back. governor-ok: a single frame per event, no loop, cannot
@@ -97,13 +104,33 @@ const bar = (seed: number, i: number) => {
 
 export default function StudioScreen({
   onClose,
+  onOpenLibrary,
+  bindBack,
   entry = 'studio',
 }: {
   onClose: () => void
+  /** Opens the map iPod without leaving the shared web surface. */
+  onOpenLibrary?: () => void
+  /** Lends the persistent navigator cube this flow's one-step-back action. */
+  bindBack?: (fn: (() => boolean) | null) => void
   /** MUSIC records a one-minute hook before it opens the normal Studio flow. */
   entry?: 'studio' | 'music-capture'
 }) {
   const isMusicCapture = entry === 'music-capture'
+  // The map picker remounts this screen. Read the completed selection first;
+  // React StrictMode briefly mounts, unmounts and mounts again in development,
+  // so consuming it inside the state initializer made the real room lose its
+  // chosen ground. The committed mount clears it in the effect below instead.
+  const [restoredMapPick] = useState(() => readPodcastMapPick())
+  useEffect(() => {
+    if (!restoredMapPick) return
+    // One committed frame proves the restored room owns this draft. The first
+    // StrictMode pass cleans this frame up before it runs; the real pass then
+    // consumes it, without ever exposing a stale selection to a later studio.
+    // governor-ok: this is one cancellable mount hand-off and never re-arms.
+    const frame = window.requestAnimationFrame(() => consumePodcastMapPick(restoredMapPick))
+    return () => window.cancelAnimationFrame(frame)
+  }, [restoredMapPick])
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recMs, setRecMs] = useState(0)
@@ -125,12 +152,16 @@ export default function StudioScreen({
   // then does the editor open — with the song and your take already on the
   // transport. Landing cold on a DAW full of empty lanes was the old, terrible
   // version of this screen.
-  const [mode, setMode] = useState<'music' | 'podcast'>('music')
-  const [stage, setStage] = useState<'choose' | 'mic' | 'style' | 'drop' | 'studio'>(
-    isMusicCapture ? 'mic' : 'choose',
+  const [mode, setMode] = useState<'music' | 'podcast'>(restoredMapPick ? 'podcast' : 'music')
+  const [stage, setStage] = useState<'choose' | 'mic' | 'style' | 'room' | 'podcast-record' | 'studio'>(
+    restoredMapPick ? 'room' : isMusicCapture ? 'mic' : 'choose',
   )
-  const [podcastGenre, setPodcastGenre] = useState<string>('Talk')
-  const [aiEnhance, setAiEnhance] = useState(false)
+  const [podcastGenre, setPodcastGenre] = useState<string>(restoredMapPick?.genre ?? 'Talk')
+  const [aiEnhance, setAiEnhance] = useState(restoredMapPick?.aiEnhanced ?? false)
+  const [podcastMapSpot] = useState(() => restoredMapPick
+    ? { lat: restoredMapPick.lat, lng: restoredMapPick.lng, radiusKm: restoredMapPick.radiusKm }
+    : null)
+  const [podcastMapKind] = useState<PodcastMapPickKind | null>(() => restoredMapPick?.kind ?? null)
   const [dropping, setDropping] = useState(false)
   const [goingLive, setGoingLive] = useState(false)
   const [songUrl, setSongUrl] = useState<string | null>(null)
@@ -156,6 +187,7 @@ export default function StudioScreen({
   const mountedRef = useRef(true)
   const songUrlRef = useRef<string | null>(null)
   const takeUrlRef = useRef<string | null>(null)
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const captureGenerationRef = useRef(0)
   const captureWantedRef = useRef(false)
   const discardedRecordersRef = useRef(new WeakSet<MediaRecorder>())
@@ -167,6 +199,22 @@ export default function StudioScreen({
   const recorderSectionRef = useRef<HTMLElement | null>(null)
   const builderRef = useRef<HTMLElement | null>(null)
   const rollRef = useRef<HTMLElement | null>(null)
+
+  // Studio is one parent surface with two entrances. The cube backs out of an
+  // active Music or Podcast flow to this chooser first; only from the chooser
+  // itself can the parent hold menu take the person back to Camera.
+  useEffect(() => {
+    if (!bindBack) return
+    bindBack(() => {
+      if (stage === 'choose') return false
+      stopCaptureRef.current(true)
+      setRecording(false)
+      setPlaying(false)
+      setStage('choose')
+      return true
+    })
+    return () => bindBack(null)
+  }, [bindBack, stage])
 
   const openStudioSection = (label: (typeof NAV)[number]['label']) => {
     playPop()
@@ -257,7 +305,9 @@ export default function StudioScreen({
       .filter(pop => pop.distanceKm <= reach)
       .sort((a, b) => a.distanceKm - b.distanceKm)
   }, [])
-  const [invited, setInvited] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const [invited, setInvited] = useState<ReadonlySet<string>>(
+    () => new Set<string>(restoredMapPick?.invitedIds ?? []),
+  )
   const toggleInvite = (id: string) => {
     playPop()
     const next = new Set(invited)
@@ -372,7 +422,7 @@ export default function StudioScreen({
   // The web has no Firebase account, so the bounce is handed to the shell as a
   // data: URL and everything authenticated happens there — the same division
   // the camera composer already uses, over the same upload events.
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(restoredMapPick?.title ?? '')
   const [publishing, setPublishing] = useState<null | 'bouncing' | 'uploading'>(null)
   const [publishNote, setPublishNote] = useState<string | null>(null)
   const [published, setPublished] = useState(false)
@@ -485,7 +535,7 @@ export default function StudioScreen({
     }
   }
 
-  const dropPodcast = async () => {
+  const dropPodcast = async (pickedSpot?: { lat: number; lng: number }) => {
     if (dropping) return
     playPop()
     const name = title.trim()
@@ -493,7 +543,7 @@ export default function StudioScreen({
     setPublishNote(null)
     setDropping(true)
     try {
-      const spot = here()
+      const spot = pickedSpot ?? here()
       const broadcast: PoplurBroadcast = {
         id: `pod-${Date.now()}`,
         title: name,
@@ -541,10 +591,10 @@ export default function StudioScreen({
     }
   }
 
-  const goLive = () => {
+  const goLive = (pickedSpot?: { lat: number; lng: number }) => {
     playPop()
     setGoingLive(true)
-    const spot = here()
+    const spot = pickedSpot ?? here()
     const broadcast: PoplurBroadcast = {
       id: `live-${Date.now()}`,
       title: title.trim() || 'Live Session',
@@ -668,7 +718,7 @@ export default function StudioScreen({
         setRecMs(limit)
         stopCapture()
         setRecording(false)
-        setStage(prev => (prev === 'mic' ? (mode === 'podcast' ? 'drop' : 'style') : prev))
+        setStage(prev => (prev === 'mic' ? (mode === 'podcast' ? 'room' : 'style') : prev))
         return
       }
       setRecMs(ms)
@@ -722,9 +772,10 @@ export default function StudioScreen({
     if (!recent.length) return 0.03
     return Math.min(1, recent.reduce((sum, value) => sum + value, 0) / recent.length / 100)
   }, [levels])
-  const [takeUrl, setTakeUrl] = useState<string | null>(null)
+  const [takeUrl, setTakeUrl] = useState<string | null>(restoredMapPick?.audioUrl ?? null)
   const [micDenied, setMicDenied] = useState(false)
   const takeAudio = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => { takeUrlRef.current = takeUrl }, [takeUrl])
 
   const stopCapture = (discard = false) => {
     captureWantedRef.current = false
@@ -758,7 +809,10 @@ export default function StudioScreen({
         audio.removeAttribute('src')
         audio.load()
       }
-      if (takeUrlRef.current) URL.revokeObjectURL(takeUrlRef.current)
+      // A map hand-off deliberately retains its one local take until Studio
+      // remounts after the pin is chosen. Every ordinary close still releases
+      // it exactly as before.
+      if (takeUrlRef.current && !hasPendingPodcastMapPick()) URL.revokeObjectURL(takeUrlRef.current)
       if (songUrlRef.current) URL.revokeObjectURL(songUrlRef.current)
       takeUrlRef.current = null
       songUrlRef.current = null
@@ -878,13 +932,57 @@ export default function StudioScreen({
     if (recording) {
       stopCapture()
       setRecording(false)
-      setStage(mode === 'podcast' ? 'drop' : 'style')
+      setStage(mode === 'podcast' ? 'room' : 'style')
       return
     }
     requestAudioFocus('studio')
     setRecMs(0)
     setRecording(true)
     void startCapture().then(ok => { if (!ok && mountedRef.current) setRecording(false) })
+  }
+
+  const uploadTrack = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    playPop()
+    stopCapture(true)
+    setRecording(false)
+    const url = URL.createObjectURL(file)
+    setTakeUrl(old => {
+      if (old && old !== url) URL.revokeObjectURL(old)
+      takeUrlRef.current = url
+      return url
+    })
+    const filename = file.name.replace(/\.[^.]+$/, '').trim()
+    if (!title.trim() && filename) setTitle(filename)
+    setRecMs(0)
+    setMicDenied(false)
+    setPublishNote('Track added. Pick a style, then make it yours.')
+    setStage('style')
+  }
+
+  const pickPodcastArea = (kind: PodcastMapPickKind) => {
+    const name = title.trim()
+    if (!name) { setPublishNote('Name your podcast before choosing its area.'); return }
+    if (kind === 'recorded' && !takeUrl) {
+      setPublishNote('Record your episode first, then choose where to drop it.')
+      return
+    }
+    playPop()
+    beginPodcastMapPick({
+      kind,
+      title: name,
+      genre: podcastGenre,
+      aiEnhanced: aiEnhance,
+      invitedIds: [...invited],
+      audioUrl: takeUrl,
+      durationMs: recMs,
+    })
+    // The map owns pin placement and communicates the final coordinates back
+    // through HomeTwin. Close this fixed overlay before the focused map opens.
+    window.dispatchEvent(new CustomEvent('poplur-pick-podcast-location'))
+    onClose()
   }
 
   // The AI music stack. ElevenLabs Music — the same provider whose key slot the
@@ -983,7 +1081,7 @@ export default function StudioScreen({
               className={`${styles.choosePath} ${styles.choosePodcast}`}
               type="button"
               aria-label="Start a podcast"
-              onClick={() => { playPop(); setMode('podcast'); setStage('mic') }}
+              onClick={() => { playPop(); setMode('podcast'); setStage('room') }}
             >
               <img
                 className={styles.chooseImage}
@@ -1007,8 +1105,9 @@ export default function StudioScreen({
     )
   }
 
-  // ── stage 1: the mic. The session starts by SINGING, not by staring at
-  // lanes. One button, up to three minutes, then the style question. ────────
+  // ── stage 1: the music mic. Its landscape is driven by the analyser's
+  // real samples; each sample also advances the horizontal synth, so it keeps
+  // travelling while the artist is speaking without adding an idle animation.
   if (stage === 'mic') {
     const signalLive = recording
       && levels.length > 0
@@ -1029,32 +1128,37 @@ export default function StudioScreen({
             <span className={styles.micHint}>
               {micDenied
                 ? 'Microphone refused — allow access in settings.'
-                : mode === 'podcast'
-                  ? (recording ? 'Your voice is shaping the horizon.' : 'Tap record to start your podcast.')
-                  : isMusicCapture
-                    ? (recording ? 'Your sound is driving the landscape.' : 'Record a hook, then take it into Studio.')
-                    : (recording ? 'Your sound is driving the landscape.' : 'Tap record and give it a hook.')}
+                : isMusicCapture
+                  ? (recording ? 'Your sound is driving the landscape sideways.' : 'Record a hook, then take it into Studio.')
+                  : (recording ? 'Your sound is driving the landscape sideways.' : 'Tap record and give it a hook.')}
             </span>
-            {mode === 'podcast' ? (
-              <button className={styles.micSkip} type="button" onClick={() => {
-                playPop()
-                stopCapture(true)
-                setRecording(false)
-                setStage('drop')
-              }}>
-                SKIP — GO LIVE INSTEAD
-              </button>
-            ) : (
-              <button className={styles.micSkip} type="button" onClick={() => {
-                playPop()
-                stopCapture(true)
-                setRecording(false)
-                setStage('style')
-              }}>
-                SKIP — NO VOCAL
+            <input
+              ref={uploadInputRef}
+              className={styles.fileInput}
+              type="file"
+              accept="audio/*"
+              aria-label="Upload a track from your phone"
+              onChange={uploadTrack}
+            />
+            {!recording && (
+              <button className={styles.micUpload} type="button" onClick={() => uploadInputRef.current?.click()}>
+                ⇧ UPLOAD A TRACK
               </button>
             )}
+            <button className={styles.micSkip} type="button" onClick={() => {
+              playPop()
+              stopCapture(true)
+              setRecording(false)
+              setStage('style')
+            }}>
+              SKIP — NO VOCAL
+            </button>
           </div>
+          {onOpenLibrary && (
+            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
+              <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
+            </button>
+          )}
         </div>
       </div>
     )
@@ -1100,122 +1204,153 @@ export default function StudioScreen({
               ✦ MAKE MY TRACK
             </button>
           )}
+          {onOpenLibrary && (
+            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
+              <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
+            </button>
+          )}
         </div>
       </div>
     )
   }
 
-  // ── stage 2b: the podcast drop. Name it, tag it, drop it on the ground. ──
-  if (stage === 'drop') {
+  // ── podcast room: guests are added before the episode is live or dropped.
+  // This intentionally has no synth: a podcast is a room with people in it.
+  if (stage === 'podcast-record') {
     return (
-      <div className={styles.screen} role="dialog" aria-label="Poplur Studio">
-        <div className={styles.styleStage}>
-          <span className={styles.styleKicker}>POPLUR PODCAST</span>
-          <h1 className={styles.styleTitle}>Drop your podcast</h1>
-          <div className={styles.chips}>
+      <div className={styles.screen} role="dialog" aria-label="Record podcast episode">
+        <div className={styles.roomRecordStage}>
+          <span className={styles.roomKicker}>YOUR PODCAST ROOM</span>
+          <div className={styles.roomTable} aria-hidden="true">
+            <span className={styles.roomMic}>●</span>
+            {Array.from({ length: Math.max(3, invited.size + 1) }, (_, index) => (
+              <span key={index} className={styles.roomSeat}>{index === 0 ? 'YOU' : 'GUEST'}</span>
+            ))}
+          </div>
+          <h1 className={styles.roomTitle}>{title || 'Untitled podcast'}</h1>
+          <p className={styles.roomCopy}>
+            {micDenied ? 'Microphone refused — allow access in settings.'
+              : recording ? 'Recording everyone in your room.' : 'Record first, then choose exactly where it lives on the map.'}
+          </p>
+          <div className={styles.roomRecordControls}>
+            <div className={styles.micTime}>{mmssms(recMs)} <span>/ {mmssms(MAX_PODCAST_MS)}</span></div>
+            <button className={recording ? `${styles.micBtn} ${styles.micBtnLive}` : styles.micBtn} type="button" onClick={micTap}>
+              {recording ? '■ FINISH EPISODE' : '● RECORD EPISODE'}
+            </button>
+            {!recording && <button className={styles.micSkip} type="button" onClick={() => { playPop(); setStage('room') }}>BACK TO ROOM</button>}
+          </div>
+          {onOpenLibrary && (
+            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
+              <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (stage === 'room') {
+    const chosenArea = podcastMapSpot && podcastMapKind
+    return (
+      <div className={styles.screen} role="dialog" aria-label="Poplur podcast room">
+        <div className={styles.roomStage}>
+          <header className={styles.roomHeader}>
+            <div className={styles.roomHeaderTop}>
+              <span className={styles.roomKicker}>POPLUR PODCAST</span>
+              <span className={styles.roomStatus}><i aria-hidden="true" /> YOUR ROOM</span>
+            </div>
+            <div className={styles.roomHeadingLine}>
+              <span className={styles.roomMicMark} aria-hidden="true"><img src="sprites/poplur_mic_lite_y0_p0_s512.png" alt="" /></span>
+              <div>
+                <h1 className={styles.roomTitle}>Build your room</h1>
+                <p className={styles.roomCopy}>Invite your people, then take your show live or drop an episode.</p>
+              </div>
+            </div>
+          </header>
+          <label className={styles.roomNameField}>
+            <span>SHOW NAME</span>
+            <input
+              className={styles.styleInput}
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              placeholder="Name this podcast"
+              maxLength={80}
+              aria-label="Podcast name"
+              onFocus={pinScrollTop}
+              onBlur={pinScrollTop}
+            />
+          </label>
+          <div className={styles.roomFormat}>
+            <span>FORMAT</span>
+            <div className={`${styles.chips} ${styles.roomGenreRail}`}>
             {PODCAST_GENRES.map(g => (
-              <button
-                key={g}
-                className={`${styles.chip}${podcastGenre === g ? ` ${styles.chipOn}` : ''}`}
-                type="button"
-                aria-pressed={podcastGenre === g}
-                onClick={() => { playPop(); setPodcastGenre(g) }}
-              >
+              <button key={g} className={`${styles.chip}${podcastGenre === g ? ` ${styles.chipOn}` : ''}`} type="button" aria-pressed={podcastGenre === g} onClick={() => { playPop(); setPodcastGenre(g) }}>
                 {g}
               </button>
             ))}
+            </div>
           </div>
-          <input
-            className={styles.styleInput}
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            placeholder="Name this podcast"
-            maxLength={80}
-            aria-label="Podcast name"
-            onFocus={pinScrollTop}
-            onBlur={pinScrollTop}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', margin: '12px 0' }}>
-            <span style={{ color: 'var(--poplur-ink, #ccc)', fontSize: '13px' }}>AI RADIO VOICE</span>
-            <button
-              className={`${styles.toggle}${aiEnhance ? ` ${styles.toggleOn}` : ''}`}
-              type="button"
-              role="switch"
-              aria-checked={aiEnhance}
-              aria-label="AI radio enhancement"
-              onClick={() => { playPop(); setAiEnhance(v => !v) }}
-            >
+          <div className={styles.roomEnhance}>
+            <span><strong>AI RADIO VOICE</strong><small>Clean, broadcast-ready sound</small></span>
+            <button className={`${styles.toggle}${aiEnhance ? ` ${styles.toggleOn}` : ''}`} type="button" role="switch" aria-checked={aiEnhance} aria-label="AI radio enhancement" onClick={() => { playPop(); setAiEnhance(v => !v) }}>
               <span className={styles.knob} />
             </button>
-            <span style={{ color: 'var(--poplur-ink, #888)', fontSize: '11px', opacity: 0.7 }}>costs credits</span>
           </div>
-          {/* Guests for the session — everyone here is inside YOUR radius, or
-              they would not be listed (nearbyPops above). Kept on screen after
-              going live too, because a live session is exactly when you want
-              to wave more people in. INVITED is the whole truth of it: no
-              acceptance is simulated, the ids just go out over
-              poplur-podcast-invite for the shell to act on. */}
           {nearbyPops.length > 0 && (
             <div className={styles.invitePanel}>
               <div className={styles.inviteHead}>
-                INVITE FROM YOUR RADIUS · {Math.round(radiusKm())} KM
+                <span>PEOPLE IN YOUR RADIUS</span>
+                <strong>{Math.round(radiusKm())} KM</strong>
+                <em>{invited.size} IN ROOM</em>
               </div>
               {nearbyPops.map(pop => {
                 const on = invited.has(pop.id)
-                return (
-                  <button
-                    key={pop.id}
-                    className={styles.inviteRow}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => toggleInvite(pop.id)}
-                  >
-                    <span className={styles.inviteDot} style={{ background: pop.color }} aria-hidden="true" />
-                    <span className={styles.inviteName}>{pop.user}</span>
-                    <span className={styles.inviteKm}>{pop.distanceKm.toFixed(1)} km</span>
-                    <span className={on ? `${styles.invitePill} ${styles.invitePillOn}` : styles.invitePill}>
-                      {on ? '✓ INVITED' : 'INVITE'}
-                    </span>
-                  </button>
-                )
+                return <button key={pop.id} className={styles.inviteRow} type="button" aria-pressed={on} onClick={() => toggleInvite(pop.id)}>
+                  <span className={styles.inviteDot} style={{ background: pop.color }} aria-hidden="true" />
+                  <span className={styles.inviteName}>{pop.user}</span>
+                  <span className={styles.inviteKm}>{pop.distanceKm.toFixed(1)} km</span>
+                  <span className={on ? `${styles.invitePill} ${styles.invitePillOn}` : styles.invitePill}>{on ? '✓ IN ROOM' : 'ADD'}</span>
+                </button>
               })}
             </div>
           )}
-          {publishNote && (
-            <div className={styles.publishNote} role="status" aria-live="polite">{publishNote}</div>
+          {chosenArea && (
+            <div className={styles.areaPicked}>
+              <strong>AREA SELECTED</strong>
+              <span>{Math.round(podcastMapSpot.radiusKm ?? radiusKm())} km radius around your pin</span>
+            </div>
           )}
+          {publishNote && <div className={styles.publishNote} role="status" aria-live="polite">{publishNote}</div>}
           {published ? (
-            <div style={{ textAlign: 'center', color: 'var(--poplur-ink, #aaa)', fontSize: '13px', marginTop: '8px' }}>
-              {publishNote}
-              {invited.size > 0 && (
-                <div className={styles.inviteCount}>
-                  {invited.size} invited to this session
-                </div>
+            <div className={styles.roomDone}>{publishNote}{invited.size > 0 && <div className={styles.inviteCount}>{invited.size} people invited</div>}</div>
+          ) : chosenArea ? (
+            <div className={styles.roomActions}>
+              {podcastMapKind === 'live' ? (
+                <button className={styles.styleGo} type="button" onClick={() => goLive(podcastMapSpot)} disabled={goingLive}>
+                  {goingLive ? 'STARTING…' : '🔴 START LIVE HERE'}
+                </button>
+              ) : (
+                <button className={styles.styleGo} type="button" onClick={() => void dropPodcast(podcastMapSpot)} disabled={dropping || !takeUrl}>
+                  {dropping ? 'DROPPING…' : '📍 DROP EPISODE HERE'}
+                </button>
               )}
             </div>
           ) : (
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '16px' }}>
-              {takeUrl && (
-                <button
-                  className={styles.styleGo}
-                  type="button"
-                  style={{ flex: 1, maxWidth: '180px' }}
-                  onClick={() => void dropPodcast()}
-                  disabled={dropping}
-                >
-                  {dropping ? 'Dropping…' : '📍 DROP HERE'}
-                </button>
-              )}
-              <button
-                className={styles.styleGo}
-                type="button"
-                style={{ flex: 1, maxWidth: '180px' }}
-                onClick={goLive}
-                disabled={goingLive || published}
-              >
-                {goingLive ? 'Going live…' : '🔴 GO LIVE'}
+            <div className={styles.roomActions}>
+              <button className={styles.roomLive} type="button" onClick={() => pickPodcastArea('live')}>
+                <span><i aria-hidden="true" /> LIVE PODCAST</span>
+                <small>Choose an area</small>
+              </button>
+              <button className={styles.roomRecorded} type="button" onClick={() => takeUrl ? pickPodcastArea('recorded') : setStage('podcast-record')}>
+                <span>{takeUrl ? 'DROP EPISODE' : 'RECORD EPISODE'}</span>
+                <small>{takeUrl ? 'Choose an area' : 'Record in this room'}</small>
               </button>
             </div>
+          )}
+          {onOpenLibrary && (
+            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
+              <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
+            </button>
           )}
         </div>
       </div>
@@ -1639,6 +1774,11 @@ export default function StudioScreen({
           </button>
         ))}
       </nav>
+      {onOpenLibrary && (
+        <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
+          <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
+        </button>
+      )}
     </div>
   )
 }

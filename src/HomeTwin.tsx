@@ -35,6 +35,11 @@ import { playPop, popHaptic } from './pop'
 import { startRingtone, stopRingtone } from './phoneRingtones'
 import IncomingCallPopup from './IncomingCallPopup'
 import { clearPendingMapPost, onCameraStore, selectedCount } from './cameraStore'
+import {
+  clearPodcastMapPick,
+  completePodcastMapPick,
+  hasPendingPodcastMapPick,
+} from './podcastMapDraft'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import {
   cancelManagedRenderingWake,
@@ -226,7 +231,7 @@ const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boole
     title: 'THE CAMERA',
     lines: [
       'Tap the camera in your hand to shoot.',
-      'Hold the cube to switch to video, the roll, or go live.',
+      'Hold the cube to switch between camera tools and your roll.',
       'Everything you post lands in your radius.',
     ],
   },
@@ -1306,7 +1311,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-settings-page', onPage)
   }, [])
   // Which stage of the studio pipeline is up ('choose' | 'mic' | 'style' |
-  // 'drop' | 'studio', null while Studio is closed — its unmount cleanup
+  // 'room' | 'podcast-record' | 'studio', null while Studio is closed — its unmount cleanup
   // dispatches the null). Only 'mic' changes the cube: the RECORD stage wears
   // the microphone itself, everything else keeps the mixing desk.
   const [studioStage, setStudioStage] = useState<string | null>(null)
@@ -2246,10 +2251,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setActiveTab('feed')
       }
       if (event.data.type === 'poplur-post-here') {
-        setPostTarget({
+        const spot = {
           lat: Number(event.data.lat),
           lng: Number(event.data.lng),
           radiusKm: Number(event.data.radiusKm) || undefined,
+        }
+        // Podcast chooses its ground deliberately. The existing map picker
+        // reports a familiar `post-here` message, so consume it before the
+        // camera composer gets a chance to create a fresh visual post.
+        if (pickingPodcastLocationRef.current && completePodcastMapPick(spot)) {
+          pickingPodcastLocationRef.current = false
+          setActiveTab('post')
+          // Let the focused map unmount before remounting Studio; otherwise a
+          // stale picker could remain on top of its selected area for a frame.
+          // governor-ok: one frame after an explicit map pick; never re-arms itself or runs at idle
+          window.requestAnimationFrame(() => {
+            setResume(current => ({ screen: 'camera-studio', n: current.n + 1 }))
+            setHoldOpen(true)
+          })
+          return
+        }
+        setPostTarget({
+          ...spot,
           // Resume the parked draft ONLY if this spot answers a pick-spot
           // trip. A plain "Post here" must open a fresh camera — resuming
           // whatever draft happened to be parked showed an old capture.
@@ -2279,10 +2302,26 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       postNativeEvent({ type: 'requestLocation' })
       setActiveTab('map')
     }
+    const onPickPodcastLocation = () => {
+      if (!hasPendingPodcastMapPick()) return
+      pickingPodcastLocationRef.current = true
+      const cached = (window as typeof window & {
+        __poplurNativeLocation?: { latitude?: unknown; longitude?: unknown }
+      }).__poplurNativeLocation
+      const latitude = Number(cached?.latitude)
+      const longitude = Number(cached?.longitude)
+      const valid = Number.isFinite(latitude) && Math.abs(latitude) <= 90
+        && Number.isFinite(longitude) && Math.abs(longitude) <= 180
+      setMapPickSpotLaunch(valid ? { latitude, longitude } : {})
+      postNativeEvent({ type: 'requestLocation' })
+      setActiveTab('map')
+    }
     window.addEventListener('poplur-pick-spot', onPickSpot)
+    window.addEventListener('poplur-pick-podcast-location', onPickPodcastLocation)
     window.addEventListener('message', onMapMessage)
     return () => {
       window.removeEventListener('poplur-pick-spot', onPickSpot)
+      window.removeEventListener('poplur-pick-podcast-location', onPickPodcastLocation)
       window.removeEventListener('message', onMapMessage)
     }
   }, [])
@@ -2751,6 +2790,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   /** a "pick a spot on the map" trip is in flight (set by the composer's
    *  button, consumed by the next Post here) */
   const pickingSpotRef = useRef(false)
+  /** Podcast uses the same precise map picker, but returns to its room rather
+      than opening the camera composer. */
+  const pickingPodcastLocationRef = useRef(false)
 
   // The map iframe stays mounted on every tab, so its audio (radio, ambience,
   // pops) must be gated here: audible only while the MAP tab is front-most AND
@@ -2877,6 +2919,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       pickingSpotRef.current = false
       clearPendingMapPost()
     }
+    if (pickingPodcastLocationRef.current) {
+      pickingPodcastLocationRef.current = false
+      clearPodcastMapPick()
+    }
     setMapPickSpotLaunch(null)
   }, [activeTab, mapMounted, mapPickSpotLaunch])
 
@@ -2917,11 +2963,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // stops. This mirrors the photo camera: choosing it is not itself a shutter.
   // What the camera is ARMED for. Selection and firing are deliberately separate
   // on this tab: the mode decides which object the navigator wears, and tapping
-  // that object is the shutter. LIVE joins photo/video here for exactly that
-  // reason — flicking past it must not put you on air.
-  const [cameraCaptureMode, setCameraCaptureMode] = useState<'photo' | 'video' | 'live'>(() => {
+  // that object is the shutter. Broadcast is no longer a camera-tab surface.
+  const [cameraCaptureMode, setCameraCaptureMode] = useState<'photo' | 'video'>(() => {
     const requested = new URLSearchParams(window.location.search).get('camera-mode')
-    return requested === 'video' ? 'video' : requested === 'live' ? 'live' : 'photo'
+    return requested === 'video' ? 'video' : 'photo'
   })
 
   // The camera's own channel cycle. PHOTO and VIDEO were already modes; ROLL is
@@ -2975,10 +3020,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // while it is up leaves it and resumes the ring from the capture mode you
     // were in — so the arrows always walk photo / video / subscreens, whatever
     // page you happened to be looking at.
-    // 'live' is not a ring stop — it is something you start while filming, so
-    // for the purpose of stepping it IS the video screen.
-    const mode = cameraCaptureMode === 'live' ? 'video' : cameraCaptureMode
-    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? mode
+    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? cameraCaptureMode
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
@@ -3051,17 +3093,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // from a plain cube tap firing this tab's favourite.
   // PROFILE included: the feed answers with whose post is playing, and that
   // handle is the profile we open — not your own.
-  type HomeCameraAction = Exclude<keyof CameraActions, 'arrow' | 'composerBack'> | 'roll'
+  type HomeCameraAction = Exclude<keyof CameraActions, 'arrow' | 'composerBack' | 'live'> | 'roll'
   const pendingMenuActionRef = useRef<FeedAction | HomeCameraAction | null>(null)
   const performMenuAction = useCallback((action: FeedAction | HomeCameraAction) => {
     if (action === 'roll') {
       setCameraStep(current => current + 1)
       return
     }
-    // Selection, not firing. LIVE joins photo/video here: the tile arms the
-    // broadcast and the cube tap commits it, so neither a wheel pick nor a
-    // channel flick can put you on air by itself.
-    if (action === 'photo' || action === 'video' || action === 'live') {
+    // Selection, not firing. The cube remains the shutter for its selected
+    // camera mode; the camera tab does not expose a broadcast destination.
+    if (action === 'photo' || action === 'video') {
       setCameraCaptureMode(action)
       return
     }
@@ -3403,11 +3444,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         ? SETTINGS_APPEARANCE_MODEL : undefined)
       ?? (cubeScreen === 'profile-settings' && settingsPage === 'verify'
         ? SETTINGS_VERIFY_MODEL : undefined)
-      // The studio's RECORD stage: the cube is the 3D microphone while the
-      // take is being sung — the screen's own big mic sprite came out in the
-      // same change, so this is the only mic on the stage. Every other studio
-      // stage falls through to the mixing desk in SUBSCREEN_CUBE_MODEL.
-      ?? ((cubeScreen === 'camera-studio' || cubeScreen === 'camera-music') && studioStage === 'mic'
+      // Music wears the microphone while recording. A podcast is a microphone
+      // from the moment its room opens through its record step — it is not a
+      // mixer screen — so those two stages use the same supplied 3D mic.
+      ?? (((cubeScreen === 'camera-studio'
+          && (studioStage === 'room' || studioStage === 'podcast-record' || studioStage === 'mic'))
+        || (cubeScreen === 'camera-music' && studioStage === 'mic'))
         ? STUDIO_MIC_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)

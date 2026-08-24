@@ -46,7 +46,7 @@ interface Item {
   /** rendered by the app itself rather than embedded from Rough Copy */
   native?: boolean
   /** performed on the live screen — no subscreen opens */
-  action?: 'like' | 'comment' | 'share' | 'profile' | 'photo' | 'video' | 'roll' | 'live'
+  action?: 'like' | 'comment' | 'share' | 'profile' | 'photo' | 'video' | 'roll'
   /** drawn as letters instead of an icon file */
   glyph?: string
   /**
@@ -463,6 +463,17 @@ export default function HoldMenuTwin({
       // The native pages nest too, and they answer for themselves. One level
       // per tap, innermost first, exactly like the embeds above.
       if (activeScreen && nativeBackRef.current?.()) return true
+      // Studio's own handler has already returned to its chooser when it is
+      // inside Music or Podcast. At that chooser there is no deeper Studio
+      // state left, so this next tap leaves Studio for Camera rather than ever
+      // falling through to a shutter/action behind the overlay.
+      if (activeScreen?.screen === 'camera-studio' || activeScreen?.screen === 'camera-music') {
+        activeScreenRef.current = null
+        setActiveScreen(null)
+        onClearPageRef.current?.()
+        onCloseRef.current('dismiss')
+        return true
+      }
       if (activeScreen) return false
       onClose('dismiss')
       return true
@@ -1036,14 +1047,29 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'camera-studio') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Studio">
-          <StudioScreen onClose={() => { playPop(); onClose() }} />
+          <StudioScreen
+            onClose={() => { playPop(); onClose() }}
+            bindBack={bindNativeBack}
+            onOpenLibrary={() => {
+              playPop()
+              setActiveScreen({ icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true })
+            }}
+          />
         </div>
       )
     }
     if (activeScreen.native && activeScreen.screen === 'camera-music') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Music">
-          <StudioScreen entry="music-capture" onClose={() => { playPop(); onClose() }} />
+          <StudioScreen
+            entry="music-capture"
+            onClose={() => { playPop(); onClose() }}
+            bindBack={bindNativeBack}
+            onOpenLibrary={() => {
+              playPop()
+              setActiveScreen({ icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true })
+            }}
+          />
         </div>
       )
     }

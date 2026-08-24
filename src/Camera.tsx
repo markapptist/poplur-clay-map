@@ -1786,24 +1786,6 @@ export default function Camera({
           size={44}
           onToggle={() => setArOpen(open => !open)}
         />
-        {/* Text, not a clay object — going live is a mode you read, and red
-            shader-text says "you're about to broadcast" faster than an icon
-            would. Same gradient-clip-text technique as the zoom presets,
-            just red; a faster, brighter pulse marks actually being on air. */}
-        {/* Video only — see captureMode. Kept mounted while ON AIR regardless,
-            because the control that ends a broadcast must never disappear
-            because the mode moved underneath it. */}
-        {(captureMode === 'video' || captureMode === 'live' || onAir) && (
-          <button
-            type="button"
-            className={onAir ? `${styles.camLiveTextBtn} ${styles.camLiveTextBtnOn}` : styles.camLiveTextBtn}
-            aria-label={onAir ? 'End live broadcast' : 'Go live'}
-            aria-pressed={onAir}
-            onClick={toggleLive}
-          >
-            LIVE
-          </button>
-        )}
         {/* Camera roll, promoted from a floating bottom-left button into this
             rail so it reads as one of the camera's own controls instead of a
             stray tile. Shows the latest shot from this session as its own
