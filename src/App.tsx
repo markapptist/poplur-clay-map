@@ -47,7 +47,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
 import { userUnitsToKm } from './units'
-import ClayMap, { MAP_2D, MAP_LITE, WeatherMark, installComposeRadiusPreview, landmarkCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
+import ClayMap, { MAP_LITE, WeatherMark, installComposeRadiusPreview, landmarkCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
 import { setMapMode } from './mapMode'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
@@ -580,14 +580,11 @@ export default function App() {
   useEffect(() => () => {
     if (placeSuggestionTimerRef.current != null) window.clearTimeout(placeSuggestionTimerRef.current)
   }, [])
-  const currentMapMode = MAP_2D ? '2d' : '3d'
+  const currentMapMode = '2d'
   const handleToggleMapMode = useCallback(() => {
-    const nextMode = MAP_2D ? '3d' : '2d'
-    setMapMode(nextMode)
-    const nextUrl = new URL(window.location.href)
-    nextUrl.searchParams.set('mapMode', nextMode)
-    nextUrl.searchParams.delete('fallback2d')
-    window.location.replace(nextUrl.toString())
+    // Compatibility entry point for the legacy hold-menu action. The shared
+    // iPhone/Android map intentionally stays in its low-power flat mode.
+    setMapMode('2d')
   }, [])
   const [selectedId, setSelectedId] = useState<string | null>('queen')
   // Theme switching lives in the app's Profile → Settings; the prototype
@@ -2496,7 +2493,15 @@ export default function App() {
         // The search panel drops in from the top, the same one the map's own
         // search button opens — the menu tile is another way in, not a copy.
         case 'search': setSearchOpen(true); break
+        case 'weather': setWeatherOpen(open => !open); break
         case 'mapMode': handleToggleMapMode(); break
+        // The visible map rail belongs to Home when this document is embedded.
+        // Persist the user choice here too, so Map audio follows the same gate
+        // as every other sound source rather than merely changing the icon.
+        case 'mute': {
+          if (typeof event.data.muted === 'boolean') setUserMuted(event.data.muted)
+          break
+        }
         // The shell's level switch (tap to cycle, hold to pick) sends the
         // chosen level down; the map owns what that means on the ground.
         case 'setPopLevel': {
@@ -2877,7 +2882,7 @@ export default function App() {
       {!isEmbedded && <TopChrome />}
       {/* Reachable thumb rail. Settings can mirror the whole group for a
           right-handed layout without scattering controls around the title. */}
-      <TabControlRail side={controlSide} label="Map controls">
+      {!isEmbedded && <TabControlRail side={controlSide} label="Map controls">
         <ClayMuteButton
           muted={muted}
           size={44}
@@ -2887,9 +2892,9 @@ export default function App() {
           type="button"
           className={styles.mapModeToggle}
           data-mode={currentMapMode}
-          aria-label={`Switch to ${currentMapMode === '2d' ? '3D' : '2D'} map`}
-          aria-pressed={currentMapMode === '3d'}
-          onClick={() => { playPop(0.25); handleToggleMapMode() }}
+          aria-label="Flat map mode"
+          aria-pressed={false}
+          disabled
         >
           <span className={styles.mapModeClay} aria-hidden="true">
             <span className={styles.mapModeClayDepth}>{currentMapMode.toUpperCase()}</span>
@@ -2960,7 +2965,7 @@ export default function App() {
         >
           <WeatherMark mode={weatherMode} icon={weatherIconMarkup} cloud={cloudBadge} compact />
         </button>
-      </TabControlRail>
+      </TabControlRail>}
       {/* The weather overlay itself: rain, snow, hail, lightning over the map. */}
       <WeatherFX mode={weatherMode} />
 

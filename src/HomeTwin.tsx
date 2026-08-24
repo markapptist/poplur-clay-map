@@ -11,6 +11,8 @@ import ClayChannelArrows from './ClayChannelArrows'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import TabControlRail from './TabControlRail'
+import MapLevelButton from './MapLevelButton'
+import { WeatherMark } from './ClayMap'
 import mapStyles from './App.module.css'
 import { cubeTransition, onTransitionChanged, screenTransition, type CubeTransition, type ScreenTransition } from './cubeTransitions'
 import { startEngagementChips, engagementVerb } from './engagement'
@@ -42,7 +44,7 @@ import {
   wakeManagedRendering,
 } from './nativeBridge'
 import type { HarnessView } from './ViewHarness'
-import { initialMapMode, type PoplurMapMode } from './mapMode'
+import type { PoplurMapMode } from './mapMode'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
 import {
   readMapTourTopics,
@@ -51,7 +53,7 @@ import {
 } from './mapTourPreferences'
 import { noteNewsMessage } from './newsMessages'
 import { onProfileGenderChange, profileHeadModel } from './profileGender'
-import { POIS } from './data'
+import { POIS, type PopLevel } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
 import {
   RADIUS_CHANGE_EVENT,
@@ -70,6 +72,11 @@ import {
  * cheapening what the user is looking at.
  */
 const CHROME_IDLE_MS = 30_000
+
+// The outer map rail appears above the native map as well as the web map. Keep
+// its weather affordance identical to the existing moulded-clay map mark — not
+// a replacement text glyph — while the map underneath owns live conditions.
+const MAP_RAIL_SUN_ICON = `<svg viewBox="0 0 40 40"><defs><radialGradient id="homeRailSun" cx="36%" cy="30%" r="76%"><stop offset="0" stop-color="#FFF3B0"/><stop offset="0.55" stop-color="#FFD23F"/><stop offset="1" stop-color="#E8A200"/></radialGradient></defs><g stroke="#E8A200" stroke-width="3" stroke-linecap="round" opacity="0.95"><path d="M20 3v5M20 32v5M3 20h5M32 20h5M8 8l3.5 3.5M28.5 28.5L32 32M32 8l-3.5 3.5M11.5 28.5L8 32"/></g><circle cx="20" cy="20" r="10" fill="url(#homeRailSun)" stroke="#D08F00" stroke-width="0.8"/><ellipse cx="16" cy="15.5" rx="3.6" ry="2.6" fill="#fff" opacity="0.45"/></svg>`
 
 // Browser twin of the iOS Home screen (map tab state), rebuilt from
 // HomeView.swift + RecordingCountdownView.swift + RadiusNumberDisplayFIXED.swift.
@@ -2506,6 +2513,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-fps-cube-controller', onFpsCube)
   }, [])
   const [mapTourOn, setMapTourOn] = useState(false)
+  const [mapPopLevel, setMapPopLevel] = useState<PopLevel>('mine')
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
   const [mapPlace, setMapPlace] = useState<string | null>(null)
@@ -2557,9 +2565,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       sequence: feedAdSequenceRef.current,
     })
   }, [])
-  const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>(() =>
-    NATIVE_ADAPTIVE_MAP ? '2d' : initialMapMode()
-  )
+  const [liveMapMode, setLiveMapMode] = useState<PoplurMapMode>('2d')
   const [nativeMapZoom, setNativeMapZoom] = useState(0.42)
   const nativeZoomFrameRef = useRef<number | null>(null)
   const pendingNativeZoomRef = useRef(nativeMapZoom)
@@ -3708,7 +3714,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           bridge. The right rail deliberately keeps the tall Poplur zoom
           silhouette from the approved map instead of replacing it with
           MapKit's stock buttons. */}
-      {NATIVE_ADAPTIVE_MAP && activeTab === 'map' && committedTab === 'map'
+      {/* The reference map keeps its three immediate actions in the HOME
+          chrome: sound, 2D/3D and location.  When the map lives in an iframe,
+          drawing a second, larger toolbar inside it made the screen feel like
+          two competing apps.  Keep this small rail above either renderer and
+          relay its actions down to the map when the WebView is in use. */}
+      {activeTab === 'map' && committedTab === 'map'
         && !overlayOpen && activePermission === null && (
         <div className={`${styles.nativeMapChrome}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}>
           <TabControlRail side="left" label="Map controls">
@@ -3719,6 +3730,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 const next = !loadingMuted
                 setUserMuted(next)
                 setLoadingMuted(next)
+                if (!NATIVE_ADAPTIVE_MAP) sendMapAction('mute', { muted: next })
                 if (!next) playPop(0.2)
               }}
             />
@@ -3726,14 +3738,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               type="button"
               className={mapStyles.mapModeToggle}
               data-mode={liveMapMode}
-              aria-label={`Switch to ${liveMapMode === '2d' ? '3D' : '2D'} map`}
-              aria-pressed={liveMapMode === '3d'}
-              onClick={() => {
-                playPop(0.25)
-                const next = liveMapMode === '2d' ? '3d' : '2d'
-                setLiveMapMode(next)
-                sendMapAction('mapMode', { mode: next })
-              }}
+              aria-label="Flat map mode"
+              aria-pressed={false}
+              disabled
             >
               <span className={mapStyles.mapModeClay} aria-hidden="true">
                 <span className={mapStyles.mapModeClayDepth}>{liveMapMode.toUpperCase()}</span>
@@ -3748,43 +3755,79 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               activateOnClick
               onPress={() => { playPop(0.25); sendMapAction('locate') }}
             />
+            <ClayCornerButton
+              kind="search"
+              label="Search places"
+              size={44}
+              still
+              activateOnClick
+              onPress={() => { playPop(0.25); sendMapAction('search') }}
+            />
+            <ClayCornerButton
+              kind="play"
+              active={mapTourOn}
+              label={mapTourOn ? 'Stop the tour' : 'Start the tour'}
+              size={44}
+              still
+              activateOnClick
+              onPress={() => { playPop(0.25); sendMapAction('tour') }}
+            />
+            <MapLevelButton
+              level={mapPopLevel}
+              mode={liveMapMode}
+              menuSide="left"
+              onPick={level => {
+                setMapPopLevel(level)
+                sendMapAction('setPopLevel', { level })
+              }}
+            />
+            <button
+              type="button"
+              className={mapStyles.mapWeatherToggle}
+              aria-label="Show weather forecast"
+              onClick={() => { playPop(0.25); sendMapAction('weather') }}
+            >
+              <WeatherMark mode="clear" icon={MAP_RAIL_SUN_ICON} compact />
+            </button>
           </TabControlRail>
-          <label
-            className={styles.nativeMapZoom}
-            aria-label="Map zoom"
-            data-poplur-native-hit-region
-            onPointerDown={beginNativeZoomGesture}
-            onPointerUp={finishNativeZoomGesture}
-            onPointerCancel={finishNativeZoomGesture}
-          >
-            <img
-              className={styles.nativeMapZoomCity}
-              src={`${import.meta.env.BASE_URL}sprites/zoom_buildings_y25_p14_s256.png`}
-              alt=""
-              aria-hidden="true"
-              draggable="false"
-            />
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.005}
-              value={nativeMapZoom}
-              onInput={event => setNativeZoom(Number(event.currentTarget.value))}
-              onChange={event => setNativeZoom(Number(event.currentTarget.value))}
-              onKeyDown={beginNativeZoomGesture}
-              onKeyUp={finishNativeZoomGesture}
-              onBlur={finishNativeZoomGesture}
+          {NATIVE_ADAPTIVE_MAP && (
+            <label
+              className={styles.nativeMapZoom}
               aria-label="Map zoom"
-            />
-            <img
-              className={styles.nativeMapZoomGlobe}
-              src={`${import.meta.env.BASE_URL}sprites/zoom_globe_y20_p12_s256.png`}
-              alt=""
-              aria-hidden="true"
-              draggable="false"
-            />
-          </label>
+              data-poplur-native-hit-region
+              onPointerDown={beginNativeZoomGesture}
+              onPointerUp={finishNativeZoomGesture}
+              onPointerCancel={finishNativeZoomGesture}
+            >
+              <img
+                className={styles.nativeMapZoomCity}
+                src={`${import.meta.env.BASE_URL}sprites/zoom_buildings_y25_p14_s256.png`}
+                alt=""
+                aria-hidden="true"
+                draggable="false"
+              />
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.005}
+                value={nativeMapZoom}
+                onInput={event => setNativeZoom(Number(event.currentTarget.value))}
+                onChange={event => setNativeZoom(Number(event.currentTarget.value))}
+                onKeyDown={beginNativeZoomGesture}
+                onKeyUp={finishNativeZoomGesture}
+                onBlur={finishNativeZoomGesture}
+                aria-label="Map zoom"
+              />
+              <img
+                className={styles.nativeMapZoomGlobe}
+                src={`${import.meta.env.BASE_URL}sprites/zoom_globe_y20_p12_s256.png`}
+                alt=""
+                aria-hidden="true"
+                draggable="false"
+              />
+            </label>
+          )}
         </div>
       )}
 

@@ -32,7 +32,6 @@ import {
 import { setCarProximity, stopCarAudio } from './carAudio'
 import type { WeatherMode } from './WeatherFX'
 import styles from './ClayMap.module.css'
-import { initialMapMode } from './mapMode'
 import { dropNewsMessage, MESSAGE_MAX } from './newsMessages'
 
 export interface ClayMapProps {
@@ -151,7 +150,12 @@ export function WeatherMark({
   )
 }
 
-export const MAP_2D = initialMapMode() === '2d'
+// One cross-platform renderer: Mercator and flat at city/region scale, with
+// our scoped clay building extrusions appearing only at close street zoom.
+// This is deliberately distinct from the former flat-only fallback and from
+// the former globe/always-3D mode.
+export const MAP_2D = false
+const SHARED_ADAPTIVE_MAP = true
 const MAP_LITE_REQUESTED =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).get('mapLite') === '1'
@@ -204,7 +208,7 @@ function applySky(map: mapboxgl.Map, shade: SkyShade) {
   // the globe; keeping it on in 2D leaves Mapbox's atmosphere pass alive and
   // was one of the GPU costs that survived after visible animation stopped on
   // iPhone. It also produced the stray launch halo.
-  if (MAP_2D) {
+  if (MAP_2D || SHARED_ADAPTIVE_MAP) {
     try { map.setFog(null) } catch { /* fog unsupported */ }
     return
   }
@@ -247,9 +251,9 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme) {
     if (!map.getLayer(layer)) return
     try { map.setLayoutProperty(layer, prop as never, value as never) } catch { /* layer varies by style version */ }
   }
-  cfg('show3dObjects', !MAP_2D)
-  cfg('show3dLandmarks', !MAP_2D)
-  cfg('show3dTrees', !MAP_2D)
+  cfg('show3dObjects', false)
+  cfg('show3dLandmarks', false)
+  cfg('show3dTrees', false)
   // Keep Mapbox's generic building extrusion layer off in realistic mode too:
   // it turns low-rise houses into flat blocks. We add a scoped solid layer for
   // taller buildings below, while house roofs keep their satellite detail.
@@ -1191,6 +1195,7 @@ const MANAGED_CAMERA_JUMP_MS = 350
 // the AO/edge clay shading. Layout, tiles and interactions are identical.
 export const MAP_LITE =
   MAP_2D ||
+  SHARED_ADAPTIVE_MAP ||
   MAP_LITE_REQUESTED ||
   typeof window !== 'undefined' &&
   Boolean(
@@ -1202,12 +1207,12 @@ export const MAP_LITE =
 
 // The clay object riding above the zoom slider: the further out you are, the
 // bigger the thing you're looking at. Globe → cloud → airplane → buildings.
-interface ZoomStage { id: string; below: number; url: string; yaw: number; pitch: number }
+interface ZoomStage { id: string; below: number; sprite: string }
 const ZOOM_STAGES: ZoomStage[] = [
-  { id: 'globe',     below: 4.5,      url: 'zoom_globe.glb',     yaw: 20,  pitch: 12 },
-  { id: 'cloud',     below: 8.5,      url: 'cloud.glb',          yaw: -18, pitch: 8 },
-  { id: 'airplane',  below: 12.5,     url: 'zoom_airplane.glb',  yaw: 35,  pitch: 10 },
-  { id: 'buildings', below: Infinity, url: 'zoom_buildings.glb', yaw: 25,  pitch: 14 },
+  { id: 'globe',     below: 4.5,      sprite: 'sprites/zoom_globe_y20_p12_s256.png' },
+  { id: 'cloud',     below: 8.5,      sprite: 'sprites/cloud_y-18_p8_s256.png' },
+  { id: 'airplane',  below: 12.5,     sprite: 'sprites/zoom_airplane_y35_p10_s256.png' },
+  { id: 'buildings', below: Infinity, sprite: 'sprites/zoom_buildings_y25_p14_s256.png' },
 ]
 const stageForZoom = (z: number): ZoomStage =>
   ZOOM_STAGES.find(s => z < s.below) ?? ZOOM_STAGES[ZOOM_STAGES.length - 1]
@@ -1222,8 +1227,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     : new URLSearchParams(window.location.search)
   const radiusPreviewLaunch = launchParams.get('radiusReview') === '1'
   const focusedPostLaunch = launchParams.get('pickSpot') === '1' || radiusPreviewLaunch
-  const adaptiveIOSLaunch = !MAP_2D && !focusedPostLaunch && (
-    launchParams.get('iosTier') === '1'
+  const adaptiveIOSLaunch = !focusedPostLaunch && (
+    SHARED_ADAPTIVE_MAP || launchParams.get('iosTier') === '1'
     || (isIOSNativeShell() && launchParams.get('iosTier') !== '0')
   )
   const deferInitialGeolocation = launchParams.get('deferLocation') === '1'
@@ -1323,8 +1328,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
   const [fovValue, setFovValue] = useState(FOV_DEFAULT)
   // The clay cloud GLB, rendered once to a sprite for the zoom-in cloud band.
   const [cloudSprite, setCloudSprite] = useState<string | null>(null)
-  // Clay objects riding above the zoom slider.
-  const [zoomSprites, setZoomSprites] = useState<Record<string, string>>({})
   // The takeover colour the circle wears. Module state owns the colour; this
   // mirror only exists so React repaints the face when it changes.
   const [takeoverFace, setTakeoverFace] = useState(() => takeoverBaseColor())
@@ -1598,22 +1601,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     mapApi?.__setStreetView?.(streetView)
   }, [mapRef, streetView])
 
-  // These are pre-rendered PNGs in production, so warm all four at once. The
-  // former active-stage-only load left the globe thumb blank for the first
-  // frame after a fast drag all the way out.
-  useEffect(() => {
-    let alive = true
-    ZOOM_STAGES.forEach(stage => {
-      modelSprite(stage.url, { yaw: stage.yaw, pitch: stage.pitch, size: 256 })
-        .then(url => {
-          if (!alive) return
-          setZoomSprites(prev => (prev[stage.id] ? prev : { ...prev, [stage.id]: url }))
-        })
-        .catch(() => { /* the fixed clay tray remains visible */ })
-    })
-    return () => { alive = false }
-  }, [])
-
   // Pop (sound + haptic) each time the zoom crosses a whole notch. Skipped while
   // the camera is flying itself (launch + AI tour), which would machine-gun it.
   useEffect(() => {
@@ -1714,7 +1701,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     //
     // Raising it again needs an on-device soak, not a gate pass.
     const iosNativeMap = isIOSNativeShell()
-    const dprCap = MAP_2D || MAP_LITE ? 1 : iosNativeMap ? 1.5 : isNativeShell() ? 2 : Infinity
+    const dprCap = MAP_2D || SHARED_ADAPTIVE_MAP || MAP_LITE ? 1 : iosNativeMap ? 1.5 : isNativeShell() ? 2 : Infinity
     if (window.devicePixelRatio > dprCap) {
       try {
         Object.defineProperty(window, 'devicePixelRatio', { value: dprCap, configurable: true })
@@ -1734,7 +1721,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // sizes this cache from the viewport; this ceiling makes the phone's
         // retained history explicit. Current visible/cover/fade tiles are active
         // render data and intentionally sit outside the cache ceiling.
-        maxTileCacheSize: MAP_2D ? 12 : MAP_LITE || iosNativeMap ? 16 : isNativeShell() ? 24 : 48,
+        maxTileCacheSize: MAP_2D || SHARED_ADAPTIVE_MAP ? 12 : MAP_LITE || iosNativeMap ? 16 : isNativeShell() ? 24 : 48,
         style: 'mapbox://styles/mapbox/dark-v11',
         center: HOME_CENTER,
         // Constructed at street zoom deliberately: the Standard style never
@@ -1744,8 +1731,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         zoom: 14.8,
         // Hard ceiling: pinch/scroll can't go deeper than the toy-diorama level.
         maxZoom: ZOOM_MAX,
-        pitch: MAP_2D ? 0 : 62,
-        bearing: MAP_2D ? 0 : -18,
+        pitch: MAP_2D || SHARED_ADAPTIVE_MAP ? 0 : 62,
+        bearing: MAP_2D || SHARED_ADAPTIVE_MAP ? 0 : -18,
         // MSAA is a browser-only luxury: on phone GPUs it multiplies the
         // fill-extrusion cost at zero perceptible gain on small screens.
         antialias: !MAP_2D && !MAP_LITE && !isNativeShell(),
@@ -1767,7 +1754,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // the still-expensive globe shader. Constructing in Mercator is stable
         // in WebView (the historical blank-canvas bug came from switching an
         // already-running classic style at runtime). 3D keeps the globe.
-        projection: MAP_2D ? 'mercator' : 'globe',
+        projection: MAP_2D || SHARED_ADAPTIVE_MAP ? 'mercator' : 'globe',
       })
     } catch (error) {
       cancelManagedRenderingWake()
@@ -2312,6 +2299,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     // up for the space view. Enforced at gesture end so cinematic flights
     // (which animate pitch themselves) never get snapped mid-flight.
     const HYBRID_ZOOM = 12.5
+    let adaptiveCameraFrame: number | null = null
+    const settleAdaptiveCamera = (pitch: number, bearing: number) => {
+      if (adaptiveCameraFrame != null) window.cancelAnimationFrame(adaptiveCameraFrame)
+      // `zoomend` is emitted while Mapbox may still be finishing symbol
+      // placement. Scheduling the one-shot camera settle for the next paint
+      // avoids mutating that placement pass (which can otherwise throw inside
+      // Mapbox on the close-zoom handoff). This is gesture-driven, never a
+      // standing render loop.
+      adaptiveCameraFrame = window.requestAnimationFrame(() => {
+        adaptiveCameraFrame = null
+        if (disposed || !map.isStyleLoaded()) return
+        map.jumpTo({ pitch, bearing })
+      })
+    }
     const enforceHybridPitch = () => {
       if (MAP_2D) {
         if (map.getMinPitch() !== 0) map.setMinPitch(0)
@@ -2327,8 +2328,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       if (map.getZoom() >= HYBRID_ZOOM) {
         const liteMax = MAP_LITE ? 60 : 70
         if (map.getMinPitch() !== 55) { map.setMinPitch(55); map.setMaxPitch(liteMax) }
-      } else if (map.getMinPitch() !== 0) {
-        map.setMinPitch(0); map.setMaxPitch(85)
+        // The 3D reveal belongs to close-in exploration only. Settle into its
+        // compact flyover angle once per completed zoom gesture—not on a
+        // frame loop—so it never spends GPU while the map is resting.
+        if (SHARED_ADAPTIVE_MAP && map.getPitch() < 54.5) {
+          settleAdaptiveCamera(55, -18)
+        }
+      } else {
+        if (map.getMinPitch() !== 0) { map.setMinPitch(0); map.setMaxPitch(85) }
+        // Pulling back returns to the light, north-up 2D map. This prevents a
+        // close-up 3D camera from persisting after the buildings have culled.
+        if (SHARED_ADAPTIVE_MAP && (map.getPitch() > 0.5 || Math.abs(map.getBearing()) > 0.5)) {
+          settleAdaptiveCamera(0, 0)
+        }
       }
     }
     map.on('zoomend', enforceHybridPitch)
@@ -2485,22 +2497,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
         // driven behaviour (parked renderer after settle) is preserved by the
         // wakeManagedRendering that covers the full duration.
         if (MAP_2D) {
-          const duration = 3200
-          wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-          map.easeTo({
+          // One shared, flat map opens at its useful city view immediately.
+          // Avoiding a cosmetic launch flight prevents an otherwise-idle map
+          // from streaming and compositing tiles for several seconds on both
+          // iPhone and Android.
+          wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
+          map.jumpTo({
             center,
-            zoom: INTRO_LANDING_ZOOM,
+            zoom: 14.8,
             pitch: 0,
             bearing: 0,
-            duration,
-            easing: t => t * t * (3 - 2 * t),
-            essential: true,
           })
-          map.once('moveend', () => {
-            if (introDone) return
+          if (!introDone) {
             introDone = true
             onIntroComplete?.(center)
-          })
+          }
           return
         }
         // Behind another tab there is nobody to watch the dive — flying it just
@@ -3123,7 +3134,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       updateLabelCull()
       } // end !REALISTIC_MAP fill-extrusion buildings
 
-      if (!REALISTIC_MAP && MAP_2D) {
+      if (!REALISTIC_MAP && (MAP_2D || SHARED_ADAPTIVE_MAP)) {
         // Flat clay building footprints for the low-cost renderer.
         //
         // These used to read from Mapbox Streets purely because it was already
@@ -3916,7 +3927,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
           setCarProximity(0)
         }
       }
-      stopFlyerFrames = onFrame(animateFlyers, MAP_2D ? 'idle' : 'ambient')
+      // The shared 2D renderer has no decorative frame subscriber at all.
+      // It only renders in response to a genuine map gesture or state change.
+      if (!MAP_2D && !SHARED_ADAPTIVE_MAP) stopFlyerFrames = onFrame(animateFlyers, 'ambient')
 
       // ── Cinematic landmark tour: long curved flights landmark to landmark ──
       // The tour is shot, not merely navigated. Every stop is a three-beat
@@ -4297,13 +4310,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     ) ? ownProfilePhoto : null
     if (!usablePhoto && !usableVideo) return
     const build = (coords: [number, number]) => {
-      void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: MAP_2D ? '2d' : '3d' })
+      void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: MAP_2D || SHARED_ADAPTIVE_MAP ? '2d' : '3d' })
         .then(src => {
           if (cancelled || mapRef.current !== map) return
           const markerRoot = document.createElement('div')
-          markerRoot.className = `${styles.popPinMarker}${MAP_2D ? ` ${styles.popPinMarkerFlat}` : ''}`
+          markerRoot.className = `${styles.popPinMarker}${MAP_2D || SHARED_ADAPTIVE_MAP ? ` ${styles.popPinMarkerFlat}` : ''}`
           const pin = document.createElement('div')
-          pin.className = `${styles.popPin} ${styles.popPinMine}${MAP_2D ? ` ${styles.popPinFlat}` : ''}`
+          pin.className = `${styles.popPin} ${styles.popPinMine}${MAP_2D || SHARED_ADAPTIVE_MAP ? ` ${styles.popPinFlat}` : ''}`
           const pinImage = document.createElement('img')
           pinImage.src = src
           pinImage.alt = ''
@@ -4423,7 +4436,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
     }
 
     // The pin's look follows the render tier: dimensional in 3D, flat in 2D.
-    const tier: '2d' | '3d' = MAP_2D ? '2d' : '3d'
+    const tier: '2d' | '3d' = MAP_2D || SHARED_ADAPTIVE_MAP ? '2d' : '3d'
     // Bake-only: .codex/prerender-sprites.mjs installs this collector before any
     // app code runs. A bake run boots in ONE tier, so it would only ever capture
     // that tier's pin and the other would be left decoding 29MB of GLB on a real
@@ -4445,11 +4458,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       // that owns Poplur's press/ownership transition; sharing one element
       // restarted five CSS transitions on every map frame.
       const markerRoot = document.createElement('div')
-      markerRoot.className = MAP_2D
+      markerRoot.className = MAP_2D || SHARED_ADAPTIVE_MAP
         ? `${styles.popPinMarker} ${styles.popPinMarkerFlat}`
         : styles.popPinMarker
       const el = document.createElement('button')
-      el.className = MAP_2D ? `${styles.popPin} ${styles.popPinFlat}` : styles.popPin
+      el.className = MAP_2D || SHARED_ADAPTIVE_MAP ? `${styles.popPin} ${styles.popPinFlat}` : styles.popPin
       el.type = 'button'
       el.setAttribute('aria-label', pin.mine
         ? `Your pop at ${pin.name}, ${pin.radiusKm} km`
@@ -4886,7 +4899,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
                 setComposeAt(null)
               }}
             >
-              {focusedPostLaunch ? 'Choose another' : 'Cancel'}
+              {focusedPostLaunch
+                ? focusedPostLocationStatus === 'ready' ? 'Choose another' : 'Pick on map'
+                : 'Cancel'}
             </button>
             {/* THE post action — the map→camera half of the May '26
                 CaptureFlow (CaptureFlowManager). Posting from the map takes
@@ -5152,7 +5167,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, da
       <div
         className={styles.zoomWrap}
         style={{
-          '--zoomThumb': zoomSprites[zoomStage.id] ? `url("${zoomSprites[zoomStage.id]}")` : 'none',
+          // The knob is a pre-rendered view of the real 3D object at this
+          // zoom band. Unlike decoding a GLB just to decorate a control, this
+          // costs one cached 2D image and is visible on the first frame.
+          '--zoomThumb': `url("${zoomStage.sprite}")`,
           '--zoomProgress': zoomProgress,
           // The rail's fill follows the takeover colour. `takeoverFace` is in
           // this component's state and changes with the wheel, so these
