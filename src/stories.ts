@@ -148,7 +148,7 @@ export function normalizeNativeStories(
       || expiresAtMillis <= createdAtMillis
       || expiresAtMillis - createdAtMillis > STORY_LIFETIME_MS + 5 * 60_000
       || createdAtMillis > now + 5 * 60_000) return []
-    return [{
+    const story: PoplurStory = {
       id,
       ownerId,
       username: boundedText(row.username, 40) ?? 'Poplur user',
@@ -167,7 +167,8 @@ export function normalizeNativeStories(
       sticker: normalizeSticker(row.sticker),
       poll: normalizePoll(row.poll),
       reaction: boundedText(row.reaction, 16),
-    }]
+    }
+    return [story]
   }).sort((a, b) => b.createdAtMillis - a.createdAtMillis)
 }
 
