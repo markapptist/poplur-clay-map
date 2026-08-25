@@ -13,6 +13,16 @@ import {
   requestNativeFeedPosts,
   type NativeFeedPost,
 } from './nativeFeedPosts'
+import {
+  FEED_DISCOVERY_MODES,
+  distanceMetersBetween,
+  feedDiscoverySnapshot,
+  onFeedDiscoveryChange,
+  rankFeedPosts,
+  recordFeedDiscoverySignal,
+  setFeedDiscoveryMode,
+  type FeedDiscoverySnapshot,
+} from './feedDiscovery'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
 // hands back on its own; background Radio or iPod is a standing choice the
@@ -83,6 +93,15 @@ function reachKmFor(key: string): number {
   let h = 0
   for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0
   return 0.3 + (h % 397) / 10
+}
+
+function discoverySeed(key: string): number {
+  let hash = 2_166_136_261
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index)
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return hash >>> 0
 }
 
 function radiusPostId(channelId: string, post?: ChannelPost): string {
@@ -211,7 +230,7 @@ const CHANNEL_USERS: Record<string, string[]> = {
 }
 
 export interface ChannelPost {
-  id?: string
+  id: string
   user: string
   video: string
   poster?: string
@@ -235,6 +254,15 @@ export interface ChannelPost {
    * Until then it is spoofed deterministically, like the other radius numbers.
    */
   reachKm?: number
+  createdAtMillis?: number
+  viewCount?: number
+  likeCount?: number
+  commentCount?: number
+  shareCount?: number
+  locationVisibility?: 'approximate' | 'hidden'
+  originLatitude?: number
+  originLongitude?: number
+  distanceMeters?: number
 }
 
 const CHANNEL_PLACES: Record<string, string[]> = {
@@ -267,6 +295,14 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       mediaType: post.mediaType,
       caption: post.caption,
       reachKm: post.radiusMeters == null ? undefined : post.radiusMeters / 1_000,
+      createdAtMillis: post.createdAtMillis,
+      viewCount: post.viewCount,
+      likeCount: post.likeCount,
+      commentCount: post.commentCount,
+      shareCount: post.shareCount,
+      locationVisibility: post.locationVisibility,
+      originLatitude: post.originLatitude,
+      originLongitude: post.originLongitude,
     }))
   if (realPosts.length) return realPosts
   // LIVE: whoever is streaming into your radius, your own broadcast first.
@@ -274,6 +310,7 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
   // never a permanent startup state.
   if (channel.id === 'live') {
     const broadcasts = interceptingLive().map(b => ({
+      id: `${channel.id}:${b.user}:${b.video ?? 'camera'}`,
       user: b.user,
       video: b.video ?? '',
       stream: b.stream,
@@ -281,14 +318,22 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       caption: b.caption,
       viewers: b.viewers,
       reachKm: reachKmFor(`${channel.id}:${b.user}:${b.video ?? ''}`),
+      createdAtMillis: Date.now(),
+      viewCount: b.viewers,
+      locationVisibility: 'hidden' as const,
     }))
     if (broadcasts.length) return broadcasts
     const video = STOCK_CLIPS[channel.number % STOCK_CLIPS.length]
     return [{
+      id: `${channel.id}:fallback:${video}`,
       user: '@poplur.live',
       video,
       caption: 'Live around your radius',
       reachKm: reachKmFor(`${channel.id}:fallback:${video}`),
+      createdAtMillis: Date.UTC(2026, 7, 25, 12),
+      viewCount: 18,
+      locationVisibility: 'approximate' as const,
+      distanceMeters: 1_400,
     }]
   }
   const users = CHANNEL_USERS[channel.id] ?? [channel.user]
@@ -303,13 +348,64 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
   return users.map((user, i) => {
     const video = own[i] ?? AD_POOL[(channel.number * 3 + i) % AD_POOL.length]
     const places = CHANNEL_PLACES[channel.id] ?? []
+    const id = `${channel.id}:${user}:${video}`
+    const seed = discoverySeed(id)
     return {
+      id,
       user,
       video,
       place: places[i % places.length],
-      reachKm: reachKmFor(`${channel.id}:${user}:${video}`),
+      reachKm: reachKmFor(id),
+      createdAtMillis: Date.UTC(2026, 7, 25, 18) - (seed % (10 * 86_400_000)),
+      viewCount: 30 + seed % 14_000,
+      likeCount: 4 + (seed >>> 5) % 1_800,
+      commentCount: (seed >>> 11) % 220,
+      shareCount: (seed >>> 17) % 90,
+      locationVisibility: 'approximate' as const,
+      distanceMeters: 250 + (seed % 24_000),
     }
   })
+}
+
+function currentViewerCoords(): [number, number] | null {
+  if (typeof window === 'undefined') return null
+  const row = (window as typeof window & {
+    __poplurNativeLocation?: { latitude?: unknown; longitude?: unknown }
+  }).__poplurNativeLocation
+  const latitude = Number(row?.latitude)
+  const longitude = Number(row?.longitude)
+  if (Number.isFinite(latitude) && Math.abs(latitude) <= 90
+    && Number.isFinite(longitude) && Math.abs(longitude) <= 180) {
+    return [longitude, latitude]
+  }
+  // The browser artifact has no shell fix. Its established Toronto centre is
+  // a deterministic preview origin; native shells fail closed until a real fix
+  // arrives so Local never pretends the device is in Toronto.
+  return isNativeShell() ? null : [-79.3811, 43.6487]
+}
+
+function rankedPostsFor(
+  channel: Channel,
+  published: NativeFeedPost[],
+  discovery: FeedDiscoverySnapshot,
+): ChannelPost[] {
+  const viewer = currentViewerCoords()
+  const candidates = postsFor(channel, published).map(post => {
+    if (post.distanceMeters != null || post.locationVisibility !== 'approximate' || !viewer
+      || !Number.isFinite(post.originLatitude) || !Number.isFinite(post.originLongitude)) return post
+    return {
+      ...post,
+      distanceMeters: distanceMetersBetween(
+        viewer,
+        [post.originLongitude as number, post.originLatitude as number],
+      ),
+    }
+  })
+  return rankFeedPosts(candidates.map(post => ({
+    ...post,
+    channelId: channel.id,
+    radiusMeters: (post.reachKm ?? 0) * 1_000,
+  })), discovery)
 }
 
 // Every bundled ad creative — the pool channels without their own clips draw
@@ -406,6 +502,8 @@ export default function FeedTwin({
   const [commentClosing, setCommentClosing] = useState(false)
   const [shareNote, setShareNote] = useState<string | null>(null)
   const shareNoteTimerRef = useRef<number | null>(null)
+  const [discoveryNote, setDiscoveryNote] = useState<string | null>(null)
+  const discoveryNoteTimerRef = useRef<number | null>(null)
   const [radiusReaction, setRadiusReaction] = useState<{ direction: 'up' | 'down'; amount: number } | null>(null)
   const radiusReactionTimerRef = useRef<number | null>(null)
   // End-of-clip comments: the roll runs when the video finishes, then leaves.
@@ -533,8 +631,24 @@ export default function FeedTwin({
   // decoder before it has painted its own first frame.
   const [readyPlaybackKey, setReadyPlaybackKey] = useState<string | null>(null)
   const ch = CHANNELS[index]
+  const discovery = useSyncExternalStore(
+    onFeedDiscoveryChange,
+    feedDiscoverySnapshot,
+    feedDiscoverySnapshot,
+  )
+  const [, setLocationRevision] = useState(0)
   const contentIdxRef = useRef<Record<string, number>>({})
   const [contentRevision, forceContentRender] = useState(0)
+
+  useEffect(() => {
+    const refresh = () => setLocationRevision(value => value + 1)
+    window.addEventListener('poplur-location', refresh)
+    window.addEventListener('poplur-native-location', refresh)
+    return () => {
+      window.removeEventListener('poplur-location', refresh)
+      window.removeEventListener('poplur-native-location', refresh)
+    }
+  }, [])
 
   // A visual tab transition leaves Feed mounted for a short beat. Treat that
   // phase as off-screen immediately: pause every video in this surface, mute
@@ -684,7 +798,7 @@ export default function FeedTwin({
     unattendedAdvancesRef.current = 0
     autoplayRestedRef.current = false
     setAutoplayRested(false)
-    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
+    const count = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot()).length
     if (count >= 2) {
       const cur = contentIdxRef.current[ch.id] ?? 0
       const nxt = (cur + 1) % count
@@ -698,6 +812,9 @@ export default function FeedTwin({
     noteFeedActivity()
     const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
     if (next === index) return
+    const currentPosts = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
+    const current = currentPosts[(contentIdxRef.current[ch.id] ?? 0) % Math.max(1, currentPosts.length)]
+    if (current) recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'skip')
     const currentVideo = adVideoRef.current
     if (currentVideo) retireFeedVideo(currentVideo)
     releaseAudioFocus('feed')
@@ -707,7 +824,7 @@ export default function FeedTwin({
     playPop()
     if (onIndexChange) onIndexChange(next)
     else setOwnIndex(next)
-  }, [index, onIndexChange])
+  }, [ch, index, noteFeedActivity, onIndexChange])
 
   const toggleMute = () => {
     const next = !muted
@@ -722,9 +839,12 @@ export default function FeedTwin({
   // narrows in.
   const changeContent = useCallback((dir: 1 | -1) => {
     noteFeedActivity()
-    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
+    const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
+    const count = ranked.length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
+    const leaving = ranked[current % count]
+    if (leaving) recordFeedDiscoverySignal({ id: leaving.id, channelId: ch.id }, 'skip')
     const next = (current + dir + count) % count
     const currentVideo = adVideoRef.current
     if (currentVideo) retireFeedVideo(currentVideo)
@@ -740,8 +860,12 @@ export default function FeedTwin({
   // Keep this separate from the arrow handler: a passive completion should
   // not make the physical navigator say "pop".
   const advanceCompletedContent = useCallback(() => {
-    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
+    const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
+    const count = ranked.length
     if (count < 2) return
+    const current = contentIdxRef.current[ch.id] ?? 0
+    const watched = ranked[current % count]
+    if (watched) recordFeedDiscoverySignal({ id: watched.id, channelId: ch.id }, 'watch')
     // Autoplaying to an empty room is pure heat. After AUTOPLAY_REST_AFTER
     // clips with no touch, rest on a cover rather than decode another; the
     // decoder was released at onEnded, so this is free until a tap resumes it.
@@ -751,7 +875,6 @@ export default function FeedTwin({
       return
     }
     unattendedAdvancesRef.current += 1
-    const current = contentIdxRef.current[ch.id] ?? 0
     const next = (current + 1) % count
     contentIdxRef.current[ch.id] = next
     onContentAdvance?.(ch.id, next)
@@ -803,7 +926,7 @@ export default function FeedTwin({
     nativeFeedPostsSnapshot,
   )
   useEffect(() => { requestNativeFeedPosts() }, [])
-  const posts = postsFor(ch, publishedPosts)
+  const posts = rankedPostsFor(ch, publishedPosts, discovery)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   const postId = radiusPostId(ch.id, post)
   // Every video change re-reports its reach — channel swipe, content swipe,
@@ -1519,11 +1642,48 @@ export default function FeedTwin({
     })
   }, [commentOpen])
 
+  const showDiscoveryNote = useCallback((message: string) => {
+    setDiscoveryNote(message)
+    if (discoveryNoteTimerRef.current != null) window.clearTimeout(discoveryNoteTimerRef.current)
+    discoveryNoteTimerRef.current = window.setTimeout(() => {
+      setDiscoveryNote(null)
+      discoveryNoteTimerRef.current = null
+    }, 2_200)
+  }, [])
+
+  const chooseDiscoveryMode = useCallback((mode: FeedDiscoverySnapshot['mode']) => {
+    playPop()
+    contentIdxRef.current = {}
+    setFeedDiscoveryMode(mode)
+    if (mode === 'local') postNativeEvent({ type: 'requestLocation' })
+    const detail = FEED_DISCOVERY_MODES.find(option => option.id === mode)?.detail ?? mode
+    showDiscoveryNote(detail)
+  }, [showDiscoveryNote])
+
+  const hideCurrentPost = useCallback(() => {
+    const current = postRef.current
+    if (!current) return
+    playPop()
+    const video = adVideoRef.current
+    if (video) retireFeedVideo(video)
+    recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'notInterested')
+    contentIdxRef.current[ch.id] = 0
+    forceContentRender(value => value + 1)
+    showDiscoveryNote('Hidden · recommendations adjusted')
+  }, [ch.id, showDiscoveryNote])
+
   const reactToCurrentPost = useCallback((direction: 'up' | 'down') => {
-    const id = radiusPostId(ch.id, postRef.current)
+    const current = postRef.current
+    const id = radiusPostId(ch.id, current)
     const amountKm = usesMiles() ? 1 / 0.621371 : 1
     if (direction === 'up') recordPostLike(id, amountKm)
     else recordPostDislike(id, amountKm)
+    if (current) {
+      recordFeedDiscoverySignal(
+        { id: current.id, channelId: ch.id },
+        direction === 'up' ? 'like' : 'dislike',
+      )
+    }
     setRadiusReaction({ direction, amount: 1 })
     playPop()
     if (radiusReactionTimerRef.current != null) window.clearTimeout(radiusReactionTimerRef.current)
@@ -1562,6 +1722,7 @@ export default function FeedTwin({
     const post = postRef.current
     const title = post?.caption ?? channel.caption
     const by = post?.user ?? channel.user
+    if (post) recordFeedDiscoverySignal({ id: post.id, channelId: channel.id }, 'share')
     // Native owns the real share sheet (UIActivityViewController); in the
     // browser the Web Share API is the same gesture. Browsers without it copy
     // a useful link and acknowledge the tap instead of silently doing nothing.
@@ -1613,6 +1774,7 @@ export default function FeedTwin({
 
   useEffect(() => () => {
     if (shareNoteTimerRef.current != null) window.clearTimeout(shareNoteTimerRef.current)
+    if (discoveryNoteTimerRef.current != null) window.clearTimeout(discoveryNoteTimerRef.current)
   }, [])
 
   useEffect(() => {
@@ -1670,6 +1832,7 @@ export default function FeedTwin({
       [key]: [{ who: '@you', body, pic: mine ?? 'mark_talk0.png', mine: true }, ...(all[key] ?? [])],
     }))
     recordPostComment(radiusPostId(ch.id, post), usesMiles() ? 2 / 0.621371 : 2)
+    if (post) recordFeedDiscoverySignal({ id: post.id, channelId: ch.id }, 'comment')
     setRadiusReaction({ direction: 'up', amount: 2 })
     if (radiusReactionTimerRef.current != null) window.clearTimeout(radiusReactionTimerRef.current)
     radiusReactionTimerRef.current = window.setTimeout(() => setRadiusReaction(null), 720)
@@ -1944,6 +2107,31 @@ export default function FeedTwin({
         <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
           <img className={styles.chIcon} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
         </div>
+        <div
+          className={styles.discoveryDock}
+          onPointerDown={event => event.stopPropagation()}
+          onPointerUp={event => event.stopPropagation()}
+        >
+          <div className={styles.discoveryModes} role="tablist" aria-label="Feed discovery mode">
+            {FEED_DISCOVERY_MODES.map(option => (
+              <button
+                key={option.id}
+                type="button"
+                role="tab"
+                aria-selected={discovery.mode === option.id}
+                className={discovery.mode === option.id ? styles.discoveryModeOn : styles.discoveryMode}
+                onClick={() => chooseDiscoveryMode(option.id)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {post && (
+            <button type="button" className={styles.notInterested} onClick={hideCurrentPost}>
+              Not for me
+            </button>
+          )}
+        </div>
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
             <div className={styles.feedHeaderCopy}>
@@ -1968,6 +2156,13 @@ export default function FeedTwin({
             </div>
           </div>
         </div>
+        {discoveryNote && <div className={styles.discoveryNote} role="status">{discoveryNote}</div>}
+        {!post && (
+          <div className={styles.discoveryEmpty} role="status">
+            No {discovery.mode} posts in this channel
+            <span>Try another channel or reset Discovery.</span>
+          </div>
+        )}
       </>
       )}
 

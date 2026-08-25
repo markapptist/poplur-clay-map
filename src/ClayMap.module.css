@@ -473,6 +473,9 @@
   border-radius: 50%;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+  user-select: none;
   /* An RGB wheel in clay: the full hue circle as a conic ring, the CURRENT
      takeover colour filling the hub, and the same sheen/rim/shadow every other
      clay control wears. Layer order is top-down — sheen, hub, ring — so the
@@ -2075,7 +2078,8 @@
   z-index: 4200;
   display: flex;
   align-items: flex-start;
-  max-width: calc(100vw - 98px);
+  right: max(14px, env(safe-area-inset-right, 0px) + 14px);
+  max-width: none;
   pointer-events: none;
 }
 
@@ -2413,7 +2417,7 @@
   }
 
   .dominanceDock .dominanceBoard {
-    width: min(304px, calc(100vw - 76px));
+    width: min(304px, calc(100vw - 72px));
     max-height: min(56dvh, 520px);
   }
 

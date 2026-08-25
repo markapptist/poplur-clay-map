@@ -10,6 +10,15 @@ export interface NativeFeedPost {
   channelId: string
   radiusMeters?: number
   createdAtMillis: number
+  viewCount?: number
+  likeCount?: number
+  commentCount?: number
+  shareCount?: number
+  /** Public, coarse origin only. Hidden/private posts never cross the bridge
+   *  with an origin, so Local discovery cannot infer where they came from. */
+  locationVisibility?: 'approximate' | 'hidden'
+  originLatitude?: number
+  originLongitude?: number
 }
 
 type NativeFeedDetail = { posts?: unknown[] }
@@ -34,6 +43,12 @@ function boundedText(value: unknown, limit: number): string | undefined {
   return text || undefined
 }
 
+function boundedCount(value: unknown): number | undefined {
+  const count = Number(value)
+  if (!Number.isFinite(count)) return undefined
+  return Math.max(0, Math.min(1_000_000_000, Math.round(count)))
+}
+
 export function normalizeNativeFeedPosts(detail: NativeFeedDetail): NativeFeedPost[] {
   if (!Array.isArray(detail.posts)) return []
   return detail.posts.slice(0, 96).flatMap(raw => {
@@ -47,6 +62,18 @@ export function normalizeNativeFeedPosts(detail: NativeFeedDetail): NativeFeedPo
     const channelId = boundedText(row.channelId, 40) ?? 'live'
     const radiusMeters = Number(row.radiusMeters)
     const createdAtMillis = Number(row.createdAtMillis)
+    const locationVisibility = row.locationVisibility === 'approximate'
+      ? 'approximate'
+      : row.locationVisibility === 'hidden'
+        ? 'hidden'
+        : undefined
+    const originLatitude = Number(row.originLatitude)
+    const originLongitude = Number(row.originLongitude)
+    const hasCoarseOrigin = locationVisibility === 'approximate'
+      && Number.isFinite(originLatitude)
+      && Math.abs(originLatitude) <= 90
+      && Number.isFinite(originLongitude)
+      && Math.abs(originLongitude) <= 180
     const mediaType: NativeFeedPost['mediaType'] = row.mediaType === 'photo' ? 'photo' : 'video'
     const post: NativeFeedPost = {
       id,
@@ -58,6 +85,13 @@ export function normalizeNativeFeedPosts(detail: NativeFeedDetail): NativeFeedPo
       channelId,
       radiusMeters: Number.isFinite(radiusMeters) ? Math.max(0, radiusMeters) : undefined,
       createdAtMillis: Number.isFinite(createdAtMillis) ? createdAtMillis : 0,
+      viewCount: boundedCount(row.viewCount),
+      likeCount: boundedCount(row.likeCount),
+      commentCount: boundedCount(row.commentCount),
+      shareCount: boundedCount(row.shareCount),
+      locationVisibility,
+      originLatitude: hasCoarseOrigin ? originLatitude : undefined,
+      originLongitude: hasCoarseOrigin ? originLongitude : undefined,
     }
     return [post]
   }).sort((a, b) => b.createdAtMillis - a.createdAtMillis)

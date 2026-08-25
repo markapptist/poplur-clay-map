@@ -209,6 +209,7 @@ export function pulseDominanceLayer(map: mapboxgl.Map, claimIds: readonly string
     map.setFilter(CLAIMS_REVEAL, ['in', ['get', 'id'], ['literal', ids]] as never)
     map.setPaintProperty(CLAIMS_REVEAL, 'fill-opacity-transition' as never, { duration: 0, delay: 0 } as never)
     map.setPaintProperty(CLAIMS_REVEAL, 'fill-opacity', 0.62)
+    // governor-ok: one transition separator per settled camera move; never re-arms or runs at idle.
     window.requestAnimationFrame(() => {
       try {
         if (!map.getLayer(CLAIMS_REVEAL)) return

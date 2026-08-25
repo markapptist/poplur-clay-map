@@ -420,6 +420,96 @@
   pointer-events: none;
 }
 
+/* One lightweight discovery switch, shared by every channel. Static fills and
+   finite press transitions only: changing ranking must not add another video,
+   canvas, blur layer, or idle animation to Feed. */
+.discoveryDock {
+  position: absolute;
+  z-index: 48;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 78px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  pointer-events: auto;
+}
+
+.discoveryModes {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(255, 138, 198, 0.44);
+  border-radius: 999px;
+  background: rgba(8, 5, 11, 0.88);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.36);
+}
+
+.discoveryMode,
+.discoveryModeOn {
+  min-height: 27px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(255, 242, 248, 0.72);
+  background: transparent;
+  font: 900 clamp(8px, 2.4vw, 10px)/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.055em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.discoveryModeOn {
+  color: #16060f;
+  background: #ff73b8;
+  box-shadow: inset 0 -2px 0 rgba(103, 8, 53, 0.34);
+}
+
+.notInterested {
+  border: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: rgba(255, 242, 248, 0.78);
+  background: rgba(8, 5, 11, 0.76);
+  font: 800 9px/1.2 system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.discoveryNote,
+.discoveryEmpty {
+  position: absolute;
+  z-index: 92;
+  left: 50%;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 150px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(78vw, 360px);
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 138, 198, 0.5);
+  border-radius: 12px;
+  color: #fff2f8;
+  background: rgba(8, 5, 11, 0.92);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  text-align: center;
+  font: 850 11px/1.25 system-ui, -apple-system, sans-serif;
+  pointer-events: none;
+}
+
+.discoveryEmpty {
+  top: 44%;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.discoveryEmpty span {
+  color: rgba(255, 242, 248, 0.68);
+  font-size: 10px;
+  text-transform: none;
+}
+
 .rail {
   position: absolute;
   z-index: 4;

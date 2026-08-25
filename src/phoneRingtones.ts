@@ -1,3 +1,5 @@
+import { isIOSNativeShell, postNativeEvent } from './nativeBridge'
+
 let ctx: AudioContext | null = null
 let activeOsc: OscillatorNode[] = []
 let activeGain: GainNode | null = null
@@ -112,6 +114,15 @@ const RING_FNS: Record<RingtoneId, (ac: AudioContext, gain: GainNode) => void> =
 
 export function startRingtone(id?: RingtoneId): void {
   stopRingtone()
+  // WKWebView turns a Web Audio context into an app playback session. On iOS
+  // that ignores the physical silent switch and can interrupt the feed or
+  // radio that was already playing. Let the shell own the ringer instead: it
+  // uses an ambient session (which honours Silent) and declines to take the
+  // audio session while media already owns it.
+  if (isIOSNativeShell()) {
+    postNativeEvent({ type: 'phoneRingtone', action: 'start', ringtone: id ?? currentRingtone })
+    return
+  }
   const ac = getCtx()
   const gain = ac.createGain()
   gain.gain.value = 0.25
@@ -133,6 +144,9 @@ export function stopRingtone(): void {
   activeOsc.forEach(o => { try { o.stop() } catch { /* already stopped */ } })
   activeOsc = []
   if (activeGain) { activeGain.disconnect(); activeGain = null }
+  if (isIOSNativeShell()) {
+    postNativeEvent({ type: 'phoneRingtone', action: 'stop' })
+  }
 }
 
 export function previewRingtone(id: RingtoneId): void {

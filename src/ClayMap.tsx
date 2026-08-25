@@ -1559,10 +1559,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       return
     }
     let sampleTimer = 0
-    let revealFrame = 0
     const publish = (settled: boolean) => {
       sampleTimer = 0
       const nextPins = viewportDominancePins(map, allPins)
+      const rankedPins = [...nextPins].sort((a, b) =>
+        dominanceFameScore(b.radiusKm, b.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
+        || b.radiusKm - a.radiusKm)
       const nextRows = dominanceLeaders(nextPins, takeoverTint(PALETTE.pinkHot)).slice(0, 10)
       const signature = nextRows
         .map(row => `${row.owner}:${row.fame}:${Math.round(row.radiusKm * 10)}`)
@@ -1577,14 +1579,30 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       setDominanceAnnouncement(leader
         ? `${leader.label} leads this area with ${leader.fame.toLocaleString()} fame.`
         : 'No conquered areas are in view.')
-      pulseDominanceLayer(map, nextPins.slice(0, 4).map(pin => pin.id))
-      if (revealFrame) window.cancelAnimationFrame(revealFrame)
-      revealFrame = window.requestAnimationFrame(() => {
-        const roots = [...(containerRef.current?.querySelectorAll<HTMLElement>(`.${styles.popPinMarker}`) ?? [])]
-        roots.forEach(root => root.classList.remove(styles.popPinMarkerReveal))
-        void containerRef.current?.offsetWidth
-        roots.forEach(root => root.classList.add(styles.popPinMarkerReveal))
-      })
+      pulseDominanceLayer(map, rankedPins.slice(0, 4).map(pin => pin.id))
+      const roots = [...(containerRef.current?.querySelectorAll<HTMLElement>(`.${styles.popPinMarker}`) ?? [])]
+      if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        roots.forEach(root => {
+          const pinImage = root.querySelector<HTMLElement>(`.${styles.popPin} > img`)
+          const ownerLabel = root.querySelector<HTMLElement>(`.${styles.dominationTerritoryLabel}`)
+          const selfie = root.querySelector<HTMLElement>(`.${styles.popPinSelfie}`)
+          pinImage?.animate([
+            { opacity: 0.22, transform: 'scale(.72)' },
+            { opacity: 1, transform: 'scale(1.12)', offset: 0.64 },
+            { opacity: 1, transform: 'scale(1)' },
+          ], { duration: 480, easing: 'cubic-bezier(.16, .82, .24, 1)' })
+          ownerLabel?.animate([
+            { opacity: 0.22, transform: 'translateX(-50%) scale(.72)' },
+            { opacity: 1, transform: 'translateX(-50%) scale(1.12)', offset: 0.64 },
+            { opacity: 1, transform: 'translateX(-50%) scale(1)' },
+          ], { duration: 480, easing: 'cubic-bezier(.16, .82, .24, 1)' })
+          selfie?.animate([
+            { opacity: 0.2, transform: 'translateX(-50%) scale(.72)' },
+            { opacity: 1, transform: 'translateX(-50%) scale(1.12)', offset: 0.64 },
+            { opacity: 1, transform: 'translateX(-50%) scale(1)' },
+          ], { duration: 480, easing: 'cubic-bezier(.16, .82, .24, 1)' })
+        })
+      }
     }
     const onMove = () => {
       if (!dominanceBoardOpenRef.current || sampleTimer) return
@@ -1599,7 +1617,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     map.on('moveend', onMoveEnd)
     return () => {
       if (sampleTimer) window.clearTimeout(sampleTimer)
-      if (revealFrame) window.cancelAnimationFrame(revealFrame)
       map.off('move', onMove)
       map.off('moveend', onMoveEnd)
     }
@@ -1613,6 +1630,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   const colorSwatches = useMemo(() => takeoverSwatches(), [])
   const closeColorPalette = useCallback((restoreFocus = false) => {
     setColorPaletteOpen(false)
+    // governor-ok: one focus handoff after an explicit close; never re-arms or runs at idle.
     if (restoreFocus) window.requestAnimationFrame(() => colorCircleRef.current?.focus())
   }, [])
   useEffect(() => () => window.clearTimeout(colorHoldTimerRef.current), [])
@@ -4859,7 +4877,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   // camera move: the sprite composite is async and re-running it per frame
   // would thrash. Markers are plain DOM, so they inherit the existing viewport
   // cull and the zoom-band visibility rules for free.
-  const pinKey = (pins ?? []).map(p => `${p.id}:${p.radiusKm}:${p.radiusDeltaKm ?? ''}:${p.color}:${p.avatar ?? ''}:${p.selfieVideo?.src ?? ''}:${p.selfieVideo?.poster ?? ''}`).join('|')
+  const pinKey = (pins ?? []).map(p => {
+    const e = p.engagement
+    return `${p.id}:${p.ownerId ?? ''}:${p.user ?? ''}:${p.radiusKm}:${p.radiusDeltaKm ?? ''}:${p.color}:${p.avatar ?? ''}:${p.selfieVideo?.src ?? ''}:${p.selfieVideo?.poster ?? ''}:${e?.views ?? 0}:${e?.repeatViews ?? 0}:${e?.upvotes ?? 0}:${e?.downvotes ?? 0}:${e?.comments ?? 0}:${e?.profileVisits ?? 0}`
+  }).join('|')
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -4946,7 +4967,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       // Every one of your pins wears the same static profile face. A still is
       // both clearer ownership and dramatically cheaper than cloning the
       // profile-video decoder above every visible claim.
-      if (pin.mine && pin.avatar) {
+      if (pin.avatar) {
         const face = document.createElement('img')
         face.className = styles.popPinSelfie
         face.src = pin.avatar
@@ -5808,6 +5829,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         tabIndex={controlsObscured ? -1 : 0}
         onPointerDown={event => {
           window.clearTimeout(colorHoldTimerRef.current)
+          event.currentTarget.setPointerCapture?.(event.pointerId)
           colorPressRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
           colorHoldTimerRef.current = window.setTimeout(() => {
             if (!colorPressRef.current) return
@@ -5824,14 +5846,21 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           window.clearTimeout(colorHoldTimerRef.current)
           colorPressRef.current = null
         }}
-        onPointerUp={() => {
+        onPointerUp={event => {
           window.clearTimeout(colorHoldTimerRef.current)
           colorPressRef.current = null
+          if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId)
+          }
         }}
-        onPointerCancel={() => {
+        onPointerCancel={event => {
           window.clearTimeout(colorHoldTimerRef.current)
           colorPressRef.current = null
+          if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId)
+          }
         }}
+        onContextMenu={event => event.preventDefault()}
         onClick={event => {
           if (suppressColorClickRef.current) {
             suppressColorClickRef.current = false

@@ -23,6 +23,7 @@ import StatsScreen from './StatsScreen'
 import TrophyRoomScreen from './TrophyRoomScreen'
 import WalletScreen from './WalletScreen'
 import AppsScreen from './AppsScreen'
+import DiscoveryScreen from './DiscoveryScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
@@ -101,6 +102,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The supplied clay TV render — the tab's own object, not the remote that
     // TV GUIDE wears below it. Two different props for two different things.
     { icon: 'TVGuide', title: 'TV', screen: 'feed-home', home: true },
+    { icon: 'Search', title: 'DISCOVER', screen: 'feed-discovery', native: true },
     // Feed engagement lives in its visible clay rail: share, comment controls,
     // comment composer, and heart must be reachable while watching.
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
@@ -1060,6 +1062,16 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Times">
           <NewsPaper onClose={() => { playPop(); onClose() }} bindBack={bindNativeBack} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'feed-discovery') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Discovery">
+          <DiscoveryScreen
+            onTune={onTuneFeedChannel}
+            onClose={() => { playPop(); onClose() }}
+          />
         </div>
       )
     }
