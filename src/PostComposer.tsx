@@ -31,6 +31,13 @@ import {
   hidesPublicPostOrigin,
   onAccountPrivacyChange,
 } from './accountPrivacy'
+import {
+  STORY_LIFETIME_MS,
+  storyMentions,
+  validateStoryPublish,
+  type StoryAudience,
+  type StorySticker,
+} from './stories'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -76,11 +83,13 @@ export interface PublishedPost {
   caption: string
   usedAI: boolean
   target?: ComposerTarget
-  destination: 'feed' | 'tv'
+  destination: 'feed' | 'tv' | 'story'
   postId: string
-  audience: 'public'
+  audience: 'public' | 'favorites'
   locationVisibility: PostLocationVisibility
 }
+
+export type PublishMode = 'post' | 'story'
 
 export type PostComposerStep = 'edit' | 'effects' | 'choice' | 'ai' | 'channel'
 
@@ -124,6 +133,7 @@ export default function PostComposer({
   bindBack,
   initialStep,
   reviewMode = false,
+  publishMode = 'post',
 }: {
   media: ComposerMedia
   /** set when the post is bound to a map coordinate */
@@ -144,6 +154,9 @@ export default function PostComposer({
   initialStep?: PostComposerStep
   /** Keeps server-only actions visible in the upload-flow review workbench. */
   reviewMode?: boolean
+  /** Story keeps the editor but replaces permanent-post/map requirements with
+   *  a 24-hour lightweight publish contract. */
+  publishMode?: PublishMode
 }) {
   const [step, setStep] = useState<PostComposerStep>(draft ? 'channel' : initialStep ?? 'edit')
   const [filterId, setFilterId] = useState(draft?.filterId ?? 'none')
@@ -166,8 +179,17 @@ export default function PostComposer({
   const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
   const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
   const [radiusKm, setRadiusKm] = useState(target?.radiusKm ?? 3)
+  const [storyAudience, setStoryAudience] = useState<StoryAudience>('public')
+  const [storyRepliesAllowed, setStoryRepliesAllowed] = useState(true)
+  const [storySticker, setStorySticker] = useState<StorySticker | null>(null)
+  const [storyMusicTitle, setStoryMusicTitle] = useState('')
+  const [storyMusicArtist, setStoryMusicArtist] = useState('')
+  const [storyPollOpen, setStoryPollOpen] = useState(false)
+  const [storyPollQuestion, setStoryPollQuestion] = useState('')
+  const [storyPollOptions, setStoryPollOptions] = useState(['', ''])
   const [accountPrivacy, setAccountPrivacy] = useState(accountPrivacySnapshot)
-  const locationVisibility: PostLocationVisibility = hidesPublicPostOrigin(accountPrivacy)
+  const locationVisibility: PostLocationVisibility = (publishMode === 'story' && !target)
+    || hidesPublicPostOrigin(accountPrivacy)
     ? 'hidden'
     : 'approximate'
   const [rightsAttested, setRightsAttested] = useState(false)
@@ -381,7 +403,7 @@ export default function PostComposer({
     if (!bindArrows) return
     bindArrows((dir: 1 | -1) => {
       playPop()
-      if (stepRef.current === 'channel') {
+      if (stepRef.current === 'channel' && publishMode === 'post') {
         setChannelId(current => {
           const i = CHANNELS.findIndex(c => c.id === current)
           return CHANNELS[((i + dir) % CHANNELS.length + CHANNELS.length) % CHANNELS.length].id
@@ -394,7 +416,7 @@ export default function PostComposer({
       })
     })
     return () => bindArrows(null)
-  }, [bindArrows])
+  }, [bindArrows, publishMode])
 
   // Keep the selected look in view whether it was chosen by touch or by the
   // persistent clay arrows. The rail itself remains a small pool of image
@@ -409,11 +431,19 @@ export default function PostComposer({
 
   const publish = async () => {
     playPop()
-    const privacyError = validatePublishPrivacy({
-      audience: 'public',
-      locationVisibility,
-      rightsAttested,
-    })
+    const privacyError = publishMode === 'story'
+      ? validateStoryPublish({
+          audience: storyAudience,
+          repliesAllowed: storyRepliesAllowed,
+          rightsAttested,
+          pollQuestion: storyPollOpen ? storyPollQuestion : undefined,
+          pollOptions: storyPollOpen ? storyPollOptions : undefined,
+        })
+      : validatePublishPrivacy({
+          audience: 'public',
+          locationVisibility,
+          rightsAttested,
+        })
     if (privacyError) {
       setPublishError({ message: privacyError, retryable: false })
       return
@@ -422,7 +452,10 @@ export default function PostComposer({
     setPublishing(true)
     setUploadProgress(null)
     setUploadPhaseState('preparing')
-    const destination = caption.trim() ? 'feed' as const : 'tv' as const
+    const destination = publishMode === 'story'
+      ? 'story' as const
+      : caption.trim() ? 'feed' as const : 'tv' as const
+    const audience = publishMode === 'story' ? storyAudience : 'public' as const
     const post: PublishedPost = {
       media,
       filterId,
@@ -439,7 +472,7 @@ export default function PostComposer({
         : undefined,
       destination,
       postId: postIdRef.current,
-      audience: 'public',
+      audience,
       locationVisibility,
     }
     try {
@@ -479,6 +512,20 @@ export default function PostComposer({
           effectAssetTaskId: effectAsset?.taskId,
           effectAssetPrompt: effectAsset?.prompt,
           usedAI,
+          contentType: publishMode,
+          expiresAtMillis: publishMode === 'story' ? Date.now() + STORY_LIFETIME_MS : undefined,
+          repliesAllowed: publishMode === 'story' ? storyRepliesAllowed : undefined,
+          mentions: publishMode === 'story' ? storyMentions(caption) : undefined,
+          storySticker: publishMode === 'story' ? storySticker ?? undefined : undefined,
+          storyMusic: publishMode === 'story' && storyMusicTitle.trim()
+            ? { title: storyMusicTitle.trim(), artist: storyMusicArtist.trim() || undefined }
+            : undefined,
+          storyPoll: publishMode === 'story' && storyPollOpen
+            ? {
+                question: storyPollQuestion.trim(),
+                options: storyPollOptions.map(option => option.trim()).filter(Boolean),
+              }
+            : undefined,
           // Exact targets cross only this owner-authenticated native bridge and
           // are written to users/{uid}/postLocations. Public post fields below
           // are either a verifiable coarse cell or absent altogether.
@@ -497,7 +544,7 @@ export default function PostComposer({
             ? publicCoordinateCell(target.lng)
             : undefined,
           radiusKm: target ? radiusKm : undefined,
-          audience: 'public',
+          audience,
           locationVisibility,
           privateAccount: accountPrivacy.privateAccount,
           ghostMode: accountPrivacy.ghostMode,
@@ -506,7 +553,7 @@ export default function PostComposer({
           destination,
         })
         await uploadResult
-        if (caption.trim() && target && locationVisibility === 'approximate') {
+        if (publishMode === 'post' && caption.trim() && target && locationVisibility === 'approximate') {
           const attachment: NewsMediaAttachment = {
             kind: media.kind,
             src: media.src,
@@ -544,10 +591,10 @@ export default function PostComposer({
   }
 
   const uploadPhaseLabel = uploadPhaseState === 'preparing'
-    ? 'Preparing your pop'
+    ? `Preparing your ${publishMode === 'story' ? 'Story' : 'pop'}`
     : uploadPhaseState === 'saving'
-      ? 'Finishing your pop'
-      : 'Uploading your pop'
+      ? `Finishing your ${publishMode === 'story' ? 'Story' : 'pop'}`
+      : `Uploading your ${publishMode === 'story' ? 'Story' : 'pop'}`
   const uploadPercent = uploadProgress === null ? null : Math.round(uploadProgress * 100)
   const composerStepLabel = step === 'edit'
     ? 'FILTER'
@@ -557,7 +604,9 @@ export default function PostComposer({
         ? 'ORIGINAL OR AI'
       : step === 'ai'
         ? 'POPLUR AI'
-        : target
+        : publishMode === 'story'
+          ? 'STORY · 24H'
+          : target
           ? 'READY TO POST'
           : 'CHANNEL'
   const filterPreviewSrc = media.kind === 'photo' ? media.src : previewStill
@@ -623,11 +672,12 @@ export default function PostComposer({
             <img src="logo_icon.png" alt="" />
             <span className={styles.doneTick}>{uploadNote ? '↑' : '✓'}</span>
           </div>
-          <span className={styles.doneEyebrow}>{uploadNote ? 'CAPTURE SAVED' : 'POP IS LIVE'}</span>
-          <h2 className={styles.doneTitle}>{uploadNote ? 'Not uploaded' : 'Posted'}</h2>
+          <span className={styles.doneEyebrow}>{uploadNote ? 'CAPTURE SAVED' : publishMode === 'story' ? 'STORY IS LIVE · 24H' : 'POP IS LIVE'}</span>
+          <h2 className={styles.doneTitle}>{uploadNote ? 'Not uploaded' : publishMode === 'story' ? 'Shared' : 'Posted'}</h2>
           <p className={styles.doneMeta}>
-            {CHANNELS.find(c => c.id === channelId)?.name} · CH {CHANNELS.find(c => c.id === channelId)?.number}
-            {target ? ` · ${radiusKm.toFixed(1)} km radius` : ''}
+            {publishMode === 'story'
+              ? `${storyAudience === 'favorites' ? 'FAVORITES' : 'EVERYONE'} · EXPIRES IN 24 HOURS`
+              : <>{CHANNELS.find(c => c.id === channelId)?.name} · CH {CHANNELS.find(c => c.id === channelId)?.number}{target ? ` · ${radiusKm.toFixed(1)} km radius` : ''}</>}
           </p>
           {uploadNote && <p className={styles.doneNote}>{uploadNote}</p>}
         </div>
@@ -785,14 +835,14 @@ export default function PostComposer({
         <div className={`${styles.panel} ${styles.panelCentered} ${styles.choicePanel}`}>
           <img className={styles.panelEmblem} src="logo_icon.png" alt="" />
           <span className={styles.panelLabel}>YOUR EDIT IS READY</span>
-          <h2 className={styles.choiceHead}>Post this version or create with Poplur AI?</h2>
+          <h2 className={styles.choiceHead}>{publishMode === 'story' ? 'Share this Story or create with Poplur AI?' : 'Post this version or create with Poplur AI?'}</h2>
           <button
             type="button"
             className={`${styles.secondary} ${styles.choiceAction}`}
             onClick={() => { playPop(); setUsedAI(false); goToStep('channel') }}
           >
             <b aria-hidden="true">✓</b>
-            <span>Post original</span>
+            <span>{publishMode === 'story' ? 'Share original Story' : 'Post original'}</span>
           </button>
           <button
             type="button"
@@ -848,11 +898,13 @@ export default function PostComposer({
             onChange={e => setCaption(e.target.value)}
           />
           <p className={styles.destinationHint}>
-            {caption.trim()
-              ? '→ Posting to News Feed'
-              : '→ Posting to TV'}
+            {publishMode === 'story'
+              ? '→ Visible for 24 hours'
+              : caption.trim()
+                ? '→ Posting to News Feed'
+                : '→ Posting to TV'}
           </p>
-          {target && (
+          {publishMode === 'post' && target && (
             <label className={styles.radiusRow}>
               <span>Claim radius <b>{radiusKm.toFixed(1)} km</b></span>
               <input
@@ -862,20 +914,69 @@ export default function PostComposer({
               />
             </label>
           )}
-          <div className={styles.publishDisclosure} aria-label="Post visibility">
-            <span><b>Audience</b><strong>Everyone</strong></span>
+          <div className={styles.publishDisclosure} aria-label={publishMode === 'story' ? 'Story visibility' : 'Post visibility'}>
+            <span><b>Audience</b><strong>{publishMode === 'story' && storyAudience === 'favorites' ? 'Favorites' : 'Everyone'}</strong></span>
             <span>
               <b>Map origin</b>
-              <strong>{locationVisibility === 'hidden' ? 'Hidden' : 'Approximate area'}</strong>
+              <strong>{publishMode === 'story' && !target ? 'Not attached' : locationVisibility === 'hidden' ? 'Hidden' : 'Approximate area'}</strong>
             </span>
             <small>
-              {accountPrivacy.privateAccount
+              {publishMode === 'story' && !target
+                ? 'This Story is not attached to a map point, and no coordinates are shown.'
+                : accountPrivacy.privateAccount
                 ? 'Private Account hides where this post came from. The post and profile stay visible.'
                 : accountPrivacy.ghostMode
                   ? 'Ghost Mode hides the map origin for all your posts while it is on.'
                   : 'Only a coarse map area is public. Your exact chosen point is never shown.'}
             </small>
           </div>
+          {publishMode === 'story' && (
+            <section className={styles.storyOptions} aria-label="Story options">
+              <span className={styles.panelLabel}>WHO CAN SEE IT</span>
+              <div className={styles.storyAudience}>
+                <button type="button" data-selected={storyAudience === 'public'} onClick={() => { playPop(.16); setStoryAudience('public') }}>EVERYONE</button>
+                <button type="button" data-selected={storyAudience === 'favorites'} onClick={() => { playPop(.16); setStoryAudience('favorites') }}>★ FAVORITES</button>
+              </div>
+              <small>Favorites are people you starred in Poplur Phone. Poplur has no followers.</small>
+              <label className={styles.storyReplyToggle}>
+                <input type="checkbox" checked={storyRepliesAllowed} onChange={event => setStoryRepliesAllowed(event.target.checked)} />
+                <span>Allow replies in Mail</span>
+              </label>
+              <span className={styles.panelLabel}>STICKER</span>
+              <div className={styles.storyStickers}>
+                {([null, 'heart', 'here', 'live', 'hype', 'call'] as const).map(sticker => (
+                  <button
+                    key={sticker ?? 'none'}
+                    type="button"
+                    data-selected={storySticker === sticker}
+                    onClick={() => { playPop(.14); setStorySticker(sticker) }}
+                  >{sticker === null ? 'NONE' : sticker === 'heart' ? '♥' : sticker.toUpperCase()}</button>
+                ))}
+              </div>
+              <span className={styles.panelLabel}>MUSIC (OPTIONAL)</span>
+              <div className={styles.storyMusicFields}>
+                <input value={storyMusicTitle} maxLength={100} onChange={event => setStoryMusicTitle(event.target.value)} placeholder="Track title" />
+                <input value={storyMusicArtist} maxLength={80} onChange={event => setStoryMusicArtist(event.target.value)} placeholder="Artist" />
+              </div>
+              <button type="button" className={styles.storyPollToggle} onClick={() => { playPop(.14); setStoryPollOpen(value => !value) }}>
+                {storyPollOpen ? 'REMOVE POLL' : '＋ ADD POLL'}
+              </button>
+              {storyPollOpen && (
+                <div className={styles.storyPollFields}>
+                  <input value={storyPollQuestion} maxLength={160} onChange={event => setStoryPollQuestion(event.target.value)} placeholder="Ask a question" />
+                  {storyPollOptions.map((option, index) => (
+                    <input
+                      key={index}
+                      value={option}
+                      maxLength={80}
+                      onChange={event => setStoryPollOptions(current => current.map((value, optionIndex) => optionIndex === index ? event.target.value : value))}
+                      placeholder={`Choice ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
           <label className={styles.rightsRow}>
             <input
               type="checkbox"
@@ -887,8 +988,8 @@ export default function PostComposer({
             />
             <span>I have permission to share this media and any music in it.</span>
           </label>
-          <span className={styles.panelLabel}>CHANNEL</span>
-          <div className={styles.channels}>
+          {publishMode === 'post' && <span className={styles.panelLabel}>CHANNEL</span>}
+          {publishMode === 'post' && <div className={styles.channels}>
             {CHANNELS.map(c => (
               <button
                 key={c.id}
@@ -901,7 +1002,7 @@ export default function PostComposer({
                 <span className={styles.chanName}>{c.name}</span>
               </button>
             ))}
-          </div>
+          </div>}
           <section className={target ? styles.readyPreview : styles.channelContentPreview} aria-label="Post preview">
             <div className={styles.channelPreviewMedia}>
               {media.kind === 'video' ? (
@@ -914,10 +1015,10 @@ export default function PostComposer({
               ) : (
                 <img src={media.src} alt="Post preview" />
               )}
-              <span>CH {CHANNELS.find(c => c.id === channelId)?.number}</span>
-              <strong>{caption || 'Your pop preview'}</strong>
+              <span>{publishMode === 'story' ? 'STORY · 24H' : `CH ${CHANNELS.find(c => c.id === channelId)?.number}`}</span>
+              <strong>{caption || (publishMode === 'story' ? 'Your Story preview' : 'Your pop preview')}</strong>
             </div>
-            {target && (
+            {publishMode === 'post' && target && (
               <div className={styles.confirmedMiniMap} aria-label="Confirmed post location">
                 <i /><i /><i /><i /><i />
                 <img src="sprites/poplur_pin_lite_y0_p0_s256.png" alt="Confirmed location" />
@@ -925,7 +1026,7 @@ export default function PostComposer({
               </div>
             )}
           </section>
-          {!target && (
+          {publishMode === 'post' && !target && (
             /* Camera→map: the May '26 CaptureFlow direction the web home lost.
                The draft (media + choices) is stashed module-side, the map tab
                opens, and the spot the user taps comes back as a normal
@@ -970,9 +1071,15 @@ export default function PostComposer({
           <button
             className={styles.primary}
             onClick={() => { void publish() }}
-            disabled={publishing || !target || !rightsAttested}
+            disabled={publishing || !rightsAttested || (publishMode === 'post' && !target)}
           >
-            {publishing ? 'Uploading…' : publishError?.retryable ? 'Retry upload' : target ? 'Post to this spot' : 'Pick a spot to post'}
+            {publishing
+              ? 'Uploading…'
+              : publishError?.retryable
+                ? 'Retry upload'
+                : publishMode === 'story'
+                  ? 'Share Story for 24 hours'
+                  : target ? 'Post to this spot' : 'Pick a spot to post'}
           </button>
           {publishError && !publishing && (
             <div className={styles.publishError} role="alert">
@@ -981,12 +1088,12 @@ export default function PostComposer({
               {publishError.retryable && <small>Your edit and the same post ID are kept for a safe retry.</small>}
             </div>
           )}
-          {!target && !publishing && (
+          {publishMode === 'post' && !target && !publishing && (
             <p className={styles.needSpot}>
               Location required before posting.
             </p>
           )}
-          {target && !rightsAttested && !publishing && (
+          {!rightsAttested && !publishing && (target || publishMode === 'story') && (
             <p className={styles.needSpot}>Confirm media rights before posting.</p>
           )}
         </div>

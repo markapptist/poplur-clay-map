@@ -208,6 +208,7 @@ function clampZoom(value: number, range: CameraZoomRange): number {
 export default function Camera({
   step = 0,
   captureMode = 'photo',
+  storyMode = false,
   surfaceVisible = true,
   onCloseRoll,
   onOpenRoll,
@@ -227,6 +228,9 @@ export default function Camera({
   step?: number
   /** Which capture the tab is set to. */
   captureMode?: 'photo' | 'video'
+  /** A Story starts from the same camera but publishes a 24-hour item without
+   *  requiring a map spot. */
+  storyMode?: boolean
   /** False while Home keeps this pager mounted behind its hold menu. */
   surfaceVisible?: boolean
   onCloseRoll?: () => void
@@ -1855,11 +1859,18 @@ export default function Camera({
           media={composing}
           target={postTarget ?? undefined}
           draft={composerDraft ?? undefined}
+          publishMode={storyMode ? 'story' : 'post'}
           onPosted={onPosted}
           onClose={() => { setComposing(null); setComposerDraft(null); onPostTargetUsed?.() }}
           bindArrows={fn => { composerArrowsRef.current = fn }}
           bindBack={fn => { composerBackRef.current = fn }}
         />
+      )}
+
+      {storyMode && !composing && page === 'live' && (
+        <div className={styles.storyModeBadge} role="status">
+          <b>24H</b><span>STORY CAMERA</span>
+        </div>
       )}
 
       {/* Asked before the real one. The native layer holds the viewfinder shut

@@ -1284,11 +1284,11 @@ const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doo
 // 17.4 floor the street-reveal ease already uses, so the two agree instead of
 // fighting. Well under ZOOM_MAX, so pinching further is still available.
 const INTRO_LANDING_ZOOM = 17.6
-// The iPhone fallback now opens the way the native experiment does: a quiet,
-// flat city view which becomes the clay flyover only after the person zooms
-// closer. It stays just below HYBRID_ZOOM, so the existing camera policy owns
-// the 2D -> 3D transition and a deliberate zoom-out still reveals the globe.
-const ADAPTIVE_IOS_LAUNCH_ZOOM = 12.1
+// Open close enough to read the neighbourhood instead of a featureless
+// regional water/land sheet, while staying below HYBRID_ZOOM. The existing
+// camera policy therefore keeps the first frame flat and low-cost; 3D still
+// arrives only after the person deliberately zooms closer.
+const ADAPTIVE_IOS_LAUNCH_ZOOM = 14.6
 // Journey mode intentionally drops below the manual diorama ceiling so the
 // clay roads and buildings read from an eye-level chase camera.
 const STREET_VIEW_MAX_ZOOM = 19
