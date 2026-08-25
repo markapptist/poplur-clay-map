@@ -259,7 +259,11 @@ export default function StoriesScreen({
               aria-label={`Open ${story.username}'s Story`}
             >
               <span className={styles.storyImage}>
-                <img src={story.posterURL ?? story.mediaURL} alt="" draggable={false} />
+                {story.mediaType === 'photo' || story.posterURL ? (
+                  <img src={story.posterURL ?? story.mediaURL} alt="" draggable={false} />
+                ) : (
+                  <span className={styles.videoPlaceholder} aria-hidden="true">24H</span>
+                )}
                 {story.mediaType === 'video' && <i aria-hidden="true">▶</i>}
                 {story.audience === 'favorites' && <em>★ FAVORITES</em>}
               </span>
@@ -313,7 +317,9 @@ export default function StoriesScreen({
             <div><strong>{viewedStory.isOwner ? 'Your Story' : viewedStory.username}</strong><small>{timeLabel(viewedStory, now)} · {viewedStory.audience === 'favorites' ? 'Favorites' : 'Everyone'}</small></div>
             {viewedStory.isOwner && (
               <button type="button" onClick={() => toggleHighlight(viewedStory)}>
-                {highlightOverrides[viewedStory.id] ?? viewedStory.highlighted ? '◆ HIGHLIGHT' : '◇ HIGHLIGHT'}
+                {(highlightOverrides[viewedStory.id] ?? viewedStory.highlighted)
+                  ? '◆ HIGHLIGHT'
+                  : '◇ HIGHLIGHT'}
               </button>
             )}
           </header>
