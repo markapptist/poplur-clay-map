@@ -2729,23 +2729,25 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     // plus one bounded initial attempt cover the same races without a heartbeat.
     let clayWorldBooted = false
     let clayWorldBooting = false
+    let clayWorldBootQueued = false
     let bootDeadline = 0
     const stopBootWatch = () => {
       window.clearTimeout(bootDeadline)
       bootDeadline = 0
-      map.off('load', bootClayWorld)
-      map.off('styledata', bootClayWorld)
+      map.off('load', queueClayWorldBoot)
+      map.off('styledata', queueClayWorldBoot)
+      map.off('idle', queueClayWorldBoot)
     }
     const bootClayWorld = () => {
       if (clayWorldBooted || clayWorldBooting || disposed) return
-      // A WebView can expose the style JSON (and its layer list) for one or
-      // two frames before Mapbox has finished installing it. Calling
-      // addSource/addLayer in that window throws "Style is not done loading"
-      // and leaves the 2D canvas permanently black. Keep polling until the
-      // SDK's actual readiness flag is true, then only mark the world booted
-      // after the layer build completes successfully.
+      // isStyleLoaded() can become true while the base style's pauseable label
+      // placement still owns the current layer table. Adding Poplur's symbol
+      // layers on that styledata edge invalidates the table and Mapbox 3.26 can
+      // later crash inside continuePlacement(). Wait for the base map's first
+      // fully loaded + idle edge and run in the following task, after Mapbox's
+      // synchronous idle bookkeeping has returned.
       try {
-        if (!map.isStyleLoaded()) return
+        if (!map.isStyleLoaded() || !map.loaded() || !map.idle()) return
         const style = map.getStyle()
         if (!style || !(style.layers || []).length) return
         clayWorldBooting = true
@@ -2758,15 +2760,24 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         clayWorldBooting = false
       }
     }
-    map.on('load', bootClayWorld)
-    map.on('styledata', bootClayWorld)
+    function queueClayWorldBoot() {
+      if (clayWorldBooted || clayWorldBooting || clayWorldBootQueued || disposed) return
+      clayWorldBootQueued = true
+      later(() => {
+        clayWorldBootQueued = false
+        bootClayWorld()
+      }, 0)
+    }
+    map.on('load', queueClayWorldBoot)
+    map.on('styledata', queueClayWorldBoot)
+    map.on('idle', queueClayWorldBoot)
     bootDeadline = window.setTimeout(() => {
       if (clayWorldBooted || disposed) return
       stopBootWatch()
       fallBackAfterWebGLFailure(new Error('Map style did not finish loading within 15 seconds'))
     }, 15_000)
     // Covers a cached style whose load event fired before this listener attached.
-    later(bootClayWorld, 0)
+    queueClayWorldBoot()
 
     const buildClayWorld = () => {
       // Clay palette + landmark/tree toggles on the Standard basemap import.

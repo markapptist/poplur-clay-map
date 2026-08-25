@@ -640,6 +640,19 @@ export default function FeedTwin({
   const contentIdxRef = useRef<Record<string, number>>({})
   const [contentRevision, forceContentRender] = useState(0)
 
+  // A Discovery post result is a direct navigation, not a recommendation
+  // vote. When its channel arrives underneath the closing hold menu, start
+  // that channel at the focused result even if the viewer previously left the
+  // channel on a later item.
+  useEffect(() => {
+    const focusedPostId = discovery.focusedPostId
+    if (!focusedPostId) return
+    const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), discovery)
+    if (!ranked.some(post => post.id === focusedPostId)) return
+    contentIdxRef.current[ch.id] = 0
+    forceContentRender(value => value + 1)
+  }, [ch.id, discovery.focusedPostId])
+
   useEffect(() => {
     const refresh = () => setLocationRevision(value => value + 1)
     window.addEventListener('poplur-location', refresh)
@@ -862,10 +875,11 @@ export default function FeedTwin({
   const advanceCompletedContent = useCallback(() => {
     const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
     const count = ranked.length
-    if (count < 2) return
+    if (count === 0) return
     const current = contentIdxRef.current[ch.id] ?? 0
     const watched = ranked[current % count]
     if (watched) recordFeedDiscoverySignal({ id: watched.id, channelId: ch.id }, 'watch')
+    if (count < 2) return
     // Autoplaying to an empty room is pure heat. After AUTOPLAY_REST_AFTER
     // clips with no touch, rest on a cover rather than decode another; the
     // decoder was released at onEnded, so this is free until a tap resumes it.

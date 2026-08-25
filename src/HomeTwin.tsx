@@ -1857,6 +1857,30 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     postWebMapAction(action, detail)
   }, [beginNativeMapWebFallback, postWebMapAction, queueMapAction])
+
+  // Unified Discovery owns the result list; Map owns rendering a selected
+  // place. The event carries a named public landmark, never a post's private
+  // origin. Unsupported native-map actions deliberately take the established
+  // feature-complete web fallback before the flight is queued.
+  useEffect(() => {
+    const openPlace = (event: Event) => {
+      const detail = (event as CustomEvent<{ name?: unknown; coords?: unknown }>).detail
+      const coords = detail?.coords
+      if (!Array.isArray(coords) || coords.length !== 2) return
+      const longitude = Number(coords[0])
+      const latitude = Number(coords[1])
+      if (!Number.isFinite(longitude) || Math.abs(longitude) > 180
+        || !Number.isFinite(latitude) || Math.abs(latitude) > 90) return
+      setActiveTab('map')
+      setHoldOpen(false)
+      sendMapAction('focusPlace', {
+        name: typeof detail?.name === 'string' ? detail.name.slice(0, 160) : 'Discovery result',
+        coords: [longitude, latitude],
+      })
+    }
+    window.addEventListener('poplur-discovery-open-place', openPlace)
+    return () => window.removeEventListener('poplur-discovery-open-place', openPlace)
+  }, [sendMapAction])
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)

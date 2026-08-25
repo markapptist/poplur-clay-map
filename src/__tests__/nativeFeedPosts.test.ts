@@ -19,4 +19,52 @@ describe('native feed post boundary', () => {
       null,
     ] })).toEqual([])
   })
+
+  it('preserves bounded engagement and a declared approximate origin', () => {
+    const [row] = normalizeNativeFeedPosts({ posts: [{
+      id: 'public-origin',
+      mediaURL: 'https://cdn.example/public.mp4',
+      viewCount: 44,
+      likeCount: 12,
+      commentCount: 3,
+      shareCount: 2,
+      locationVisibility: 'approximate',
+      originLatitude: 43.65,
+      originLongitude: -79.38,
+    }] })
+    expect(row).toMatchObject({
+      viewCount: 44,
+      likeCount: 12,
+      commentCount: 3,
+      shareCount: 2,
+      locationVisibility: 'approximate',
+      originLatitude: 43.65,
+      originLongitude: -79.38,
+    })
+  })
+
+  it('never admits coordinates for hidden or invalid origins', () => {
+    const rows = normalizeNativeFeedPosts({ posts: [
+      {
+        id: 'hidden',
+        mediaURL: 'https://cdn.example/hidden.mp4',
+        locationVisibility: 'hidden',
+        originLatitude: 43.65,
+        originLongitude: -79.38,
+      },
+      {
+        id: 'invalid',
+        mediaURL: 'https://cdn.example/invalid.mp4',
+        locationVisibility: 'approximate',
+        originLatitude: 143.65,
+        originLongitude: -79.38,
+      },
+    ] })
+    expect(rows[0]).toMatchObject({ locationVisibility: 'hidden' })
+    expect(rows[0].originLatitude).toBeUndefined()
+    expect(rows[0].originLongitude).toBeUndefined()
+    expect(rows[1]).toMatchObject({ locationVisibility: 'approximate' })
+    expect(rows[1].originLatitude).toBeUndefined()
+    expect(rows[1].originLongitude).toBeUndefined()
+  })
 })
