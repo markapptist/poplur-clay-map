@@ -7,12 +7,16 @@ import { isNativeShell } from './nativeBridge'
 import CameraARButton from './CameraARButton'
 import ARFilters from './ARFilters'
 import FaceAROverlay from './FaceAROverlay'
+import CameraRoll from './CameraRoll'
 import { arFilterCatalog } from './arFilterCatalog'
 import type { Detection } from './mlDetect'
 import {
   activeTyping,
+  attachmentLabel,
   createClientMessageId,
   sentMessageStatus,
+  validAttachmentMime,
+  type DMAttachmentKind,
   type DMDeliveryStatus,
 } from './dmContract'
 import {
@@ -116,6 +120,12 @@ interface Thread {
     text: string
     createdAtMillis: number
     status?: DMDeliveryStatus
+    attachment?: {
+      kind: DMAttachmentKind
+      url: string
+      mimeType: string
+      durationMillis?: number
+    }
   }>
 }
 
@@ -135,6 +145,10 @@ interface NativeMessagePayload {
   text?: unknown
   createdAtMillis?: unknown
   pending?: unknown
+  kind?: unknown
+  mediaURL?: unknown
+  mimeType?: unknown
+  durationMillis?: unknown
 }
 
 const THREADS: Thread[] = [
@@ -230,6 +244,23 @@ function nativeMessages(value: unknown): Thread['messages'] {
       && Number.isFinite(message.createdAtMillis)
       ? message.createdAtMillis
       : 0
+    const attachmentKind: DMAttachmentKind | null = message.kind === 'image'
+      || message.kind === 'video'
+      || message.kind === 'audio'
+      ? message.kind
+      : null
+    const mediaURL = typeof message.mediaURL === 'string' ? message.mediaURL.trim() : ''
+    const mimeType = typeof message.mimeType === 'string' ? message.mimeType.trim() : ''
+    const attachment = attachmentKind && mediaURL && validAttachmentMime(attachmentKind, mimeType)
+      ? {
+          kind: attachmentKind,
+          url: mediaURL,
+          mimeType,
+          ...(typeof message.durationMillis === 'number' && Number.isFinite(message.durationMillis)
+            ? { durationMillis: Math.max(0, Math.round(message.durationMillis)) }
+            : {}),
+        }
+      : undefined
     return [{
       id: typeof message.id === 'string' && message.id ? message.id : createClientMessageId(),
       from: message.from === 'me' ? 'me' : 'them',
@@ -238,6 +269,7 @@ function nativeMessages(value: unknown): Thread['messages'] {
       status: message.from === 'me'
         ? sentMessageStatus(createdAtMillis, undefined, message.pending === true)
         : undefined,
+      attachment,
     }]
   })
 }
@@ -626,22 +658,72 @@ export function FaceTimeOverlay({
   )
 }
 
-export default function MailScreen({ onClose, onCallViaPhone }: {
+function blobDataURL(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read recording'))
+    reader.onload = () => typeof reader.result === 'string'
+      ? resolve(reader.result)
+      : reject(new Error('Could not read recording'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }: {
   onClose?: () => void
   onCallViaPhone?: (id: string, name: string) => void
+  initialThreadId?: string
 }) {
   const [activeThread, setActiveThread] = useState<Thread | null>(null)
   const [faceTimeWith, setFaceTimeWith] = useState<{ id: string; name: string } | null>(null)
   const [liveThreads, setLiveThreads] = useState<Thread[] | null>(null)
   const [composerText, setComposerText] = useState('')
   const [stickerTrayOpen, setStickerTrayOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false)
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'preparing'>('idle')
+  const [voiceElapsed, setVoiceElapsed] = useState(0)
+  const [voiceError, setVoiceError] = useState('')
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => readDeletedThreads())
   const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null)
   const remoteTypingTimerRef = useRef<number | null>(null)
   const typingStopTimerRef = useRef<number | null>(null)
   const typingSentForRef = useRef<string | null>(null)
   const typingLastSentAtRef = useRef(0)
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null)
+  const voiceStreamRef = useRef<MediaStream | null>(null)
+  const voiceChunksRef = useRef<Blob[]>([])
+  const voiceStartedAtRef = useRef(0)
+  const voiceTickRef = useRef<number | null>(null)
+  const voiceLimitRef = useRef<number | null>(null)
+  const voiceDiscardRef = useRef(false)
+  const pendingInitialThreadIdRef = useRef(initialThreadId)
   const threads = (liveThreads ?? THREADS).filter(t => !deletedIds.has(t.id))
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
+  const visibleThreads = normalizedSearch
+    ? threads.filter(thread => `${thread.title}\n${thread.preview}`.toLocaleLowerCase().includes(normalizedSearch))
+    : threads
+
+  const stopVoiceResources = useCallback((discard: boolean, updateUI = true) => {
+    voiceDiscardRef.current = discard
+    if (voiceTickRef.current != null) window.clearInterval(voiceTickRef.current)
+    if (voiceLimitRef.current != null) window.clearTimeout(voiceLimitRef.current)
+    voiceTickRef.current = null
+    voiceLimitRef.current = null
+    const recorder = voiceRecorderRef.current
+    if (recorder && recorder.state !== 'inactive') recorder.stop()
+    voiceStreamRef.current?.getTracks().forEach(track => track.stop())
+    voiceStreamRef.current = null
+    if (discard) {
+      voiceChunksRef.current = []
+      if (updateUI) {
+        setVoiceState('idle')
+        setVoiceElapsed(0)
+      }
+    }
+  }, [])
+
+  useEffect(() => () => stopVoiceResources(true, false), [stopVoiceResources])
 
   // Pull to refresh, on the thread list only.
   //
@@ -680,11 +762,47 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
       if (detail.type === 'poplurDMThreads') {
         const next = nativeThreads(detail.threads)
         setLiveThreads(next)
+        // A server-hidden conversation legitimately reappears when a newer
+        // message arrives. Remove its old local fallback tombstone as soon as
+        // native includes it again, otherwise this device would keep hiding a
+        // live conversation forever.
+        setDeletedIds(previous => {
+          const restored = new Set(previous)
+          next.forEach(thread => restored.delete(thread.id))
+          if (restored.size !== previous.size) writeDeletedThreads(restored)
+          return restored.size === previous.size ? previous : restored
+        })
         setActiveThread(current => {
           if (!current) return null
           const replacement = next.find(thread => thread.id === current.id)
           return replacement ? { ...replacement, messages: current.messages } : null
         })
+        const requestedThreadId = pendingInitialThreadIdRef.current
+        const requestedThread = requestedThreadId
+          ? next.find(thread => thread.id === requestedThreadId)
+          : undefined
+        if (requestedThread) {
+          pendingInitialThreadIdRef.current = undefined
+          setComposerText('')
+          setStickerTrayOpen(false)
+          setActiveThread(requestedThread)
+          window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+            detail: { type: 'openDMThread', threadId: requestedThread.id },
+          }))
+        }
+        return
+      }
+      if (detail.type === 'poplurDMThreadHidden' && detail.ok === false
+        && typeof detail.threadId === 'string') {
+        const failedThreadId = detail.threadId
+        setDeletedIds(previous => {
+          if (!previous.has(failedThreadId)) return previous
+          const restored = new Set(previous)
+          restored.delete(failedThreadId)
+          writeDeletedThreads(restored)
+          return restored
+        })
+        refreshThreads()
         return
       }
       if (detail.type === 'poplurDMMessages' && typeof detail.threadId === 'string') {
@@ -859,12 +977,14 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     // WebRTC camera/mic behind the compact audio call bar. End the media
     // session before unmounting the only video controls.
     if (faceTimeWith) hangupCall()
+    stopVoiceResources(true)
     setFaceTimeWith(null)
     setComposerText('')
     setStickerTrayOpen(false)
+    setMediaPickerOpen(false)
     setActiveThread(null)
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
-  }, [faceTimeWith])
+  }, [faceTimeWith, stopVoiceResources])
 
   const sendTyping = useCallback((threadId: string, typing: boolean) => {
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
@@ -973,21 +1093,130 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     }))
   }, [activeThread?.otherId])
 
-  const retryMessage = useCallback((clientMessageId: string, text: string) => {
+  const sendAttachment = useCallback((
+    kind: DMAttachmentKind,
+    source: string,
+    mimeType: string,
+    durationMillis?: number,
+  ) => {
+    if (!activeThread?.otherId || !source || !validAttachmentMime(kind, mimeType)) return
+    playPop()
+    const clientMessageId = createClientMessageId()
+    const text = attachmentLabel(kind)
+    const optimistic = {
+      id: clientMessageId,
+      from: 'me' as const,
+      text,
+      createdAtMillis: Date.now(),
+      status: 'sending' as const,
+      attachment: { kind, url: source, mimeType, ...(durationMillis != null ? { durationMillis } : {}) },
+    }
+    setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
+    setMediaPickerOpen(false)
+    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+      detail: {
+        type: 'sendDMAttachment',
+        threadId: activeThread.id,
+        otherId: activeThread.otherId,
+        source,
+        kind,
+        mimeType,
+        durationMillis,
+        clientMessageId,
+      },
+    }))
+  }, [activeThread?.id, activeThread?.otherId])
+
+  const startVoiceMessage = useCallback(async () => {
+    if (!activeThread?.otherId || voiceState !== 'idle') return
+    setVoiceError('')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const preferred = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
+        .find(type => MediaRecorder.isTypeSupported(type))
+      const recorder = preferred ? new MediaRecorder(stream, { mimeType: preferred }) : new MediaRecorder(stream)
+      voiceDiscardRef.current = false
+      voiceStreamRef.current = stream
+      voiceRecorderRef.current = recorder
+      voiceChunksRef.current = []
+      voiceStartedAtRef.current = Date.now()
+      setVoiceElapsed(0)
+      setVoiceState('recording')
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) voiceChunksRef.current.push(event.data)
+      }
+      recorder.onstop = async () => {
+        const discard = voiceDiscardRef.current
+        const durationMillis = Math.min(60_000, Math.max(0, Date.now() - voiceStartedAtRef.current))
+        const type = recorder.mimeType || voiceChunksRef.current[0]?.type || 'audio/webm'
+        const blob = new Blob(voiceChunksRef.current, { type })
+        voiceChunksRef.current = []
+        voiceRecorderRef.current = null
+        voiceStreamRef.current?.getTracks().forEach(track => track.stop())
+        voiceStreamRef.current = null
+        if (discard) return
+        if (durationMillis < 500 || blob.size === 0) {
+          setVoiceState('idle')
+          setVoiceElapsed(0)
+          return
+        }
+        if (blob.size > 8 * 1024 * 1024) {
+          setVoiceError('Voice messages must stay under 8 MB.')
+          setVoiceState('idle')
+          return
+        }
+        setVoiceState('preparing')
+        try {
+          sendAttachment('audio', await blobDataURL(blob), type, durationMillis)
+        } catch {
+          setVoiceError('That voice message could not be prepared.')
+        } finally {
+          setVoiceState('idle')
+          setVoiceElapsed(0)
+        }
+      }
+      recorder.start(250)
+      voiceTickRef.current = window.setInterval(() => {
+        setVoiceElapsed(Math.min(60, Math.floor((Date.now() - voiceStartedAtRef.current) / 1000)))
+      }, 250)
+      voiceLimitRef.current = window.setTimeout(() => stopVoiceResources(false), 60_000)
+    } catch {
+      setVoiceError('Microphone access is needed for a voice message.')
+      stopVoiceResources(true)
+    }
+  }, [activeThread?.otherId, sendAttachment, stopVoiceResources, voiceState])
+
+  const toggleVoiceMessage = useCallback(() => {
+    if (voiceState === 'recording') stopVoiceResources(false)
+    else if (voiceState === 'idle') void startVoiceMessage()
+  }, [startVoiceMessage, stopVoiceResources, voiceState])
+
+  const retryMessage = useCallback((message: Thread['messages'][number]) => {
     if (!activeThread?.otherId) return
     playPop()
     setActiveThread(current => current
       ? {
           ...current,
-          messages: current.messages.map(message => message.id === clientMessageId
-            ? { ...message, status: 'sending' }
-            : message),
+          messages: current.messages.map(item => item.id === message.id
+            ? { ...item, status: 'sending' }
+            : item),
         }
       : current)
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
-      detail: { type: 'sendDM', otherId: activeThread.otherId, text, clientMessageId },
+      detail: message.attachment
+        ? {
+            type: 'sendDMAttachment',
+            threadId: activeThread.id,
+            otherId: activeThread.otherId,
+            source: message.attachment.url,
+            kind: message.attachment.kind,
+            mimeType: message.attachment.mimeType,
+            durationMillis: message.attachment.durationMillis,
+            clientMessageId: message.id,
+          }
+        : { type: 'sendDM', otherId: activeThread.otherId, text: message.text, clientMessageId: message.id },
     }))
-  }, [activeThread?.otherId])
+  }, [activeThread?.id, activeThread?.otherId])
 
   if (activeThread) {
     const canCall = Boolean(activeThread.otherId)
@@ -1016,7 +1245,20 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
             const sticker = stickerFromText(m.text)
             return (
               <div key={m.id} className={m.from === 'me' ? `${styles.messageWrap} ${styles.messageWrapMine}` : styles.messageWrap}>
-                {sticker ? (
+                {m.attachment?.kind === 'image' ? (
+                  <a className={styles.mediaMessage} href={m.attachment.url} target="_blank" rel="noreferrer" aria-label="Open photo">
+                    <img src={m.attachment.url} alt="Shared in this conversation" loading="lazy" />
+                  </a>
+                ) : m.attachment?.kind === 'video' ? (
+                  <div className={styles.mediaMessage}>
+                    <video src={m.attachment.url} controls playsInline preload="metadata" />
+                  </div>
+                ) : m.attachment?.kind === 'audio' ? (
+                  <div className={`${styles.mediaMessage} ${styles.voiceMessage}`}>
+                    <span aria-hidden="true">◖)))</span>
+                    <audio src={m.attachment.url} controls preload="metadata" />
+                  </div>
+                ) : sticker ? (
                   <div className={styles.stickerMessage}>
                     <PoplurSticker id={sticker} />
                   </div>
@@ -1029,7 +1271,7 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
                   <button
                     type="button"
                     className={`${styles.delivery} ${styles.deliveryFailed}`}
-                    onClick={() => retryMessage(m.id, m.text)}
+                    onClick={() => retryMessage(m)}
                   >
                     Not sent · Retry
                   </button>
@@ -1068,7 +1310,42 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
             </div>
           </section>
         )}
+        {mediaPickerOpen && (
+          <section className={styles.mediaPicker} role="dialog" aria-modal="true" aria-label="Choose a photo or video">
+            <header>
+              <strong>SHARE FROM CAMERA ROLL</strong>
+              <button type="button" onClick={() => setMediaPickerOpen(false)} aria-label="Close camera roll">×</button>
+            </header>
+            <CameraRoll
+              active
+              hideHeader
+              nativeRequestType="requestProfileCameraRoll"
+              onDeny={() => setMediaPickerOpen(false)}
+              onPick={media => sendAttachment(
+                media.kind === 'photo' ? 'image' : 'video',
+                media.src,
+                media.kind === 'photo' ? 'image/jpeg' : 'video/mp4',
+              )}
+            />
+          </section>
+        )}
+        {(voiceState !== 'idle' || voiceError) && (
+          <div className={voiceError ? styles.voiceError : styles.voiceRecording} role="status">
+            {voiceError || (voiceState === 'preparing'
+              ? 'Preparing voice message…'
+              : `Recording ${Math.floor(voiceElapsed / 60)}:${String(voiceElapsed % 60).padStart(2, '0')} · tap stop`)}
+          </div>
+        )}
         <form className={styles.compose} onSubmit={e => { e.preventDefault(); sendMessage() }}>
+          <button
+            type="button"
+            className={styles.attachButton}
+            aria-label="Share a photo or video"
+            disabled={!activeThread.otherId || voiceState !== 'idle'}
+            onClick={() => { playPop(); setStickerTrayOpen(false); setMediaPickerOpen(true) }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12.5l6.7-6.7a3 3 0 114.2 4.2l-8.5 8.5a5 5 0 01-7.1-7.1L12 2.7" /></svg>
+          </button>
           <button
             type="button"
             className={stickerTrayOpen ? `${styles.stickerButton} ${styles.stickerButtonOpen}` : styles.stickerButton}
@@ -1083,10 +1360,20 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
             name="message"
             autoComplete="off"
             value={composerText}
-            onChange={event => setComposerText(event.currentTarget.value.slice(0, 2000))}
+            onChange={event => { setVoiceError(''); setComposerText(event.currentTarget.value.slice(0, 2000)) }}
             placeholder={`Message ${activeThread.title}`}
+            disabled={voiceState !== 'idle'}
           />
-          <button type="submit" className={styles.sendBtn} disabled={!composerText.trim() || !activeThread.otherId}>Send</button>
+          <button
+            type="button"
+            className={voiceState === 'recording' ? `${styles.voiceButton} ${styles.voiceButtonRecording}` : styles.voiceButton}
+            aria-label={voiceState === 'recording' ? 'Stop recording voice message' : 'Record voice message'}
+            disabled={!activeThread.otherId || voiceState === 'preparing'}
+            onClick={toggleVoiceMessage}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM6 11v1a6 6 0 0012 0v-1M12 18v3" /></svg>
+          </button>
+          <button type="submit" className={styles.sendBtn} disabled={!composerText.trim() || !activeThread.otherId || voiceState !== 'idle'}>Send</button>
         </form>
         {faceTimeWith && (
           <FaceTimeOverlay who={faceTimeWith.name} direction="outgoing" onEnd={endFaceTime} />
@@ -1108,6 +1395,16 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
           </span>
         </div>
       </div>
+      <label className={styles.chatSearch}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5L21 21" /></svg>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={event => setSearchQuery(event.currentTarget.value.slice(0, 80))}
+          placeholder="Search conversations"
+          aria-label="Search conversations"
+        />
+      </label>
       <div className={styles.threadList} ref={pullHost}>
         {/* The shared curtain, so Chats refreshes with the same clay lip and
             the same mark head the news page does — one component, not a second
@@ -1118,7 +1415,7 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
           </div>
         </div>
         <div ref={pullInner}>
-        {threads.map(t => (
+        {visibleThreads.map(t => (
           <SwipeableThread
             key={t.id}
             thread={t}
@@ -1128,11 +1425,11 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
             onDelete={deleteThread}
           />
         ))}
-        {threads.length === 0 && (
+        {visibleThreads.length === 0 && (
           <div className={styles.emptyState}>
             <span className={styles.emptyMark}>💬</span>
-            <strong>All clear</strong>
-            <span>New chats from your radius land here.</span>
+            <strong>{threads.length === 0 ? 'All clear' : 'No matching chats'}</strong>
+            <span>{threads.length === 0 ? 'New chats from your radius land here.' : 'Try another name or message.'}</span>
           </div>
         )}
         </div>

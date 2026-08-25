@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
@@ -20,6 +20,7 @@ import {
 import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
+import { DOMINANCE_OVERVIEW_MAX_ZOOM } from './mapDominance'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
 import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
 import {
@@ -1318,6 +1319,46 @@ const ZOOM_STAGES: ZoomStage[] = [
 const stageForZoom = (z: number): ZoomStage =>
   ZOOM_STAGES.find(s => z < s.below) ?? ZOOM_STAGES[ZOOM_STAGES.length - 1]
 
+interface DominanceLeader {
+  owner: string
+  label: string
+  color: string
+  radiusKm: number
+  topRadiusKm: number
+  territories: number
+  topPlace: string
+  mine: boolean
+}
+
+function dominanceLeaders(pins: readonly PopPin[] | undefined, ownColor: string): DominanceLeader[] {
+  const byOwner = new Map<string, DominanceLeader>()
+  for (const pin of pins ?? []) {
+    const owner = pin.user ?? 'You'
+    const current = byOwner.get(owner)
+    if (!current) {
+      byOwner.set(owner, {
+        owner,
+        label: pin.user ?? 'YOU',
+        color: pin.mine ? ownColor : pin.color,
+        radiusKm: Math.max(0, pin.radiusKm),
+        topRadiusKm: Math.max(0, pin.radiusKm),
+        territories: 1,
+        topPlace: pin.name,
+        mine: pin.mine,
+      })
+      continue
+    }
+    current.radiusKm += Math.max(0, pin.radiusKm)
+    current.territories += 1
+    if (pin.radiusKm > current.topRadiusKm) {
+      current.topRadiusKm = pin.radiusKm
+      current.topPlace = pin.name
+    }
+  }
+  return [...byOwner.values()]
+    .sort((a, b) => b.radiusKm - a.radiusKm || b.territories - a.territories || a.owner.localeCompare(b.owner))
+}
+
 export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
@@ -1491,6 +1532,14 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
   const zoomProgress = `${((zoomRatio * (zoomRailMetrics.length - zoomRailMetrics.thumb) + zoomRailMetrics.thumb / 2) / zoomRailMetrics.length) * 100}%`
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
+  const [dominanceBoardOpen, setDominanceBoardOpen] = useState(false)
+  const dominanceOverview = zoomValue <= DOMINANCE_OVERVIEW_MAX_ZOOM
+  const dominanceRows = useMemo(() => dominanceLeaders(pins, takeoverTint(PALETTE.pinkHot)), [pins, takeoverFace])
+  const dominanceTotalKm = dominanceRows.reduce((sum, row) => sum + row.radiusKm, 0)
+  const dominanceMaxKm = dominanceRows[0]?.radiusKm ?? 1
+  useEffect(() => {
+    if (!dominanceOverview) setDominanceBoardOpen(false)
+  }, [dominanceOverview])
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const composeAtRef = useRef(composeAt)
@@ -5156,6 +5205,79 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       {/* Edge-blur "depth of field" removed by request: real DoF means the
           BACKGROUND behind the focal subject blurs (bokeh), not the screen
           edges — that effect is on the work order for capable devices. */}
+
+      {dominanceOverview && dominanceRows.length > 0 && !controlsObscured && (
+        <section className={styles.dominanceCard} aria-label="Map domination preview">
+          <div className={styles.dominanceHeader}>
+            <span>DOMINATION LIVE</span>
+            <strong>{Math.round(dominanceTotalKm).toLocaleString()} km</strong>
+          </div>
+          <button
+            type="button"
+            className={styles.dominanceMapButton}
+            onClick={() => {
+              playPop()
+              setDominanceBoardOpen(true)
+            }}
+            aria-label="Open domination leaderboard"
+          >
+            {dominanceRows.slice(0, 3).map((row, index) => (
+              <span className={styles.dominanceMiniRow} key={row.owner}>
+                <i>{index + 1}</i>
+                <b style={{ '--dominationColor': row.color } as React.CSSProperties} />
+                <span>{row.label}</span>
+                <em>{Math.round(row.radiusKm).toLocaleString()} km</em>
+              </span>
+            ))}
+          </button>
+        </section>
+      )}
+
+      {dominanceBoardOpen && dominanceOverview && (
+        <div className={styles.dominanceBackdrop} role="presentation" onClick={() => setDominanceBoardOpen(false)}>
+          <section
+            className={styles.dominanceBoard}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="poplur-domination-title"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className={styles.dominanceBoardTop}>
+              <div>
+                <span>MAP DOMINATION</span>
+                <h2 id="poplur-domination-title">Conquer Board</h2>
+              </div>
+              <button type="button" aria-label="Close domination leaderboard" onClick={() => setDominanceBoardOpen(false)}>×</button>
+            </header>
+            <div className={styles.dominanceBoardStats}>
+              <span><strong>{dominanceRows.length}</strong> holders</span>
+              <span><strong>{Math.round(dominanceTotalKm).toLocaleString()}</strong> km held</span>
+              <span><strong>{dominanceRows[0]?.label ?? '—'}</strong> leading</span>
+            </div>
+            <div className={styles.dominanceList}>
+              {dominanceRows.slice(0, 8).map((row, index) => (
+                <article className={styles.dominanceRow} key={row.owner}>
+                  <span className={styles.dominanceRank}>{index + 1}</span>
+                  <span className={styles.dominanceSwatch} style={{ '--dominationColor': row.color } as React.CSSProperties} />
+                  <span className={styles.dominanceName}>
+                    <strong>{row.label}</strong>
+                    <em>{row.territories} {row.territories === 1 ? 'territory' : 'territories'} · top: {row.topPlace}</em>
+                  </span>
+                  <span className={styles.dominanceKm}>{Math.round(row.radiusKm).toLocaleString()} km</span>
+                  <span className={styles.dominanceBar} aria-hidden="true">
+                    <i
+                      style={{
+                        '--dominationColor': row.color,
+                        width: `${Math.max(8, (row.radiusKm / dominanceMaxKm) * 100)}%`,
+                      } as React.CSSProperties}
+                    />
+                  </span>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
 
       {cloudBand > 0.01 && cloudSprite && (
         <div className={styles.cloudLayer} aria-hidden="true">

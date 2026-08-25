@@ -1,4 +1,5 @@
 export type DMDeliveryStatus = 'sending' | 'sent' | 'read' | 'failed'
+export type DMAttachmentKind = 'image' | 'video' | 'audio'
 
 const MESSAGE_ID = /^msg-[a-zA-Z0-9-]{16,96}$/
 
@@ -30,4 +31,15 @@ export function activeTyping(typingAtMillis: number | undefined, now = Date.now(
     && Number.isFinite(typingAtMillis)
     && typingAtMillis <= now + 1_000
     && now - typingAtMillis < 6_000
+}
+
+export function attachmentLabel(kind: DMAttachmentKind): string {
+  if (kind === 'image') return 'Photo'
+  if (kind === 'video') return 'Video'
+  return 'Voice message'
+}
+
+export function validAttachmentMime(kind: DMAttachmentKind, mimeType: string): boolean {
+  const normalized = mimeType.trim().toLowerCase()
+  return normalized.startsWith(`${kind === 'image' ? 'image' : kind}/`)
 }

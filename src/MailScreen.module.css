@@ -63,6 +63,40 @@
   stroke-linejoin: round;
 }
 
+.chatSearch {
+  flex: none;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 11px;
+  padding: 0 12px;
+  min-height: 42px;
+  border: 1px solid rgba(77, 46, 60, 0.1);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 2px 7px rgba(66, 37, 51, 0.06);
+}
+
+.chatSearch svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: rgba(56, 31, 44, 0.48);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.chatSearch input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #24141d;
+  font: 750 14px/1.2 inherit;
+}
+
 .threadList {
   flex: 1;
   /* The pull-to-refresh curtain is `position: absolute` and parks itself above
@@ -377,6 +411,36 @@
   padding: 1px;
 }
 
+.mediaMessage {
+  display: grid;
+  overflow: hidden;
+  width: min(252px, 68vw);
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  border-radius: 19px;
+  background: #321020;
+  box-shadow: 0 9px 18px rgba(67, 20, 45, 0.2);
+}
+
+.mediaMessage img,
+.mediaMessage video {
+  display: block;
+  width: 100%;
+  max-height: 310px;
+  object-fit: cover;
+  background: #24141d;
+}
+
+.voiceMessage {
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: #fff;
+  font-weight: 950;
+}
+
+.voiceMessage audio { width: 100%; min-width: 0; height: 34px; }
+
 .stickerArt {
   position: relative;
   isolation: isolate;
@@ -504,12 +568,96 @@
 .compose {
   flex: none;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 9px;
+  grid-template-columns: auto auto minmax(54px, 1fr) auto auto;
+  gap: 7px;
   padding: 12px 16px 8px;
   background: rgba(254, 240, 245, 0.94);
   backdrop-filter: blur(15px);
 }
+
+.attachButton,
+.voiceButton {
+  width: 42px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(99, 42, 71, 0.2);
+  border-radius: 15px;
+  background: linear-gradient(145deg, #fff, #ead5e0);
+  color: #7f2854;
+  box-shadow: inset 0 2px 3px rgba(255,255,255,.72), 0 3px 0 rgba(99,42,71,.16);
+  cursor: pointer;
+}
+
+.attachButton svg,
+.voiceButton svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.attachButton:disabled,
+.voiceButton:disabled { opacity: .4; cursor: default; }
+
+.voiceButtonRecording {
+  color: #fff;
+  background: linear-gradient(145deg, #ff7185, #e62c55 64%, #981536);
+  border-color: #d32650;
+}
+
+.mediaPicker {
+  position: absolute;
+  z-index: 24;
+  inset: max(96px, calc(env(safe-area-inset-top, 0px) + 60px)) 10px calc(18px + var(--cube-size, clamp(124px, 37vw, 176px)) + 72px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 199, 229, .72);
+  border-radius: 23px;
+  background: #1e0b19;
+  box-shadow: 0 18px 36px rgba(49, 8, 32, .42);
+}
+
+.mediaPicker > header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  color: #ffb0d4;
+  font: 900 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .12em;
+}
+
+.mediaPicker > header button {
+  width: 27px;
+  height: 27px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255,255,255,.14);
+  color: #fff;
+  font-size: 21px;
+  line-height: 1;
+}
+
+.mediaPicker > section { flex: 1; min-height: 0; overflow-y: auto; }
+
+.voiceRecording,
+.voiceError {
+  flex: none;
+  margin: 0 16px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  text-align: center;
+  font: 850 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.voiceRecording { color: #8e174d; background: rgba(247, 38, 134, .1); }
+.voiceError { color: #a41734; background: rgba(219, 40, 74, .12); }
 
 .stickerButton {
   width: 44px;
@@ -570,7 +718,7 @@
 
 .sendBtn {
   min-height: 44px;
-  padding: 0 18px;
+  padding: 0 12px;
   border: 0;
   border-radius: 15px;
   background: linear-gradient(145deg, #ff69b0, #f72686 65%, #bd155f);

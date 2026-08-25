@@ -1375,6 +1375,29 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     setHoldOpen(true)
   }, [notifOpenNonce])
 
+  // A system DM notification lands in the reachable web Mail page. Native
+  // supplies only the canonical thread id; Mail waits for its live thread
+  // snapshot before opening it, so the notification cannot fabricate a
+  // participant or bypass Firestore's membership check.
+  const [dmOpenRequest, setDMOpenRequest] = useState<{ threadId: string; nonce: number } | null>(null)
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const threadId = (event as CustomEvent<{ threadId?: unknown }>).detail?.threadId
+      if (typeof threadId !== 'string' || !threadId || threadId.length > 200) return
+      setProfileOrigin(activeTabLiveRef.current)
+      setViewingUser(null)
+      setActiveTab('profile')
+      setDMOpenRequest(current => ({ threadId, nonce: (current?.nonce ?? 0) + 1 }))
+    }
+    window.addEventListener('poplur-open-dm', onOpen)
+    return () => window.removeEventListener('poplur-open-dm', onOpen)
+  }, [])
+  useEffect(() => {
+    if (!dmOpenRequest) return
+    setResume(current => ({ screen: 'profile-messages', n: current.n + 1 }))
+    setHoldOpen(true)
+  }, [dmOpenRequest])
+
   // Taking your profile picture is NOT a subscreen — it is overlay state inside
   // ProfileTwin, so it has no id and cannot be keyed in SUBSCREEN_CUBE_MODEL
   // above (the same reason 'camera-capture' has no entry there). It announces
@@ -2378,11 +2401,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const onNativeDMResult = (event: MessageEvent) => {
       const data = event.data
       if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
+      if (data.type === 'poplurOpenDM' && typeof data.threadId === 'string' && data.threadId) {
+        window.dispatchEvent(new CustomEvent('poplur-open-dm', {
+          detail: { threadId: data.threadId },
+        }))
+        return
+      }
       if (data.type !== 'poplurDMThreads'
         && data.type !== 'poplurDMMessages'
         && data.type !== 'poplurDMThreadState'
         && data.type !== 'poplurDMSent'
         && data.type !== 'poplurDMSendFailed'
+        && data.type !== 'poplurDMThreadHidden'
         && data.type !== 'poplurPhoneContacts'
         && !String(data.type).startsWith('poplurCall')) return
       window.dispatchEvent(new CustomEvent('poplur-dm-result', { detail: data }))
@@ -5158,6 +5188,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           key={`hold-${resume.n}`}
           tab={activeTab}
           initialScreen={resume.screen ?? undefined}
+          initialDMThreadId={resume.screen === 'profile-messages' ? dmOpenRequest?.threadId : undefined}
           wheelOverNonce={wheelOverNonce}
           onClose={reason => {
             // Waving the wheel away leaves you exactly where it found you.

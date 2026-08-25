@@ -270,6 +270,7 @@ export default function HoldMenuTwin({
   onSubscreenChange,
   onWheelFocusChange,
   initialScreen,
+  initialDMThreadId,
   wheelOverNonce = 0,
   bindGoBack,
   bindArrows,
@@ -308,6 +309,9 @@ export default function HoldMenuTwin({
       page you were on when you left the tab. Backing out of it still lands on
       the wheel, so the rest of the menu stays one gesture away. */
   initialScreen?: string
+  /** A system-notification deep link. Mail validates it against the live native
+      thread snapshot before opening anything. */
+  initialDMThreadId?: string
   /** Bumped by a cube long-press. With a page up, the wheel opens ON TOP of it
       rather than replacing it — the page is where the tab is standing, and
       asking for the menu is not asking to leave it. Ignored on mount so a
@@ -660,7 +664,8 @@ export default function HoldMenuTwin({
       // Direct messages. The chat page has no Firebase, so its reads and writes
       // ride the same road: page -> here -> HomeTwin -> native -> Firestore.
       if (event.source === frame.contentWindow
-        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM', 'setDMTyping',
+        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM', 'sendDMAttachment',
+            'deleteDMThread', 'setDMTyping',
             'requestPhoneContacts', 'togglePhoneFavourite',
             'callStart', 'callAnswerJoin', 'callDescription', 'callCandidate',
             'callEnd', 'callWatchIncoming'].includes(data.type)) {
@@ -690,6 +695,7 @@ export default function HoldMenuTwin({
         || data?.type === 'poplurDMThreadState'
         || data?.type === 'poplurDMSent'
         || data?.type === 'poplurDMSendFailed'
+        || data?.type === 'poplurDMThreadHidden'
         || data?.type === 'poplurPhoneContacts'
         || String(data?.type ?? '').startsWith('poplurCall')) {
         frame.contentWindow?.postMessage(data, '*')
@@ -1024,6 +1030,7 @@ export default function HoldMenuTwin({
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Mail">
           <MailScreen
             onClose={() => { playPop(); onClose() }}
+            initialThreadId={initialDMThreadId}
             onCallViaPhone={(id, name) => {
               const phoneTile = items.find(it => it.screen === 'profile-phone')
               if (phoneTile) {

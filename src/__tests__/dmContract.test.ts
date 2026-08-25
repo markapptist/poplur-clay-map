@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   activeTyping,
+  attachmentLabel,
   createClientMessageId,
   isClientMessageId,
   sentMessageStatus,
+  validAttachmentMime,
 } from '../dmContract'
 
 describe('direct-message contract', () => {
@@ -23,5 +25,13 @@ describe('direct-message contract', () => {
   it('expires abandoned typing state', () => {
     expect(activeTyping(8_000, 10_000)).toBe(true)
     expect(activeTyping(2_000, 10_000)).toBe(false)
+  })
+
+  it('keeps attachment labels and MIME families on the shared wire contract', () => {
+    expect(attachmentLabel('image')).toBe('Photo')
+    expect(attachmentLabel('video')).toBe('Video')
+    expect(attachmentLabel('audio')).toBe('Voice message')
+    expect(validAttachmentMime('image', 'image/jpeg')).toBe(true)
+    expect(validAttachmentMime('audio', 'video/mp4')).toBe(false)
   })
 })
