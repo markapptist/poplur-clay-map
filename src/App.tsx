@@ -2790,6 +2790,21 @@ export default function App() {
         // The search panel drops in from the top, the same one the map's own
         // search button opens — the menu tile is another way in, not a copy.
         case 'search': openSearch(); break
+        case 'focusPlace': {
+          const raw = event.data.coords
+          if (!Array.isArray(raw) || raw.length !== 2) break
+          const longitude = Number(raw[0])
+          const latitude = Number(raw[1])
+          if (!Number.isFinite(longitude) || Math.abs(longitude) > 180
+            || !Number.isFinite(latitude) || Math.abs(latitude) > 90) break
+          stopTour()
+          closeSearchImmediately()
+          setCurrentPlace(typeof event.data.name === 'string'
+            ? displayPlaceName(event.data.name.slice(0, 160))
+            : 'Discovery result')
+          flyToCenter([longitude, latitude], 4_600)
+          break
+        }
         case 'weather': toggleWeather(); break
         // The visible map rail belongs to Home when this document is embedded.
         // Persist the user choice here too, so Map audio follows the same gate

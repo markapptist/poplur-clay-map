@@ -24,6 +24,7 @@ import TrophyRoomScreen from './TrophyRoomScreen'
 import WalletScreen from './WalletScreen'
 import AppsScreen from './AppsScreen'
 import DiscoveryScreen from './DiscoveryScreen'
+import StoriesScreen from './StoriesScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
@@ -103,6 +104,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // TV GUIDE wears below it. Two different props for two different things.
     { icon: 'TVGuide', title: 'TV', screen: 'feed-home', home: true },
     { icon: 'Search', title: 'DISCOVER', screen: 'feed-discovery', native: true },
+    // Daily, low-pressure posts. Audience is Everyone or the account's Poplur
+    // Phone favourites—never followers—and the Story screen owns the 24-hour
+    // lifecycle, archive and highlights without leaving a decoder behind Feed.
+    { icon: 'Stories', glyph: '24H', title: 'STORIES', screen: 'feed-stories', native: true },
     // Feed engagement lives in its visible clay rail: share, comment controls,
     // comment composer, and heart must be reachable while watching.
     { icon: 'Home', title: 'VIEW PROFILE', screen: 'profile-stats', action: 'profile' },
@@ -269,6 +274,7 @@ export default function HoldMenuTwin({
   onMapTourTopicsChange,
   currentFeedChannelId,
   onTuneFeedChannel,
+  onCreateStory,
   onSubscreenChange,
   onWheelFocusChange,
   initialScreen,
@@ -297,6 +303,8 @@ export default function HoldMenuTwin({
   /** Feed selection shared with TV Guide so a selected row can tune Home. */
   currentFeedChannelId?: string
   onTuneFeedChannel?: (channelId: string) => void
+  /** Leaves Stories for the camera in Story mode. */
+  onCreateStory?: () => void
   /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the
       app. `unmounting` marks the close that comes from the menu itself leaving
       (a tab switch) rather than from the person closing the page. */
@@ -1071,6 +1079,20 @@ export default function HoldMenuTwin({
           <DiscoveryScreen
             onTune={onTuneFeedChannel}
             onClose={() => { playPop(); onClose() }}
+          />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'feed-stories') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Stories">
+          <StoriesScreen
+            onCreate={() => {
+              playPop()
+              onCreateStory?.()
+            }}
+            onClose={() => { playPop(); onClose() }}
+            bindBack={bindNativeBack}
           />
         </div>
       )

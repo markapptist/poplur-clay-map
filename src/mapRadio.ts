@@ -973,19 +973,14 @@ function isLiveRadioPlaying(): boolean {
 }
 
 function syncRadioMusicPlayback(): void {
-  const htmlRadioAudible = Boolean(
-    (isLiveRadioPlaying() && liveAudio && !liveAudio.muted && liveAudio.volume > 0)
-    || (fallbackAudio && !fallbackAudio.paused && !fallbackAudio.muted && fallbackAudio.volume > 0),
-  )
-  const webAudioRadioAudible = Boolean(
-    audioContext?.state === 'running'
-    && radioBed
-    && targetRadioLevel * masterVolume > 0.001,
-  )
-  setMusicPlayback(
-    'radio',
-    soundWanted && !isRadioGateMuted() && (htmlRadioAudible || webAudioRadioAudible),
-  )
+  // Radio is an audio surface, not a proof that the listener deliberately
+  // started music. Its bed can be under a spoken tour, a local station can be
+  // talk radio, and it can resume behind the map after a prior session.
+  //
+  // The disco navigator is reserved for explicit music: an opted-in Music
+  // feed video, iPod track, or Studio transport/take. Clear an older radio
+  // assertion on every radio state edge so audio alone can never summon it.
+  setMusicPlayback('radio', false)
 }
 
 function tryPlayLiveRadio(): void {

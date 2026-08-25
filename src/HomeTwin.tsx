@@ -1527,7 +1527,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // sitting on top of the Continue button. Raising the composer cannot work
   // from inside a clamped stacking context, so the chrome stands down instead.
   const [composerOpen, setComposerOpen] = useState(false)
-  const handleComposingChange = useCallback((open: boolean) => setComposerOpen(open), [])
+  const [storyCaptureMode, setStoryCaptureMode] = useState(false)
+  const composerWasOpenRef = useRef(false)
+  const handleComposingChange = useCallback((open: boolean) => {
+    setComposerOpen(open)
+    if (!open && composerWasOpenRef.current) setStoryCaptureMode(false)
+    composerWasOpenRef.current = open
+  }, [])
   // No timer any more: the state is now driven purely by whether the PHONE
   // screen is open, so it clears when you leave rather than after 1.55s.
 
@@ -1857,6 +1863,30 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     postWebMapAction(action, detail)
   }, [beginNativeMapWebFallback, postWebMapAction, queueMapAction])
+
+  // Unified Discovery owns the result list; Map owns rendering a selected
+  // place. The event carries a named public landmark, never a post's private
+  // origin. Unsupported native-map actions deliberately take the established
+  // feature-complete web fallback before the flight is queued.
+  useEffect(() => {
+    const openPlace = (event: Event) => {
+      const detail = (event as CustomEvent<{ name?: unknown; coords?: unknown }>).detail
+      const coords = detail?.coords
+      if (!Array.isArray(coords) || coords.length !== 2) return
+      const longitude = Number(coords[0])
+      const latitude = Number(coords[1])
+      if (!Number.isFinite(longitude) || Math.abs(longitude) > 180
+        || !Number.isFinite(latitude) || Math.abs(latitude) > 90) return
+      setActiveTab('map')
+      setHoldOpen(false)
+      sendMapAction('focusPlace', {
+        name: typeof detail?.name === 'string' ? detail.name.slice(0, 160) : 'Discovery result',
+        coords: [longitude, latitude],
+      })
+    }
+    window.addEventListener('poplur-discovery-open-place', openPlace)
+    return () => window.removeEventListener('poplur-discovery-open-place', openPlace)
+  }, [sendMapAction])
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)
@@ -4630,6 +4660,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )}
         {mainSurfaceVisible && committedTab === 'post' && (
           <Camera
+            storyMode={storyCaptureMode}
             captureMode={cameraCaptureMode}
             // Hold scrolling is UI over the lens, but it must not keep camera,
             // ML and AR work live while the wheel and its previews animate.
@@ -4662,6 +4693,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}
             onPosted={post => {
+              setStoryCaptureMode(false)
+              if (post.destination === 'story') return
               const itemId = typeof crypto.randomUUID === 'function'
                 ? crypto.randomUUID()
                 : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`
@@ -5208,6 +5241,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           onMapTourTopicsChange={handleMapTourTopicsChange}
           currentFeedChannelId={CHANNELS[chanIndex]?.id}
           onTuneFeedChannel={tuneFeedChannel}
+          onCreateStory={() => {
+            setStoryCaptureMode(true)
+            setHoldOpen(false)
+            setActiveTab('post')
+          }}
           onSubscreenChange={handleSubscreenChange}
           onWheelFocusChange={handleWheelFocusChange}
           bindArrows={bindSubscreenArrows}
