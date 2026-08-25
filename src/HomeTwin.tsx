@@ -26,7 +26,6 @@ import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { isResumablePage, tabPageScreens, type HoldMenuFocus } from './HoldMenuTwin'
 import { FaceTimeOverlay } from './MailScreen'
-import LoadingGlobe from './LoadingGlobe'
 import TopChrome from './TopChrome'
 import PermissionAlert from './PermissionAlert'
 import {
@@ -107,8 +106,6 @@ const MAP_RAIL_SUN_ICON = `<svg viewBox="0 0 40 40"><defs><radialGradient id="ho
 // press-and-hold to open the hold menu twin. Pills track the front face;
 // clicking the already-front face's pill opens that tab's screen twin.
 
-// The approved Loading screen's rotating copy (gcl-prototype loadingPage()),
-// cycled on the same 1.8s beat with the same 200ms cross-fade.
 /** The clay TV the navigator becomes while the TV Guide is open. Supplied art
     in public/, like every other clay model — never a drawn substitute. */
 // Navigator-specific LODs retain all four 1024px JPEG material maps. Geometry
@@ -185,6 +182,7 @@ const RAIN_CUBE_MODEL = 'poplur_cube_rain_cloud.glb'
 const THUNDER_CUBE_MODEL = 'poplur_cube_thunder_cloud.glb'
 const DISCO_BALL_CUBE_MODEL = 'poplur_cube_disco_ball.glb'
 const DISCO_CUBE_MAX_MS = 30_000
+const DISCO_CUBE_MIN_MUSIC_MS = 10_000
 const WEATHER_REFRESH_MS = 5 * 60_000
 
 type WeatherCubeKind = 'rain' | 'thunder'
@@ -484,18 +482,6 @@ const ANDROID_STORE_PRODUCT_BY_CARD_ID: Record<string, string> = {
 // original 39.5MB models/poplur_mixer.glb stays where it is as the master; the
 // navigator loads the 329KB decimation from the bundle root, because models/
 // never reaches a phone.
-
-const LOADING_MESSAGES = [
-  'Warming up the pinetrees',
-  'Rolling out the clay roads',
-  'Dusting off the globe',
-  'Pinning the hotspots',
-  'Measuring your radius',
-  'Sprinkling pink stars',
-  'Waking up the tugboat',
-  'Polishing the big P',
-  'Fluffing the clouds',
-]
 
 // The cube scales with the phone width so it and the two flanking counters
 // always fit — full 176 on a roomy phone, shrinking on tighter ones.
@@ -1985,18 +1971,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // white on device. This flag drives an opaque cover in THIS document — already
   // painted, so it is dark from the frame the iframe attaches — and the cover
   // now lifts only on map-ready (or after retries expose the child's actionable
-  // error card). The old first-message rule revealed the grain/backdrop as soon
-  // as `poplur-map-loading` arrived, several seconds before Mapbox had tiles —
-  // exactly the blank gray screen seen on device.
+  // error card). The old first-message rule revealed the map before Mapbox had
+  // tiles, producing the blank/blue loading flash seen on device.
   const [mapPainted, setMapPainted] = useState(NATIVE_ADAPTIVE_MAP)
-  const [loadingMessage, setLoadingMessage] = useState(0)
-  const [messageShown, setMessageShown] = useState(true)
   const [loadingMuted, setLoadingMuted] = useState(isUserMuted)
-  // The tab pills are a testing aid. Keep them out of the app/RN surface unless
-  // a prototype session explicitly asks for them with ?tabs=1.
-  const forceMapLoading = import.meta.env.DEV
-    && typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('map-loading') === '1'
   useEffect(() => {
     // iOS fires `resize` when the software keyboard changes only the visual
     // viewport. Recomputing from that temporary height shrank and moved the
@@ -3258,11 +3236,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }, '*')
   }, [activePermission, activeTab, mapReady, overlayOpen])
 
-  // Rotate the loading copy only while the overlay is up.
   // Map lifetime. Coming back to the map remounts it immediately; leaving it
   // starts the grace timer, and only when that expires does the iframe go away.
-  // Clearing mapReady on teardown puts the map's own loading screen back, so a
-  // remounted map shows the loading globe instead of a blank layer.
+  // Clearing mapReady on teardown re-arms the dark boot cover for the next
+  // mount instead of exposing an unpainted iframe.
   useEffect(() => {
     if (NATIVE_ADAPTIVE_MAP) {
       setMapMounted(false)
@@ -3383,23 +3360,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const watchdog = window.setTimeout(scheduleMapRetry, 18_000)
     return () => window.clearTimeout(watchdog)
   }, [activeTab, committedTab, mapFailedVisible, mapMounted, mapReady, mapReloadNonce, scheduleMapRetry, surfaceVisible])
-
-  // Keep a real loading surface over Mapbox's incomplete canvas. A cold style
-  // or tile request can take seconds in WKWebView; showing the partial grain
-  // layer made a healthy-but-loading map look broken.
-  const loadingVisible = activeTab === 'map' && committedTab === 'map'
-    && (!mapReady && !mapFailedVisible || forceMapLoading)
-  useEffect(() => {
-    if (!loadingVisible) return
-    const iv = window.setInterval(() => {
-      setMessageShown(false)
-      window.setTimeout(() => {
-        setLoadingMessage(i => (i + 1) % LOADING_MESSAGES.length)
-        setMessageShown(true)
-      }, 200)
-    }, 1800)
-    return () => window.clearInterval(iv)
-  }, [loadingVisible])
 
   // Camera's vertical pager: `step` counts arrow presses (up +1 / down -1);
   // parity picks the page, so both directions cycle viewfinder ⇄ roll.
@@ -3900,26 +3860,43 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       Date.now(),
       DISCO_CUBE_MAX_MS,
       discoCubeVisible,
+      DISCO_CUBE_MIN_MUSIC_MS,
     )
     musicSessionRef.current = decision.session
     setDiscoCubeActive(decision.active)
-    if (!decision.active || decision.remainingMs == null || decision.session.deadline == null) return
+    const timerMs = decision.activationDelayMs ?? (decision.active ? decision.remainingMs : null)
+    if (timerMs == null) return
+    const waitingForEligibility = decision.activationDelayMs != null
     const deadline = decision.session.deadline
     discoDeadlineTimerRef.current = window.setTimeout(() => {
       const current = musicSessionRef.current
       discoDeadlineTimerRef.current = null
+      if (waitingForEligibility) {
+        const ready = reconcileDiscoCubeSession(
+          current,
+          getMusicPlaybackSnapshot().playing,
+          Date.now(),
+          DISCO_CUBE_MAX_MS,
+          discoCubeVisible,
+          DISCO_CUBE_MIN_MUSIC_MS,
+        )
+        musicSessionRef.current = ready.session
+        setDiscoCubeActive(ready.active)
+        return
+      }
+      if (deadline == null) return
       const expired = expireDiscoCubeSession(current, deadline)
       if (expired === current) return
       musicSessionRef.current = expired
       setDiscoCubeActive(false)
-    }, decision.remainingMs)
+    }, timerMs)
     return () => {
       if (discoDeadlineTimerRef.current !== null) {
         window.clearTimeout(discoDeadlineTimerRef.current)
         discoDeadlineTimerRef.current = null
       }
     }
-  }, [discoCubeVisible, musicPlayback.playing])
+  }, [discoCubeActive, discoCubeVisible, musicPlayback.playing])
 
   // Weather wins while Map is the current surface; music remains global. When
   // either signal clears, this falls through to the model for the page the
@@ -4559,41 +4536,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           motion, and every particle was another compositor layer animating
           for the whole spin — cost paid continuously on a phone that was
           already running hot. The cube's own physics carries the motion. */}
-
-      {loadingVisible && (
-        <div className={styles.mapLoading} role="status" aria-label="Loading the map">
-          <LoadingGlobe />
-          {/* Mute control, matching the approved Loading screen's top-left mark. */}
-          <button
-            type="button"
-            className={styles.mapLoadingMute}
-            aria-label={loadingMuted ? 'Unmute sound' : 'Mute sound'}
-            aria-pressed={loadingMuted}
-            onClick={() => { const next = !loadingMuted; setUserMuted(next); setLoadingMuted(next) }}
-          >
-            <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
-              <path d="M6 12h4l6-5v18l-6-5H6z" fill="#fff2f8" stroke="rgba(10,30,110,.55)" strokeWidth="1.3" strokeLinejoin="round" />
-              {!loadingMuted && <g>
-                <path d="M21 11.5a7 7 0 0 1 0 9" fill="none" stroke="#fff2f8" strokeWidth="2.4" strokeLinecap="round" />
-                <path d="M25 8.5a11.5 11.5 0 0 1 0 15" fill="none" stroke="#d6e7ff" strokeWidth="2.4" strokeLinecap="round" />
-              </g>}
-              {loadingMuted && <line x1="20" y1="26" x2="30" y2="6" stroke="#fff2f8" strokeWidth="3" strokeLinecap="round" />}
-            </svg>
-          </button>
-          <div className={styles.mapLoadingLoader}>
-            <p
-              className={styles.mapLoadingText}
-              style={{ opacity: messageShown ? 1 : 0 }}
-              aria-live="polite"
-            >
-              {LOADING_MESSAGES[loadingMessage]}
-            </p>
-            <div className={styles.mapLoadingTrack} role="progressbar" aria-label="Loading map">
-              <span className={styles.mapLoadingFill} />
-            </div>
-          </div>
-        </div>
-      )}
 
       {mapFailedVisible && activeTab === 'map' && committedTab === 'map' && (
         <div className={styles.mapFailure} role="alertdialog" aria-modal="true" aria-labelledby="map-failure-title">

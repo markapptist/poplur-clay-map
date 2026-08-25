@@ -3,9 +3,9 @@
   height: 100%;
   position: absolute;
   inset: 0;
-  /* Prevent the WebGL clear colour from flashing black while Mapbox rebuilds
-     its globe atmosphere after an iOS tab swap. */
-  background: #8ec9f2;
+  /* Keep the map's pre-first-frame surface in the app's dark palette. The old
+     sky-blue fill read as a separate loading screen before Mapbox painted. */
+  background: #050407;
 }
 
 .photorealMessage {

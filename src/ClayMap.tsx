@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
-import { onFrame, ambientAllowed, boostFrames, currentQuality, managedRenderingOperationActive, onAmbientSleepChange, onQualityChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
+import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { installMapIdleSnapshot, type MapIdleSnapshotController } from './mapIdleSnapshot'
 import { CLAY_ROUTES, PALETTE } from './data'
@@ -199,12 +199,6 @@ const SHARED_ADAPTIVE_MAP = true
 // Keeping this shared prevents a flat roof layer from continuing above the 3D
 // buildings, camera handoff, or landmark reveal.
 const BUILDING_3D_MIN_ZOOM = 15
-// The first 3D band is deliberately sparse: at a tour-sized camera the phone
-// should describe the skyline, not tessellate every house in the district.
-// Full footprint density returns only once the camera is close enough that
-// Mapbox's viewport tile culling has already made the working set small.
-const BUILDING_FULL_DETAIL_ZOOM = 16.6
-const BUILDING_OVERVIEW_MIN_HEIGHT_M = 30
 const MAP_LITE_REQUESTED =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).get('mapLite') === '1'
@@ -1802,8 +1796,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     let stopRendererParking: (() => void) | null = null
     let finishRendererParkOnIdle: (() => void) | null = null
     let stopClaimRoadPaint: (() => void) | null = null
-    let updateBuildingLod: (() => void) | null = null
-    let stopBuildingLodQuality: (() => void) | null = null
     let pendingLandmarkThumbId: string | null = null
     let disposed = false
 
@@ -2252,7 +2244,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     // "cuts" between subjects are long eased glides.
     const startOrbit = () => {
       stopOrbit()
-      if (MAP_2D) return
+      // The native map already has a full-screen Mapbox renderer and dense
+      // extrusion buildings. A standing camera orbit keeps invalidating the
+      // settled scene and was the remaining sustained heat source after the
+      // renderer park. Desktop keeps the showcase; phones stay on the last
+      // composed frame until the user or an explicit tour moves the camera.
+      if (MAP_2D || isNativeShell()) return
       const begun = performance.now()
       let last = begun
       // the shot's own rate, re-rolled each time we settle somewhere new
@@ -3224,10 +3221,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             9],
           6] as never
         const fullBuildingFilter = notALandmarkBuilding()
-        const overviewBuildingFilter = ['all',
-          fullBuildingFilter,
-          ['>=', clayHeight, BUILDING_OVERVIEW_MIN_HEIGHT_M],
-        ]
         // Per-building pop scale driven by feature-state (see pop system below)
         const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
         const poppedHeight = ['*', clayHeight, popScale] as never
@@ -3262,7 +3255,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           // exactly ("the landmark should actually replace the building, not
           // just hover on it"). Matched by OSM way id — see
           // LANDMARK_BUILDING_IDS for why a geometric test cannot do this.
-          filter: overviewBuildingFilter as never,
+          filter: fullBuildingFilter as never,
           // Geometry culling: no extrusions until the camera is close enough
           // to be looking at a neighbourhood, not a whole city. The clay
           // settlement placeholders own everything wider than this.
@@ -3346,32 +3339,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           'fill-extrusion-ambient-occlusion-radius': 2,
         } as never,
       })
-
-      // Geometry LOD, not DOM-marker culling. The tour lands around z15–16,
-      // where only the skyline-height buildings are useful. Restore all real
-      // footprints only at close inspection zoom, and keep the sparse filter
-      // at any zoom while the performance governor is protecting the phone.
-      // Roof caps are a second extrusion pass, so they are full-detail only.
-      let fullBuildingDetail: boolean | null = null
-      updateBuildingLod = () => {
-        if (!map.getLayer('clay-buildings-3d')) return
-        // Quality 2 is already a protection rung. Reserve the all-footprint
-        // pass for quality 3 so the first thermal demotion sheds geometry.
-        const nextFull = map.getZoom() >= BUILDING_FULL_DETAIL_ZOOM && currentQuality() > 2
-        if (fullBuildingDetail === nextFull) return
-        fullBuildingDetail = nextFull
-        map.setFilter(
-          'clay-buildings-3d',
-          (nextFull ? fullBuildingFilter : overviewBuildingFilter) as never,
-        )
-        if (map.getLayer('clay-building-caps')) {
-          map.setLayoutProperty('clay-building-caps', 'visibility', nextFull ? 'visible' : 'none')
-        }
-        map.getContainer().dataset.poplurBuildingLod = nextFull ? 'full' : 'reduced'
-      }
-      updateBuildingLod()
-      map.on('zoomend', updateBuildingLod)
-      stopBuildingLodQuality = onQualityChange(updateBuildingLod)
 
       // Building and venue names sit above the molded forms so the clay city
       // still tells you what you are looking at.
@@ -3466,14 +3433,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             ['has', 'num_floors'], ['*', ['to-number', ['get', 'num_floors']], 3.2],
             9],
           6]
-        // At the 3D handoff, keep only the LOW-RISE footprints as inexpensive
-        // city fabric. Skyline-height features become extrusions, so a 2D slab
-        // is never painted on top of the corresponding 3D geometry.
-        const reducedFlatOpacity = (opacity: number) => ['step', ['zoom'],
-          opacity,
-          BUILDING_3D_MIN_ZOOM,
-          ['case', ['<', flatHeight, BUILDING_OVERVIEW_MIN_HEIGHT_M], opacity, 0],
-        ]
         if (flatSource === 'overture-buildings' && !map.getSource('overture-buildings')) {
           map.addSource('overture-buildings', { type: 'vector', url: OVERTURE_BUILDINGS_PMTILES })
         }
@@ -3484,10 +3443,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           source: flatSource,
           'source-layer': 'building',
           minzoom: 13.2,
-          ...(SHARED_ADAPTIVE_MAP ? { maxzoom: BUILDING_FULL_DETAIL_ZOOM } : {}),
+          ...(SHARED_ADAPTIVE_MAP ? { maxzoom: BUILDING_3D_MIN_ZOOM } : {}),
           paint: {
             'fill-color': '#604836',
-            'fill-opacity': reducedFlatOpacity(0.42) as never,
+            'fill-opacity': 0.42,
             'fill-translate': [0, 2],
             'fill-translate-anchor': 'viewport',
           },
@@ -3499,10 +3458,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           source: flatSource,
           'source-layer': 'building',
           minzoom: 13.2,
-          ...(SHARED_ADAPTIVE_MAP ? { maxzoom: BUILDING_FULL_DETAIL_ZOOM } : {}),
+          ...(SHARED_ADAPTIVE_MAP ? { maxzoom: BUILDING_3D_MIN_ZOOM } : {}),
           paint: {
             'fill-color': flatBuildingColor() as never,
-            'fill-opacity': reducedFlatOpacity(0.96) as never,
+            'fill-opacity': 0.96,
             'fill-outline-color': '#7b5a43',
           },
         })
@@ -4469,10 +4428,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       finishRendererParkOnIdle = null
       stopClaimRoadPaint?.()
       stopClaimRoadPaint = null
-      if (updateBuildingLod) map.off('zoomend', updateBuildingLod)
-      updateBuildingLod = null
-      stopBuildingLodQuality?.()
-      stopBuildingLodQuality = null
       map.off('movestart', clearLandmarkThumb)
       map.off('moveend', settleLandmarkThumb)
       idleSnapshot.dispose()
