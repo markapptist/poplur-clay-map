@@ -35,6 +35,23 @@ describe('disco cube playback session', () => {
     expect(stopped.session).toEqual(emptyDiscoCubeSession())
   })
 
+  it('releases immediately on a screen or channel change and earns a new dwell', () => {
+    const started = reconcileDiscoCubeSession(
+      emptyDiscoCubeSession(), true, 0, MAX_MS, true, 20_000, 'feed:101',
+    )
+    const ready = reconcileDiscoCubeSession(
+      started.session, true, 20_000, MAX_MS, true, 20_000, 'feed:101',
+    )
+    expect(ready.active).toBe(true)
+
+    const changed = reconcileDiscoCubeSession(
+      ready.session, true, 21_000, MAX_MS, true, 20_000, 'feed:104',
+    )
+    expect(changed).toMatchObject({ active: false, activationDelayMs: 20_000 })
+    expect(changed.session.contextKey).toBe('feed:104')
+    expect(changed.session.deadline).toBeNull()
+  })
+
   it('starts its 30 seconds only when the disco cube can be seen', () => {
     const hiddenStart = reconcileDiscoCubeSession(
       emptyDiscoCubeSession(),

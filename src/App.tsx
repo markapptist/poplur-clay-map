@@ -75,6 +75,7 @@ import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
 import { radiusDeltaForChannel } from './radiusLedger'
 import { contentPostId, listPostings, onPostedContentChange, radiusKmFor, POSTINGS_KEY } from './postedContent'
+import { effectiveDominanceLevel } from './mapDominance'
 
 /** The shipped games by id, so a dropped game's claim can wear its title on
  *  the pin. A tiny local map rather than an import of GamesScreen: this
@@ -2218,7 +2219,7 @@ export default function App() {
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLive) return
-    const applyMine = () => {
+    const applyMine = (effectiveLevel: PopLevel) => {
       const persisted = listPostings()
         .filter(posting => posting.kind !== 'game')
         .map(posting => ({
@@ -2229,7 +2230,7 @@ export default function App() {
       setClaimGroup(map, 'mine',
         TAKEOVER_TEST && popLevel === 'all'
           ? worldTakeoverClaims()
-          : popLevel === 'others' ? [] : [
+          : effectiveLevel === 'others' ? [] : [
             ...POIS.map(poi => ({
               id: `pop-${poi.id}`,
               center: poi.coords as [number, number],
@@ -2238,9 +2239,16 @@ export default function App() {
             ...persisted,
           ])
     }
+    let previousEffectiveLevel: PopLevel | null = null
     const apply = () => {
+      // Regional and planet views are always the colour-coded scoreboard.
+      // Close 3D returns to the selected level, so the extra rival polygons
+      // are not kept active around building views and cannot add GPU pressure.
+      const effectiveLevel = effectiveDominanceLevel(popLevel, map.getZoom())
+      if (effectiveLevel === previousEffectiveLevel) return
+      previousEffectiveLevel = effectiveLevel
       try {
-        setClaimGroup(map, 'others', popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
+        setClaimGroup(map, 'others', effectiveLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
           id: pop.id,
           center: pop.coords,
           radiusKm: pop.radiusKm,
@@ -2252,16 +2260,24 @@ export default function App() {
         // Takeover test: on `all`, YOUR ground becomes the whole world, so the
         // terrain wrap can be judged at range. Only on `all` — the flag must
         // not quietly change what levels 1 and 2 mean.
-        applyMine()
+        applyMine(effectiveLevel)
       } catch { /* map torn down */ }
     }
     // Let the first seed land before the level starts rearranging the board.
     const t = window.setTimeout(apply, 60)
+    // `zoomend`, not `zoom`: one bounded source update only when a settled
+    // camera crosses the overview boundary. Pinching/flying does no claim work
+    // per frame, and an idempotent effective-level guard ignores same-side
+    // settles entirely.
+    map.on('zoomend', apply)
     // Live photo/video drops still travel through the dedicated `dropClaim`
     // action so their territory grows on camera arrival. The persisted ledger
     // is read here on mount and every level change; subscribing here as well
     // would pre-seed the same claim before its authored grow-in can play.
-    return () => window.clearTimeout(t)
+    return () => {
+      window.clearTimeout(t)
+      map.off('zoomend', apply)
+    }
   }, [popLevel, mapLive])
 
   // ── Dropped games are territory too ──────────────────────────────────────

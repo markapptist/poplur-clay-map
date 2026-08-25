@@ -47,6 +47,7 @@ import {
   type ProfileTheme,
 } from './profileThemes'
 import { takeProfileMode } from './profileMode'
+import { refreshedProfilePhotoSource, usableProfilePhoto } from './profilePhoto'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -136,16 +137,6 @@ function usableUsername(value: string | null | undefined): string | null {
 const USERNAME_MAX = 30
 function sanitizeUsername(value: string): string {
   return value.replace(/^@/, '').replace(/[^A-Za-z0-9_.]/g, '').slice(0, USERNAME_MAX)
-}
-
-function usableProfilePhoto(value: string | null | undefined): string | null {
-  if (!value) return null
-  const photo = value.trim()
-  return photo.startsWith('data:image/')
-    || /^https:\/\//i.test(photo)
-    || /^poplur-clay:\/\//i.test(photo)
-    ? photo
-    : null
 }
 
 function readStoredPhoto(): string | null {
@@ -683,6 +674,48 @@ export default function ProfileTwin({
   // read "no profile image set" forever — the reported bug. Stored as a data
   // URI under one key, rehydrated on mount.
   const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
+  // Keep the last image that actually loaded on screen while a cache-busted
+  // retry is probed off-screen. A failed refresh therefore cannot replace a
+  // working cached portrait with a broken-image frame.
+  const [displayedPhoto, setDisplayedPhoto] = useState<{ photo: string; source: string } | null>(() => {
+    const stored = readStoredPhoto()
+    return stored ? { photo: stored, source: stored } : null
+  })
+  const [photoReloadRevision, setPhotoReloadRevision] = useState(0)
+  const photoRetryCountRef = useRef(0)
+  const retryProfilePhoto = useCallback(() => {
+    if (photoRetryCountRef.current >= 2) return
+    photoRetryCountRef.current += 1
+    setPhotoReloadRevision(current => current + 1)
+  }, [])
+  const forceProfilePhotoReload = useCallback(() => {
+    photoRetryCountRef.current = 0
+    setPhotoReloadRevision(current => current + 1)
+  }, [])
+  useEffect(() => {
+    photoRetryCountRef.current = 0
+    setDisplayedPhoto(current => {
+      if (!photo) return null
+      return current?.photo === photo ? current : { photo, source: photo }
+    })
+  }, [photo])
+  useEffect(() => {
+    if (!photo || photoReloadRevision === 0 || photo.startsWith('data:image/')) return
+    let live = true
+    const candidate = refreshedProfilePhotoSource(photo, photoReloadRevision)
+    const probe = new Image()
+    probe.onload = () => {
+      if (live) setDisplayedPhoto({ photo, source: candidate })
+    }
+    probe.onerror = () => {
+      if (live) retryProfilePhoto()
+    }
+    probe.src = candidate
+    return () => { live = false; probe.onload = null; probe.onerror = null }
+  }, [photo, photoReloadRevision, retryProfilePhoto])
+  const renderedPhotoSource = photo
+    ? displayedPhoto?.photo === photo ? displayedPhoto.source : photo
+    : null
   const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
@@ -837,6 +870,9 @@ export default function ProfileTwin({
       const nativePhoto = usableProfilePhoto(prof?.photo)
       if (nativePhoto) {
         setPhoto(nativePhoto)
+        // A native response may repeat the same durable URL after WebKit has
+        // cached an earlier failure. State equality alone would not retry it.
+        forceProfilePhotoReload()
         writeStoredPhoto(nativePhoto)
         window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: nativePhoto } }))
       } else {
@@ -872,7 +908,7 @@ export default function ProfileTwin({
     return () => {
       window.removeEventListener('poplur-native-profile', receiveProfile)
     }
-  }, [])
+  }, [forceProfilePhotoReload])
 
   useEffect(() => {
     if (!capturing || !isNativeShell()) return
@@ -1230,6 +1266,10 @@ export default function ProfileTwin({
     // This makes a pull useful across the native handoff boundary instead of
     // waiting for a later Profile remount to rehydrate the picture.
     setPhoto(current => readStoredPhoto() ?? current)
+    // Explicitly retry the portrait even when storage/native returns the same
+    // string. The off-screen probe keeps the currently working image visible
+    // until the refreshed response has loaded successfully.
+    forceProfilePhotoReload()
     setSelfieVideo(current => readStoredSelfieVideo() ?? current)
     // The grid's posts come from the shell, so refreshing asks for them again.
     // Nothing answers in the browser preview and the grid keeps what it has —
@@ -1256,7 +1296,7 @@ export default function ProfileTwin({
       window.addEventListener('poplur-native-profile', receive)
       if (!postNativeEvent({ type: 'requestProfile' })) finish()
     })
-  }, [])
+  }, [forceProfilePhotoReload])
 
   usePullToRefresh({
     scrollRef: contentRef,
@@ -1991,7 +2031,7 @@ export default function ProfileTwin({
                 ref={selfieVideoRef}
                 className={`${styles.photo} ${styles.selfieMirrored}`}
                 src={selfieVideo}
-                poster={photo ?? undefined}
+                poster={renderedPhotoSource ?? undefined}
                 autoPlay
                 muted
                 loop
@@ -2002,20 +2042,16 @@ export default function ProfileTwin({
               />
             ) : photo ? (
               <img
+                key={renderedPhotoSource ?? photo}
                 className={styles.photo}
-                src={photo}
+                src={renderedPhotoSource ?? photo}
                 alt=""
                 draggable="false"
-                onError={e => {
+                onError={() => {
                   if (photo.startsWith('data:')) {
                     console.warn('[ProfileTwin] photo data URI failed to load — this should not happen')
                   } else {
-                    const img = e.currentTarget
-                    const attempt = Number(img.dataset.retry ?? '0')
-                    if (attempt < 2) {
-                      img.dataset.retry = String(attempt + 1)
-                      setTimeout(() => { img.src = photo }, 800 * (attempt + 1))
-                    }
+                    retryProfilePhoto()
                   }
                 }}
               />

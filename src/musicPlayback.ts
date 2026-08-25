@@ -137,23 +137,14 @@ if (typeof window !== 'undefined') {
     refreshSnapshot()
   }
 
-  // DOM audio/video covers Feed, Studio takes and any future ordinary media.
-  // Detached Radio elements and WebAudio iPod/Studio engines report explicitly
-  // through setMusicPlayback instead.
-  const mediaIds = new WeakMap<HTMLMediaElement, string>()
-  let nextMediaId = 0
-  const sourceForMedia = (media: HTMLMediaElement) => {
-    const declared = media.dataset.poplurMusic?.trim()
-    if (declared) return declared
-    let source = mediaIds.get(media)
-    if (!source) {
-      nextMediaId += 1
-      source = `media-${nextMediaId}`
-      mediaIds.set(media, source)
-    }
-    return source
-  }
+  // Explicitly tagged DOM audio/video covers Music Feed and Studio takes.
+  // Ordinary voiced clips are not music. Detached Radio elements and WebAudio
+  // iPod/Studio engines report explicitly through setMusicPlayback instead.
   const syncMedia = (media: HTMLMediaElement) => {
+    // Opt-in is intentional. A voiced Food/Sports/Comedy clip is audible
+    // media, but it is not music and must never arm the disco navigator.
+    const source = declaredMusicSource(media)
+    if (!source) return
     // Camera and FaceTime streams are conversation/capture, not music. Their
     // elements can be unmuted, so srcObject is the reliable distinction.
     const audible = media.srcObject == null
@@ -162,7 +153,7 @@ if (typeof window !== 'undefined') {
       && !media.muted
       && media.volume > 0
       && media.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-    setMusicPlayback(sourceForMedia(media), audible)
+    setMusicPlayback(source, audible)
   }
   const onMediaState = (event: Event) => {
     if (event.target instanceof HTMLMediaElement) syncMedia(event.target)
@@ -182,4 +173,9 @@ if (typeof window !== 'undefined') {
       window.removeEventListener('pagehide', clearLocalSources)
     })
   }
+}
+
+/** Only explicitly musical media may contribute to the disco signal. */
+export function declaredMusicSource(media: Pick<HTMLMediaElement, 'dataset'>): string | null {
+  return media.dataset.poplurMusic?.trim() || null
 }

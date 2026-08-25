@@ -13,8 +13,13 @@ import {
   type LandmarkArtDirection,
   type NearLandmark3D,
 } from './libertyLandmark'
+import {
+  LANDMARK_MATERIAL_IDENTITIES,
+  type LandmarkMaterialIdentity,
+} from './landmarkMaterials'
+import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
 import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
 import {
@@ -453,34 +458,17 @@ function claimedFlatBuildingColor() {
   ]
 }
 
-/**
- * "Is this building inside a claim?", as a paint expression.
- *
- * Was `['feature-state', 'claimed']`, which meant every claimed building
- * carried an entry in the source's feature-state map and Mapbox re-read that
- * map — `getState`, a stringified-id lookup into an object with thousands of
- * keys — for every rendered building. On the 7 Aug device trace that read path
- * was the top remaining cost after the recolor storm was fixed (megamorphic
- * string-keyed property access, `StringImpl::hashSlowCase` and number→string
- * conversion all in the top ten symbols), and 16% of JS self time headless.
- *
- * Geometry answers the same question with no per-feature state at all: the
- * claim discs are already carried as `within` polygons for the five road and
- * grass layers, and the compose preview already proves `within` works on this
- * very fill-extrusion layer. Evaluated when a bucket is built or the paint
- * property changes — NOT per rendered frame off a mutable side table.
- *
- * No claims yet ⇒ a literal false, because `within` over an empty collection
- * is undefined behaviour rather than a cheap no.
- */
-function claimedWithin(): unknown {
-  const fc = claimsWithinCollection()
-  return fc.features.length ? ['within', fc] : false
-}
-
 // The 3D building + cap palettes, shared by applyTheme and the colour-circle
 // repaint so the two can never disagree about what a claimed tower wears.
-function building3DColor() {
+function building2DColor(map: mapboxgl.Map) {
+  return visibleBuildingClaimColorExpression(
+    map,
+    takeoverTint('#ee3d98'),
+    flatBuildingColor(),
+  )
+}
+
+function building3DColor(map: mapboxgl.Map) {
   const regular = mapNightModeActive
     ? ['case',
         ['==', ['%', ['to-number', ['id']], 9], 0], '#343746',
@@ -492,19 +480,19 @@ function building3DColor() {
         ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
         '#dbd3c7',
       ]
-  return ['case',
-    claimedWithin(), ['case',
-      ['==', ['%', ['to-number', ['id']], 9], 0], takeoverTint('#e8368f'),
-      ['==', ['%', ['to-number', ['id']], 9], 4], takeoverTint('#f983c1'),
-      takeoverTint('#ee3d98'),
-    ],
+  return visibleBuildingClaimColorExpression(
+    map,
+    takeoverTint('#ee3d98'),
     regular,
-  ]
+  )
 }
 
-function buildingCaps3DColor() {
-  return ['case',
-    claimedWithin(), takeoverTint('#ff9ccd'), mapNightModeActive ? '#55586b' : '#efe9df']
+function buildingCaps3DColor(map: mapboxgl.Map) {
+  return visibleBuildingClaimColorExpression(
+    map,
+    takeoverTint('#ff9ccd'),
+    mapNightModeActive ? '#55586b' : '#efe9df',
+  )
 }
 
 function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActive) {
@@ -537,12 +525,11 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActi
   set('clay-real-road-rim', 'line-color', claimedPaint(palette.roadRim, takeoverTint('#ff9ccd')))
   set('clay-real-road-stitches', 'line-color', theme.accentHot)
   set('clay-trail-stitches', 'line-color', theme.accent)
-  set('clay-buildings-2d', 'fill-color',
-    claimedPaint(flatBuildingColor(), claimedFlatBuildingColor()))
+  set('clay-buildings-2d', 'fill-color', building2DColor(map))
   // Buildings stay true-to-life neutral cream in every skin — only the map
   // surfaces re-colour with the theme. Claimed footprints go Poplur pink.
-  set('clay-buildings-3d', 'fill-extrusion-color', building3DColor())
-  set('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor())
+  set('clay-buildings-3d', 'fill-extrusion-color', building3DColor(map))
+  set('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map))
 }
 
 function applyComposeSurfacePreview(
@@ -582,14 +569,13 @@ function applyComposeSurfacePreview(
   set('clay-real-road-rim', 'line-color',
     takeover(palette.roadRim, takeoverTint('#ff9ccd'), takeoverTint('#FFD2E8')))
   set('clay-buildings-2d', 'fill-color',
-    takeover(flatBuildingColor(), claimedFlatBuildingColor(), claimedFlatBuildingColor()))
+    ['case', withinPreview, claimedFlatBuildingColor(), building2DColor(map)])
 
-  const regularBuilding = building3DColor()
+  const regularBuilding = building3DColor(map)
   set('clay-buildings-3d', 'fill-extrusion-color',
     ['case', withinPreview, claimedFlatBuildingColor(), regularBuilding])
   set('clay-building-caps', 'fill-extrusion-color',
-    ['case', withinPreview, takeoverTint('#FFD0E6'),
-      claimedWithin(), takeoverTint('#ff9ccd'), mapNightModeActive ? '#55586b' : '#efe9df'])
+    ['case', withinPreview, takeoverTint('#FFD0E6'), buildingCaps3DColor(map)])
 }
 
 // Clay-style world monuments drawn as inline SVGs, pink/black like the theme.
@@ -741,37 +727,42 @@ const WORLD_LANDMARKS: {
   revealZoom?: number
   frameBearing?: number
   artDirection?: LandmarkArtDirection
+  materialIdentity: LandmarkMaterialIdentity
 }[] = [
-  { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xf0b75f, artDirection: LANDMARK_ART_DIRECTIONS['burj-khalifa'] },
+  { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xdce4e6, artDirection: LANDMARK_ART_DIRECTIONS['burj-khalifa'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['burj-khalifa'] },
   {
     id: 'cn-tower', coords: [-79.3871, 43.6426], heightM: 553,
-    frameSpanM: 553, color: 0x7fc9f4, nearKm: 0.5,
+    frameSpanM: 553, color: 0xc9c6c2, nearKm: 0.9,
     frameCenter: [-79.38677, 43.64418],
     // Keep the real 553 m proportions but present the pod and three Y-shaped
     // supports at a phone-legible size. The slight rotation also moves the
     // Ritz-Carlton label off the observation deck without losing SkyDome.
-    framePitch: 42, frameZoom: 15.6, revealZoom: 15.0, frameBearing: 22, artDirection: LANDMARK_ART_DIRECTIONS['cn-tower'],
+    framePitch: 42, frameZoom: 15.6, revealZoom: 15.0, frameBearing: 22, artDirection: LANDMARK_ART_DIRECTIONS['cn-tower'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['cn-tower'],
   },
-  // Both Toronto models stay eligible throughout either destination frame;
-  // CN uses the tighter readability angle while SkyDome keeps its roof-first
-  // stadium view, and either search result still lands on the complete pair.
+  // The Toronto models share a close activation area. Their update pass below
+  // selects the one nearest the authored camera frame so an emergency phone's
+  // one-light-renderer budget cannot let registration order hide CN Tower.
   {
     id: 'rogers-centre', coords: [-79.38918212, 43.64161058], heightM: 60,
     frameSpanM: 553, color: 0xe4e6e8, yaw: 15.9, clearDepth: false, nearKm: 0.5,
     frameCenter: [-79.38834927, 43.64200635],
-    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0, artDirection: LANDMARK_ART_DIRECTIONS['rogers-centre'],
+    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0, artDirection: LANDMARK_ART_DIRECTIONS['rogers-centre'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['rogers-centre'],
   },
-  { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0xef7495, artDirection: LANDMARK_ART_DIRECTIONS.eiffel },
-  { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0x87d2b6, artDirection: LANDMARK_ART_DIRECTIONS['space-needle'] },
-  { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xed765e, yaw: 12, artDirection: LANDMARK_ART_DIRECTIONS['golden-gate'] },
-  { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93, frameSpanM: 93, color: 0x7cc8a5, artDirection: LANDMARK_ART_DIRECTIONS['statue-liberty'] },
-  { id: 'big-ben', coords: [-0.1246, 51.5007], heightM: 96, frameSpanM: 96, color: 0xd7ab59, artDirection: LANDMARK_ART_DIRECTIONS['big-ben'] },
-  { id: 'giza', coords: [31.1342, 29.9792], heightM: 139, frameSpanM: 300, color: 0xe0b065, artDirection: LANDMARK_ART_DIRECTIONS.giza },
-  { id: 'taj-mahal', coords: [78.0421, 27.1751], heightM: 73, frameSpanM: 85, color: 0xf0d7e3, artDirection: LANDMARK_ART_DIRECTIONS['taj-mahal'] },
-  { id: 'colosseum', coords: [12.4922, 41.8902], heightM: 48, frameSpanM: 95, color: 0xc99570, artDirection: LANDMARK_ART_DIRECTIONS.colosseum },
-  { id: 'sydney-opera', coords: [151.2153, -33.8568], heightM: 65, frameSpanM: 150, color: 0xe8bfd8, artDirection: LANDMARK_ART_DIRECTIONS['sydney-opera'] },
-  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0x9dc7f2, artDirection: LANDMARK_ART_DIRECTIONS['christ-redeemer'] },
+  { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0x76543a, artDirection: LANDMARK_ART_DIRECTIONS.eiffel, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.eiffel },
+  { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0xe2e1dc, artDirection: LANDMARK_ART_DIRECTIONS['space-needle'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['space-needle'] },
+  { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xdd5b38, yaw: 12, artDirection: LANDMARK_ART_DIRECTIONS['golden-gate'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['golden-gate'] },
+  { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93, frameSpanM: 93, color: 0x72aa91, artDirection: LANDMARK_ART_DIRECTIONS['statue-liberty'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['statue-liberty'] },
+  { id: 'big-ben', coords: [-0.1246, 51.5007], heightM: 96, frameSpanM: 96, color: 0xb49a68, artDirection: LANDMARK_ART_DIRECTIONS['big-ben'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['big-ben'] },
+  { id: 'giza', coords: [31.1342, 29.9792], heightM: 139, frameSpanM: 300, color: 0xd5b879, artDirection: LANDMARK_ART_DIRECTIONS.giza, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.giza },
+  { id: 'taj-mahal', coords: [78.0421, 27.1751], heightM: 73, frameSpanM: 85, color: 0xf3e7d8, artDirection: LANDMARK_ART_DIRECTIONS['taj-mahal'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['taj-mahal'] },
+  { id: 'colosseum', coords: [12.4922, 41.8902], heightM: 48, frameSpanM: 95, color: 0xc8a27a, artDirection: LANDMARK_ART_DIRECTIONS.colosseum, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.colosseum },
+  { id: 'sydney-opera', coords: [151.2153, -33.8568], heightM: 65, frameSpanM: 150, color: 0xf2eee4, artDirection: LANDMARK_ART_DIRECTIONS['sydney-opera'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['sydney-opera'] },
+  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0xe1d8ca, artDirection: LANDMARK_ART_DIRECTIONS['christ-redeemer'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['christ-redeemer'] },
 ]
+
+const TORONTO_LANDMARK_RENDERER_IDS = new Set(['cn-tower', 'rogers-centre'])
+const TORONTO_LANDMARK_RENDERERS = WORLD_LANDMARKS.filter(landmark =>
+  TORONTO_LANDMARK_RENDERER_IDS.has(landmark.id))
 
 // Transparent baked views of the same authored landmark models. These replace
 // only the slider knob after the grounded object has genuinely rendered; they
@@ -2141,6 +2132,26 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       el.style.display = visible ? '' : 'none'
     }
 
+    const updateGroundedLandmarks = () => {
+      // CN Tower and Rogers Centre share each other's near-camera radius. If
+      // both demand equal-priority leases, the newer Rogers registration wins
+      // the emergency tier's sole light-renderer slot even during a CN tour.
+      // The authored CN and Rogers camera centres each sit closest to their
+      // intended subject, so mutually exclude only this overlapping pair.
+      // Every other city remains independent, and Toronto still consumes no
+      // more than one landmark renderer at a time on any performance tier.
+      const center = map.getCenter()
+      const preferredTorontoId = preferredLandmarkRendererId(
+        [center.lng, center.lat],
+        TORONTO_LANDMARK_RENDERERS,
+      )
+      landmarks3dRef.current.forEach((handle, id) => {
+        handle.update(
+          !TORONTO_LANDMARK_RENDERER_IDS.has(id) || id === preferredTorontoId,
+        )
+      })
+    }
+
     const updateLandmarks = () => {
       const zoom = map.getZoom()
       const isGlobe = zoom < 5.5
@@ -2158,7 +2169,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       // map-arrival at 24 listeners × ~60fps × 30s, and the gate rejected the
       // build (see libertyLandmark's own note). One forEach at the same beat
       // Mapbox already fires this handler on.
-      landmarks3dRef.current.forEach(h => h.update())
+      updateGroundedLandmarks()
       markersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? 'none' : ''
       })
@@ -3268,26 +3279,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             // Hand-rolled clay is never one flat colour. Eight-way hash across the
             // warm-cream family gives the batch variation a real sculpt has, while
             // staying inside one material.
-            'fill-extrusion-color': ['case',
-              // Claimed territory: the buildings themselves re-mold in the
-              // Poplur pink family (same 8-way batch variation).
-              claimedWithin(), ['case',
-                ['==', ['%', ['to-number', ['id']], 8], 0], '#e8368f',
-                ['==', ['%', ['to-number', ['id']], 8], 1], '#f983c1',
-                ['==', ['%', ['to-number', ['id']], 8], 2], '#ef4fa2',
-                ['==', ['%', ['to-number', ['id']], 8], 3], '#f8a5cf',
-                ['==', ['%', ['to-number', ['id']], 8], 5], '#d92a80',
-                ['==', ['%', ['to-number', ['id']], 8], 6], '#f26bb0',
-                '#ee3d98',
-              ],
-              ['==', ['%', ['to-number', ['id']], 8], 0], '#b2916c',
-              ['==', ['%', ['to-number', ['id']], 8], 1], '#cdb28a',
-              ['==', ['%', ['to-number', ['id']], 8], 2], '#c0a37c',
-              ['==', ['%', ['to-number', ['id']], 8], 3], '#d6bd96',
-              ['==', ['%', ['to-number', ['id']], 8], 5], '#a98a66',
-              ['==', ['%', ['to-number', ['id']], 8], 6], '#c7ab82',
-              '#c3a67e', // warm modelling-clay tan
-            ],
+            'fill-extrusion-color': building3DColor(map) as never,
             'fill-extrusion-height': poppedHeight,
             'fill-extrusion-base': ['to-number', ['coalesce', ['get', 'min_height'], 0]],
             // A real clay object is opaque. Depth comes from AO + cast shadows,
@@ -3329,9 +3321,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.95,
         } as never,
         paint: {
-          'fill-extrusion-color': ['case',
-            claimedWithin(), '#ff9ccd',
-            '#d8c19a'] as never,
+          'fill-extrusion-color': buildingCaps3DColor(map) as never,
           'fill-extrusion-base': poppedHeight,
           'fill-extrusion-height': ['+', poppedHeight, 4],
           'fill-extrusion-opacity': 1,
@@ -3460,7 +3450,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           minzoom: 13.2,
           ...(SHARED_ADAPTIVE_MAP ? { maxzoom: BUILDING_3D_MIN_ZOOM } : {}),
           paint: {
-            'fill-color': flatBuildingColor() as never,
+            'fill-color': building2DColor(map) as never,
             'fill-opacity': 0.96,
             'fill-outline-color': '#7b5a43',
           },
@@ -3577,9 +3567,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       }
 
       // Only user gestures pop (originalEvent present) — programmatic camera
-      // flights like the launch descent stay quiet.
+      // flights like the launch descent stay quiet. A gesture merely arms the
+      // decoration while moving; the full rendered-building query and its
+      // feature-state animation wait until the camera has completely settled.
+      let buildingPopPending = false
       map.on('move', e => {
-        if (!(e as { originalEvent?: Event }).originalEvent) return
+        if (!buildingPopPending && (e as { originalEvent?: Event }).originalEvent) {
+          buildingPopPending = true
+        }
+      })
+      map.on('moveend', () => {
+        if (!buildingPopPending || map.isMoving()) return
+        buildingPopPending = false
         if (map.getZoom() >= 5.5) triggerPops()
       })
 
@@ -3618,6 +3617,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           heightM: mark.heightM,
           color: mark.color,
           artDirection: mark.artDirection,
+          materialIdentity: mark.materialIdentity,
           yaw: mark.yaw,
           clearDepth: mark.clearDepth,
           nearKm: mark.nearKm ?? LANDMARK_3D_REVEAL_KM,
@@ -3637,10 +3637,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           },
         })
         landmarks3dRef.current.set(mark.id, h)
-        // Evaluate once for the current camera (the app may already be near
-        // one of them, e.g. on a resume to a landmark tab).
-        h.update()
       }
+      // Evaluate once after every handle exists (the app may already be near
+      // one on resume). Running the shared arbitration after the loop prevents
+      // the later Rogers registration from becoming the accidental winner.
+      updateGroundedLandmarks()
 
       // ── City props: clay trees, harbour boats, cars on the roads ───────────
       treeMarkersRef.current.forEach(mk => mk.remove())
@@ -3769,26 +3770,28 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       installClaimsLayer(map)
 
       // ── Takeover colorization: features INSIDE a claim recolor ──────────────
-      // Streets, grass AND buildings all answer "am I inside a claim?" the same
-      // way now: a `within` paint expression over the claim discs. Buildings
+      // Streets and grass use the signed-in user's coarse `within` collection.
+      // Buildings use a separate bounded, owner-aware expression so rival
+      // towers keep their owner's colour and the larger radius wins. Buildings
       // used to be the odd one out — a querySourceFeatures scan marked each
       // footprint with `feature-state: claimed`, which cost a full scan per
       // pass AND left Mapbox re-reading the state map (`getState`) for every
       // rendered building forever after. The scan was the 700ms GC storm; the
       // reads were what remained after it (top device symbols: stringified-id
       // lookups, StringImpl hashing, number→string conversion). Geometry needs
-      // neither: see claimedWithin().
+      // neither: see visibleBuildingClaimColorExpression().
       let claimPaintQueue = 0
-      const applyClaimRoadPaint = () => {
-        const fc = claimsWithinCollection()
-        const palette = renderedTheme(theme, mapNightModeActive)
-        // No claims of YOUR OWN on the board — switching the pop level to
-        // "other pops" is the case that produces this. Bailing here left the
-        // last takeover's paint burned into the streets, so the map still read
-        // as yours while showing nothing but other people's territory. Paint
-        // the plain palette back instead of returning.
-        const held = fc.features.length > 0
-        const w = held ? ['within', fc] : false
+      let fullClaimPaintActive = false
+      let pendingCameraBuildingPaint = false
+      const applyClaimRoadPaint = (buildingsOnly = false) => {
+        // A move can settle while the seven-layer claim-settle sequence is
+        // still walking one layer per frame. Never let that camera refresh
+        // invalidate the full sequence halfway through; run it immediately
+        // after the full pass instead.
+        if (buildingsOnly && fullClaimPaintActive) {
+          pendingCameraBuildingPaint = true
+          return
+        }
         // ONE layer per frame. Each setPaintProperty with a `within` forces a
         // style recalculation over that layer's features; five in one call was
         // a single long task in the idle window. Spread out, each stays under
@@ -3796,21 +3799,45 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         // frames. The two extrusion layers ride the same queue rather than a
         // separate pass, so a claim change can never cost more than one layer
         // recalc per frame.
-        // `within false` is not a valid expression, so an empty board hands each
-        // layer its plain colour directly rather than a case that can never match.
-        const claimed = (taken: unknown, plain: unknown) => (held ? ['case', w, taken, plain] : plain)
-        const sets: Array<[string, string, unknown]> = [
-          ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), palette.road)],
-          ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), palette.road)],
-          ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), palette.roadRim)],
-          ['clay-grass-fill', 'fill-color', claimed(takeoverTint('#D85D96'), palette.park)],
-          ['clay-buildings-2d', 'fill-color', claimed(claimedFlatBuildingColor(), flatBuildingColor())],
-          ['clay-buildings-3d', 'fill-extrusion-color', building3DColor()],
-          ['clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor()],
+        const buildingSets: Array<[string, string, unknown]> = [
+          ['clay-buildings-2d', 'fill-color', building2DColor(map)],
+          ['clay-buildings-3d', 'fill-extrusion-color', building3DColor(map)],
+          ['clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map)],
         ]
+        let sets = buildingSets
+        if (!buildingsOnly) {
+          const fc = claimsWithinCollection()
+          const palette = renderedTheme(theme, mapNightModeActive)
+          // No claims of YOUR OWN on the board — switching the pop level to
+          // "other pops" is the case that produces this. Paint the plain
+          // palette back instead of leaving an old takeover burned in.
+          const held = fc.features.length > 0
+          const w = held ? ['within', fc] : false
+          // `within false` is not valid, so an empty board hands every layer
+          // its plain colour directly.
+          const claimed = (taken: unknown, plain: unknown) => (held ? ['case', w, taken, plain] : plain)
+          sets = [
+            ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), palette.road)],
+            ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), palette.road)],
+            ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), palette.roadRim)],
+            ['clay-grass-fill', 'fill-color', claimed(takeoverTint('#D85D96'), palette.park)],
+            ...buildingSets,
+          ]
+        }
         const generation = ++claimPaintQueue
+        if (!buildingsOnly) fullClaimPaintActive = true
         const step = (i: number) => {
-          if (generation !== claimPaintQueue || i >= sets.length) return
+          if (generation !== claimPaintQueue) return
+          if (i >= sets.length) {
+            if (!buildingsOnly) {
+              fullClaimPaintActive = false
+              if (pendingCameraBuildingPaint) {
+                pendingCameraBuildingPaint = false
+                applyClaimRoadPaint(true)
+              }
+            }
+            return
+          }
           const [layer, prop, value] = sets[i]
           try {
             if (map.isStyleLoaded() && map.getLayer(layer)) {
@@ -3826,6 +3853,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       // a newly loaded building tile evaluates the expression itself as its
       // bucket builds, so late tiles come up already claimed.
       stopClaimRoadPaint = onClaimsSettled(() => { applyClaimRoadPaint() })
+      // Owner-aware building expressions are camera-scoped. Recompute only
+      // after a camera settles; never during the move/render loop.
+      map.on('moveend', () => { applyClaimRoadPaint(true) })
 
       // ── The colour circle: takeover recolour ────────────────────────────────
       // The circle under the zoom slider transposes the takeover family to a
@@ -3896,11 +3926,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             nextFrame(() => nextFrame(() => {
               if (beat !== recolorBeat) return
               try {
-                if (map.getLayer('clay-buildings-3d')) map.setPaintProperty('clay-buildings-3d', 'fill-extrusion-color', building3DColor() as never)
+                if (map.getLayer('clay-buildings-3d')) map.setPaintProperty('clay-buildings-3d', 'fill-extrusion-color', building3DColor(map) as never)
                 nextFrame(() => {
                   if (beat !== recolorBeat) return
                   try {
-                    if (map.getLayer('clay-building-caps')) map.setPaintProperty('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor() as never)
+                    if (map.getLayer('clay-building-caps')) map.setPaintProperty('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map) as never)
                   } catch { /* torn down */ }
                 })
               } catch { /* torn down */ }
@@ -5172,43 +5202,52 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       {composeAt && !radiusPreviewLaunch && (
         <div
           className={styles.composeBubble}
-          style={{ left: composeAt.x, top: composeAt.y }}
           data-focused-picker={focusedPostLaunch ? 'true' : undefined}
           role="dialog"
           aria-modal="false"
           aria-labelledby="poplur-map-compose-title"
         >
-          <div className={styles.composeTitle} id="poplur-map-compose-title">
-            {focusedPostLaunch
-              ? focusedPostLocationStatus === 'ready'
-                ? 'Place this post here'
-                : focusedPostLocationStatus === 'waiting'
-                  ? 'Finding your current area…'
-                  : 'Choose a post spot'
-              : 'Drop a pop here'}
+          <div className={styles.composeHeader}>
+            <span className={styles.composePostMark} aria-hidden="true">P</span>
+            <div>
+              <div className={styles.composeTitle} id="poplur-map-compose-title">
+                {focusedPostLaunch
+                  ? focusedPostLocationStatus === 'ready'
+                    ? 'Place this post here'
+                    : focusedPostLocationStatus === 'waiting'
+                      ? 'Finding your current area…'
+                      : 'Choose a post spot'
+                  : 'Drop a pop here'}
+              </div>
+              <div className={styles.composeSubtitle}>
+                {focusedPostLaunch ? 'Confirm the point on the map' : 'Claim this area with a post'}
+              </div>
+            </div>
           </div>
-          <label className={styles.composeRadiusRow}>
-            <span>Claim radius</span>
-            <strong>{composeRadiusKm} km</strong>
-          </label>
-          <div className={styles.composeCoverage}>
-            {focusedPostLaunch && focusedPostLocationStatus !== 'ready'
-              ? focusedPostLocationStatus === 'waiting'
-                ? 'Getting your location…'
-                : 'Tap the map to select a spot'
-              : `Live coverage · ${composeRadiusKm * 2} km across`}
+          <div className={styles.composeRadiusPanel}>
+            <label className={styles.composeRadiusRow}>
+              <span>Claim radius</span>
+              <strong>{composeRadiusKm} km</strong>
+            </label>
+            <div className={styles.composeCoverage}>
+              {focusedPostLaunch && focusedPostLocationStatus !== 'ready'
+                ? focusedPostLocationStatus === 'waiting'
+                  ? 'Getting your location…'
+                  : 'Tap the map to select a spot'
+                : `Live coverage · ${composeRadiusKm * 2} km across`}
+            </div>
+            <input
+              type="range"
+              min={0.5}
+              max={25}
+              step={0.5}
+              value={composeRadiusKm}
+              onInput={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
+              onChange={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
+              className={styles.composeSlider}
+              aria-label="Claim radius"
+            />
           </div>
-          <input
-            type="range"
-            min={0.5}
-            max={25}
-            step={0.5}
-            value={composeRadiusKm}
-            onInput={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
-            onChange={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
-            className={styles.composeSlider}
-            aria-label="Claim radius"
-          />
           {/* Say it in words. A written pop is a pop: it claims the same
               ground, and it is what the Times sets as a MESSAGE inside this
               radius. Leave it blank and Post here still takes you to the

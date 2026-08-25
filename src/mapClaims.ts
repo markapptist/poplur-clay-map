@@ -1,6 +1,16 @@
 import mapboxgl from 'mapbox-gl'
 import { takeoverTint, takeoverTintRGB } from './takeoverColor'
 import { onFrame } from './frameGovernor'
+import {
+  buildingClaimColorExpression,
+} from './buildingClaimDominance'
+import {
+  DOMINANCE_DETAIL_MIN_ZOOM,
+  DOMINANCE_GROUND_SLOT,
+  dominanceFillOpacityExpression,
+  dominanceInsertBefore,
+  dominancePaintOrder,
+} from './mapDominance'
 
 // ── Land-claim clay territory ───────────────────────────────────────────────
 // A Poplur post claims land: its radius (km) becomes a clay disc on the map, so
@@ -129,6 +139,21 @@ function liteTier(): boolean {
   return typeof document !== 'undefined' && document.documentElement.classList.contains('perf-lite')
 }
 
+/**
+ * Put conquered ground immediately above the clay land and immediately below
+ * the clay water mask.
+ *
+ * Mapbox Standard only honours an explicit `beforeId` when both layers share
+ * the same named slot. Clay land/water live in `bottom`, so every conquered-
+ * ground layer uses that same slot before targeting the last water fill.
+ */
+function claimsInsertBefore(map: mapboxgl.Map): string | undefined {
+  try {
+    const layers = map.getStyle()?.layers
+    return Array.isArray(layers) ? dominanceInsertBefore(layers) : undefined
+  } catch { return undefined }
+}
+
 /** The claims hatch pixels, in the CURRENT takeover colour (default pink). */
 function hatchImage(): { width: number; height: number; data: Uint8Array } {
   const size = 16
@@ -179,7 +204,7 @@ export function installClaimsLayer(map: mapboxgl.Map) {
 
   map.addLayer({
     id: CLAIMS_FILL,
-    slot: 'bottom',
+    slot: DOMINANCE_GROUND_SLOT,
     type: 'fill',
     source: CLAIMS_SOURCE,
     paint: {
@@ -189,23 +214,23 @@ export function installClaimsLayer(map: mapboxgl.Map) {
       // Strongest at planet scale, where a real kilometre radius would
       // otherwise collapse into a few pixels; settle back to the established
       // city opacity before the close-up texture and shockwave layers appear.
-      'fill-opacity': ['interpolate', ['linear'], ['zoom'], 3, 0.92, 7.5, 0.78],
+      'fill-opacity': dominanceFillOpacityExpression() as never,
     },
-  }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+  }, claimsInsertBefore(map))
 
 if (!liteTier())   map.addLayer({
       id: CLAIMS_TEXTURE,
-      slot: 'bottom',
+      slot: DOMINANCE_GROUND_SLOT,
       type: 'fill',
       source: CLAIMS_SOURCE,
       // A hatch is useful local material detail and unreadable world-scale
       // overdraw. The solid conquered terrain alone carries the overview.
-      minzoom: 7.5,
+      minzoom: DOMINANCE_DETAIL_MIN_ZOOM,
       paint: {
         'fill-pattern': CLAIMS_TEXTURE_IMAGE,
         'fill-opacity': 0.66,
       },
-    }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+    }, claimsInsertBefore(map))
 
   // ── Globe presence ────────────────────────────────────────────────────────
   // A 28km territory is sub-pixel from space (0.5px at zoom 0.9), so zoomed out
@@ -340,9 +365,13 @@ if (!liteTier())   map.addLayer({
 
   map.addLayer({
     id: CLAIMS_RIM,
-    slot: 'bottom',
+    slot: DOMINANCE_GROUND_SLOT,
     type: 'line',
     source: CLAIMS_SOURCE,
+    // At overview zoom the fully opaque, radius-sorted fill is the complete
+    // ownership answer. Hiding smaller owners' internal rims prevents their
+    // colours leaking through the larger-radius winner.
+    minzoom: DOMINANCE_DETAIL_MIN_ZOOM,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: {
       'line-color': claimColor('#FF8AC6') as never,
@@ -350,7 +379,7 @@ if (!liteTier())   map.addLayer({
       'line-opacity': 0.96,
       'line-blur': 0.25,
     },
-  }, map.getLayer('clay-water-fill') ? 'clay-water-fill' : undefined)
+  }, claimsInsertBefore(map))
 }
 
 /**
@@ -494,6 +523,30 @@ export function claimsWithinCollection(): GeoJSON.FeatureCollection {
   }
 }
 
+/**
+ * Owner-aware building colour, scoped to the claims that can actually touch
+ * the settled camera. This is intentionally separate from
+ * `claimsWithinCollection`: roads/grass only need the signed-in user's binary
+ * claimed state, while buildings must preserve every owner's colour.
+ *
+ * The retained board is already capped at 96 and this pass is called only on
+ * camera/claim settle. Filtering to the camera, sorting largest-first, then
+ * capping at 24 keeps the embedded Mapbox expression strictly bounded while
+ * guaranteeing that a larger-radius owner wins every represented overlap.
+ */
+export function visibleBuildingClaimColorExpression(
+  map: mapboxgl.Map,
+  ownColor: unknown,
+  unclaimedColor: unknown,
+): unknown {
+  // Building layers start at z13.2. Returning their ordinary clay palette at
+  // wider zooms avoids carrying claim polygons while no building can render;
+  // `moveend` installs the local expression before the buildings appear.
+  if (map.getZoom() < 13) return unclaimedColor
+  const visible = [...claims.values()].filter(claim => claimTouchesViewport(map, claim))
+  return buildingClaimColorExpression(visible, ownColor, unclaimedColor)
+}
+
 type ClaimsListener = () => void
 const claimsListeners = new Set<ClaimsListener>()
 /** Fires when a claim SETTLES (not per animation frame). Multi-listener: the
@@ -518,7 +571,7 @@ function pushClaims(map: mapboxgl.Map, options?: { points?: boolean }) {
   // Where two takeovers overlap, the ground shows whoever holds more of it —
   // that is what "who is in the lead here" looks like, and without the sort it
   // was just whichever pop happened to be inserted last.
-  const byReach = [...claims.values()].sort((a, b) => a.radiusKm - b.radiusKm)
+  const byReach = dominancePaintOrder(claims.values())
   // Where the camera is decides how much ground a claim must cover to still
   // BE ground rather than a speck. Read once per push, not per claim.
   const zoom = map.getZoom()

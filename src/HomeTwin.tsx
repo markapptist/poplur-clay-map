@@ -25,6 +25,12 @@ import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
 import HoldMenuTwin, { isResumablePage, tabPageScreens, type HoldMenuFocus } from './HoldMenuTwin'
+import {
+  CAMERA_CYCLE,
+  CAMERA_CYCLE_SCREEN,
+  CAMERA_STOP_BY_SCREEN,
+  type CameraCycleStop,
+} from './cameraNavigation'
 import { FaceTimeOverlay } from './MailScreen'
 import TopChrome from './TopChrome'
 import PermissionAlert from './PermissionAlert'
@@ -53,6 +59,12 @@ import {
   postNativeEvent,
   wakeManagedRendering,
 } from './nativeBridge'
+import {
+  claimReplaysBeforeQueuedActions,
+  enqueueMapFallbackAction,
+  nativeMapHandlesAction,
+  type QueuedMapAction,
+} from './nativeMapFallback'
 import type { HarnessView } from './ViewHarness'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
 import {
@@ -74,6 +86,12 @@ import {
   reconcileDiscoCubeSession,
   type DiscoCubeSession,
 } from './discoCubeSession'
+import {
+  emptyFoodCubeSession,
+  expireFoodCubeSession,
+  reconcileFoodCubeSession,
+  type FoodCubeSession,
+} from './foodCubeSession'
 import {
   RADIUS_CHANGE_EVENT,
   nextRadiusInactivityAt,
@@ -113,9 +131,9 @@ const MAP_RAIL_SUN_ICON = `<svg viewBox="0 0 40 40"><defs><radialGradient id="ho
 // the visible model plus one prepared destination. This keeps Meshy's surface
 // detail without putting the 23-47MB authoring masters on a phone.
 const CLAY_TV_MODEL = 'clay_tv.glb'
-/** The Feed's real food creative temporarily turns the TV navigator into the
-    supplied 3D fork-and-knife cube, then the normal cube-swap path returns it
-    to the TV as soon as the creative is gone. */
+/** Food context briefly turns the TV navigator into the supplied fork/knife
+    cube. A continuous mention is capped below, so this never becomes a
+    permanent channel-level replacement. */
 const FOOD_AD_CUBE_MODEL = 'poplur_cube_fork_knife.glb'
 // The flash camera the profile wears while you are taking your picture.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
@@ -182,7 +200,10 @@ const RAIN_CUBE_MODEL = 'poplur_cube_rain_cloud.glb'
 const THUNDER_CUBE_MODEL = 'poplur_cube_thunder_cloud.glb'
 const DISCO_BALL_CUBE_MODEL = 'poplur_cube_disco_ball.glb'
 const DISCO_CUBE_MAX_MS = 30_000
-const DISCO_CUBE_MIN_MUSIC_MS = 10_000
+const FOOD_CUBE_MAX_MS = 30_000
+// A track has to survive intros, accidental autoplay and quick skips before it
+// earns the ambient disco moment. Navigation restarts this dwell below.
+const DISCO_CUBE_MIN_MUSIC_MS = 20_000
 const WEATHER_REFRESH_MS = 5 * 60_000
 
 type WeatherCubeKind = 'rain' | 'thunder'
@@ -976,7 +997,7 @@ function FpsCubeOverlay({ size }: { size: number }) {
   )
 }
 
-export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'live' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'live' | 'roll' }) {
+export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'viewfinder' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'viewfinder' | 'roll' }) {
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
@@ -1020,6 +1041,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [discoCubeActive, setDiscoCubeActive] = useState(false)
   const musicSessionRef = useRef<DiscoCubeSession>(emptyDiscoCubeSession())
   const discoDeadlineTimerRef = useRef<number | null>(null)
+  const [foodCubeActive, setFoodCubeActive] = useState(false)
+  const foodCubeSessionRef = useRef<FoodCubeSession>(emptyFoodCubeSession())
+  const foodDeadlineTimerRef = useRef<number | null>(null)
 
   const activeStoreCheckoutRequestRef = useRef<string | null>(null)
   // Preserve the best location across a map iframe remount. An already-active
@@ -1749,20 +1773,73 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
-  const sendMapAction = useCallback((action: string, detail: Record<string, unknown> = {}) => {
-    if (NATIVE_ADAPTIVE_MAP) {
-      postNativeEvent({ type: 'poplur-map-action', action, ...detail })
-      return
-    }
+  const mapFrontRef = useRef(initialTab === 'map')
+  const [nativeMapWebFallback, setNativeMapWebFallback] = useState(false)
+  const nativeMapWebFallbackRef = useRef(false)
+  const mapReadyRef = useRef(NATIVE_ADAPTIVE_MAP)
+  const queuedMapActionsRef = useRef<QueuedMapAction[]>([])
+  nativeMapWebFallbackRef.current = nativeMapWebFallback
+
+  const queueMapAction = useCallback((action: string, detail: Record<string, unknown>) => {
+    queuedMapActionsRef.current = enqueueMapFallbackAction(
+      queuedMapActionsRef.current,
+      { action, detail },
+    )
+  }, [])
+
+  const postWebMapAction = useCallback((action: string, detail: Record<string, unknown>) => {
     mapFrameRef.current?.contentWindow?.postMessage({
       type: 'poplur-map-action',
       action,
       ...detail,
     }, '*')
   }, [])
+
+  const beginNativeMapWebFallback = useCallback((queued?: QueuedMapAction) => {
+    if (!NATIVE_ADAPTIVE_MAP) return
+    if (queued) queueMapAction(queued.action, queued.detail)
+    // Update refs synchronously as well as React state. Two controls can fire in
+    // one turn; the second must join the same boot queue rather than being sent
+    // to the now-obscured native map.
+    nativeMapWebFallbackRef.current = true
+    mapReadyRef.current = false
+    setNativeMapWebFallback(true)
+    setMapMounted(true)
+    setMapReady(false)
+    setMapPainted(false)
+    setMapFailedVisible(false)
+    setMapOverlayOpen(false)
+    // Do not leave a live MKMapView accepting touches behind the booting frame.
+    // The regular presentation effect republishes full hit regions after React
+    // commits; this immediate edge closes the hand-off gap.
+    postNativeEvent({ type: 'nativeMapPresentation', active: false, passthrough: false, regions: [] })
+  }, [queueMapAction])
+
+  const sendMapAction = useCallback((action: string, detail: Record<string, unknown> = {}) => {
+    // Engagement travel is attended-map behaviour. The web renderer already
+    // rejects it while parked; gate it here too so native cannot retain an
+    // off-map CameraCommand and jump on the user's next Map visit.
+    if (action === 'engagement' && !mapFrontRef.current) return
+    if (NATIVE_ADAPTIVE_MAP) {
+      if (!nativeMapWebFallbackRef.current && nativeMapHandlesAction(action)) {
+        postNativeEvent({ type: 'poplur-map-action', action, ...detail })
+        return
+      }
+      if (!nativeMapWebFallbackRef.current) {
+        beginNativeMapWebFallback({ action, detail })
+      } else if (!mapReadyRef.current || !mapFrameRef.current?.contentWindow) {
+        queueMapAction(action, detail)
+      } else {
+        postWebMapAction(action, detail)
+      }
+      return
+    }
+    postWebMapAction(action, detail)
+  }, [beginNativeMapWebFallback, postWebMapAction, queueMapAction])
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)
+  mapReadyRef.current = mapReady
   const [mapFailedVisible, setMapFailedVisible] = useState(false)
   const [mapOverlayOpen, setMapOverlayOpen] = useState(false)
   const dismissMapOverlay = useCallback(() => {
@@ -1796,11 +1873,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [mapReloadNonce, setMapReloadNonce] = useState(0)
   const mapRetryCountRef = useRef(0)
   const mapRetryTimerRef = useRef<number | null>(null)
-  const mapFrontRef = useRef(initialTab === 'map')
   const scheduleMapRetry = useCallback(() => {
     // A parked iframe is deliberately asleep. Do not wake Mapbox, network,
     // and WebGL behind another tab just because its last request failed.
-    if (NATIVE_ADAPTIVE_MAP || !mapFrontRef.current || mapRetryTimerRef.current !== null) return
+    if ((NATIVE_ADAPTIVE_MAP && !nativeMapWebFallbackRef.current)
+      || !mapFrontRef.current || mapRetryTimerRef.current !== null) return
+    mapReadyRef.current = false
     setMapReady(false)
     setMapFailedVisible(false)
     setMapPainted(false)
@@ -1825,6 +1903,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       mapRetryTimerRef.current = null
     }
     mapRetryCountRef.current = 0
+    mapReadyRef.current = false
     setMapReady(false)
     setMapFailedVisible(false)
     setMapPainted(false)
@@ -1961,6 +2040,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // whenever the document remains visible.
   const surfaceVisible = iOSNativeShell ? (nativeAppActive || pageVisible) : pageVisible
   mapFrontRef.current = activeTab === 'map' && committedTab === 'map' && surfaceVisible
+    && activePermission === null
   // Has the map actually reached a usable frame since this iframe mounted?
   //
   // A remount is a brand-new DOCUMENT, and until that document's CSS applies
@@ -2366,6 +2446,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
       if (event.data.type === 'poplur-map-loading') {
+        mapReadyRef.current = false
         setMapReady(false)
         setMapFailedVisible(false)
         setMapPainted(false)
@@ -2523,12 +2604,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           mapRetryTimerRef.current = null
         }
         mapRetryCountRef.current = 0
+        mapReadyRef.current = true
         setMapReady(true)
         setMapFailedVisible(false)
         setMapPainted(true)
-        droppedClaimsRef.current.forEach(claim => {
+        const queued = nativeMapWebFallbackRef.current
+          ? queuedMapActionsRef.current
+          : []
+        claimReplaysBeforeQueuedActions(droppedClaimsRef.current, queued).forEach(claim => {
           mapFrameRef.current?.contentWindow?.postMessage({ ...claim, replay: true }, '*')
         })
+        if (nativeMapWebFallbackRef.current) {
+          queuedMapActionsRef.current = []
+          queued.forEach(item => postWebMapAction(item.action, item.detail))
+        }
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
         postNativeEvent({ type: 'homeReady' })
       }
@@ -2625,6 +2714,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       const valid = Number.isFinite(latitude) && Math.abs(latitude) <= 90
         && Number.isFinite(longitude) && Math.abs(longitude) <= 180
       setMapPickSpotLaunch(valid ? { latitude, longitude } : {})
+      if (NATIVE_ADAPTIVE_MAP) beginNativeMapWebFallback()
       // This is an explicit location action, so it is the right moment to ask
       // the native shell for a fresh fix. iOS replays it into the newly mounted
       // iframe; browser/Android map code retains a geolocation fallback.
@@ -2642,6 +2732,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       const valid = Number.isFinite(latitude) && Math.abs(latitude) <= 90
         && Number.isFinite(longitude) && Math.abs(longitude) <= 180
       setMapPickSpotLaunch(valid ? { latitude, longitude } : {})
+      if (NATIVE_ADAPTIVE_MAP) beginNativeMapWebFallback()
       postNativeEvent({ type: 'requestLocation' })
       setActiveTab('map')
     }
@@ -2653,7 +2744,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.removeEventListener('poplur-pick-podcast-location', onPickPodcastLocation)
       window.removeEventListener('message', onMapMessage)
     }
-  }, [])
+  }, [beginNativeMapWebFallback, postWebMapAction])
 
   // Engagement reaches the SHELL, but the camera lives in the map.
   //
@@ -2833,9 +2924,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
   useEffect(() => { if (!overlayOpen) setSubscreenFullscreen(false) }, [overlayOpen])
   const feedChromeGone = feedFullscreen && committedTab === 'feed'
-  // FeedTwin reports actual visible food creatives, not merely a selected Food
-  // channel. That makes the fork/knife object a truthful temporary ad state:
-  // the moment the video ends, changes, or the Feed unmounts, it returns to TV.
+  // FeedTwin reports actual food language or a food creative, never merely a
+  // selected Food channel. The session below also caps one continuous signal
+  // at 30 seconds; when the mention/ad clears it resets and can earn a future
+  // appearance.
   const [foodAdOpen, setFoodAdOpen] = useState(false)
   // A Google feed slot is a NATIVE card the shell lays over the web feed — it
   // cannot be drawn in here. The chrome has to take itself away while it is up,
@@ -3028,7 +3120,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // existing native-map-state bridge and only polls while Map is front-most.
   useEffect(() => {
     if (!NATIVE_ADAPTIVE_MAP || activeTab !== 'map' || committedTab !== 'map'
-      || !nativeMapCoordinate) return
+      || nativeMapWebFallback || !nativeMapCoordinate) return
     let controller: AbortController | null = null
     const refresh = () => {
       controller?.abort()
@@ -3069,7 +3161,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [activeTab, committedTab, nativeMapCoordinate])
+  }, [activeTab, committedTab, nativeMapCoordinate, nativeMapWebFallback])
 
   // A transparent WKWebView is still a full-screen UIKit hit target. Report
   // the real, currently visible HUD rectangles to native; its managed WebView
@@ -3078,7 +3170,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // the whole WebView so their drags and dismissal gestures remain unchanged.
   useEffect(() => {
     if (!NATIVE_ADAPTIVE_MAP) return
-    const mapVisible = activeTab === 'map' && committedTab === 'map' && surfaceVisible
+    const mapVisible = activeTab === 'map' && committedTab === 'map'
+      && surfaceVisible && !nativeMapWebFallback
     const webOwnsWholeSurface = holdOpen || overlayOpen || mapOverlayOpen || activePermission !== null
       || subscreenFullscreen || composerOpen || feedAdSlotOpen || Boolean(incomingCall)
     document.documentElement.classList.toggle('native-map-live', mapVisible)
@@ -3165,7 +3258,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       nativeHitSignatureRef.current = ''
       postNativeEvent({ type: 'nativeMapPresentation', active: false, passthrough: false, regions: [] })
     }
-  }, [activePermission, activeTab, committedTab, composerOpen, feedAdSlotOpen, holdOpen, incomingCall, mapOverlayOpen, overlayOpen, subscreenFullscreen, surfaceVisible])
+  }, [activePermission, activeTab, committedTab, composerOpen, feedAdSlotOpen, holdOpen, incomingCall, mapOverlayOpen, nativeMapWebFallback, overlayOpen, subscreenFullscreen, surfaceVisible])
 
   const [mapTourTopics, setMapTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
   const handleMapTourTopicsChange = useCallback((topics: MapTourTopic[]) => {
@@ -3241,12 +3334,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Clearing mapReady on teardown re-arms the dark boot cover for the next
   // mount instead of exposing an unpainted iframe.
   useEffect(() => {
-    if (NATIVE_ADAPTIVE_MAP) {
-      setMapMounted(false)
-      setMapReady(true)
-      setMapPainted(true)
-      return
-    }
     let dropTimer = 0
     const drop = () => {
       const mapWindow = mapFrameRef.current?.contentWindow as (Window & {
@@ -3258,10 +3345,61 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       try { mapWindow?.__poplurDisposeMap?.() } catch { /* cross-origin frame */ }
       mapWindow?.postMessage({ type: 'poplur-map-dispose' }, '*')
       setMapMounted(false)
+      mapReadyRef.current = false
       setMapReady(false)
       setMapFailedVisible(false)
       setMapOverlayOpen(false)
     }
+
+    if (NATIVE_ADAPTIVE_MAP) {
+      if (!nativeMapWebFallback) {
+        queuedMapActionsRef.current = []
+        setMapMounted(false)
+        mapReadyRef.current = true
+        setMapReady(true)
+        setMapPainted(true)
+        return
+      }
+
+      // A specialised Mapbox feature owns the rest of this Map-tab visit. Do
+      // not hand back on overlay/tour close: MapKit has a separate camera and
+      // would visibly jump to stale coordinates. A real tab leave is the clean
+      // session boundary; the next Map visit starts natively again.
+      if (activeTab !== 'map') {
+        drop()
+        queuedMapActionsRef.current = []
+        nativeMapWebFallbackRef.current = false
+        setNativeMapWebFallback(false)
+        mapReadyRef.current = true
+        setMapReady(true)
+        setMapPainted(true)
+        return
+      }
+
+      // Covered/backgrounded surfaces may release WebGL without changing the
+      // visit's renderer choice. Closing the cover remounts Mapbox and preserves
+      // the guarantee that its unsupported feature still has somewhere to run.
+      if (!surfaceVisible || overlayOpen || activePermission !== null) {
+        drop()
+        return
+      }
+      if (committedTab === 'map') setMapMounted(true)
+
+      // Under genuine memory pressure, responsiveness beats camera continuity:
+      // release WebGL and fall back to the already-resident native renderer.
+      const onMemoryPressure = () => {
+        drop()
+        queuedMapActionsRef.current = []
+        nativeMapWebFallbackRef.current = false
+        setNativeMapWebFallback(false)
+        mapReadyRef.current = true
+        setMapReady(true)
+        setMapPainted(true)
+      }
+      window.addEventListener('poplur-memory-pressure', onMemoryPressure)
+      return () => window.removeEventListener('poplur-memory-pressure', onMemoryPressure)
+    }
+
     // Covered and backgrounded surfaces are not a navigation animation. Drop
     // them synchronously instead of waiting for the cube's settle window.
     // Deliberately NOT mainSurfaceVisible: that flag includes
@@ -3311,7 +3449,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.clearTimeout(dropTimer)
       window.removeEventListener('poplur-memory-pressure', onMemoryPressure)
     }
-  }, [activeTab, committedTab, surfaceVisible, overlayOpen, activePermission, mapPickSpotLaunch])
+  }, [activeTab, committedTab, surfaceVisible, overlayOpen, activePermission, mapPickSpotLaunch, nativeMapWebFallback])
 
   // Do not mutate the iframe URL while it is still mounted: changing `src`
   // during the return-to-Camera transition would reload a map that is about to
@@ -3335,10 +3473,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // covered in the same commit that attaches the iframe — there is no frame in
   // which the new subframe is visible before its document has painted.
   useEffect(() => {
-    if (NATIVE_ADAPTIVE_MAP) { setMapPainted(true); return }
+    if (NATIVE_ADAPTIVE_MAP && !nativeMapWebFallback) { setMapPainted(true); return }
     if (!mapMounted) { setMapPainted(false); return }
     setMapPainted(false)
-  }, [mapMounted, mapReloadNonce])
+  }, [mapMounted, mapReloadNonce, nativeMapWebFallback])
 
   useEffect(() => {
     if (mapMounted) return
@@ -3355,11 +3493,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // longer parent watchdog also covers a script/bootstrap failure where the
   // child never gets far enough to post any failure at all.
   useEffect(() => {
-    if (NATIVE_ADAPTIVE_MAP || !mapMounted || mapReady || mapFailedVisible
+    if ((NATIVE_ADAPTIVE_MAP && !nativeMapWebFallback)
+      || !mapMounted || mapReady || mapFailedVisible
       || activeTab !== 'map' || committedTab !== 'map' || !surfaceVisible) return
     const watchdog = window.setTimeout(scheduleMapRetry, 18_000)
     return () => window.clearTimeout(watchdog)
-  }, [activeTab, committedTab, mapFailedVisible, mapMounted, mapReady, mapReloadNonce, scheduleMapRetry, surfaceVisible])
+  }, [activeTab, committedTab, mapFailedVisible, mapMounted, mapReady, mapReloadNonce, nativeMapWebFallback, scheduleMapRetry, surfaceVisible])
 
   // Camera's vertical pager: `step` counts arrow presses (up +1 / down -1);
   // parity picks the page, so both directions cycle viewfinder ⇄ roll.
@@ -3404,19 +3543,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // photo -> video -> the camera's subscreens -> repeat. ROLL stays outside
   // the ring because it is the camera's own second page (the cube walks up to
   // it), rather than a capture mode or a destination in this cycle.
-  const CAMERA_CYCLE = ['photo', 'video', 'create', 'games', 'studio', 'music'] as const
-  const CAMERA_CYCLE_SCREEN = {
-    create: 'camera-ai-chat',
-    games: 'feed-games',
-    studio: 'camera-studio',
-    music: 'camera-music',
-  } as const
-  const CAMERA_STOP_BY_SCREEN: Record<string, 'create' | 'games' | 'studio' | 'music'> = {
-    'camera-ai-chat': 'create',
-    'feed-games': 'games',
-    'camera-studio': 'studio',
-    'camera-music': 'music',
-  }
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
     const openRing = holdOpen && cubeScreen ? CAMERA_STOP_BY_SCREEN[cubeScreen] ?? null : null
@@ -3424,7 +3550,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // while it is up leaves it and resumes the ring from the capture mode you
     // were in — so the arrows always walk photo / video / subscreens, whatever
     // page you happened to be looking at.
-    const current: (typeof CAMERA_CYCLE)[number] = openRing ?? cameraCaptureMode
+    const current: CameraCycleStop = openRing ?? cameraCaptureMode
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
@@ -3839,11 +3965,25 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const cameraCubeOverridesEvent = activeTab === 'post'
     && cubeScreen == null
     && (cameraZooming || cameraCaptureMode === 'video' || recordMs != null)
+  // The disco ball belongs only to a stable root surface. A tab, channel,
+  // capture-mode, roll or subscreen change names a new context and immediately
+  // returns the navigator to that destination's own object.
+  const discoNavigationContext = [
+    activeTab,
+    cubeScreen ?? 'root',
+    activeTab === 'feed' ? chanIndex : 0,
+    activeTab === 'post' ? cameraCaptureMode : '',
+    activeTab === 'post' ? cameraStep : 0,
+    activeTab === 'map' && mapTourOn ? 'tour' : '',
+  ].join(':')
+  const discoNavigationContextRef = useRef(discoNavigationContext)
+  discoNavigationContextRef.current = discoNavigationContext
   const discoCubeVisible = weatherCubeModel == null
     && incomingCall == null
     && !faceTimeActive
     && !(composerOpen && composerEditing)
     && !cameraCubeOverridesEvent
+    && cubeScreen == null
 
   // One bounded disco appearance per continuous music session. Its budget is
   // visible time: rain, calls and active camera work pause the countdown, and
@@ -3861,6 +4001,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       DISCO_CUBE_MAX_MS,
       discoCubeVisible,
       DISCO_CUBE_MIN_MUSIC_MS,
+      discoNavigationContext,
     )
     musicSessionRef.current = decision.session
     setDiscoCubeActive(decision.active)
@@ -3871,6 +4012,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     discoDeadlineTimerRef.current = window.setTimeout(() => {
       const current = musicSessionRef.current
       discoDeadlineTimerRef.current = null
+      if (discoNavigationContextRef.current !== discoNavigationContext) return
       if (waitingForEligibility) {
         const ready = reconcileDiscoCubeSession(
           current,
@@ -3879,6 +4021,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           DISCO_CUBE_MAX_MS,
           discoCubeVisible,
           DISCO_CUBE_MIN_MUSIC_MS,
+          discoNavigationContext,
         )
         musicSessionRef.current = ready.session
         setDiscoCubeActive(ready.active)
@@ -3896,15 +4039,52 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         discoDeadlineTimerRef.current = null
       }
     }
-  }, [discoCubeActive, discoCubeVisible, musicPlayback.playing])
+  }, [discoCubeActive, discoCubeVisible, discoNavigationContext, musicPlayback.playing])
+
+  // Food uses the same one-shot session discipline as music, but with no dwell
+  // threshold: language/ad context is already the explicit trigger. Holding a
+  // food mention on screen cannot pin the fork/knife indefinitely; the next
+  // false signal is what re-arms it for a genuinely new mention or ad.
+  useEffect(() => {
+    if (foodDeadlineTimerRef.current !== null) {
+      window.clearTimeout(foodDeadlineTimerRef.current)
+      foodDeadlineTimerRef.current = null
+    }
+    const decision = reconcileFoodCubeSession(
+      foodCubeSessionRef.current,
+      foodAdOpen,
+      Date.now(),
+      FOOD_CUBE_MAX_MS,
+    )
+    foodCubeSessionRef.current = decision.session
+    setFoodCubeActive(decision.active)
+    const deadline = decision.session.deadline
+    if (!decision.active || deadline == null || decision.remainingMs == null) return
+    foodDeadlineTimerRef.current = window.setTimeout(() => {
+      const expired = expireFoodCubeSession(foodCubeSessionRef.current, deadline)
+      if (expired === foodCubeSessionRef.current) return
+      foodCubeSessionRef.current = expired
+      foodDeadlineTimerRef.current = null
+      setFoodCubeActive(false)
+    }, decision.remainingMs)
+    return () => {
+      if (foodDeadlineTimerRef.current !== null) {
+        window.clearTimeout(foodDeadlineTimerRef.current)
+        foodDeadlineTimerRef.current = null
+      }
+    }
+  }, [foodAdOpen])
 
   // Weather wins while Map is the current surface; music remains global. When
   // either signal clears, this falls through to the model for the page the
   // user is on NOW rather than restoring a captured, potentially stale URL.
-  const eventCubeModel = weatherCubeModel ?? (discoCubeActive ? DISCO_BALL_CUBE_MODEL : null)
+  const discoCubeActiveHere = discoCubeActive
+    && discoCubeVisible
+    && musicSessionRef.current.contextKey === discoNavigationContext
+  const eventCubeModel = weatherCubeModel ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
   const cubeEventSignal = weatherCubeModel
     ? mapWeatherSignal?.kind ?? 'none'
-    : discoCubeActive
+    : discoCubeActiveHere
       ? 'music'
       : 'none'
   const wheelPreviewModel = holdCubePreviewMode === '3d'
@@ -3947,7 +4127,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     ? CAMCORDER_MODEL
     : eventCubeModel
     ? eventCubeModel
-    : activeTab === 'feed' && committedTab === 'feed' && foodAdOpen
+    : activeTab === 'feed' && committedTab === 'feed' && foodCubeActive
     ? FOOD_AD_CUBE_MODEL
     : (avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? CAMCORDER_MODEL : undefined)
@@ -4366,7 +4546,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               <WeatherMark mode="clear" icon={MAP_RAIL_SUN_ICON} compact />
             </button>
           </TabControlRail>
-          {NATIVE_ADAPTIVE_MAP && (
+          {NATIVE_ADAPTIVE_MAP && !nativeMapWebFallback && (
             <label
               className={styles.nativeMapZoom}
               aria-label="Map zoom"

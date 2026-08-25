@@ -139,6 +139,12 @@ const STOCK_CLIPS = [
   feedUrl('ad-spanish-1.mp4'), feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4'),
 ]
 
+// The navigator should react to content, not to a channel label. Keep this
+// narrow enough that words such as "bar" in a comedy caption do not turn the
+// TV into cutlery, while covering the food language users actually see.
+const FOOD_MENTION = /\b(?:food|poutine|burger|fries?|tacos?|pizza|ramen|noodles?|sushi|restaurant|diner|cafe|café|gravy|curds?|meal|eat(?:ing)?|lunch|dinner|breakfast)\b/i
+const MAX_PLAYBACK_RECOVERY_SOURCES = 2
+
 function posterForFeedClip(source: string): string {
   const localSource = source.split(/[?#]/, 1)[0].replace(/^\/+/, '')
   if ((localSource.startsWith('feed/') || localSource.includes('/feed/')) && localSource.endsWith('.mp4')) {
@@ -792,6 +798,8 @@ export default function FeedTwin({
     : []
   const sourceKey = `${ch.id}:${post?.user ?? 'no-user'}:${desiredAdSrc ?? 'stream'}`
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
+  const recoveryAttemptRef = useRef(0)
+  const [playbackUnavailable, setPlaybackUnavailable] = useState(false)
   const adSrc = sourceCandidates.length
     ? sourceCandidates[recoveryAttempt % sourceCandidates.length]
     : undefined
@@ -799,7 +807,9 @@ export default function FeedTwin({
   const posterKey = posterSrc ? `${sourceKey}:${adSrc}:${posterSrc}` : null
   const [readyPosterKey, setReadyPosterKey] = useState<string | null>(null)
   useEffect(() => {
+    recoveryAttemptRef.current = 0
     setRecoveryAttempt(0)
+    setPlaybackUnavailable(false)
     setRecoveringPlayback(true)
     setReadyPlaybackKey(null)
     settledAdRef.current = null
@@ -819,10 +829,21 @@ export default function FeedTwin({
     if (failedSource && recoveringAdSrcRef.current === failedSource) return
     recoveringAdSrcRef.current = failedSource
     setReadyPlaybackKey(null)
-    setRecoveringPlayback(true)
     settledAdRef.current = null
-    setRecoveryAttempt(attempt => attempt + 1)
-  }, [])
+    const nextAttempt = recoveryAttemptRef.current + 1
+    const recoveryLimit = Math.min(MAX_PLAYBACK_RECOVERY_SOURCES, sourceCandidates.length)
+    if (nextAttempt >= recoveryLimit) {
+      // Every bundled clip has a poster. After a bounded pair of decoder
+      // attempts, keep that real creative visible and release the broken
+      // pipeline instead of cycling TV static forever.
+      setPlaybackUnavailable(true)
+      setRecoveringPlayback(false)
+      return
+    }
+    recoveryAttemptRef.current = nextAttempt
+    setRecoveringPlayback(true)
+    setRecoveryAttempt(nextAttempt)
+  }, [sourceCandidates.length])
   const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
     if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
     if (completedAdRef.current === source) return
@@ -911,16 +932,25 @@ export default function FeedTwin({
   const adReady = Boolean(playbackKey) && readyPlaybackKey === playbackKey
   // This is the creative identity, not the Food channel. Food can contain a
   // normal post, a fallback, or its static handoff; only the actual ad film
-  // deserves to change the physical navigator.
+  // deserves to change the physical navigator on its own.
   const foodCreativeVisible = !suppressed
     && frontMost
     && !playerMode
     && adReady
     && completedAdSrc !== adSrc
     && /(?:^|\/)ad-food\.mp4(?:[?#].*)?$/i.test(adSrc ?? '')
+  // The written post context can be food even when its actual clip is a
+  // non-food ad from the shared pool. That is an equally valid, but bounded,
+  // reason for the fork/knife cube to appear.
+  const foodMentionVisible = !suppressed
+    && frontMost
+    && !playerMode
+    && completedAdSrc !== adSrc
+    && [post?.caption, ch.caption].some(text => FOOD_MENTION.test(text ?? ''))
+  const foodContextVisible = foodCreativeVisible || foodMentionVisible
   useEffect(() => {
-    onFoodAdChange?.(foodCreativeVisible)
-  }, [foodCreativeVisible, onFoodAdChange])
+    onFoodAdChange?.(foodContextVisible)
+  }, [foodContextVisible, onFoodAdChange])
   useEffect(() => () => { onFoodAdChange?.(false) }, [onFoodAdChange])
   useEffect(() => {
     if (adReady || post?.stream) recordPostView(postId)
@@ -969,7 +999,12 @@ export default function FeedTwin({
   // and spending two decoder leases on one visible surface. Static remains an
   // explicit QA/transition treatment only.
   const [recoveringPlayback, setRecoveringPlayback] = useState(true)
-  const showStatic = forceStatic || forceTransition || recoveringPlayback || !decoderGranted
+  const posterReady = Boolean(posterKey) && readyPosterKey === posterKey
+  // Static is only a brief bridge to a real frame or a loaded poster. The
+  // poster is the honest fallback when WebKit cannot provide a decoder, so it
+  // must never remain hidden behind the buffering grid.
+  const showStatic = forceStatic || forceTransition
+    || (!posterReady && !playbackUnavailable && (recoveringPlayback || !decoderGranted))
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
   const staticReady = readyStaticKey === staticKey
@@ -1748,14 +1783,14 @@ export default function FeedTwin({
         />
       )}
 
-      {adSrc && !post?.stream && mediaUnlocked && decoderGranted && completedAdSrc !== adSrc && (
+      {adSrc && !post?.stream && mediaUnlocked && decoderGranted && !playbackUnavailable && completedAdSrc !== adSrc && (
         <video
           // The same creative can appear in two adjacent posts. The post key
           // forces a fresh decoder in that case; otherwise a completed video
           // node is reused by React and remains paused at its final frame.
           key={`${sourceKey}:playing`}
           data-feed-media="true"
-          data-poplur-music="feed"
+          data-poplur-music={ch.id === 'music' ? 'feed' : undefined}
           ref={bindAdVideo}
           className={adReady ? `${styles.adVideo} ${styles.adVideoReady}` : styles.adVideo}
           src={adSrc}

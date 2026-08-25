@@ -26,6 +26,7 @@ import AppsScreen from './AppsScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
+import { CAMERA_HOLD_MENU_ITEMS } from './cameraNavigation'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -94,7 +95,6 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // like any other pop, and pickable only where your radius reaches them.
     { icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true },
     { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true },
-    { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
   feed: [
@@ -117,34 +117,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Apps', title: 'APPS', screen: 'feed-apps', native: true },
   ],
   post: [
-    // PHOTO and VIDEO select which physical camera object the navigator wears.
-    // The object itself remains the shutter: tap the photo camera to shoot, or
-    // tap the camcorder to start/stop recording. PHOTO is the default mode.
-    // The tile now wears the supplied flash camera render — its own object,
-    // not the generic CREATE mark it used to share with AVATAR/APPS/AI chat.
-    { icon: 'Photo', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
-    // VIDEO has its own cube now. It used to borrow TVGuide's mark, which meant
-    // the two tiles were indistinguishable in the wheel — and it also meant the
-    // VIDEO cube could not be dropped in without silently restyling TV GUIDE.
-    { icon: 'Video', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
-    // ML scan and AR are persistent camera-side controls. They do not belong
-    // in the hold menu, where they duplicate controls that remain visible on
-    // the live viewfinder.
-    // CREATE opens the existing Poplur AI chat. iOS presents the native
-    // PoplurAIChatView; browser and Android use its interactive shared twin.
-    // Wears the supplied laptop render — the screen this actually runs through.
-    { icon: 'Create', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
-    // Games is a working in-home screen on every target (including RN and
-    // Android). Sending it to the old native-only route left it as a no-op on
-    // those hosts, so it stays in the shared surface like News and TV Guide.
-    { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true },
-    // STUDIO is where you make a track: record a take, build it into a song,
-    // then publish it to your radius. It is deliberately separate from MUSIC,
-    // which is where posted tracks are heard.
-    { icon: 'Studio', title: 'STUDIO', screen: 'camera-studio', native: true },
-    // MUSIC is the short capture entrance: record a hook for up to a minute,
-    // then continue into Studio to shape it with the AI.
-    { icon: 'Music', title: 'MUSIC', screen: 'camera-music', native: true },
+    // One shared, tested inventory for both the wheel and the camera's arrow
+    // ring. LIVE broadcast is intentionally absent; Photo/Video remain capture
+    // modes, and creation tools remain deliberate destinations.
+    ...CAMERA_HOLD_MENU_ITEMS,
   ],
   profile: [
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', home: true },

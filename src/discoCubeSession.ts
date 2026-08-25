@@ -1,6 +1,8 @@
 export interface DiscoCubeSession {
   playing: boolean
   exhausted: boolean
+  /** Screen/channel context this appearance was earned in. */
+  contextKey: string | null
   /** The playback edge after which a continuous music session is eligible. */
   eligibleAt: number | null
   deadline: number | null
@@ -17,7 +19,7 @@ export interface DiscoCubeDecision {
 }
 
 export function emptyDiscoCubeSession(): DiscoCubeSession {
-  return { playing: false, exhausted: false, eligibleAt: null, deadline: null, remainingMs: null }
+  return { playing: false, exhausted: false, contextKey: null, eligibleAt: null, deadline: null, remainingMs: null }
 }
 
 /** Pure state transition for one bounded, visible disco appearance per playback run. */
@@ -28,15 +30,20 @@ export function reconcileDiscoCubeSession(
   maxMs: number,
   visible = true,
   minPlayingMs = 10_000,
+  contextKey = 'root',
 ): DiscoCubeDecision {
   if (!playing) {
     return { session: emptyDiscoCubeSession(), active: false, activationDelayMs: null, remainingMs: null }
   }
-  const session = current.playing
+  // A navigator change is a new opportunity, even when music continues. The
+  // old disco ball must release the cube synchronously and earn another dwell
+  // on the destination instead of pinning itself across the screen change.
+  const session = current.playing && current.contextKey === contextKey
     ? current
     : {
         playing: true,
         exhausted: false,
+        contextKey,
         eligibleAt: now + minPlayingMs,
         deadline: null,
         remainingMs: maxMs,
