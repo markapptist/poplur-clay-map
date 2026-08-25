@@ -56,16 +56,181 @@ const CALL_LOCAL_FACE: Detection = {
 // regular message while each current client renders the Poplur artwork instead
 // of exposing implementation text. Unknown tokens remain ordinary text, so an
 // older client never loses a message.
+// The supplied sticker sheet is intentionally used as the source artwork
+// rather than asking a model to redraw text-heavy stickers. Each entry is one
+// 6 × 5 atlas cell, keeping their supplied lettering and character art exact.
 const POPLUR_STICKERS = [
-  { id: 'pop', label: 'POP!', caption: 'Make it pop' },
-  { id: 'heart', label: 'BIG LOVE', caption: 'Send love' },
-  { id: 'here', label: "I'M HERE", caption: 'Share your spot' },
-  { id: 'live', label: 'LIVE!', caption: 'Go live' },
-  { id: 'call', label: 'CALL ME', caption: 'Ask for a call' },
-  { id: 'hype', label: "LET'S GO", caption: 'Bring the hype' },
+  { id: 'poplur', label: 'POPLUR', caption: 'Poplur', x: '0%', y: '0%' },
+  { id: 'hey', label: 'HEY POPLUR!', caption: 'Say hey', x: '20%', y: '0%' },
+  { id: 'globe', label: 'WORLD PIN', caption: 'Share the world', x: '40%', y: '0%' },
+  { id: 'pheart', label: 'P HEART', caption: 'Send a heart', x: '60%', y: '0%' },
+  { id: 'here', label: "I'M HERE", caption: 'Share your spot', x: '80%', y: '0%' },
+  { id: 'cool', label: 'COOL', caption: 'Looking good', x: '100%', y: '0%' },
+  { id: 'love', label: 'BIG LOVE', caption: 'Send love', x: '0%', y: '25%' },
+  { id: 'flame', label: 'P FLAME', caption: 'On fire', x: '20%', y: '25%' },
+  { id: 'go', label: "LET'S GO!", caption: 'Bring the hype', x: '40%', y: '25%' },
+  { id: 'hands', label: 'HEART HANDS', caption: 'Send a heart', x: '60%', y: '25%' },
+  { id: 'call', label: 'CALL ME', caption: 'Ask for a call', x: '80%', y: '25%' },
+  { id: 'camera', label: 'CAMERA', caption: 'Send a snap', x: '100%', y: '25%' },
+  { id: 'live', label: 'LIVE!', caption: 'Go live', x: '0%', y: '50%' },
+  { id: 'way', label: 'ON MY WAY!', caption: 'On my way', x: '20%', y: '50%' },
+  { id: 'kiss', label: 'KISS', caption: 'Sending love', x: '40%', y: '50%' },
+  { id: 'fire', label: "THAT'S FIRE", caption: 'That is fire', x: '60%', y: '50%' },
+  { id: 'laptop', label: 'LAPTOP', caption: 'Working on it', x: '80%', y: '50%' },
+  { id: 'vibes', label: 'GOOD VIBES', caption: 'Good vibes', x: '100%', y: '50%' },
+  { id: 'wink', label: 'WINK', caption: 'Hey there', x: '0%', y: '75%' },
+  { id: 'seen', label: 'SEEN', caption: 'Seen', x: '20%', y: '75%' },
+  { id: 'crown', label: 'CROWN', caption: 'You rule', x: '40%', y: '75%' },
+  { id: 'phone', label: 'POPLUR PHONE', caption: 'From Poplur Phone', x: '60%', y: '75%' },
+  { id: 'soon', label: 'DROPPING SOON', caption: 'Dropping soon', x: '80%', y: '75%' },
+  { id: 'active', label: 'STAY ACTIVE', caption: 'Stay active', x: '100%', y: '75%' },
+  { id: 'expanding', label: 'EXPANDING', caption: 'Radius expanding', x: '0%', y: '100%' },
+  { id: 'time', label: 'SAME TIME?', caption: 'Same time', x: '20%', y: '100%' },
+  { id: 'music', label: 'MUSIC', caption: 'Music mood', x: '40%', y: '100%' },
+  { id: 'heart', label: 'P HEART', caption: 'Big love', x: '60%', y: '100%' },
+  { id: 'out', label: "I'M OUT", caption: 'I am out', x: '80%', y: '100%' },
+  { id: 'fam', label: 'POPLUR FAM', caption: 'Poplur fam', x: '100%', y: '100%' },
 ] as const
 
 type PoplurStickerId = typeof POPLUR_STICKERS[number]['id']
+
+type ComposerTab = 'chat' | 'media' | 'stickers' | 'games' | 'share'
+
+type ShareCategory = 'apps' | 'games' | 'music' | 'podcasts' | 'wardrobe'
+type ShareKind = 'app' | 'game' | 'music' | 'podcast' | 'wardrobe'
+
+type SharedWork = {
+  kind: ShareKind
+  id: string
+  title: string
+  subtitle: string
+  glyph: string
+}
+
+type PoplurGameDraft = {
+  id: string
+  title: string
+  detail: string
+  accent: string
+  glyph: string
+}
+
+const POPLUR_AI_GAME_DRAFTS: readonly PoplurGameDraft[] = [
+  {
+    id: 'radius-riddle',
+    title: 'Radius Riddle',
+    detail: 'AI makes three clues from the places around both of you. First to solve two wins.',
+    accent: 'cyan',
+    glyph: '?',
+  },
+  {
+    id: 'pop-relay',
+    title: 'Pop Relay',
+    detail: 'Trade one photo prompt each. The AI judges the most unexpected match.',
+    accent: 'pink',
+    glyph: '↗',
+  },
+  {
+    id: 'channel-101',
+    title: 'Channel 101',
+    detail: 'Pick a mood and let AI turn it into a three-round music-and-memory match.',
+    accent: 'violet',
+    glyph: '101',
+  },
+]
+
+function conversationStartersFor(name: string): readonly string[] {
+  const person = name.replace(/^@/, '') || 'them'
+  return [
+    `What are you seeing in your radius tonight?`,
+    `Want to make a two-person Poplur game?`,
+    `I found something you might like near me — want the pin?`,
+    `What channel are you on, ${person}?`,
+  ]
+}
+
+function shareWire(share: SharedWork): string {
+  // URI encoding keeps the payload ASCII before btoa so Unicode titles remain
+  // reversible. Older clients still receive a short, understandable message.
+  const payload = btoa(encodeURIComponent(JSON.stringify(share)))
+  return `Shared a ${share.kind}: ${share.title}\n[[poplur:share:${payload}]]`
+}
+
+function shareFromText(text: string): SharedWork | null {
+  const match = /\[\[poplur:share:([A-Za-z0-9+/=]+)\]\]$/.exec(text.trim())
+  if (!match) return null
+  try {
+    const raw = JSON.parse(decodeURIComponent(atob(match[1]))) as Partial<SharedWork>
+    const kinds: readonly ShareKind[] = ['app', 'game', 'music', 'podcast', 'wardrobe']
+    if (!raw || !kinds.includes(raw.kind as ShareKind)) return null
+    if (typeof raw.id !== 'string' || typeof raw.title !== 'string' || typeof raw.subtitle !== 'string' || typeof raw.glyph !== 'string') return null
+    return {
+      kind: raw.kind as ShareKind,
+      id: raw.id.slice(0, 120),
+      title: raw.title.slice(0, 120),
+      subtitle: raw.subtitle.slice(0, 220),
+      glyph: raw.glyph.slice(0, 8),
+    }
+  } catch {
+    return null
+  }
+}
+
+function sharePreview(text: string): string {
+  const share = shareFromText(text)
+  return share ? `Shared ${share.kind}: ${share.title}` : text
+}
+
+// Keep the catalog modules out of the initial Messages chunk. The chat opens
+// much more often than someone shares a creation, and the catalog is only
+// useful after they explicitly open the collapsed "Your work" panel.
+async function loadWorkFor(category: Exclude<ShareCategory, 'wardrobe'>): Promise<SharedWork[]> {
+  if (category === 'apps') {
+    const { listMiniApps } = await import('./miniApps')
+    return listMiniApps().filter(app => app.app.id !== 'poplur-flashlight').map(app => ({
+      kind: 'app' as const,
+      id: app.app.id,
+      title: app.app.name,
+      subtitle: app.app.description,
+      glyph: app.app.icon || 'P',
+    }))
+  }
+  if (category === 'games') {
+    const { listPostings } = await import('./postedContent')
+    return listPostings('game').map(post => ({
+      kind: 'game' as const,
+      id: post.itemId,
+      title: post.itemId.replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase()),
+      subtitle: post.place ? `Created game · ${post.place}` : 'Created Poplur game',
+      glyph: '⌘',
+    }))
+  }
+  if (category === 'music') {
+    const { accountShelf, postedTracks } = await import('./musicPosts')
+    const seen = new Set<string>()
+    return [...accountShelf(), ...postedTracks()].filter(track => {
+      if (seen.has(track.id)) return false
+      seen.add(track.id)
+      return true
+    }).map(track => ({
+      kind: 'music' as const,
+      id: track.id,
+      title: track.title,
+      subtitle: `${track.artist} · ${track.mood}`,
+      glyph: '♫',
+    }))
+  }
+  const { ownBroadcastShelf } = await import('./mapRadio')
+  return ownBroadcastShelf()
+    .filter(broadcast => broadcast.type === 'podcast')
+    .map(broadcast => ({
+      kind: 'podcast' as const,
+      id: broadcast.id,
+      title: broadcast.title,
+      subtitle: `${broadcast.status === 'live' ? 'Live' : 'Recorded'} · ${broadcast.genre}`,
+      glyph: '◖)))',
+    }))
+}
 
 const stickerWire = (id: PoplurStickerId) => `[[poplur:sticker:${id}]]`
 
@@ -77,29 +242,21 @@ function stickerFromText(text: string): PoplurStickerId | null {
 
 function stickerPreview(text: string): string {
   const sticker = stickerFromText(text)
-  return sticker ? `${POPLUR_STICKERS.find(item => item.id === sticker)?.label ?? 'Poplur'} sticker` : text
+  if (sticker) return `${POPLUR_STICKERS.find(item => item.id === sticker)?.label ?? 'Poplur'} sticker`
+  return sharePreview(text)
 }
 
 function PoplurSticker({ id, size = 'message' }: { id: PoplurStickerId; size?: 'tray' | 'message' }) {
   const sticker = POPLUR_STICKERS.find(item => item.id === id)
-  const icon = id === 'heart'
-    ? '♥'
-    : id === 'here'
-      ? 'P'
-      : id === 'live'
-        ? '•'
-        : id === 'call'
-          ? '⌁'
-          : id === 'hype'
-            ? '✦'
-            : 'P'
   return (
-    <span className={styles.stickerArt} data-sticker={id} data-sticker-size={size} aria-label={sticker?.label} role="img">
-      <span className={styles.stickerGlow} aria-hidden="true" />
-      <span className={styles.stickerIcon} aria-hidden="true"><span className={styles.stickerIconLetter}>{icon}</span></span>
-      <strong>{sticker?.label}</strong>
-      {id === 'live' && <i className={styles.stickerLiveDot} aria-hidden="true" />}
-    </span>
+    <span
+      className={styles.stickerArt}
+      data-sticker={id}
+      data-sticker-size={size}
+      aria-label={sticker?.label}
+      role="img"
+      style={{ ['--sticker-x' as string]: sticker?.x ?? '0%', ['--sticker-y' as string]: sticker?.y ?? '0%' }}
+    />
   )
 }
 
@@ -669,7 +826,7 @@ function blobDataURL(blob: Blob): Promise<string> {
   })
 }
 
-export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }: {
+export default function MailScreen({ onCallViaPhone, initialThreadId }: {
   onClose?: () => void
   onCallViaPhone?: (id: string, name: string) => void
   initialThreadId?: string
@@ -678,9 +835,13 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
   const [faceTimeWith, setFaceTimeWith] = useState<{ id: string; name: string } | null>(null)
   const [liveThreads, setLiveThreads] = useState<Thread[] | null>(null)
   const [composerText, setComposerText] = useState('')
-  const [stickerTrayOpen, setStickerTrayOpen] = useState(false)
+  const [composerTab, setComposerTab] = useState<ComposerTab>('chat')
+  const [messageToolsOpen, setMessageToolsOpen] = useState(false)
+  const [shareCategory, setShareCategory] = useState<ShareCategory>('apps')
+  const [shareableWork, setShareableWork] = useState<SharedWork[]>([])
+  const [shareWorkLoading, setShareWorkLoading] = useState(false)
+  const [wardrobeShareBusy, setWardrobeShareBusy] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [mediaPickerOpen, setMediaPickerOpen] = useState(false)
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'preparing'>('idle')
   const [voiceElapsed, setVoiceElapsed] = useState(0)
   const [voiceError, setVoiceError] = useState('')
@@ -784,7 +945,7 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
         if (requestedThread) {
           pendingInitialThreadIdRef.current = undefined
           setComposerText('')
-          setStickerTrayOpen(false)
+          setComposerTab('chat')
           setActiveThread(requestedThread)
           window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
             detail: { type: 'openDMThread', threadId: requestedThread.id },
@@ -980,8 +1141,8 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
     stopVoiceResources(true)
     setFaceTimeWith(null)
     setComposerText('')
-    setStickerTrayOpen(false)
-    setMediaPickerOpen(false)
+    setComposerTab('chat')
+    setMessageToolsOpen(false)
     setActiveThread(null)
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
   }, [faceTimeWith, stopVoiceResources])
@@ -1046,7 +1207,8 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
 
   const openThread = useCallback((thread: Thread) => {
     setComposerText('')
-    setStickerTrayOpen(false)
+    setComposerTab('chat')
+    setMessageToolsOpen(false)
     setActiveThread(thread)
     if (thread.otherId) {
       window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
@@ -1055,43 +1217,74 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
     }
   }, [])
 
+  // The browser workbench uses seeded conversations rather than real account
+  // ids. Let it demonstrate composing (including the sticker pack) locally,
+  // but never route those demo messages through the device/cloud bridge.
+  const canComposeInCurrentSurface = Boolean(activeThread?.otherId) || !isNativeShell()
+
+  useEffect(() => {
+    if (!messageToolsOpen || composerTab !== 'share' || shareCategory === 'wardrobe') return
+    let cancelled = false
+    setShareableWork([])
+    setShareWorkLoading(true)
+    void loadWorkFor(shareCategory)
+      .then(work => {
+        if (!cancelled) setShareableWork(work)
+      })
+      .catch(() => {
+        // A missing local shelf should look like an empty collection, not a
+        // broken composer. The next tab visit will make a fresh attempt.
+        if (!cancelled) setShareableWork([])
+      })
+      .finally(() => {
+        if (!cancelled) setShareWorkLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [composerTab, messageToolsOpen, shareCategory])
+
+  const sendText = useCallback((rawText: string) => {
+    const text = rawText.trim()
+    const otherId = activeThread?.otherId
+    const isBrowserDemo = !otherId && !isNativeShell()
+    if (!text || !activeThread || (!otherId && !isBrowserDemo)) return false
+    playPop()
+    const clientMessageId = createClientMessageId()
+    const optimistic = {
+      id: clientMessageId,
+      from: 'me' as const,
+      text,
+      createdAtMillis: Date.now(),
+      status: isBrowserDemo ? ('sent' as const) : ('sending' as const),
+    }
+    setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
+    if (otherId) {
+      window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+        detail: { type: 'sendDM', otherId, text, clientMessageId },
+      }))
+    }
+    return true
+  }, [activeThread])
+
   const sendMessage = useCallback(() => {
     const text = composerText.trim()
-    if (!text || !activeThread?.otherId) return
-    playPop()
-    const clientMessageId = createClientMessageId()
-    const optimistic = {
-      id: clientMessageId,
-      from: 'me' as const,
-      text,
-      createdAtMillis: Date.now(),
-      status: 'sending' as const,
-    }
-    setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
-    setComposerText('')
-    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
-      detail: { type: 'sendDM', otherId: activeThread.otherId, text, clientMessageId },
-    }))
-  }, [activeThread?.otherId, composerText])
+    if (sendText(text)) setComposerText('')
+  }, [composerText, sendText])
 
   const sendSticker = useCallback((stickerId: PoplurStickerId) => {
-    if (!activeThread?.otherId) return
-    playPop()
-    const text = stickerWire(stickerId)
-    const clientMessageId = createClientMessageId()
-    const optimistic = {
-      id: clientMessageId,
-      from: 'me' as const,
-      text,
-      createdAtMillis: Date.now(),
-      status: 'sending' as const,
+    if (sendText(stickerWire(stickerId))) setComposerTab('chat')
+  }, [sendText])
+
+  const sendAIGameInvite = useCallback((game: PoplurGameDraft) => {
+    const invitation = `🎮 Poplur AI made “${game.title}” for us. ${game.detail} Want to play?`
+    if (sendText(invitation)) setComposerTab('chat')
+  }, [sendText])
+
+  const sendWorkShare = useCallback((share: SharedWork) => {
+    if (sendText(shareWire(share))) {
+      setComposerTab('chat')
+      setMessageToolsOpen(false)
     }
-    setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
-    setStickerTrayOpen(false)
-    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
-      detail: { type: 'sendDM', otherId: activeThread.otherId, text, clientMessageId },
-    }))
-  }, [activeThread?.otherId])
+  }, [sendText])
 
   const sendAttachment = useCallback((
     kind: DMAttachmentKind,
@@ -1099,7 +1292,9 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
     mimeType: string,
     durationMillis?: number,
   ) => {
-    if (!activeThread?.otherId || !source || !validAttachmentMime(kind, mimeType)) return
+    const otherId = activeThread?.otherId
+    const isBrowserDemo = !otherId && !isNativeShell()
+    if ((!otherId && !isBrowserDemo) || !activeThread || !source || !validAttachmentMime(kind, mimeType)) return
     playPop()
     const clientMessageId = createClientMessageId()
     const text = attachmentLabel(kind)
@@ -1108,24 +1303,49 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
       from: 'me' as const,
       text,
       createdAtMillis: Date.now(),
-      status: 'sending' as const,
+      status: isBrowserDemo ? ('sent' as const) : ('sending' as const),
       attachment: { kind, url: source, mimeType, ...(durationMillis != null ? { durationMillis } : {}) },
     }
     setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
-    setMediaPickerOpen(false)
-    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
-      detail: {
-        type: 'sendDMAttachment',
-        threadId: activeThread.id,
-        otherId: activeThread.otherId,
-        source,
-        kind,
-        mimeType,
-        durationMillis,
-        clientMessageId,
-      },
-    }))
-  }, [activeThread?.id, activeThread?.otherId])
+    setComposerTab('chat')
+    if (otherId) {
+      window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+        detail: {
+          type: 'sendDMAttachment',
+          threadId: activeThread.id,
+          otherId,
+          source,
+          kind,
+          mimeType,
+          durationMillis,
+          clientMessageId,
+        },
+      }))
+    }
+  }, [activeThread])
+
+  const sendWardrobeShare = useCallback(async () => {
+    if (!canComposeInCurrentSurface || wardrobeShareBusy) return
+    setWardrobeShareBusy(true)
+    try {
+      // This is a one-shot capture of the current wardrobe scene. It does not
+      // turn the editor into a live video source or retain a canvas after the
+      // message is sent. Both modules are imported only after this explicit
+      // action, so opening Messages never initializes the wardrobe renderer.
+      const [{ generateWardrobeThumbnail }, { wardrobeEditor }] = await Promise.all([
+        import('./wardrobe/WardrobePreview'),
+        import('./wardrobe/wardrobeStore'),
+      ])
+      const screenshot = await generateWardrobeThumbnail(wardrobeEditor.getState().scene, 640)
+      sendText('My current wardrobe look ✦')
+      sendAttachment('image', screenshot, 'image/png')
+      setMessageToolsOpen(false)
+    } catch {
+      setVoiceError('Your wardrobe look could not be captured just now.')
+    } finally {
+      setWardrobeShareBusy(false)
+    }
+  }, [canComposeInCurrentSurface, sendAttachment, sendText, wardrobeShareBusy])
 
   const startVoiceMessage = useCallback(async () => {
     if (!activeThread?.otherId || voiceState !== 'idle') return
@@ -1223,9 +1443,6 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
     return (
       <div className={styles.screen}>
         <div className={styles.toolbar}>
-          <button type="button" className={styles.threadBack} aria-label="Back to chats" onClick={() => { playPop(); closeThread() }}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19l-7-7 7-7" /></svg>
-          </button>
           <div className={styles.avatar}>{activeThread.initials}</div>
           <div className={styles.toolbarInfo}>
             <h1>{activeThread.title}</h1>
@@ -1243,6 +1460,7 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
         <div className={styles.conversation} aria-live="polite">
           {activeThread.messages.map(m => {
             const sticker = stickerFromText(m.text)
+            const share = shareFromText(m.text)
             return (
               <div key={m.id} className={m.from === 'me' ? `${styles.messageWrap} ${styles.messageWrapMine}` : styles.messageWrap}>
                 {m.attachment?.kind === 'image' ? (
@@ -1262,6 +1480,16 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
                   <div className={styles.stickerMessage}>
                     <PoplurSticker id={sticker} />
                   </div>
+                ) : share ? (
+                  <article className={styles.sharedWorkCard} data-share-kind={share.kind} aria-label={`Shared ${share.kind}: ${share.title}`}>
+                    <span className={styles.sharedWorkGlyph} aria-hidden="true">{share.glyph}</span>
+                    <span className={styles.sharedWorkCopy}>
+                      <small>POPLUR {share.kind.toUpperCase()}</small>
+                      <strong>{share.title}</strong>
+                      <em>{share.subtitle}</em>
+                    </span>
+                    <i>SHARED</i>
+                  </article>
                 ) : (
                   <div className={m.from === 'me' ? `${styles.bubble} ${styles.mine}` : styles.bubble}>
                     {m.text}
@@ -1289,11 +1517,96 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
             </div>
           )}
         </div>
-        {stickerTrayOpen && (
+        <section className={styles.composerSurface} aria-label="Message tools">
+          <button
+            type="button"
+            className={messageToolsOpen ? `${styles.messageToolsToggle} ${styles.messageToolsToggleOpen}` : styles.messageToolsToggle}
+            aria-expanded={messageToolsOpen}
+            aria-controls="poplur-message-tools"
+            onClick={() => { playPop(); setMessageToolsOpen(open => !open) }}
+          >
+            <span aria-hidden="true">{messageToolsOpen ? '×' : '+'}</span>
+            {messageToolsOpen ? 'Hide message tools' : 'Message tools'}
+            <i aria-hidden="true">{messageToolsOpen ? '⌃' : '⌄'}</i>
+          </button>
+          {messageToolsOpen && (
+            <div id="poplur-message-tools" className={styles.messageToolsPanel}>
+          <div className={styles.composerTabs} role="tablist" aria-label="Message actions">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'chat'}
+              className={composerTab === 'chat' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              onClick={() => { playPop(); setComposerTab('chat') }}
+            >
+              <span aria-hidden="true">✦</span> AI ideas
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'media'}
+              className={composerTab === 'media' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              disabled={!canComposeInCurrentSurface}
+              onClick={() => { playPop(); setComposerTab('media') }}
+            >
+              <span aria-hidden="true">▣</span> Camera roll
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'stickers'}
+              className={composerTab === 'stickers' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              disabled={!canComposeInCurrentSurface}
+              onClick={() => { playPop(); setComposerTab('stickers') }}
+            >
+              <span aria-hidden="true">P</span> Stickers
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'games'}
+              className={composerTab === 'games' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              disabled={!canComposeInCurrentSurface}
+              onClick={() => { playPop(); setComposerTab('games') }}
+            >
+              <span aria-hidden="true">⌘</span> AI game
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'share'}
+              className={composerTab === 'share' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              disabled={!canComposeInCurrentSurface}
+              onClick={() => { playPop(); setComposerTab('share') }}
+            >
+              <span aria-hidden="true">↗</span> Your work
+            </button>
+          </div>
+          {composerTab === 'chat' && (
+            <section className={styles.starterTray} aria-label="Poplur AI conversation starters">
+              <div className={styles.starterHeading}>
+                <span>POPLUR AI STARTERS</span>
+                <small>tap to use</small>
+              </div>
+              <div className={styles.starterList}>
+                {conversationStartersFor(activeThread.title).map(starter => (
+                  <button
+                    type="button"
+                    key={starter}
+                    className={styles.starterChip}
+                    onClick={() => { playPop(); setComposerText(starter) }}
+                  >
+                    {starter}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {composerTab === 'stickers' && (
           <section className={styles.stickerTray} aria-label="Poplur sticker pack">
             <div className={styles.stickerTrayHeading}>
               <span>POPLUR POP PACK</span>
-              <button type="button" onClick={() => setStickerTrayOpen(false)} aria-label="Close stickers">×</button>
+              <button type="button" onClick={() => setComposerTab('chat')} aria-label="Close stickers">×</button>
             </div>
             <div className={styles.stickerGrid}>
               {POPLUR_STICKERS.map(sticker => (
@@ -1310,17 +1623,17 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
             </div>
           </section>
         )}
-        {mediaPickerOpen && (
-          <section className={styles.mediaPicker} role="dialog" aria-modal="true" aria-label="Choose a photo or video">
+          {composerTab === 'media' && (
+          <section className={styles.mediaPicker} aria-label="Choose a photo or video">
             <header>
               <strong>SHARE FROM CAMERA ROLL</strong>
-              <button type="button" onClick={() => setMediaPickerOpen(false)} aria-label="Close camera roll">×</button>
+              <button type="button" onClick={() => setComposerTab('chat')} aria-label="Close camera roll">×</button>
             </header>
             <CameraRoll
               active
               hideHeader
               nativeRequestType="requestProfileCameraRoll"
-              onDeny={() => setMediaPickerOpen(false)}
+              onDeny={() => setComposerTab('chat')}
               onPick={media => sendAttachment(
                 media.kind === 'photo' ? 'image' : 'video',
                 media.src,
@@ -1329,6 +1642,101 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
             />
           </section>
         )}
+          {composerTab === 'games' && (
+            <section className={styles.gameTray} aria-label="AI game invitations">
+              <div className={styles.gameTrayHeading}>
+                <span>POPLUR AI GAME MAKER</span>
+                <small>made for two</small>
+              </div>
+              <p>Pick a game idea and Poplur AI sends a ready-to-play challenge into this chat.</p>
+              <div className={styles.gameDraftList}>
+                {POPLUR_AI_GAME_DRAFTS.map(game => (
+                  <button
+                    key={game.id}
+                    type="button"
+                    className={styles.gameDraft}
+                    data-accent={game.accent}
+                    onClick={() => sendAIGameInvite(game)}
+                    aria-label={`Make and send ${game.title}`}
+                  >
+                    <span className={styles.gameDraftGlyph} aria-hidden="true">{game.glyph}</span>
+                    <span><strong>{game.title}</strong><small>{game.detail}</small></span>
+                    <i>MAKE</i>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {composerTab === 'share' && (
+            <section className={styles.shareTray} aria-label="Share your Poplur work">
+              <div className={styles.shareTrayHeading}>
+                <span>YOUR POPLUR WORK</span>
+                <small>send a creation</small>
+              </div>
+              <div className={styles.shareFilters} role="tablist" aria-label="Your work categories">
+                {([
+                  ['apps', 'Apps'],
+                  ['games', 'Games'],
+                  ['music', 'Music'],
+                  ['podcasts', 'Podcasts'],
+                  ['wardrobe', 'Wardrobe'],
+                ] as const).map(([category, label]) => (
+                  <button
+                    key={category}
+                    type="button"
+                    role="tab"
+                    aria-selected={shareCategory === category}
+                    className={shareCategory === category ? `${styles.shareFilter} ${styles.shareFilterActive}` : styles.shareFilter}
+                    onClick={() => { playPop(); setShareCategory(category) }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {shareCategory === 'wardrobe' ? (
+                <button
+                  type="button"
+                  className={styles.wardrobeShare}
+                  disabled={wardrobeShareBusy || !canComposeInCurrentSurface}
+                  onClick={() => void sendWardrobeShare()}
+                >
+                  <span aria-hidden="true">✦</span>
+                  <span><strong>{wardrobeShareBusy ? 'Capturing your look…' : 'Send your current wardrobe look'}</strong><small>A one-time screenshot of your current character.</small></span>
+                  <i>{wardrobeShareBusy ? '…' : 'SEND'}</i>
+                </button>
+              ) : shareWorkLoading ? (
+                <div className={styles.workEmpty} role="status">
+                  <strong>Loading your {shareCategory}…</strong>
+                  <span>Getting your Poplur creations ready to share.</span>
+                </div>
+              ) : shareableWork.length > 0 ? (
+                <div className={styles.sharedWorkList}>
+                  {shareableWork.map(work => (
+                    <button
+                      type="button"
+                      key={`${work.kind}-${work.id}`}
+                      className={styles.workPick}
+                      data-share-kind={work.kind}
+                      onClick={() => sendWorkShare(work)}
+                      aria-label={`Send ${work.kind}: ${work.title}`}
+                    >
+                      <span className={styles.workPickGlyph} aria-hidden="true">{work.glyph}</span>
+                      <span><strong>{work.title}</strong><small>{work.subtitle}</small></span>
+                      <i>SEND</i>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.workEmpty}>
+                  <strong>No {shareCategory} created yet</strong>
+                  <span>When you make one in Poplur, it appears here ready to send.</span>
+                </div>
+              )}
+            </section>
+          )}
+            </div>
+          )}
+        </section>
         {(voiceState !== 'idle' || voiceError) && (
           <div className={voiceError ? styles.voiceError : styles.voiceRecording} role="status">
             {voiceError || (voiceState === 'preparing'
@@ -1341,18 +1749,18 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
             type="button"
             className={styles.attachButton}
             aria-label="Share a photo or video"
-            disabled={!activeThread.otherId || voiceState !== 'idle'}
-            onClick={() => { playPop(); setStickerTrayOpen(false); setMediaPickerOpen(true) }}
+            disabled={!canComposeInCurrentSurface || voiceState !== 'idle'}
+            onClick={() => { playPop(); setComposerTab('media'); setMessageToolsOpen(true) }}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12.5l6.7-6.7a3 3 0 114.2 4.2l-8.5 8.5a5 5 0 01-7.1-7.1L12 2.7" /></svg>
           </button>
           <button
             type="button"
-            className={stickerTrayOpen ? `${styles.stickerButton} ${styles.stickerButtonOpen}` : styles.stickerButton}
-            aria-label={stickerTrayOpen ? 'Close Poplur stickers' : 'Open Poplur stickers'}
-            aria-expanded={stickerTrayOpen}
-            disabled={!activeThread.otherId}
-            onClick={() => { playPop(); setStickerTrayOpen(open => !open) }}
+            className={composerTab === 'stickers' ? `${styles.stickerButton} ${styles.stickerButtonOpen}` : styles.stickerButton}
+            aria-label={composerTab === 'stickers' ? 'Close Poplur stickers' : 'Open Poplur stickers'}
+            aria-expanded={composerTab === 'stickers'}
+            disabled={!canComposeInCurrentSurface}
+            onClick={() => { playPop(); setComposerTab(tab => tab === 'stickers' ? 'chat' : 'stickers'); setMessageToolsOpen(true) }}
           >
             <span>P</span>
           </button>
@@ -1373,7 +1781,7 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM6 11v1a6 6 0 0012 0v-1M12 18v3" /></svg>
           </button>
-          <button type="submit" className={styles.sendBtn} disabled={!composerText.trim() || !activeThread.otherId || voiceState !== 'idle'}>Send</button>
+          <button type="submit" className={styles.sendBtn} disabled={!composerText.trim() || !canComposeInCurrentSurface || voiceState !== 'idle'}>Send</button>
         </form>
         {faceTimeWith && (
           <FaceTimeOverlay who={faceTimeWith.name} direction="outgoing" onEnd={endFaceTime} />
@@ -1385,9 +1793,6 @@ export default function MailScreen({ onClose, onCallViaPhone, initialThreadId }:
   return (
     <div className={styles.screen}>
       <div className={styles.chatHeader}>
-        <button type="button" className={styles.backBtn} aria-label="Close mail" onClick={() => { playPop(); onClose?.() }}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19l-7-7 7-7" /></svg>
-        </button>
         <div className={styles.chatHeaderText}>
           <h1>Chats</h1>
           <span className={styles.chatHeaderSub}>

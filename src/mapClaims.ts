@@ -1,5 +1,5 @@
 import mapboxgl from 'mapbox-gl'
-import { takeoverTint, takeoverTintRGB } from './takeoverColor'
+import { takeoverTint } from './takeoverColor'
 import { onFrame } from './frameGovernor'
 import {
   buildingClaimColorExpression,
@@ -10,6 +10,7 @@ import {
   dominanceFillOpacityExpression,
   dominanceInsertBefore,
   dominancePaintOrder,
+  dominancePower,
 } from './mapDominance'
 
 // ── Land-claim clay territory ───────────────────────────────────────────────
@@ -20,8 +21,13 @@ import {
 
 export interface Claim {
   id: string
+  /** Stable backend identity. Handles can change; ownership cannot. */
+  ownerId?: string
   center: [number, number] // lng, lat
   radiusKm: number
+  /** Engagement-weighted fame. When present it wins overlap ordering before
+   * raw radius, so a culturally dominant local area can beat a quiet disc. */
+  fameScore?: number
   /** Whose takeover this is. Absent means yours — the app's own takeover
    *  colour paints it, which is every claim the map drew before other people
    *  appeared on it. */
@@ -38,6 +44,7 @@ export interface Claim {
 
 const CLAIMS_SOURCE = 'poplur-claims'
 const CLAIMS_FILL = 'poplur-claims-fill'
+const CLAIMS_REVEAL = 'poplur-claims-reveal'
 const CLAIMS_TEXTURE = 'poplur-claims-texture'
 const CLAIMS_TEXTURE_IMAGE = 'poplur-claims-hatch'
 const CLAIMS_RIM = 'poplur-claims-rim'
@@ -154,19 +161,20 @@ function claimsInsertBefore(map: mapboxgl.Map): string | undefined {
   } catch { return undefined }
 }
 
-/** The claims hatch pixels, in the CURRENT takeover colour (default pink). */
+/** A neutral clay hatch. The data-coloured fill underneath supplies each
+ * owner's current colour; tinting this shared image pink made every rival's
+ * terrain wear the signed-in user's identity. */
 function hatchImage(): { width: number; height: number; data: Uint8Array } {
   const size = 16
-  const [r, g, b] = takeoverTintRGB(255, 218, 237)
   const data = new Uint8Array(size * size * 4)
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       if ((x + y) % 8 > 1) continue
       const offset = (y * size + x) * 4
-      data[offset] = r
-      data[offset + 1] = g
-      data[offset + 2] = b
-      data[offset + 3] = 76
+      data[offset] = 255
+      data[offset + 1] = 255
+      data[offset + 2] = 255
+      data[offset + 3] = (x + y) % 8 === 0 ? 54 : 26
     }
   }
   return { width: size, height: size, data }
@@ -181,18 +189,37 @@ export function applyClaimsPalette(map: mapboxgl.Map): void {
     try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* torn down */ }
   }
   set(CLAIMS_FILL, 'fill-color', claimColor('#D93D89'))
+  set(CLAIMS_REVEAL, 'fill-color', claimColor('#FF8AC6'))
   set(CLAIMS_RIM, 'line-color', claimColor('#FF8AC6'))
   set(CLAIMS_RINGS, 'line-color', claimColor('#FFB3D9'))
   set(CLAIMS_CORE, 'circle-color', claimColor('#FFFFFF'))
   set(CLAIMS_GLOBE, 'circle-color', claimColor('#FF5FA8'))
   set(CLAIMS_GLOBE, 'circle-stroke-color', takeoverTint('#FFD7EC'))
   set(CLAIMS_GLOBE_BLOOM, 'circle-color', claimColor('#FF4BA1'))
-  if (map.hasImage(CLAIMS_TEXTURE_IMAGE)) {
-    try {
-      map.removeImage(CLAIMS_TEXTURE_IMAGE)
-      map.addImage(CLAIMS_TEXTURE_IMAGE, hatchImage(), { pixelRatio: 2 })
-    } catch { /* style torn down mid-swap */ }
-  }
+}
+
+/** One compositor-side reveal when the camera settles on a different area.
+ * Geometry does not rebuild and there is no JS animation loop: Mapbox blends
+ * two paint values internally, then returns to its ordinary idle frame. */
+export function pulseDominanceLayer(map: mapboxgl.Map, claimIds: readonly string[] = []): void {
+  if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  if (!map.getLayer(CLAIMS_REVEAL) || !claimIds.length) return
+  const ids = [...new Set(claimIds)].slice(0, 4)
+  try {
+    map.setFilter(CLAIMS_REVEAL, ['in', ['get', 'id'], ['literal', ids]] as never)
+    map.setPaintProperty(CLAIMS_REVEAL, 'fill-opacity-transition' as never, { duration: 0, delay: 0 } as never)
+    map.setPaintProperty(CLAIMS_REVEAL, 'fill-opacity', 0.62)
+    window.requestAnimationFrame(() => {
+      try {
+        if (!map.getLayer(CLAIMS_REVEAL)) return
+        map.setPaintProperty(CLAIMS_REVEAL, 'fill-opacity-transition' as never, {
+          duration: 540,
+          delay: 0,
+        } as never)
+        map.setPaintProperty(CLAIMS_REVEAL, 'fill-opacity', 0)
+      } catch { /* style changed between the two beats */ }
+    })
+  } catch { /* map was removed while its camera settled */ }
 }
 
 export function installClaimsLayer(map: mapboxgl.Map) {
@@ -215,6 +242,21 @@ export function installClaimsLayer(map: mapboxgl.Map) {
       // otherwise collapse into a few pixels; settle back to the established
       // city opacity before the close-up texture and shockwave layers appear.
       'fill-opacity': dominanceFillOpacityExpression() as never,
+    },
+  }, claimsInsertBefore(map))
+
+  // A dormant, filtered bloom used only when a camera settles. It never
+  // rebuilds geometry and is capped to four newly visible territories, so the
+  // requested map-pop does not turn panning into a full-board animation.
+  map.addLayer({
+    id: CLAIMS_REVEAL,
+    slot: DOMINANCE_GROUND_SLOT,
+    type: 'fill',
+    source: CLAIMS_SOURCE,
+    filter: ['==', ['get', 'id'], ''] as never,
+    paint: {
+      'fill-color': claimColor('#FF8AC6') as never,
+      'fill-opacity': 0,
     },
   }, claimsInsertBefore(map))
 
@@ -451,6 +493,7 @@ function replaceClaimsBounded(map: mapboxgl.Map, candidates: Map<string, Claim>)
   ranked.sort((a, b) =>
     Number(b.visible) - Number(a.visible)
     || Number(b.recent) - Number(a.recent)
+    || dominancePower(b.claim) - dominancePower(a.claim)
     || b.claim.radiusKm - a.claim.radiusKm
     || b.index - a.index
     || a.claim.id.localeCompare(b.claim.id))
@@ -617,6 +660,8 @@ function pushClaims(map: mapboxgl.Map, options?: { points?: boolean }) {
  *  app's takeover colour instead of painting a literal null. */
 function claimProps(c: Claim): GeoJSON.GeoJsonProperties {
   const props: Record<string, unknown> = { id: c.id, radiusKm: c.radiusKm }
+  if (c.ownerId) props.ownerId = c.ownerId
+  if (Number.isFinite(c.fameScore)) props.fameScore = c.fameScore
   if (c.color) props.color = c.color
   if (c.user) props.user = c.user
   return props

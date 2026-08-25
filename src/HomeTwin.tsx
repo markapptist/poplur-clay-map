@@ -19,8 +19,7 @@ import {
   cubeTransition, holdPreviewMode, onTransitionChanged, screenTransition,
   type CubeTransition, type HoldPreviewMode, type ScreenTransition,
 } from './cubeTransitions'
-import { startEngagementChips, engagementVerb } from './engagement'
-import { onEngagementLogged } from './engagementLog'
+import { startEngagementChips } from './engagement'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
@@ -101,6 +100,7 @@ import {
 } from './radiusLedger'
 import { poplurResourcePool } from './resourcePool'
 import { ownsMainSurface, ownsMapSurface } from './screenOwnership'
+import { applyNativeAccountPrivacy } from './accountPrivacy'
 
 
 /**
@@ -1027,6 +1027,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.removeEventListener('message', onMessage)
     }
   }, [])
+  useEffect(() => {
+    const onNativePrivacy = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        privateAccount?: unknown
+        ghostMode?: unknown
+        ok?: unknown
+      }>).detail ?? {}
+      // A failed refresh must not turn a previously-set private account into
+      // a public-looking local state. Native publishing and Firestore still
+      // fail closed, and the UI keeps the last settled privacy snapshot.
+      if (detail.ok === false) return
+      applyNativeAccountPrivacy(detail)
+    }
+    window.addEventListener('poplur-native-account-privacy', onNativePrivacy)
+    if (isNativeShell()) postNativeEvent({ type: 'requestAccountPrivacy' })
+    return () => window.removeEventListener('poplur-native-account-privacy', onNativePrivacy)
+  }, [])
   const [permissionQueue, setPermissionQueue] = useState<PostLoginPermission[]>(initialPostLoginPermissions)
   // The tilt is asked for on demand: the cube, the profile card and the sway
   // objects each raise MOTION_REQUEST_EVENT the first time they want it, and
@@ -1934,11 +1951,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // map front the embed generates and forwards (and keeps its camera traversal
   // and radius reward, which are map concerns); everywhere else this runs.
   //
-  // demo is ON here even on a phone. The embed disables it on device because a
-  // fake arrival could wake a CAMERA TRAVERSAL while the ambient lease was
-  // trying to park — a map problem. Nothing here moves a camera; it draws a
-  // notice and writes a row. With no live backend yet, demo off would mean a
-  // notifications screen that never changes, which is the reported symptom.
+  // Demo stays in the browser workbench only. Installed apps now read the
+  // persisted Firestore inbox, so generating pretend engagement on a phone
+  // would create a badge for activity that never happened.
   //
   // GENERATOR ONLY (`wire: false`). App's relay instance runs for the whole
   // session in this same document and is the one subscribed to the real
@@ -1949,43 +1964,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // listed both copies, which is how it was found.
   useEffect(() => {
     if (mapMounted) return
-    return startEngagementChips({ demo: true, wire: false })
+    return startEngagementChips({ demo: !isNativeShell(), wire: false })
   }, [mapMounted])
-
-  // ── The outside-app notification has to say what the screen says ──────────
-  //
-  // These were two unrelated systems. The push was
-  // `poplur.daily.radius.insight`: one recurring daily summary built from
-  // Firestore post signals, scheduled on a single reused identifier that each
-  // new one removed. The list you actually open lives here in the web and is
-  // driven by the engagement log. So the same push arrived over and over while
-  // the notifications screen showed something else.
-  //
-  // `.engagement` was always meant to arrive remotely from the
-  // notifyOnEngagement Cloud Function; until that is live nothing arrives at
-  // all. So the row that was just written is forwarded down, and native
-  // schedules it under that row's own id.
-  //
-  // Forwarded from the SHELL because the shell is what writes the log — the
-  // same reason engagement generation moved here when the map iframe stopped
-  // being permanent.
-  useEffect(() => {
-    let lastAt = 0
-    return onEngagementLogged(entries => {
-      const newest = entries[0]          // newest first, as the list renders it
-      if (!newest || newest.at <= lastAt) return
-      lastAt = newest.at
-      postNativeEvent({
-        type: 'notification',
-        // Deterministic, so a resend after a reconnect is recognised as the
-        // same notification rather than stacking a duplicate.
-        id: `engagement-${newest.at}-${newest.user}`,
-        title: newest.user,
-        detail: engagementVerb(newest.kind),
-        kind: newest.kind,
-      })
-    })
-  }, [])
   // Camera uploads use the Map as a focused location picker, not as a normal
   // destination. Keep that intent on the iframe URL for this mount so ClayMap
   // can skip its globe launch before the first frame is drawn. An empty object
@@ -2418,6 +2398,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.dispatchEvent(new CustomEvent('poplur-dm-result', { detail: data }))
     }
 
+    const onNativeNotificationsResult = (event: MessageEvent) => {
+      const data = event.data
+      if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
+      if (data.type !== 'poplurNotifications') return
+      window.dispatchEvent(new CustomEvent('poplur-notifications-result', { detail: data }))
+    }
+
     const onNativeWalletPassResult = (event: MessageEvent) => {
       const data = event.data
       if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
@@ -2442,6 +2429,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-wallet-pass-requested', onWalletPassRequested)
     window.addEventListener('poplur-dm-requested', onDMRequested)
     window.addEventListener('message', onNativeDMResult)
+    window.addEventListener('message', onNativeNotificationsResult)
     window.addEventListener('message', onNativeCheckoutResult)
     window.addEventListener('message', onNativeWalletPassResult)
     return () => {
@@ -2449,6 +2437,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.removeEventListener('poplur-wallet-pass-requested', onWalletPassRequested)
       window.removeEventListener('poplur-dm-requested', onDMRequested)
       window.removeEventListener('message', onNativeDMResult)
+      window.removeEventListener('message', onNativeNotificationsResult)
       window.removeEventListener('message', onNativeCheckoutResult)
       window.removeEventListener('message', onNativeWalletPassResult)
     }

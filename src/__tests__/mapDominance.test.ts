@@ -5,8 +5,11 @@ import {
   DOMINANCE_OVERVIEW_MAX_ZOOM,
   dominanceFillOpacityAtZoom,
   dominanceFillOpacityExpression,
+  dominanceFameScore,
   dominanceInsertBefore,
+  dominanceLeaders,
   dominancePaintOrder,
+  dominancePower,
   effectiveDominanceLevel,
   isDominanceOverviewZoom,
 } from '../mapDominance'
@@ -75,5 +78,34 @@ describe('map dominance overview', () => {
       { id: 'alpha', radiusKm: 20 },
     ])
     expect(ordered.map(claim => claim.id)).toEqual(['alpha', 'zulu'])
+  })
+
+  it('rewards returning attention and lets downvotes reduce fame', () => {
+    const passive = dominanceFameScore(10, { views: 25 })
+    const returning = dominanceFameScore(10, { views: 25, repeatViews: 9 })
+    const rejected = dominanceFameScore(10, { views: 25, repeatViews: 9, downvotes: 20 })
+    expect(returning).toBeGreaterThan(passive)
+    expect(rejected).toBeLessThan(returning)
+    expect(dominanceFameScore(0, { downvotes: 10_000 })).toBe(0)
+  })
+
+  it('uses one fame power contract for overlap order', () => {
+    const quietLarge = { id: 'quiet-large', radiusKm: 30, fameScore: 3_000 }
+    const famousLocal = { id: 'famous-local', radiusKm: 12, fameScore: 9_000 }
+    const ordered = dominancePaintOrder([famousLocal, quietLarge])
+    expect(ordered.map(claim => claim.id)).toEqual(['quiet-large', 'famous-local'])
+    expect(dominancePower(famousLocal)).toBeGreaterThan(dominancePower(quietLarge))
+  })
+
+  it('builds a deterministic fame board and takes the selfie from the top area', () => {
+    const rows = dominanceLeaders([
+      { id: 'a-small', ownerId: 'a', user: '@alpha', name: 'Small', radiusKm: 4, color: '#f00', avatar: '/small.jpg', mine: false, engagement: { upvotes: 2 } },
+      { id: 'a-large', ownerId: 'a', user: '@alpha-renamed', name: 'Large', radiusKm: 20, color: '#f00', avatar: '/large.jpg', mine: false, engagement: { repeatViews: 8 } },
+      { id: 'b', ownerId: 'b', user: '@beta', name: 'Beta', radiusKm: 8, color: '#0af', avatar: '/beta.jpg', mine: false },
+    ], '#F63B9A')
+    expect(rows[0]?.owner).toBe('a')
+    expect(rows[0]?.territories).toBe(2)
+    expect(rows[0]?.topPlace).toBe('Large')
+    expect(rows[0]?.avatar).toBe('/large.jpg')
   })
 })

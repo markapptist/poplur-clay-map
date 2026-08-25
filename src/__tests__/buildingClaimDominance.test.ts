@@ -48,4 +48,17 @@ describe('building claim dominance', () => {
     const ordinary = ['case', true, '#fff', '#000']
     expect(buildingClaimColorExpression([], '#FF4BA1', ordinary)).toBe(ordinary)
   })
+
+  it('keeps the fame winner on top of the same ground and buildings', () => {
+    const claims = [
+      { id: 'quiet-large', center: [0, 0] as [number, number], radiusKm: 30, fameScore: 3_000, color: '#29A6E6' },
+      { id: 'famous-local', center: [0, 0] as [number, number], radiusKm: 12, fameScore: 9_000, color: '#F63B9A' },
+    ]
+    expect(dominantBuildingClaims(claims).map(claim => claim.id)).toEqual([
+      'famous-local',
+      'quiet-large',
+    ])
+    const expression = buildingClaimColorExpression(claims, '#F63B9A', '#C3A67E') as unknown[]
+    expect(expression[2]).toBe('#F63B9A')
+  })
 })

@@ -1723,7 +1723,7 @@
   display: block;
   object-fit: cover;
   transform: translateX(-50%);
-  border: 3px solid #ff4ba7;
+  border: 3px solid var(--dominationColor, #ff4ba7);
   border-radius: 50%;
   background: #170a18;
   box-shadow: 0 3px 10px rgba(32, 2, 24, 0.58), 0 0 0 2px rgba(255, 255, 255, 0.88);
@@ -2061,6 +2061,382 @@
     repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0 7px, transparent 7px 14px),
     linear-gradient(90deg, var(--dominationColor), #74e7ff);
   box-shadow: 0 0 12px var(--dominationColor);
+}
+
+/* ── Live map domination dock ───────────────────────────────────────────────
+   Non-modal by design: the map keeps panning beneath it, and only the glass
+   panel/button take pointer events. A solid translucent material is used
+   instead of backdrop-filter so the default-open window does not keep a blur
+   compositor pass alive above Mapbox on phones. */
+.dominanceDock {
+  position: fixed;
+  left: max(14px, env(safe-area-inset-left, 0px) + 14px);
+  top: calc(env(safe-area-inset-top, 0px) + 118px);
+  z-index: 4200;
+  display: flex;
+  align-items: flex-start;
+  max-width: calc(100vw - 98px);
+  pointer-events: none;
+}
+
+.dominanceDockClosed { max-width: 46px; }
+
+.dominanceSideButton {
+  position: relative;
+  z-index: 2;
+  width: 44px;
+  min-width: 44px;
+  height: 92px;
+  margin-top: 18px;
+  padding: 5px 3px;
+  border: 1px solid rgba(255, 138, 198, .68);
+  border-right: 0;
+  border-radius: 13px 0 0 13px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  background: rgba(21, 10, 19, .94);
+  color: #ff8ac6;
+  box-shadow: -5px 8px 18px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .14);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.dominanceDockClosed .dominanceSideButton {
+  border-right: 1px solid rgba(255, 138, 198, .68);
+  border-radius: 13px;
+}
+
+.dominanceSideButton span {
+  font: 950 25px/.7 system-ui, sans-serif;
+}
+
+.dominanceSideButton b {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font: 950 9px/1 system-ui, sans-serif;
+  letter-spacing: .12em;
+}
+
+.dominanceDock .dominanceBoard {
+  width: min(344px, calc(100vw - 88px));
+  max-height: min(63vh, 610px);
+  max-height: min(63dvh, 610px);
+  overflow: hidden;
+  padding: 12px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at 15% -10%, rgba(255, 138, 198, .24), transparent 36%),
+    rgba(255, 247, 252, .93);
+  border: 1px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 22px 48px rgba(0, 0, 0, .42), 0 0 0 1px rgba(246, 59, 154, .24);
+  pointer-events: auto;
+  animation: dominanceWindowIn .32s cubic-bezier(.16, .84, .24, 1) both;
+}
+
+.dominanceDock .dominanceBoardTop {
+  align-items: center;
+}
+
+.dominanceDock .dominanceBoardTop h2 {
+  font-size: 24px;
+}
+
+.dominanceLeaderNow {
+  min-width: 0;
+  max-width: 132px;
+  overflow: hidden;
+  color: var(--dominationColor, #f63b9a);
+  font-size: 14px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 0 #fff, 0 0 12px color-mix(in srgb, var(--dominationColor, #f63b9a) 44%, transparent);
+  white-space: nowrap;
+  animation: dominanceLeaderSwap .34s cubic-bezier(.16, .82, .24, 1) both;
+}
+
+.dominanceDock .dominanceBoardStats {
+  margin: 10px 0 9px;
+}
+
+.dominanceDock .dominanceList {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #f63b9a transparent;
+  padding-right: 2px;
+}
+
+.dominanceDock .dominanceRow {
+  grid-template-columns: 24px 38px minmax(0, 1fr) auto;
+  grid-template-rows: auto 6px;
+  gap: 5px 8px;
+  padding: 7px 8px;
+  border-left: 3px solid var(--dominationColor);
+  animation: dominanceRowSwap .36s cubic-bezier(.16, .82, .24, 1) both;
+}
+
+.dominanceDock .dominanceRank {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.dominanceAvatar {
+  width: 36px;
+  height: 36px;
+  overflow: hidden;
+  border: 2px solid var(--dominationColor);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #210d1a;
+  color: #fff;
+  box-shadow: 0 0 0 2px #fff, 0 3px 8px rgba(25, 4, 18, .3);
+}
+
+.dominanceAvatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.dominanceAvatar b {
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.dominanceDock .dominanceName strong {
+  color: var(--dominationColor);
+  font-size: 13px;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .94);
+}
+
+.dominanceDock .dominanceName em {
+  font-size: 9px;
+}
+
+.dominanceFame {
+  color: #180913;
+  font: 950 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dominanceFame small {
+  display: block;
+  margin-top: 3px;
+  color: var(--dominationColor);
+  font: 950 7px/1 system-ui, sans-serif;
+  letter-spacing: .11em;
+}
+
+.dominanceDock .dominanceBar {
+  height: 6px;
+}
+
+.dominanceDock .dominanceBar i {
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, .52) 0 6px, transparent 6px 12px),
+    var(--dominationColor);
+}
+
+.dominationTerritoryLabel {
+  position: absolute;
+  left: 50%;
+  bottom: -19px;
+  z-index: 3;
+  max-width: 118px;
+  transform: translateX(-50%);
+  overflow: hidden;
+  color: var(--dominationColor, #f63b9a);
+  font: 950 12px/1 system-ui, sans-serif;
+  letter-spacing: .01em;
+  text-align: center;
+  text-overflow: ellipsis;
+  -webkit-text-stroke: 2px rgba(20, 4, 15, .94);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, .82), 0 0 10px var(--dominationColor, #f63b9a);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.popPinMarkerReveal .popPin > img,
+.popPinMarkerReveal .dominationTerritoryLabel {
+  animation: dominanceMarkerPop .48s cubic-bezier(.16, .82, .24, 1);
+}
+
+.popPinMarkerReveal .popPinSelfie {
+  animation: dominanceSelfiePop .48s cubic-bezier(.16, .82, .24, 1);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Hold-to-pick palette. The full-screen transparent dismiss layer owns exactly
+   one tap, per the interaction contract: tap anywhere and the picker closes. */
+.colorPaletteDismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 4590;
+  pointer-events: auto;
+}
+
+.colorPalette {
+  position: absolute;
+  right: max(64px, env(safe-area-inset-right, 0px) + 64px);
+  bottom: max(84px, env(safe-area-inset-bottom, 0px) + 84px);
+  width: min(286px, calc(100vw - 96px));
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-radius: 16px;
+  background: rgba(255, 247, 252, .96);
+  color: #210d1a;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, .46), 0 0 0 1px rgba(246, 59, 154, .28);
+  pointer-events: auto;
+  animation: dominanceWindowIn .25s cubic-bezier(.16, .84, .24, 1) both;
+}
+
+.colorPalette header strong,
+.colorPalette header span {
+  display: block;
+}
+
+.colorPalette header strong {
+  color: #c92e7d;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: .1em;
+}
+
+.colorPalette header span {
+  margin-top: 3px;
+  color: #704058;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.colorSwatchGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.colorSwatchGrid button {
+  min-width: 0;
+  min-height: 54px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  background: transparent;
+  color: #4a2539;
+  cursor: pointer;
+}
+
+.colorSwatchGrid button i {
+  width: 38px;
+  height: 38px;
+  border: 3px solid rgba(255, 255, 255, .95);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 25%, rgba(255, 255, 255, .88), transparent 25%),
+    var(--swatchColor);
+  box-shadow: 0 0 0 2px rgba(48, 13, 34, .28), 0 6px 12px color-mix(in srgb, var(--swatchColor) 42%, transparent);
+}
+
+.colorSwatchGrid button span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 8px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.colorSwatchGrid button:hover,
+.colorSwatchGrid button:focus-visible,
+.colorSwatchActive {
+  background: rgba(246, 59, 154, .12) !important;
+  outline: 2px solid rgba(246, 59, 154, .62);
+  outline-offset: 1px;
+}
+
+@keyframes dominanceWindowIn {
+  from { opacity: 0; transform: translateX(-10px) scale(.96); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes dominanceLeaderSwap {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes dominanceRowSwap {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes dominanceMarkerPop {
+  0% { opacity: .22; transform: scale(.72); }
+  64% { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes dominanceSelfiePop {
+  0% { opacity: .2; transform: translateX(-50%) scale(.72); }
+  64% { opacity: 1; transform: translateX(-50%) scale(1.12); }
+  100% { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+@media (max-width: 430px) {
+  .dominanceDock {
+    left: max(8px, env(safe-area-inset-left, 0px) + 8px);
+    top: calc(env(safe-area-inset-top, 0px) + 112px);
+  }
+
+  .dominanceDock .dominanceBoard {
+    width: min(304px, calc(100vw - 76px));
+    max-height: min(56dvh, 520px);
+  }
+
+  .dominanceDock .dominanceRow {
+    grid-template-columns: 22px 34px minmax(0, 1fr) auto;
+    padding: 6px;
+  }
+
+  .dominanceAvatar { width: 32px; height: 32px; }
+  .dominanceDock .dominanceBoardStats span { padding: 6px 3px; font-size: 8px; }
+  .dominanceDock .dominanceBoardStats strong { font-size: 11px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dominanceDock .dominanceBoard,
+  .dominanceLeaderNow,
+  .dominanceDock .dominanceRow,
+  .popPinMarkerReveal .popPin > img,
+  .popPinMarkerReveal .dominationTerritoryLabel,
+  .popPinMarkerReveal .popPinSelfie,
+  .colorPalette {
+    animation: none !important;
+  }
 }
 
 @keyframes popPinRadiusGain {

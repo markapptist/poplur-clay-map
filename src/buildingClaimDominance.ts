@@ -13,6 +13,7 @@ export interface BuildingDominanceClaim {
   id: string
   center: [number, number]
   radiusKm: number
+  fameScore?: number
   /** Missing means the signed-in user's current takeover colour. */
   color?: string
 }
@@ -29,7 +30,10 @@ export function dominantBuildingClaims<T extends BuildingDominanceClaim>(
   const boundedLimit = Math.max(0, Math.floor(limit))
   return [...claims]
     .filter(claim => Number.isFinite(claim.radiusKm) && claim.radiusKm > 0)
-    .sort((a, b) => b.radiusKm - a.radiusKm || a.id.localeCompare(b.id))
+    .sort((a, b) =>
+      dominancePower(b) - dominancePower(a)
+      || b.radiusKm - a.radiusKm
+      || a.id.localeCompare(b.id))
     .slice(0, boundedLimit)
 }
 
@@ -81,3 +85,4 @@ export function buildingClaimColorExpression(
   }
   return ['case', ...branches, unclaimedColor]
 }
+import { dominancePower } from './mapDominance'

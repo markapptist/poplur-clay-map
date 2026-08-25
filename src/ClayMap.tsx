@@ -19,10 +19,16 @@ import {
 } from './landmarkMaterials'
 import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
-import { DOMINANCE_OVERVIEW_MAX_ZOOM } from './mapDominance'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer } from './mapClaims'
+import {
+  DOMINANCE_OVERVIEW_MAX_ZOOM,
+  dominanceFameScore,
+  dominanceLeaders,
+  type DominanceEngagement,
+  type DominanceLeader,
+} from './mapDominance'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
-import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
+import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
 import {
   fetchRoute,
   installRouteLayers,
@@ -102,6 +108,8 @@ export interface ClayMapProps {
 /** A pop standing on the map: whose it is, where, and how much it holds. */
 export interface PopPin {
   id: string
+  /** Stable account identity used for aggregation even if the handle changes. */
+  ownerId?: string
   /** '@handle', or null for your own pops */
   user: string | null
   name: string
@@ -111,6 +119,9 @@ export interface PopPin {
   color: string
   /** profile picture shown above the pin. */
   avatar: string | null
+  /** Frequencies used by the fame board. Radius remains the authoritative
+   * geometry and already grows/shrinks from these events in radiusLedger. */
+  engagement?: DominanceEngagement
   /** A short, muted selfie loop that floats above the single primary own pin. */
   selfieVideo?: {
     src: string
@@ -1319,44 +1330,34 @@ const ZOOM_STAGES: ZoomStage[] = [
 const stageForZoom = (z: number): ZoomStage =>
   ZOOM_STAGES.find(s => z < s.below) ?? ZOOM_STAGES[ZOOM_STAGES.length - 1]
 
-interface DominanceLeader {
-  owner: string
-  label: string
-  color: string
-  radiusKm: number
-  topRadiusKm: number
-  territories: number
-  topPlace: string
-  mine: boolean
-}
-
-function dominanceLeaders(pins: readonly PopPin[] | undefined, ownColor: string): DominanceLeader[] {
-  const byOwner = new Map<string, DominanceLeader>()
-  for (const pin of pins ?? []) {
-    const owner = pin.user ?? 'You'
-    const current = byOwner.get(owner)
-    if (!current) {
-      byOwner.set(owner, {
-        owner,
-        label: pin.user ?? 'YOU',
-        color: pin.mine ? ownColor : pin.color,
-        radiusKm: Math.max(0, pin.radiusKm),
-        topRadiusKm: Math.max(0, pin.radiusKm),
-        territories: 1,
-        topPlace: pin.name,
-        mine: pin.mine,
+/** Pins whose claimed ground intersects the camera footprint. The origin can
+ * be off-screen while a large territory still owns the visible area, so this
+ * uses map distance plus radius instead of a centre-in-bounds test. */
+function viewportDominancePins(map: mapboxgl.Map, pins: readonly PopPin[]): PopPin[] {
+  try {
+    const bounds = map.getBounds()
+    const center = map.getCenter()
+    if (!bounds) return [...pins]
+    const viewportRadiusKm = Math.max(
+      center.distanceTo(bounds.getNorthEast()),
+      center.distanceTo(bounds.getSouthWest()),
+    ) / 1000
+    const local = pins.filter(pin =>
+      center.distanceTo(new mapboxgl.LngLat(pin.coords[0], pin.coords[1])) / 1000
+      <= viewportRadiusKm + Math.max(0, pin.radiusKm))
+    if (local.length) return local
+    // Between territories the board should explain who is nearest, not turn
+    // into an empty glass panel. This fallback is bounded before aggregation.
+    return [...pins]
+      .sort((a, b) => {
+        const da = center.distanceTo(new mapboxgl.LngLat(a.coords[0], a.coords[1])) / 1000 - a.radiusKm
+        const db = center.distanceTo(new mapboxgl.LngLat(b.coords[0], b.coords[1])) / 1000 - b.radiusKm
+        return da - db || b.radiusKm - a.radiusKm
       })
-      continue
-    }
-    current.radiusKm += Math.max(0, pin.radiusKm)
-    current.territories += 1
-    if (pin.radiusKm > current.topRadiusKm) {
-      current.topRadiusKm = pin.radiusKm
-      current.topPlace = pin.name
-    }
+      .slice(0, 10)
+  } catch {
+    return [...pins]
   }
-  return [...byOwner.values()]
-    .sort((a, b) => b.radiusKm - a.radiusKm || b.territories - a.territories || a.owner.localeCompare(b.owner))
 }
 
 export default function ClayMap(props: ClayMapProps) {
@@ -1532,14 +1533,100 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
   const zoomProgress = `${((zoomRatio * (zoomRailMetrics.length - zoomRailMetrics.thumb) + zoomRailMetrics.thumb / 2) / zoomRailMetrics.length) * 100}%`
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
-  const [dominanceBoardOpen, setDominanceBoardOpen] = useState(false)
+  const [dominanceBoardOpen, setDominanceBoardOpen] = useState(true)
+  const dominanceBoardOpenRef = useRef(true)
+  dominanceBoardOpenRef.current = dominanceBoardOpen
   const dominanceOverview = zoomValue <= DOMINANCE_OVERVIEW_MAX_ZOOM
-  const dominanceRows = useMemo(() => dominanceLeaders(pins, takeoverTint(PALETTE.pinkHot)), [pins, takeoverFace])
+  const [dominanceViewportPins, setDominanceViewportPins] = useState<readonly PopPin[]>(() => pins ?? [])
+  const [dominanceViewRevision, setDominanceViewRevision] = useState(0)
+  const [dominanceAnnouncement, setDominanceAnnouncement] = useState('')
+  const dominanceSignatureRef = useRef('')
+  const dominancePinsKey = (pins ?? []).map(pin => {
+    const e = pin.engagement
+    return `${pin.id}:${pin.ownerId ?? ''}:${pin.radiusKm}:${pin.color}:${pin.avatar ?? ''}:${e?.views ?? 0}:${e?.repeatViews ?? 0}:${e?.upvotes ?? 0}:${e?.downvotes ?? 0}:${e?.comments ?? 0}`
+  }).join('|')
+  const dominanceRows = useMemo(
+    () => dominanceLeaders(dominanceViewportPins, takeoverTint(PALETTE.pinkHot)),
+    [dominanceViewportPins, takeoverFace],
+  )
   const dominanceTotalKm = dominanceRows.reduce((sum, row) => sum + row.radiusKm, 0)
-  const dominanceMaxKm = dominanceRows[0]?.radiusKm ?? 1
+  const dominanceMaxFame = dominanceRows[0]?.fame ?? 1
   useEffect(() => {
-    if (!dominanceOverview) setDominanceBoardOpen(false)
-  }, [dominanceOverview])
+    const map = mapRef.current
+    const allPins = pins ?? []
+    if (!map || mapEpoch === 0) {
+      setDominanceViewportPins(allPins)
+      return
+    }
+    let sampleTimer = 0
+    let revealFrame = 0
+    const publish = (settled: boolean) => {
+      sampleTimer = 0
+      const nextPins = viewportDominancePins(map, allPins)
+      const nextRows = dominanceLeaders(nextPins, takeoverTint(PALETTE.pinkHot)).slice(0, 10)
+      const signature = nextRows
+        .map(row => `${row.owner}:${row.fame}:${Math.round(row.radiusKm * 10)}`)
+        .join('|')
+      if (signature !== dominanceSignatureRef.current) {
+        dominanceSignatureRef.current = signature
+        setDominanceViewportPins(nextPins)
+        setDominanceViewRevision(revision => revision + 1)
+      }
+      if (!settled) return
+      const leader = nextRows[0]
+      setDominanceAnnouncement(leader
+        ? `${leader.label} leads this area with ${leader.fame.toLocaleString()} fame.`
+        : 'No conquered areas are in view.')
+      pulseDominanceLayer(map, nextPins.slice(0, 4).map(pin => pin.id))
+      if (revealFrame) window.cancelAnimationFrame(revealFrame)
+      revealFrame = window.requestAnimationFrame(() => {
+        const roots = [...(containerRef.current?.querySelectorAll<HTMLElement>(`.${styles.popPinMarker}`) ?? [])]
+        roots.forEach(root => root.classList.remove(styles.popPinMarkerReveal))
+        void containerRef.current?.offsetWidth
+        roots.forEach(root => root.classList.add(styles.popPinMarkerReveal))
+      })
+    }
+    const onMove = () => {
+      if (!dominanceBoardOpenRef.current || sampleTimer) return
+      sampleTimer = window.setTimeout(() => publish(false), 120)
+    }
+    const onMoveEnd = () => {
+      if (sampleTimer) window.clearTimeout(sampleTimer)
+      publish(true)
+    }
+    publish(true)
+    map.on('move', onMove)
+    map.on('moveend', onMoveEnd)
+    return () => {
+      if (sampleTimer) window.clearTimeout(sampleTimer)
+      if (revealFrame) window.cancelAnimationFrame(revealFrame)
+      map.off('move', onMove)
+      map.off('moveend', onMoveEnd)
+    }
+  }, [dominancePinsKey, mapEpoch, mapRef, takeoverFace])
+
+  const colorCircleRef = useRef<HTMLButtonElement>(null)
+  const colorHoldTimerRef = useRef(0)
+  const colorPressRef = useRef<{ pointerId: number; x: number; y: number } | null>(null)
+  const suppressColorClickRef = useRef(false)
+  const [colorPaletteOpen, setColorPaletteOpen] = useState(false)
+  const colorSwatches = useMemo(() => takeoverSwatches(), [])
+  const closeColorPalette = useCallback((restoreFocus = false) => {
+    setColorPaletteOpen(false)
+    if (restoreFocus) window.requestAnimationFrame(() => colorCircleRef.current?.focus())
+  }, [])
+  useEffect(() => () => window.clearTimeout(colorHoldTimerRef.current), [])
+  useEffect(() => {
+    if (!colorPaletteOpen) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeColorPalette(true)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [colorPaletteOpen, closeColorPalette])
+  useEffect(() => {
+    if (controlsObscured) setColorPaletteOpen(false)
+  }, [controlsObscured])
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const composeAtRef = useRef(composeAt)
@@ -4796,32 +4883,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     // only holders whose ground is actually on screen, capped, and ranked so
     // the cap can never drop the regional holders that ARE the board.
     //
-    // Planet zoom draws NO pins deliberately: at zoom 2 every face projects
-    // into a few pixels and thirty of them read as noise over the dots that
-    // are already saying who owns what.
-    const PIN_MIN_ZOOM = 3.2
     const PIN_MAX_LIVE = 18
     const visiblePins = (): PopPin[] => {
       const zoom = map.getZoom()
-      if (zoom < PIN_MIN_ZOOM) return []
-      const b = map.getBounds()
-      if (!b) return list.slice(0, PIN_MAX_LIVE)
-      // A pop's PIN stands on its centre, but its ground extends radiusKm
-      // around it — pad the test so a holder whose territory fills the screen
-      // still gets a face while its centre is just off the edge.
-      const pad = (pin: PopPin) => pin.radiusKm / 111
-      const inView = list.filter(pin => {
-        const d = pad(pin)
-        return pin.coords[0] >= b.getWest() - d && pin.coords[0] <= b.getEast() + d
-          && pin.coords[1] >= b.getSouth() - d && pin.coords[1] <= b.getNorth() + d
-      })
+      const maxLive = zoom < 3.2 ? 10 : PIN_MAX_LIVE
+      const inView = viewportDominancePins(map, list)
       // Dominance first: world holders, then by how much ground they hold.
       // Your own pops sort with the rest — on a shared board the question is
       // who leads here, and pinning yours to the top would answer a different
       // one.
       inView.sort((a, c) =>
-        (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0) || c.radiusKm - a.radiusKm)
-      return inView.slice(0, PIN_MAX_LIVE)
+        dominanceFameScore(c.radiusKm, c.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
+        || (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0)
+        || c.radiusKm - a.radiusKm)
+      return inView.slice(0, maxLive)
     }
 
     // The pin's look follows the render tier: dimensional in 3D, flat in 2D.
@@ -4848,8 +4923,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       // restarted five CSS transitions on every map frame.
       const markerRoot = document.createElement('div')
       markerRoot.className = MAP_2D || SHARED_ADAPTIVE_MAP
-        ? `${styles.popPinMarker} ${styles.popPinMarkerFlat}`
-        : styles.popPinMarker
+        ? `${styles.popPinMarker} ${styles.popPinMarkerFlat} ${styles.popPinMarkerReveal}`
+        : `${styles.popPinMarker} ${styles.popPinMarkerReveal}`
+      markerRoot.dataset.dominationOwner = pin.ownerId ?? pin.user ?? 'self'
+      markerRoot.style.setProperty('--dominationColor', pin.color)
       const el = document.createElement('button')
       el.className = MAP_2D || SHARED_ADAPTIVE_MAP ? `${styles.popPin} ${styles.popPinFlat}` : styles.popPin
       el.type = 'button'
@@ -4862,6 +4939,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       img.draggable = false
       el.appendChild(img)
       markerRoot.appendChild(el)
+      const ownerLabel = document.createElement('span')
+      ownerLabel.className = styles.dominationTerritoryLabel
+      ownerLabel.textContent = pin.user ?? 'YOU'
+      markerRoot.appendChild(ownerLabel)
       // Every one of your pins wears the same static profile face. A still is
       // both clearer ownership and dramatically cheaper than cloning the
       // profile-video decoder above every visible claim.
@@ -5206,76 +5287,75 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           BACKGROUND behind the focal subject blurs (bokeh), not the screen
           edges — that effect is on the work order for capable devices. */}
 
-      {dominanceOverview && dominanceRows.length > 0 && !controlsObscured && (
-        <section className={styles.dominanceCard} aria-label="Map domination preview">
-          <div className={styles.dominanceHeader}>
-            <span>DOMINATION LIVE</span>
-            <strong>{Math.round(dominanceTotalKm).toLocaleString()} km</strong>
-          </div>
+      {dominanceRows.length > 0 && !controlsObscured && (
+        <div className={dominanceBoardOpen ? styles.dominanceDock : `${styles.dominanceDock} ${styles.dominanceDockClosed}`}>
           <button
             type="button"
-            className={styles.dominanceMapButton}
+            className={styles.dominanceSideButton}
+            aria-label={dominanceBoardOpen ? 'Close domination live' : 'Open domination live'}
+            aria-expanded={dominanceBoardOpen}
+            aria-controls="poplur-domination-live"
             onClick={() => {
               playPop()
-              setDominanceBoardOpen(true)
+              setDominanceBoardOpen(open => !open)
             }}
-            aria-label="Open domination leaderboard"
           >
-            {dominanceRows.slice(0, 3).map((row, index) => (
-              <span className={styles.dominanceMiniRow} key={row.owner}>
-                <i>{index + 1}</i>
-                <b style={{ '--dominationColor': row.color } as React.CSSProperties} />
-                <span>{row.label}</span>
-                <em>{Math.round(row.radiusKm).toLocaleString()} km</em>
-              </span>
-            ))}
+            <span aria-hidden="true">{dominanceBoardOpen ? '‹' : '›'}</span>
+            <b>FAME</b>
           </button>
-        </section>
-      )}
-
-      {dominanceBoardOpen && dominanceOverview && (
-        <div className={styles.dominanceBackdrop} role="presentation" onClick={() => setDominanceBoardOpen(false)}>
-          <section
-            className={styles.dominanceBoard}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="poplur-domination-title"
-            onClick={event => event.stopPropagation()}
-          >
-            <header className={styles.dominanceBoardTop}>
-              <div>
-                <span>MAP DOMINATION</span>
-                <h2 id="poplur-domination-title">Conquer Board</h2>
+          {dominanceBoardOpen && (
+            <section
+              id="poplur-domination-live"
+              className={styles.dominanceBoard}
+              aria-labelledby="poplur-domination-title"
+            >
+              <header className={styles.dominanceBoardTop}>
+                <div>
+                  <span>{dominanceOverview ? 'WORLD' : 'LOCAL'} · DOMINATION LIVE</span>
+                  <h2 id="poplur-domination-title">Conquer Board</h2>
+                </div>
+                <strong
+                  key={`leader-${dominanceRows[0]?.owner}-${dominanceViewRevision}`}
+                  className={styles.dominanceLeaderNow}
+                  style={{ '--dominationColor': dominanceRows[0]?.color } as React.CSSProperties}
+                >
+                  {dominanceRows[0]?.label}
+                </strong>
+              </header>
+              <div className={styles.dominanceBoardStats}>
+                <span><strong>{dominanceRows.length}</strong> in view</span>
+                <span><strong>{Math.round(dominanceTotalKm).toLocaleString()}</strong> km held</span>
+                <span><strong>{dominanceRows[0]?.fame.toLocaleString() ?? '—'}</strong> top fame</span>
               </div>
-              <button type="button" aria-label="Close domination leaderboard" onClick={() => setDominanceBoardOpen(false)}>×</button>
-            </header>
-            <div className={styles.dominanceBoardStats}>
-              <span><strong>{dominanceRows.length}</strong> holders</span>
-              <span><strong>{Math.round(dominanceTotalKm).toLocaleString()}</strong> km held</span>
-              <span><strong>{dominanceRows[0]?.label ?? '—'}</strong> leading</span>
-            </div>
-            <div className={styles.dominanceList}>
-              {dominanceRows.slice(0, 8).map((row, index) => (
-                <article className={styles.dominanceRow} key={row.owner}>
-                  <span className={styles.dominanceRank}>{index + 1}</span>
-                  <span className={styles.dominanceSwatch} style={{ '--dominationColor': row.color } as React.CSSProperties} />
-                  <span className={styles.dominanceName}>
-                    <strong>{row.label}</strong>
-                    <em>{row.territories} {row.territories === 1 ? 'territory' : 'territories'} · top: {row.topPlace}</em>
-                  </span>
-                  <span className={styles.dominanceKm}>{Math.round(row.radiusKm).toLocaleString()} km</span>
-                  <span className={styles.dominanceBar} aria-hidden="true">
-                    <i
-                      style={{
-                        '--dominationColor': row.color,
-                        width: `${Math.max(8, (row.radiusKm / dominanceMaxKm) * 100)}%`,
-                      } as React.CSSProperties}
-                    />
-                  </span>
-                </article>
-              ))}
-            </div>
-          </section>
+              <div className={styles.dominanceList}>
+                {dominanceRows.slice(0, 10).map((row: DominanceLeader, index) => (
+                  <article
+                    className={styles.dominanceRow}
+                    key={`${row.owner}-${dominanceViewRevision}`}
+                    style={{ '--dominationColor': row.color } as React.CSSProperties}
+                  >
+                    <span className={styles.dominanceRank}>{index + 1}</span>
+                    <span className={styles.dominanceAvatar}>
+                      {row.avatar
+                        ? <img src={row.avatar} alt="" draggable={false} />
+                        : <b aria-hidden="true">{row.label.replace('@', '').slice(0, 1).toUpperCase()}</b>}
+                    </span>
+                    <span className={styles.dominanceName}>
+                      <strong>{row.label}</strong>
+                      <em>{row.topPlace} · {row.territories} {row.territories === 1 ? 'area' : 'areas'}</em>
+                    </span>
+                    <span className={styles.dominanceFame}>
+                      {row.fame.toLocaleString()}<small>FAME</small>
+                    </span>
+                    <span className={styles.dominanceBar} aria-hidden="true">
+                      <i style={{ width: `${Math.max(8, (row.fame / dominanceMaxFame) * 100)}%` }} />
+                    </span>
+                  </article>
+                ))}
+              </div>
+              <span className={styles.srOnly} aria-live="polite">{dominanceAnnouncement}</span>
+            </section>
+          )}
         </div>
       )}
 
@@ -5674,17 +5754,98 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           buildings you hold pop (with the house sound) and re-mold in the new
           colour. The map-side subscription owns that answer; this button only
           spins the wheel. */}
+      {colorPaletteOpen && (
+        <div
+          className={styles.colorPaletteDismiss}
+          role="presentation"
+          onPointerDown={() => closeColorPalette(false)}
+        >
+          <section
+            className={styles.colorPalette}
+            role="dialog"
+            aria-label="Choose your domination colour"
+            onPointerDown={event => event.stopPropagation()}
+          >
+            <header>
+              <strong>YOUR COLOUR</strong>
+              <span>Terrain, labels and fame update together</span>
+            </header>
+            <div className={styles.colorSwatchGrid}>
+              {colorSwatches.map(swatch => (
+                <button
+                  type="button"
+                  key={swatch.name}
+                  className={swatch.color.toLowerCase() === takeoverFace.toLowerCase() ? styles.colorSwatchActive : undefined}
+                  style={{ '--swatchColor': swatch.color } as React.CSSProperties}
+                  aria-label={swatch.name}
+                  aria-pressed={swatch.color.toLowerCase() === takeoverFace.toLowerCase()}
+                  onClick={() => {
+                    setTakeoverColor(swatch.color)
+                    playPop()
+                    closeColorPalette(true)
+                  }}
+                >
+                  <i />
+                  <span>{swatch.name.replace('Poplur ', '')}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
       <button
+        ref={colorCircleRef}
         type="button"
         key={`takeover-${takeoverFace}`}
         className={controlsObscured ? `${styles.colorCircle} ${styles.mapControlsObscured}` : styles.colorCircle}
         style={{ '--takeoverFace': takeoverFace } as React.CSSProperties}
-        aria-label="Change your takeover colour"
+        aria-label="Change your takeover colour. Hold to choose a colour"
+        aria-haspopup="dialog"
+        aria-expanded={colorPaletteOpen}
         aria-hidden={controlsObscured ? true : undefined}
         title="Takeover colour"
         disabled={controlsObscured}
         tabIndex={controlsObscured ? -1 : 0}
-        onClick={() => randomizeTakeoverColor()}
+        onPointerDown={event => {
+          window.clearTimeout(colorHoldTimerRef.current)
+          colorPressRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+          colorHoldTimerRef.current = window.setTimeout(() => {
+            if (!colorPressRef.current) return
+            suppressColorClickRef.current = true
+            colorPressRef.current = null
+            setColorPaletteOpen(true)
+            playPop()
+          }, 520)
+        }}
+        onPointerMove={event => {
+          const press = colorPressRef.current
+          if (!press || press.pointerId !== event.pointerId) return
+          if (Math.hypot(event.clientX - press.x, event.clientY - press.y) <= 12) return
+          window.clearTimeout(colorHoldTimerRef.current)
+          colorPressRef.current = null
+        }}
+        onPointerUp={() => {
+          window.clearTimeout(colorHoldTimerRef.current)
+          colorPressRef.current = null
+        }}
+        onPointerCancel={() => {
+          window.clearTimeout(colorHoldTimerRef.current)
+          colorPressRef.current = null
+        }}
+        onClick={event => {
+          if (suppressColorClickRef.current) {
+            suppressColorClickRef.current = false
+            event.preventDefault()
+            return
+          }
+          // Keyboard users cannot perform a long press; their activation opens
+          // the same explicit picker instead of gambling on a random hue.
+          if (event.detail === 0) {
+            setColorPaletteOpen(true)
+            return
+          }
+          randomizeTakeoverColor()
+        }}
       />
 
       {/* FOV slider moved into the HOLD MENU (declutter): its entry cycles

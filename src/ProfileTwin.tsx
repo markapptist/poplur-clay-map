@@ -12,16 +12,18 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
-import { onEngagementLogged, unreadEngagementCount, markEngagementSeen } from './engagementLog'
+import { markEngagementSeen } from './engagementLog'
 // The notification list is shared with the NOTIFICATIONS subscreen — one list,
 // one set of cleared rows. See notifications.ts.
 import {
   listNotifications,
+  markNotificationsSeen,
   onNotificationsChanged,
   dismissNotification as clearNotification,
   notificationKey,
   NOTIF_ICON_LABEL,
   TILE_BY_POP_ID,
+  unreadNotificationCount,
   type Notification,
   type NotificationKind,
 } from './notifications'
@@ -666,11 +668,11 @@ export default function ProfileTwin({
   useEffect(() => onNotificationsChanged(setNotifs), [])
   // Drives the bell's dot. The dot used to render unconditionally, so it was on
   // before anything had happened and opening the list could not clear it.
-  const [unreadNotifs, setUnreadNotifs] = useState(() => unreadEngagementCount())
+  const [unreadNotifs, setUnreadNotifs] = useState(() => unreadNotificationCount())
   // markEngagementSeen() broadcasts through this same listener, so the count
   // drops to zero here the moment the list is opened — including when it is
   // the subscreen, in another component, that opened it.
-  useEffect(() => onEngagementLogged(() => setUnreadNotifs(unreadEngagementCount())), [])
+  useEffect(() => onNotificationsChanged(() => setUnreadNotifs(unreadNotificationCount())), [])
   const [swipedNotif, setSwipedNotif] = useState<string | null>(null)
   const notifSwipeRef = useRef<{ key: string; x0: number; moved: boolean } | null>(null)
   /** The message row a notification just sent you to, lit like a grid tile. */
@@ -1117,6 +1119,7 @@ export default function ProfileTwin({
     // Reading the list is what clears the badge. Marked on OPEN rather than on
     // close so the dot goes out as the panel springs down, and anything that
     // lands while it is open stays counted for the next visit.
+    markNotificationsSeen()
     markEngagementSeen()
     // One pop per notification, staggered with the rows rather than a single
     // chime for the sheet: the count is the information, so hearing five is
@@ -1189,8 +1192,21 @@ export default function ProfileTwin({
     }
     if (target.mode === 'media') {
       setLitMessage(null)
-      setLitTiles(new Set([target.tile]))
+      const resolvedTile = typeof target.tile === 'number'
+        ? target.tile
+        : target.postId
+          ? profilePostsRef.current.findIndex(post => post.id === target.postId)
+          : -1
+      setLitTiles(resolvedTile >= 0 ? new Set([resolvedTile]) : null)
     } else {
+      if (target.threadId) {
+        window.dispatchEvent(new CustomEvent('poplur-open-dm', {
+          detail: { threadId: target.threadId },
+        }))
+        setLitTiles(null)
+        setLitMessage(null)
+        return
+      }
       setLitTiles(null)
       setLitMessage(target.who)
     }

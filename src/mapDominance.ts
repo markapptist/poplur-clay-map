@@ -14,6 +14,137 @@ const DOMINANCE_DETAIL_FILL_OPACITY = 0.78
 
 export type DominanceLevel = 'mine' | 'others' | 'all'
 
+/** Engagement signals that make a piece of ground culturally important rather
+ * than merely large. The radius ledger remains the authority for the actual
+ * kilometres held; these signals decide how that reach reads on the fame
+ * board when two accounts hold a similar amount of ground. */
+export interface DominanceEngagement {
+  views?: number
+  repeatViews?: number
+  upvotes?: number
+  downvotes?: number
+  comments?: number
+  profileVisits?: number
+}
+
+export interface DominancePinLike {
+  id: string
+  ownerId?: string
+  user: string | null
+  name: string
+  radiusKm: number
+  color: string
+  avatar: string | null
+  mine: boolean
+  engagement?: DominanceEngagement
+}
+
+export interface DominanceLeader {
+  owner: string
+  label: string
+  color: string
+  avatar: string | null
+  radiusKm: number
+  topRadiusKm: number
+  territories: number
+  topPlace: string
+  mine: boolean
+  fame: number
+  engagement: Required<DominanceEngagement>
+}
+
+const count = (value: number | undefined): number =>
+  Number.isFinite(value) ? Math.max(0, value ?? 0) : 0
+
+export function normalizedDominanceEngagement(
+  engagement: DominanceEngagement | undefined,
+): Required<DominanceEngagement> {
+  return {
+    views: count(engagement?.views),
+    repeatViews: count(engagement?.repeatViews),
+    upvotes: count(engagement?.upvotes),
+    downvotes: count(engagement?.downvotes),
+    comments: count(engagement?.comments),
+    profileVisits: count(engagement?.profileVisits),
+  }
+}
+
+/** Fame deliberately uses diminishing returns for passive views and gives
+ * returning viewers more weight: one viral glance should not permanently beat
+ * an area whose audience keeps coming back. Downvotes are the strongest single
+ * negative signal and can never drive the public score below zero. */
+export function dominanceFameScore(
+  radiusKm: number,
+  engagement?: DominanceEngagement,
+): number {
+  const e = normalizedDominanceEngagement(engagement)
+  const reach = Math.max(0, Number.isFinite(radiusKm) ? radiusKm : 0) * 100
+  const attention = Math.sqrt(e.views) * 22 + Math.sqrt(e.repeatViews) * 46
+  const approval = e.upvotes * 12 + e.comments * 24 + e.profileVisits * 18
+  const rejection = e.downvotes * 20
+  return Math.max(0, Math.round(reach + attention + approval - rejection))
+}
+
+/** One ordering key shared by ground, buildings, retention and labels. */
+export function dominancePower(item: { radiusKm: number; fameScore?: number }): number {
+  return Number.isFinite(item.fameScore)
+    ? Math.max(0, item.fameScore ?? 0)
+    : Math.max(0, Number.isFinite(item.radiusKm) ? item.radiusKm : 0) * 100
+}
+
+/** Aggregate pins by owner for the live board. Radius is summed because each
+ * origin is independent territory; fame is scored per origin before summing so
+ * an engaged small neighbourhood is not erased by a single huge quiet disc. */
+export function dominanceLeaders(
+  pins: readonly DominancePinLike[] | undefined,
+  ownColor: string,
+): DominanceLeader[] {
+  const byOwner = new Map<string, DominanceLeader>()
+  for (const pin of pins ?? []) {
+    const owner = pin.ownerId ?? pin.user ?? 'self'
+    const radiusKm = Math.max(0, Number.isFinite(pin.radiusKm) ? pin.radiusKm : 0)
+    const engagement = normalizedDominanceEngagement(pin.engagement)
+    const fame = dominanceFameScore(radiusKm, engagement)
+    const current = byOwner.get(owner)
+    if (!current) {
+      byOwner.set(owner, {
+        owner,
+        label: pin.user ?? 'YOU',
+        color: pin.mine ? ownColor : pin.color,
+        avatar: pin.avatar,
+        radiusKm,
+        topRadiusKm: radiusKm,
+        territories: 1,
+        topPlace: pin.name,
+        mine: pin.mine,
+        fame,
+        engagement,
+      })
+      continue
+    }
+    current.radiusKm += radiusKm
+    current.territories += 1
+    current.fame += fame
+    current.avatar ||= pin.avatar
+    current.engagement.views += engagement.views
+    current.engagement.repeatViews += engagement.repeatViews
+    current.engagement.upvotes += engagement.upvotes
+    current.engagement.downvotes += engagement.downvotes
+    current.engagement.comments += engagement.comments
+    current.engagement.profileVisits += engagement.profileVisits
+    if (radiusKm > current.topRadiusKm) {
+      current.topRadiusKm = radiusKm
+      current.topPlace = pin.name
+      if (pin.avatar) current.avatar = pin.avatar
+    }
+  }
+  return [...byOwner.values()].sort((a, b) =>
+    b.fame - a.fame
+    || b.radiusKm - a.radiusKm
+    || b.territories - a.territories
+    || a.owner.localeCompare(b.owner))
+}
+
 export function isDominanceOverviewZoom(zoom: number): boolean {
   return Number.isFinite(zoom) && zoom <= DOMINANCE_OVERVIEW_MAX_ZOOM
 }
@@ -70,8 +201,11 @@ export function dominanceFillOpacityAtZoom(zoom: number): number {
  * the larger radius paints last and therefore owns every overlap. The id
  * tie-break keeps equal-radius fixtures deterministic across reloads.
  */
-export function dominancePaintOrder<T extends { id: string; radiusKm: number }>(
+export function dominancePaintOrder<T extends { id: string; radiusKm: number; fameScore?: number }>(
   list: Iterable<T>,
 ): T[] {
-  return [...list].sort((a, b) => a.radiusKm - b.radiusKm || a.id.localeCompare(b.id))
+  return [...list].sort((a, b) =>
+    dominancePower(a) - dominancePower(b)
+    || a.radiusKm - b.radiusKm
+    || a.id.localeCompare(b.id))
 }

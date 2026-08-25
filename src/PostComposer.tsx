@@ -22,9 +22,15 @@ import {
   POST_RIGHTS_VERSION,
   POST_SCHEMA_VERSION,
   publicCoordinate,
+  publicCoordinateCell,
   validatePublishPrivacy,
   type PostLocationVisibility,
 } from './publishing'
+import {
+  accountPrivacySnapshot,
+  hidesPublicPostOrigin,
+  onAccountPrivacyChange,
+} from './accountPrivacy'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -160,7 +166,10 @@ export default function PostComposer({
   const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
   const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
   const [radiusKm, setRadiusKm] = useState(target?.radiusKm ?? 3)
-  const [locationVisibility, setLocationVisibility] = useState<PostLocationVisibility>('approximate')
+  const [accountPrivacy, setAccountPrivacy] = useState(accountPrivacySnapshot)
+  const locationVisibility: PostLocationVisibility = hidesPublicPostOrigin(accountPrivacy)
+    ? 'hidden'
+    : 'approximate'
   const [rightsAttested, setRightsAttested] = useState(false)
   const [posted, setPosted] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -175,6 +184,8 @@ export default function PostComposer({
   const [uploadNote, setUploadNote] = useState<string | null>(null)
   const [publishError, setPublishError] = useState<{ message: string; retryable: boolean } | null>(null)
   const filterCss = AR_FILTERS.find(f => f.id === filterId)?.css ?? 'none'
+
+  useEffect(() => onAccountPrivacyChange(setAccountPrivacy), [])
 
   // The cube's back: one screen at a time, closing from the first. Matches
   // the Escape key exactly.
@@ -421,7 +432,11 @@ export default function PostComposer({
       channelId,
       caption,
       usedAI,
-      target: target && { ...target, radiusKm },
+      // A hidden-origin post remains visible in the feed/profile, but it must
+      // not paint a public claim or hand its chosen map point to another UI.
+      target: target && locationVisibility === 'approximate'
+        ? { ...target, radiusKm }
+        : undefined,
       destination,
       postId: postIdRef.current,
       audience: 'public',
@@ -464,17 +479,34 @@ export default function PostComposer({
           effectAssetTaskId: effectAsset?.taskId,
           effectAssetPrompt: effectAsset?.prompt,
           usedAI,
-          latitude: target ? publicCoordinate(target.lat, locationVisibility) : undefined,
-          longitude: target ? publicCoordinate(target.lng, locationVisibility) : undefined,
+          // Exact targets cross only this owner-authenticated native bridge and
+          // are written to users/{uid}/postLocations. Public post fields below
+          // are either a verifiable coarse cell or absent altogether.
+          targetLatitude: target?.lat,
+          targetLongitude: target?.lng,
+          latitude: target && locationVisibility === 'approximate'
+            ? publicCoordinate(target.lat)
+            : undefined,
+          longitude: target && locationVisibility === 'approximate'
+            ? publicCoordinate(target.lng)
+            : undefined,
+          latitudeCell: target && locationVisibility === 'approximate'
+            ? publicCoordinateCell(target.lat)
+            : undefined,
+          longitudeCell: target && locationVisibility === 'approximate'
+            ? publicCoordinateCell(target.lng)
+            : undefined,
           radiusKm: target ? radiusKm : undefined,
           audience: 'public',
           locationVisibility,
+          privateAccount: accountPrivacy.privateAccount,
+          ghostMode: accountPrivacy.ghostMode,
           rightsAttested: true,
           rightsAttestationVersion: POST_RIGHTS_VERSION,
           destination,
         })
         await uploadResult
-        if (caption.trim() && target) {
+        if (caption.trim() && target && locationVisibility === 'approximate') {
           const attachment: NewsMediaAttachment = {
             kind: media.kind,
             src: media.src,
@@ -482,8 +514,8 @@ export default function PostComposer({
           }
           dropNewsMessage({
             body: caption.trim(),
-            lat: publicCoordinate(target.lat, locationVisibility),
-            lng: publicCoordinate(target.lng, locationVisibility),
+            lat: publicCoordinate(target.lat),
+            lng: publicCoordinate(target.lng),
             radiusKm,
             media: [attachment],
           })
@@ -833,19 +865,15 @@ export default function PostComposer({
           <div className={styles.publishDisclosure} aria-label="Post visibility">
             <span><b>Audience</b><strong>Everyone</strong></span>
             <span>
-              <b>Location shown</b>
-              <select
-                value={locationVisibility}
-                onChange={event => setLocationVisibility(event.target.value as PostLocationVisibility)}
-              >
-                <option value="approximate">Approximate area</option>
-                <option value="exact">Exact place</option>
-              </select>
+              <b>Map origin</b>
+              <strong>{locationVisibility === 'hidden' ? 'Hidden' : 'Approximate area'}</strong>
             </span>
             <small>
-              {locationVisibility === 'approximate'
-                ? 'Your public location is rounded to roughly a city block.'
-                : 'People can see the exact spot selected on the map.'}
+              {accountPrivacy.privateAccount
+                ? 'Private Account hides where this post came from. The post and profile stay visible.'
+                : accountPrivacy.ghostMode
+                  ? 'Ghost Mode hides the map origin for all your posts while it is on.'
+                  : 'Only a coarse map area is public. Your exact chosen point is never shown.'}
             </small>
           </div>
           <label className={styles.rightsRow}>
@@ -893,7 +921,7 @@ export default function PostComposer({
               <div className={styles.confirmedMiniMap} aria-label="Confirmed post location">
                 <i /><i /><i /><i /><i />
                 <img src="sprites/poplur_pin_lite_y0_p0_s256.png" alt="Confirmed location" />
-                <span><b>CONFIRMED LOCATION</b><small>{target.lat.toFixed(4)}, {target.lng.toFixed(4)}</small></span>
+                <span><b>CONFIRMED LOCATION</b><small>Selected map point</small></span>
               </div>
             )}
           </section>

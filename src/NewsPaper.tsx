@@ -696,7 +696,6 @@ export default function NewsPaper({ onClose, bindBack }: {
       </div>
 
       {detail && (() => {
-        const [lng, lat] = coordsFor(detail)
         const plate = snapshotFor(detail)
         return (
           <div className={styles.detail} role="dialog" aria-label={`${detail.who}'s post`}>
@@ -722,7 +721,9 @@ export default function NewsPaper({ onClose, bindBack }: {
               {detail.media?.length ? <EntryMedia media={detail.media} large /> : null}
               <p className={styles.detailWhen}>{detail.when} ago</p>
 
-              {/* Where it reaches, and where it was actually dropped. */}
+              {/* Reach stays useful without printing a coordinate pair that can
+                  be copied into another map. Public posts show only an area;
+                  private/ghost posts arrive without a public origin at all. */}
               <dl className={styles.detailFacts}>
                 <div>
                   <dt>RADIUS</dt>
@@ -734,7 +735,7 @@ export default function NewsPaper({ onClose, bindBack }: {
                 </div>
                 <div>
                   <dt>POSTED AT</dt>
-                  <dd className={styles.detailCoords}>{lat.toFixed(4)}, {lng.toFixed(4)}</dd>
+                  <dd className={styles.detailCoords}>Approximate map area</dd>
                 </div>
               </dl>
 

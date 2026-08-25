@@ -73,9 +73,9 @@ import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
-import { radiusDeltaForChannel } from './radiusLedger'
+import { radiusDeltaForChannel, radiusEngagementForChannel } from './radiusLedger'
 import { contentPostId, listPostings, onPostedContentChange, radiusKmFor, POSTINGS_KEY } from './postedContent'
-import { effectiveDominanceLevel } from './mapDominance'
+import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
 
 /** The shipped games by id, so a dropped game's claim can wear its title on
  *  the pin. A tiny local map rather than an import of GamesScreen: this
@@ -2132,8 +2132,13 @@ export default function App() {
       try {
         seedClaims(map, POIS.map(poi => ({
           id: `pop-${poi.id}`,
+          ownerId: 'self',
           center: poi.coords as [number, number],
           radiusKm: livePoiRadiusKm(poi),
+          fameScore: dominanceFameScore(
+            livePoiRadiusKm(poi),
+            radiusEngagementForChannel(poi.channel),
+          ),
         })))
       } catch { /* map torn down */ }
     }
@@ -2205,7 +2210,13 @@ export default function App() {
     const map = mapRef.current
     if (map) {
       try {
-        setClaim(map, { id: claimId, center: poi.coords as [number, number], radiusKm: nextRadiusKm })
+        setClaim(map, {
+          id: claimId,
+          ownerId: 'self',
+          center: poi.coords as [number, number],
+          radiusKm: nextRadiusKm,
+          fameScore: dominanceFameScore(nextRadiusKm, radiusEngagementForChannel(poi.channel)),
+        })
       } catch { /* style can be rebuilding; persisted value is used on remount */ }
     }
     if (openedPinRef.current === claimId) {
@@ -2233,8 +2244,13 @@ export default function App() {
           : effectiveLevel === 'others' ? [] : [
             ...POIS.map(poi => ({
               id: `pop-${poi.id}`,
+              ownerId: 'self',
               center: poi.coords as [number, number],
               radiusKm: livePoiRadiusKm(poi),
+              fameScore: dominanceFameScore(
+                livePoiRadiusKm(poi),
+                radiusEngagementForChannel(poi.channel),
+              ),
             })),
             ...persisted,
           ])
@@ -2250,8 +2266,10 @@ export default function App() {
       try {
         setClaimGroup(map, 'others', effectiveLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
           id: pop.id,
+          ownerId: pop.user,
           center: pop.coords,
           radiusKm: pop.radiusKm,
+          fameScore: dominanceFameScore(pop.radiusKm),
           color: pop.color,
           user: pop.user,
         })))
@@ -2343,10 +2361,12 @@ export default function App() {
   const mapPins = useMemo(() => {
     const mine = popLevel === 'others' ? [] : POIS.map(poi => ({
       id: `pop-${poi.id}`,
+      ownerId: 'self',
       user: null,
       name: poi.name,
       coords: poi.coords as [number, number],
       radiusKm: livePoiRadiusKm(poi),
+      engagement: radiusEngagementForChannel(poi.channel),
       color: myColor,
       avatar: ownAvatar,
       selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
@@ -2366,6 +2386,7 @@ export default function App() {
     }))
     const others = popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
       id: pop.id,
+      ownerId: pop.user,
       user: pop.user,
       name: pop.name,
       coords: pop.coords,

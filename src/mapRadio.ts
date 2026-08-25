@@ -310,6 +310,15 @@ export function removeBroadcast(id: string) {
   writeBroadcastShelf(readBroadcastShelf().filter(b => b.id !== id))
 }
 
+/** Broadcasts authored on this account. This is deliberately separate from
+ * discovery: Messages should offer only your own podcasts for sharing, never
+ * another creator's nearby show. */
+export function ownBroadcastShelf(): PoplurBroadcast[] {
+  return readBroadcastShelf()
+    .filter(broadcast => broadcast.artist.trim().toLocaleLowerCase() === 'you')
+    .sort((a, b) => (b.status === 'live' ? 1 : 0) - (a.status === 'live' ? 1 : 0))
+}
+
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371, toRad = (v: number) => (v * Math.PI) / 180
   const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1)

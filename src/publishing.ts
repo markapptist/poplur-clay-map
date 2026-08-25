@@ -2,7 +2,7 @@ export const POST_SCHEMA_VERSION = 2
 export const POST_RIGHTS_VERSION = '2026-08'
 
 export type PostAudience = 'public'
-export type PostLocationVisibility = 'exact' | 'approximate'
+export type PostLocationVisibility = 'approximate' | 'hidden'
 
 export interface PublishPrivacy {
   audience: PostAudience
@@ -29,22 +29,26 @@ export function isClientPostId(value: unknown): value is string {
 }
 
 /**
- * Approximate posts disclose an area of roughly a city block, not the exact
- * map tap. This is intentionally deterministic so feed/map clients agree.
+ * Public posts disclose only an area of roughly a city block, never the exact
+ * map tap. This is deterministic so every client and the Firestore rules can
+ * verify the same public map cell.
  */
 export function publicCoordinate(
   value: number,
-  visibility: PostLocationVisibility,
 ): number {
   if (!Number.isFinite(value)) throw new Error('A valid post location is required.')
-  if (visibility === 'exact') return value
   return Math.round(value * 1_000) / 1_000
+}
+
+export function publicCoordinateCell(value: number): number {
+  if (!Number.isFinite(value)) throw new Error('A valid post location is required.')
+  return Math.round(value * 1_000)
 }
 
 export function validatePublishPrivacy(value: PublishPrivacy): string | null {
   if (value.audience !== 'public') return 'This version can only publish to Everyone.'
-  if (value.locationVisibility !== 'exact' && value.locationVisibility !== 'approximate') {
-    return 'Choose how precisely the post location should be shown.'
+  if (value.locationVisibility !== 'hidden' && value.locationVisibility !== 'approximate') {
+    return 'Choose whether this post has a public map area.'
   }
   if (!value.rightsAttested) return 'Confirm that you have permission to share this media and music.'
   return null
