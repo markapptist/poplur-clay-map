@@ -316,6 +316,7 @@ export default function NewsPaper({ onClose, bindBack }: {
   const [liked, setLiked] = useState<Set<string>>(() => new Set())
   const sentinel = useRef<HTMLDivElement>(null)
   const scrollHost = useRef<HTMLDivElement>(null)
+  const entryNodes = useRef(new Map<string, HTMLElement>())
   const pullInner = useRef<HTMLDivElement>(null)
   const pullPanel = useRef<HTMLDivElement>(null)
   const pullHead = useRef<HTMLDivElement>(null)
@@ -326,6 +327,43 @@ export default function NewsPaper({ onClose, bindBack }: {
     for (let p = 0; p < pages; p += 1) all.push(...buildPage(p, edition))
     return all
   }, [pages, dropped, now, edition])
+
+  const [activeEntryId, setActiveEntryId] = useState<string | null>(null)
+  const registerEntry = useCallback((id: string, node: HTMLElement | null) => {
+    if (node) entryNodes.current.set(id, node)
+    else entryNodes.current.delete(id)
+  }, [])
+
+  // One observer tracks the story that occupies the reader's focus band. It
+  // replaces a continuous scroll handler: no per-frame state work, and the
+  // persistent radius card can honestly report the post now in view.
+  useEffect(() => {
+    setActiveEntryId(previous => entries.some(entry => entry.id === previous) ? previous : (entries[0]?.id ?? null))
+  }, [entries])
+  useEffect(() => {
+    const root = scrollHost.current
+    if (!root || entryNodes.current.size === 0) return
+    const observer = new IntersectionObserver(records => {
+      const rootCenter = root.getBoundingClientRect().top + root.clientHeight * 0.42
+      const best = records
+        .filter(record => record.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio
+          || Math.abs(a.boundingClientRect.top + a.boundingClientRect.height / 2 - rootCenter)
+            - Math.abs(b.boundingClientRect.top + b.boundingClientRect.height / 2 - rootCenter))[0]
+      const id = best?.target.getAttribute('data-news-entry-id')
+      if (id) setActiveEntryId(id)
+    }, { root, rootMargin: '-14% 0px -40%', threshold: [0.2, 0.45, 0.7] })
+    entryNodes.current.forEach(node => observer.observe(node))
+    return () => observer.disconnect()
+  }, [entries])
+  useEffect(() => {
+    const active = entries.find(entry => entry.id === activeEntryId) ?? entries[0]
+    if (!active) return
+    window.dispatchEvent(new CustomEvent('poplur-news-active-entry', { detail: { radiusKm: active.radiusKm } }))
+  }, [activeEntryId, entries])
+  useEffect(() => () => {
+    window.dispatchEvent(new CustomEvent('poplur-news-active-entry', { detail: { radiusKm: null } }))
+  }, [])
 
   // Keep setting type while the presses have something in reach.
   const loadMore = useCallback(() => {
@@ -533,7 +571,12 @@ export default function NewsPaper({ onClose, bindBack }: {
         </header>
 
         {lead && (
-          <article className={styles.lead}>
+          <article
+            className={activeEntryId === lead.id ? `${styles.lead} ${styles.entryActive}` : styles.lead}
+            data-news-entry-id={lead.id}
+            ref={node => registerEntry(lead.id, node)}
+            aria-current={activeEntryId === lead.id ? 'true' : undefined}
+          >
             <div className={styles.kicker}>
               {lead.kind === 'dispatch' ? 'MAP DISPATCH' : lead.mine ? 'YOUR POP' : 'FROM THE STREET'}
             </div>
@@ -575,9 +618,12 @@ export default function NewsPaper({ onClose, bindBack }: {
           {rest.map(entry => (
             <article
               key={entry.id}
-              className={entry.kind === 'dispatch' ? `${styles.entry} ${styles.entryAi}` : styles.entry}
+              className={`${entry.kind === 'dispatch' ? `${styles.entry} ${styles.entryAi}` : styles.entry}${activeEntryId === entry.id ? ` ${styles.entryActive}` : ''}`}
+              data-news-entry-id={entry.id}
+              ref={node => registerEntry(entry.id, node)}
               role="button"
               tabIndex={0}
+              aria-current={activeEntryId === entry.id ? 'true' : undefined}
               aria-label={`Open ${entry.who}'s post`}
               onClick={event => {
                 // The engagement row and the plate have their own jobs; only a
@@ -650,7 +696,6 @@ export default function NewsPaper({ onClose, bindBack }: {
       </div>
 
       {detail && (() => {
-        const [lng, lat] = coordsFor(detail)
         const plate = snapshotFor(detail)
         return (
           <div className={styles.detail} role="dialog" aria-label={`${detail.who}'s post`}>
@@ -676,7 +721,9 @@ export default function NewsPaper({ onClose, bindBack }: {
               {detail.media?.length ? <EntryMedia media={detail.media} large /> : null}
               <p className={styles.detailWhen}>{detail.when} ago</p>
 
-              {/* Where it reaches, and where it was actually dropped. */}
+              {/* Reach stays useful without printing a coordinate pair that can
+                  be copied into another map. Public posts show only an area;
+                  private/ghost posts arrive without a public origin at all. */}
               <dl className={styles.detailFacts}>
                 <div>
                   <dt>RADIUS</dt>
@@ -688,7 +735,7 @@ export default function NewsPaper({ onClose, bindBack }: {
                 </div>
                 <div>
                   <dt>POSTED AT</dt>
-                  <dd className={styles.detailCoords}>{lat.toFixed(4)}, {lng.toFixed(4)}</dd>
+                  <dd className={styles.detailCoords}>Approximate map area</dd>
                 </div>
               </dl>
 

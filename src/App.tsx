@@ -71,10 +71,11 @@ import { ambientAllowed, currentQuality, onAmbientSleepChange, onQualityChange, 
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange } from './popups'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
-import { skyShadeAt } from './skyCycle'
+import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
-import { radiusDeltaForChannel } from './radiusLedger'
+import { radiusDeltaForChannel, radiusEngagementForChannel } from './radiusLedger'
 import { contentPostId, listPostings, onPostedContentChange, radiusKmFor, POSTINGS_KEY } from './postedContent'
+import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
 
 /** The shipped games by id, so a dropped game's claim can wear its title on
  *  the pin. A tiny local map rather than an import of GamesScreen: this
@@ -119,6 +120,7 @@ import styles from './App.module.css'
 
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
+const WEATHER_REFRESH_MS = 5 * 60_000
 
 // Clay weather icons keyed by open-meteo weather codes
 // Clay-shaded weather icons: each body is filled with a soft radial "shader"
@@ -483,6 +485,18 @@ function currentSkyShade() {
   return skyShadeAt()
 }
 
+/** Match currentSkyShade's deterministic preview semantics: map-night=0 is
+ * fixed noon and map-night=1 is fixed midnight, neither is morning. */
+function currentMorningNavigator() {
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('day-cycle') === '1') return false
+    const forced = params.get('map-night')
+    if (forced === '1' || forced === '0') return false
+  }
+  return localSunriseToNoon()
+}
+
 type MapMoonModel = 'full' | 'crescent'
 
 /** Open-Meteo reports the synodic phase as a fraction: new moon at 0/1 and
@@ -662,6 +676,10 @@ export default function App() {
   // The current sky shade. Same-key updates return the previous object so the
   // minute cadence below only re-renders while the sky is actually shifting.
   const [sky, setSky] = useState(currentSkyShade)
+  // The shell's Map navigator wears the sun only from local sunrise to noon.
+  // This state rides the sky's existing minute cadence below rather than
+  // adding another clock loop to the home screen.
+  const [morningNavigator, setMorningNavigator] = useState(currentMorningNavigator)
   // Tour narration stays separate from the visible status. The map header only
   // says where the camera is — the station readout left with the radio.
   const [tourLine, setTourLine] = useState<string | null>(null)
@@ -697,9 +715,14 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.poplurMapTime = nightMode ? 'night' : 'day'
     if (isEmbedded) {
-      window.parent.postMessage({ type: 'poplur-map-night', night: nightMode, moon: moonModel }, '*')
+      window.parent.postMessage({
+        type: 'poplur-map-night',
+        night: nightMode,
+        morning: morningNavigator,
+        moon: moonModel,
+      }, '*')
     }
-  }, [isEmbedded, moonModel, nightMode])
+  }, [isEmbedded, moonModel, morningNavigator, nightMode])
   // The title stays EMPTY until the camera has actually arrived somewhere.
   //
   // `currentPlace` seeds to a city name and the reverse geocode re-fires on
@@ -1377,6 +1400,7 @@ export default function App() {
   // territories, and a short list besides; everywhere else gets Celsius.
   useEffect(() => {
     const syncLocalSky = () => {
+      setMorningNavigator(currentMorningNavigator())
       setSky(prev => {
         const next = currentSkyShade()
         return next.key === prev.key ? prev : next
@@ -1392,37 +1416,71 @@ export default function App() {
 
   useEffect(() => {
     const unit = usesFahrenheit() ? 'fahrenheit' : 'celsius'
-    setWeatherForecastStatus('loading')
-    fetch(`https://api.open-meteo.com/v1/forecast?latitude=43.65&longitude=-79.38&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,moon_phase&forecast_days=5&temperature_unit=${unit}&timezone=auto`)
-      .then(res => {
-        if (!res.ok) throw new Error(`Weather request failed: ${res.status}`)
-        return res.json()
+    const [longitude, latitude] = navigationOrigin
+    let controller: AbortController | null = null
+    let confirmed = false
+    const refresh = () => {
+      controller?.abort()
+      controller = new AbortController()
+      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,moon_phase&forecast_days=5&temperature_unit=${unit}&timezone=auto`, {
+        cache: 'no-store',
+        signal: controller.signal,
       })
-      .then(json => {
-        const temperature = Number(json.current?.temperature_2m)
-        const currentCode = Number(json.current?.weather_code)
-        if (!Number.isFinite(temperature) || !Number.isFinite(currentCode)) {
-          throw new Error('Weather response is missing current conditions')
-        }
-        setWeather({ temp: Math.round(temperature), code: currentCode })
-        const apiMoon = moonModelFromWeatherPhase(json.daily?.moon_phase?.[0])
-        if (apiMoon) setMoonModel(apiMoon)
-        const dates = Array.isArray(json.daily?.time) ? json.daily.time : []
-        const forecast = dates.slice(0, 5).map((date: string, index: number) => ({
-          date,
-          high: Number(json.daily.temperature_2m_max?.[index]) || 0,
-          low: Number(json.daily.temperature_2m_min?.[index]) || 0,
-          code: Number(json.daily.weather_code?.[index]) || 0,
-        }))
-        setWeatherForecast(forecast)
-        setWeatherForecastStatus(forecast.length > 0 ? 'ready' : 'error')
-      })
-      .catch(() => {
-        setWeather({ temp: usesFahrenheit() ? 72 : 22, code: 1 })
-        setWeatherForecast([])
-        setWeatherForecastStatus('error')
-      })
-  }, [])
+        .then(res => {
+          if (!res.ok) throw new Error(`Weather request failed: ${res.status}`)
+          return res.json()
+        })
+        .then(json => {
+          const temperature = Number(json.current?.temperature_2m)
+          const currentCode = Number(json.current?.weather_code)
+          if (!Number.isFinite(temperature) || !Number.isFinite(currentCode)) {
+            throw new Error('Weather response is missing current conditions')
+          }
+          confirmed = true
+          setWeather({ temp: Math.round(temperature), code: currentCode })
+          const apiMoon = moonModelFromWeatherPhase(json.daily?.moon_phase?.[0])
+          if (apiMoon) setMoonModel(apiMoon)
+          const dates = Array.isArray(json.daily?.time) ? json.daily.time : []
+          const forecast = dates.slice(0, 5).map((date: string, index: number) => ({
+            date,
+            high: Number(json.daily.temperature_2m_max?.[index]) || 0,
+            low: Number(json.daily.temperature_2m_min?.[index]) || 0,
+            code: Number(json.daily.weather_code?.[index]) || 0,
+          }))
+          setWeatherForecast(forecast)
+          setWeatherForecastStatus(forecast.length > 0 ? 'ready' : 'error')
+        })
+        .catch(error => {
+          if ((error as { name?: string } | null)?.name === 'AbortError') return
+          if (!confirmed) {
+            setWeather(current => current ?? { temp: usesFahrenheit() ? 72 : 22, code: 1 })
+            setWeatherForecast(current => current.length ? current : [])
+            setWeatherForecastStatus(current => current === 'ready' ? current : 'error')
+          }
+          // Once real conditions have been confirmed, preserve them through a
+          // transient failure instead of inventing clear weather mid-session.
+        })
+    }
+    setWeatherForecastStatus(current => current === 'ready' ? current : 'loading')
+    refresh()
+    const interval = window.setInterval(() => {
+      if (mapFrontRef.current && document.visibilityState === 'visible') refresh()
+    }, WEATHER_REFRESH_MS)
+    const onForeground = () => {
+      if (document.visibilityState === 'visible' && mapFrontRef.current) refresh()
+    }
+    const onFront = (event: MessageEvent) => {
+      if (event.data?.type === 'poplur-map-front' && event.data.front === true) refresh()
+    }
+    document.addEventListener('visibilitychange', onForeground)
+    window.addEventListener('message', onFront)
+    return () => {
+      controller?.abort()
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onForeground)
+      window.removeEventListener('message', onFront)
+    }
+  }, [navigationOrigin])
 
   // DEV: cycle weather / sky from the console to demo every overlay
   useEffect(() => {
@@ -1687,6 +1745,9 @@ export default function App() {
   const tourNextTimerRef = useRef(0)
   const tourFlightInProgressRef = useRef(false)
   const tourPauseAfterStopRef = useRef(false)
+  // Continuous playback is optional. A warm phone and every explicit arrow
+  // press use one bounded flight, then leave the tour armed for manual steps.
+  const tourAutoAdvanceRef = useRef(false)
   const [tourOn, setTourOn] = useState(false)
   const tourOnRef = useRef(false)
   const cancelTourTimer = useCallback((timer: number) => {
@@ -1714,6 +1775,7 @@ export default function App() {
   const pauseTourAtCurrentStop = useCallback(() => {
     clearTourTimers()
     tourPauseAfterStopRef.current = false
+    tourAutoAdvanceRef.current = false
     tourFlightInProgressRef.current = false
     tourStartedRef.current = false
     tourOnRef.current = false
@@ -1733,6 +1795,7 @@ export default function App() {
     cancelStagedCameraFlight()
     clearTourTimers()
     tourPauseAfterStopRef.current = false
+    tourAutoAdvanceRef.current = false
     tourFlightInProgressRef.current = false
     tourStartedRef.current = false
     tourOnRef.current = false
@@ -1903,13 +1966,12 @@ export default function App() {
     clearTourTimers()
     tourPauseAfterStopRef.current = false
     tourFlightInProgressRef.current = false
-    // Low-power/thermal rungs keep direct map gestures available but reject a
-    // new autonomous 3D camera sequence. The button remains usable once the
-    // device recovers instead of committing it to another warm three minutes.
-    if (currentQuality() <= 1) {
-      setTourLine('Landmark tour is paused while the phone protects performance.')
-      return
-    }
+    // The Play button may auto-walk the finite catalog while the device has
+    // headroom. On a protected quality rung it still WORKS, but becomes one
+    // finite arrival at a time; the persistent arrows continue the tour. An
+    // explicit arrow destination is always manual so it never races away from
+    // the landmark the user just requested.
+    tourAutoAdvanceRef.current = firstDestination == null && currentQuality() > 1
     // One press means one complete pass. If a caller supplies a landmark, start
     // there and rotate the same catalog so every landmark is still shown once;
     // a non-landmark first stop is followed by the full landmark catalog.
@@ -1937,16 +1999,15 @@ export default function App() {
     let currentStopIndex = -1
     const runStopAt = (requestedIndex: number) => {
       if (!tourOnRef.current) return
-      // Re-check before each expensive flight because the native thermal or
-      // low-power ceiling may have changed while the previous landmark rested.
-      if (currentQuality() <= 1) {
-        pauseTourAtCurrentStop()
-        return
-      }
+      // Re-check before each flight. Thermal pressure converts the remaining
+      // pass into one manually stepped stop instead of turning Play into a
+      // silent no-op or starting another autonomous camera move.
+      if (currentQuality() <= 1) tourAutoAdvanceRef.current = false
       const stopIndex = ((requestedIndex % tourOrder.length) + tourOrder.length) % tourOrder.length
       currentStopIndex = stopIndex
       tourFlightInProgressRef.current = true
       activateTourDestination(tourOrder[stopIndex])
+      if (!tourAutoAdvanceRef.current) return
       // The sequence is deliberately finite: after the final landmark's hold,
       // release the camera and reset the button instead of looping forever.
       const afterStop = stopIndex >= tourOrder.length - 1
@@ -1960,7 +2021,7 @@ export default function App() {
     } else {
       runStop()
     }
-  }, [activateTourDestination, clearTourTimers, pauseTourAtCurrentStop, scheduleTourTimer, stopTour])
+  }, [activateTourDestination, clearTourTimers, scheduleTourTimer, stopTour])
 
   useEffect(() => onAmbientSleepChange(sleeping => {
     if (!sleeping || !tourOnRef.current) return
@@ -1969,7 +2030,7 @@ export default function App() {
     // leaving Map, or a true protection rung still pauses the bounded pass.
     if (mapFrontRef.current
       && document.visibilityState === 'visible'
-      && currentQuality() > 1) return
+      && (!tourAutoAdvanceRef.current || currentQuality() > 1)) return
     tourPauseAfterStopRef.current = true
     cancelTourTimer(tourNextTimerRef.current)
     // During a flight, its bounded render lease and arrival beat finish first.
@@ -1979,10 +2040,13 @@ export default function App() {
 
   useEffect(() => onQualityChange(quality => {
     if (quality > 1 || !tourOnRef.current) return
-    tourPauseAfterStopRef.current = true
+    // Finish at the current landmark, park there, and leave the arrows armed.
+    // This sheds every future camera flight without making the active tour
+    // button or manual landmark traversal disappear.
+    tourAutoAdvanceRef.current = false
+    tourPauseAfterStopRef.current = false
     cancelTourTimer(tourNextTimerRef.current)
-    if (!tourFlightInProgressRef.current) pauseTourAtCurrentStop()
-  }), [cancelTourTimer, pauseTourAtCurrentStop])
+  }), [cancelTourTimer])
 
   // ── Static long idle ──────────────────────────────────────────────────────
   // An untouched map used to arm a raw one-minute timer, then start a 30-second
@@ -2068,8 +2132,13 @@ export default function App() {
       try {
         seedClaims(map, POIS.map(poi => ({
           id: `pop-${poi.id}`,
+          ownerId: 'self',
           center: poi.coords as [number, number],
           radiusKm: livePoiRadiusKm(poi),
+          fameScore: dominanceFameScore(
+            livePoiRadiusKm(poi),
+            radiusEngagementForChannel(poi.channel),
+          ),
         })))
       } catch { /* map torn down */ }
     }
@@ -2084,9 +2153,9 @@ export default function App() {
   // there is nobody to be winning against. The level switch (shell HUD, above
   // the channel arrows) puts other holders on the board — each in their OWN
   // colour, with their face on the pin standing in their territory.
-  // The visible control is numbered 1 → 2 → 3, so launch on Level 1 and let
-  // each press advance in the same order the lit sheets communicate.
-  const [popLevel, setPopLevel] = useState<PopLevel>('mine')
+  // The visible control is numbered 1 → 2 → 3. Launch with all three layers
+  // present so the first map frame explains the shared domination system.
+  const [popLevel, setPopLevel] = useState<PopLevel>('all')
   const [publishedPins, setPublishedPins] = useState<PopPin[]>([])
   // Values remain in radiusLedger; this revision only recomputes the visible
   // pin set after Home relays a signed reward or loss into this iframe.
@@ -2141,7 +2210,13 @@ export default function App() {
     const map = mapRef.current
     if (map) {
       try {
-        setClaim(map, { id: claimId, center: poi.coords as [number, number], radiusKm: nextRadiusKm })
+        setClaim(map, {
+          id: claimId,
+          ownerId: 'self',
+          center: poi.coords as [number, number],
+          radiusKm: nextRadiusKm,
+          fameScore: dominanceFameScore(nextRadiusKm, radiusEngagementForChannel(poi.channel)),
+        })
       } catch { /* style can be rebuilding; persisted value is used on remount */ }
     }
     if (openedPinRef.current === claimId) {
@@ -2155,7 +2230,7 @@ export default function App() {
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLive) return
-    const applyMine = () => {
+    const applyMine = (effectiveLevel: PopLevel) => {
       const persisted = listPostings()
         .filter(posting => posting.kind !== 'game')
         .map(posting => ({
@@ -2166,21 +2241,35 @@ export default function App() {
       setClaimGroup(map, 'mine',
         TAKEOVER_TEST && popLevel === 'all'
           ? worldTakeoverClaims()
-          : popLevel === 'others' ? [] : [
+          : effectiveLevel === 'others' ? [] : [
             ...POIS.map(poi => ({
               id: `pop-${poi.id}`,
+              ownerId: 'self',
               center: poi.coords as [number, number],
               radiusKm: livePoiRadiusKm(poi),
+              fameScore: dominanceFameScore(
+                livePoiRadiusKm(poi),
+                radiusEngagementForChannel(poi.channel),
+              ),
             })),
             ...persisted,
           ])
     }
+    let previousEffectiveLevel: PopLevel | null = null
     const apply = () => {
+      // Regional and planet views are always the colour-coded scoreboard.
+      // Close 3D returns to the selected level, so the extra rival polygons
+      // are not kept active around building views and cannot add GPU pressure.
+      const effectiveLevel = effectiveDominanceLevel(popLevel, map.getZoom())
+      if (effectiveLevel === previousEffectiveLevel) return
+      previousEffectiveLevel = effectiveLevel
       try {
-        setClaimGroup(map, 'others', popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
+        setClaimGroup(map, 'others', effectiveLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
           id: pop.id,
+          ownerId: pop.user,
           center: pop.coords,
           radiusKm: pop.radiusKm,
+          fameScore: dominanceFameScore(pop.radiusKm),
           color: pop.color,
           user: pop.user,
         })))
@@ -2189,16 +2278,24 @@ export default function App() {
         // Takeover test: on `all`, YOUR ground becomes the whole world, so the
         // terrain wrap can be judged at range. Only on `all` — the flag must
         // not quietly change what levels 1 and 2 mean.
-        applyMine()
+        applyMine(effectiveLevel)
       } catch { /* map torn down */ }
     }
     // Let the first seed land before the level starts rearranging the board.
     const t = window.setTimeout(apply, 60)
+    // `zoomend`, not `zoom`: one bounded source update only when a settled
+    // camera crosses the overview boundary. Pinching/flying does no claim work
+    // per frame, and an idempotent effective-level guard ignores same-side
+    // settles entirely.
+    map.on('zoomend', apply)
     // Live photo/video drops still travel through the dedicated `dropClaim`
     // action so their territory grows on camera arrival. The persisted ledger
     // is read here on mount and every level change; subscribing here as well
     // would pre-seed the same claim before its authored grow-in can play.
-    return () => window.clearTimeout(t)
+    return () => {
+      window.clearTimeout(t)
+      map.off('zoomend', apply)
+    }
   }, [popLevel, mapLive])
 
   // ── Dropped games are territory too ──────────────────────────────────────
@@ -2264,10 +2361,12 @@ export default function App() {
   const mapPins = useMemo(() => {
     const mine = popLevel === 'others' ? [] : POIS.map(poi => ({
       id: `pop-${poi.id}`,
+      ownerId: 'self',
       user: null,
       name: poi.name,
       coords: poi.coords as [number, number],
       radiusKm: livePoiRadiusKm(poi),
+      engagement: radiusEngagementForChannel(poi.channel),
       color: myColor,
       avatar: ownAvatar,
       selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
@@ -2287,6 +2386,7 @@ export default function App() {
     }))
     const others = popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
       id: pop.id,
+      ownerId: pop.user,
       user: pop.user,
       name: pop.name,
       coords: pop.coords,
@@ -2448,9 +2548,9 @@ export default function App() {
   }, [mapLive])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
-    // Safety net: if 'idle' never fired at globe zoom, this still reveals.
-    if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-ready' }, '*')
-    postNativeEvent({ type: 'mapReady' })
+    // Readiness belongs exclusively to handleGlobeReady, which now follows a
+    // confirmed Mapbox render. Camera arrival is application state, not proof
+    // that WebKit has composited a visible frame.
     if (landingCenter) setNavigationOrigin(landingCenter)
 
     // Camera upload asked only for a coordinate. Keep all the normal map tools,
@@ -2828,6 +2928,8 @@ export default function App() {
             )
             const base = current >= 0 ? current : dir > 0 ? -1 : 0
             const nextLandmark = ((base + dir) % TOUR_LANDMARKS.length + TOUR_LANDMARKS.length) % TOUR_LANDMARKS.length
+            // One arrow means one landmark. Keep TOUR armed at the destination
+            // so the next arrow press continues from exactly what is visible.
             startExplicitTourLoop(0, TOUR_LANDMARKS[nextLandmark])
             break
           }
@@ -2927,6 +3029,12 @@ export default function App() {
     // Selection moves to the post; only its marker button opens its content.
   }, [flyToCenter])
 
+  const weatherMode: WeatherMode = weatherOverride ?? (weather ? modeForCode(weather.code) : 'clear')
+  useEffect(() => {
+    if (harnessView || !TOKEN || window.parent === window) return
+    window.parent.postMessage({ type: 'poplur-map-weather', mode: weatherMode }, '*')
+  }, [harnessView, weatherMode])
+
   if (harnessView) {
     return (
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -2947,7 +3055,6 @@ export default function App() {
     )
   }
 
-  const weatherMode: WeatherMode = weatherOverride ?? (weather ? modeForCode(weather.code) : 'clear')
   const weatherIconMarkup = cloudBadge && (weatherMode === 'cloudy' || weatherMode === 'fog')
     ? `<img src="${cloudBadge}" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain" />`
     : weatherIconForMode(weatherMode)
@@ -3243,7 +3350,10 @@ export default function App() {
           normal cyclePop action otherwise. Keeping those intents distinct
           means a cross-frame timing change can never turn a tour press into a
           posted-pop traversal. */}
-      <div className={styles.popStepper} data-map-tour-step="">
+      <div
+        className={`${styles.popStepper}${isEmbedded ? ` ${styles.popStepperAboveCube}` : ''}`}
+        data-map-tour-step=""
+      >
         <ClayChannelArrows
           orientation="horizontal"
           size={150}

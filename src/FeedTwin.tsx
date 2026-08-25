@@ -6,6 +6,13 @@ import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudio
 import { feedSuggestionFor } from './tourSmarts'
 import { feedUrl, channelUrl } from './assetPacks'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
+import { setMusicPlayback } from './musicPlayback'
+import {
+  nativeFeedPostsSnapshot,
+  onNativeFeedPosts,
+  requestNativeFeedPosts,
+  type NativeFeedPost,
+} from './nativeFeedPosts'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
 // hands back on its own; background Radio or iPod is a standing choice the
@@ -14,8 +21,7 @@ import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 const deferToOwner = (owner: AudioOwner | null): boolean =>
   owner === 'voice' || owner === 'radio' || owner === 'ipod'
 import ClayCornerButton from './ClayCornerButton'
-import ClayMuteButton from './ClayMuteButton'
-import TabControlRail from './TabControlRail'
+import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
@@ -40,9 +46,9 @@ import {
 // username↔"CH 101" and coordinates↔CATEGORY in green monospace, a flag +
 // channel icon, a bottom AI caption, and a clean channel change with no static.
 //
-// (Real posts are user videos on Firebase and can't be embedded here, so each
-//  channel shows a representative full-bleed animated background — the feed
-//  *chrome* and behaviour are the faithful part.)
+// Authenticated native shells now send the bounded media rows users actually
+// publish. Bundled channel creatives remain the deterministic browser-preview
+// fallback and the empty-channel fallback only.
 
 interface Channel {
   id: string
@@ -80,7 +86,7 @@ function reachKmFor(key: string): number {
 }
 
 function radiusPostId(channelId: string, post?: ChannelPost): string {
-  return `${channelId}:${post?.user ?? 'unknown'}:${post?.video ?? 'live'}`
+  return post?.id ?? `${channelId}:${post?.user ?? 'unknown'}:${post?.video ?? 'live'}`
 }
 
 function usesMiles(): boolean {
@@ -138,6 +144,12 @@ const STOCK_CLIPS = [
   feedUrl('ad-shopping.mp4'), feedUrl('ad-cartoon.mp4'), feedUrl('ad-kids.mp4'), feedUrl('ad-comedy.mp4'),
   feedUrl('ad-spanish-1.mp4'), feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4'),
 ]
+
+// The navigator should react to content, not to a channel label. Keep this
+// narrow enough that words such as "bar" in a comedy caption do not turn the
+// TV into cutlery, while covering the food language users actually see.
+const FOOD_MENTION = /\b(?:food|poutine|burger|fries?|tacos?|pizza|ramen|noodles?|sushi|restaurant|diner|cafe|café|gravy|curds?|meal|eat(?:ing)?|lunch|dinner|breakfast)\b/i
+const MAX_PLAYBACK_RECOVERY_SOURCES = 2
 
 function posterForFeedClip(source: string): string {
   const localSource = source.split(/[?#]/, 1)[0].replace(/^\/+/, '')
@@ -199,8 +211,12 @@ const CHANNEL_USERS: Record<string, string[]> = {
 }
 
 export interface ChannelPost {
+  id?: string
   user: string
   video: string
+  poster?: string
+  real?: boolean
+  mediaType?: 'photo' | 'video'
   /** Named venue behind this post, used to ground its live ad lookup. */
   place?: string
   /** a live broadcast: the camera itself, when the broadcast is your own */
@@ -239,7 +255,20 @@ const CHANNEL_PLACES: Record<string, string[]> = {
 }
 
 // Ordered by the post's radius intercepting your location, widest first.
-function postsFor(channel: Channel): ChannelPost[] {
+function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPost[] {
+  const realPosts = published
+    .filter(post => post.channelId === channel.id)
+    .map(post => ({
+      id: post.id,
+      user: post.username,
+      video: post.mediaURL,
+      poster: post.mediaType === 'photo' ? post.mediaURL : post.posterURL,
+      real: true,
+      mediaType: post.mediaType,
+      caption: post.caption,
+      reachKm: post.radiusMeters == null ? undefined : post.radiusMeters / 1_000,
+    }))
+  if (realPosts.length) return realPosts
   // LIVE: whoever is streaming into your radius, your own broadcast first.
   // An empty channel still gets a playable Poplur clip: static is a transition,
   // never a permanent startup state.
@@ -524,6 +553,12 @@ export default function FeedTwin({
   // the next heavyweight screen mounts, so WebKit never has to choose between
   // an old Feed pipeline and a new camera/map workload.
   useEffect(() => {
+    if (!frontMost) {
+      decoderLeaseRef.current?.release()
+      decoderLeaseRef.current = null
+      setDecoderGranted(false)
+      return
+    }
     const lease = poplurResourcePool.acquire('media-decoder', 'feed', {
       priority: 100,
       onRevoke: () => {
@@ -542,7 +577,7 @@ export default function FeedTwin({
       lease?.release()
       if (decoderLeaseRef.current === lease) decoderLeaseRef.current = null
     }
-  }, [])
+  }, [frontMost])
 
   // A manually opened suggestion belongs to the post that was on screen when
   // the TV cube was tapped. Changing post/channel or covering the feed clears
@@ -649,7 +684,7 @@ export default function FeedTwin({
     unattendedAdvancesRef.current = 0
     autoplayRestedRef.current = false
     setAutoplayRested(false)
-    const count = postsFor(ch).length
+    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
     if (count >= 2) {
       const cur = contentIdxRef.current[ch.id] ?? 0
       const nxt = (cur + 1) % count
@@ -687,7 +722,7 @@ export default function FeedTwin({
   // narrows in.
   const changeContent = useCallback((dir: 1 | -1) => {
     noteFeedActivity()
-    const count = postsFor(ch).length
+    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
     const next = (current + dir + count) % count
@@ -705,7 +740,7 @@ export default function FeedTwin({
   // Keep this separate from the arrow handler: a passive completion should
   // not make the physical navigator say "pop".
   const advanceCompletedContent = useCallback(() => {
-    const count = postsFor(ch).length
+    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
     if (count < 2) return
     // Autoplaying to an empty room is pure heat. After AUTOPLAY_REST_AFTER
     // clips with no touch, rest on a cover rather than decode another; the
@@ -762,7 +797,13 @@ export default function FeedTwin({
 
   // The live channel's posts change as broadcasts start and stop.
   useSyncExternalStore(onLiveStore, isLive, isLive)
-  const posts = postsFor(ch)
+  const publishedPosts = useSyncExternalStore(
+    onNativeFeedPosts,
+    nativeFeedPostsSnapshot,
+    nativeFeedPostsSnapshot,
+  )
+  useEffect(() => { requestNativeFeedPosts() }, [])
+  const posts = postsFor(ch, publishedPosts)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   const postId = radiusPostId(ch.id, post)
   // Every video change re-reports its reach — channel swipe, content swipe,
@@ -784,22 +825,31 @@ export default function FeedTwin({
   }, [onPostReach, post?.reachKm, postId])
   useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
 
-  const desiredAdSrc = post?.stream
+  const desiredAdSrc = post?.stream || post?.mediaType === 'photo'
     ? undefined
     : (post?.video || STOCK_CLIPS[ch.number % STOCK_CLIPS.length])
   const sourceCandidates = desiredAdSrc
-    ? [desiredAdSrc, ...STOCK_CLIPS.filter(source => source !== desiredAdSrc)]
+    ? post?.real
+      ? [desiredAdSrc]
+      : [desiredAdSrc, ...STOCK_CLIPS.filter(source => source !== desiredAdSrc)]
     : []
   const sourceKey = `${ch.id}:${post?.user ?? 'no-user'}:${desiredAdSrc ?? 'stream'}`
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
+  const recoveryAttemptRef = useRef(0)
+  const [playbackUnavailable, setPlaybackUnavailable] = useState(false)
   const adSrc = sourceCandidates.length
     ? sourceCandidates[recoveryAttempt % sourceCandidates.length]
     : undefined
-  const posterSrc = adSrc ? posterForFeedClip(adSrc) : undefined
+  const posterSrc = post?.mediaType === 'photo'
+    ? post.poster
+    : adSrc ? (post?.poster ?? posterForFeedClip(adSrc)) : undefined
   const posterKey = posterSrc ? `${sourceKey}:${adSrc}:${posterSrc}` : null
   const [readyPosterKey, setReadyPosterKey] = useState<string | null>(null)
+  const posterReady = Boolean(posterKey) && readyPosterKey === posterKey
   useEffect(() => {
+    recoveryAttemptRef.current = 0
     setRecoveryAttempt(0)
+    setPlaybackUnavailable(false)
     setRecoveringPlayback(true)
     setReadyPlaybackKey(null)
     settledAdRef.current = null
@@ -819,10 +869,21 @@ export default function FeedTwin({
     if (failedSource && recoveringAdSrcRef.current === failedSource) return
     recoveringAdSrcRef.current = failedSource
     setReadyPlaybackKey(null)
-    setRecoveringPlayback(true)
     settledAdRef.current = null
-    setRecoveryAttempt(attempt => attempt + 1)
-  }, [])
+    const nextAttempt = recoveryAttemptRef.current + 1
+    const recoveryLimit = Math.min(MAX_PLAYBACK_RECOVERY_SOURCES, sourceCandidates.length)
+    if (nextAttempt >= recoveryLimit) {
+      // Every bundled clip has a poster. After a bounded pair of decoder
+      // attempts, keep that real creative visible and release the broken
+      // pipeline instead of cycling TV static forever.
+      setPlaybackUnavailable(true)
+      setRecoveringPlayback(false)
+      return
+    }
+    recoveryAttemptRef.current = nextAttempt
+    setRecoveringPlayback(true)
+    setRecoveryAttempt(nextAttempt)
+  }, [sourceCandidates.length])
   const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
     if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
     if (completedAdRef.current === source) return
@@ -911,20 +972,29 @@ export default function FeedTwin({
   const adReady = Boolean(playbackKey) && readyPlaybackKey === playbackKey
   // This is the creative identity, not the Food channel. Food can contain a
   // normal post, a fallback, or its static handoff; only the actual ad film
-  // deserves to change the physical navigator.
+  // deserves to change the physical navigator on its own.
   const foodCreativeVisible = !suppressed
     && frontMost
     && !playerMode
     && adReady
     && completedAdSrc !== adSrc
     && /(?:^|\/)ad-food\.mp4(?:[?#].*)?$/i.test(adSrc ?? '')
+  // The written post context can be food even when its actual clip is a
+  // non-food ad from the shared pool. That is an equally valid, but bounded,
+  // reason for the fork/knife cube to appear.
+  const foodMentionVisible = !suppressed
+    && frontMost
+    && !playerMode
+    && completedAdSrc !== adSrc
+    && [post?.caption, ch.caption].some(text => FOOD_MENTION.test(text ?? ''))
+  const foodContextVisible = foodCreativeVisible || foodMentionVisible
   useEffect(() => {
-    onFoodAdChange?.(foodCreativeVisible)
-  }, [foodCreativeVisible, onFoodAdChange])
+    onFoodAdChange?.(foodContextVisible)
+  }, [foodContextVisible, onFoodAdChange])
   useEffect(() => () => { onFoodAdChange?.(false) }, [onFoodAdChange])
   useEffect(() => {
-    if (adReady || post?.stream) recordPostView(postId)
-  }, [adReady, post?.stream, postId])
+    if (adReady || posterReady || post?.stream) recordPostView(postId)
+  }, [adReady, posterReady, post?.stream, postId])
 
   // While the player is up, mirror the video's clock into the timeline. Native
   // media events only — no rAF loop, so the layer is idle between events and
@@ -969,7 +1039,11 @@ export default function FeedTwin({
   // and spending two decoder leases on one visible surface. Static remains an
   // explicit QA/transition treatment only.
   const [recoveringPlayback, setRecoveringPlayback] = useState(true)
-  const showStatic = forceStatic || forceTransition || recoveringPlayback || !decoderGranted
+  // Static is only a brief bridge to a real frame or a loaded poster. The
+  // poster is the honest fallback when WebKit cannot provide a decoder, so it
+  // must never remain hidden behind the buffering grid.
+  const showStatic = forceStatic || forceTransition
+    || (!posterReady && !playbackUnavailable && (recoveringPlayback || !decoderGranted))
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
   const staticReady = readyStaticKey === staticKey
@@ -1299,6 +1373,7 @@ export default function FeedTwin({
       offGate()
       offFocus()
       unregister()
+      setMusicPlayback('feed', false)
       releaseAudioFocus('feed')
     }
   }, [adSrc, sourceKey, audioUnlocked, frontMost])
@@ -1734,7 +1809,7 @@ export default function FeedTwin({
         />
       )}
 
-      {adSrc && !post?.stream && posterSrc && posterKey && (!mediaUnlocked || !adReady) && (
+      {(adSrc || post?.mediaType === 'photo') && !post?.stream && posterSrc && posterKey && (!mediaUnlocked || !adReady) && (
         <img
           key={`${posterKey}:poster`}
           data-feed-media="true"
@@ -1747,13 +1822,14 @@ export default function FeedTwin({
         />
       )}
 
-      {adSrc && !post?.stream && mediaUnlocked && decoderGranted && completedAdSrc !== adSrc && (
+      {adSrc && !post?.stream && mediaUnlocked && decoderGranted && !playbackUnavailable && completedAdSrc !== adSrc && (
         <video
           // The same creative can appear in two adjacent posts. The post key
           // forces a fresh decoder in that case; otherwise a completed video
           // node is reused by React and remains paused at its final frame.
           key={`${sourceKey}:playing`}
           data-feed-media="true"
+          data-poplur-music={ch.id === 'music' ? 'feed' : undefined}
           ref={bindAdVideo}
           className={adReady ? `${styles.adVideo} ${styles.adVideoReady}` : styles.adVideo}
           src={adSrc}
@@ -1851,63 +1927,20 @@ export default function FeedTwin({
           information underneath the title. */}
       {!playerMode && (
       <>
-        <TabControlRail side={controlSide} label="Feed controls">
-          <ClayMuteButton muted={muted} onToggle={toggleMute} size={44} />
-          <ClayCornerButton kind="share" label="Share this post" size={44} still onPress={sharePost} />
-          <button
-            type="button"
-            className={styles.ccGlyphButton}
-            aria-label={captionsOn ? 'Turn closed captions off' : 'Turn closed captions on'}
-            aria-pressed={captionsOn}
-            onClick={toggleCaptions}
-          >
-            <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden="true" className={styles.ccGlyph}>
-              <defs>
-                <linearGradient id="ccFace" x1="0" y1="0" x2="1" y2="1">
-                  <stop stopColor="#ffb3d7" /><stop offset=".46" stopColor="#f24c9c" /><stop offset="1" stopColor="#8d124d" />
-                </linearGradient>
-                <linearGradient id="ccEdge" x1="0" y1="0" x2="0" y2="1">
-                  <stop stopColor="#a81558" /><stop offset="1" stopColor="#510725" />
-                </linearGradient>
-                <radialGradient id="ccGlow" cx="35%" cy="20%" r="78%">
-                  <stop stopColor="#d9fbff" /><stop offset=".45" stopColor="#6ee7fa" /><stop offset="1" stopColor="#228bbd" />
-                </radialGradient>
-              </defs>
-              <path d="M9 35 24 43 39 35 24 28Z" fill="rgba(0,0,0,.42)" />
-              <path d="M8 16v19l16 9V25Z" fill="url(#ccEdge)" />
-              <path d="M40 16v19l-16 9V25Z" fill="url(#ccEdge)" />
-              <path d="M24 5 40 14 24 25 8 14Z" fill="url(#ccFace)" />
-              <text x="24" y="18.5" textAnchor="middle" className={styles.ccText} fill={captionsOn ? 'url(#ccGlow)' : '#fff2f8'}>CC</text>
-              <path d="M24 5 40 14 24 25 8 14Z" fill="none" stroke="rgba(20,4,12,.55)" strokeWidth="1" />
-              <path d="M8 14v21l16 9 16-9V14M24 25v19" fill="none" stroke="rgba(20,4,12,.4)" strokeWidth="1" />
-            </svg>
-          </button>
-          <ClayCornerButton
-            kind="comments"
-            active={commentsAtEnd}
-            label={commentsAtEnd ? 'Hide end-of-video comments' : 'Show end-of-video comments'}
-            size={44}
-            still
-            onPress={toggleCommentsAtEnd}
-          />
-          <ClayCornerButton kind="comment" label="Comment on this post" size={44} still onPress={openComments} />
-          <ClayCornerButton
-            kind="thumbUp"
-            label="Increase this post's radius by one"
-            size={44}
-            still
-            prism
-            onPress={likeCurrentPost}
-          />
-          <ClayCornerButton
-            kind="thumbDown"
-            label="Reduce this post's radius by one"
-            size={44}
-            still
-            prism
-            onPress={dislikeCurrentPost}
-          />
-        </TabControlRail>
+        <PostActionRail
+          side={controlSide}
+          label="Feed controls"
+          muted={muted}
+          captionsOn={captionsOn}
+          commentsAtEnd={commentsAtEnd}
+          onToggleMute={toggleMute}
+          onShare={sharePost}
+          onToggleCaptions={toggleCaptions}
+          onToggleCommentsAtEnd={toggleCommentsAtEnd}
+          onComment={openComments}
+          onLike={likeCurrentPost}
+          onDislike={dislikeCurrentPost}
+        />
         <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
           <img className={styles.chIcon} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
         </div>

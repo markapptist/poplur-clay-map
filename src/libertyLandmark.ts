@@ -4,6 +4,10 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { sustainManagedRendering } from './nativeBridge'
+import {
+  applyLandmarkMaterialIdentity,
+  type LandmarkMaterialIdentity,
+} from './landmarkMaterials'
 
 // ── World landmarks as TRUE 3D map models ────────────────────────────────────
 //
@@ -79,6 +83,11 @@ export interface NearLandmark3DConfig {
   perfPriority?: number
   /** Clay fallback for legacy GLBs that contain no authored textures. */
   color?: number
+  /** Real-world material colour applied as a one-time tint over the authored
+   *  PBR base-colour/normal maps. This keeps the texture detail while making
+   *  an iron tower read as iron, copper as patina, and stone as stone instead
+   *  of tinting every landmark Poplur pink. It never adds a render loop. */
+  materialIdentity?: LandmarkMaterialIdentity
   /** A small, static lighting recipe that gives each landmark its own sense
    *  of place without adding particles, a second renderer, or an animation
    *  loop. It is evaluated only while this near-camera model is visible. */
@@ -106,8 +115,10 @@ export interface LandmarkArtDirection {
 }
 
 export interface NearLandmark3D {
-  /** Re-evaluate whether the 3D model should be active (call on move/zoom). */
-  update: () => void
+  /** Re-evaluate whether the 3D model should be active (call on move/zoom).
+   *  `eligible` lets the owner arbitrate overlapping landmarks before their
+   *  equal-priority leases reach the global performance manager. */
+  update: (eligible?: boolean) => void
   /** True while the 3D model is on the map in place of the flat sprite. */
   isActive: () => boolean
   /** True once the GLB decoded and was added to the grounded render scene. */
@@ -160,6 +171,7 @@ function prepareLandmarkMaterials(
   root: THREE.Object3D,
   fallbackColor: number,
   maxAnisotropy: number,
+  identity?: LandmarkMaterialIdentity,
 ): void {
   const meshes: THREE.Mesh[] = []
   const authoredMaterials = new Set<THREE.Material>()
@@ -217,6 +229,18 @@ function prepareLandmarkMaterials(
       mesh.material = fallbackMaterial()
     }
   })
+
+  // The compact world models already carry 64px base-colour and normal maps.
+  // A material colour is a shader uniform multiplied over those maps, so this
+  // adds no texture allocation and no draw call. It is intentionally limited
+  // to a landmark's single authored material: Toronto's CN Tower and Rogers
+  // Centre have detailed named concrete/glass/steel zones and do not pass a
+  // broad identity tint here.
+  if (identity && hasAuthoredPbr) {
+    authoredMaterials.forEach(material => {
+      applyLandmarkMaterialIdentity(material, identity)
+    })
+  }
 
   if (!hasAuthoredPbr) {
     // These materials were detached from every mesh above. Dispose their GPU
@@ -402,6 +426,7 @@ export function installNearLandmark3D(
             built,
             cfg.color ?? 0xefe9df,
             renderer?.capabilities.getMaxAnisotropy() ?? 1,
+            cfg.materialIdentity,
           )
           const box = new THREE.Box3().setFromObject(built)
           const size = new THREE.Vector3()
@@ -617,8 +642,20 @@ export function installNearLandmark3D(
   const nearLatDeg = nearKm / 111 + 0.01
   const targetLat = cfg.coords[1]
 
-  const update = () => {
+  const update = (eligible = true) => {
     if (disposed) return
+    if (!eligible) {
+      // A nearby landmark in the same visual group owns this camera frame.
+      // Withdraw both votes before the global renderer arbiter runs so a
+      // newest-registration tie cannot steal the selected landmark's slot.
+      if (wanted) {
+        wanted = false
+        perf.setVisible(false)
+        perf.setDemand(false)
+        sync()
+      }
+      return
+    }
     const c = map.getCenter()
     if (Math.abs(c.lat - targetLat) > nearLatDeg) {
       // Clearly out of range on latitude alone. Skip the haversine, but still

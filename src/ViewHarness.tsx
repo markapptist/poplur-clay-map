@@ -116,7 +116,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
         onTabChange={setInlineTab}
         initialTab={VIEW_TO_TAB[baseView]}
         initialHoldOpen={view === 'holdmenu'}
-        initialCameraPage={view === 'cameraroll' ? 'roll' : 'live'}
+        initialCameraPage={view === 'cameraroll' ? 'roll' : 'viewfinder'}
       />
     ),
     [baseView, view],

@@ -16,7 +16,7 @@ function clock(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-export default function InCallBar() {
+export default function InCallBar({ hidden = false }: { hidden?: boolean }) {
   const [call, setCall] = useState<CallSnapshot | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
@@ -32,7 +32,7 @@ export default function InCallBar() {
     return () => window.clearInterval(id)
   }, [call?.phase])
 
-  if (!call || call.phase === 'idle') return null
+  if (hidden || !call || call.phase === 'idle') return null
 
   const label =
     call.phase === 'calling' ? 'CALLING'

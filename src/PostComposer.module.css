@@ -534,6 +534,59 @@
 .radiusRow b { color: #7bffa0; }
 .radiusRow input { accent-color: #f63b9a; }
 
+.publishDisclosure {
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid rgba(141, 233, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(7, 14, 18, 0.78);
+}
+.publishDisclosure > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.publishDisclosure b { color: rgba(255, 255, 255, 0.7); font: 850 11px/1.2 system-ui, sans-serif; }
+.publishDisclosure strong { color: #8de9ff; font: 900 11px/1.2 system-ui, sans-serif; }
+.publishDisclosure select {
+  max-width: 160px;
+  border: 1px solid rgba(255, 143, 197, 0.5);
+  border-radius: 6px;
+  padding: 7px 8px;
+  color: #fff;
+  background: #22121c;
+  font: 850 11px/1 system-ui, sans-serif;
+}
+.publishDisclosure small { color: rgba(220, 249, 255, 0.66); font: 750 9px/1.4 system-ui, sans-serif; }
+
+.rightsRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 209, 233, 0.18);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(9, 8, 11, 0.68);
+  font: 750 10px/1.4 system-ui, sans-serif;
+}
+.rightsRow input { margin-top: 1px; accent-color: #f63b9a; }
+
+.publishError {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 122, 153, 0.55);
+  border-radius: 8px;
+  color: #ffe6ee;
+  background: rgba(69, 10, 29, 0.88);
+}
+.publishError b { font: 900 11px/1.2 system-ui, sans-serif; }
+.publishError span { font: 700 10px/1.4 system-ui, sans-serif; }
+.publishError small { color: rgba(255, 230, 238, 0.66); font: 700 9px/1.35 system-ui, sans-serif; }
+
 .channels {
   display: flex;
   gap: 8px;

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
@@ -13,10 +13,22 @@ import {
   type LandmarkArtDirection,
   type NearLandmark3D,
 } from './libertyLandmark'
+import {
+  LANDMARK_MATERIAL_IDENTITIES,
+  type LandmarkMaterialIdentity,
+} from './landmarkMaterials'
+import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, onClaimsSettled, applyClaimsPalette, largestOwnClaim } from './mapClaims'
-import { skyShadeAt, type SkyShade } from './skyCycle'
-import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor } from './takeoverColor'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer } from './mapClaims'
+import {
+  DOMINANCE_OVERVIEW_MAX_ZOOM,
+  dominanceFameScore,
+  dominanceLeaders,
+  type DominanceEngagement,
+  type DominanceLeader,
+} from './mapDominance'
+import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
+import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
 import {
   fetchRoute,
   installRouteLayers,
@@ -96,6 +108,8 @@ export interface ClayMapProps {
 /** A pop standing on the map: whose it is, where, and how much it holds. */
 export interface PopPin {
   id: string
+  /** Stable account identity used for aggregation even if the handle changes. */
+  ownerId?: string
   /** '@handle', or null for your own pops */
   user: string | null
   name: string
@@ -105,6 +119,9 @@ export interface PopPin {
   color: string
   /** profile picture shown above the pin. */
   avatar: string | null
+  /** Frequencies used by the fame board. Radius remains the authoritative
+   * geometry and already grows/shrinks from these events in radiusLedger. */
+  engagement?: DominanceEngagement
   /** A short, muted selfie loop that floats above the single primary own pin. */
   selfieVideo?: {
     src: string
@@ -453,34 +470,17 @@ function claimedFlatBuildingColor() {
   ]
 }
 
-/**
- * "Is this building inside a claim?", as a paint expression.
- *
- * Was `['feature-state', 'claimed']`, which meant every claimed building
- * carried an entry in the source's feature-state map and Mapbox re-read that
- * map — `getState`, a stringified-id lookup into an object with thousands of
- * keys — for every rendered building. On the 7 Aug device trace that read path
- * was the top remaining cost after the recolor storm was fixed (megamorphic
- * string-keyed property access, `StringImpl::hashSlowCase` and number→string
- * conversion all in the top ten symbols), and 16% of JS self time headless.
- *
- * Geometry answers the same question with no per-feature state at all: the
- * claim discs are already carried as `within` polygons for the five road and
- * grass layers, and the compose preview already proves `within` works on this
- * very fill-extrusion layer. Evaluated when a bucket is built or the paint
- * property changes — NOT per rendered frame off a mutable side table.
- *
- * No claims yet ⇒ a literal false, because `within` over an empty collection
- * is undefined behaviour rather than a cheap no.
- */
-function claimedWithin(): unknown {
-  const fc = claimsWithinCollection()
-  return fc.features.length ? ['within', fc] : false
-}
-
 // The 3D building + cap palettes, shared by applyTheme and the colour-circle
 // repaint so the two can never disagree about what a claimed tower wears.
-function building3DColor() {
+function building2DColor(map: mapboxgl.Map) {
+  return visibleBuildingClaimColorExpression(
+    map,
+    takeoverTint('#ee3d98'),
+    flatBuildingColor(),
+  )
+}
+
+function building3DColor(map: mapboxgl.Map) {
   const regular = mapNightModeActive
     ? ['case',
         ['==', ['%', ['to-number', ['id']], 9], 0], '#343746',
@@ -492,19 +492,19 @@ function building3DColor() {
         ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
         '#dbd3c7',
       ]
-  return ['case',
-    claimedWithin(), ['case',
-      ['==', ['%', ['to-number', ['id']], 9], 0], takeoverTint('#e8368f'),
-      ['==', ['%', ['to-number', ['id']], 9], 4], takeoverTint('#f983c1'),
-      takeoverTint('#ee3d98'),
-    ],
+  return visibleBuildingClaimColorExpression(
+    map,
+    takeoverTint('#ee3d98'),
     regular,
-  ]
+  )
 }
 
-function buildingCaps3DColor() {
-  return ['case',
-    claimedWithin(), takeoverTint('#ff9ccd'), mapNightModeActive ? '#55586b' : '#efe9df']
+function buildingCaps3DColor(map: mapboxgl.Map) {
+  return visibleBuildingClaimColorExpression(
+    map,
+    takeoverTint('#ff9ccd'),
+    mapNightModeActive ? '#55586b' : '#efe9df',
+  )
 }
 
 function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActive) {
@@ -537,12 +537,11 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActi
   set('clay-real-road-rim', 'line-color', claimedPaint(palette.roadRim, takeoverTint('#ff9ccd')))
   set('clay-real-road-stitches', 'line-color', theme.accentHot)
   set('clay-trail-stitches', 'line-color', theme.accent)
-  set('clay-buildings-2d', 'fill-color',
-    claimedPaint(flatBuildingColor(), claimedFlatBuildingColor()))
+  set('clay-buildings-2d', 'fill-color', building2DColor(map))
   // Buildings stay true-to-life neutral cream in every skin — only the map
   // surfaces re-colour with the theme. Claimed footprints go Poplur pink.
-  set('clay-buildings-3d', 'fill-extrusion-color', building3DColor())
-  set('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor())
+  set('clay-buildings-3d', 'fill-extrusion-color', building3DColor(map))
+  set('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map))
 }
 
 function applyComposeSurfacePreview(
@@ -582,14 +581,13 @@ function applyComposeSurfacePreview(
   set('clay-real-road-rim', 'line-color',
     takeover(palette.roadRim, takeoverTint('#ff9ccd'), takeoverTint('#FFD2E8')))
   set('clay-buildings-2d', 'fill-color',
-    takeover(flatBuildingColor(), claimedFlatBuildingColor(), claimedFlatBuildingColor()))
+    ['case', withinPreview, claimedFlatBuildingColor(), building2DColor(map)])
 
-  const regularBuilding = building3DColor()
+  const regularBuilding = building3DColor(map)
   set('clay-buildings-3d', 'fill-extrusion-color',
     ['case', withinPreview, claimedFlatBuildingColor(), regularBuilding])
   set('clay-building-caps', 'fill-extrusion-color',
-    ['case', withinPreview, takeoverTint('#FFD0E6'),
-      claimedWithin(), takeoverTint('#ff9ccd'), mapNightModeActive ? '#55586b' : '#efe9df'])
+    ['case', withinPreview, takeoverTint('#FFD0E6'), buildingCaps3DColor(map)])
 }
 
 // Clay-style world monuments drawn as inline SVGs, pink/black like the theme.
@@ -741,37 +739,60 @@ const WORLD_LANDMARKS: {
   revealZoom?: number
   frameBearing?: number
   artDirection?: LandmarkArtDirection
+  materialIdentity: LandmarkMaterialIdentity
 }[] = [
-  { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xf0b75f, artDirection: LANDMARK_ART_DIRECTIONS['burj-khalifa'] },
+  { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xdce4e6, artDirection: LANDMARK_ART_DIRECTIONS['burj-khalifa'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['burj-khalifa'] },
   {
     id: 'cn-tower', coords: [-79.3871, 43.6426], heightM: 553,
-    frameSpanM: 553, color: 0x7fc9f4, nearKm: 0.5,
+    frameSpanM: 553, color: 0xc9c6c2, nearKm: 0.9,
     frameCenter: [-79.38677, 43.64418],
     // Keep the real 553 m proportions but present the pod and three Y-shaped
     // supports at a phone-legible size. The slight rotation also moves the
     // Ritz-Carlton label off the observation deck without losing SkyDome.
-    framePitch: 42, frameZoom: 15.6, revealZoom: 15.0, frameBearing: 22, artDirection: LANDMARK_ART_DIRECTIONS['cn-tower'],
+    framePitch: 42, frameZoom: 15.6, revealZoom: 15.0, frameBearing: 22, artDirection: LANDMARK_ART_DIRECTIONS['cn-tower'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['cn-tower'],
   },
-  // Both Toronto models stay eligible throughout either destination frame;
-  // CN uses the tighter readability angle while SkyDome keeps its roof-first
-  // stadium view, and either search result still lands on the complete pair.
+  // The Toronto models share a close activation area. Their update pass below
+  // selects the one nearest the authored camera frame so an emergency phone's
+  // one-light-renderer budget cannot let registration order hide CN Tower.
   {
     id: 'rogers-centre', coords: [-79.38918212, 43.64161058], heightM: 60,
     frameSpanM: 553, color: 0xe4e6e8, yaw: 15.9, clearDepth: false, nearKm: 0.5,
     frameCenter: [-79.38834927, 43.64200635],
-    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0, artDirection: LANDMARK_ART_DIRECTIONS['rogers-centre'],
+    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0, artDirection: LANDMARK_ART_DIRECTIONS['rogers-centre'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['rogers-centre'],
   },
-  { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0xef7495, artDirection: LANDMARK_ART_DIRECTIONS.eiffel },
-  { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0x87d2b6, artDirection: LANDMARK_ART_DIRECTIONS['space-needle'] },
-  { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xed765e, yaw: 12, artDirection: LANDMARK_ART_DIRECTIONS['golden-gate'] },
-  { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93, frameSpanM: 93, color: 0x7cc8a5, artDirection: LANDMARK_ART_DIRECTIONS['statue-liberty'] },
-  { id: 'big-ben', coords: [-0.1246, 51.5007], heightM: 96, frameSpanM: 96, color: 0xd7ab59, artDirection: LANDMARK_ART_DIRECTIONS['big-ben'] },
-  { id: 'giza', coords: [31.1342, 29.9792], heightM: 139, frameSpanM: 300, color: 0xe0b065, artDirection: LANDMARK_ART_DIRECTIONS.giza },
-  { id: 'taj-mahal', coords: [78.0421, 27.1751], heightM: 73, frameSpanM: 85, color: 0xf0d7e3, artDirection: LANDMARK_ART_DIRECTIONS['taj-mahal'] },
-  { id: 'colosseum', coords: [12.4922, 41.8902], heightM: 48, frameSpanM: 95, color: 0xc99570, artDirection: LANDMARK_ART_DIRECTIONS.colosseum },
-  { id: 'sydney-opera', coords: [151.2153, -33.8568], heightM: 65, frameSpanM: 150, color: 0xe8bfd8, artDirection: LANDMARK_ART_DIRECTIONS['sydney-opera'] },
-  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0x9dc7f2, artDirection: LANDMARK_ART_DIRECTIONS['christ-redeemer'] },
+  { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0x76543a, artDirection: LANDMARK_ART_DIRECTIONS.eiffel, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.eiffel },
+  { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0xe2e1dc, artDirection: LANDMARK_ART_DIRECTIONS['space-needle'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['space-needle'] },
+  { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xdd5b38, yaw: 12, artDirection: LANDMARK_ART_DIRECTIONS['golden-gate'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['golden-gate'] },
+  { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93, frameSpanM: 93, color: 0x72aa91, artDirection: LANDMARK_ART_DIRECTIONS['statue-liberty'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['statue-liberty'] },
+  { id: 'big-ben', coords: [-0.1246, 51.5007], heightM: 96, frameSpanM: 96, color: 0xb49a68, artDirection: LANDMARK_ART_DIRECTIONS['big-ben'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['big-ben'] },
+  { id: 'giza', coords: [31.1342, 29.9792], heightM: 139, frameSpanM: 300, color: 0xd5b879, artDirection: LANDMARK_ART_DIRECTIONS.giza, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.giza },
+  { id: 'taj-mahal', coords: [78.0421, 27.1751], heightM: 73, frameSpanM: 85, color: 0xf3e7d8, artDirection: LANDMARK_ART_DIRECTIONS['taj-mahal'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['taj-mahal'] },
+  { id: 'colosseum', coords: [12.4922, 41.8902], heightM: 48, frameSpanM: 95, color: 0xc8a27a, artDirection: LANDMARK_ART_DIRECTIONS.colosseum, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.colosseum },
+  { id: 'sydney-opera', coords: [151.2153, -33.8568], heightM: 65, frameSpanM: 150, color: 0xf2eee4, artDirection: LANDMARK_ART_DIRECTIONS['sydney-opera'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['sydney-opera'] },
+  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0xe1d8ca, artDirection: LANDMARK_ART_DIRECTIONS['christ-redeemer'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['christ-redeemer'] },
 ]
+
+const TORONTO_LANDMARK_RENDERER_IDS = new Set(['cn-tower', 'rogers-centre'])
+const TORONTO_LANDMARK_RENDERERS = WORLD_LANDMARKS.filter(landmark =>
+  TORONTO_LANDMARK_RENDERER_IDS.has(landmark.id))
+
+// Transparent baked views of the same authored landmark models. These replace
+// only the slider knob after the grounded object has genuinely rendered; they
+// do not add another WebGL context or keep a landmark renderer awake.
+const LANDMARK_THUMB_SPRITES: Record<string, string> = {
+  'big-ben': 'sprites/big-ben_y18_p10_s320.png',
+  'burj-khalifa': 'sprites/burj-khalifa_y18_p10_s320.png',
+  'christ-redeemer': 'sprites/christ-redeemer_y18_p10_s320.png',
+  'cn-tower': 'sprites/cn-tower_y18_p10_s320.png',
+  colosseum: 'sprites/colosseum_y18_p10_s320.png',
+  eiffel: 'sprites/eiffel_y18_p10_s320.png',
+  giza: 'sprites/giza_y18_p10_s320.png',
+  'golden-gate': 'sprites/golden-gate_y12_p10_s320.png',
+  'space-needle': 'sprites/space-needle_y18_p10_s320.png',
+  'statue-liberty': 'sprites/statue-liberty_y18_p10_s320.png',
+  'sydney-opera': 'sprites/sydney-opera_y18_p10_s320.png',
+  'taj-mahal': 'sprites/taj-mahal_y18_p10_s320.png',
+}
 
 // Landmarks are discoveries at street level, not distant navigation pins.
 // Showing a large, screen-fixed sprite from city or globe zoom makes it look
@@ -1309,6 +1330,36 @@ const ZOOM_STAGES: ZoomStage[] = [
 const stageForZoom = (z: number): ZoomStage =>
   ZOOM_STAGES.find(s => z < s.below) ?? ZOOM_STAGES[ZOOM_STAGES.length - 1]
 
+/** Pins whose claimed ground intersects the camera footprint. The origin can
+ * be off-screen while a large territory still owns the visible area, so this
+ * uses map distance plus radius instead of a centre-in-bounds test. */
+function viewportDominancePins(map: mapboxgl.Map, pins: readonly PopPin[]): PopPin[] {
+  try {
+    const bounds = map.getBounds()
+    const center = map.getCenter()
+    if (!bounds) return [...pins]
+    const viewportRadiusKm = Math.max(
+      center.distanceTo(bounds.getNorthEast()),
+      center.distanceTo(bounds.getSouthWest()),
+    ) / 1000
+    const local = pins.filter(pin =>
+      center.distanceTo(new mapboxgl.LngLat(pin.coords[0], pin.coords[1])) / 1000
+      <= viewportRadiusKm + Math.max(0, pin.radiusKm))
+    if (local.length) return local
+    // Between territories the board should explain who is nearest, not turn
+    // into an empty glass panel. This fallback is bounded before aggregation.
+    return [...pins]
+      .sort((a, b) => {
+        const da = center.distanceTo(new mapboxgl.LngLat(a.coords[0], a.coords[1])) / 1000 - a.radiusKm
+        const db = center.distanceTo(new mapboxgl.LngLat(b.coords[0], b.coords[1])) / 1000 - b.radiusKm
+        return da - db || b.radiusKm - a.radiusKm
+      })
+      .slice(0, 10)
+  } catch {
+    return [...pins]
+  }
+}
+
 export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
@@ -1358,6 +1409,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   }, [closeWeather])
   useEffect(() => {
     if (!weatherOpen) return
+    // governor-ok: one-shot focus handoff for the modal; it never re-arms.
     const frame = window.requestAnimationFrame(() => weatherCloseRef.current?.focus({ preventScroll: true }))
     return () => window.cancelAnimationFrame(frame)
   }, [weatherOpen])
@@ -1450,6 +1502,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   }, [radiusPreviewLaunch])
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
+  const [landmarkThumbId, setLandmarkThumbId] = useState<string | null>(null)
+  const landmarkThumbSprite = landmarkThumbId ? LANDMARK_THUMB_SPRITES[landmarkThumbId] : null
+  const activeZoomThumb = landmarkThumbSprite
+    ? { id: `landmark-${landmarkThumbId}`, sprite: landmarkThumbSprite }
+    : zoomStage
   // Fill percentage aligned to the CENTER of the native thumb: a range thumb
   // only travels (track − thumb) px, so a raw value-percentage mask leads the
   // knob by up to half the thumb width — the barber fill visibly ran PAST the
@@ -1476,6 +1533,100 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
   const zoomProgress = `${((zoomRatio * (zoomRailMetrics.length - zoomRailMetrics.thumb) + zoomRailMetrics.thumb / 2) / zoomRailMetrics.length) * 100}%`
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
+  const [dominanceBoardOpen, setDominanceBoardOpen] = useState(true)
+  const dominanceBoardOpenRef = useRef(true)
+  dominanceBoardOpenRef.current = dominanceBoardOpen
+  const dominanceOverview = zoomValue <= DOMINANCE_OVERVIEW_MAX_ZOOM
+  const [dominanceViewportPins, setDominanceViewportPins] = useState<readonly PopPin[]>(() => pins ?? [])
+  const [dominanceViewRevision, setDominanceViewRevision] = useState(0)
+  const [dominanceAnnouncement, setDominanceAnnouncement] = useState('')
+  const dominanceSignatureRef = useRef('')
+  const dominancePinsKey = (pins ?? []).map(pin => {
+    const e = pin.engagement
+    return `${pin.id}:${pin.ownerId ?? ''}:${pin.radiusKm}:${pin.color}:${pin.avatar ?? ''}:${e?.views ?? 0}:${e?.repeatViews ?? 0}:${e?.upvotes ?? 0}:${e?.downvotes ?? 0}:${e?.comments ?? 0}`
+  }).join('|')
+  const dominanceRows = useMemo(
+    () => dominanceLeaders(dominanceViewportPins, takeoverTint(PALETTE.pinkHot)),
+    [dominanceViewportPins, takeoverFace],
+  )
+  const dominanceTotalKm = dominanceRows.reduce((sum, row) => sum + row.radiusKm, 0)
+  const dominanceMaxFame = dominanceRows[0]?.fame ?? 1
+  useEffect(() => {
+    const map = mapRef.current
+    const allPins = pins ?? []
+    if (!map || mapEpoch === 0) {
+      setDominanceViewportPins(allPins)
+      return
+    }
+    let sampleTimer = 0
+    let revealFrame = 0
+    const publish = (settled: boolean) => {
+      sampleTimer = 0
+      const nextPins = viewportDominancePins(map, allPins)
+      const nextRows = dominanceLeaders(nextPins, takeoverTint(PALETTE.pinkHot)).slice(0, 10)
+      const signature = nextRows
+        .map(row => `${row.owner}:${row.fame}:${Math.round(row.radiusKm * 10)}`)
+        .join('|')
+      if (signature !== dominanceSignatureRef.current) {
+        dominanceSignatureRef.current = signature
+        setDominanceViewportPins(nextPins)
+        setDominanceViewRevision(revision => revision + 1)
+      }
+      if (!settled) return
+      const leader = nextRows[0]
+      setDominanceAnnouncement(leader
+        ? `${leader.label} leads this area with ${leader.fame.toLocaleString()} fame.`
+        : 'No conquered areas are in view.')
+      pulseDominanceLayer(map, nextPins.slice(0, 4).map(pin => pin.id))
+      if (revealFrame) window.cancelAnimationFrame(revealFrame)
+      revealFrame = window.requestAnimationFrame(() => {
+        const roots = [...(containerRef.current?.querySelectorAll<HTMLElement>(`.${styles.popPinMarker}`) ?? [])]
+        roots.forEach(root => root.classList.remove(styles.popPinMarkerReveal))
+        void containerRef.current?.offsetWidth
+        roots.forEach(root => root.classList.add(styles.popPinMarkerReveal))
+      })
+    }
+    const onMove = () => {
+      if (!dominanceBoardOpenRef.current || sampleTimer) return
+      sampleTimer = window.setTimeout(() => publish(false), 120)
+    }
+    const onMoveEnd = () => {
+      if (sampleTimer) window.clearTimeout(sampleTimer)
+      publish(true)
+    }
+    publish(true)
+    map.on('move', onMove)
+    map.on('moveend', onMoveEnd)
+    return () => {
+      if (sampleTimer) window.clearTimeout(sampleTimer)
+      if (revealFrame) window.cancelAnimationFrame(revealFrame)
+      map.off('move', onMove)
+      map.off('moveend', onMoveEnd)
+    }
+  }, [dominancePinsKey, mapEpoch, mapRef, takeoverFace])
+
+  const colorCircleRef = useRef<HTMLButtonElement>(null)
+  const colorHoldTimerRef = useRef(0)
+  const colorPressRef = useRef<{ pointerId: number; x: number; y: number } | null>(null)
+  const suppressColorClickRef = useRef(false)
+  const [colorPaletteOpen, setColorPaletteOpen] = useState(false)
+  const colorSwatches = useMemo(() => takeoverSwatches(), [])
+  const closeColorPalette = useCallback((restoreFocus = false) => {
+    setColorPaletteOpen(false)
+    if (restoreFocus) window.requestAnimationFrame(() => colorCircleRef.current?.focus())
+  }, [])
+  useEffect(() => () => window.clearTimeout(colorHoldTimerRef.current), [])
+  useEffect(() => {
+    if (!colorPaletteOpen) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeColorPalette(true)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [colorPaletteOpen, closeColorPalette])
+  useEffect(() => {
+    if (controlsObscured) setColorPaletteOpen(false)
+  }, [controlsObscured])
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const composeAtRef = useRef(composeAt)
@@ -1772,6 +1923,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     let stopRendererParking: (() => void) | null = null
     let finishRendererParkOnIdle: (() => void) | null = null
     let stopClaimRoadPaint: (() => void) | null = null
+    let pendingLandmarkThumbId: string | null = null
     let disposed = false
 
     const fallBackAfterWebGLFailure = (error: unknown) => {
@@ -2057,13 +2209,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     // Probe/dev hook: force the sky to any moment ("2026-08-22T23:30") or
     // clear back to the live clock. Same pattern as __poplurSetMapSurface.
     ;(window as unknown as { __poplurApplySkyAt?: (iso?: string) => string }).__poplurApplySkyAt = (iso?: string) => {
-      const shade = skyShadeAt(iso ? new Date(iso) : new Date())
+      const when = iso ? new Date(iso) : new Date()
+      const shade = skyShadeAt(when)
       const night = shade.lightPreset === 'night'
+      const morning = localSunriseToNoon(when)
       applySky(map, shade)
       applyTheme(map, theme, night)
       document.documentElement.dataset.poplurMapTime = night ? 'night' : 'day'
       if (window.parent !== window) {
-        window.parent.postMessage({ type: 'poplur-map-night', night }, '*')
+        window.parent.postMessage({ type: 'poplur-map-night', night, morning }, '*')
       }
       return shade.key
     }
@@ -2114,6 +2268,26 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       el.style.display = visible ? '' : 'none'
     }
 
+    const updateGroundedLandmarks = () => {
+      // CN Tower and Rogers Centre share each other's near-camera radius. If
+      // both demand equal-priority leases, the newer Rogers registration wins
+      // the emergency tier's sole light-renderer slot even during a CN tour.
+      // The authored CN and Rogers camera centres each sit closest to their
+      // intended subject, so mutually exclude only this overlapping pair.
+      // Every other city remains independent, and Toronto still consumes no
+      // more than one landmark renderer at a time on any performance tier.
+      const center = map.getCenter()
+      const preferredTorontoId = preferredLandmarkRendererId(
+        [center.lng, center.lat],
+        TORONTO_LANDMARK_RENDERERS,
+      )
+      landmarks3dRef.current.forEach((handle, id) => {
+        handle.update(
+          !TORONTO_LANDMARK_RENDERER_IDS.has(id) || id === preferredTorontoId,
+        )
+      })
+    }
+
     const updateLandmarks = () => {
       const zoom = map.getZoom()
       const isGlobe = zoom < 5.5
@@ -2131,7 +2305,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       // map-arrival at 24 listeners × ~60fps × 30s, and the gate rejected the
       // build (see libertyLandmark's own note). One forEach at the same beat
       // Mapbox already fires this handler on.
-      landmarks3dRef.current.forEach(h => h.update())
+      updateGroundedLandmarks()
       markersRef.current.forEach(mk => {
         mk.getElement().style.display = isGlobe ? 'none' : ''
       })
@@ -2148,6 +2322,29 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     // event, expensive to thrash during a gesture, and the update() lat gate
     // above keeps this cheap.
     map.on('moveend', updateLandmarks)
+
+    // The normal knob returns the instant any camera movement starts. A newly
+    // decoded landmark may finish during the last frames of a tour flight, so
+    // retain that one pending arrival and reveal it once the camera settles.
+    // Ordinary movement after an already-rendered landmark has no pending ID,
+    // therefore it stays on the normal knob exactly as requested.
+    const clearLandmarkThumb = () => {
+      pendingLandmarkThumbId = null
+      setLandmarkThumbId(null)
+    }
+    const settleLandmarkThumb = () => {
+      const pending = pendingLandmarkThumbId
+      if (!pending || map.isMoving()) return
+      const handle = landmarks3dRef.current.get(pending)
+      pendingLandmarkThumbId = null
+      setLandmarkThumbId(
+        handle?.isActive() && handle.isRendered() && LANDMARK_THUMB_SPRITES[pending]
+          ? pending
+          : null,
+      )
+    }
+    map.on('movestart', clearLandmarkThumb)
+    map.on('moveend', settleLandmarkThumb)
 
     // Pins near the horizon (top of a pitched view) hover over the sky and
     // read as "floating in space" — hide them until the camera brings their
@@ -2194,7 +2391,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     // "cuts" between subjects are long eased glides.
     const startOrbit = () => {
       stopOrbit()
-      if (MAP_2D) return
+      // The native map already has a full-screen Mapbox renderer and dense
+      // extrusion buildings. A standing camera orbit keeps invalidating the
+      // settled scene and was the remaining sustained heat source after the
+      // renderer park. Desktop keeps the showcase; phones stay on the last
+      // composed frame until the user or an explicit tour moves the camera.
+      if (MAP_2D || isNativeShell()) return
       const begun = performance.now()
       let last = begun
       // the shot's own rate, re-rolled each time we settle somewhere new
@@ -2608,28 +2810,69 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       zoomTargetRef.current = launchZoom
       setZoomValue(launchZoom)
 
-      // Reveal the chosen launch shot once it has drawn. On desktop this is the
-      // globe; on iPhone it is the flat regional map. Waiting for the old dive
-      // to finish hid the entire arrival behind the Loading screen.
-      //
-      // 'idle' alone is NOT safe to gate on: the idle-orbit spins the camera
-      // every frame, so a map that has started orbiting never idles (and never
-      // emits moveend either). Race it against a deadline so neither launch
-      // shot can be stranded behind the loading layer.
+      // Reveal only after Mapbox reports a real post-jump render whose backing
+      // store contains visible map detail. A `render` event alone is not enough:
+      // Mapbox also emits one for its uniform empty/fallback buffer while style
+      // workers are still settling. Exposing that frame recreates the exact
+      // "blank until touch" failure this gate owns.
       let revealed = false
+      const launchSample = document.createElement('canvas')
+      launchSample.width = 20
+      launchSample.height = 20
+      const launchSampleContext = launchSample.getContext('2d', { willReadFrequently: true })
+      const launchFrameHasVisiblePixels = () => {
+        if (!map.isStyleLoaded()) return false
+        // A missing 2D readback context is an unusual browser limitation. The
+        // style lifecycle remains the safest available readiness signal there.
+        if (!launchSampleContext) return true
+        try {
+          launchSampleContext.clearRect(0, 0, launchSample.width, launchSample.height)
+          launchSampleContext.drawImage(map.getCanvas(), 0, 0, launchSample.width, launchSample.height)
+          const pixels = launchSampleContext.getImageData(0, 0, launchSample.width, launchSample.height).data
+          let darkest = 255 * 3
+          let lightest = 0
+          let visibleSamples = 0
+          for (let index = 0; index < pixels.length; index += 4) {
+            if (pixels[index + 3] < 8) continue
+            visibleSamples += 1
+            const brightness = pixels[index] + pixels[index + 1] + pixels[index + 2]
+            darkest = Math.min(darkest, brightness)
+            lightest = Math.max(lightest, brightness)
+          }
+          // Toronto at the launch zoom always includes land/water, labels, or
+          // atmosphere variation. Uniform black, blue, or gray is a fallback,
+          // not a map frame, regardless of its absolute brightness.
+          return visibleSamples >= 8 && lightest - darkest >= 8
+        } catch {
+          // Future non-CORS custom sources may forbid canvas readback even
+          // though Mapbox can display them. Do not turn that into a permanent
+          // loader once Mapbox itself confirms the style is ready.
+          return true
+        }
+      }
       const revealLaunch = () => {
-        if (revealed) return
+        if (revealed || !launchFrameHasVisiblePixels()) return
         revealed = true
+        map.off('render', revealLaunch)
         onGlobeReady?.()
       }
-      if (focusedPostLaunch) {
-        // This is a task surface, not a destination reveal. Report ready on the
-        // next turn after the direct local camera has painted; never show space.
-        later(revealLaunch, 0)
-      } else {
-        map.once('idle', revealLaunch)
-        later(revealLaunch, 1200)
-      }
+      map.on('render', revealLaunch)
+      map.triggerRepaint()
+      // A cold WebKit compositor occasionally ignores the first explicit
+      // repaint while its style workers are settling. Ask again without ever
+      // treating elapsed time itself as proof that the frame is visible.
+      later(() => {
+        if (revealed) return
+        wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
+        map.triggerRepaint()
+      }, 1200)
+      // The parent has its own final retry, but surface this failure from the
+      // renderer document too so it cannot remain behind Loading indefinitely.
+      later(() => {
+        if (revealed) return
+        map.off('render', revealLaunch)
+        fallBackAfterWebGLFailure(new Error('Map did not paint its launch frame within 12 seconds'))
+      }, 12_000)
 
       let introDone = false
       const finishInterruptedIntro = () => {
@@ -3124,6 +3367,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             ['has', 'num_floors'], ['*', ['to-number', ['get', 'num_floors']], 3.2],
             9],
           6] as never
+        const fullBuildingFilter = notALandmarkBuilding()
         // Per-building pop scale driven by feature-state (see pop system below)
         const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
         const poppedHeight = ['*', clayHeight, popScale] as never
@@ -3158,7 +3402,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           // exactly ("the landmark should actually replace the building, not
           // just hover on it"). Matched by OSM way id — see
           // LANDMARK_BUILDING_IDS for why a geometric test cannot do this.
-          filter: notALandmarkBuilding() as never,
+          filter: fullBuildingFilter as never,
           // Geometry culling: no extrusions until the camera is close enough
           // to be looking at a neighbourhood, not a whole city. The clay
           // settlement placeholders own everything wider than this.
@@ -3171,26 +3415,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             // Hand-rolled clay is never one flat colour. Eight-way hash across the
             // warm-cream family gives the batch variation a real sculpt has, while
             // staying inside one material.
-            'fill-extrusion-color': ['case',
-              // Claimed territory: the buildings themselves re-mold in the
-              // Poplur pink family (same 8-way batch variation).
-              claimedWithin(), ['case',
-                ['==', ['%', ['to-number', ['id']], 8], 0], '#e8368f',
-                ['==', ['%', ['to-number', ['id']], 8], 1], '#f983c1',
-                ['==', ['%', ['to-number', ['id']], 8], 2], '#ef4fa2',
-                ['==', ['%', ['to-number', ['id']], 8], 3], '#f8a5cf',
-                ['==', ['%', ['to-number', ['id']], 8], 5], '#d92a80',
-                ['==', ['%', ['to-number', ['id']], 8], 6], '#f26bb0',
-                '#ee3d98',
-              ],
-              ['==', ['%', ['to-number', ['id']], 8], 0], '#b2916c',
-              ['==', ['%', ['to-number', ['id']], 8], 1], '#cdb28a',
-              ['==', ['%', ['to-number', ['id']], 8], 2], '#c0a37c',
-              ['==', ['%', ['to-number', ['id']], 8], 3], '#d6bd96',
-              ['==', ['%', ['to-number', ['id']], 8], 5], '#a98a66',
-              ['==', ['%', ['to-number', ['id']], 8], 6], '#c7ab82',
-              '#c3a67e', // warm modelling-clay tan
-            ],
+            'fill-extrusion-color': building3DColor(map) as never,
             'fill-extrusion-height': poppedHeight,
             'fill-extrusion-base': ['to-number', ['coalesce', ['get', 'min_height'], 0]],
             // A real clay object is opaque. Depth comes from AO + cast shadows,
@@ -3232,9 +3457,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.95,
         } as never,
         paint: {
-          'fill-extrusion-color': ['case',
-            claimedWithin(), '#ff9ccd',
-            '#d8c19a'] as never,
+          'fill-extrusion-color': buildingCaps3DColor(map) as never,
           'fill-extrusion-base': poppedHeight,
           'fill-extrusion-height': ['+', poppedHeight, 4],
           'fill-extrusion-opacity': 1,
@@ -3330,6 +3553,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         const flatSource = (!import.meta.env.DEV && OVERTURE_BUILDINGS_FILL)
           ? 'overture-buildings'
           : 'clay-streets'
+        const flatHeight = ['max',
+          ['case',
+            ['has', 'height'], ['to-number', ['get', 'height']],
+            ['has', 'num_floors'], ['*', ['to-number', ['get', 'num_floors']], 3.2],
+            9],
+          6]
         if (flatSource === 'overture-buildings' && !map.getSource('overture-buildings')) {
           map.addSource('overture-buildings', { type: 'vector', url: OVERTURE_BUILDINGS_PMTILES })
         }
@@ -3357,7 +3586,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           minzoom: 13.2,
           ...(SHARED_ADAPTIVE_MAP ? { maxzoom: BUILDING_3D_MIN_ZOOM } : {}),
           paint: {
-            'fill-color': flatBuildingColor() as never,
+            'fill-color': building2DColor(map) as never,
             'fill-opacity': 0.96,
             'fill-outline-color': '#7b5a43',
           },
@@ -3474,9 +3703,18 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       }
 
       // Only user gestures pop (originalEvent present) — programmatic camera
-      // flights like the launch descent stay quiet.
+      // flights like the launch descent stay quiet. A gesture merely arms the
+      // decoration while moving; the full rendered-building query and its
+      // feature-state animation wait until the camera has completely settled.
+      let buildingPopPending = false
       map.on('move', e => {
-        if (!(e as { originalEvent?: Event }).originalEvent) return
+        if (!buildingPopPending && (e as { originalEvent?: Event }).originalEvent) {
+          buildingPopPending = true
+        }
+      })
+      map.on('moveend', () => {
+        if (!buildingPopPending || map.isMoving()) return
+        buildingPopPending = false
         if (map.getZoom() >= 5.5) triggerPops()
       })
 
@@ -3515,6 +3753,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           heightM: mark.heightM,
           color: mark.color,
           artDirection: mark.artDirection,
+          materialIdentity: mark.materialIdentity,
           yaw: mark.yaw,
           clearDepth: mark.clearDepth,
           nearKm: mark.nearKm ?? LANDMARK_3D_REVEAL_KM,
@@ -3526,12 +3765,19 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             mark.revealZoom
               ?? landmarkCameraZoom(mark.frameSpanM) - LANDMARK_REVEAL_ZOOM_BUFFER,
           ),
+        }, {
+          onModelRendered: () => {
+            if (!LANDMARK_THUMB_SPRITES[mark.id]) return
+            pendingLandmarkThumbId = mark.id
+            settleLandmarkThumb()
+          },
         })
         landmarks3dRef.current.set(mark.id, h)
-        // Evaluate once for the current camera (the app may already be near
-        // one of them, e.g. on a resume to a landmark tab).
-        h.update()
       }
+      // Evaluate once after every handle exists (the app may already be near
+      // one on resume). Running the shared arbitration after the loop prevents
+      // the later Rogers registration from becoming the accidental winner.
+      updateGroundedLandmarks()
 
       // ── City props: clay trees, harbour boats, cars on the roads ───────────
       treeMarkersRef.current.forEach(mk => mk.remove())
@@ -3660,26 +3906,28 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       installClaimsLayer(map)
 
       // ── Takeover colorization: features INSIDE a claim recolor ──────────────
-      // Streets, grass AND buildings all answer "am I inside a claim?" the same
-      // way now: a `within` paint expression over the claim discs. Buildings
+      // Streets and grass use the signed-in user's coarse `within` collection.
+      // Buildings use a separate bounded, owner-aware expression so rival
+      // towers keep their owner's colour and the larger radius wins. Buildings
       // used to be the odd one out — a querySourceFeatures scan marked each
       // footprint with `feature-state: claimed`, which cost a full scan per
       // pass AND left Mapbox re-reading the state map (`getState`) for every
       // rendered building forever after. The scan was the 700ms GC storm; the
       // reads were what remained after it (top device symbols: stringified-id
       // lookups, StringImpl hashing, number→string conversion). Geometry needs
-      // neither: see claimedWithin().
+      // neither: see visibleBuildingClaimColorExpression().
       let claimPaintQueue = 0
-      const applyClaimRoadPaint = () => {
-        const fc = claimsWithinCollection()
-        const palette = renderedTheme(theme, mapNightModeActive)
-        // No claims of YOUR OWN on the board — switching the pop level to
-        // "other pops" is the case that produces this. Bailing here left the
-        // last takeover's paint burned into the streets, so the map still read
-        // as yours while showing nothing but other people's territory. Paint
-        // the plain palette back instead of returning.
-        const held = fc.features.length > 0
-        const w = held ? ['within', fc] : false
+      let fullClaimPaintActive = false
+      let pendingCameraBuildingPaint = false
+      const applyClaimRoadPaint = (buildingsOnly = false) => {
+        // A move can settle while the seven-layer claim-settle sequence is
+        // still walking one layer per frame. Never let that camera refresh
+        // invalidate the full sequence halfway through; run it immediately
+        // after the full pass instead.
+        if (buildingsOnly && fullClaimPaintActive) {
+          pendingCameraBuildingPaint = true
+          return
+        }
         // ONE layer per frame. Each setPaintProperty with a `within` forces a
         // style recalculation over that layer's features; five in one call was
         // a single long task in the idle window. Spread out, each stays under
@@ -3687,21 +3935,45 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         // frames. The two extrusion layers ride the same queue rather than a
         // separate pass, so a claim change can never cost more than one layer
         // recalc per frame.
-        // `within false` is not a valid expression, so an empty board hands each
-        // layer its plain colour directly rather than a case that can never match.
-        const claimed = (taken: unknown, plain: unknown) => (held ? ['case', w, taken, plain] : plain)
-        const sets: Array<[string, string, unknown]> = [
-          ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), palette.road)],
-          ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), palette.road)],
-          ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), palette.roadRim)],
-          ['clay-grass-fill', 'fill-color', claimed(takeoverTint('#D85D96'), palette.park)],
-          ['clay-buildings-2d', 'fill-color', claimed(claimedFlatBuildingColor(), flatBuildingColor())],
-          ['clay-buildings-3d', 'fill-extrusion-color', building3DColor()],
-          ['clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor()],
+        const buildingSets: Array<[string, string, unknown]> = [
+          ['clay-buildings-2d', 'fill-color', building2DColor(map)],
+          ['clay-buildings-3d', 'fill-extrusion-color', building3DColor(map)],
+          ['clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map)],
         ]
+        let sets = buildingSets
+        if (!buildingsOnly) {
+          const fc = claimsWithinCollection()
+          const palette = renderedTheme(theme, mapNightModeActive)
+          // No claims of YOUR OWN on the board — switching the pop level to
+          // "other pops" is the case that produces this. Paint the plain
+          // palette back instead of leaving an old takeover burned in.
+          const held = fc.features.length > 0
+          const w = held ? ['within', fc] : false
+          // `within false` is not valid, so an empty board hands every layer
+          // its plain colour directly.
+          const claimed = (taken: unknown, plain: unknown) => (held ? ['case', w, taken, plain] : plain)
+          sets = [
+            ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), palette.road)],
+            ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), palette.road)],
+            ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), palette.roadRim)],
+            ['clay-grass-fill', 'fill-color', claimed(takeoverTint('#D85D96'), palette.park)],
+            ...buildingSets,
+          ]
+        }
         const generation = ++claimPaintQueue
+        if (!buildingsOnly) fullClaimPaintActive = true
         const step = (i: number) => {
-          if (generation !== claimPaintQueue || i >= sets.length) return
+          if (generation !== claimPaintQueue) return
+          if (i >= sets.length) {
+            if (!buildingsOnly) {
+              fullClaimPaintActive = false
+              if (pendingCameraBuildingPaint) {
+                pendingCameraBuildingPaint = false
+                applyClaimRoadPaint(true)
+              }
+            }
+            return
+          }
           const [layer, prop, value] = sets[i]
           try {
             if (map.isStyleLoaded() && map.getLayer(layer)) {
@@ -3717,6 +3989,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       // a newly loaded building tile evaluates the expression itself as its
       // bucket builds, so late tiles come up already claimed.
       stopClaimRoadPaint = onClaimsSettled(() => { applyClaimRoadPaint() })
+      // Owner-aware building expressions are camera-scoped. Recompute only
+      // after a camera settles; never during the move/render loop.
+      map.on('moveend', () => { applyClaimRoadPaint(true) })
 
       // ── The colour circle: takeover recolour ────────────────────────────────
       // The circle under the zoom slider transposes the takeover family to a
@@ -3787,11 +4062,11 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             nextFrame(() => nextFrame(() => {
               if (beat !== recolorBeat) return
               try {
-                if (map.getLayer('clay-buildings-3d')) map.setPaintProperty('clay-buildings-3d', 'fill-extrusion-color', building3DColor() as never)
+                if (map.getLayer('clay-buildings-3d')) map.setPaintProperty('clay-buildings-3d', 'fill-extrusion-color', building3DColor(map) as never)
                 nextFrame(() => {
                   if (beat !== recolorBeat) return
                   try {
-                    if (map.getLayer('clay-building-caps')) map.setPaintProperty('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor() as never)
+                    if (map.getLayer('clay-building-caps')) map.setPaintProperty('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map) as never)
                   } catch { /* torn down */ }
                 })
               } catch { /* torn down */ }
@@ -4319,6 +4594,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       finishRendererParkOnIdle = null
       stopClaimRoadPaint?.()
       stopClaimRoadPaint = null
+      map.off('movestart', clearLandmarkThumb)
+      map.off('moveend', settleLandmarkThumb)
       idleSnapshot.dispose()
       if (idleSnapshotRef.current === idleSnapshot) idleSnapshotRef.current = null
       stopCarAudio()
@@ -4606,32 +4883,20 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     // only holders whose ground is actually on screen, capped, and ranked so
     // the cap can never drop the regional holders that ARE the board.
     //
-    // Planet zoom draws NO pins deliberately: at zoom 2 every face projects
-    // into a few pixels and thirty of them read as noise over the dots that
-    // are already saying who owns what.
-    const PIN_MIN_ZOOM = 3.2
     const PIN_MAX_LIVE = 18
     const visiblePins = (): PopPin[] => {
       const zoom = map.getZoom()
-      if (zoom < PIN_MIN_ZOOM) return []
-      const b = map.getBounds()
-      if (!b) return list.slice(0, PIN_MAX_LIVE)
-      // A pop's PIN stands on its centre, but its ground extends radiusKm
-      // around it — pad the test so a holder whose territory fills the screen
-      // still gets a face while its centre is just off the edge.
-      const pad = (pin: PopPin) => pin.radiusKm / 111
-      const inView = list.filter(pin => {
-        const d = pad(pin)
-        return pin.coords[0] >= b.getWest() - d && pin.coords[0] <= b.getEast() + d
-          && pin.coords[1] >= b.getSouth() - d && pin.coords[1] <= b.getNorth() + d
-      })
+      const maxLive = zoom < 3.2 ? 10 : PIN_MAX_LIVE
+      const inView = viewportDominancePins(map, list)
       // Dominance first: world holders, then by how much ground they hold.
       // Your own pops sort with the rest — on a shared board the question is
       // who leads here, and pinning yours to the top would answer a different
       // one.
       inView.sort((a, c) =>
-        (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0) || c.radiusKm - a.radiusKm)
-      return inView.slice(0, PIN_MAX_LIVE)
+        dominanceFameScore(c.radiusKm, c.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
+        || (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0)
+        || c.radiusKm - a.radiusKm)
+      return inView.slice(0, maxLive)
     }
 
     // The pin's look follows the render tier: dimensional in 3D, flat in 2D.
@@ -4658,8 +4923,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       // restarted five CSS transitions on every map frame.
       const markerRoot = document.createElement('div')
       markerRoot.className = MAP_2D || SHARED_ADAPTIVE_MAP
-        ? `${styles.popPinMarker} ${styles.popPinMarkerFlat}`
-        : styles.popPinMarker
+        ? `${styles.popPinMarker} ${styles.popPinMarkerFlat} ${styles.popPinMarkerReveal}`
+        : `${styles.popPinMarker} ${styles.popPinMarkerReveal}`
+      markerRoot.dataset.dominationOwner = pin.ownerId ?? pin.user ?? 'self'
+      markerRoot.style.setProperty('--dominationColor', pin.color)
       const el = document.createElement('button')
       el.className = MAP_2D || SHARED_ADAPTIVE_MAP ? `${styles.popPin} ${styles.popPinFlat}` : styles.popPin
       el.type = 'button'
@@ -4672,6 +4939,10 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       img.draggable = false
       el.appendChild(img)
       markerRoot.appendChild(el)
+      const ownerLabel = document.createElement('span')
+      ownerLabel.className = styles.dominationTerritoryLabel
+      ownerLabel.textContent = pin.user ?? 'YOU'
+      markerRoot.appendChild(ownerLabel)
       // Every one of your pins wears the same static profile face. A still is
       // both clearer ownership and dramatically cheaper than cloning the
       // profile-video decoder above every visible claim.
@@ -5016,6 +5287,78 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           BACKGROUND behind the focal subject blurs (bokeh), not the screen
           edges — that effect is on the work order for capable devices. */}
 
+      {dominanceRows.length > 0 && !controlsObscured && (
+        <div className={dominanceBoardOpen ? styles.dominanceDock : `${styles.dominanceDock} ${styles.dominanceDockClosed}`}>
+          <button
+            type="button"
+            className={styles.dominanceSideButton}
+            aria-label={dominanceBoardOpen ? 'Close domination live' : 'Open domination live'}
+            aria-expanded={dominanceBoardOpen}
+            aria-controls="poplur-domination-live"
+            onClick={() => {
+              playPop()
+              setDominanceBoardOpen(open => !open)
+            }}
+          >
+            <span aria-hidden="true">{dominanceBoardOpen ? '‹' : '›'}</span>
+            <b>FAME</b>
+          </button>
+          {dominanceBoardOpen && (
+            <section
+              id="poplur-domination-live"
+              className={styles.dominanceBoard}
+              aria-labelledby="poplur-domination-title"
+            >
+              <header className={styles.dominanceBoardTop}>
+                <div>
+                  <span>{dominanceOverview ? 'WORLD' : 'LOCAL'} · DOMINATION LIVE</span>
+                  <h2 id="poplur-domination-title">Conquer Board</h2>
+                </div>
+                <strong
+                  key={`leader-${dominanceRows[0]?.owner}-${dominanceViewRevision}`}
+                  className={styles.dominanceLeaderNow}
+                  style={{ '--dominationColor': dominanceRows[0]?.color } as React.CSSProperties}
+                >
+                  {dominanceRows[0]?.label}
+                </strong>
+              </header>
+              <div className={styles.dominanceBoardStats}>
+                <span><strong>{dominanceRows.length}</strong> in view</span>
+                <span><strong>{Math.round(dominanceTotalKm).toLocaleString()}</strong> km held</span>
+                <span><strong>{dominanceRows[0]?.fame.toLocaleString() ?? '—'}</strong> top fame</span>
+              </div>
+              <div className={styles.dominanceList}>
+                {dominanceRows.slice(0, 10).map((row: DominanceLeader, index) => (
+                  <article
+                    className={styles.dominanceRow}
+                    key={`${row.owner}-${dominanceViewRevision}`}
+                    style={{ '--dominationColor': row.color } as React.CSSProperties}
+                  >
+                    <span className={styles.dominanceRank}>{index + 1}</span>
+                    <span className={styles.dominanceAvatar}>
+                      {row.avatar
+                        ? <img src={row.avatar} alt="" draggable={false} />
+                        : <b aria-hidden="true">{row.label.replace('@', '').slice(0, 1).toUpperCase()}</b>}
+                    </span>
+                    <span className={styles.dominanceName}>
+                      <strong>{row.label}</strong>
+                      <em>{row.topPlace} · {row.territories} {row.territories === 1 ? 'area' : 'areas'}</em>
+                    </span>
+                    <span className={styles.dominanceFame}>
+                      {row.fame.toLocaleString()}<small>FAME</small>
+                    </span>
+                    <span className={styles.dominanceBar} aria-hidden="true">
+                      <i style={{ width: `${Math.max(8, (row.fame / dominanceMaxFame) * 100)}%` }} />
+                    </span>
+                  </article>
+                ))}
+              </div>
+              <span className={styles.srOnly} aria-live="polite">{dominanceAnnouncement}</span>
+            </section>
+          )}
+        </div>
+      )}
+
       {cloudBand > 0.01 && cloudSprite && (
         <div className={styles.cloudLayer} aria-hidden="true">
           <img className={styles.cloudSprite} src={cloudSprite} alt=""
@@ -5061,43 +5404,52 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       {composeAt && !radiusPreviewLaunch && (
         <div
           className={styles.composeBubble}
-          style={{ left: composeAt.x, top: composeAt.y }}
           data-focused-picker={focusedPostLaunch ? 'true' : undefined}
           role="dialog"
           aria-modal="false"
           aria-labelledby="poplur-map-compose-title"
         >
-          <div className={styles.composeTitle} id="poplur-map-compose-title">
-            {focusedPostLaunch
-              ? focusedPostLocationStatus === 'ready'
-                ? 'Place this post here'
-                : focusedPostLocationStatus === 'waiting'
-                  ? 'Finding your current area…'
-                  : 'Choose a post spot'
-              : 'Drop a pop here'}
+          <div className={styles.composeHeader}>
+            <span className={styles.composePostMark} aria-hidden="true">P</span>
+            <div>
+              <div className={styles.composeTitle} id="poplur-map-compose-title">
+                {focusedPostLaunch
+                  ? focusedPostLocationStatus === 'ready'
+                    ? 'Place this post here'
+                    : focusedPostLocationStatus === 'waiting'
+                      ? 'Finding your current area…'
+                      : 'Choose a post spot'
+                  : 'Drop a pop here'}
+              </div>
+              <div className={styles.composeSubtitle}>
+                {focusedPostLaunch ? 'Confirm the point on the map' : 'Claim this area with a post'}
+              </div>
+            </div>
           </div>
-          <label className={styles.composeRadiusRow}>
-            <span>Claim radius</span>
-            <strong>{composeRadiusKm} km</strong>
-          </label>
-          <div className={styles.composeCoverage}>
-            {focusedPostLaunch && focusedPostLocationStatus !== 'ready'
-              ? focusedPostLocationStatus === 'waiting'
-                ? 'Getting your location…'
-                : 'Tap the map to select a spot'
-              : `Live coverage · ${composeRadiusKm * 2} km across`}
+          <div className={styles.composeRadiusPanel}>
+            <label className={styles.composeRadiusRow}>
+              <span>Claim radius</span>
+              <strong>{composeRadiusKm} km</strong>
+            </label>
+            <div className={styles.composeCoverage}>
+              {focusedPostLaunch && focusedPostLocationStatus !== 'ready'
+                ? focusedPostLocationStatus === 'waiting'
+                  ? 'Getting your location…'
+                  : 'Tap the map to select a spot'
+                : `Live coverage · ${composeRadiusKm * 2} km across`}
+            </div>
+            <input
+              type="range"
+              min={0.5}
+              max={25}
+              step={0.5}
+              value={composeRadiusKm}
+              onInput={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
+              onChange={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
+              className={styles.composeSlider}
+              aria-label="Claim radius"
+            />
           </div>
-          <input
-            type="range"
-            min={0.5}
-            max={25}
-            step={0.5}
-            value={composeRadiusKm}
-            onInput={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
-            onChange={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
-            className={styles.composeSlider}
-            aria-label="Claim radius"
-          />
           {/* Say it in words. A written pop is a pop: it claims the same
               ground, and it is what the Times sets as a MESSAGE inside this
               radius. Leave it blank and Post here still takes you to the
@@ -5365,7 +5717,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           // The knob is a pre-rendered view of the real 3D object at this
           // zoom band. Unlike decoding a GLB just to decorate a control, this
           // costs one cached 2D image and is visible on the first frame.
-          '--zoomThumb': `url("${zoomStage.sprite}")`,
+          '--zoomThumb': `url("${activeZoomThumb.sprite}")`,
           '--zoomProgress': zoomProgress,
           // The rail's fill follows the takeover colour. `takeoverFace` is in
           // this component's state and changes with the wheel, so these
@@ -5389,7 +5741,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       >
         <div className={styles.zoomRail} ref={zoomRailRef}>
           <div
-            className={styles.zoomThumb}
+            key={activeZoomThumb.id}
+            className={`${styles.zoomThumb}${landmarkThumbSprite ? ` ${styles.zoomThumbLandmark}` : ''}`}
+            data-zoom-thumb={activeZoomThumb.id}
             style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
           />
         </div>
@@ -5400,17 +5754,98 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           buildings you hold pop (with the house sound) and re-mold in the new
           colour. The map-side subscription owns that answer; this button only
           spins the wheel. */}
+      {colorPaletteOpen && (
+        <div
+          className={styles.colorPaletteDismiss}
+          role="presentation"
+          onPointerDown={() => closeColorPalette(false)}
+        >
+          <section
+            className={styles.colorPalette}
+            role="dialog"
+            aria-label="Choose your domination colour"
+            onPointerDown={event => event.stopPropagation()}
+          >
+            <header>
+              <strong>YOUR COLOUR</strong>
+              <span>Terrain, labels and fame update together</span>
+            </header>
+            <div className={styles.colorSwatchGrid}>
+              {colorSwatches.map(swatch => (
+                <button
+                  type="button"
+                  key={swatch.name}
+                  className={swatch.color.toLowerCase() === takeoverFace.toLowerCase() ? styles.colorSwatchActive : undefined}
+                  style={{ '--swatchColor': swatch.color } as React.CSSProperties}
+                  aria-label={swatch.name}
+                  aria-pressed={swatch.color.toLowerCase() === takeoverFace.toLowerCase()}
+                  onClick={() => {
+                    setTakeoverColor(swatch.color)
+                    playPop()
+                    closeColorPalette(true)
+                  }}
+                >
+                  <i />
+                  <span>{swatch.name.replace('Poplur ', '')}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
       <button
+        ref={colorCircleRef}
         type="button"
         key={`takeover-${takeoverFace}`}
         className={controlsObscured ? `${styles.colorCircle} ${styles.mapControlsObscured}` : styles.colorCircle}
         style={{ '--takeoverFace': takeoverFace } as React.CSSProperties}
-        aria-label="Change your takeover colour"
+        aria-label="Change your takeover colour. Hold to choose a colour"
+        aria-haspopup="dialog"
+        aria-expanded={colorPaletteOpen}
         aria-hidden={controlsObscured ? true : undefined}
         title="Takeover colour"
         disabled={controlsObscured}
         tabIndex={controlsObscured ? -1 : 0}
-        onClick={() => randomizeTakeoverColor()}
+        onPointerDown={event => {
+          window.clearTimeout(colorHoldTimerRef.current)
+          colorPressRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+          colorHoldTimerRef.current = window.setTimeout(() => {
+            if (!colorPressRef.current) return
+            suppressColorClickRef.current = true
+            colorPressRef.current = null
+            setColorPaletteOpen(true)
+            playPop()
+          }, 520)
+        }}
+        onPointerMove={event => {
+          const press = colorPressRef.current
+          if (!press || press.pointerId !== event.pointerId) return
+          if (Math.hypot(event.clientX - press.x, event.clientY - press.y) <= 12) return
+          window.clearTimeout(colorHoldTimerRef.current)
+          colorPressRef.current = null
+        }}
+        onPointerUp={() => {
+          window.clearTimeout(colorHoldTimerRef.current)
+          colorPressRef.current = null
+        }}
+        onPointerCancel={() => {
+          window.clearTimeout(colorHoldTimerRef.current)
+          colorPressRef.current = null
+        }}
+        onClick={event => {
+          if (suppressColorClickRef.current) {
+            suppressColorClickRef.current = false
+            event.preventDefault()
+            return
+          }
+          // Keyboard users cannot perform a long press; their activation opens
+          // the same explicit picker instead of gambling on a random hue.
+          if (event.detail === 0) {
+            setColorPaletteOpen(true)
+            return
+          }
+          randomizeTakeoverColor()
+        }}
       />
 
       {/* FOV slider moved into the HOLD MENU (declutter): its entry cycles

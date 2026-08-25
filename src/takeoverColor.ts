@@ -15,7 +15,17 @@
 // visibly changes the world, and notifies subscribers — the map answers by
 // popping the claimed buildings and re-painting (see ClayMap).
 
-let hueDelta = 0
+const TAKEOVER_COLOR_KEY = 'poplur.takeover.hue.v1'
+
+function storedHueDelta(): number {
+  if (typeof window === 'undefined') return 0
+  try {
+    const parsed = Number(window.localStorage.getItem(TAKEOVER_COLOR_KEY))
+    return Number.isFinite(parsed) ? ((parsed % 360) + 360) % 360 : 0
+  } catch { return 0 }
+}
+
+let hueDelta = storedHueDelta()
 
 const listeners = new Set<(delta: number) => void>()
 
@@ -23,6 +33,16 @@ const listeners = new Set<(delta: number) => void>()
 // no reason to pay them per paint call: memoise per (delta, hex).
 let memoDelta = 0
 const memo = new Map<string, string>()
+
+function publishHue(): void {
+  try { window.localStorage.setItem(TAKEOVER_COLOR_KEY, String(hueDelta)) } catch { /* private/embed mode */ }
+  listeners.forEach(fn => fn(hueDelta))
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('poplur-takeover-color-change', {
+      detail: { hueDelta, color: takeoverBaseColor() },
+    }))
+  }
+}
 
 function hexToHsl(hex: string): [number, number, number] {
   const n = hex.replace('#', '')
@@ -89,18 +109,58 @@ export function takeoverHueDelta(): number {
   return hueDelta
 }
 
+export interface TakeoverSwatch {
+  name: string
+  color: string
+}
+
+const SWATCH_HUES: Array<[string, number]> = [
+  ['Poplur pink', 0],
+  ['Cherry', 34],
+  ['Tangerine', 70],
+  ['Gold', 102],
+  ['Lime', 142],
+  ['Mint', 178],
+  ['Sky', 218],
+  ['Violet', 272],
+]
+
+/** The authored identity colours shown by the map's hold-to-pick palette. They
+ * all preserve the base clay material's saturation/lightness, so selecting a
+ * swatch changes hue without flattening the shader family. */
+export function takeoverSwatches(): TakeoverSwatch[] {
+  const [baseHue, saturation, lightness] = hexToHsl('#F63B9A')
+  return SWATCH_HUES.map(([name, delta]) => ({
+    name,
+    color: hslToHex(baseHue + delta, saturation, lightness),
+  }))
+}
+
+/** Select an explicit identity colour. The rest of the takeover palette is
+ * transposed by the same hue delta, keeping roads, terrain, rims and buildings
+ * in sync with the chosen swatch. */
+export function setTakeoverColor(color: string): void {
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return
+  const [baseHue] = hexToHsl('#F63B9A')
+  const [targetHue] = hexToHsl(color)
+  const next = ((targetHue - baseHue) % 360 + 360) % 360
+  if (Math.abs(next - hueDelta) < 0.001) return
+  hueDelta = next
+  publishHue()
+}
+
 /** Spin the wheel: a new hue at least 40° from the current one, so every press
  *  visibly changes the takeover. Notifies subscribers (the map pops + repaints). */
 export function randomizeTakeoverColor(): void {
   hueDelta = (hueDelta + 40 + Math.random() * 280) % 360
-  listeners.forEach(fn => fn(hueDelta))
+  publishHue()
 }
 
 /** Back to the default pink family (delta 0). Mostly for tests/dev drives. */
 export function resetTakeoverColor(): void {
   if (hueDelta === 0) return
   hueDelta = 0
-  listeners.forEach(fn => fn(hueDelta))
+  publishHue()
 }
 
 /** Subscribe to colour changes. Returns unsubscribe. */

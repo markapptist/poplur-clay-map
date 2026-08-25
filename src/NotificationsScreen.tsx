@@ -8,8 +8,10 @@ import { postNativeEvent } from './nativeBridge'
 import {
   clearAllNotifications,
   listNotifications,
+  markNotificationsSeen,
   onNotificationsChanged,
   NOTIF_ICON_LABEL,
+  replaceNativeNotifications,
   type Notification,
 } from './notifications'
 
@@ -40,21 +42,44 @@ export default function NotificationsScreen({
   const [notifs, setNotifs] = useState<Notification[]>(() => listNotifications())
   useEffect(() => onNotificationsChanged(setNotifs), [])
 
+  // Native owns authenticated Firestore access. Ask for its canonical inbox on
+  // mount and whenever pull-to-refresh runs, then replace the persisted slice
+  // of the shared store. Plain-browser previews simply keep their local seed.
+  useEffect(() => {
+    const onResult = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail
+      if (detail?.type !== 'poplurNotifications') return
+      const receivedUnread = Array.isArray(detail.notifications)
+        && detail.notifications.some(row => !!row && typeof row === 'object'
+          && (row as { unread?: unknown }).unread !== false)
+      replaceNativeNotifications(detail.notifications)
+      // The response may have raced the native read batch. This screen is
+      // already open, so none of the rows it just received should relight the
+      // bell locally.
+      markNotificationsSeen()
+      if (receivedUnread) postNativeEvent({ type: 'notificationsRead' })
+    }
+    window.addEventListener('poplur-notifications-result', onResult)
+    postNativeEvent({ type: 'notificationsRequested' })
+    return () => window.removeEventListener('poplur-notifications-result', onResult)
+  }, [])
+
   // Reading the list is what clears the bell's dot. On MOUNT rather than on
   // close, so the dot goes out as the screen opens and anything landing while
   // it is up stays counted for the next visit.
-  useEffect(() => { markEngagementSeen() }, [])
+  useEffect(() => {
+    markNotificationsSeen()
+    markEngagementSeen()
+  }, [])
 
   const pullHost = useRef<HTMLDivElement>(null)
   const pullInner = useRef<HTMLDivElement>(null)
   const pullPanel = useRef<HTMLDivElement>(null)
   const pullHead = useRef<HTMLDivElement>(null)
 
-  // engagementLog.ts is "a demo trickle today and a live wire" later — no real
-  // backend feeds this yet, so a pull has nothing to fetch. Same honesty as
-  // Mail's requestDMThreads: announce the ask over the bridge (a no-op until a
-  // native side answers it, and then this becomes a real refresh for free)
-  // and re-read the local log, rather than fake a delay pretending to fetch.
+  // The installed app's authenticated shell owns the Firestore query, just as
+  // it owns DM reads. A browser workbench has no bridge and simply re-reads its
+  // local preview rows rather than faking a network result.
   const refreshNotifications = useCallback(() => {
     postNativeEvent({ type: 'notificationsRequested' })
     setNotifs(listNotifications())

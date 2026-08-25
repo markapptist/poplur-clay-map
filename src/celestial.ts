@@ -203,10 +203,10 @@ export function moonPhase(when: Date): MoonPhase {
  * fetch simply found nothing on device. Anything the app needs on a phone
  * lives at the root — the same reason clay_tv.glb does.
  *
- * They were also far too heavy to send even if the path had been right: 13MB,
- * 28MB and 24MB. Decimated (Draco + simplify 0.0005 + 256px webp) they are
- * 59KB, 136KB and 89KB, craters and all — 65MB of sky reduced to 283KB. The
- * originals stay in models/ as the masters.
+ * They are also far too heavy to send even if the path is right: 81MB, 28MB
+ * and 24MB. Decimated (Draco + simplify 0.0005 + 256px webp) they are 221KB,
+ * 136KB and 89KB, face and craters intact — 133MB of sky reduced to 445KB.
+ * The originals stay in models/ as the masters.
  */
 export const CELESTIAL_MODELS = {
   sun: 'poplur_sun_lite.glb',

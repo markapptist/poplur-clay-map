@@ -10,7 +10,7 @@
 // firebase client never initialises inside the app, where native owns it.
 
 import {
-  collection, doc, addDoc, setDoc, deleteDoc, getDocs, onSnapshot,
+  collection, doc, addDoc, setDoc, updateDoc, deleteDoc, getDocs, onSnapshot,
   query, where, serverTimestamp,
 } from 'firebase/firestore'
 import { webDb, currentUid, currentDisplayName } from './webFirebase'
@@ -52,9 +52,15 @@ async function startCall(otherUID: string, callerName?: string, video = false): 
 async function publishDescription(callId: string, type: string, sdp: string): Promise<void> {
   if (!callId) return
   const key = type === 'offer' ? 'offer' : 'answer'
+  // The call document is already `ringing` before the caller creates its
+  // offer.  Do not write that status a second time: a fast callee can accept
+  // while the offer is still being published, and a late `ringing` merge
+  // would otherwise resurrect the incoming-call query mid-call.
+  const payload: Record<string, unknown> = { [key]: { type, sdp } }
+  if (key === 'answer') payload.status = 'connected'
   await setDoc(
     doc(webDb(), 'calls', callId),
-    { [key]: { type, sdp }, status: key === 'answer' ? 'connected' : 'ringing' },
+    payload,
     { merge: true },
   ).catch(err => console.warn('[webCallSig] publishDescription', err))
 }
@@ -82,14 +88,14 @@ async function endCall(callId: string): Promise<void> {
 
 async function declineCall(callId: string): Promise<void> {
   if (!callId) return
-  await setDoc(doc(webDb(), 'calls', callId), { status: 'declined' }, { merge: true })
+  await updateDoc(doc(webDb(), 'calls', callId), { status: 'declined' })
     .catch(err => console.warn('[webCallSig] declineCall', err))
 }
 
 async function acceptCall(callId: string): Promise<void> {
   if (!callId) return
   observe(callId)
-  await setDoc(doc(webDb(), 'calls', callId), { status: 'connected' }, { merge: true })
+  await updateDoc(doc(webDb(), 'calls', callId), { status: 'connected' })
     .catch(err => console.warn('[webCallSig] acceptCall', err))
 }
 
@@ -141,6 +147,10 @@ export function observeIncoming(): void {
   )
   incomingUnsub = onSnapshot(q, snap => {
     snap.docChanges().forEach(change => {
+      if (change.type === 'removed') {
+        emit({ type: 'poplurCallIncomingUnavailable', callId: change.doc.id })
+        return
+      }
       if (change.type !== 'added') return
       const data = change.doc.data()
       emit({
@@ -173,13 +183,16 @@ export function handleSignal(message: Record<string, unknown>): void {
   const m = message
   switch (m.type) {
     case 'callStart':
+      {
+      const requestId = String(m.requestId ?? '')
       void startCall(
         String(m.otherId ?? ''),
         typeof m.callerName === 'string' ? m.callerName : undefined,
         m.video === true,
       )
-        .then(id => emit({ type: 'poplurCallStarted', callId: id ?? '', ok: !!id }))
+        .then(id => emit({ type: 'poplurCallStarted', callId: id ?? '', ok: !!id, requestId }))
       break
+      }
     case 'callAccept': void acceptCall(String(m.callId ?? '')); break
     case 'callDescription':
       void publishDescription(String(m.callId ?? ''), String(m.sdpType ?? 'offer'), String(m.sdp ?? ''))

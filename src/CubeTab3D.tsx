@@ -129,6 +129,10 @@ const FRONT_ONLY_MODELS = new Set([
   'poplur_cube_verification.glb',
   'poplur_cube_paint_bucket.glb',
   'poplur_cube_directions_arrow.glb',
+  // The supplied rain cloud is intentionally a shallow hero-facing relief;
+  // both weather objects should keep their readable face toward the viewer.
+  'poplur_cube_rain_cloud.glb',
+  'poplur_cube_thunder_cloud.glb',
 ])
 /** The grip the camcorder reads as level. A handset held to film sits around
     60° off the tabletop, not flat and not upright, so that is the pose that
@@ -258,6 +262,7 @@ export const DEFAULT_CUBE_MODEL = 'poplur_cube_v4.glb'
 const CUBE_MODEL = DEFAULT_CUBE_MODEL
 const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
 const TSHIRT_MODEL = 'poplur_cube_tshirt.glb'
+const DISCO_BALL_MODEL = 'poplur_cube_disco_ball.glb'
 
 /** The clay GLBs use Draco or Meshopt compression depending on which asset
     pipeline produced them. A bare GLTFLoader downloads either format and then
@@ -410,6 +415,27 @@ function fitIntoGroup(
         if (standard.map) standard.emissiveMap = standard.map
         standard.emissive.set(0xffffff)
         standard.emissiveIntensity = Math.max(0.62, standard.emissiveIntensity || 0)
+        standard.needsUpdate = true
+      })
+    })
+  }
+  // Meshy's disco asset supplies the tiled PBR texture but no environment,
+  // emissive layer or animation. Keep enough albedo to read in WebKit's small
+  // transparent canvas, then let the governed point light below travel across
+  // the polished surface for the real glisten.
+  if (url === DISCO_BALL_MODEL) {
+    model.traverse(child => {
+      const mesh = child as THREE.Mesh
+      if (!mesh.isMesh) return
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      materials.forEach(material => {
+        const standard = material as THREE.MeshStandardMaterial
+        if (!standard.isMeshStandardMaterial) return
+        standard.metalness = Math.max(0.62, standard.metalness || 0)
+        standard.roughness = Math.min(0.32, standard.roughness || 0.32)
+        if (standard.map) standard.emissiveMap = standard.map
+        standard.emissive.set(0x2d1628)
+        standard.emissiveIntensity = Math.max(0.16, standard.emissiveIntensity || 0)
         standard.needsUpdate = true
       })
     })
@@ -680,6 +706,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     const rim = new THREE.DirectionalLight(0xff8ac6, 0.7)
     rim.position.set(3, 1, -3)
     scene.add(rim)
+    // Off at rest. While the disco model is actually visible this highlight
+    // orbits the ball inside the existing 20 Hz governed loop, producing the
+    // travelling mirror flashes without another canvas or runaway rAF.
+    const discoGlisten = new THREE.PointLight(0xfff5dc, 0, 5.5, 1.7)
+    discoGlisten.position.set(-1.8, 1.5, 3.2)
+    scene.add(discoGlisten)
 
     // ORTHOGRAPHIC camera: no perspective foreshortening, so every face
     // projects at exactly the same size no matter how the cube is rotated —
@@ -766,6 +798,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     // Navigation itself never rotates. The visible map earth and live device
     // orientation use the navigator-only display clock below.
     let yaw = 0
+    let discoYaw = 0
+    let discoGlistenTime = 0
     let motionYaw = 0
     let motionTargetYaw = 0
     let motionPitch = 0
@@ -836,6 +870,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // very touch that un-ghosts the chrome also restarts the turn.
       && window.__poplurChromeIdle !== true
       && isMapGlobe()
+    const discoBallIsVisible = () =>
+      document.visibilityState === 'visible'
+      && (window.__poplurDisplayActive?.() ?? true)
+      && window.__poplurChromeIdle !== true
+      && loadedUrlRef.current === DISCO_BALL_MODEL
     const armGlobeSpin = (durationMs: number) => {
       if (!mapGlobeIsVisible()) return
       globeSpinUntil = Math.max(globeSpinUntil, performance.now() + durationMs)
@@ -1529,6 +1568,27 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         needsRender = true
       }
 
+      // A disco ball reads through reflected motion, not by spinning fast.
+      // Keep the turn relaxed and sweep one warm-white point highlight over
+      // different mirror tiles. This shares the navigator's ambient 20 Hz
+      // cadence and disappears the instant Home swaps the event cube back.
+      const discoAnimating = discoBallIsVisible()
+      if (discoAnimating) {
+        discoYaw = (discoYaw + 0.64 * dt) % (Math.PI * 2)
+        discoGlistenTime = (discoGlistenTime + dt) % 12
+        const sweep = discoGlistenTime * 2.15
+        discoGlisten.position.set(
+          Math.cos(sweep) * 2.15,
+          1.15 + Math.sin(sweep * 0.73) * 0.9,
+          2.5 + Math.sin(sweep) * 0.55,
+        )
+        discoGlisten.intensity = 4.4 + Math.pow(Math.max(0, Math.sin(sweep * 1.7)), 10) * 4.2
+        needsRender = true
+      } else if (discoGlisten.intensity !== 0) {
+        discoGlisten.intensity = 0
+        needsRender = true
+      }
+
       // The wardrobe tee's cloth response. Its spring chases the tilt the
       // motion spring above already resolved — inverted, because fabric lags
       // the body — with a velocity kick so a fast flick swings the hem
@@ -1586,7 +1646,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         // The globe's authored entrance turn and live device response share
         // one rotation. Every other object stays front-facing and moves only
         // from device tilt; a tab change never carries the globe's yaw into it.
-        group.rotation.y = (isMapGlobe() ? yaw : 0) + motionYaw + (tracksHeading() ? headingYaw : 0)
+        group.rotation.y = (isMapGlobe() ? yaw : discoAnimating ? discoYaw : 0)
+          + motionYaw + (tracksHeading() ? headingYaw : 0)
         pitchGroup.rotation.x = pitch + motionPitch
         renderer.render(scene, camera)
         needsRender = false
@@ -1609,7 +1670,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // scheduled and pick the next one up on the very next frame instead of
       // parking between samples and stuttering.
       const motionLive = now < motionActiveUntil
-      if (active || globeAnimating || motionLive || clothSettling) {
+      if (active || globeAnimating || discoAnimating || motionLive || clothSettling) {
         // Ambient navigator work gets 20Hz; a direct gesture and camera aim
         // keep the full policy rate.
         //

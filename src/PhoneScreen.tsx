@@ -438,6 +438,12 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
       else playPop()
       return
     }
+    if (liveCall?.phase === 'calling' || liveCall?.phase === 'connecting') {
+      if (key === '5') { playPop(); hangupCall(); setCalling(null) }
+      else if (key === '*') back()
+      else playPop()
+      return
+    }
     if (key === '2') step(-1)
     else if (key === '8') step(1)
     else if (key === '5') select()
@@ -484,7 +490,7 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
 
         <div className={themeRebooting ? `${styles.lcd} ${styles.lcdBlue}` : styles.lcd} aria-live="polite">
           <div className={styles.topline} aria-hidden="true">
-            <span>▮▮▮ ⋮</span><span>▮▮</span>
+            <span>PT&amp;T WIRELESS</span><span>▮▮▮</span>
           </div>
 
           {themeRebooting ? (

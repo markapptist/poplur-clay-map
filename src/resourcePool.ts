@@ -20,7 +20,7 @@ const CAPACITY: Record<PoplurResourceKind, number> = {
   analysis: 1,
 }
 
-class PoplurResourcePool {
+export class PoplurResourcePool {
   private nextID = 0
   private leases = new Map<number, LeaseRecord>()
 
@@ -63,6 +63,11 @@ class PoplurResourcePool {
         }
       },
     }
+  }
+
+  /** Revoke every live device/decoder/analysis owner at a screen boundary. */
+  releaseAll() {
+    ;[...this.leases.values()].forEach(record => this.revoke(record))
   }
 
   private revoke(record: LeaseRecord) {

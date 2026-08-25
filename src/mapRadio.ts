@@ -1,5 +1,6 @@
 import { isGateMuted, onGateChange } from './audioGate'
 import { currentAudioOwner, holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
+import { setMusicPlayback } from './musicPlayback'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { musicShelf } from './musicPosts'
 import { HOME } from './reach'
@@ -309,6 +310,15 @@ export function removeBroadcast(id: string) {
   writeBroadcastShelf(readBroadcastShelf().filter(b => b.id !== id))
 }
 
+/** Broadcasts authored on this account. This is deliberately separate from
+ * discovery: Messages should offer only your own podcasts for sharing, never
+ * another creator's nearby show. */
+export function ownBroadcastShelf(): PoplurBroadcast[] {
+  return readBroadcastShelf()
+    .filter(broadcast => broadcast.artist.trim().toLocaleLowerCase() === 'you')
+    .sort((a, b) => (b.status === 'live' ? 1 : 0) - (a.status === 'live' ? 1 : 0))
+}
+
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371, toRad = (v: number) => (v * Math.PI) / 180
   const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1)
@@ -535,7 +545,10 @@ function suspendRadioContextSoon(delayMs = 450) {
     if (!ctx || ctx.state !== 'running') return
     if (soundWanted && !isRadioGateMuted()) return
     void ctx.suspend()
-      .then(() => publishRadioState(isRadioGateMuted() ? 'muted' : 'off'))
+      .then(() => {
+        publishRadioState(isRadioGateMuted() ? 'muted' : 'off')
+        syncRadioMusicPlayback()
+      })
       .catch(() => {})
   }, delayMs)
 }
@@ -561,6 +574,7 @@ function installUnlock() {
       .then(() => {
         stopFallbackRadio()
         setRadioLevel(targetRadioLevel, 0.08)
+        syncRadioMusicPlayback()
       })
       .catch(() => {})
   }
@@ -581,6 +595,10 @@ function getFallbackAudio(): HTMLAudioElement | null {
     fallbackAudio.loop = true
     fallbackAudio.preload = 'auto'
     fallbackAudio.volume = 0
+    fallbackAudio.addEventListener('playing', syncRadioMusicPlayback)
+    fallbackAudio.addEventListener('pause', syncRadioMusicPlayback)
+    fallbackAudio.addEventListener('ended', syncRadioMusicPlayback)
+    fallbackAudio.addEventListener('volumechange', syncRadioMusicPlayback)
   }
   return fallbackAudio
 }
@@ -608,7 +626,7 @@ function startFallbackRadio(): boolean {
   const audio = getFallbackAudio()
   if (!audio) return false
   setFallbackRadioLevel(targetRadioLevel, 0.12)
-  void audio.play().catch(() => {})
+  void audio.play().then(syncRadioMusicPlayback).catch(syncRadioMusicPlayback)
   return true
 }
 
@@ -621,6 +639,7 @@ function stopFallbackRadio() {
   fallbackAudio.pause()
   fallbackAudio.currentTime = 0
   fallbackAudio.volume = 0
+  syncRadioMusicPlayback()
 }
 
 function createNoise(ctx: AudioContext, seconds = 2, amount = 0.38): AudioBuffer {
@@ -922,13 +941,16 @@ function getLiveAudio(): HTMLAudioElement | null {
       if (!soundWanted || !liveStation) return
       stopFallbackRadio()
       setRadioLevel(targetRadioLevel, 0.28)
+      syncRadioMusicPlayback()
     })
     liveAudio.addEventListener('pause', () => {
+      syncRadioMusicPlayback()
       if (!soundWanted || isRadioGateMuted() || !liveStation) return
       // A stream can pause before the delayed stalled/error signal arrives.
       // Bring the bed back immediately so the map never becomes dead air.
       setRadioLevel(targetRadioLevel, 0.16)
     })
+    liveAudio.addEventListener('volumechange', syncRadioMusicPlayback)
     // 'stalled' fires on transient buffering too — only drop if still stalled
     liveAudio.addEventListener('stalled', () => {
       if (liveStalledTimer !== null) window.clearTimeout(liveStalledTimer)
@@ -950,6 +972,22 @@ function isLiveRadioPlaying(): boolean {
   )
 }
 
+function syncRadioMusicPlayback(): void {
+  const htmlRadioAudible = Boolean(
+    (isLiveRadioPlaying() && liveAudio && !liveAudio.muted && liveAudio.volume > 0)
+    || (fallbackAudio && !fallbackAudio.paused && !fallbackAudio.muted && fallbackAudio.volume > 0),
+  )
+  const webAudioRadioAudible = Boolean(
+    audioContext?.state === 'running'
+    && radioBed
+    && targetRadioLevel * masterVolume > 0.001,
+  )
+  setMusicPlayback(
+    'radio',
+    soundWanted && !isRadioGateMuted() && (htmlRadioAudible || webAudioRadioAudible),
+  )
+}
+
 function tryPlayLiveRadio(): void {
   if (!soundWanted || isRadioGateMuted() || !liveStation || !liveAudio) return
   if (!liveAudio.getAttribute('src')) liveAudio.src = liveStation.url
@@ -958,6 +996,7 @@ function tryPlayLiveRadio(): void {
     .then(() => {
       stopFallbackRadio()
       setRadioLevel(targetRadioLevel, 0.28)
+      syncRadioMusicPlayback()
     })
     .catch((error: unknown) => {
       // Autoplay can still be denied in an embedded WebView. Keep WebAudio
@@ -966,6 +1005,7 @@ function tryPlayLiveRadio(): void {
       setRadioLevel(targetRadioLevel, 0.12)
       const ctx = audioContext
       if (!ctx || ctx.state === 'suspended') startFallbackRadio()
+      syncRadioMusicPlayback()
       // A genuine stream/codec failure should move to another station. Keep a
       // NotAllowedError selected because the next user gesture can unlock it.
       if ((error as { name?: string } | null)?.name !== 'NotAllowedError' && liveStation) {
@@ -1001,6 +1041,7 @@ function dropLiveStation() {
   if (liveAudio) { liveAudio.pause(); liveAudio.removeAttribute('src'); liveAudio.load() }
   // The synth bed swells back so the radio never goes dead.
   if (soundWanted) setRadioLevel(targetRadioLevel, 0.4)
+  syncRadioMusicPlayback()
   scheduleRetune()
 }
 
@@ -1094,30 +1135,40 @@ export function startMapRadio({ mediaOnly = false }: { mediaOnly?: boolean } = {
     tryPlayLiveRadio()
     setRadioLevel(RADIO_IDLE_LEVEL, 0.16)
     if (!isLiveRadioPlaying() && !isRadioGateMuted()) startFallbackRadio()
+    syncRadioMusicPlayback()
     return true
   }
   const ctx = getAudioContext()
-  if (!ctx || ctx.state === 'closed') return startFallbackRadio()
+  if (!ctx || ctx.state === 'closed') {
+    const started = startFallbackRadio()
+    syncRadioMusicPlayback()
+    return started
+  }
   if (!radioBed) radioBed = createRadioBed(ctx)
   stopFallbackRadio()
   tryPlayLiveRadio()
   setRadioLevel(RADIO_IDLE_LEVEL, 0.16)
-  void ctx.resume().catch(() => {
-    // iOS/Safari can reject a cold AudioContext even when it permits an
-    // ordinary media element. Try the small HTML fallback now; if that is
-    // blocked too, installUnlock owns the first real gesture retry.
-    if (soundWanted && !isRadioGateMuted()) startFallbackRadio()
-  })
+  void ctx.resume()
+    .then(syncRadioMusicPlayback)
+    .catch(() => {
+      // iOS/Safari can reject a cold AudioContext even when it permits an
+      // ordinary media element. Try the small HTML fallback now; if that is
+      // blocked too, installUnlock owns the first real gesture retry.
+      if (soundWanted && !isRadioGateMuted()) startFallbackRadio()
+      syncRadioMusicPlayback()
+    })
   if (ctx.state === 'suspended' && typeof window !== 'undefined') {
     window.setTimeout(() => {
       if (soundWanted && ctx.state === 'suspended') startFallbackRadio()
     }, 900)
   }
+  syncRadioMusicPlayback()
   return true
 }
 
 export function stopMapRadio() {
   soundWanted = false
+  setMusicPlayback('radio', false)
   // Do not let a slow launch directory response resurrect a station after the
   // listener has explicitly stopped the radio.
   bootTuneGeneration += 1
@@ -1236,6 +1287,7 @@ if (typeof window !== 'undefined') {
     // Muted or switched off, the context has nothing left to render.
     if (muted || !soundWanted) suspendRadioContextSoon()
     else cancelRadioSuspend()
+    syncRadioMusicPlayback()
   }
   onGateChange(applyGate)
   applyGate()
@@ -1457,10 +1509,11 @@ export function playStation(
   tryPlayLiveRadio()
   setRadioLevel(RADIO_CRUISE_LEVEL, 0.4)
   if (ctx && !isRadioGateMuted()) {
-    void ctx.resume().catch(() => startFallbackRadio())
+    void ctx.resume().then(syncRadioMusicPlayback).catch(() => startFallbackRadio())
   } else if (!ctx && !isRadioGateMuted()) {
     startFallbackRadio()
   }
+  syncRadioMusicPlayback()
 }
 
 export function nowPlayingStation(): { name: string; url: string } | null { return liveStation }

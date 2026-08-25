@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './PostComposer.module.css'
-import { awaitNativeUpload, type UploadPhase } from './nativeUpload'
+import { awaitNativeUpload, NativeUploadError, type UploadPhase } from './nativeUpload'
 import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
 import { channelUrl } from './assetPacks'
@@ -17,6 +17,20 @@ import VFXStudio, {
 } from './VFXStudio'
 import ComposerAIChat from './ComposerAIChat'
 import BoundedPopupVideo from './BoundedPopupVideo'
+import {
+  createClientPostId,
+  POST_RIGHTS_VERSION,
+  POST_SCHEMA_VERSION,
+  publicCoordinate,
+  publicCoordinateCell,
+  validatePublishPrivacy,
+  type PostLocationVisibility,
+} from './publishing'
+import {
+  accountPrivacySnapshot,
+  hidesPublicPostOrigin,
+  onAccountPrivacyChange,
+} from './accountPrivacy'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -63,6 +77,9 @@ export interface PublishedPost {
   usedAI: boolean
   target?: ComposerTarget
   destination: 'feed' | 'tv'
+  postId: string
+  audience: 'public'
+  locationVisibility: PostLocationVisibility
 }
 
 export type PostComposerStep = 'edit' | 'effects' | 'choice' | 'ai' | 'channel'
@@ -149,8 +166,14 @@ export default function PostComposer({
   const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
   const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
   const [radiusKm, setRadiusKm] = useState(target?.radiusKm ?? 3)
+  const [accountPrivacy, setAccountPrivacy] = useState(accountPrivacySnapshot)
+  const locationVisibility: PostLocationVisibility = hidesPublicPostOrigin(accountPrivacy)
+    ? 'hidden'
+    : 'approximate'
+  const [rightsAttested, setRightsAttested] = useState(false)
   const [posted, setPosted] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const postIdRef = useRef(createClientPostId())
   // A percentage is displayed only when the host reports real transferred
   // bytes. Preparing/awaiting-native phases stay visibly indeterminate rather
   // than filling a made-up timeline that could reach 99% and stall.
@@ -159,7 +182,10 @@ export default function PostComposer({
   // Set when the post could NOT actually be uploaded (browser preview has no
   // account) — the confirmation must never imply an upload that did not happen.
   const [uploadNote, setUploadNote] = useState<string | null>(null)
+  const [publishError, setPublishError] = useState<{ message: string; retryable: boolean } | null>(null)
   const filterCss = AR_FILTERS.find(f => f.id === filterId)?.css ?? 'none'
+
+  useEffect(() => onAccountPrivacyChange(setAccountPrivacy), [])
 
   // The cube's back: one screen at a time, closing from the first. Matches
   // the Escape key exactly.
@@ -383,6 +409,16 @@ export default function PostComposer({
 
   const publish = async () => {
     playPop()
+    const privacyError = validatePublishPrivacy({
+      audience: 'public',
+      locationVisibility,
+      rightsAttested,
+    })
+    if (privacyError) {
+      setPublishError({ message: privacyError, retryable: false })
+      return
+    }
+    setPublishError(null)
     setPublishing(true)
     setUploadProgress(null)
     setUploadPhaseState('preparing')
@@ -396,8 +432,15 @@ export default function PostComposer({
       channelId,
       caption,
       usedAI,
-      target: target && { ...target, radiusKm },
+      // A hidden-origin post remains visible in the feed/profile, but it must
+      // not paint a public claim or hand its chosen map point to another UI.
+      target: target && locationVisibility === 'approximate'
+        ? { ...target, radiusKm }
+        : undefined,
       destination,
+      postId: postIdRef.current,
+      audience: 'public',
+      locationVisibility,
     }
     try {
       // The app shell owns the account, Firebase Storage and the posts write
@@ -406,7 +449,7 @@ export default function PostComposer({
       if (isNativeShell()) {
         const baked = await renderForUpload()
         const data = await asTransferable(baked)
-        const requestId = `post-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        const requestId = `${postIdRef.current}-try-${Date.now().toString(36)}`
         // Install both listeners before native receives the message. Decode
         // failures can answer immediately, and the first byte-progress event
         // must not be lost to a bridge race.
@@ -421,6 +464,8 @@ export default function PostComposer({
         postNativeEvent({
           type: 'publishPost',
           requestId,
+          postId: postIdRef.current,
+          schemaVersion: POST_SCHEMA_VERSION,
           kind: media.kind,
           data,
           caption,
@@ -434,13 +479,34 @@ export default function PostComposer({
           effectAssetTaskId: effectAsset?.taskId,
           effectAssetPrompt: effectAsset?.prompt,
           usedAI,
-          latitude: target?.lat,
-          longitude: target?.lng,
+          // Exact targets cross only this owner-authenticated native bridge and
+          // are written to users/{uid}/postLocations. Public post fields below
+          // are either a verifiable coarse cell or absent altogether.
+          targetLatitude: target?.lat,
+          targetLongitude: target?.lng,
+          latitude: target && locationVisibility === 'approximate'
+            ? publicCoordinate(target.lat)
+            : undefined,
+          longitude: target && locationVisibility === 'approximate'
+            ? publicCoordinate(target.lng)
+            : undefined,
+          latitudeCell: target && locationVisibility === 'approximate'
+            ? publicCoordinateCell(target.lat)
+            : undefined,
+          longitudeCell: target && locationVisibility === 'approximate'
+            ? publicCoordinateCell(target.lng)
+            : undefined,
           radiusKm: target ? radiusKm : undefined,
+          audience: 'public',
+          locationVisibility,
+          privateAccount: accountPrivacy.privateAccount,
+          ghostMode: accountPrivacy.ghostMode,
+          rightsAttested: true,
+          rightsAttestationVersion: POST_RIGHTS_VERSION,
           destination,
         })
         await uploadResult
-        if (caption.trim() && target) {
+        if (caption.trim() && target && locationVisibility === 'approximate') {
           const attachment: NewsMediaAttachment = {
             kind: media.kind,
             src: media.src,
@@ -448,8 +514,8 @@ export default function PostComposer({
           }
           dropNewsMessage({
             body: caption.trim(),
-            lat: target.lat,
-            lng: target.lng,
+            lat: publicCoordinate(target.lat),
+            lng: publicCoordinate(target.lng),
             radiusKm,
             media: [attachment],
           })
@@ -466,8 +532,12 @@ export default function PostComposer({
         window.setTimeout(onClose, 2600)
       }
     } catch (error) {
-      setUploadNote(error instanceof Error ? error.message : 'That post could not be prepared for upload. Your capture is still in the camera roll.')
-      setPosted(true)
+      setPublishError({
+        message: error instanceof Error
+          ? error.message
+          : 'That post could not be prepared for upload. Your capture is still in the camera roll.',
+        retryable: !(error instanceof NativeUploadError) || error.retryable,
+      })
     } finally {
       setPublishing(false)
     }
@@ -792,6 +862,31 @@ export default function PostComposer({
               />
             </label>
           )}
+          <div className={styles.publishDisclosure} aria-label="Post visibility">
+            <span><b>Audience</b><strong>Everyone</strong></span>
+            <span>
+              <b>Map origin</b>
+              <strong>{locationVisibility === 'hidden' ? 'Hidden' : 'Approximate area'}</strong>
+            </span>
+            <small>
+              {accountPrivacy.privateAccount
+                ? 'Private Account hides where this post came from. The post and profile stay visible.'
+                : accountPrivacy.ghostMode
+                  ? 'Ghost Mode hides the map origin for all your posts while it is on.'
+                  : 'Only a coarse map area is public. Your exact chosen point is never shown.'}
+            </small>
+          </div>
+          <label className={styles.rightsRow}>
+            <input
+              type="checkbox"
+              checked={rightsAttested}
+              onChange={event => {
+                setRightsAttested(event.target.checked)
+                if (event.target.checked) setPublishError(null)
+              }}
+            />
+            <span>I have permission to share this media and any music in it.</span>
+          </label>
           <span className={styles.panelLabel}>CHANNEL</span>
           <div className={styles.channels}>
             {CHANNELS.map(c => (
@@ -826,7 +921,7 @@ export default function PostComposer({
               <div className={styles.confirmedMiniMap} aria-label="Confirmed post location">
                 <i /><i /><i /><i /><i />
                 <img src="sprites/poplur_pin_lite_y0_p0_s256.png" alt="Confirmed location" />
-                <span><b>CONFIRMED LOCATION</b><small>{target.lat.toFixed(4)}, {target.lng.toFixed(4)}</small></span>
+                <span><b>CONFIRMED LOCATION</b><small>Selected map point</small></span>
               </div>
             )}
           </section>
@@ -875,14 +970,24 @@ export default function PostComposer({
           <button
             className={styles.primary}
             onClick={() => { void publish() }}
-            disabled={publishing || !target}
+            disabled={publishing || !target || !rightsAttested}
           >
-            {publishing ? 'Uploading…' : target ? 'Post to this spot' : 'Pick a spot to post'}
+            {publishing ? 'Uploading…' : publishError?.retryable ? 'Retry upload' : target ? 'Post to this spot' : 'Pick a spot to post'}
           </button>
+          {publishError && !publishing && (
+            <div className={styles.publishError} role="alert">
+              <b>{publishError.retryable ? 'Upload not finished' : 'Before you post'}</b>
+              <span>{publishError.message}</span>
+              {publishError.retryable && <small>Your edit and the same post ID are kept for a safe retry.</small>}
+            </div>
+          )}
           {!target && !publishing && (
             <p className={styles.needSpot}>
               Location required before posting.
             </p>
+          )}
+          {target && !rightsAttested && !publishing && (
+            <p className={styles.needSpot}>Confirm media rights before posting.</p>
           )}
         </div>
       )}

@@ -514,6 +514,16 @@
 :global([data-poplur-performance-mode='low_power']) .globe,
 :global([data-poplur-performance-mode='emergency']) .globe {
   animation: none;
+  background-image: url('/sprites/stats_globe_static.png');
+  background-size: 280px 280px;
+  background-position: 0 0;
+}
+
+:global(.tier-ios) .pulseRing,
+:global([data-poplur-performance-mode='low_power']) .pulseRing,
+:global([data-poplur-performance-mode='emergency']) .pulseRing {
+  display: none;
+  animation: none;
 }
 
 :global(.tier-ios) .cardValue,
@@ -524,6 +534,75 @@
   background: none;
   -webkit-text-fill-color: #f63b9a;
   color: #f63b9a;
+}
+
+/* The phone also skips the finite entrance/reveal animations. They are not
+   idle leaks, but firing every card and every initially visible chart during
+   the first visit still creates avoidable renderer work. Keep the authored
+   motion in the desktop preview and present the same final layout on-device. */
+:global(.tier-ios) .card,
+:global(.tier-ios) .pieDisc,
+:global(.tier-ios) .bar3d,
+:global(.tier-ios) .linePath,
+:global(.tier-ios) .lineArea,
+:global(.tier-ios) .lineDot,
+:global([data-poplur-performance-mode='low_power']) .card,
+:global([data-poplur-performance-mode='low_power']) .pieDisc,
+:global([data-poplur-performance-mode='low_power']) .bar3d,
+:global([data-poplur-performance-mode='low_power']) .linePath,
+:global([data-poplur-performance-mode='low_power']) .lineArea,
+:global([data-poplur-performance-mode='low_power']) .lineDot,
+:global([data-poplur-performance-mode='emergency']) .card,
+:global([data-poplur-performance-mode='emergency']) .pieDisc,
+:global([data-poplur-performance-mode='emergency']) .bar3d,
+:global([data-poplur-performance-mode='emergency']) .linePath,
+:global([data-poplur-performance-mode='emergency']) .lineArea,
+:global([data-poplur-performance-mode='emergency']) .lineDot {
+  animation: none;
+}
+
+:global(.tier-ios) .card,
+:global([data-poplur-performance-mode='low_power']) .card,
+:global([data-poplur-performance-mode='emergency']) .card {
+  opacity: 1;
+}
+
+:global(.tier-ios) .cardTop,
+:global(.tier-ios) .cardBottom,
+:global([data-poplur-performance-mode='low_power']) .cardTop,
+:global([data-poplur-performance-mode='low_power']) .cardBottom,
+:global([data-poplur-performance-mode='emergency']) .cardTop,
+:global([data-poplur-performance-mode='emergency']) .cardBottom {
+  transform: translateX(-50%);
+}
+
+:global(.tier-ios) .pieDisc,
+:global([data-poplur-performance-mode='low_power']) .pieDisc,
+:global([data-poplur-performance-mode='emergency']) .pieDisc {
+  opacity: 1;
+  transform: rotateX(55deg);
+}
+
+:global(.tier-ios) .bar3d,
+:global([data-poplur-performance-mode='low_power']) .bar3d,
+:global([data-poplur-performance-mode='emergency']) .bar3d {
+  opacity: 1;
+  transform: none;
+}
+
+:global(.tier-ios) .linePath,
+:global([data-poplur-performance-mode='low_power']) .linePath,
+:global([data-poplur-performance-mode='emergency']) .linePath {
+  stroke-dashoffset: 0;
+}
+
+:global(.tier-ios) .lineArea,
+:global(.tier-ios) .lineDot,
+:global([data-poplur-performance-mode='low_power']) .lineArea,
+:global([data-poplur-performance-mode='low_power']) .lineDot,
+:global([data-poplur-performance-mode='emergency']) .lineArea,
+:global([data-poplur-performance-mode='emergency']) .lineDot {
+  opacity: 1;
 }
 
 /* ── Reduced motion ───────────────────────────────────────────────────── */

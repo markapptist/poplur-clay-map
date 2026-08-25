@@ -18,8 +18,10 @@ import {
   listEngagement,
   onEngagementLogged,
   engagementAge,
+  unreadEngagementCount,
   type LoggedEngagement,
 } from './engagementLog'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 
 // like / view / comment are the engagement kinds. Notifications is where the
 // history of your content's engagement lives: the map and feed pop a notice for
@@ -31,8 +33,8 @@ export type NotificationKind = NotifKind
  *  ground, or the conversation it came from. Tapping goes there and lights it
  *  up, the same highlight the map uses when it hands a pop to this screen. */
 export type NotifTarget =
-  | { mode: 'media'; tile: number }
-  | { mode: 'messages'; who: string }
+  | { mode: 'media'; tile?: number; postId?: string }
+  | { mode: 'messages'; who: string; threadId?: string }
 
 export interface Notification {
   who: string
@@ -46,6 +48,24 @@ export interface Notification {
   /** Stable identity. Falls back to `text` for the seeded rows, which is what
    *  identified them before engagement history made text non-unique. */
   key?: string
+  /** Server/native inbox rows carry a real unread bit. Local engagement rows
+   * use the engagement watermark instead. */
+  unread?: boolean
+  /** Epoch milliseconds from Firestore. Keeping the raw value lets tests and
+   * native shells agree on ordering without parsing the rendered age label. */
+  createdAtMillis?: number
+}
+
+export interface NativeNotificationRow {
+  id?: unknown
+  kind?: unknown
+  title?: unknown
+  detail?: unknown
+  actorHandle?: unknown
+  createdAtMillis?: unknown
+  unread?: unknown
+  postId?: unknown
+  threadId?: unknown
 }
 
 /** Which grid tile is "the post that took this ground" on your own profile.
@@ -112,13 +132,95 @@ export function notificationKey(n: Notification): string {
 // back the moment the next like landed.
 const dismissed = new Set<string>()
 const listeners = new Set<(list: Notification[]) => void>()
+let nativeRows: Notification[] = []
+let nativeInboxLoaded = false
+
+function nativeKind(value: unknown): NotificationKind {
+  switch (value) {
+    case 'like': return 'like'
+    case 'view': return 'view'
+    case 'comment': return 'comment'
+    case 'dm':
+    case 'message': return 'message'
+    case 'radiusGrowth':
+    case 'growth': return 'growth'
+    case 'radiusDip':
+    case 'decrease': return 'decrease'
+    case 'areaTakeover':
+    case 'radiusEntry':
+    case 'pop': return 'pop'
+    case 'dailyInsight':
+    case 'trend': return 'trend'
+    // Mentions are conversational activity and use the existing clay comment
+    // bubble until a dedicated mention mould is added.
+    case 'mention': return 'comment'
+    default: return 'trend'
+  }
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+export function nativeNotificationRow(value: unknown, now = Date.now()): Notification | null {
+  if (!value || typeof value !== 'object') return null
+  const row = value as NativeNotificationRow
+  const id = nonEmptyString(row.id)
+  const title = nonEmptyString(row.title)
+  if (!id || !title) return null
+  const detail = nonEmptyString(row.detail) ?? 'New activity on Poplur'
+  const createdAtMillis = typeof row.createdAtMillis === 'number' && Number.isFinite(row.createdAtMillis)
+    ? Math.max(0, row.createdAtMillis)
+    : now
+  const postId = nonEmptyString(row.postId)
+  const threadId = nonEmptyString(row.threadId)
+  const who = nonEmptyString(row.actorHandle) ?? title
+  const target: NotifTarget | undefined = threadId
+    ? { mode: 'messages', who, threadId }
+    : postId
+      ? { mode: 'media', postId, tile: TILE_BY_POP_ID[postId] }
+      : undefined
+  return {
+    key: id,
+    who: title,
+    text: detail,
+    when: engagementAge(createdAtMillis, now),
+    kind: nativeKind(row.kind),
+    target,
+    unread: row.unread !== false,
+    createdAtMillis,
+  }
+}
+
+/** Replace, rather than append, because native/Firestore is authoritative for
+ * the persisted inbox. The local engagement log is merged separately below. */
+export function replaceNativeNotifications(value: unknown, now = Date.now()): void {
+  const rows = Array.isArray(value)
+    ? value.map(row => nativeNotificationRow(row, now)).filter((row): row is Notification => row != null)
+    : []
+  const byId = new Map<string, Notification>()
+  rows
+    .sort((a, b) => (b.createdAtMillis ?? 0) - (a.createdAtMillis ?? 0))
+    .forEach(row => {
+      const key = notificationKey(row)
+      if (!byId.has(key)) byId.set(key, row)
+    })
+  nativeRows = [...byId.values()]
+  nativeInboxLoaded = true
+  const snapshot = listNotifications()
+  listeners.forEach(fn => fn(snapshot))
+}
 
 /** Every notification this account has, newest engagement first, then the
  *  seeded notices, minus anything cleared. The one list. */
 export function listNotifications(): Notification[] {
   const seen = new Set<string>()
   const out: Notification[] = []
-  for (const n of [...listEngagement().map(engagementRow), ...SEEDED_NOTIFICATIONS]) {
+  // Preview seeds never enter an installed app. A real shell starts empty,
+  // requests its persisted Firestore/native inbox, and shows only real rows.
+  const previewRows = isNativeShell() ? [] : SEEDED_NOTIFICATIONS
+  const localRows = isNativeShell() && nativeInboxLoaded ? [] : listEngagement().map(engagementRow)
+  for (const n of [...nativeRows, ...localRows, ...previewRows]) {
     const key = notificationKey(n)
     // Keys have to be unique: they are React keys and they are what `Clear`
     // names. A repeat would render two rows that clear as one.
@@ -132,6 +234,7 @@ export function listNotifications(): Notification[] {
 export function dismissNotification(key: string): void {
   if (dismissed.has(key)) return
   dismissed.add(key)
+  postNativeEvent({ type: 'notificationDismissed', id: key })
   const snapshot = listNotifications()
   listeners.forEach(fn => fn(snapshot))
 }
@@ -142,8 +245,30 @@ export function dismissNotification(key: string): void {
 export function clearAllNotifications(): void {
   const visible = listNotifications()
   if (visible.length === 0) return
+  const ids = visible.map(notificationKey)
   visible.forEach(notification => dismissed.add(notificationKey(notification)))
+  postNativeEvent({ type: 'notificationsCleared', ids })
   listeners.forEach(fn => fn([]))
+}
+
+export function unreadNotificationCount(): number {
+  const remote = listNotifications().reduce((total, item) => total + (item.unread ? 1 : 0), 0)
+  return remote + (isNativeShell() && nativeInboxLoaded ? 0 : unreadEngagementCount())
+}
+
+/** Optimistically clears the canonical unread bits as the screen opens. Native
+ * persists the same transition through `notificationsRead`; a slow network
+ * therefore cannot leave the bell lit after the user has already read it. */
+export function markNotificationsSeen(): void {
+  let changed = false
+  nativeRows = nativeRows.map(row => {
+    if (!row.unread) return row
+    changed = true
+    return { ...row, unread: false }
+  })
+  if (!changed) return
+  const snapshot = listNotifications()
+  listeners.forEach(fn => fn(snapshot))
 }
 
 /** Subscribe to the list. Fires when engagement is recorded and when a row is
@@ -152,4 +277,11 @@ export function onNotificationsChanged(fn: (list: Notification[]) => void): () =
   listeners.add(fn)
   const stopLog = onEngagementLogged(() => fn(listNotifications()))
   return () => { listeners.delete(fn); stopLog() }
+}
+
+export function resetNotificationsForTests(): void {
+  nativeRows = []
+  nativeInboxLoaded = false
+  dismissed.clear()
+  listeners.clear()
 }

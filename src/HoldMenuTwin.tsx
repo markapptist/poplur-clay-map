@@ -26,6 +26,7 @@ import AppsScreen from './AppsScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
+import { CAMERA_HOLD_MENU_ITEMS } from './cameraNavigation'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -94,7 +95,6 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // like any other pop, and pickable only where your radius reaches them.
     { icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true },
     { icon: 'Search', title: 'SHOW ME', screen: 'map-show-me', native: true },
-    { icon: 'Tour', title: 'START TOUR', activeTitle: 'STOP TOUR', screen: 'map-tour', mapAction: 'tour' },
     { icon: 'Directions', title: 'DIRECTIONS', screen: 'map-directions', mapAction: 'directions' },
   ],
   feed: [
@@ -117,34 +117,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Apps', title: 'APPS', screen: 'feed-apps', native: true },
   ],
   post: [
-    // PHOTO and VIDEO select which physical camera object the navigator wears.
-    // The object itself remains the shutter: tap the photo camera to shoot, or
-    // tap the camcorder to start/stop recording. PHOTO is the default mode.
-    // The tile now wears the supplied flash camera render — its own object,
-    // not the generic CREATE mark it used to share with AVATAR/APPS/AI chat.
-    { icon: 'Photo', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
-    // VIDEO has its own cube now. It used to borrow TVGuide's mark, which meant
-    // the two tiles were indistinguishable in the wheel — and it also meant the
-    // VIDEO cube could not be dropped in without silently restyling TV GUIDE.
-    { icon: 'Video', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
-    // ML scan and AR are persistent camera-side controls. They do not belong
-    // in the hold menu, where they duplicate controls that remain visible on
-    // the live viewfinder.
-    // CREATE opens the existing Poplur AI chat. iOS presents the native
-    // PoplurAIChatView; browser and Android use its interactive shared twin.
-    // Wears the supplied laptop render — the screen this actually runs through.
-    { icon: 'Create', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
-    // Games is a working in-home screen on every target (including RN and
-    // Android). Sending it to the old native-only route left it as a no-op on
-    // those hosts, so it stays in the shared surface like News and TV Guide.
-    { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true },
-    // STUDIO is where you make a track: record a take, build it into a song,
-    // then publish it to your radius. It is deliberately separate from MUSIC,
-    // which is where posted tracks are heard.
-    { icon: 'Studio', title: 'STUDIO', screen: 'camera-studio', native: true },
-    // MUSIC is the short capture entrance: record a hook for up to a minute,
-    // then continue into Studio to shape it with the AI.
-    { icon: 'Music', title: 'MUSIC', screen: 'camera-music', native: true },
+    // One shared, tested inventory for both the wheel and the camera's arrow
+    // ring. LIVE broadcast is intentionally absent; Photo/Video remain capture
+    // modes, and creation tools remain deliberate destinations.
+    ...CAMERA_HOLD_MENU_ITEMS,
   ],
   profile: [
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', home: true },
@@ -294,6 +270,7 @@ export default function HoldMenuTwin({
   onSubscreenChange,
   onWheelFocusChange,
   initialScreen,
+  initialDMThreadId,
   wheelOverNonce = 0,
   bindGoBack,
   bindArrows,
@@ -332,6 +309,9 @@ export default function HoldMenuTwin({
       page you were on when you left the tab. Backing out of it still lands on
       the wheel, so the rest of the menu stays one gesture away. */
   initialScreen?: string
+  /** A system-notification deep link. Mail validates it against the live native
+      thread snapshot before opening anything. */
+  initialDMThreadId?: string
   /** Bumped by a cube long-press. With a page up, the wheel opens ON TOP of it
       rather than replacing it — the page is where the tab is standing, and
       asking for the menu is not asking to leave it. Ignored on mount so a
@@ -670,6 +650,11 @@ export default function HoldMenuTwin({
       if (event.source === frame.contentWindow && data.type === 'poplurStoreCheckoutRequested') {
         window.dispatchEvent(new CustomEvent('poplur-store-checkout-requested', { detail: data }))
       }
+      if (event.source === frame.contentWindow && data.type === 'poplurStoreCardChange') {
+        window.dispatchEvent(new CustomEvent('poplur-store-card-change', {
+          detail: { cardId: data.cardId },
+        }))
+      }
       // Add to Apple Wallet takes the same route for the same reason: PassKit
       // is native-only, and this store is a page inside a WebView.
       if (event.source === frame.contentWindow
@@ -679,7 +664,8 @@ export default function HoldMenuTwin({
       // Direct messages. The chat page has no Firebase, so its reads and writes
       // ride the same road: page -> here -> HomeTwin -> native -> Firestore.
       if (event.source === frame.contentWindow
-        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM',
+        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM', 'sendDMAttachment',
+            'deleteDMThread', 'setDMTyping',
             'requestPhoneContacts', 'togglePhoneFavourite',
             'callStart', 'callAnswerJoin', 'callDescription', 'callCandidate',
             'callEnd', 'callWatchIncoming'].includes(data.type)) {
@@ -706,7 +692,10 @@ export default function HoldMenuTwin({
       const data = (event as CustomEvent<Record<string, unknown>>).detail
       if (data?.type === 'poplurDMThreads'
         || data?.type === 'poplurDMMessages'
+        || data?.type === 'poplurDMThreadState'
+        || data?.type === 'poplurDMSent'
         || data?.type === 'poplurDMSendFailed'
+        || data?.type === 'poplurDMThreadHidden'
         || data?.type === 'poplurPhoneContacts'
         || String(data?.type ?? '').startsWith('poplurCall')) {
         frame.contentWindow?.postMessage(data, '*')
@@ -804,6 +793,10 @@ export default function HoldMenuTwin({
     // mechanical reel sounds when the opening shuffle begins.
     if (item.screen === 'feed-casino') primeCasinoAudio()
     playPop()
+    // Notify Home before mounting the destination. Parent and child updates
+    // are batched into one commit, so the outgoing heavy tab is removed rather
+    // than coexisting for a passive-effect frame with this subscreen.
+    onSubscreenChange?.(true, item.screen)
     setActiveScreen(item)
   }
 
@@ -921,8 +914,15 @@ export default function HoldMenuTwin({
     movedRef.current += Math.abs(dy)
     scrub(-dy) // drag up (negative dy) → advance
   }
-  const onPointerUp = () => {
+  const onPointerUp = (e: React.PointerEvent) => {
     draggingRef.current = false
+    // Safari can coalesce (or omit) intermediate pointermove events during a
+    // fast finger scrub. The release coordinate is an independent backstop so
+    // a real drag can never be mistaken for a stationary tile tap.
+    movedRef.current = Math.max(
+      movedRef.current,
+      Math.hypot(e.clientX - downPtRef.current.x, e.clientY - downPtRef.current.y),
+    )
     if (movedRef.current < 6) {
       const el = document.elementFromPoint(downPtRef.current.x, downPtRef.current.y)
       const btn = (el as Element | null)?.closest('[data-index]') as HTMLElement | null
@@ -1030,6 +1030,7 @@ export default function HoldMenuTwin({
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Mail">
           <MailScreen
             onClose={() => { playPop(); onClose() }}
+            initialThreadId={initialDMThreadId}
             onCallViaPhone={(id, name) => {
               const phoneTile = items.find(it => it.screen === 'profile-phone')
               if (phoneTile) {
@@ -1253,6 +1254,12 @@ export default function HoldMenuTwin({
                   consumedTileTapRef.current = false
                   return
                 }
+                // Pointer capture keeps the original tile as the click target
+                // even after a long scrub. Without this guard, lifting a
+                // finger after scrolling could open whichever tile the drag
+                // started on. A fresh tap resets movedRef on pointer-down, so
+                // keyboard and intentional taps are unchanged.
+                if (movedRef.current >= 6) return
                 activateItem(it)
               }}
               onPointerDown={e => e.preventDefault()}
@@ -1322,10 +1329,17 @@ export default function HoldMenuTwin({
   // drop you back on the tab's main screen: holding the cube on Chat left you
   // looking at the live camera.
   if (activeScreen) {
-    if (!wheelOverPage) return renderSubscreen()
+    // Screen identity is a teardown boundary even when two routes use the same
+    // component type (Camera Studio and Music both use StudioScreen).
+    const page = (
+      <React.Fragment key={`${activeScreen.screen}:${activeScreen.title}`}>
+        {renderSubscreen()}
+      </React.Fragment>
+    )
+    if (!wheelOverPage) return page
     return (
       <>
-        {renderSubscreen()}
+        {page}
         {renderWheel(true)}
       </>
     )

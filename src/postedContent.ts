@@ -185,15 +185,9 @@ export function reachesFrom(
   return haversineKm(viewerCoords, posting.coords) <= viewerRadiusKm
 }
 
-/** `43.6487° N, 79.3811° W` — hemisphere letters rather than signs, because a
- *  minus sign in front of a longitude is not something anyone reads as "west".
- *  4dp is ~11m, close enough to identify a corner without implying survey
- *  precision the phone's fix does not have. */
-export function formatCoords(coords: [number, number]): string {
-  const [lng, lat] = coords
-  const ns = `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? 'N' : 'S'}`
-  const ew = `${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? 'E' : 'W'}`
-  return `${ns}, ${ew}`
+/** Never turn a stored ground point into user-facing numeric coordinates. */
+export function formatCoords(_coords: [number, number]): string {
+  return 'Approximate map area'
 }
 
 /** Subscribe to drops, moves and pick-ups. Returns the unsubscribe. */

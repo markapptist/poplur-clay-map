@@ -40,9 +40,6 @@
   "HomeTwin.tsx": {
     "rawRaf": 10
   },
-  "LoadingGlobe.tsx": {
-    "webglRenderer": 1
-  },
   "RadioBootScreen.tsx": {
     "rawRaf": 2,
     "webglRenderer": 1

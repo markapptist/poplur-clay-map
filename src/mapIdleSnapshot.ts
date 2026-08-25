@@ -12,7 +12,7 @@ import type mapboxgl from 'mapbox-gl'
  * is still exactly one live 3D map and no recurring snapshot work.
  */
 export interface MapIdleSnapshotController {
-  /** Refresh the retained frame after the next fully-settled map render. */
+  /** Mark the retained frame stale; it is refreshed only if the map parks. */
   requestCapture(): void
   /** Show the retained frame before the WebGL scheduler is stopped. */
   park(): void
@@ -41,21 +41,25 @@ export function installMapIdleSnapshot(
   canvas: HTMLCanvasElement,
 ): MapIdleSnapshotController {
   const host = canvas.parentElement
-  const image = document.createElement('img')
-  image.alt = ''
-  image.draggable = false
-  image.decoding = 'async'
-  image.dataset.poplurMapStaticFrame = '1'
-  Object.assign(image.style, {
-    position: 'absolute',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    objectFit: 'fill',
-    display: 'none',
-    pointerEvents: 'none',
-    userSelect: 'none',
-  } satisfies Partial<CSSStyleDeclaration>)
+  const createSnapshotImage = () => {
+    const nextImage = document.createElement('img')
+    nextImage.alt = ''
+    nextImage.draggable = false
+    nextImage.decoding = 'async'
+    nextImage.dataset.poplurMapStaticFrame = '1'
+    Object.assign(nextImage.style, {
+      position: 'absolute',
+      inset: '0',
+      width: '100%',
+      height: '100%',
+      objectFit: 'fill',
+      display: 'none',
+      pointerEvents: 'none',
+      userSelect: 'none',
+    } satisfies Partial<CSSStyleDeclaration>)
+    return nextImage
+  }
+  let image = createSnapshotImage()
 
   // Put the retained frame immediately BELOW the live canvas. Markers that
   // Mapbox appends after the canvas therefore remain visible and selectable.
@@ -63,7 +67,6 @@ export function installMapIdleSnapshot(
   // does not stop the first touch from waking the real 3D renderer.
   host?.insertBefore(image, canvas)
 
-  const staging = document.createElement('canvas')
   const sample = document.createElement('canvas')
   sample.width = SAMPLE_SIZE
   sample.height = SAMPLE_SIZE
@@ -80,9 +83,12 @@ export function installMapIdleSnapshot(
 
   let disposed = false
   let parked = false
-  let captureRequested = true
+  let snapshotStale = true
   let snapshotReady = false
-  let mapLoaded = map.loaded()
+  let snapshotGeneration = 0
+  let pendingImage: HTMLImageElement | null = null
+  let pendingObjectUrl: string | null = null
+  let imageObjectUrl: string | null = null
 
   const setVisible = (visible: boolean) => {
     diagnostics.visible = visible
@@ -104,9 +110,12 @@ export function installMapIdleSnapshot(
         darkest = Math.min(darkest, brightness)
         lightest = Math.max(lightest, brightness)
       }
-      // A cleared WebGL backing store is uniformly black/transparent. Even
-      // Poplur's darkest space view has stars, atmosphere or terrain variation.
-      return lightest - darkest >= 8 || lightest >= 24
+      // A cleared backing store and the blue/gray fallback layer are both
+      // uniform. Brightness alone used to accept the latter as a valid map
+      // snapshot, hide the live canvas, and leave only HUD controls visible.
+      // Every real Poplur map view has terrain, labels, stars, or atmosphere
+      // variation, so require contrast instead of accepting a bright flat fill.
+      return lightest - darkest >= 8
     } catch {
       // Mapbox resources are CORS-enabled, but a future custom source may make
       // readback inspection unavailable. In that case trust the captured frame
@@ -115,9 +124,29 @@ export function installMapIdleSnapshot(
     }
   }
 
-  const capture = () => {
-    if (disposed || parked || !captureRequested || canvas.width < 2 || canvas.height < 2) return
-    captureRequested = false
+  const revokeObjectUrl = (url: string | null) => {
+    if (!url) return
+    try { URL.revokeObjectURL(url) } catch { /* already released */ }
+  }
+
+  const discardPendingImage = () => {
+    pendingImage?.removeAttribute('src')
+    pendingImage = null
+    revokeObjectUrl(pendingObjectUrl)
+    pendingObjectUrl = null
+  }
+
+  const captureForPark = () => {
+    if (disposed || !parked || (!snapshotStale && snapshotReady)
+      || canvas.width < 2 || canvas.height < 2) return
+    snapshotStale = false
+    const generation = ++snapshotGeneration
+    discardPendingImage()
+    const staging = document.createElement('canvas')
+    const releaseStaging = () => {
+      staging.width = 1
+      staging.height = 1
+    }
     try {
       // This image is visible only while the unchanged WebGL frame is parked.
       // Cap its decoded pixel count while leaving the live map and 3D textures
@@ -130,46 +159,96 @@ export function installMapIdleSnapshot(
       context.drawImage(canvas, 0, 0)
       if (!hasVisibleMapPixels(staging)) {
         diagnostics.rejectedBlankFrames += 1
-        captureRequested = true
+        snapshotStale = true
+        releaseStaging()
         return
       }
-      const next = staging.toDataURL('image/jpeg', JPEG_QUALITY)
-      if (!next.startsWith('data:image/') || next.length < 512) {
-        captureRequested = true
-        return
-      }
-      image.src = next
-      snapshotReady = true
-      diagnostics.captures += 1
+      // JPEG serialization is intentionally asynchronous. `toDataURL()` used
+      // to encode synchronously inside ordinary move/zoom render callbacks,
+      // creating a large main-thread hitch after every gesture. Copying the
+      // settled frame happens only at the actual park edge; WebKit encodes it
+      // after control has returned to the event loop.
+      staging.toBlob(blob => {
+        releaseStaging()
+        if (disposed || generation !== snapshotGeneration) return
+        if (!blob || blob.size < 256) {
+          snapshotStale = true
+          return
+        }
+
+        let objectUrl: string | null = null
+        try {
+          objectUrl = URL.createObjectURL(blob)
+          const candidate = createSnapshotImage()
+          pendingImage = candidate
+          pendingObjectUrl = objectUrl
+          candidate.src = objectUrl
+
+          // Decode off-DOM, then atomically replace the retained frame. Assigning
+          // `src` directly to the visible image and immediately marking it ready
+          // let park() hide the WebGL canvas while WebKit was still decoding the
+          // JPEG; touching the map woke the canvas and made it appear to fix itself.
+          const commit = () => {
+            if (disposed || generation !== snapshotGeneration || pendingImage !== candidate || !host) {
+              candidate.removeAttribute('src')
+              revokeObjectUrl(objectUrl)
+              return
+            }
+            const previous = image
+            const previousObjectUrl = imageObjectUrl
+            host.insertBefore(candidate, canvas)
+            image = candidate
+            imageObjectUrl = objectUrl
+            pendingImage = null
+            pendingObjectUrl = null
+            snapshotReady = true
+            diagnostics.captures += 1
+            // If another visual change arrived during the asynchronous encode,
+            // keep the live canvas up; the new view will be captured at its own
+            // park edge instead of briefly showing this now-stale frame.
+            if (parked && !snapshotStale) setVisible(true)
+            previous.removeAttribute('src')
+            previous.remove()
+            revokeObjectUrl(previousObjectUrl)
+          }
+          const reject = () => {
+            if (generation !== snapshotGeneration || pendingImage !== candidate) return
+            pendingImage = null
+            pendingObjectUrl = null
+            candidate.removeAttribute('src')
+            revokeObjectUrl(objectUrl)
+            snapshotStale = true
+          }
+          if (typeof candidate.decode === 'function') {
+            void candidate.decode().then(commit, reject)
+          } else {
+            candidate.addEventListener('load', commit, { once: true })
+            candidate.addEventListener('error', reject, { once: true })
+          }
+        } catch {
+          discardPendingImage()
+          revokeObjectUrl(objectUrl)
+          snapshotStale = true
+        }
+      }, 'image/jpeg', JPEG_QUALITY)
     } catch {
       // Keep the previous known-good frame. A failed readback must never replace
       // it with the exact black image this controller exists to prevent.
-      captureRequested = true
-    } finally {
-      // Release the full-size 2D backing store immediately. The encoded image is
-      // the only retained resource, so repeated interactions do not accumulate
-      // canvases or decoded map frames.
-      staging.width = 1
-      staging.height = 1
+      snapshotStale = true
+      releaseStaging()
     }
   }
 
   const requestCapture = () => {
     if (disposed) return
-    captureRequested = true
-    if (!parked) map.triggerRepaint()
+    snapshotStale = true
   }
 
-  const onIdle = () => {
-    mapLoaded = true
-    capture()
-  }
-  const onLoad = () => {
-    mapLoaded = true
-    requestCapture()
-  }
-  const onMoveEnd = () => requestCapture()
-  const onZoomEnd = () => requestCapture()
+  // Camera changes only invalidate the retained frame. There is no readback,
+  // repaint, sampling, or JPEG work on moveend/zoomend (or any render emitted
+  // by those events); the final frame is copied once if the renderer later
+  // reaches a real park edge.
+  const onMoveStart = () => requestCapture()
   const onRender = () => {
     if (diagnostics.waitingForWakeFrame) {
       // `render` is emitted after Mapbox has drawn the new frame. Reveal the live
@@ -178,37 +257,30 @@ export function installMapIdleSnapshot(
       diagnostics.waitingForWakeFrame = false
       setVisible(false)
     }
-    // Capture in the render callback while the non-preserved drawing buffer is
-    // guaranteed to contain this frame. `idle` is retained as a fallback, but
-    // some live sources keep Mapbox from ever declaring a formal idle state.
-    if (mapLoaded) capture()
   }
 
-  map.on('idle', onIdle)
-  map.on('load', onLoad)
-  map.on('moveend', onMoveEnd)
-  map.on('zoomend', onZoomEnd)
+  map.on('movestart', onMoveStart)
   map.on('render', onRender)
 
   return {
     requestCapture,
     park() {
       if (disposed || parked) return
-      // A settled `idle` event normally supplied the frame. This last attempt
-      // covers a map parked just after construction; uniform cleared buffers
-      // are rejected and cannot poison an earlier good snapshot.
-      capture()
       parked = true
       diagnostics.waitingForWakeFrame = false
-      if (snapshotReady) setVisible(true)
+      if (snapshotStale || !snapshotReady) {
+        // Do not flash the previous camera position while the new JPEG is
+        // encoding. The settled WebGL canvas stays visible until the decoded
+        // replacement is ready, then commit() swaps it atomically.
+        setVisible(false)
+        captureForPark()
+      } else {
+        setVisible(true)
+      }
     },
     wake() {
       if (disposed || !parked) return
       parked = false
-      // Do not synchronously encode the very first frame under a waking finger.
-      // `moveend`/`zoomend` requests the new settled view; if there was no valid
-      // snapshot yet, keep the request so this first render can establish one.
-      captureRequested = !snapshotReady
       if (diagnostics.visible) {
         diagnostics.waitingForWakeFrame = true
       } else {
@@ -218,15 +290,15 @@ export function installMapIdleSnapshot(
     dispose() {
       if (disposed) return
       disposed = true
-      map.off('idle', onIdle)
-      map.off('load', onLoad)
-      map.off('moveend', onMoveEnd)
-      map.off('zoomend', onZoomEnd)
+      snapshotGeneration += 1
+      map.off('movestart', onMoveStart)
       map.off('render', onRender)
       setVisible(false)
+      discardPendingImage()
       image.removeAttribute('src')
       image.remove()
-      staging.width = staging.height = 1
+      revokeObjectUrl(imageObjectUrl)
+      imageObjectUrl = null
       sample.width = sample.height = 1
       delete document.documentElement.dataset.poplurMapStaticFrame
       if (diagnosticWindow.__poplurMapIdleSnapshot === diagnostics) {

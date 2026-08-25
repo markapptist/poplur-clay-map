@@ -11,7 +11,6 @@ import {
   playCasinoWin,
 } from './casinoAudio'
 import { creditBalance, grantCasinoWin, onCreditsChange } from './poplurCredits'
-import { postNativeEvent } from './nativeBridge'
 import { useNearbyLocation } from './nearbyLocation'
 
 // POPLUR CASINO — the feed's daily slots channel. One free spin a day; the
@@ -77,12 +76,18 @@ const REEL_STOPS_MS = Array.from({ length: REELS }, (_, i) => REEL_DUR_BASE + i 
 // Device-local, keyed like the app's other persisted prefs. SERVER-SIDE
 // ENFORCEMENT COMES LATER (see the note at the top of this file); this is
 // honest-player plumbing, not security.
-const LAST_SPIN_KEY = 'poplur.casino.lastSpin.v1'
+// v2 intentionally resets the old auto-open gate. Before this version the
+// casino spun on mount, so simply visiting the screen could incorrectly use
+// today's free spin.
+const LAST_SPIN_KEY = 'poplur.casino.lastSpin.v2'
 
 type CasinoAdvertiser = {
   name: string
   detail: string
   distanceKm?: number
+  website?: string
+  imageUrl?: string
+  videoUrl?: string
   /** An OpenStreetMap result is a named, locally resolved venue. */
   verifiedNearby: boolean
 }
@@ -90,7 +95,49 @@ type CasinoAdvertiser = {
 const TORONTO_CASINO_FALLBACK: CasinoAdvertiser = {
   name: 'Great Canadian Casino Resort Toronto',
   detail: 'Casino and live entertainment',
+  website: 'https://greatcanadian.com/locations/toronto/',
   verifiedNearby: true,
+}
+
+function normalizeHttpUrl(value?: string): string | undefined {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  if (!/^https?:\/\//i.test(trimmed)) return undefined
+  return trimmed
+}
+
+function normalizeVideoUrl(value?: string): string | undefined {
+  const url = normalizeHttpUrl(value)
+  return url && /\.(?:mp4|webm|mov)(?:$|[?#])/i.test(url) ? url : undefined
+}
+
+function commonsFileUrl(value?: string): string | undefined {
+  if (!value) return undefined
+  const file = value.replace(/^File:/i, '').trim()
+  if (!file) return undefined
+  return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}?width=900`
+}
+
+function mediaFromTags(tags: Record<string, string> | undefined): Pick<CasinoAdvertiser, 'website' | 'imageUrl' | 'videoUrl'> {
+  const website = normalizeHttpUrl(tags?.website || tags?.['contact:website'] || tags?.url)
+  const imageUrl = normalizeHttpUrl(tags?.image) || commonsFileUrl(tags?.wikimedia_commons)
+  const videoUrl = normalizeVideoUrl(tags?.video)
+  return { website, imageUrl, videoUrl }
+}
+
+async function findVenueImage(name: string, signal: AbortSignal): Promise<string | undefined> {
+  const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(name)}&gsrnamespace=6&gsrlimit=1&prop=imageinfo&iiprop=url&iiurlwidth=900&format=json&origin=*`
+  try {
+    const response = await fetch(url, { signal })
+    if (!response.ok) return undefined
+    const payload = await response.json() as {
+      query?: { pages?: Record<string, { imageinfo?: Array<{ thumburl?: string; url?: string }> }> }
+    }
+    const page = Object.values(payload.query?.pages ?? {})[0]
+    return page?.imageinfo?.[0]?.thumburl || page?.imageinfo?.[0]?.url
+  } catch {
+    return undefined
+  }
 }
 
 function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
@@ -121,7 +168,7 @@ function useNearbyCasinoAdvertiser(): CasinoAdvertiser {
 
     void fetch(url, { signal: controller.signal })
       .then(response => response.ok ? response.json() : Promise.reject(new Error(`directory ${response.status}`)))
-      .then((payload: { elements?: Array<{ lat?: number; lon?: number; center?: { lat?: number; lon?: number }; tags?: Record<string, string> }> }) => {
+      .then(async (payload: { elements?: Array<{ lat?: number; lon?: number; center?: { lat?: number; lon?: number }; tags?: Record<string, string> }> }) => {
         if (controller.signal.aborted) return
         const results = (payload.elements ?? [])
           .map((element): CasinoAdvertiser | null => {
@@ -133,12 +180,21 @@ function useNearbyCasinoAdvertiser(): CasinoAdvertiser {
               name,
               detail: element.tags?.['addr:city'] || element.tags?.operator || 'Casino and live entertainment',
               distanceKm: distanceKm(location.lat, location.lng, lat as number, lng as number),
+              ...mediaFromTags(element.tags),
               verifiedNearby: true,
             } satisfies CasinoAdvertiser
           })
           .filter((result): result is CasinoAdvertiser => result !== null)
           .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity))
-        if (results[0]) setAdvertiser(results[0])
+        if (results[0]) {
+          const first = results[0]
+          if (!first.imageUrl) {
+            const imageUrl = await findVenueImage(first.name, controller.signal)
+            if (controller.signal.aborted) return
+            if (imageUrl) first.imageUrl = imageUrl
+          }
+          setAdvertiser(first)
+        }
         else if (location.source === 'device') {
           setAdvertiser({
             name: 'Casinos near your radius',
@@ -290,13 +346,6 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const ceilingRef = useRef<number | null>(null)
   const finalFacesRef = useRef<Faces | null>(null)
   const pendingRef = useRef<SpinResult | null>(null)
-  // Entering the casino spends today's free spin immediately. Keep this as a
-  // ref rather than state so the effect cannot re-arm itself when `spin()`
-  // advances through armed → rolling → idle.
-  const openingSpinStartedRef = useRef(false)
-  // A visitor who already spent today's spin still gets the Casino offers;
-  // a fresh daily visitor gets them after the opening reels have settled.
-  const openedAfterDailySpinRef = useRef(spinUsedToday())
 
   useEffect(() => onCreditsChange(() => setCredits(creditBalance())), [])
 
@@ -309,21 +358,13 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   }, [])
 
   useEffect(() => {
-    const delay = openedAfterDailySpinRef.current
-      ? 850
-      : REEL_DUR_BASE + REEL_DUR_STEP * (REELS - 1) + 620
-    const id = window.setTimeout(() => setPromoOpen(true), delay)
+    // Ads are independent from the daily spin. Opening the casino must never
+    // spend the spin or imply that the player already played.
+    const id = window.setTimeout(() => {
+      setPromoOpen(true)
+    }, 850)
     return () => window.clearTimeout(id)
   }, [])
-
-  // A Poplur ad is a brief interception, not a blocking casino dialog. It
-  // closes itself and an outside tap treats the user as resuming the game,
-  // matching the feed's sponsored-creative behavior.
-  useEffect(() => {
-    if (!promoOpen || paysOpen) return
-    const id = window.setTimeout(() => setPromoOpen(false), 8_500)
-    return () => window.clearTimeout(id)
-  }, [promoOpen, paysOpen])
 
   // Same contract as GamesScreen: ask HomeTwin to clear its wordmark and stat
   // row while this screen is up (the jackpot sign lives where the wordmark
@@ -412,19 +453,8 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     )
   }
 
-  // The cabinet welcomes the player by running the daily spin as soon as the
-  // screen opens. `LAST_SPIN_KEY` is day-stamped, so a fresh visit after local
-  // midnight gets a newly rolled result while repeat visits that day leave the
-  // settled machine alone. This routes through the same spin path as the
-  // buttons, preserving the mechanical start/whirr/reel-stop sounds whenever
-  // the platform allows playback for the navigation gesture.
-  useEffect(() => {
-    if (openingSpinStartedRef.current || used || phase !== 'idle') return
-    openingSpinStartedRef.current = true
-    const id = window.setTimeout(spin, 180)
-    return () => window.clearTimeout(id)
-  }, [phase, used])
-
+  // The daily spin is user-activated. Opening the casino is discovery only;
+  // browsing ads cannot consume the free play.
   // governor-ok: a single deferred frame per spin press, no loop — the strips
   // must mount at rest before the transform that travels them, or there is no
   // transition to run.
@@ -456,16 +486,6 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     : used
       ? 'COME BACK TOMORROW — ONE FREE SPIN A DAY'
       : 'YOUR FREE DAILY SPIN IS READY'
-  const openNearbyCasinos = () => {
-    // The same local advertiser named in the creative is what the call-to-
-    // action opens. Maps resolves the player’s current area if the directory
-    // is offline and the creative is in its transparent fallback state.
-    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(advertiser.name)}`
-    playPop()
-    setPromoOpen(false)
-    if (!postNativeEvent({ type: 'openInAppBrowser', url })) window.location.assign(url)
-  }
-
   return (
     <div className={styles.stage} data-win={result && result.amount > 0 ? 'true' : undefined}>
       <div className={styles.ambient} aria-hidden="true" />
@@ -671,7 +691,12 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
           className={styles.promoScrim}
           role="presentation"
           onPointerDown={event => {
-            if (event.target === event.currentTarget) { playPop(); setPromoOpen(false) }
+            // A Poplur pop-up is an interruption, not another screen. Touching
+            // the creative OR anywhere behind it consumes that gesture and
+            // returns to the cabinet, so it cannot accidentally spin a reel.
+            event.preventDefault()
+            playPop()
+            setPromoOpen(false)
           }}
         >
           <section
@@ -679,28 +704,23 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
             role="dialog"
             aria-modal="true"
             aria-label="Sponsored casino advertisement"
-            onPointerDown={event => event.stopPropagation()}
           >
-            <span className={styles.adBurst} aria-hidden="true">★ BAM! ★</span>
-            <span className={styles.promoEyebrow}>POPLUR AD · NEAR YOUR RADIUS</span>
+            <span className={styles.adBurst} aria-hidden="true">★ LIVE ★</span>
+            <span className={styles.promoEyebrow}>SPONSORED CASINO · NEAR YOUR RADIUS</span>
+            {advertiser.videoUrl ? (
+              <video className={styles.casinoMedia} src={advertiser.videoUrl} poster={advertiser.imageUrl} autoPlay muted loop playsInline />
+            ) : advertiser.imageUrl ? (
+              <img className={styles.casinoMedia} src={advertiser.imageUrl} alt={`${advertiser.name} venue`} />
+            ) : (
+              <div className={styles.casinoMediaFallback}>LIVE VENUE MEDIA</div>
+            )}
             <strong className={styles.promoTitle}>{advertiser.name}</strong>
             <p className={styles.promoBody}>
               {advertiser.distanceKm !== undefined
                 ? `${advertiser.distanceKm < 1 ? '< 1' : advertiser.distanceKm.toFixed(1)} km away · ${advertiser.detail}`
                 : advertiser.detail}
             </p>
-            <button type="button" className={styles.nearbyAction} onClick={openNearbyCasinos}>
-              {advertiser.verifiedNearby ? 'VIEW THIS CASINO' : 'VIEW CASINOS NEAR ME'}
-            </button>
-            <div className={styles.playAd} aria-label="Poplur daily spin advertisement">
-              <span className={styles.playAdEyebrow}>POPLUR TV SHOPPING</span>
-              <strong><i aria-hidden="true">✦</i> ONE FREE SPIN <i aria-hidden="true">✦</i></strong>
-              <p>{isDoubleCreditDay() ? 'BAM! Friday wins land with 2× Credits.' : 'BAM! Your next daily spin is always on the house.'}</p>
-              <button type="button" className={styles.promoPrimary} onClick={() => { playPop(); setPromoOpen(false) }}>
-                BACK TO THE REELS
-              </button>
-            </div>
-            <span className={styles.adDismissHint}>Tap outside to close · closes automatically</span>
+            <span className={styles.adDismissHint}>Tap anywhere to close</span>
           </section>
         </div>
       )}

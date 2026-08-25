@@ -7,31 +7,45 @@ import { usePullToRefresh } from './usePullToRefresh'
 import { OTHER_POPS } from './data'
 import { feedUrl } from './assetPacks'
 import { playPop } from './pop'
-import { isGateMuted, onGateChange } from './audioGate'
+import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
-import { onEngagementLogged, unreadEngagementCount, markEngagementSeen } from './engagementLog'
+import { markEngagementSeen } from './engagementLog'
 // The notification list is shared with the NOTIFICATIONS subscreen — one list,
 // one set of cleared rows. See notifications.ts.
 import {
   listNotifications,
+  markNotificationsSeen,
   onNotificationsChanged,
   dismissNotification as clearNotification,
   notificationKey,
   NOTIF_ICON_LABEL,
   TILE_BY_POP_ID,
+  unreadNotificationCount,
   type Notification,
   type NotificationKind,
 } from './notifications'
 import ClaySwayObject, { primeMotionPermission } from './ClaySwayObject'
 import CameraRoll from './CameraRoll'
-import { radiusStats } from './radiusLedger'
+import CameraARButton from './CameraARButton'
+import ARFilters from './ARFilters'
+import FaceAROverlay from './FaceAROverlay'
+import { arFilterCatalog } from './arFilterCatalog'
+import type { Detection } from './mlDetect'
+import {
+  radiusStats,
+  recordPostComment,
+  recordPostDislike,
+  recordPostLike,
+} from './radiusLedger'
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 import TabControlRail from './TabControlRail'
+import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
+import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 import {
   DEFAULT_PROFILE_THEME,
   applyNativeProfileTheme,
@@ -40,6 +54,13 @@ import {
   type ProfileTheme,
 } from './profileThemes'
 import { takeProfileMode } from './profileMode'
+import { refreshedProfilePhotoSource, usableProfilePhoto } from './profilePhoto'
+import {
+  accountSnapshot,
+  onAccountChange,
+  setAccountAuth,
+  setAccountProfile,
+} from './accountStore'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -129,16 +150,6 @@ function usableUsername(value: string | null | undefined): string | null {
 const USERNAME_MAX = 30
 function sanitizeUsername(value: string): string {
   return value.replace(/^@/, '').replace(/[^A-Za-z0-9_.]/g, '').slice(0, USERNAME_MAX)
-}
-
-function usableProfilePhoto(value: string | null | undefined): string | null {
-  if (!value) return null
-  const photo = value.trim()
-  return photo.startsWith('data:image/')
-    || /^https:\/\//i.test(photo)
-    || /^poplur-clay:\/\//i.test(photo)
-    ? photo
-    : null
 }
 
 function readStoredPhoto(): string | null {
@@ -486,6 +497,9 @@ function ProfileCallOverlay({ who, video, onEnd }: { who: string; video: boolean
   const [muted, setMuted] = useState(false)
   const [cameraOn, setCameraOn] = useState(video)
   const [elapsed, setElapsed] = useState(0)
+  const [arOpen, setArOpen] = useState(false)
+  const [arFilter, setArFilter] = useState('none')
+  const arFilterCss = arFilterCatalog().filters.find(filter => filter.id === arFilter)?.css ?? 'none'
 
   useEffect(() => {
     let alive = true
@@ -527,12 +541,23 @@ function ProfileCallOverlay({ who, video, onEnd }: { who: string; video: boolean
 
   return createPortal(
     <section className={styles.callOverlay} role="dialog" aria-modal="true" aria-label={`${video ? 'Video' : 'Voice'} call with ${who}`}>
-      {video && <video ref={localVideoRef} autoPlay muted playsInline className={cameraOn ? styles.callVideo : `${styles.callVideo} ${styles.callVideoOff}`} />}
+      {video && <video ref={localVideoRef} autoPlay muted playsInline className={cameraOn ? styles.callVideo : `${styles.callVideo} ${styles.callVideoOff}`} style={arFilterCss === 'none' ? undefined : { filter: arFilterCss }} />}
+      {video && cameraOn && arFilter !== 'none' && (
+        <FaceAROverlay detections={[PROFILE_SELFIE_FACE]} filter={arFilter} mirrored allow3D={false} />
+      )}
       <div className={styles.callIdentity}>
         <img src={AVATAR_BY_HANDLE[who] ?? 'mark_talk0.png'} alt="" />
         <h2>{who}</h2>
         <p>{connected ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}` : 'CONNECTING...'}</p>
       </div>
+      {video && (
+        <div className={styles.callSideRail}>
+          <CameraARButton active={arOpen} size={42} onToggle={() => setArOpen(open => !open)} />
+        </div>
+      )}
+      {video && arOpen && (
+        <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
+      )}
       <div className={styles.callControls}>
         <button type="button" aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={muted} onClick={toggleMute}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
@@ -549,6 +574,19 @@ function ProfileCallOverlay({ who, video, onEnd }: { who: string; video: boolean
     </section>,
     document.body,
   )
+}
+
+// The selfie and one-to-one call camera are the only image subjects in these
+// flows. A fixed anchor avoids a continuous detector while still giving every
+// non-3D filter a clear, stable place to land over the local preview.
+const PROFILE_SELFIE_FACE: Detection = {
+  id: 'profile-selfie-face',
+  x: 0.29,
+  y: 0.20,
+  w: 0.42,
+  h: 0.42,
+  label: 'You',
+  confidence: 1,
 }
 
 export default function ProfileTwin({
@@ -630,11 +668,11 @@ export default function ProfileTwin({
   useEffect(() => onNotificationsChanged(setNotifs), [])
   // Drives the bell's dot. The dot used to render unconditionally, so it was on
   // before anything had happened and opening the list could not clear it.
-  const [unreadNotifs, setUnreadNotifs] = useState(() => unreadEngagementCount())
+  const [unreadNotifs, setUnreadNotifs] = useState(() => unreadNotificationCount())
   // markEngagementSeen() broadcasts through this same listener, so the count
   // drops to zero here the moment the list is opened — including when it is
   // the subscreen, in another component, that opened it.
-  useEffect(() => onEngagementLogged(() => setUnreadNotifs(unreadEngagementCount())), [])
+  useEffect(() => onNotificationsChanged(() => setUnreadNotifs(unreadNotificationCount())), [])
   const [swipedNotif, setSwipedNotif] = useState<string | null>(null)
   const notifSwipeRef = useRef<{ key: string; x0: number; moved: boolean } | null>(null)
   /** The message row a notification just sent you to, lit like a grid tile. */
@@ -676,6 +714,48 @@ export default function ProfileTwin({
   // read "no profile image set" forever — the reported bug. Stored as a data
   // URI under one key, rehydrated on mount.
   const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
+  // Keep the last image that actually loaded on screen while a cache-busted
+  // retry is probed off-screen. A failed refresh therefore cannot replace a
+  // working cached portrait with a broken-image frame.
+  const [displayedPhoto, setDisplayedPhoto] = useState<{ photo: string; source: string } | null>(() => {
+    const stored = readStoredPhoto()
+    return stored ? { photo: stored, source: stored } : null
+  })
+  const [photoReloadRevision, setPhotoReloadRevision] = useState(0)
+  const photoRetryCountRef = useRef(0)
+  const retryProfilePhoto = useCallback(() => {
+    if (photoRetryCountRef.current >= 2) return
+    photoRetryCountRef.current += 1
+    setPhotoReloadRevision(current => current + 1)
+  }, [])
+  const forceProfilePhotoReload = useCallback(() => {
+    photoRetryCountRef.current = 0
+    setPhotoReloadRevision(current => current + 1)
+  }, [])
+  useEffect(() => {
+    photoRetryCountRef.current = 0
+    setDisplayedPhoto(current => {
+      if (!photo) return null
+      return current?.photo === photo ? current : { photo, source: photo }
+    })
+  }, [photo])
+  useEffect(() => {
+    if (!photo || photoReloadRevision === 0 || photo.startsWith('data:image/')) return
+    let live = true
+    const candidate = refreshedProfilePhotoSource(photo, photoReloadRevision)
+    const probe = new Image()
+    probe.onload = () => {
+      if (live) setDisplayedPhoto({ photo, source: candidate })
+    }
+    probe.onerror = () => {
+      if (live) retryProfilePhoto()
+    }
+    probe.src = candidate
+    return () => { live = false; probe.onload = null; probe.onerror = null }
+  }, [photo, photoReloadRevision, retryProfilePhoto])
+  const renderedPhotoSource = photo
+    ? displayedPhoto?.photo === photo ? displayedPhoto.source : photo
+    : null
   const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
@@ -688,17 +768,30 @@ export default function ProfileTwin({
   const [facingMode, setFacingMode] = useState<CaptureFacing>('user')
   const [torchOn, setTorchOn] = useState(false)
   const [torchAvailable, setTorchAvailable] = useState(false)
+  const [selfieArOpen, setSelfieArOpen] = useState(false)
+  const [selfieArFilter, setSelfieArFilter] = useState('none')
   const [showNotifs, setShowNotifs] = useState(false)
   const [notifsClosing, setNotifsClosing] = useState(false)
   const [faceAsk, setFaceAsk] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
   const [viewerPlaying, setViewerPlaying] = useState(false)
+  const [viewerMuted, setViewerMuted] = useState(isUserMuted)
+  const [viewerCaptionsOn, setViewerCaptionsOn] = useState(false)
+  const [viewerCommentsAtEnd, setViewerCommentsAtEnd] = useState(readFeedCommentsAtEnd)
+  const [viewerCommentOpen, setViewerCommentOpen] = useState(false)
+  const [viewerCommentText, setViewerCommentText] = useState('')
+  const [viewerComments, setViewerComments] = useState<Record<string, string[]>>({})
+  const [deletePromptPost, setDeletePromptPost] = useState<Post | null>(null)
+  const [deletePending, setDeletePending] = useState<{ requestId: string; postId: string } | null>(null)
   // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
   // to the OS share sheet / clipboard for outside.
   const [shareOpen, setShareOpen] = useState(false)
   const [mailingUser, setMailingUser] = useState(false)
   const [mailText, setMailText] = useState('')
   const [shareNote, setShareNote] = useState<string | null>(null)
+  const viewerCovered = shareOpen || viewerCommentOpen || deletePromptPost != null || deletePending != null
+
+  useEffect(() => onGateChange(() => setViewerMuted(isUserMuted())), [])
 
   // The avatar loop is a real decoder, not decorative CSS. Keep it only while
   // the avatar itself is the visible experience; fullscreen Profile layers can
@@ -764,7 +857,7 @@ export default function ProfileTwin({
     const fromQuery = usableUsername(params?.get('username'))
     let stored: string | null = null
     try { stored = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
-    return fromQuery ?? stored ?? PROFILE_NAME_FALLBACK
+    return fromQuery ?? accountSnapshot().username ?? stored ?? PROFILE_NAME_FALLBACK
   })
   // Editing your own handle. There was no way to set one anywhere in the
   // shipping app: the only editor was the native EditProfileView, which the web
@@ -776,8 +869,19 @@ export default function ProfileTwin({
   if (persistedName.current === null) {
     // Seeded from real sources only. The fallback is a placeholder, never
     // something the account is believed to already hold.
-    try { persistedName.current = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
+    try {
+      persistedName.current = accountSnapshot().username
+        ?? usableUsername(window.localStorage.getItem('poplur.username'))
+    } catch { persistedName.current = accountSnapshot().username }
   }
+
+  useEffect(() => onAccountChange(snapshot => {
+    if (viewUser) return
+    const next = usableUsername(snapshot.username)
+    if (!next || next === persistedName.current) return
+    persistedName.current = next
+    setUsername(next)
+  }), [viewUser])
 
   const commitUsername = () => {
     setEditingName(false)
@@ -785,23 +889,48 @@ export default function ProfileTwin({
     if (!next || next === persistedName.current) return
     persistedName.current = next
     setUsername(next)
+    setAccountProfile({ username: next }, 'local')
     try { window.localStorage.setItem('poplur.username', next) } catch { /* embedded */ }
-    // Storage is the fallback, not the record. The account is the record, and
-    // this is the only path that reaches it.
+    // The canonical account store is the client-side source of truth here;
+    // the native bridge persists the same change to the remote account when
+    // this page is running inside the app shell.
     postNativeEvent({ type: 'saveProfileUsername', username: next })
   }
 
   useEffect(() => {
     if (!isNativeShell()) return
-    type NativeProfile = { username?: string; business?: boolean; photo?: string; video?: string }
+    type NativeProfile = {
+      uid?: string
+      username?: string
+      displayName?: string
+      business?: boolean
+      photo?: string
+      profilePictureURL?: string
+      video?: string
+      selfieVideoURL?: string
+    }
     const applyProfile = (value: unknown) => {
       const prof = value as NativeProfile
+      if (prof?.uid) {
+        setAccountAuth({ uid: prof.uid, displayName: prof.displayName, source: 'native' })
+      }
       const nextUsername = usableUsername(prof?.username)
       if (nextUsername) {
+        setAccountProfile({
+          username: nextUsername,
+          ...(prof.displayName !== undefined ? { displayName: prof.displayName } : {}),
+          ...(prof.business !== undefined ? { business: prof.business } : {}),
+        }, 'native')
         setUsername(nextUsername)
         try { window.localStorage.setItem('poplur.username', nextUsername) } catch { /* embedded */ }
         persistedName.current = nextUsername
       } else {
+        if (prof.displayName !== undefined || prof.business !== undefined) {
+          setAccountProfile({
+            ...(prof.displayName !== undefined ? { displayName: prof.displayName } : {}),
+            ...(prof.business !== undefined ? { business: prof.business } : {}),
+          }, 'native')
+        }
         // The ACCOUNT has no username and this device does — so lift ours up.
         //
         // The username only ever lived in this localStorage key. Nothing wrote
@@ -816,9 +945,13 @@ export default function ProfileTwin({
         try { local = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
         if (local) postNativeEvent({ type: 'saveProfileUsername', username: local })
       }
-      const nativePhoto = usableProfilePhoto(prof?.photo)
+      const nativePhoto = usableProfilePhoto(prof?.photo ?? prof?.profilePictureURL)
       if (nativePhoto) {
+        setAccountProfile({ photoURL: nativePhoto }, 'native')
         setPhoto(nativePhoto)
+        // A native response may repeat the same durable URL after WebKit has
+        // cached an earlier failure. State equality alone would not retry it.
+        forceProfilePhotoReload()
         writeStoredPhoto(nativePhoto)
         window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: nativePhoto } }))
       } else {
@@ -832,8 +965,9 @@ export default function ProfileTwin({
           postNativeEvent({ type: 'saveProfilePhoto', photo: localPhoto })
         }
       }
-      const nativeVideo = usableSelfieVideo(prof?.video)
+      const nativeVideo = usableSelfieVideo(prof?.video ?? prof?.selfieVideoURL)
       if (nativeVideo) {
+        setAccountProfile({ videoURL: nativeVideo }, 'native')
         setSelfieVideo(nativeVideo)
         writeStoredSelfieVideo(nativeVideo)
         window.dispatchEvent(new CustomEvent('poplur-profile-media', {
@@ -854,7 +988,7 @@ export default function ProfileTwin({
     return () => {
       window.removeEventListener('poplur-native-profile', receiveProfile)
     }
-  }, [])
+  }, [forceProfilePhotoReload])
 
   useEffect(() => {
     if (!capturing || !isNativeShell()) return
@@ -934,21 +1068,21 @@ export default function ProfileTwin({
   // until the user closes/covers it. Only a real lifecycle boundary retires
   // the decoder; there is no foreground timer or replay affordance.
   useEffect(() => {
-    if (viewerIdx == null || document.hidden || shareOpen) retireViewer()
+    if (viewerIdx == null || document.hidden || viewerCovered) retireViewer()
     else setViewerPlaying(true)
-  }, [mode, retireViewer, shareOpen, viewerIdx])
+  }, [mode, retireViewer, viewerCovered, viewerIdx])
 
   useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
     if (!snapshot.isForeground) retireViewer()
   }), [retireViewer])
 
   useEffect(() => {
-    if (shareOpen) retireViewer()
-  }, [retireViewer, shareOpen])
+    if (viewerCovered) retireViewer()
+  }, [retireViewer, viewerCovered])
 
   useEffect(() => {
     const video = viewerVideoRef.current
-    if (!video || viewerIdx == null || !viewerPlaying || shareOpen) return
+    if (!video || viewerIdx == null || !viewerPlaying || viewerCovered) return
     if (!video.getAttribute('src')) {
       const available = mode === 'liked' ? LIKED : profilePostsRef.current
       const selected = available.length ? available[viewerIdx % available.length] : null
@@ -973,7 +1107,7 @@ export default function ProfileTwin({
       window.removeEventListener('pagehide', retireViewer)
       releaseViewerMedia(video)
     }
-  }, [mode, retireViewer, shareOpen, viewerIdx, viewerPlaying])
+  }, [mode, retireViewer, viewerCovered, viewerIdx, viewerPlaying])
 
   const openNotifs = () => {
     if (notifCloseTimerRef.current != null) {
@@ -985,6 +1119,7 @@ export default function ProfileTwin({
     // Reading the list is what clears the badge. Marked on OPEN rather than on
     // close so the dot goes out as the panel springs down, and anything that
     // lands while it is open stays counted for the next visit.
+    markNotificationsSeen()
     markEngagementSeen()
     // One pop per notification, staggered with the rows rather than a single
     // chime for the sheet: the count is the information, so hearing five is
@@ -1057,8 +1192,21 @@ export default function ProfileTwin({
     }
     if (target.mode === 'media') {
       setLitMessage(null)
-      setLitTiles(new Set([target.tile]))
+      const resolvedTile = typeof target.tile === 'number'
+        ? target.tile
+        : target.postId
+          ? profilePostsRef.current.findIndex(post => post.id === target.postId)
+          : -1
+      setLitTiles(resolvedTile >= 0 ? new Set([resolvedTile]) : null)
     } else {
+      if (target.threadId) {
+        window.dispatchEvent(new CustomEvent('poplur-open-dm', {
+          detail: { threadId: target.threadId },
+        }))
+        setLitTiles(null)
+        setLitMessage(null)
+        return
+      }
       setLitTiles(null)
       setLitMessage(target.who)
     }
@@ -1140,6 +1288,8 @@ export default function ProfileTwin({
   capturingRef.current = capturing
   const captureSourceRef = useRef(captureSource)
   captureSourceRef.current = captureSource
+  const viewerCoveredRef = useRef(viewerCovered)
+  viewerCoveredRef.current = viewerCovered
   useEffect(() => {
     if (!bindArrows) return
     bindArrows(dir => {
@@ -1150,6 +1300,9 @@ export default function ProfileTwin({
         return true
       }
       if (viewerIdxRef.current != null) {
+        // A confirmation/share/comment sheet owns the arrows while it is up;
+        // never switch the post underneath a decision the user is making.
+        if (viewerCoveredRef.current) return true
         const posts = modeRef.current === 'liked' ? LIKED : profilePostsRef.current
         if (!posts.length) return true
         setViewerIdx(i => (i == null ? i : ((i + dir) % posts.length + posts.length) % posts.length))
@@ -1167,10 +1320,12 @@ export default function ProfileTwin({
   // Kept in a ref-read closure so the handler registers once and still sees
   // current state.
   const backStateRef = useRef({
-    shareOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+    shareOpen, viewerCommentOpen, deletePrompt: deletePromptPost != null, deletePending: deletePending != null,
+    viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
   })
   backStateRef.current = {
-    shareOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+    shareOpen, viewerCommentOpen, deletePrompt: deletePromptPost != null, deletePending: deletePending != null,
+    viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
   }
   const onBackToOwnRef = useRef(onBackToOwn)
   onBackToOwnRef.current = onBackToOwn
@@ -1181,6 +1336,9 @@ export default function ProfileTwin({
     bindGoBack(() => {
       const s = backStateRef.current
       if (s.shareOpen) { setShareOpen(false); return true }
+      if (s.viewerCommentOpen) { setViewerCommentOpen(false); return true }
+      if (s.deletePrompt) { setDeletePromptPost(null); return true }
+      if (s.deletePending) return true
       if (s.viewerIdx != null) { setViewerIdx(null); return true }
       if (s.capturing) { setCapturing(false); return true }
       if (s.showNotifs) { closeNotifsRef.current(); return true }
@@ -1202,6 +1360,10 @@ export default function ProfileTwin({
     // This makes a pull useful across the native handoff boundary instead of
     // waiting for a later Profile remount to rehydrate the picture.
     setPhoto(current => readStoredPhoto() ?? current)
+    // Explicitly retry the portrait even when storage/native returns the same
+    // string. The off-screen probe keeps the currently working image visible
+    // until the refreshed response has loaded successfully.
+    forceProfilePhotoReload()
     setSelfieVideo(current => readStoredSelfieVideo() ?? current)
     // The grid's posts come from the shell, so refreshing asks for them again.
     // Nothing answers in the browser preview and the grid keeps what it has —
@@ -1228,7 +1390,7 @@ export default function ProfileTwin({
       window.addEventListener('poplur-native-profile', receive)
       if (!postNativeEvent({ type: 'requestProfile' })) finish()
     })
-  }, [])
+  }, [forceProfilePhotoReload])
 
   usePullToRefresh({
     scrollRef: contentRef,
@@ -1444,6 +1606,7 @@ export default function ProfileTwin({
     writeStoredPhoto(preview)
     setSelfieVideo(source)
     writeStoredSelfieVideo(source)
+    setAccountProfile({ photoURL: preview, videoURL: source }, 'local')
     if (nativePayload) postNativeEvent(nativePayload)
     // The poster is the profile picture, and it must reach the ACCOUNT, not
     // just this device: the shell uploads it and writes profilePictureURL.
@@ -1620,6 +1783,8 @@ export default function ProfileTwin({
     }
   }
 
+  const selfieArFilterCss = arFilterCatalog().filters.find(filter => filter.id === selfieArFilter)?.css ?? 'none'
+
   // Keep capture inside the Home stacking tree. Portalling it to <body> put it
   // above the shared cube/arrows regardless of their z-index, so the camera
   // lost the app's universal navigation controls.
@@ -1643,9 +1808,43 @@ export default function ProfileTwin({
             <p>Camera unavailable here.<br />Try a selfie video from your camera roll.</p>
           </div>
         ) : (
-          <video ref={videoRef} className={facingMode === 'user' ? styles.video : `${styles.video} ${styles.videoBack}`} playsInline muted />
+          <video
+            ref={videoRef}
+            className={facingMode === 'user' ? styles.video : `${styles.video} ${styles.videoBack}`}
+            style={selfieArFilterCss === 'none' ? undefined : { filter: selfieArFilterCss }}
+            playsInline
+            muted
+          />
+        )}
+        {captureSource === 'camera' && !camError && selfieArFilter !== 'none' && (
+          <FaceAROverlay
+            detections={[PROFILE_SELFIE_FACE]}
+            filter={selfieArFilter}
+            mirrored={facingMode === 'user'}
+            allow3D={false}
+          />
         )}
         {captureSource === 'camera' && <div className={styles.vfRing} />}
+        {captureSource === 'camera' && (
+          <div className={styles.captureSideRail}>
+            <CameraARButton active={selfieArOpen} size={42} onToggle={() => setSelfieArOpen(open => !open)} />
+            <button
+              type="button"
+              className={styles.captureFlip}
+              aria-label="Switch selfie camera"
+              onClick={() => {
+                playPop()
+                setFacingMode(mode => mode === 'user' ? 'environment' : 'user')
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h9l-2.4-2.4M17 17H8l2.4 2.4M18 7a7 7 0 010 10M6 17a7 7 0 010-10" /></svg>
+              <span>FLIP</span>
+            </button>
+          </div>
+        )}
+        {captureSource === 'camera' && selfieArOpen && (
+          <ARFilters active={selfieArFilter} onPick={setSelfieArFilter} onClose={() => setSelfieArOpen(false)} />
+        )}
         <div className={styles.captureBar}>
           {captureSource === 'camera' && cameraRollThumb && (
             <button
@@ -1722,6 +1921,96 @@ export default function ProfileTwin({
     }
   }
 
+  const toggleViewerMute = () => {
+    const next = !isUserMuted()
+    setUserMuted(next)
+    setViewerMuted(next)
+    playPop()
+  }
+
+  const toggleViewerCommentsAtEnd = () => {
+    const next = writeFeedCommentsAtEnd(!viewerCommentsAtEnd)
+    setViewerCommentsAtEnd(next)
+    playPop()
+    flashNote(next ? 'End comments on' : 'End comments off')
+  }
+
+  const reactToViewerPost = (direction: 'up' | 'down') => {
+    if (!viewerPost) return
+    const postId = viewerPost.id ?? viewerPost.video
+    if (direction === 'up') recordPostLike(postId, 1)
+    else recordPostDislike(postId, 1)
+    playPop()
+    flashNote(direction === 'up' ? '+1 radius' : '−1 radius')
+  }
+
+  const sendViewerComment = () => {
+    const body = viewerCommentText.trim()
+    if (!body || !viewerPost) return
+    const postId = viewerPost.id ?? viewerPost.video
+    setViewerComments(current => ({
+      ...current,
+      [postId]: [...(current[postId] ?? []), body],
+    }))
+    recordPostComment(postId, 2)
+    setViewerCommentText('')
+    setViewerCommentOpen(false)
+    playPop()
+    flashNote('Comment posted · +2 radius')
+  }
+
+  const confirmViewerDelete = () => {
+    const post = deletePromptPost
+    const postId = post?.id?.trim()
+    if (!post || !postId || deletePending) return
+    const requestId = `profile-delete-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    setDeletePromptPost(null)
+    setDeletePending({ requestId, postId })
+    playPop()
+    if (!postNativeEvent({ type: 'deleteProfilePost', requestId, postId })) {
+      setDeletePending(null)
+      setDeletePromptPost(post)
+      flashNote('Delete is only available in the app')
+    }
+  }
+
+  useEffect(() => {
+    const receiveDeleteResult = (event: Event) => {
+      const result = (event as CustomEvent<{
+        requestId?: string
+        postId?: string
+        ok?: boolean
+        error?: string
+      }>).detail
+      const pending = deletePending
+      if (!pending || result?.requestId !== pending.requestId || result?.postId !== pending.postId) return
+      setDeletePending(null)
+      if (!result.ok) {
+        flashNote(result.error?.trim() || 'Could not delete this post')
+        return
+      }
+      retireViewer()
+      setUploadedPosts(current => current.filter(post => post.id !== pending.postId))
+      setViewerIdx(null)
+      setViewerCommentOpen(false)
+      setShareOpen(false)
+      setDeletePromptPost(null)
+      flashNote('Post deleted')
+      postNativeEvent({ type: 'requestProfilePosts' })
+    }
+    window.addEventListener('poplur-native-profile-post-delete-result', receiveDeleteResult)
+    return () => window.removeEventListener('poplur-native-profile-post-delete-result', receiveDeleteResult)
+  }, [deletePending, retireViewer])
+
+  useEffect(() => {
+    if (!deletePending) return
+    const timer = window.setTimeout(() => {
+      setDeletePending(current => current?.requestId === deletePending.requestId ? null : current)
+      flashNote('Delete timed out — the post is still here')
+    }, 10_000)
+    return () => window.clearTimeout(timer)
+  }, [deletePending])
+
   // Viewer audio follows the gate (mute button, backgrounding).
   useEffect(() => {
     if (viewerIdx == null) return
@@ -1737,9 +2026,17 @@ export default function ProfileTwin({
   const posts = mode === 'liked' ? LIKED : profilePosts
   const viewerPost = viewerIdx != null && posts.length ? posts[viewerIdx % posts.length] : null
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
+  const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
+  const viewerPostComments = viewerPostId ? (viewerComments[viewerPostId] ?? []) : []
   // Someone else's profile: their handle, their picture, and none of your own
   // controls (you cannot set another person's photo or read their bell).
   const visiting = Boolean(viewUser)
+  const canDeleteViewerPost = Boolean(
+    viewerPost?.id
+    && !visiting
+    && mode === 'media'
+    && uploadedPostsLoaded,
+  )
   const displayedProfileTheme = visiting || failedProfileThemeID === selectedProfileTheme.id
     ? DEFAULT_PROFILE_THEME
     : selectedProfileTheme
@@ -1811,6 +2108,7 @@ export default function ProfileTwin({
           aria-hidden="true"
         />
       )}
+      {viewerPost == null && (
       <TabControlRail side={controlSide} label="Profile controls">
         {!visiting && (
           <button
@@ -1847,6 +2145,7 @@ export default function ProfileTwin({
           </button>
         )}
       </TabControlRail>
+      )}
       <div className={styles.header}>
         <div className={styles.avatarWrap}>
           <div className={styles.avatarFrame} />
@@ -1863,7 +2162,7 @@ export default function ProfileTwin({
                 ref={selfieVideoRef}
                 className={`${styles.photo} ${styles.selfieMirrored}`}
                 src={selfieVideo}
-                poster={photo ?? undefined}
+                poster={renderedPhotoSource ?? undefined}
                 autoPlay
                 muted
                 loop
@@ -1874,20 +2173,16 @@ export default function ProfileTwin({
               />
             ) : photo ? (
               <img
+                key={renderedPhotoSource ?? photo}
                 className={styles.photo}
-                src={photo}
+                src={renderedPhotoSource ?? photo}
                 alt=""
                 draggable="false"
-                onError={e => {
+                onError={() => {
                   if (photo.startsWith('data:')) {
                     console.warn('[ProfileTwin] photo data URI failed to load — this should not happen')
                   } else {
-                    const img = e.currentTarget
-                    const attempt = Number(img.dataset.retry ?? '0')
-                    if (attempt < 2) {
-                      img.dataset.retry = String(attempt + 1)
-                      setTimeout(() => { img.src = photo }, 800 * (attempt + 1))
-                    }
+                    retryProfilePhoto()
                   }
                 }}
               />
@@ -2156,7 +2451,7 @@ export default function ProfileTwin({
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}
       {viewerPost && (
         <div className={styles.viewer}>
-          {viewerPostIsVideo && viewerPlaying && !shareOpen ? (
+          {viewerPostIsVideo && viewerPlaying && !viewerCovered ? (
             <video
               key={viewerPost.video}
               ref={viewerVideoRef}
@@ -2178,22 +2473,92 @@ export default function ProfileTwin({
             />
           )}
           <span className={styles.tileScan} aria-hidden="true" />
+          <PostActionRail
+            side={controlSide}
+            label="Profile post controls"
+            muted={viewerMuted}
+            captionsOn={viewerCaptionsOn}
+            commentsAtEnd={viewerCommentsAtEnd}
+            onToggleMute={toggleViewerMute}
+            onShare={() => { playPop(); setShareOpen(true) }}
+            onToggleCaptions={() => { playPop(); setViewerCaptionsOn(value => !value) }}
+            onToggleCommentsAtEnd={toggleViewerCommentsAtEnd}
+            onComment={() => { playPop(); setViewerCommentOpen(true) }}
+            onLike={() => reactToViewerPost('up')}
+            onDislike={() => reactToViewerPost('down')}
+            onDelete={canDeleteViewerPost ? () => { playPop(); setDeletePromptPost(viewerPost) } : undefined}
+            deletePending={deletePending != null}
+          />
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>
-            {/* Real moulded clay, same renderer as the channel arrows — not a
-                CSS impression of it. */}
-            <div className={styles.viewerTools}>
-              <ClayCornerButton
-                kind="share"
-                label="Share this pop"
-                size={46}
-                onPress={() => { playPop(); setShareOpen(true) }}
-              />
-              {/* No ✕ — the cube closes the viewer. */}
-            </div>
           </div>
           <p className={styles.viewerTitle}>{viewerPost.title}</p>
+          {viewerCaptionsOn && (
+            <p className={styles.viewerCaptions} aria-live="polite">{viewerPost.title}</p>
+          )}
           <p className={styles.viewerHint}>▲ ▼ browse your posts</p>
+
+          {viewerCommentOpen && (
+            <div className={styles.viewerDialogScrim} onClick={() => setViewerCommentOpen(false)}>
+              <div
+                className={styles.viewerDialog}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Comment on this post"
+                onClick={event => event.stopPropagation()}
+              >
+                <h2>Comments</h2>
+                <div className={styles.viewerCommentList}>
+                  {viewerPostComments.length ? viewerPostComments.map((comment, index) => (
+                    <p key={`${viewerPostId}-${index}`}><strong>@you</strong> {comment}</p>
+                  )) : (
+                    <p className={styles.viewerDialogEmpty}>No comments yet.</p>
+                  )}
+                </div>
+                <div className={styles.viewerCommentComposer}>
+                  <input
+                    value={viewerCommentText}
+                    placeholder="Say something…"
+                    maxLength={280}
+                    autoFocus
+                    onChange={event => setViewerCommentText(event.target.value)}
+                    onKeyDown={event => { if (event.key === 'Enter') sendViewerComment() }}
+                  />
+                  <button type="button" onClick={sendViewerComment} disabled={!viewerCommentText.trim()}>Post</button>
+                </div>
+                <button type="button" className={styles.viewerDialogCancel} onClick={() => setViewerCommentOpen(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {deletePromptPost && !deletePending && (
+            <div className={styles.viewerDialogScrim} onClick={() => setDeletePromptPost(null)}>
+              <div
+                className={`${styles.viewerDialog} ${styles.viewerDeleteDialog}`}
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="profile-delete-title"
+                aria-describedby="profile-delete-copy"
+                onClick={event => event.stopPropagation()}
+              >
+                <h2 id="profile-delete-title">Delete this post?</h2>
+                <p id="profile-delete-copy">It will be removed from your profile. This cannot be undone.</p>
+                <div className={styles.viewerDialogActions}>
+                  <button type="button" onClick={() => setDeletePromptPost(null)}>Keep it</button>
+                  <button type="button" className={styles.viewerDialogDanger} onClick={confirmViewerDelete}>Delete</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {deletePending && (
+            <div className={styles.viewerDialogScrim}>
+              <div className={`${styles.viewerDialog} ${styles.viewerDeleteDialog}`} role="status" aria-live="polite">
+                <h2>Deleting post…</h2>
+                <p>Removing it from your profile.</p>
+              </div>
+            </div>
+          )}
 
           {/* ── Poplur share alert: DM inside, or hand it to the OS ── */}
           {shareOpen && (

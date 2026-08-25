@@ -1,0 +1,43 @@
+.ccGlyphButton {
+  display: block;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 120ms ease;
+}
+
+.ccGlyphButton:active { transform: translateY(1px) scale(.93); }
+
+.ccGlyph {
+  display: block;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, .62));
+}
+
+.ccGlyphButton[aria-pressed="true"] .ccGlyph {
+  filter:
+    drop-shadow(0 3px 4px rgba(0, 0, 0, .62))
+    drop-shadow(0 0 8px rgba(43, 216, 255, .45));
+}
+
+.ccText {
+  font: 950 9px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+.deletePending {
+  opacity: .58;
+  pointer-events: none;
+  animation: deleteWaiting 900ms ease-in-out infinite alternate;
+}
+
+@keyframes deleteWaiting {
+  to { transform: scale(.92); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deletePending { animation: none; }
+}

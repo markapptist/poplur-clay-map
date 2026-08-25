@@ -461,10 +461,12 @@ export default function FaceAROverlay({
   detections,
   filter,
   mirrored,
+  allow3D = true,
 }: {
   detections: readonly Detection[]
   filter: string
   mirrored: boolean
+  allow3D?: boolean
 }) {
   if (filter === 'none') return null
   const faces = detections.filter(isFace)
@@ -475,7 +477,7 @@ export default function FaceAROverlay({
       style={mirrored ? { transform: 'scaleX(-1)' } : undefined}
       aria-hidden="true"
     >
-      {hasFaceAR3D(filter) && <FaceAR3D detections={faces} filter={filter} />}
+      {allow3D && hasFaceAR3D(filter) && <FaceAR3D detections={faces} filter={filter} />}
       {faces.map(face => (
         <div
           key={face.id}

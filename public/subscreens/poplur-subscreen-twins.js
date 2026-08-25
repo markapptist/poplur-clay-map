@@ -172,7 +172,6 @@ const groups = {
       { id: 'camera-roll', title: 'Camera Roll', detail: 'showCameraRollWindow', icon: H.cameraRoll, render: () => cameraRoll() },
       { id: 'camera-create', title: 'Create', detail: 'OpenCreatorRequested', icon: H.create, render: () => creatorScreen() },
       { id: 'camera-preview', title: 'Preview', detail: 'CapturePreviewOverlay', icon: H.tvGuide, render: () => cameraPreview() },
-      { id: 'camera-live', title: 'Live', detail: 'LiveVideoStatusBadge', icon: H.tvGuide, render: () => cameraLive() },
       { id: 'camera-chat', title: 'Chat', detail: 'OpenDMsRequested', icon: H.chat, render: () => messagesScreen('Camera') },
       { id: 'camera-store', title: 'Store', detail: 'OpenPoplurStoreRequested', icon: H.store, render: () => storeScreen() },
     ],
@@ -224,6 +223,7 @@ let profileStoreCheckoutSnapshot = null;
 let profileStoreTab = 'featured';
 let profileStoreSlide = 0;
 let storeCarouselTimer = null;
+let reportedStoreCardId = undefined;
 let profileStat = null;
 let profileSettingsPanel = null;
 let profileSettingsNotice = '';
@@ -1227,6 +1227,18 @@ function renderScreen() {
   }
   const group = groups[activeGroup];
   const item = group.screens.find(s => s.id === activeScreen) || group.screens[0];
+  // The Store's detail page is inside this iframe, while the physical
+  // navigator lives in HomeTwin. Publish just the selected card id; the host
+  // validates it against its model map before allowing a cube swap.
+  const storeCardId = item.id === 'profile-store' && profileStoreView === 'catalog'
+    ? profileStoreProduct
+    : null;
+  if (storeCardId !== reportedStoreCardId) {
+    reportedStoreCardId = storeCardId;
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'poplurStoreCardChange', cardId: storeCardId }, '*');
+    }
+  }
   screenEl.className = `screen ${activeGroup}-screen`;
   screenEl.innerHTML = item.render();
   if (item.id === 'profile-phone' && typeof window !== 'undefined' && window.setTimeout) {
@@ -2362,7 +2374,7 @@ function cameraCapture() {
         <span>@creator</span>
       </div>
       <div class="camera-focus"></div>
-      <div class="camera-hint">The cube is the shutter · Hold it for Photo, Video, or Live</div>
+      <div class="camera-hint">The cube is the shutter · Hold it for Photo or Video</div>
     </div>
   `;
 }
@@ -2411,20 +2423,6 @@ function cameraPreview() {
         <div class="preview-action"><i class="white">×</i><span>Retake</span></div>
         <div class="preview-action"><i class="red">✓</i><span>Keep</span></div>
       </div>
-    </div>
-  `;
-}
-
-function cameraLive() {
-  return `
-    <div class="ios-screen camera">
-      <div class="camera-preview"></div>
-      <div class="camera-top-controls">
-        <div class="camera-icon-btn">ϟ</div>
-        <div class="camera-icon-btn">↻</div>
-      </div>
-      <div class="live-status"><i></i><b>LIVE</b><span>1:42</span><span class="green">128 watching</span><span>Yonge-Dundas</span></div>
-      <div class="camera-focus"></div>
     </div>
   `;
 }

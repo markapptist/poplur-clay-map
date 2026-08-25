@@ -1,10 +1,24 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import styles from './MailScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
 import { isNativeShell } from './nativeBridge'
+import CameraARButton from './CameraARButton'
+import ARFilters from './ARFilters'
+import FaceAROverlay from './FaceAROverlay'
+import CameraRoll from './CameraRoll'
+import { arFilterCatalog } from './arFilterCatalog'
+import type { Detection } from './mlDetect'
+import {
+  activeTyping,
+  attachmentLabel,
+  createClientMessageId,
+  sentMessageStatus,
+  validAttachmentMime,
+  type DMAttachmentKind,
+  type DMDeliveryStatus,
+} from './dmContract'
 import {
   placeCall,
   hangup as hangupCall,
@@ -16,6 +30,236 @@ import {
   type CallSnapshot,
 } from './webCall'
 
+type CallVisualTheme = 'orbit' | 'ring' | 'duo'
+
+const CALL_VISUAL_THEMES: readonly CallVisualTheme[] = ['orbit', 'ring', 'duo']
+
+function chooseCallVisualTheme(): CallVisualTheme {
+  return CALL_VISUAL_THEMES[Math.floor(Math.random() * CALL_VISUAL_THEMES.length)]
+}
+
+// Calls already have a real video stream, so the filter rail deliberately uses
+// a stable, lightweight face anchor. This keeps costume placement responsive
+// without starting a second camera or continuous vision pass over FaceTime.
+const CALL_LOCAL_FACE: Detection = {
+  id: 'call-local-face',
+  x: 0.29,
+  y: 0.20,
+  w: 0.42,
+  h: 0.42,
+  label: 'You',
+  confidence: 1,
+}
+
+// Stickers travel through the existing DM text transport as a closed, compact
+// token. That keeps delivery, retries and Firestore history identical to a
+// regular message while each current client renders the Poplur artwork instead
+// of exposing implementation text. Unknown tokens remain ordinary text, so an
+// older client never loses a message.
+// The supplied sticker sheet is intentionally used as the source artwork
+// rather than asking a model to redraw text-heavy stickers. Each entry is one
+// 6 × 5 atlas cell, keeping their supplied lettering and character art exact.
+const POPLUR_STICKERS = [
+  { id: 'poplur', label: 'POPLUR', caption: 'Poplur', x: '0%', y: '0%' },
+  { id: 'hey', label: 'HEY POPLUR!', caption: 'Say hey', x: '20%', y: '0%' },
+  { id: 'globe', label: 'WORLD PIN', caption: 'Share the world', x: '40%', y: '0%' },
+  { id: 'pheart', label: 'P HEART', caption: 'Send a heart', x: '60%', y: '0%' },
+  { id: 'here', label: "I'M HERE", caption: 'Share your spot', x: '80%', y: '0%' },
+  { id: 'cool', label: 'COOL', caption: 'Looking good', x: '100%', y: '0%' },
+  { id: 'love', label: 'BIG LOVE', caption: 'Send love', x: '0%', y: '25%' },
+  { id: 'flame', label: 'P FLAME', caption: 'On fire', x: '20%', y: '25%' },
+  { id: 'go', label: "LET'S GO!", caption: 'Bring the hype', x: '40%', y: '25%' },
+  { id: 'hands', label: 'HEART HANDS', caption: 'Send a heart', x: '60%', y: '25%' },
+  { id: 'call', label: 'CALL ME', caption: 'Ask for a call', x: '80%', y: '25%' },
+  { id: 'camera', label: 'CAMERA', caption: 'Send a snap', x: '100%', y: '25%' },
+  { id: 'live', label: 'LIVE!', caption: 'Go live', x: '0%', y: '50%' },
+  { id: 'way', label: 'ON MY WAY!', caption: 'On my way', x: '20%', y: '50%' },
+  { id: 'kiss', label: 'KISS', caption: 'Sending love', x: '40%', y: '50%' },
+  { id: 'fire', label: "THAT'S FIRE", caption: 'That is fire', x: '60%', y: '50%' },
+  { id: 'laptop', label: 'LAPTOP', caption: 'Working on it', x: '80%', y: '50%' },
+  { id: 'vibes', label: 'GOOD VIBES', caption: 'Good vibes', x: '100%', y: '50%' },
+  { id: 'wink', label: 'WINK', caption: 'Hey there', x: '0%', y: '75%' },
+  { id: 'seen', label: 'SEEN', caption: 'Seen', x: '20%', y: '75%' },
+  { id: 'crown', label: 'CROWN', caption: 'You rule', x: '40%', y: '75%' },
+  { id: 'phone', label: 'POPLUR PHONE', caption: 'From Poplur Phone', x: '60%', y: '75%' },
+  { id: 'soon', label: 'DROPPING SOON', caption: 'Dropping soon', x: '80%', y: '75%' },
+  { id: 'active', label: 'STAY ACTIVE', caption: 'Stay active', x: '100%', y: '75%' },
+  { id: 'expanding', label: 'EXPANDING', caption: 'Radius expanding', x: '0%', y: '100%' },
+  { id: 'time', label: 'SAME TIME?', caption: 'Same time', x: '20%', y: '100%' },
+  { id: 'music', label: 'MUSIC', caption: 'Music mood', x: '40%', y: '100%' },
+  { id: 'heart', label: 'P HEART', caption: 'Big love', x: '60%', y: '100%' },
+  { id: 'out', label: "I'M OUT", caption: 'I am out', x: '80%', y: '100%' },
+  { id: 'fam', label: 'POPLUR FAM', caption: 'Poplur fam', x: '100%', y: '100%' },
+] as const
+
+type PoplurStickerId = typeof POPLUR_STICKERS[number]['id']
+
+type ComposerTab = 'chat' | 'media' | 'stickers' | 'games' | 'share'
+
+type ShareCategory = 'apps' | 'games' | 'music' | 'podcasts' | 'wardrobe'
+type ShareKind = 'app' | 'game' | 'music' | 'podcast' | 'wardrobe'
+
+type SharedWork = {
+  kind: ShareKind
+  id: string
+  title: string
+  subtitle: string
+  glyph: string
+}
+
+type PoplurGameDraft = {
+  id: string
+  title: string
+  detail: string
+  accent: string
+  glyph: string
+}
+
+const POPLUR_AI_GAME_DRAFTS: readonly PoplurGameDraft[] = [
+  {
+    id: 'radius-riddle',
+    title: 'Radius Riddle',
+    detail: 'AI makes three clues from the places around both of you. First to solve two wins.',
+    accent: 'cyan',
+    glyph: '?',
+  },
+  {
+    id: 'pop-relay',
+    title: 'Pop Relay',
+    detail: 'Trade one photo prompt each. The AI judges the most unexpected match.',
+    accent: 'pink',
+    glyph: '↗',
+  },
+  {
+    id: 'channel-101',
+    title: 'Channel 101',
+    detail: 'Pick a mood and let AI turn it into a three-round music-and-memory match.',
+    accent: 'violet',
+    glyph: '101',
+  },
+]
+
+function conversationStartersFor(name: string): readonly string[] {
+  const person = name.replace(/^@/, '') || 'them'
+  return [
+    `What are you seeing in your radius tonight?`,
+    `Want to make a two-person Poplur game?`,
+    `I found something you might like near me — want the pin?`,
+    `What channel are you on, ${person}?`,
+  ]
+}
+
+function shareWire(share: SharedWork): string {
+  // URI encoding keeps the payload ASCII before btoa so Unicode titles remain
+  // reversible. Older clients still receive a short, understandable message.
+  const payload = btoa(encodeURIComponent(JSON.stringify(share)))
+  return `Shared a ${share.kind}: ${share.title}\n[[poplur:share:${payload}]]`
+}
+
+function shareFromText(text: string): SharedWork | null {
+  const match = /\[\[poplur:share:([A-Za-z0-9+/=]+)\]\]$/.exec(text.trim())
+  if (!match) return null
+  try {
+    const raw = JSON.parse(decodeURIComponent(atob(match[1]))) as Partial<SharedWork>
+    const kinds: readonly ShareKind[] = ['app', 'game', 'music', 'podcast', 'wardrobe']
+    if (!raw || !kinds.includes(raw.kind as ShareKind)) return null
+    if (typeof raw.id !== 'string' || typeof raw.title !== 'string' || typeof raw.subtitle !== 'string' || typeof raw.glyph !== 'string') return null
+    return {
+      kind: raw.kind as ShareKind,
+      id: raw.id.slice(0, 120),
+      title: raw.title.slice(0, 120),
+      subtitle: raw.subtitle.slice(0, 220),
+      glyph: raw.glyph.slice(0, 8),
+    }
+  } catch {
+    return null
+  }
+}
+
+function sharePreview(text: string): string {
+  const share = shareFromText(text)
+  return share ? `Shared ${share.kind}: ${share.title}` : text
+}
+
+// Keep the catalog modules out of the initial Messages chunk. The chat opens
+// much more often than someone shares a creation, and the catalog is only
+// useful after they explicitly open the collapsed "Your work" panel.
+async function loadWorkFor(category: Exclude<ShareCategory, 'wardrobe'>): Promise<SharedWork[]> {
+  if (category === 'apps') {
+    const { listMiniApps } = await import('./miniApps')
+    return listMiniApps().filter(app => app.app.id !== 'poplur-flashlight').map(app => ({
+      kind: 'app' as const,
+      id: app.app.id,
+      title: app.app.name,
+      subtitle: app.app.description,
+      glyph: app.app.icon || 'P',
+    }))
+  }
+  if (category === 'games') {
+    const { listPostings } = await import('./postedContent')
+    return listPostings('game').map(post => ({
+      kind: 'game' as const,
+      id: post.itemId,
+      title: post.itemId.replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase()),
+      subtitle: post.place ? `Created game · ${post.place}` : 'Created Poplur game',
+      glyph: '⌘',
+    }))
+  }
+  if (category === 'music') {
+    const { accountShelf, postedTracks } = await import('./musicPosts')
+    const seen = new Set<string>()
+    return [...accountShelf(), ...postedTracks()].filter(track => {
+      if (seen.has(track.id)) return false
+      seen.add(track.id)
+      return true
+    }).map(track => ({
+      kind: 'music' as const,
+      id: track.id,
+      title: track.title,
+      subtitle: `${track.artist} · ${track.mood}`,
+      glyph: '♫',
+    }))
+  }
+  const { ownBroadcastShelf } = await import('./mapRadio')
+  return ownBroadcastShelf()
+    .filter(broadcast => broadcast.type === 'podcast')
+    .map(broadcast => ({
+      kind: 'podcast' as const,
+      id: broadcast.id,
+      title: broadcast.title,
+      subtitle: `${broadcast.status === 'live' ? 'Live' : 'Recorded'} · ${broadcast.genre}`,
+      glyph: '◖)))',
+    }))
+}
+
+const stickerWire = (id: PoplurStickerId) => `[[poplur:sticker:${id}]]`
+
+function stickerFromText(text: string): PoplurStickerId | null {
+  const match = /^\[\[poplur:sticker:([a-z]+)\]\]$/.exec(text.trim())
+  if (!match) return null
+  return POPLUR_STICKERS.find(sticker => sticker.id === match[1])?.id ?? null
+}
+
+function stickerPreview(text: string): string {
+  const sticker = stickerFromText(text)
+  if (sticker) return `${POPLUR_STICKERS.find(item => item.id === sticker)?.label ?? 'Poplur'} sticker`
+  return sharePreview(text)
+}
+
+function PoplurSticker({ id, size = 'message' }: { id: PoplurStickerId; size?: 'tray' | 'message' }) {
+  const sticker = POPLUR_STICKERS.find(item => item.id === id)
+  return (
+    <span
+      className={styles.stickerArt}
+      data-sticker={id}
+      data-sticker-size={size}
+      aria-label={sticker?.label}
+      role="img"
+      style={{ ['--sticker-x' as string]: sticker?.x ?? '0%', ['--sticker-y' as string]: sticker?.y ?? '0%' }}
+    />
+  )
+}
+
 interface Thread {
   id: string
   /** The actual Poplur account on the other side of this conversation. */
@@ -25,7 +269,21 @@ interface Thread {
   preview: string
   when: string
   unread: number
-  messages: Array<{ from: 'me' | 'them'; text: string }>
+  typing?: boolean
+  otherReadAtMillis?: number
+  messages: Array<{
+    id: string
+    from: 'me' | 'them'
+    text: string
+    createdAtMillis: number
+    status?: DMDeliveryStatus
+    attachment?: {
+      kind: DMAttachmentKind
+      url: string
+      mimeType: string
+      durationMillis?: number
+    }
+  }>
 }
 
 interface NativeThreadPayload {
@@ -35,11 +293,19 @@ interface NativeThreadPayload {
   title?: unknown
   preview?: unknown
   unread?: unknown
+  updatedAtMillis?: unknown
 }
 
 interface NativeMessagePayload {
+  id?: unknown
   from?: unknown
   text?: unknown
+  createdAtMillis?: unknown
+  pending?: unknown
+  kind?: unknown
+  mediaURL?: unknown
+  mimeType?: unknown
+  durationMillis?: unknown
 }
 
 const THREADS: Thread[] = [
@@ -51,8 +317,8 @@ const THREADS: Thread[] = [
     when: '2m',
     unread: 2,
     messages: [
-      { from: 'them', text: 'Hey — are you around the radius tonight?' },
-      { from: 'me', text: 'Yes. Send me the channel when it goes live.' },
+      { id: 'preview-a-1', from: 'them', text: 'Hey — are you around the radius tonight?', createdAtMillis: 1 },
+      { id: 'preview-a-2', from: 'me', text: 'Yes. Send me the channel when it goes live.', createdAtMillis: 2, status: 'read' },
     ],
   },
   {
@@ -63,8 +329,8 @@ const THREADS: Thread[] = [
     when: '18m',
     unread: 0,
     messages: [
-      { from: 'them', text: 'this is live right now' },
-      { from: 'me', text: 'I see it on channel 101.' },
+      { id: 'preview-b-1', from: 'them', text: 'this is live right now', createdAtMillis: 1 },
+      { id: 'preview-b-2', from: 'me', text: 'I see it on channel 101.', createdAtMillis: 2, status: 'sent' },
     ],
   },
   {
@@ -75,7 +341,7 @@ const THREADS: Thread[] = [
     when: '1h',
     unread: 1,
     messages: [
-      { from: 'them', text: 'Your Poplur Phone is ready for a video call.' },
+      { id: 'preview-c-1', from: 'them', text: 'Your Poplur Phone is ready for a video call.', createdAtMillis: 1 },
     ],
   },
   {
@@ -86,7 +352,7 @@ const THREADS: Thread[] = [
     when: '3h',
     unread: 0,
     messages: [
-      { from: 'them', text: 'Yonge-Dundas Square is popping. Want a quick tour?' },
+      { id: 'preview-d-1', from: 'them', text: 'Yonge-Dundas Square is popping. Want a quick tour?', createdAtMillis: 1 },
     ],
   },
 ]
@@ -111,9 +377,11 @@ function nativeThreads(value: unknown): Thread[] {
       initials,
       title,
       preview: typeof thread.preview === 'string' && thread.preview.trim()
-        ? thread.preview.trim()
+        ? stickerPreview(thread.preview.trim())
         : 'No messages yet',
-      when: 'now',
+      when: typeof thread.updatedAtMillis === 'number' && Number.isFinite(thread.updatedAtMillis)
+        ? relativeMessageTime(thread.updatedAtMillis)
+        : 'now',
       unread: typeof thread.unread === 'number' && Number.isFinite(thread.unread)
         ? Math.max(0, Math.floor(thread.unread))
         : 0,
@@ -129,8 +397,48 @@ function nativeMessages(value: unknown): Thread['messages'] {
     const message = raw as NativeMessagePayload
     const text = typeof message.text === 'string' ? message.text.trim() : ''
     if (!text) return []
-    return [{ from: message.from === 'me' ? 'me' : 'them', text }]
+    const createdAtMillis = typeof message.createdAtMillis === 'number'
+      && Number.isFinite(message.createdAtMillis)
+      ? message.createdAtMillis
+      : 0
+    const attachmentKind: DMAttachmentKind | null = message.kind === 'image'
+      || message.kind === 'video'
+      || message.kind === 'audio'
+      ? message.kind
+      : null
+    const mediaURL = typeof message.mediaURL === 'string' ? message.mediaURL.trim() : ''
+    const mimeType = typeof message.mimeType === 'string' ? message.mimeType.trim() : ''
+    const attachment = attachmentKind && mediaURL && validAttachmentMime(attachmentKind, mimeType)
+      ? {
+          kind: attachmentKind,
+          url: mediaURL,
+          mimeType,
+          ...(typeof message.durationMillis === 'number' && Number.isFinite(message.durationMillis)
+            ? { durationMillis: Math.max(0, Math.round(message.durationMillis)) }
+            : {}),
+        }
+      : undefined
+    return [{
+      id: typeof message.id === 'string' && message.id ? message.id : createClientMessageId(),
+      from: message.from === 'me' ? 'me' : 'them',
+      text,
+      createdAtMillis,
+      status: message.from === 'me'
+        ? sentMessageStatus(createdAtMillis, undefined, message.pending === true)
+        : undefined,
+      attachment,
+    }]
   })
+}
+
+function relativeMessageTime(timestamp: number): string {
+  const elapsed = Math.max(0, Date.now() - timestamp)
+  const minutes = Math.floor(elapsed / 60_000)
+  if (minutes < 1) return 'now'
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+  return `${Math.floor(hours / 24)}d`
 }
 
 /** Deleted chats stay deleted across visits. The list is seeded locally (the
@@ -167,6 +475,7 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
 }) {
   const cardRef = useRef<HTMLDivElement>(null)
   const drag = useRef({ pointerId: -1, startX: 0, startY: 0, dx: 0, axis: null as 'x' | 'y' | null, from: 0 })
+  const hasSettledOnce = useRef(false)
 
   const settle = useCallback((x: number, animate: boolean) => {
     const card = cardRef.current
@@ -175,7 +484,13 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
     card.style.transform = `translate3d(${x}px, 0, 0)`
   }, [])
 
-  useEffect(() => { settle(open ? -SWIPE_OPEN_PX : 0, true) }, [open, settle])
+  useEffect(() => {
+    // Mount directly at rest. Animating every inbox card from its implicit
+    // transform during Mail's first paint creates compositor work the user
+    // cannot see; later open/close changes still spring normally.
+    settle(open ? -SWIPE_OPEN_PX : 0, hasSettledOnce.current)
+    hasSettledOnce.current = true
+  }, [open, settle])
 
   const onPointerDown = (e: React.PointerEvent) => {
     drag.current = {
@@ -299,9 +614,16 @@ export function FaceTimeOverlay({
   const [localVideoReady, setLocalVideoReady] = useState(false)
   const [remoteVideoReady, setRemoteVideoReady] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [arOpen, setArOpen] = useState(false)
+  const [arFilter, setArFilter] = useState('none')
   const callBegan = useRef(false)
+  // A theme is chosen once for the call, rather than each render. This lets an
+  // incoming or outgoing call keep one visual identity through ringing,
+  // connection setup and the live video hand-off.
+  const callTheme = useRef<CallVisualTheme>(chooseCallVisualTheme()).current
   const connected = callSnap?.phase === 'connected'
   const initial = who.trim().charAt(0).toUpperCase() || '?'
+  const arFilterCss = arFilterCatalog().filters.find(filter => filter.id === arFilter)?.css ?? 'none'
 
   useEffect(() => {
     installCallBridge()
@@ -396,13 +718,13 @@ export function FaceTimeOverlay({
       ? direction === 'incoming' ? `${who} is calling you` : `Waiting for ${who} to answer`
       : 'Setting up the call securely'
 
-  return createPortal(
-    <section className={styles.ftOverlay} role="dialog" aria-modal="true" aria-label={`FaceTime with ${who}`}>
+  return (
+    <section className={styles.ftOverlay} data-call-theme={callTheme} role="dialog" aria-modal="true" aria-label={`Video call with ${who}`}>
       <header className={styles.ftHeader}>
         <span className={styles.ftBrandMark} aria-hidden="true">P</span>
         <span>
           <b>POPLUR CALL</b>
-          <small>DM · VIDEO</small>
+          <small>PT&amp;T WIRELESS · VIDEO</small>
         </span>
         <span className={styles.ftLiveLamp}><i aria-hidden="true" />LIVE</span>
       </header>
@@ -440,20 +762,28 @@ export function FaceTimeOverlay({
               onPlaying={markLocalVideoReady}
               onEmptied={() => setLocalVideoReady(false)}
               className={localVideoReady && cameraOn ? `${styles.ftVideo} ${styles.ftVideoReady}` : styles.ftVideo}
+              style={arFilterCss === 'none' ? undefined : { filter: arFilterCss }}
             />
+            {cameraOn && arFilter !== 'none' && (
+              <FaceAROverlay detections={[CALL_LOCAL_FACE]} filter={arFilter} mirrored allow3D={false} />
+            )}
             <div className={styles.ftLocalLabel}>You</div>
           </div>
         </div>
       ) : (
         <div className={styles.ftRinging}>
           <div className={styles.ftRingingHalo} aria-hidden="true" />
+          <div className={styles.ftOrbitRail} aria-hidden="true"><i /><i /><i /></div>
+          <div className={styles.ftDuoStage} aria-hidden="true">
+            <i /><b>@</b><i />
+          </div>
           <div className={styles.ftContactCube} aria-hidden="true">
             <span className={styles.ftCubeTop} />
             <span className={styles.ftCubeSide} />
             <span className={styles.ftCubeFace}>{initial}</span>
           </div>
           <strong>{who}</strong>
-          <span className={styles.ftCallKind}>FaceTime video via Poplur DM</span>
+          <span className={styles.ftCallKind}>Poplur video call</span>
           <b>{callHeading}</b>
           <small>{callDetail}</small>
         </div>
@@ -461,6 +791,12 @@ export function FaceTimeOverlay({
       <div className={styles.ftStatus}>
         {statusLabel}
       </div>
+      <div className={styles.ftSideRail}>
+        <CameraARButton active={arOpen} size={42} onToggle={() => setArOpen(open => !open)} />
+      </div>
+      {arOpen && (
+        <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
+      )}
       <div className={styles.ftControls}>
         <button type="button" aria-label={callSnap?.muted ? 'Unmute' : 'Mute'} aria-pressed={callSnap?.muted} onClick={toggleMute}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
@@ -475,22 +811,80 @@ export function FaceTimeOverlay({
           <span>END</span>
         </button>
       </div>
-    </section>,
-    document.body,
+    </section>
   )
 }
 
-export default function MailScreen({ onClose, onCallViaPhone }: {
+function blobDataURL(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read recording'))
+    reader.onload = () => typeof reader.result === 'string'
+      ? resolve(reader.result)
+      : reject(new Error('Could not read recording'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+export default function MailScreen({ onCallViaPhone, initialThreadId }: {
   onClose?: () => void
   onCallViaPhone?: (id: string, name: string) => void
+  initialThreadId?: string
 }) {
   const [activeThread, setActiveThread] = useState<Thread | null>(null)
   const [faceTimeWith, setFaceTimeWith] = useState<{ id: string; name: string } | null>(null)
   const [liveThreads, setLiveThreads] = useState<Thread[] | null>(null)
   const [composerText, setComposerText] = useState('')
+  const [composerTab, setComposerTab] = useState<ComposerTab>('chat')
+  const [messageToolsOpen, setMessageToolsOpen] = useState(false)
+  const [shareCategory, setShareCategory] = useState<ShareCategory>('apps')
+  const [shareableWork, setShareableWork] = useState<SharedWork[]>([])
+  const [shareWorkLoading, setShareWorkLoading] = useState(false)
+  const [wardrobeShareBusy, setWardrobeShareBusy] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'preparing'>('idle')
+  const [voiceElapsed, setVoiceElapsed] = useState(0)
+  const [voiceError, setVoiceError] = useState('')
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => readDeletedThreads())
   const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null)
+  const remoteTypingTimerRef = useRef<number | null>(null)
+  const typingStopTimerRef = useRef<number | null>(null)
+  const typingSentForRef = useRef<string | null>(null)
+  const typingLastSentAtRef = useRef(0)
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null)
+  const voiceStreamRef = useRef<MediaStream | null>(null)
+  const voiceChunksRef = useRef<Blob[]>([])
+  const voiceStartedAtRef = useRef(0)
+  const voiceTickRef = useRef<number | null>(null)
+  const voiceLimitRef = useRef<number | null>(null)
+  const voiceDiscardRef = useRef(false)
+  const pendingInitialThreadIdRef = useRef(initialThreadId)
   const threads = (liveThreads ?? THREADS).filter(t => !deletedIds.has(t.id))
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
+  const visibleThreads = normalizedSearch
+    ? threads.filter(thread => `${thread.title}\n${thread.preview}`.toLocaleLowerCase().includes(normalizedSearch))
+    : threads
+
+  const stopVoiceResources = useCallback((discard: boolean, updateUI = true) => {
+    voiceDiscardRef.current = discard
+    if (voiceTickRef.current != null) window.clearInterval(voiceTickRef.current)
+    if (voiceLimitRef.current != null) window.clearTimeout(voiceLimitRef.current)
+    voiceTickRef.current = null
+    voiceLimitRef.current = null
+    const recorder = voiceRecorderRef.current
+    if (recorder && recorder.state !== 'inactive') recorder.stop()
+    voiceStreamRef.current?.getTracks().forEach(track => track.stop())
+    voiceStreamRef.current = null
+    if (discard) {
+      voiceChunksRef.current = []
+      if (updateUI) {
+        setVoiceState('idle')
+        setVoiceElapsed(0)
+      }
+    }
+  }, [])
+
+  useEffect(() => () => stopVoiceResources(true, false), [stopVoiceResources])
 
   // Pull to refresh, on the thread list only.
   //
@@ -529,24 +923,141 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
       if (detail.type === 'poplurDMThreads') {
         const next = nativeThreads(detail.threads)
         setLiveThreads(next)
+        // A server-hidden conversation legitimately reappears when a newer
+        // message arrives. Remove its old local fallback tombstone as soon as
+        // native includes it again, otherwise this device would keep hiding a
+        // live conversation forever.
+        setDeletedIds(previous => {
+          const restored = new Set(previous)
+          next.forEach(thread => restored.delete(thread.id))
+          if (restored.size !== previous.size) writeDeletedThreads(restored)
+          return restored.size === previous.size ? previous : restored
+        })
         setActiveThread(current => {
           if (!current) return null
           const replacement = next.find(thread => thread.id === current.id)
           return replacement ? { ...replacement, messages: current.messages } : null
         })
+        const requestedThreadId = pendingInitialThreadIdRef.current
+        const requestedThread = requestedThreadId
+          ? next.find(thread => thread.id === requestedThreadId)
+          : undefined
+        if (requestedThread) {
+          pendingInitialThreadIdRef.current = undefined
+          setComposerText('')
+          setComposerTab('chat')
+          setActiveThread(requestedThread)
+          window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+            detail: { type: 'openDMThread', threadId: requestedThread.id },
+          }))
+        }
+        return
+      }
+      if (detail.type === 'poplurDMThreadHidden' && detail.ok === false
+        && typeof detail.threadId === 'string') {
+        const failedThreadId = detail.threadId
+        setDeletedIds(previous => {
+          if (!previous.has(failedThreadId)) return previous
+          const restored = new Set(previous)
+          restored.delete(failedThreadId)
+          writeDeletedThreads(restored)
+          return restored
+        })
+        refreshThreads()
         return
       }
       if (detail.type === 'poplurDMMessages' && typeof detail.threadId === 'string') {
         const threadId = detail.threadId
         const messages = nativeMessages(detail.messages)
+        setActiveThread(current => {
+          if (current?.id !== threadId) return current
+          const received = new Set(messages.map(message => message.id))
+          const unsettled = current.messages.filter(message =>
+            !received.has(message.id) && (message.status === 'sending' || message.status === 'failed'))
+          const next = [...messages, ...unsettled].map(message => message.from === 'me'
+            ? {
+                ...message,
+                status: message.status === 'failed'
+                  ? 'failed' as const
+                  : sentMessageStatus(
+                      message.createdAtMillis,
+                      current.otherReadAtMillis,
+                      message.status === 'sending',
+                    ),
+              }
+            : message)
+          return { ...current, messages: next }
+        })
+        return
+      }
+      if (detail.type === 'poplurDMThreadState' && typeof detail.threadId === 'string') {
+        const threadId = detail.threadId
+        const typingAtMillis = typeof detail.typingAtMillis === 'number'
+          ? detail.typingAtMillis
+          : undefined
+        const otherReadAtMillis = typeof detail.otherReadAtMillis === 'number'
+          ? detail.otherReadAtMillis
+          : undefined
+        const typing = activeTyping(typingAtMillis)
+        if (remoteTypingTimerRef.current != null) window.clearTimeout(remoteTypingTimerRef.current)
+        if (typing) {
+          const remaining = Math.max(100, 6_000 - (Date.now() - (typingAtMillis ?? 0)))
+          remoteTypingTimerRef.current = window.setTimeout(() => {
+            setActiveThread(current => current?.id === threadId ? { ...current, typing: false } : current)
+          }, remaining)
+        }
         setActiveThread(current => current?.id === threadId
-          ? { ...current, messages }
+          ? {
+              ...current,
+              typing,
+              otherReadAtMillis,
+              messages: current.messages.map(message => message.from === 'me'
+                ? {
+                    ...message,
+                    status: message.status === 'failed'
+                      ? 'failed'
+                      : sentMessageStatus(
+                          message.createdAtMillis,
+                          otherReadAtMillis,
+                          message.status === 'sending',
+                        ),
+                  }
+                : message),
+            }
+          : current)
+        return
+      }
+      if (detail.type === 'poplurDMSent' && typeof detail.clientMessageId === 'string') {
+        const clientMessageId = detail.clientMessageId
+        setActiveThread(current => current
+          ? {
+              ...current,
+              messages: current.messages.map(message => message.id === clientMessageId
+                ? { ...message, status: sentMessageStatus(message.createdAtMillis, current.otherReadAtMillis, false) }
+                : message),
+            }
           : current)
         return
       }
       if (detail.type === 'poplurDMSendFailed' && typeof detail.text === 'string') {
         const failedText = detail.text
-        setComposerText(current => current || failedText)
+        const clientMessageId = typeof detail.clientMessageId === 'string'
+          ? detail.clientMessageId
+          : ''
+        setActiveThread(current => current
+          ? {
+              ...current,
+              messages: current.messages.map(message => message.id === clientMessageId
+                ? { ...message, status: 'failed' }
+                : message),
+            }
+          : current)
+        // Current shells return the stable id and the failed bubble exposes a
+        // same-id retry. Older shells did not, so preserve their recovery path
+        // by returning ordinary text to the composer.
+        if (!clientMessageId && !stickerFromText(failedText)) {
+          setComposerText(current => current || failedText)
+        }
       }
     }
     window.addEventListener('poplur-dm-result', onResult)
@@ -558,6 +1069,8 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     // first-visit render.
     if (isNativeShell()) refreshThreads()
     return () => {
+      if (remoteTypingTimerRef.current != null) window.clearTimeout(remoteTypingTimerRef.current)
+      if (typingStopTimerRef.current != null) window.clearTimeout(typingStopTimerRef.current)
       window.removeEventListener('poplur-dm-result', onResult)
       window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
     }
@@ -621,11 +1134,53 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
   }, [faceTimeWith])
 
   const closeThread = useCallback(() => {
+    // Leaving a DM while its video surface is active must not strand the
+    // WebRTC camera/mic behind the compact audio call bar. End the media
+    // session before unmounting the only video controls.
+    if (faceTimeWith) hangupCall()
+    stopVoiceResources(true)
     setFaceTimeWith(null)
     setComposerText('')
+    setComposerTab('chat')
+    setMessageToolsOpen(false)
     setActiveThread(null)
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
+  }, [faceTimeWith, stopVoiceResources])
+
+  const sendTyping = useCallback((threadId: string, typing: boolean) => {
+    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+      detail: { type: 'setDMTyping', threadId, typing },
+    }))
   }, [])
+
+  useEffect(() => {
+    if (typingStopTimerRef.current != null) window.clearTimeout(typingStopTimerRef.current)
+    const threadId = activeThread?.id
+    const previous = typingSentForRef.current
+    if (!threadId || !composerText.trim()) {
+      if (previous) sendTyping(previous, false)
+      typingSentForRef.current = null
+      typingLastSentAtRef.current = 0
+      return
+    }
+    if (previous && previous !== threadId) sendTyping(previous, false)
+    const now = Date.now()
+    if (previous !== threadId || now - typingLastSentAtRef.current >= 3_000) {
+      sendTyping(threadId, true)
+      typingLastSentAtRef.current = now
+    }
+    typingSentForRef.current = threadId
+    typingStopTimerRef.current = window.setTimeout(() => {
+      if (typingSentForRef.current === threadId) {
+        sendTyping(threadId, false)
+        typingSentForRef.current = null
+        typingLastSentAtRef.current = 0
+      }
+    }, 2_500)
+    return () => {
+      if (typingStopTimerRef.current != null) window.clearTimeout(typingStopTimerRef.current)
+    }
+  }, [activeThread?.id, composerText, sendTyping])
 
   // Retain the cube gesture as a convenient back route, but Messages also has
   // an ordinary visible back control now. The home chrome no longer has to sit
@@ -652,6 +1207,8 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
 
   const openThread = useCallback((thread: Thread) => {
     setComposerText('')
+    setComposerTab('chat')
+    setMessageToolsOpen(false)
     setActiveThread(thread)
     if (thread.otherId) {
       window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
@@ -660,52 +1217,571 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     }
   }, [])
 
+  // The browser workbench uses seeded conversations rather than real account
+  // ids. Let it demonstrate composing (including the sticker pack) locally,
+  // but never route those demo messages through the device/cloud bridge.
+  const canComposeInCurrentSurface = Boolean(activeThread?.otherId) || !isNativeShell()
+
+  useEffect(() => {
+    if (!messageToolsOpen || composerTab !== 'share' || shareCategory === 'wardrobe') return
+    let cancelled = false
+    setShareableWork([])
+    setShareWorkLoading(true)
+    void loadWorkFor(shareCategory)
+      .then(work => {
+        if (!cancelled) setShareableWork(work)
+      })
+      .catch(() => {
+        // A missing local shelf should look like an empty collection, not a
+        // broken composer. The next tab visit will make a fresh attempt.
+        if (!cancelled) setShareableWork([])
+      })
+      .finally(() => {
+        if (!cancelled) setShareWorkLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [composerTab, messageToolsOpen, shareCategory])
+
+  const sendText = useCallback((rawText: string) => {
+    const text = rawText.trim()
+    const otherId = activeThread?.otherId
+    const isBrowserDemo = !otherId && !isNativeShell()
+    if (!text || !activeThread || (!otherId && !isBrowserDemo)) return false
+    playPop()
+    const clientMessageId = createClientMessageId()
+    const optimistic = {
+      id: clientMessageId,
+      from: 'me' as const,
+      text,
+      createdAtMillis: Date.now(),
+      status: isBrowserDemo ? ('sent' as const) : ('sending' as const),
+    }
+    setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
+    if (otherId) {
+      window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+        detail: { type: 'sendDM', otherId, text, clientMessageId },
+      }))
+    }
+    return true
+  }, [activeThread])
+
   const sendMessage = useCallback(() => {
     const text = composerText.trim()
-    if (!text || !activeThread?.otherId) return
+    if (sendText(text)) setComposerText('')
+  }, [composerText, sendText])
+
+  const sendSticker = useCallback((stickerId: PoplurStickerId) => {
+    if (sendText(stickerWire(stickerId))) setComposerTab('chat')
+  }, [sendText])
+
+  const sendAIGameInvite = useCallback((game: PoplurGameDraft) => {
+    const invitation = `🎮 Poplur AI made “${game.title}” for us. ${game.detail} Want to play?`
+    if (sendText(invitation)) setComposerTab('chat')
+  }, [sendText])
+
+  const sendWorkShare = useCallback((share: SharedWork) => {
+    if (sendText(shareWire(share))) {
+      setComposerTab('chat')
+      setMessageToolsOpen(false)
+    }
+  }, [sendText])
+
+  const sendAttachment = useCallback((
+    kind: DMAttachmentKind,
+    source: string,
+    mimeType: string,
+    durationMillis?: number,
+  ) => {
+    const otherId = activeThread?.otherId
+    const isBrowserDemo = !otherId && !isNativeShell()
+    if ((!otherId && !isBrowserDemo) || !activeThread || !source || !validAttachmentMime(kind, mimeType)) return
     playPop()
-    setComposerText('')
+    const clientMessageId = createClientMessageId()
+    const text = attachmentLabel(kind)
+    const optimistic = {
+      id: clientMessageId,
+      from: 'me' as const,
+      text,
+      createdAtMillis: Date.now(),
+      status: isBrowserDemo ? ('sent' as const) : ('sending' as const),
+      attachment: { kind, url: source, mimeType, ...(durationMillis != null ? { durationMillis } : {}) },
+    }
+    setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
+    setComposerTab('chat')
+    if (otherId) {
+      window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+        detail: {
+          type: 'sendDMAttachment',
+          threadId: activeThread.id,
+          otherId,
+          source,
+          kind,
+          mimeType,
+          durationMillis,
+          clientMessageId,
+        },
+      }))
+    }
+  }, [activeThread])
+
+  const sendWardrobeShare = useCallback(async () => {
+    if (!canComposeInCurrentSurface || wardrobeShareBusy) return
+    setWardrobeShareBusy(true)
+    try {
+      // This is a one-shot capture of the current wardrobe scene. It does not
+      // turn the editor into a live video source or retain a canvas after the
+      // message is sent. Both modules are imported only after this explicit
+      // action, so opening Messages never initializes the wardrobe renderer.
+      const [{ generateWardrobeThumbnail }, { wardrobeEditor }] = await Promise.all([
+        import('./wardrobe/WardrobePreview'),
+        import('./wardrobe/wardrobeStore'),
+      ])
+      const screenshot = await generateWardrobeThumbnail(wardrobeEditor.getState().scene, 640)
+      sendText('My current wardrobe look ✦')
+      sendAttachment('image', screenshot, 'image/png')
+      setMessageToolsOpen(false)
+    } catch {
+      setVoiceError('Your wardrobe look could not be captured just now.')
+    } finally {
+      setWardrobeShareBusy(false)
+    }
+  }, [canComposeInCurrentSurface, sendAttachment, sendText, wardrobeShareBusy])
+
+  const startVoiceMessage = useCallback(async () => {
+    if (!activeThread?.otherId || voiceState !== 'idle') return
+    setVoiceError('')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const preferred = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
+        .find(type => MediaRecorder.isTypeSupported(type))
+      const recorder = preferred ? new MediaRecorder(stream, { mimeType: preferred }) : new MediaRecorder(stream)
+      voiceDiscardRef.current = false
+      voiceStreamRef.current = stream
+      voiceRecorderRef.current = recorder
+      voiceChunksRef.current = []
+      voiceStartedAtRef.current = Date.now()
+      setVoiceElapsed(0)
+      setVoiceState('recording')
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) voiceChunksRef.current.push(event.data)
+      }
+      recorder.onstop = async () => {
+        const discard = voiceDiscardRef.current
+        const durationMillis = Math.min(60_000, Math.max(0, Date.now() - voiceStartedAtRef.current))
+        const type = recorder.mimeType || voiceChunksRef.current[0]?.type || 'audio/webm'
+        const blob = new Blob(voiceChunksRef.current, { type })
+        voiceChunksRef.current = []
+        voiceRecorderRef.current = null
+        voiceStreamRef.current?.getTracks().forEach(track => track.stop())
+        voiceStreamRef.current = null
+        if (discard) return
+        if (durationMillis < 500 || blob.size === 0) {
+          setVoiceState('idle')
+          setVoiceElapsed(0)
+          return
+        }
+        if (blob.size > 8 * 1024 * 1024) {
+          setVoiceError('Voice messages must stay under 8 MB.')
+          setVoiceState('idle')
+          return
+        }
+        setVoiceState('preparing')
+        try {
+          sendAttachment('audio', await blobDataURL(blob), type, durationMillis)
+        } catch {
+          setVoiceError('That voice message could not be prepared.')
+        } finally {
+          setVoiceState('idle')
+          setVoiceElapsed(0)
+        }
+      }
+      recorder.start(250)
+      voiceTickRef.current = window.setInterval(() => {
+        setVoiceElapsed(Math.min(60, Math.floor((Date.now() - voiceStartedAtRef.current) / 1000)))
+      }, 250)
+      voiceLimitRef.current = window.setTimeout(() => stopVoiceResources(false), 60_000)
+    } catch {
+      setVoiceError('Microphone access is needed for a voice message.')
+      stopVoiceResources(true)
+    }
+  }, [activeThread?.otherId, sendAttachment, stopVoiceResources, voiceState])
+
+  const toggleVoiceMessage = useCallback(() => {
+    if (voiceState === 'recording') stopVoiceResources(false)
+    else if (voiceState === 'idle') void startVoiceMessage()
+  }, [startVoiceMessage, stopVoiceResources, voiceState])
+
+  const retryMessage = useCallback((message: Thread['messages'][number]) => {
+    if (!activeThread?.otherId) return
+    playPop()
+    setActiveThread(current => current
+      ? {
+          ...current,
+          messages: current.messages.map(item => item.id === message.id
+            ? { ...item, status: 'sending' }
+            : item),
+        }
+      : current)
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
-      detail: { type: 'sendDM', otherId: activeThread.otherId, text },
+      detail: message.attachment
+        ? {
+            type: 'sendDMAttachment',
+            threadId: activeThread.id,
+            otherId: activeThread.otherId,
+            source: message.attachment.url,
+            kind: message.attachment.kind,
+            mimeType: message.attachment.mimeType,
+            durationMillis: message.attachment.durationMillis,
+            clientMessageId: message.id,
+          }
+        : { type: 'sendDM', otherId: activeThread.otherId, text: message.text, clientMessageId: message.id },
     }))
-  }, [activeThread?.otherId, composerText])
+  }, [activeThread?.id, activeThread?.otherId])
 
   if (activeThread) {
     const canCall = Boolean(activeThread.otherId)
     return (
       <div className={styles.screen}>
         <div className={styles.toolbar}>
-          <button type="button" className={styles.threadBack} aria-label="Back to chats" onClick={() => { playPop(); closeThread() }}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19l-7-7 7-7" /></svg>
-          </button>
           <div className={styles.avatar}>{activeThread.initials}</div>
           <div className={styles.toolbarInfo}>
             <h1>{activeThread.title}</h1>
-            <span>Active in your Poplur radius</span>
+            <span>{activeThread.typing ? 'typing…' : 'Active in your Poplur radius'}</span>
           </div>
           <button type="button" className={styles.dmCallButton} aria-label={`Call ${activeThread.title}`} disabled={!canCall} onClick={() => startPhoneCall(activeThread)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3l3 5-2 2c1.5 3 3 4.5 6 6l2-2 5 3-1 4c-8 1-16-7-17-15z" /></svg>
+            <span>CALL</span>
           </button>
           <button type="button" className={styles.dmCallButton} aria-label={`FaceTime ${activeThread.title}`} disabled={!canCall} onClick={() => startFaceTime(activeThread)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
+            <span>VIDEO</span>
           </button>
         </div>
-        <div className={styles.conversation}>
-          {activeThread.messages.map((m, i) => (
-            <div key={i} className={m.from === 'me' ? `${styles.bubble} ${styles.mine}` : styles.bubble}>
-              {m.text}
+        <div className={styles.conversation} aria-live="polite">
+          {activeThread.messages.map(m => {
+            const sticker = stickerFromText(m.text)
+            const share = shareFromText(m.text)
+            return (
+              <div key={m.id} className={m.from === 'me' ? `${styles.messageWrap} ${styles.messageWrapMine}` : styles.messageWrap}>
+                {m.attachment?.kind === 'image' ? (
+                  <a className={styles.mediaMessage} href={m.attachment.url} target="_blank" rel="noreferrer" aria-label="Open photo">
+                    <img src={m.attachment.url} alt="Shared in this conversation" loading="lazy" />
+                  </a>
+                ) : m.attachment?.kind === 'video' ? (
+                  <div className={styles.mediaMessage}>
+                    <video src={m.attachment.url} controls playsInline preload="metadata" />
+                  </div>
+                ) : m.attachment?.kind === 'audio' ? (
+                  <div className={`${styles.mediaMessage} ${styles.voiceMessage}`}>
+                    <span aria-hidden="true">◖)))</span>
+                    <audio src={m.attachment.url} controls preload="metadata" />
+                  </div>
+                ) : sticker ? (
+                  <div className={styles.stickerMessage}>
+                    <PoplurSticker id={sticker} />
+                  </div>
+                ) : share ? (
+                  <article className={styles.sharedWorkCard} data-share-kind={share.kind} aria-label={`Shared ${share.kind}: ${share.title}`}>
+                    <span className={styles.sharedWorkGlyph} aria-hidden="true">{share.glyph}</span>
+                    <span className={styles.sharedWorkCopy}>
+                      <small>POPLUR {share.kind.toUpperCase()}</small>
+                      <strong>{share.title}</strong>
+                      <em>{share.subtitle}</em>
+                    </span>
+                    <i>SHARED</i>
+                  </article>
+                ) : (
+                  <div className={m.from === 'me' ? `${styles.bubble} ${styles.mine}` : styles.bubble}>
+                    {m.text}
+                  </div>
+                )}
+                {m.from === 'me' && m.status === 'failed' ? (
+                  <button
+                    type="button"
+                    className={`${styles.delivery} ${styles.deliveryFailed}`}
+                    onClick={() => retryMessage(m)}
+                  >
+                    Not sent · Retry
+                  </button>
+                ) : m.from === 'me' && m.status ? (
+                  <small className={styles.delivery}>
+                    {m.status === 'sending' ? 'Sending…' : m.status === 'read' ? 'Read' : 'Sent'}
+                  </small>
+                ) : null}
+              </div>
+            )
+          })}
+          {activeThread.typing && (
+            <div className={styles.typingBubble} aria-label={`${activeThread.title} is typing`}>
+              <i /><i /><i />
             </div>
-          ))}
+          )}
         </div>
+        <section className={styles.composerSurface} aria-label="Message tools">
+          <button
+            type="button"
+            className={messageToolsOpen ? `${styles.messageToolsToggle} ${styles.messageToolsToggleOpen}` : styles.messageToolsToggle}
+            aria-expanded={messageToolsOpen}
+            aria-controls="poplur-message-tools"
+            onClick={() => { playPop(); setMessageToolsOpen(open => !open) }}
+          >
+            <span aria-hidden="true">{messageToolsOpen ? '×' : '+'}</span>
+            {messageToolsOpen ? 'Hide message tools' : 'Message tools'}
+            <i aria-hidden="true">{messageToolsOpen ? '⌃' : '⌄'}</i>
+          </button>
+          {messageToolsOpen && (
+            <div id="poplur-message-tools" className={styles.messageToolsPanel}>
+          <div className={styles.composerTabs} role="tablist" aria-label="Message actions">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'chat'}
+              className={composerTab === 'chat' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              onClick={() => { playPop(); setComposerTab('chat') }}
+            >
+              <span aria-hidden="true">✦</span> AI ideas
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'media'}
+              className={composerTab === 'media' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              disabled={!canComposeInCurrentSurface}
+              onClick={() => { playPop(); setComposerTab('media') }}
+            >
+              <span aria-hidden="true">▣</span> Camera roll
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'stickers'}
+              className={composerTab === 'stickers' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              disabled={!canComposeInCurrentSurface}
+              onClick={() => { playPop(); setComposerTab('stickers') }}
+            >
+              <span aria-hidden="true">P</span> Stickers
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'games'}
+              className={composerTab === 'games' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              disabled={!canComposeInCurrentSurface}
+              onClick={() => { playPop(); setComposerTab('games') }}
+            >
+              <span aria-hidden="true">⌘</span> AI game
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={composerTab === 'share'}
+              className={composerTab === 'share' ? `${styles.composerTab} ${styles.composerTabActive}` : styles.composerTab}
+              disabled={!canComposeInCurrentSurface}
+              onClick={() => { playPop(); setComposerTab('share') }}
+            >
+              <span aria-hidden="true">↗</span> Your work
+            </button>
+          </div>
+          {composerTab === 'chat' && (
+            <section className={styles.starterTray} aria-label="Poplur AI conversation starters">
+              <div className={styles.starterHeading}>
+                <span>POPLUR AI STARTERS</span>
+                <small>tap to use</small>
+              </div>
+              <div className={styles.starterList}>
+                {conversationStartersFor(activeThread.title).map(starter => (
+                  <button
+                    type="button"
+                    key={starter}
+                    className={styles.starterChip}
+                    onClick={() => { playPop(); setComposerText(starter) }}
+                  >
+                    {starter}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {composerTab === 'stickers' && (
+          <section className={styles.stickerTray} aria-label="Poplur sticker pack">
+            <div className={styles.stickerTrayHeading}>
+              <span>POPLUR POP PACK</span>
+              <button type="button" onClick={() => setComposerTab('chat')} aria-label="Close stickers">×</button>
+            </div>
+            <div className={styles.stickerGrid}>
+              {POPLUR_STICKERS.map(sticker => (
+                <button
+                  type="button"
+                  key={sticker.id}
+                  className={styles.stickerPick}
+                  onClick={() => sendSticker(sticker.id)}
+                  aria-label={`Send ${sticker.caption} sticker`}
+                >
+                  <PoplurSticker id={sticker.id} size="tray" />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+          {composerTab === 'media' && (
+          <section className={styles.mediaPicker} aria-label="Choose a photo or video">
+            <header>
+              <strong>SHARE FROM CAMERA ROLL</strong>
+              <button type="button" onClick={() => setComposerTab('chat')} aria-label="Close camera roll">×</button>
+            </header>
+            <CameraRoll
+              active
+              hideHeader
+              nativeRequestType="requestProfileCameraRoll"
+              onDeny={() => setComposerTab('chat')}
+              onPick={media => sendAttachment(
+                media.kind === 'photo' ? 'image' : 'video',
+                media.src,
+                media.kind === 'photo' ? 'image/jpeg' : 'video/mp4',
+              )}
+            />
+          </section>
+        )}
+          {composerTab === 'games' && (
+            <section className={styles.gameTray} aria-label="AI game invitations">
+              <div className={styles.gameTrayHeading}>
+                <span>POPLUR AI GAME MAKER</span>
+                <small>made for two</small>
+              </div>
+              <p>Pick a game idea and Poplur AI sends a ready-to-play challenge into this chat.</p>
+              <div className={styles.gameDraftList}>
+                {POPLUR_AI_GAME_DRAFTS.map(game => (
+                  <button
+                    key={game.id}
+                    type="button"
+                    className={styles.gameDraft}
+                    data-accent={game.accent}
+                    onClick={() => sendAIGameInvite(game)}
+                    aria-label={`Make and send ${game.title}`}
+                  >
+                    <span className={styles.gameDraftGlyph} aria-hidden="true">{game.glyph}</span>
+                    <span><strong>{game.title}</strong><small>{game.detail}</small></span>
+                    <i>MAKE</i>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {composerTab === 'share' && (
+            <section className={styles.shareTray} aria-label="Share your Poplur work">
+              <div className={styles.shareTrayHeading}>
+                <span>YOUR POPLUR WORK</span>
+                <small>send a creation</small>
+              </div>
+              <div className={styles.shareFilters} role="tablist" aria-label="Your work categories">
+                {([
+                  ['apps', 'Apps'],
+                  ['games', 'Games'],
+                  ['music', 'Music'],
+                  ['podcasts', 'Podcasts'],
+                  ['wardrobe', 'Wardrobe'],
+                ] as const).map(([category, label]) => (
+                  <button
+                    key={category}
+                    type="button"
+                    role="tab"
+                    aria-selected={shareCategory === category}
+                    className={shareCategory === category ? `${styles.shareFilter} ${styles.shareFilterActive}` : styles.shareFilter}
+                    onClick={() => { playPop(); setShareCategory(category) }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {shareCategory === 'wardrobe' ? (
+                <button
+                  type="button"
+                  className={styles.wardrobeShare}
+                  disabled={wardrobeShareBusy || !canComposeInCurrentSurface}
+                  onClick={() => void sendWardrobeShare()}
+                >
+                  <span aria-hidden="true">✦</span>
+                  <span><strong>{wardrobeShareBusy ? 'Capturing your look…' : 'Send your current wardrobe look'}</strong><small>A one-time screenshot of your current character.</small></span>
+                  <i>{wardrobeShareBusy ? '…' : 'SEND'}</i>
+                </button>
+              ) : shareWorkLoading ? (
+                <div className={styles.workEmpty} role="status">
+                  <strong>Loading your {shareCategory}…</strong>
+                  <span>Getting your Poplur creations ready to share.</span>
+                </div>
+              ) : shareableWork.length > 0 ? (
+                <div className={styles.sharedWorkList}>
+                  {shareableWork.map(work => (
+                    <button
+                      type="button"
+                      key={`${work.kind}-${work.id}`}
+                      className={styles.workPick}
+                      data-share-kind={work.kind}
+                      onClick={() => sendWorkShare(work)}
+                      aria-label={`Send ${work.kind}: ${work.title}`}
+                    >
+                      <span className={styles.workPickGlyph} aria-hidden="true">{work.glyph}</span>
+                      <span><strong>{work.title}</strong><small>{work.subtitle}</small></span>
+                      <i>SEND</i>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.workEmpty}>
+                  <strong>No {shareCategory} created yet</strong>
+                  <span>When you make one in Poplur, it appears here ready to send.</span>
+                </div>
+              )}
+            </section>
+          )}
+            </div>
+          )}
+        </section>
+        {(voiceState !== 'idle' || voiceError) && (
+          <div className={voiceError ? styles.voiceError : styles.voiceRecording} role="status">
+            {voiceError || (voiceState === 'preparing'
+              ? 'Preparing voice message…'
+              : `Recording ${Math.floor(voiceElapsed / 60)}:${String(voiceElapsed % 60).padStart(2, '0')} · tap stop`)}
+          </div>
+        )}
         <form className={styles.compose} onSubmit={e => { e.preventDefault(); sendMessage() }}>
+          <button
+            type="button"
+            className={styles.attachButton}
+            aria-label="Share a photo or video"
+            disabled={!canComposeInCurrentSurface || voiceState !== 'idle'}
+            onClick={() => { playPop(); setComposerTab('media'); setMessageToolsOpen(true) }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12.5l6.7-6.7a3 3 0 114.2 4.2l-8.5 8.5a5 5 0 01-7.1-7.1L12 2.7" /></svg>
+          </button>
+          <button
+            type="button"
+            className={composerTab === 'stickers' ? `${styles.stickerButton} ${styles.stickerButtonOpen}` : styles.stickerButton}
+            aria-label={composerTab === 'stickers' ? 'Close Poplur stickers' : 'Open Poplur stickers'}
+            aria-expanded={composerTab === 'stickers'}
+            disabled={!canComposeInCurrentSurface}
+            onClick={() => { playPop(); setComposerTab(tab => tab === 'stickers' ? 'chat' : 'stickers'); setMessageToolsOpen(true) }}
+          >
+            <span>P</span>
+          </button>
           <input
             name="message"
             autoComplete="off"
             value={composerText}
-            onChange={event => setComposerText(event.currentTarget.value.slice(0, 2000))}
+            onChange={event => { setVoiceError(''); setComposerText(event.currentTarget.value.slice(0, 2000)) }}
             placeholder={`Message ${activeThread.title}`}
+            disabled={voiceState !== 'idle'}
           />
-          <button type="submit" className={styles.sendBtn} disabled={!composerText.trim() || !activeThread.otherId}>Send</button>
+          <button
+            type="button"
+            className={voiceState === 'recording' ? `${styles.voiceButton} ${styles.voiceButtonRecording}` : styles.voiceButton}
+            aria-label={voiceState === 'recording' ? 'Stop recording voice message' : 'Record voice message'}
+            disabled={!activeThread.otherId || voiceState === 'preparing'}
+            onClick={toggleVoiceMessage}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM6 11v1a6 6 0 0012 0v-1M12 18v3" /></svg>
+          </button>
+          <button type="submit" className={styles.sendBtn} disabled={!composerText.trim() || !canComposeInCurrentSurface || voiceState !== 'idle'}>Send</button>
         </form>
         {faceTimeWith && (
           <FaceTimeOverlay who={faceTimeWith.name} direction="outgoing" onEnd={endFaceTime} />
@@ -717,9 +1793,6 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
   return (
     <div className={styles.screen}>
       <div className={styles.chatHeader}>
-        <button type="button" className={styles.backBtn} aria-label="Close mail" onClick={() => { playPop(); onClose?.() }}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19l-7-7 7-7" /></svg>
-        </button>
         <div className={styles.chatHeaderText}>
           <h1>Chats</h1>
           <span className={styles.chatHeaderSub}>
@@ -727,6 +1800,16 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
           </span>
         </div>
       </div>
+      <label className={styles.chatSearch}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5L21 21" /></svg>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={event => setSearchQuery(event.currentTarget.value.slice(0, 80))}
+          placeholder="Search conversations"
+          aria-label="Search conversations"
+        />
+      </label>
       <div className={styles.threadList} ref={pullHost}>
         {/* The shared curtain, so Chats refreshes with the same clay lip and
             the same mark head the news page does — one component, not a second
@@ -737,7 +1820,7 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
           </div>
         </div>
         <div ref={pullInner}>
-        {threads.map(t => (
+        {visibleThreads.map(t => (
           <SwipeableThread
             key={t.id}
             thread={t}
@@ -747,11 +1830,11 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
             onDelete={deleteThread}
           />
         ))}
-        {threads.length === 0 && (
+        {visibleThreads.length === 0 && (
           <div className={styles.emptyState}>
             <span className={styles.emptyMark}>💬</span>
-            <strong>All clear</strong>
-            <span>New chats from your radius land here.</span>
+            <strong>{threads.length === 0 ? 'All clear' : 'No matching chats'}</strong>
+            <span>{threads.length === 0 ? 'New chats from your radius land here.' : 'Try another name or message.'}</span>
           </div>
         )}
         </div>

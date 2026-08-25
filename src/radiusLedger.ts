@@ -1,4 +1,4 @@
-export type RadiusEventKind = 'view' | 'like' | 'dislike' | 'comment' | 'profile' | 'inactive'
+export type RadiusEventKind = 'view' | 'replay' | 'like' | 'dislike' | 'comment' | 'profile' | 'inactive'
 
 export interface RadiusEvent {
   id: string
@@ -19,6 +19,11 @@ const BASE_RADIUS_KM = 41.8
 const EVENT_KEY = 'poplur.radius.events.v1'
 const OWNED_POST_KEY = 'poplur.radius.owned-posts.v1'
 const INACTIVITY_MS = 3_600_000
+// A React remount or decoder recovery is not a returning viewer. Count another
+// watch only after a real break, and reward it at half a first view so repeated
+// attention matters without making a loop farm radius.
+const REPEAT_VIEW_MIN_MS = 30_000
+const REPEAT_VIEW_RADIUS_KM = 0.5
 export const RADIUS_CHANGE_EVENT = 'poplur-radius-change'
 
 function readJson<T>(key: string, fallback: T): T {
@@ -69,7 +74,16 @@ export function recordPostView(postId: string): boolean {
     owned[index] = { ...owned[index], viewedAt: Date.now() }
     writeJson(OWNED_POST_KEY, owned)
   }
-  return once('view', 1, postId)
+  const all = events()
+  if (!all.some(event => event.kind === 'view' && event.postId === postId)) {
+    append('view', 1, postId)
+    return true
+  }
+  const previousWatch = [...all].reverse().find(event =>
+    event.postId === postId && (event.kind === 'view' || event.kind === 'replay'))
+  if (previousWatch && Date.now() - previousWatch.at < REPEAT_VIEW_MIN_MS) return false
+  append('replay', REPEAT_VIEW_RADIUS_KM, postId)
+  return true
 }
 
 export function recordPostLike(postId: string, deltaKm = 1): RadiusEvent {
@@ -151,6 +165,23 @@ export function radiusDeltaForChannel(channelId: string): number {
   ), 0)
 }
 
+/** Engagement frequencies behind one channel's visible piece of ground. The
+ * domination window consumes this summary without reading or retaining the
+ * ledger's individual rows. */
+export function radiusEngagementForChannel(channelId: string) {
+  const prefix = `${channelId}:`
+  const relevant = events().filter(event => event.postId?.startsWith(prefix))
+  const countKind = (kind: RadiusEventKind) => relevant.filter(event => event.kind === kind).length
+  return {
+    views: countKind('view'),
+    repeatViews: countKind('replay'),
+    upvotes: countKind('like'),
+    downvotes: countKind('dislike'),
+    comments: countKind('comment'),
+    profileVisits: countKind('profile'),
+  }
+}
+
 /** The current post's reach is its published snapshot plus its live reactions. */
 export function radiusDeltaForPost(postId: string): number {
   return events().reduce((sum, event) => event.postId === postId ? sum + event.deltaKm : sum, 0)
@@ -166,6 +197,7 @@ export function radiusStats() {
     gains,
     losses,
     views: count('view'),
+    repeatViews: count('replay'),
     likes: count('like'),
     dislikes: count('dislike'),
     comments: count('comment'),

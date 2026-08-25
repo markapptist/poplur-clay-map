@@ -11,19 +11,31 @@ function fmt(n: number): string {
   return String(Math.round(n))
 }
 
+function usesStaticStatsPresentation(): boolean {
+  if (typeof document === 'undefined') return false
+  const root = document.documentElement
+  return root.classList.contains('tier-ios')
+    || root.dataset.poplurPerformanceMode === 'low_power'
+    || root.dataset.poplurPerformanceMode === 'emergency'
+}
+
 function useInView(): [React.RefCallback<HTMLElement>, boolean] {
-  const [visible, setVisible] = useState(false)
+  // A phone renders the charts in their final state, so observing every chart
+  // only to schedule three follow-up React commits is needless arrival work.
+  // Desktop keeps the authored scroll reveals.
+  const staticPresentation = usesStaticStatsPresentation()
+  const [visible, setVisible] = useState(staticPresentation)
   const obs = useRef<IntersectionObserver | null>(null)
   const ref = useCallback((node: HTMLElement | null) => {
     if (obs.current) { obs.current.disconnect(); obs.current = null }
-    if (!node) return
+    if (!node || staticPresentation) return
     const io = new IntersectionObserver(
       ([e]) => { if (e.isIntersecting) { setVisible(true); io.disconnect() } },
       { threshold: 0.15 }
     )
     io.observe(node)
     obs.current = io
-  }, [])
+  }, [staticPresentation])
   return [ref, visible]
 }
 
@@ -39,8 +51,15 @@ const COUNT_UP_MS = 900
 
 function AnimNum({ value, run, delay = 0 }: { value: number; run: boolean; delay?: number }) {
   const [current, setCurrent] = useState(0)
+  const staticPresentation = usesStaticStatsPresentation()
   useEffect(() => {
     if (!run) return
+    // The iOS tier already freezes the expensive text shimmer. Counting each
+    // visible card through dozens of React commits after that buys no useful
+    // motion on the phone, but it still lands inside the per-visit thermal
+    // window. Show the truthful final value immediately on constrained tiers;
+    // the unconstrained web preview keeps the authored count-up.
+    if (staticPresentation) return
     if (value === 0) { setCurrent(0); return }
     let stop: (() => void) | null = null
     const tid = window.setTimeout(() => {
@@ -57,8 +76,11 @@ function AnimNum({ value, run, delay = 0 }: { value: number; run: boolean; delay
       }, 'interactive')
     }, delay)
     return () => { window.clearTimeout(tid); stop?.() }
-  }, [value, run, delay])
-  return <>{fmt(current)}</>
+  }, [value, run, delay, staticPresentation])
+  // Read the prop directly on constrained tiers. Initialising at zero and
+  // then calling setState(value) made every visible number commit twice even
+  // though the phone deliberately does not animate those values.
+  return <>{fmt(staticPresentation ? value : current)}</>
 }
 
 function funnySummary(s: ReturnType<typeof radiusStats>): string[] {
@@ -101,7 +123,8 @@ function funnySummary(s: ReturnType<typeof radiusStats>): string[] {
 
 export default function StatsScreen({ onClose }: { onClose: () => void }) {
   const [stats, setStats] = useState(radiusStats)
-  const [globeReady, setGlobeReady] = useState(false)
+  const staticPresentation = usesStaticStatsPresentation()
+  const [globeReady, setGlobeReady] = useState(staticPresentation)
   const [pieRef, pieVisible] = useInView()
   const [barRef, barVisible] = useInView()
   const [lineRef, lineVisible] = useInView()
@@ -113,9 +136,11 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const refresh = () => setStats(radiusStats())
     window.addEventListener(RADIUS_CHANGE_EVENT, refresh)
-    const tid = setTimeout(() => setGlobeReady(true), 200)
+    const tid = staticPresentation
+      ? undefined
+      : window.setTimeout(() => setGlobeReady(true), 200)
     return () => { window.removeEventListener(RADIUS_CHANGE_EVENT, refresh); clearTimeout(tid) }
-  }, [])
+  }, [staticPresentation])
 
   const refreshStats = useCallback(() => { setStats(radiusStats()) }, [])
 

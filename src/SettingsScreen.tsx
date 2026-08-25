@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  cubeTransition, screenTransition, setCubeTransition, setScreenTransition,
-  type CubeTransition, type ScreenTransition,
+  cubeTransition, holdPreviewMode, screenTransition, setCubeTransition,
+  setHoldPreviewMode, setScreenTransition,
+  type CubeTransition, type HoldPreviewMode, type ScreenTransition,
 } from './cubeTransitions'
 import styles from './SettingsScreen.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -53,6 +54,14 @@ import {
   type VerificationState,
   type VerificationStatus,
 } from './profileVerification'
+import {
+  accountPrivacySnapshot,
+  applyNativeAccountPrivacy,
+  onAccountPrivacyChange,
+  setAccountPrivacySaving,
+  setLocalAccountPrivacy,
+  type AccountPrivacySnapshot,
+} from './accountPrivacy'
 
 
 
@@ -70,7 +79,7 @@ import {
 // lives under Audio playback. Pages with nothing to set yet still get a row — a gap in
 // the list would read as "this page has no settings screen", which is a
 // different claim from "there is nothing to set here yet".
-type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'ringtone' | 'app' | 'profile' | 'verify'
+type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'ringtone' | 'app' | 'privacy' | 'profile' | 'verify'
 
 const PAGE_TITLE: Record<Page, string> = {
   home: 'HOME',
@@ -80,6 +89,7 @@ const PAGE_TITLE: Record<Page, string> = {
   radio: 'AUDIO',
   ringtone: 'RINGTONE',
   app: 'APP ICON',
+  privacy: 'PRIVACY',
   profile: 'PROFILE',
 
   verify: 'VERIFICATION',
@@ -132,11 +142,13 @@ export default function SettingsScreen({ bindBack }: {
   const [radioScope, setRadioScopeState] = useState<RadioScope>(readRadioScope)
   const [screenMode, setScreenMode] = useState<ScreenTransition>(() => screenTransition())
   const [cubeMode, setCubeMode] = useState<CubeTransition>(() => cubeTransition())
+  const [holdCubeMode, setHoldCubeMode] = useState<HoldPreviewMode>(() => holdPreviewMode())
   const [controlSide, setControlSideState] = useState<ControlSide>(readControlSide)
   const [profileTheme, setProfileThemeState] = useState<ProfileTheme>(readSelectedProfileTheme)
   const [appIcon, setAppIcon] = useState<AppIconOption>(readSelectedAppIcon)
   const [gender, setGenderState] = useState<ProfileGender>(readProfileGender)
   const [verification, setVerification] = useState<VerificationState>(readVerification)
+  const [accountPrivacy, setAccountPrivacyState] = useState<AccountPrivacySnapshot>(accountPrivacySnapshot)
   const [verifyChoice, setVerifyChoice] = useState<VerificationCategoryID | null>(null)
   // null is the root list. The cube still closes Settings outright, so this only
   // ever has to walk back one level.
@@ -229,6 +241,45 @@ export default function SettingsScreen({ bindBack }: {
   }, [])
 
   useEffect(() => onProfileThemeChange(setProfileThemeState), [])
+
+  useEffect(() => onAccountPrivacyChange(setAccountPrivacyState), [])
+
+  useEffect(() => {
+    const onNativePrivacy = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        privateAccount?: unknown
+        ghostMode?: unknown
+        ok?: unknown
+        message?: unknown
+      }>).detail ?? {}
+      if (detail.ok === false) {
+        setAccountPrivacySaving(false)
+        if (typeof detail.message === 'string' && detail.message.trim()) say(detail.message)
+        return
+      }
+      applyNativeAccountPrivacy(detail)
+    }
+    window.addEventListener('poplur-native-account-privacy', onNativePrivacy)
+    if (isNativeShell()) postNativeEvent({ type: 'requestAccountPrivacy' })
+    return () => window.removeEventListener('poplur-native-account-privacy', onNativePrivacy)
+  }, [])
+
+  const changeAccountPrivacy = (patch: Partial<Pick<AccountPrivacySnapshot, 'privateAccount' | 'ghostMode'>>) => {
+    playPop()
+    const next = {
+      privateAccount: patch.privateAccount ?? accountPrivacy.privateAccount,
+      ghostMode: patch.ghostMode ?? accountPrivacy.ghostMode,
+    }
+    if (!isNativeShell()) {
+      setLocalAccountPrivacy(next)
+      return
+    }
+    setAccountPrivacySaving(true)
+    if (!postNativeEvent({ type: 'accountPrivacyChanged', ...next })) {
+      setAccountPrivacySaving(false)
+      say('Privacy could not be saved on this device.')
+    }
+  }
 
   // The installed shells persist the shared playback preference independently
   // of WebView storage. Ask when Settings opens rather than assuming an event
@@ -391,6 +442,22 @@ export default function SettingsScreen({ bindBack }: {
                 <span className={styles.rowValue}>{cubeMode === 'slide' ? 'Slide' : 'Roll'}</span>
               </button>
 
+              <button
+                type="button"
+                className={styles.row}
+                onClick={() => {
+                  const next: HoldPreviewMode = holdPreviewMode() === '3d' ? '2d' : '3d'
+                  setHoldPreviewMode(next)
+                  setHoldCubeMode(next)
+                }}
+              >
+                <span className={styles.rowText}>
+                  <b>Hold Menu cubes</b>
+                  <i>Use real 3D objects or lightweight 2D renders while scrolling.</i>
+                </span>
+                <span className={styles.rowValue}>{holdCubeMode === '3d' ? '3D' : '2D'}</span>
+              </button>
+
               <button type="button" className={styles.row} onClick={() => openPage('home')}>
                 <span className={styles.rowText}>
                   <b>Home</b>
@@ -451,6 +518,19 @@ export default function SettingsScreen({ bindBack }: {
                   <i>Your account and this session on this device.</i>
                 </span>
                 <span className={styles.rowValue}>{profileTheme.displayName}</span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
+              <button type="button" className={styles.row} onClick={() => openPage('privacy')}>
+                <span className={styles.rowText}>
+                  <b>Privacy</b>
+                  <i>Control whether posts carry a public map origin.</i>
+                </span>
+                <span className={styles.rowValue}>
+                  {accountPrivacy.privateAccount
+                    ? 'Private'
+                    : accountPrivacy.ghostMode ? 'Ghost' : 'Public'}
+                </span>
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
 
@@ -643,6 +723,49 @@ export default function SettingsScreen({ bindBack }: {
             ))}
           </div>
           <p className={styles.radioScopeNote}>Moves the Camera and Map action rails to your preferred thumb side.</p>
+        </article>
+        )}
+
+        {page === 'privacy' && (
+        <article className={styles.group} aria-label="Account location privacy">
+          <button
+            type="button"
+            className={styles.switchRow}
+            role="switch"
+            aria-checked={accountPrivacy.privateAccount}
+            disabled={accountPrivacy.saving}
+            onClick={() => changeAccountPrivacy({ privateAccount: !accountPrivacy.privateAccount })}
+          >
+            <span className={styles.switchText}>
+              <b>Private Account</b>
+              <i>People can still see you and your posts, but not where any post came from. Poplur has no follower approvals.</i>
+            </span>
+            <span className={accountPrivacy.privateAccount ? `${styles.switchTrack} ${styles.switchOn}` : styles.switchTrack}>
+              <em />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className={styles.switchRow}
+            role="switch"
+            aria-checked={accountPrivacy.ghostMode}
+            disabled={accountPrivacy.saving}
+            onClick={() => changeAccountPrivacy({ ghostMode: !accountPrivacy.ghostMode })}
+          >
+            <span className={styles.switchText}>
+              <b>Ghost Mode</b>
+              <i>Temporarily hide the public map origin of all your posts while this is on.</i>
+            </span>
+            <span className={accountPrivacy.ghostMode ? `${styles.switchTrack} ${styles.switchOn}` : styles.switchTrack}>
+              <em />
+            </span>
+          </button>
+
+          <p className={styles.radioScopeNote}>
+            Exact coordinates are never public in either mode. Public accounts show only a coarse map area; private or ghost posts show no map origin.
+            {accountPrivacy.saving ? ' Updating existing posts…' : ''}
+          </p>
         </article>
         )}
 

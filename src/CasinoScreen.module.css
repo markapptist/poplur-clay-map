@@ -615,6 +615,23 @@ span.hwBtn { cursor: default; }
   font: 650 13px/1.45 system-ui, sans-serif;
   color: rgba(255, 255, 255, 0.82);
 }
+.casinoMedia,
+.casinoMediaFallback {
+  display: block;
+  width: 100%;
+  height: 132px;
+  border-radius: 14px;
+  object-fit: cover;
+  background: linear-gradient(135deg, #311142, #0c0712);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24), 0 5px 14px rgba(0, 0, 0, 0.45);
+}
+.casinoMediaFallback {
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.5);
+  font: 900 10px/1 system-ui, sans-serif;
+  letter-spacing: 1.5px;
+}
 .promoPrimary,
 .nearbyAction {
   border: 0;
@@ -654,13 +671,28 @@ span.hwBtn { cursor: default; }
   background: linear-gradient(180deg, #7eb4ff 0%, #2d6ddd 58%, #174296 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 4px 10px rgba(0, 0, 0, 0.44);
 }
+.nearbyAction:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.adSwitch {
+  border: 0;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: #9eeaff;
+  background: transparent;
+  font: 850 10px/1.2 system-ui, sans-serif;
+  letter-spacing: 0.8px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .promoPrimary:active,
 .nearbyAction:active,
 .promoClose:active { transform: translateY(1px) scale(0.97); }
 
-/* The casino promotion is a short Poplur ad break, styled like a loud late-
-   night shopping-channel bumper rather than a product-settings modal. Every
-   flourish below is static; the only motion is the bounded entrance above. */
+/* The casino promotion is a tap-dismissed Poplur pop-up, styled like a loud
+   late-night shopping-channel bumper rather than a product-settings modal.
+   Every flourish below is static; the only motion is the bounded entrance. */
 .promoCard::before,
 .promoCard::after {
   content: '';

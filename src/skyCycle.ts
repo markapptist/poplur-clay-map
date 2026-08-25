@@ -21,6 +21,18 @@ export function localDaylight(when = new Date()): boolean {
   return minute >= sunrise && minute < sunset
 }
 
+/** True from today's seasonal local sunrise until local noon.
+ *
+ * The navigator uses this narrower window for its morning sun model while the
+ * map itself keeps the full daylight range above. Keeping both decisions on
+ * the same sunrise calculation prevents the cube and sky disagreeing as the
+ * seasons change. */
+export function localSunriseToNoon(when = new Date()): boolean {
+  const { sunrise } = sunTimes(when)
+  const minute = when.getHours() * 60 + when.getMinutes() + when.getSeconds() / 60
+  return minute >= sunrise && minute < 12 * 60
+}
+
 // ── The sky wheel ────────────────────────────────────────────────────────────
 //
 // Nine sky shades, anchored to the SAME seasonal sunrise/sunset model as
