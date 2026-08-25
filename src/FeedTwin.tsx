@@ -7,6 +7,12 @@ import { feedSuggestionFor } from './tourSmarts'
 import { feedUrl, channelUrl } from './assetPacks'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { setMusicPlayback } from './musicPlayback'
+import {
+  nativeFeedPostsSnapshot,
+  onNativeFeedPosts,
+  requestNativeFeedPosts,
+  type NativeFeedPost,
+} from './nativeFeedPosts'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
 // hands back on its own; background Radio or iPod is a standing choice the
@@ -40,9 +46,9 @@ import {
 // username↔"CH 101" and coordinates↔CATEGORY in green monospace, a flag +
 // channel icon, a bottom AI caption, and a clean channel change with no static.
 //
-// (Real posts are user videos on Firebase and can't be embedded here, so each
-//  channel shows a representative full-bleed animated background — the feed
-//  *chrome* and behaviour are the faithful part.)
+// Authenticated native shells now send the bounded media rows users actually
+// publish. Bundled channel creatives remain the deterministic browser-preview
+// fallback and the empty-channel fallback only.
 
 interface Channel {
   id: string
@@ -80,7 +86,7 @@ function reachKmFor(key: string): number {
 }
 
 function radiusPostId(channelId: string, post?: ChannelPost): string {
-  return `${channelId}:${post?.user ?? 'unknown'}:${post?.video ?? 'live'}`
+  return post?.id ?? `${channelId}:${post?.user ?? 'unknown'}:${post?.video ?? 'live'}`
 }
 
 function usesMiles(): boolean {
@@ -205,8 +211,12 @@ const CHANNEL_USERS: Record<string, string[]> = {
 }
 
 export interface ChannelPost {
+  id?: string
   user: string
   video: string
+  poster?: string
+  real?: boolean
+  mediaType?: 'photo' | 'video'
   /** Named venue behind this post, used to ground its live ad lookup. */
   place?: string
   /** a live broadcast: the camera itself, when the broadcast is your own */
@@ -245,7 +255,20 @@ const CHANNEL_PLACES: Record<string, string[]> = {
 }
 
 // Ordered by the post's radius intercepting your location, widest first.
-function postsFor(channel: Channel): ChannelPost[] {
+function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPost[] {
+  const realPosts = published
+    .filter(post => post.channelId === channel.id)
+    .map(post => ({
+      id: post.id,
+      user: post.username,
+      video: post.mediaURL,
+      poster: post.mediaType === 'photo' ? post.mediaURL : post.posterURL,
+      real: true,
+      mediaType: post.mediaType,
+      caption: post.caption,
+      reachKm: post.radiusMeters == null ? undefined : post.radiusMeters / 1_000,
+    }))
+  if (realPosts.length) return realPosts
   // LIVE: whoever is streaming into your radius, your own broadcast first.
   // An empty channel still gets a playable Poplur clip: static is a transition,
   // never a permanent startup state.
@@ -655,7 +678,7 @@ export default function FeedTwin({
     unattendedAdvancesRef.current = 0
     autoplayRestedRef.current = false
     setAutoplayRested(false)
-    const count = postsFor(ch).length
+    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
     if (count >= 2) {
       const cur = contentIdxRef.current[ch.id] ?? 0
       const nxt = (cur + 1) % count
@@ -693,7 +716,7 @@ export default function FeedTwin({
   // narrows in.
   const changeContent = useCallback((dir: 1 | -1) => {
     noteFeedActivity()
-    const count = postsFor(ch).length
+    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
     const next = (current + dir + count) % count
@@ -711,7 +734,7 @@ export default function FeedTwin({
   // Keep this separate from the arrow handler: a passive completion should
   // not make the physical navigator say "pop".
   const advanceCompletedContent = useCallback(() => {
-    const count = postsFor(ch).length
+    const count = postsFor(ch, nativeFeedPostsSnapshot()).length
     if (count < 2) return
     // Autoplaying to an empty room is pure heat. After AUTOPLAY_REST_AFTER
     // clips with no touch, rest on a cover rather than decode another; the
@@ -768,7 +791,13 @@ export default function FeedTwin({
 
   // The live channel's posts change as broadcasts start and stop.
   useSyncExternalStore(onLiveStore, isLive, isLive)
-  const posts = postsFor(ch)
+  const publishedPosts = useSyncExternalStore(
+    onNativeFeedPosts,
+    nativeFeedPostsSnapshot,
+    nativeFeedPostsSnapshot,
+  )
+  useEffect(() => { requestNativeFeedPosts() }, [])
+  const posts = postsFor(ch, publishedPosts)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   const postId = radiusPostId(ch.id, post)
   // Every video change re-reports its reach — channel swipe, content swipe,
@@ -790,11 +819,13 @@ export default function FeedTwin({
   }, [onPostReach, post?.reachKm, postId])
   useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
 
-  const desiredAdSrc = post?.stream
+  const desiredAdSrc = post?.stream || post?.mediaType === 'photo'
     ? undefined
     : (post?.video || STOCK_CLIPS[ch.number % STOCK_CLIPS.length])
   const sourceCandidates = desiredAdSrc
-    ? [desiredAdSrc, ...STOCK_CLIPS.filter(source => source !== desiredAdSrc)]
+    ? post?.real
+      ? [desiredAdSrc]
+      : [desiredAdSrc, ...STOCK_CLIPS.filter(source => source !== desiredAdSrc)]
     : []
   const sourceKey = `${ch.id}:${post?.user ?? 'no-user'}:${desiredAdSrc ?? 'stream'}`
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
@@ -803,9 +834,12 @@ export default function FeedTwin({
   const adSrc = sourceCandidates.length
     ? sourceCandidates[recoveryAttempt % sourceCandidates.length]
     : undefined
-  const posterSrc = adSrc ? posterForFeedClip(adSrc) : undefined
+  const posterSrc = post?.mediaType === 'photo'
+    ? post.poster
+    : adSrc ? (post?.poster ?? posterForFeedClip(adSrc)) : undefined
   const posterKey = posterSrc ? `${sourceKey}:${adSrc}:${posterSrc}` : null
   const [readyPosterKey, setReadyPosterKey] = useState<string | null>(null)
+  const posterReady = Boolean(posterKey) && readyPosterKey === posterKey
   useEffect(() => {
     recoveryAttemptRef.current = 0
     setRecoveryAttempt(0)
@@ -953,8 +987,8 @@ export default function FeedTwin({
   }, [foodContextVisible, onFoodAdChange])
   useEffect(() => () => { onFoodAdChange?.(false) }, [onFoodAdChange])
   useEffect(() => {
-    if (adReady || post?.stream) recordPostView(postId)
-  }, [adReady, post?.stream, postId])
+    if (adReady || posterReady || post?.stream) recordPostView(postId)
+  }, [adReady, posterReady, post?.stream, postId])
 
   // While the player is up, mirror the video's clock into the timeline. Native
   // media events only — no rAF loop, so the layer is idle between events and
@@ -999,7 +1033,6 @@ export default function FeedTwin({
   // and spending two decoder leases on one visible surface. Static remains an
   // explicit QA/transition treatment only.
   const [recoveringPlayback, setRecoveringPlayback] = useState(true)
-  const posterReady = Boolean(posterKey) && readyPosterKey === posterKey
   // Static is only a brief bridge to a real frame or a loaded poster. The
   // poster is the honest fallback when WebKit cannot provide a decoder, so it
   // must never remain hidden behind the buffering grid.
@@ -1770,7 +1803,7 @@ export default function FeedTwin({
         />
       )}
 
-      {adSrc && !post?.stream && posterSrc && posterKey && (!mediaUnlocked || !adReady) && (
+      {(adSrc || post?.mediaType === 'photo') && !post?.stream && posterSrc && posterKey && (!mediaUnlocked || !adReady) && (
         <img
           key={`${posterKey}:poster`}
           data-feed-media="true"

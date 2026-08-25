@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './PostComposer.module.css'
-import { awaitNativeUpload, type UploadPhase } from './nativeUpload'
+import { awaitNativeUpload, NativeUploadError, type UploadPhase } from './nativeUpload'
 import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
 import { channelUrl } from './assetPacks'
@@ -17,6 +17,14 @@ import VFXStudio, {
 } from './VFXStudio'
 import ComposerAIChat from './ComposerAIChat'
 import BoundedPopupVideo from './BoundedPopupVideo'
+import {
+  createClientPostId,
+  POST_RIGHTS_VERSION,
+  POST_SCHEMA_VERSION,
+  publicCoordinate,
+  validatePublishPrivacy,
+  type PostLocationVisibility,
+} from './publishing'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -63,6 +71,9 @@ export interface PublishedPost {
   usedAI: boolean
   target?: ComposerTarget
   destination: 'feed' | 'tv'
+  postId: string
+  audience: 'public'
+  locationVisibility: PostLocationVisibility
 }
 
 export type PostComposerStep = 'edit' | 'effects' | 'choice' | 'ai' | 'channel'
@@ -149,8 +160,11 @@ export default function PostComposer({
   const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
   const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
   const [radiusKm, setRadiusKm] = useState(target?.radiusKm ?? 3)
+  const [locationVisibility, setLocationVisibility] = useState<PostLocationVisibility>('approximate')
+  const [rightsAttested, setRightsAttested] = useState(false)
   const [posted, setPosted] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const postIdRef = useRef(createClientPostId())
   // A percentage is displayed only when the host reports real transferred
   // bytes. Preparing/awaiting-native phases stay visibly indeterminate rather
   // than filling a made-up timeline that could reach 99% and stall.
@@ -159,6 +173,7 @@ export default function PostComposer({
   // Set when the post could NOT actually be uploaded (browser preview has no
   // account) — the confirmation must never imply an upload that did not happen.
   const [uploadNote, setUploadNote] = useState<string | null>(null)
+  const [publishError, setPublishError] = useState<{ message: string; retryable: boolean } | null>(null)
   const filterCss = AR_FILTERS.find(f => f.id === filterId)?.css ?? 'none'
 
   // The cube's back: one screen at a time, closing from the first. Matches
@@ -383,6 +398,16 @@ export default function PostComposer({
 
   const publish = async () => {
     playPop()
+    const privacyError = validatePublishPrivacy({
+      audience: 'public',
+      locationVisibility,
+      rightsAttested,
+    })
+    if (privacyError) {
+      setPublishError({ message: privacyError, retryable: false })
+      return
+    }
+    setPublishError(null)
     setPublishing(true)
     setUploadProgress(null)
     setUploadPhaseState('preparing')
@@ -398,6 +423,9 @@ export default function PostComposer({
       usedAI,
       target: target && { ...target, radiusKm },
       destination,
+      postId: postIdRef.current,
+      audience: 'public',
+      locationVisibility,
     }
     try {
       // The app shell owns the account, Firebase Storage and the posts write
@@ -406,7 +434,7 @@ export default function PostComposer({
       if (isNativeShell()) {
         const baked = await renderForUpload()
         const data = await asTransferable(baked)
-        const requestId = `post-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        const requestId = `${postIdRef.current}-try-${Date.now().toString(36)}`
         // Install both listeners before native receives the message. Decode
         // failures can answer immediately, and the first byte-progress event
         // must not be lost to a bridge race.
@@ -421,6 +449,8 @@ export default function PostComposer({
         postNativeEvent({
           type: 'publishPost',
           requestId,
+          postId: postIdRef.current,
+          schemaVersion: POST_SCHEMA_VERSION,
           kind: media.kind,
           data,
           caption,
@@ -434,9 +464,13 @@ export default function PostComposer({
           effectAssetTaskId: effectAsset?.taskId,
           effectAssetPrompt: effectAsset?.prompt,
           usedAI,
-          latitude: target?.lat,
-          longitude: target?.lng,
+          latitude: target ? publicCoordinate(target.lat, locationVisibility) : undefined,
+          longitude: target ? publicCoordinate(target.lng, locationVisibility) : undefined,
           radiusKm: target ? radiusKm : undefined,
+          audience: 'public',
+          locationVisibility,
+          rightsAttested: true,
+          rightsAttestationVersion: POST_RIGHTS_VERSION,
           destination,
         })
         await uploadResult
@@ -448,8 +482,8 @@ export default function PostComposer({
           }
           dropNewsMessage({
             body: caption.trim(),
-            lat: target.lat,
-            lng: target.lng,
+            lat: publicCoordinate(target.lat, locationVisibility),
+            lng: publicCoordinate(target.lng, locationVisibility),
             radiusKm,
             media: [attachment],
           })
@@ -466,8 +500,12 @@ export default function PostComposer({
         window.setTimeout(onClose, 2600)
       }
     } catch (error) {
-      setUploadNote(error instanceof Error ? error.message : 'That post could not be prepared for upload. Your capture is still in the camera roll.')
-      setPosted(true)
+      setPublishError({
+        message: error instanceof Error
+          ? error.message
+          : 'That post could not be prepared for upload. Your capture is still in the camera roll.',
+        retryable: !(error instanceof NativeUploadError) || error.retryable,
+      })
     } finally {
       setPublishing(false)
     }
@@ -792,6 +830,35 @@ export default function PostComposer({
               />
             </label>
           )}
+          <div className={styles.publishDisclosure} aria-label="Post visibility">
+            <span><b>Audience</b><strong>Everyone</strong></span>
+            <span>
+              <b>Location shown</b>
+              <select
+                value={locationVisibility}
+                onChange={event => setLocationVisibility(event.target.value as PostLocationVisibility)}
+              >
+                <option value="approximate">Approximate area</option>
+                <option value="exact">Exact place</option>
+              </select>
+            </span>
+            <small>
+              {locationVisibility === 'approximate'
+                ? 'Your public location is rounded to roughly a city block.'
+                : 'People can see the exact spot selected on the map.'}
+            </small>
+          </div>
+          <label className={styles.rightsRow}>
+            <input
+              type="checkbox"
+              checked={rightsAttested}
+              onChange={event => {
+                setRightsAttested(event.target.checked)
+                if (event.target.checked) setPublishError(null)
+              }}
+            />
+            <span>I have permission to share this media and any music in it.</span>
+          </label>
           <span className={styles.panelLabel}>CHANNEL</span>
           <div className={styles.channels}>
             {CHANNELS.map(c => (
@@ -875,14 +942,24 @@ export default function PostComposer({
           <button
             className={styles.primary}
             onClick={() => { void publish() }}
-            disabled={publishing || !target}
+            disabled={publishing || !target || !rightsAttested}
           >
-            {publishing ? 'Uploading…' : target ? 'Post to this spot' : 'Pick a spot to post'}
+            {publishing ? 'Uploading…' : publishError?.retryable ? 'Retry upload' : target ? 'Post to this spot' : 'Pick a spot to post'}
           </button>
+          {publishError && !publishing && (
+            <div className={styles.publishError} role="alert">
+              <b>{publishError.retryable ? 'Upload not finished' : 'Before you post'}</b>
+              <span>{publishError.message}</span>
+              {publishError.retryable && <small>Your edit and the same post ID are kept for a safe retry.</small>}
+            </div>
+          )}
           {!target && !publishing && (
             <p className={styles.needSpot}>
               Location required before posting.
             </p>
+          )}
+          {target && !rightsAttested && !publishing && (
+            <p className={styles.needSpot}>Confirm media rights before posting.</p>
           )}
         </div>
       )}

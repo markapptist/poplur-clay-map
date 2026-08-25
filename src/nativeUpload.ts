@@ -15,6 +15,8 @@ export type NativeUploadResult = {
   requestId?: string
   ok?: boolean
   error?: string
+  code?: string
+  retryable?: boolean
 }
 
 export type NativeUploadProgress = {
@@ -38,6 +40,18 @@ export type UploadProgressUpdate = {
 }
 
 export const NATIVE_UPLOAD_TIMEOUT_MS = 90_000
+
+export class NativeUploadError extends Error {
+  readonly code: string
+  readonly retryable: boolean
+
+  constructor(message: string, code = 'upload_failed', retryable = true) {
+    super(message)
+    this.name = 'NativeUploadError'
+    this.code = code
+    this.retryable = retryable
+  }
+}
 
 /**
  * A native shell owns Firebase auth, Storage and the Firestore write. The web
@@ -75,7 +89,11 @@ export function awaitNativeUpload(
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       cleanup()
-      reject(new Error('Upload is taking longer than expected.'))
+      reject(new NativeUploadError(
+        'Upload is taking longer than expected. Check your connection and retry.',
+        'timeout',
+        true,
+      ))
     }, NATIVE_UPLOAD_TIMEOUT_MS)
 
     const onResult = (event: Event) => {
@@ -83,7 +101,11 @@ export function awaitNativeUpload(
       if (!detail || detail.requestId !== requestId) return
       cleanup()
       if (detail.ok) resolve()
-      else reject(new Error(detail.error || 'The post could not be uploaded.'))
+      else reject(new NativeUploadError(
+        detail.error || 'The post could not be uploaded.',
+        detail.code || 'upload_failed',
+        detail.retryable !== false,
+      ))
     }
 
     const onNativeProgress = (event: Event) => {
@@ -103,4 +125,3 @@ export function awaitNativeUpload(
     window.addEventListener('poplur-upload-progress', onNativeProgress)
   })
 }
-
