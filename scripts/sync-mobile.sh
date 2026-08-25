@@ -26,6 +26,7 @@ RN_DEST="/Users/matrix/Developer/Poplur2025-ReactNative/src/assets/claymap/claym
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/poplur-mobile-dist.XXXXXX")"
 PUBLISH_LOCK="${TMPDIR:-/tmp}/poplur-mobile-sync.lock"
 RN_TMP="$(mktemp "${TMPDIR:-/tmp}/poplur-claymap.zip.XXXXXX")"
+RN_VERIFY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/poplur-rn-verify.XXXXXX")"
 GATE_SERVER_LOG="$(mktemp "${TMPDIR:-/tmp}/poplur-gate-server.log.XXXXXX")"
 GATE_SERVER_PID=""
 LOCK_HELD=0
@@ -35,6 +36,7 @@ cleanup() {
   rm -f "$GATE_SERVER_LOG"
   rm -rf "$BUILD_DIR"
   rm -f "$RN_TMP"
+  rm -rf "$RN_VERIFY_DIR"
   # A queued release may acquire the same directory immediately after this
   # process stops owning it. Never let a late cleanup remove that newer
   # owner's lock.
@@ -75,6 +77,63 @@ node scripts/verify-tab-model-quality.mjs
 # measurement — sees exactly the bytes a device will run. AR filters stay
 # bundled while that pack is explicitly pinned as unpublished.
 rm -rf "$BUILD_DIR/models" "$BUILD_DIR/feed" "$BUILD_DIR/channels"
+
+# A detached/clean release worktree can contain raw Git LFS pointer text when
+# the corresponding object has not been hydrated locally. Vite copies those
+# tiny files without complaint, producing a valid-looking bundle whose models
+# fail only on device. Reject every leaked pointer before the thermal gate or
+# any downstream destination is touched.
+LFS_POINTER="$(find "$BUILD_DIR" -type f -size -256c \
+  -exec grep -IlF 'version https://git-lfs.github.com/spec/v1' {} + \
+  | head -n 1 || true)"
+if [[ -n "$LFS_POINTER" ]]; then
+  echo "Mobile release verification failed: Git LFS pointer leaked into $LFS_POINTER." >&2
+  echo "Hydrate the release worktree's LFS objects, then rerun the guarded sync." >&2
+  exit 1
+fi
+
+# The source models tree is deliberately excluded above, but Wardrobe's five
+# compact runtime GLBs live outside it and are required on every phone. Fail
+# closed here so a packaging change cannot silently ship the exact
+# "3D avatar could not load" screen again.
+WARDROBE_ASSETS=(
+  wardrobe-models/Poplur_Male_Morph.glb
+  wardrobe-models/Poplur_Female_Morph.glb
+  wardrobe-models/Hair_Long.glb
+  wardrobe-models/Hair_BuzzedFemale.glb
+  wardrobe-models/Hair_SimpleParted.glb
+)
+verify_wardrobe_assets() {
+  local root="$1"
+  local asset
+  local paths=()
+  for asset in "${WARDROBE_ASSETS[@]}"; do
+    if [[ ! -s "$root/$asset" ]]; then
+      echo "Mobile release verification failed: missing $asset in $root." >&2
+      exit 1
+    fi
+    paths+=("$root/$asset")
+  done
+  node --input-type=module - "${paths[@]}" <<'NODE'
+import fs from 'node:fs'
+
+for (const path of process.argv.slice(2)) {
+  const bytes = fs.readFileSync(path)
+  const fail = reason => {
+    console.error(`Mobile release verification failed: invalid GLB ${path}: ${reason}.`)
+    process.exit(1)
+  }
+  if (bytes.length < 12) fail('file is shorter than the 12-byte header')
+  if (bytes.toString('ascii', 0, 4) !== 'glTF') fail('header magic is not glTF')
+  if (bytes.readUInt32LE(4) !== 2) fail(`unsupported version ${bytes.readUInt32LE(4)}`)
+  const declaredLength = bytes.readUInt32LE(8)
+  if (declaredLength !== bytes.length) {
+    fail(`header declares ${declaredLength} bytes but file contains ${bytes.length}`)
+  }
+}
+NODE
+}
+verify_wardrobe_assets "$BUILD_DIR"
 # ripgrep is not installed on every machine that runs this script; fall back
 # to plain grep for the same fixed-string check rather than failing the
 # release with a misleading "token was not embedded" error.
@@ -85,6 +144,14 @@ js_contains() {
     grep -rlF --include='*.js' -- "$1" "$2" >/dev/null
   fi
 }
+if ! js_contains '/wardrobe-models/' "$BUILD_DIR"; then
+  echo "Mobile release verification failed: compiled JavaScript does not reference /wardrobe-models/." >&2
+  exit 1
+fi
+if js_contains '/models/avatars/quaternius/' "$BUILD_DIR"; then
+  echo "Mobile release verification failed: compiled JavaScript still references the excluded wardrobe model root." >&2
+  exit 1
+fi
 if ! js_contains "$VITE_MAPBOX_TOKEN" "$BUILD_DIR"; then
   echo "Mobile release verification failed: Mapbox token was not embedded." >&2
   exit 1
@@ -177,6 +244,7 @@ sync_to() {
     --exclude 'channels/' \
     "$BUILD_DIR/" "$dest/"
   rm -rf "$dest/models" "$dest/feed" "$dest/channels"
+  verify_wardrobe_assets "$dest"
   shasum -a 256 public/logo_icon.png "$dest/logo_icon.png" | awk 'NR == 1 { expected = $1 } NR == 2 && $1 != expected { exit 1 }'
 }
 
@@ -195,6 +263,8 @@ rm -f "$RN_TMP"
     -x 'channels/*'
 )
 unzip -tq "$RN_TMP" >/dev/null
+unzip -qq "$RN_TMP" "${WARDROBE_ASSETS[@]}" -d "$RN_VERIFY_DIR"
+verify_wardrobe_assets "$RN_VERIFY_DIR"
 mv -f "$RN_TMP" "$RN_DEST"
 
 # The RN repo no longer TRACKS that zip (it is ~105MB rewritten on every web

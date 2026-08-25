@@ -547,6 +547,12 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.mapControlsObscured {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
 /* Was a rotated <input type="range">. Rotation and touch drags do not mix in
    WebKit — the hit test runs against the UNROTATED box, so the band that
    actually responded to a finger was a short horizontal strip, not the tall
@@ -1169,19 +1175,22 @@
 }
 
 .weatherForecast {
+  --weather-modal-top: max(150px, calc(env(safe-area-inset-top, 0px) + 116px));
   position: absolute;
   z-index: 90;
-  /* This is a MAP CARD, not a full-screen weather app: it must sit wholly
-     between the left action axis and the right zoom axis. The positions are
-     derived from the same shared axis variables as those controls. */
-  left: calc(var(--map-mute-center) + 36px);
-  right: calc(100vw - var(--map-search-center) + 40px);
-  /* Clear the logo/location header instead of crowding the top safe area. */
-  top: max(176px, calc(env(safe-area-inset-top) + 142px));
+  /* A true modal card. Home hides its parent-document rails while this is
+     open, so the forecast no longer has to squeeze into the ~250px corridor
+     between them on iPhone. */
+  left: 50%;
+  right: auto;
+  top: var(--weather-modal-top);
   bottom: auto;
-  width: auto;
+  width: min(calc(100vw - 28px), 420px);
+  max-height: calc(100vh - var(--weather-modal-top) - max(16px, env(safe-area-inset-bottom, 0px)));
+  max-height: calc(100dvh - var(--weather-modal-top) - max(16px, env(safe-area-inset-bottom, 0px)));
+  transform: translateX(-50%);
   padding: 0;
-  overflow: visible;
+  overflow: auto;
   color: #fff4fb;
   background: transparent;
   border: 1px solid rgba(255, 172, 221, 0.28);
@@ -1192,8 +1201,11 @@
 }
 
 .weatherTitleBar {
-  min-height: 40px;
-  padding: 8px 10px 3px 12px;
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  min-height: 48px;
+  padding: 9px 10px 7px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1207,7 +1219,7 @@
 .weatherKicker {
   display: block;
   color: #ff9ad2;
-  font: 900 10px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font: 900 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   letter-spacing: 1.25px;
   text-shadow: 0 2px 4px rgba(5, 0, 12, 0.9);
 }
@@ -1216,13 +1228,13 @@
   display: block;
   margin-top: 3px;
   color: rgba(224, 213, 244, 0.68);
-  font: 700 9px/1 system-ui, -apple-system, sans-serif;
+  font: 700 10px/1 system-ui, -apple-system, sans-serif;
   text-shadow: 0 2px 4px rgba(5, 0, 12, 0.9);
 }
 
 .weatherCardClose {
-  width: 25px;
-  height: 25px;
+  width: 44px;
+  height: 44px;
   flex: none;
   padding: 0 0 2px;
   border: 1px solid rgba(255, 135, 205, 0.82);
@@ -1230,16 +1242,20 @@
   color: #fff3fb;
   background: linear-gradient(180deg, #f650aa, #a71567);
   box-shadow: 0 0 10px rgba(255, 63, 169, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.42);
-  font: 900 19px/1 system-ui, sans-serif;
+  font: 900 24px/1 system-ui, sans-serif;
   cursor: pointer;
 }
 .weatherCardClose:active { transform: scale(0.9); }
+.weatherCardClose:focus-visible {
+  outline: 2px solid #7fe3ff;
+  outline-offset: 2px;
+}
 
 .weatherNow {
-  min-height: 80px;
-  padding: 3px 10px 5px 12px;
+  min-height: 104px;
+  padding: 6px 12px 8px 14px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 106px;
+  grid-template-columns: minmax(0, 1fr) 120px;
   align-items: center;
   background:
     radial-gradient(circle at 78% 50%, rgba(217, 65, 178, 0.22), transparent 45%),
@@ -1250,18 +1266,18 @@
 .weatherNowCopy { min-width: 0; display: grid; gap: 2px; }
 .weatherReading {
   color: #fff5fc;
-  font: 950 clamp(38px, 11vw, 54px)/0.86 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font: 950 clamp(48px, 14vw, 64px)/0.86 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   letter-spacing: -3px;
   text-shadow: 0 3px 0 #481331, 0 0 14px rgba(255, 61, 171, 0.58);
 }
 .weatherCondition {
   overflow: hidden;
   color: #ffd3e9;
-  font: 900 12px/1.15 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font: 900 14px/1.15 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.weatherRange { color: #94dcff; font: 800 10px/1.15 system-ui, sans-serif; }
+.weatherRange { color: #94dcff; font: 800 12px/1.15 system-ui, sans-serif; }
 
 .weatherSticker {
   display: block;
@@ -1277,14 +1293,29 @@
 .weatherStickerCloud { background-position: 100% 0; }
 .weatherStickerStorm { background-position: 0 100%; }
 .weatherStickerSnow { background-position: 100% 100%; }
-.weatherHeroSticker { width: 106px; justify-self: end; }
+.weatherHeroSticker { width: 120px; justify-self: end; }
+
+.weatherHeroStatus {
+  width: 96px;
+  aspect-ratio: 1;
+  justify-self: end;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 154, 210, 0.58);
+  border-radius: 50%;
+  color: #ff9ad2;
+  background: radial-gradient(circle at 38% 32%, rgba(255, 121, 196, 0.3), rgba(30, 10, 45, 0.84) 68%);
+  box-shadow: 0 0 18px rgba(255, 61, 171, 0.3), inset 0 0 18px rgba(255, 255, 255, 0.08);
+  font: 950 48px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-shadow: 0 2px 0 rgba(30, 4, 20, 0.8);
+}
 
 .weatherStripMeta {
   display: flex;
   justify-content: space-between;
   padding: 7px 12px 5px;
   color: #fa8bc9;
-  font: 900 9px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font: 900 10px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   letter-spacing: 0.65px;
   text-transform: uppercase;
   text-shadow: 0 2px 4px rgba(5, 0, 12, 0.9);
@@ -1317,7 +1348,7 @@
   background-clip: text;
   -webkit-text-stroke: 1px rgba(5, 2, 9, 0.94);
   paint-order: stroke fill;
-  font: 900 8px/1 system-ui, sans-serif;
+  font: 900 10px/1 system-ui, sans-serif;
   text-transform: uppercase;
 }
 .weatherDays article > span:not(.weatherDayIcon) {
@@ -1327,16 +1358,38 @@
   background-clip: text;
   -webkit-text-stroke: 1px rgba(5, 2, 9, 0.95);
   paint-order: stroke fill;
-  font: 900 13px/1 system-ui, sans-serif;
+  font: 900 15px/1 system-ui, sans-serif;
 }
 .weatherDays article > i {
   color: #f3ddec;
   -webkit-text-stroke: 0.8px rgba(5, 2, 9, 0.88);
   paint-order: stroke fill;
-  font: 800 10px/1 system-ui, sans-serif;
+  font: 800 11px/1 system-ui, sans-serif;
   font-style: normal;
 }
-.weatherDayIcon { display: block; width: min(44px, 100%); height: auto; }
+.weatherDayIcon { display: block; width: min(48px, 100%); height: auto; }
+
+.weatherForecastState {
+  min-height: 94px;
+  padding: 20px 18px 22px;
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  border-radius: 0 0 18px 18px;
+  color: #f3ddec;
+  background: linear-gradient(180deg, rgba(16, 7, 25, 0.72), rgba(9, 6, 18, 0.88));
+  text-align: center;
+}
+
+.weatherForecastState strong {
+  color: #ff9ad2;
+  font: 900 14px/1.15 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.03em;
+}
+
+.weatherForecastState span {
+  font: 700 12px/1.35 system-ui, -apple-system, sans-serif;
+}
 
 .weatherVisual {
   position: relative;
@@ -1498,34 +1551,56 @@
   }
 
   .weatherForecast {
-    left: calc(var(--map-mute-center) + 34px);
-    right: calc(100vw - var(--map-search-center) + 36px);
-    top: max(162px, calc(env(safe-area-inset-top) + 130px));
+    --weather-modal-top: max(142px, calc(env(safe-area-inset-top, 0px) + 108px));
+    left: 50%;
+    right: auto;
+    top: var(--weather-modal-top);
     bottom: auto;
-    width: auto;
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - var(--weather-modal-top) - max(12px, env(safe-area-inset-bottom, 0px)));
+    max-height: calc(100dvh - var(--weather-modal-top) - max(12px, env(safe-area-inset-bottom, 0px)));
     padding: 0;
   }
 
   .weatherNow {
-    grid-template-columns: minmax(0, 1fr) 82px;
-    min-height: 72px;
+    grid-template-columns: minmax(0, 1fr) 102px;
+    min-height: 90px;
   }
 
-  .weatherHeroSticker { width: 82px; }
-  .weatherReading { font-size: clamp(34px, 10vw, 46px); }
-  .weatherCondition { font-size: 11px; }
+  .weatherHeroSticker { width: 102px; }
+  .weatherHeroStatus { width: 86px; font-size: 42px; }
+  .weatherReading { font-size: clamp(44px, 13vw, 58px); }
+  .weatherCondition { font-size: 13px; }
   .weatherDays article { padding-top: 5px; }
-  .weatherDayIcon { width: min(37px, 100%); }
-  .weatherDays article > span:not(.weatherDayIcon) { font-size: 12px; }
-  .weatherDays article > i { font-size: 9px; }
-  .weatherKicker { font-size: 9px; }
-  .weatherUpdated { font-size: 8px; }
-  .weatherStripMeta { padding-top: 6px; font-size: 8px; }
+  .weatherDayIcon { width: min(44px, 100%); }
+  .weatherDays article > span:not(.weatherDayIcon) { font-size: 14px; }
+  .weatherDays article > i { font-size: 10px; }
+  .weatherKicker { font-size: 11px; }
+  .weatherUpdated { font-size: 9px; }
+  .weatherStripMeta { padding-top: 6px; font-size: 9px; }
   .weatherDays { gap: 3px; padding-inline: 6px; }
   .weatherDays article { border-radius: 8px; }
-  .weatherCardClose { width: 23px; height: 23px; font-size: 17px; }
+  .weatherCardClose { width: 44px; height: 44px; font-size: 24px; }
   .weatherForecast {
     border-radius: 16px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .weatherForecast {
+    --weather-modal-top: max(12px, calc(env(safe-area-inset-top, 0px) + 8px));
+    width: min(calc(100vw - max(28px, env(safe-area-inset-left, 0px)) - max(28px, env(safe-area-inset-right, 0px))), 560px);
+    max-height: calc(100vh - var(--weather-modal-top) - max(12px, env(safe-area-inset-bottom, 0px)));
+    max-height: calc(100dvh - var(--weather-modal-top) - max(12px, env(safe-area-inset-bottom, 0px)));
+  }
+
+  .weatherNow {
+    min-height: 82px;
+  }
+
+  .weatherForecastState {
+    min-height: 72px;
+    padding-block: 12px 14px;
   }
 }
 

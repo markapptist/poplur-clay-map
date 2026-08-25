@@ -67,6 +67,14 @@ interface Item {
   home?: boolean
 }
 
+/** Stable identity for the tile currently centered under the Hold-menu
+ * selector. Home uses this to preview action tiles as well as page tiles on
+ * the persistent navigator cube without committing any navigation. */
+export type HoldMenuFocus = Pick<
+  Item,
+  'icon' | 'format' | 'glyph' | 'screen' | 'title' | 'action' | 'mapAction' | 'event' | 'home' | 'nativeAction'
+>
+
 // Per-tab item sets are the confirmed hold-menu inventory. Every tile keeps a
 // subscreen destination so the prototype remains inspectable from the app.
 const TAB_MENUS: Record<CubeTab, Item[]> = {
@@ -319,7 +327,7 @@ export default function HoldMenuTwin({
       are still scrolling toward it (see DIRECTIONS: an action tile with no
       subscreen of its own, so this is the only moment its arrow ever shows).
       Fires on every settle, including null once the wheel closes. */
-  onWheelFocusChange?: (screen: string | null) => void
+  onWheelFocusChange?: (focus: HoldMenuFocus | null) => void
   /** Open directly on this subscreen, wheel skipped — how HomeTwin resumes the
       page you were on when you left the tab. Backing out of it still lands on
       the wheel, so the rest of the menu stays one gesture away. */
@@ -421,13 +429,40 @@ export default function HoldMenuTwin({
   // Report the centered wheel slot so the shell can preview its object on
   // the navigator cube before anything is committed — an action tile (like
   // DIRECTIONS) never opens a subscreen, so scrolling to it is the only
-  // moment its own object gets to appear at all. Silent while a page is
-  // open over the wheel: that page already owns the cube.
-  const focusedScreen = activeScreen ? null : items[selected]?.screen ?? null
+  // moment its own object gets to appear at all. A plain open page owns the
+  // cube; once the wheel is deliberately laid over that page, the centered
+  // wheel item temporarily owns it again.
+  const focusedItem = !activeScreen || wheelOverPage ? items[selected] ?? null : null
+  const focusedKey = focusedItem
+    ? [
+        focusedItem.screen,
+        focusedItem.icon,
+        focusedItem.format ?? '',
+        focusedItem.glyph ?? '',
+        focusedItem.title,
+        focusedItem.action ?? '',
+        focusedItem.mapAction ?? '',
+        focusedItem.event ?? '',
+        focusedItem.home ? 'home' : '',
+        focusedItem.nativeAction ?? '',
+      ].join('|')
+    : ''
   useEffect(() => {
-    onWheelFocusChange?.(focusedScreen)
+    const item = (!activeScreen || wheelOverPage) ? itemsRef.current[selected] : null
+    onWheelFocusChange?.(item ? {
+      icon: item.icon,
+      format: item.format,
+      glyph: item.glyph,
+      screen: item.screen,
+      title: item.title,
+      action: item.action,
+      mapAction: item.mapAction,
+      event: item.event,
+      home: item.home,
+      nativeAction: item.nativeAction,
+    } : null)
     return () => onWheelFocusChange?.(null)
-  }, [focusedScreen, onWheelFocusChange])
+  }, [activeScreen, focusedKey, onWheelFocusChange, selected, wheelOverPage])
 
   // The cube no longer unwinds an open PAGE — pages are places the tab
   // stands, not layers to escape (they are remembered and resumed, so
@@ -702,6 +737,21 @@ export default function HoldMenuTwin({
   countRef.current = items.length
   const itemsRef = useRef(items)
   itemsRef.current = items
+  // Pointer events can arrive faster than the display refreshes. Keep the
+  // physics exact in refs, but coalesce React's visual update to one render per
+  // painted frame. This removes redundant wheel-tree/filter work without
+  // changing a single notch or any momentum values.
+  const offsetPaintFrameRef = useRef<number | null>(null)
+  const scheduleOffsetPaint = () => {
+    if (offsetPaintFrameRef.current !== null) return
+    offsetPaintFrameRef.current = window.requestAnimationFrame(() => { // governor-ok: one-shot input coalescing, never an idle loop
+      offsetPaintFrameRef.current = null
+      setOffset(offsetRef.current)
+    })
+  }
+  useEffect(() => () => {
+    if (offsetPaintFrameRef.current !== null) window.cancelAnimationFrame(offsetPaintFrameRef.current)
+  }, [])
 
   // Tile HOLDS do nothing any more — hold-to-favourite is retired in favour of
   // the last-page resume in HomeTwin. Clear any pins an older build left.
@@ -763,7 +813,7 @@ export default function HoldMenuTwin({
     let o = (offsetRef.current + delta) % count
     if (o < 0) o += count
     offsetRef.current = o
-    setOffset(o)
+    scheduleOffsetPaint()
 
     const notch = ((Math.round(o) % count) + count) % count
     if (notch !== lastNotchRef.current) {

@@ -615,6 +615,7 @@ export default function App() {
   const [theme] = useState(MAP_THEMES[0])
   const [weather, setWeather] = useState<{ temp: number; code: number } | null>(null)
   const [weatherForecast, setWeatherForecast] = useState<Array<{ date: string; high: number; low: number; code: number }>>([])
+  const [weatherForecastStatus, setWeatherForecastStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   // The weather response replaces this astronomical offline fallback. The
   // fallback prevents a failed request from leaving a night cube undefined.
   const [moonModel, setMoonModel] = useState<MapMoonModel>(() => moonPhase(new Date()).model)
@@ -653,6 +654,8 @@ export default function App() {
   const [searchText, setSearchText] = useState('')
   const [searchHits, setSearchHits] = useState<Array<{ name: string; center: [number, number] }>>([])
   const [searching, setSearching] = useState(false)
+  const searchCloseTimerRef = useRef<number | null>(null)
+  const searchPanelRef = useRef<HTMLDivElement | null>(null)
   // Use the phone clock on the first paint. The weather service improves this
   // once it returns, but a missing or slow request must not leave a 1 AM globe
   // in full daylight.
@@ -676,6 +679,21 @@ export default function App() {
   const isEmbedded = typeof window !== 'undefined' && window.parent !== window
   const nightMode = sky.lightPreset === 'night'
   const dayTime = !nightMode
+  // Search and weather live inside this iframe, while the visible map tool
+  // rails live in HomeTwin's parent document. A child z-index can never cover
+  // a parent sibling, so tell the shell when either true modal is open and let
+  // it stand its rails down for the duration.
+  useEffect(() => {
+    if (!isEmbedded) return
+    window.parent.postMessage({
+      type: 'poplur-map-overlay',
+      open: searchOpen || weatherOpen,
+      kind: searchOpen ? 'search' : weatherOpen ? 'weather' : null,
+    }, '*')
+  }, [isEmbedded, searchOpen, weatherOpen])
+  useEffect(() => () => {
+    if (isEmbedded) window.parent.postMessage({ type: 'poplur-map-overlay', open: false, kind: null }, '*')
+  }, [isEmbedded])
   useEffect(() => {
     document.documentElement.dataset.poplurMapTime = nightMode ? 'night' : 'day'
     if (isEmbedded) {
@@ -997,14 +1015,97 @@ export default function App() {
 
   // Tapping away sends the panel back up the way it came, then unmounts it.
   const closeSearch = useCallback(() => {
+    if (searchCloseTimerRef.current !== null) window.clearTimeout(searchCloseTimerRef.current)
     setSearchClosing(true)
-    window.setTimeout(() => {
+    searchCloseTimerRef.current = window.setTimeout(() => {
+      searchCloseTimerRef.current = null
       setSearchOpen(false)
       setSearchClosing(false)
       setSearchText('')
       setSearchHits([])
+      setSearching(false)
     }, 320)
   }, [])
+
+  const closeSearchImmediately = useCallback(() => {
+    if (searchCloseTimerRef.current !== null) {
+      window.clearTimeout(searchCloseTimerRef.current)
+      searchCloseTimerRef.current = null
+    }
+    setSearchOpen(false)
+    setSearchClosing(false)
+    setSearchText('')
+    setSearchHits([])
+    setSearching(false)
+  }, [])
+
+  const openSearch = useCallback(() => {
+    setWeatherOpen(false)
+    if (searchCloseTimerRef.current !== null) {
+      window.clearTimeout(searchCloseTimerRef.current)
+      searchCloseTimerRef.current = null
+    }
+    setSearchClosing(false)
+    setSearchText('')
+    setSearchHits([])
+    setSearching(false)
+    setSearchOpen(true)
+  }, [])
+
+  const toggleWeather = useCallback(() => {
+    if (weatherOpen) {
+      setWeatherOpen(false)
+      return
+    }
+    // Search and weather are both modal. Never leave one mounted underneath
+    // the other, especially across a parent-document toolbar command.
+    closeSearchImmediately()
+    setWeatherOpen(true)
+  }, [closeSearchImmediately, weatherOpen])
+
+  useEffect(() => () => {
+    if (searchCloseTimerRef.current !== null) window.clearTimeout(searchCloseTimerRef.current)
+  }, [])
+
+  // The shell consumes a cube hold as "dismiss the map modal" before it opens
+  // the Hold menu. Keep that contract inside this document so search can play
+  // its exit animation and weather can close immediately.
+  useEffect(() => {
+    if (!isEmbedded) return
+    const onDismissOverlay = (event: MessageEvent) => {
+      if (event.source !== window.parent) return
+      if (event.data?.type !== 'poplur-map-dismiss-overlay') return
+      if (searchOpen && !searchClosing) closeSearch()
+      setWeatherOpen(false)
+    }
+    window.addEventListener('message', onDismissOverlay)
+    return () => window.removeEventListener('message', onDismissOverlay)
+  }, [closeSearch, isEmbedded, searchClosing, searchOpen])
+
+  const handleSearchDialogKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeSearch()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const panel = searchPanelRef.current
+    if (!panel) return
+    const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
+      'input:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    )).filter(element => element.getAttribute('aria-hidden') !== 'true')
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }, [closeSearch])
 
   const flyToPlace = useCallback((center: [number, number], name: string) => {
     playPop(0.3)
@@ -1014,13 +1115,7 @@ export default function App() {
     // Keep the scrim through its exit animation. Closing it synchronously
     // removed the button underneath the user's finger, so the same tap could
     // fall through to the map and replace a landmark flight with a local pop.
-    setSearchClosing(true)
-    window.setTimeout(() => {
-      setSearchOpen(false)
-      setSearchClosing(false)
-      setSearchText('')
-      setSearchHits([])
-    }, 320)
+    closeSearch()
     const map = mapRef.current as unknown as {
       stop?: () => void
       easeTo?: (o: Record<string, unknown>) => void
@@ -1080,7 +1175,7 @@ export default function App() {
       easing: (t: number) => t * t * (3 - 2 * t),
       essential: true,
     })
-  }, [mapRef])
+  }, [closeSearch, mapRef])
 
   // Keep the place half of the status truthful after a manual pan as well as
   // after a tour/search action. Curated destinations win near their own
@@ -1297,23 +1392,35 @@ export default function App() {
 
   useEffect(() => {
     const unit = usesFahrenheit() ? 'fahrenheit' : 'celsius'
+    setWeatherForecastStatus('loading')
     fetch(`https://api.open-meteo.com/v1/forecast?latitude=43.65&longitude=-79.38&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,moon_phase&forecast_days=5&temperature_unit=${unit}&timezone=auto`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`Weather request failed: ${res.status}`)
+        return res.json()
+      })
       .then(json => {
-        setWeather({ temp: Math.round(json.current.temperature_2m), code: json.current.weather_code })
+        const temperature = Number(json.current?.temperature_2m)
+        const currentCode = Number(json.current?.weather_code)
+        if (!Number.isFinite(temperature) || !Number.isFinite(currentCode)) {
+          throw new Error('Weather response is missing current conditions')
+        }
+        setWeather({ temp: Math.round(temperature), code: currentCode })
         const apiMoon = moonModelFromWeatherPhase(json.daily?.moon_phase?.[0])
         if (apiMoon) setMoonModel(apiMoon)
         const dates = Array.isArray(json.daily?.time) ? json.daily.time : []
-        setWeatherForecast(dates.slice(0, 5).map((date: string, index: number) => ({
+        const forecast = dates.slice(0, 5).map((date: string, index: number) => ({
           date,
           high: Number(json.daily.temperature_2m_max?.[index]) || 0,
           low: Number(json.daily.temperature_2m_min?.[index]) || 0,
           code: Number(json.daily.weather_code?.[index]) || 0,
-        })))
+        }))
+        setWeatherForecast(forecast)
+        setWeatherForecastStatus(forecast.length > 0 ? 'ready' : 'error')
       })
       .catch(() => {
         setWeather({ temp: usesFahrenheit() ? 72 : 22, code: 1 })
         setWeatherForecast([])
+        setWeatherForecastStatus('error')
       })
   }, [])
 
@@ -2582,8 +2689,8 @@ export default function App() {
         case 'directions': setDirectionsSignal(n => n + 1); break
         // The search panel drops in from the top, the same one the map's own
         // search button opens — the menu tile is another way in, not a copy.
-        case 'search': setSearchOpen(true); break
-        case 'weather': setWeatherOpen(open => !open); break
+        case 'search': openSearch(); break
+        case 'weather': toggleWeather(); break
         // The visible map rail belongs to Home when this document is embedded.
         // Persist the user choice here too, so Map audio follows the same gate
         // as every other sound source rather than merely changing the icon.
@@ -2792,7 +2899,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [applyRadiusDelta, handleGoToCurrentLocation, handleToggleStreetView, startExplicitTourLoop, stopTour, flyToCenter, flyToPop, myColor, ownAvatar, theme, traverseToEngagement])
+  }, [applyRadiusDelta, handleGoToCurrentLocation, handleToggleStreetView, startExplicitTourLoop, stopTour, flyToCenter, flyToPop, myColor, openSearch, ownAvatar, theme, toggleWeather, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -2879,7 +2986,9 @@ export default function App() {
         weatherIcon={weatherIconMarkup}
         weatherOpen={weatherOpen}
         onWeatherOpenChange={setWeatherOpen}
+        controlsObscured={searchOpen || weatherOpen}
         weatherTemp={weather?.temp}
+        weatherForecastStatus={weatherForecastStatus}
         weatherForecast={weatherForecast.map(day => ({
           date: day.date,
           high: day.high,
@@ -2941,7 +3050,7 @@ export default function App() {
           size={44}
           still
           activateOnClick
-          onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else setSearchOpen(true) }}
+          onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else openSearch() }}
         />
         {/* START / STOP TOUR. One press visits the complete landmark catalog in
             fixed order, then releases the camera after the final hold. */}
@@ -2973,7 +3082,7 @@ export default function App() {
           data-open={weatherOpen ? 'true' : 'false'}
           aria-label={`Current weather: ${weatherMode}${weather ? `, ${weather.temp} degrees ${usesFahrenheit() ? 'Fahrenheit' : 'Celsius'}` : ''}. Show five day forecast`}
           aria-expanded={weatherOpen}
-          onClick={() => { playPop(0.25); setWeatherOpen(open => !open) }}
+          onClick={() => { playPop(0.25); toggleWeather() }}
         >
           <WeatherMark mode={weatherMode} icon={weatherIconMarkup} cloud={cloudBadge} compact />
         </button>
@@ -2984,13 +3093,22 @@ export default function App() {
       {searchOpen && (
         <div className={styles.searchScrim} onClick={closeSearch}>
         <div
+          ref={searchPanelRef}
           className={searchClosing ? `${styles.searchPanel} ${styles.searchPanelOut}` : styles.searchPanel}
+          style={{ maxHeight: '64dvh' }}
           onClick={e => e.stopPropagation()}
+          onKeyDown={handleSearchDialogKeyDown}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Search places"
+          aria-busy={searching}
         >
           <input
             className={styles.searchInput}
+            style={{ paddingRight: 58 }}
             value={searchText}
             placeholder="Search places…"
+            aria-label="Search places"
             autoFocus
             onChange={e => { setSearchText(e.target.value); void runPlaceSearch(e.target.value) }}
             onKeyDown={e => {
@@ -3010,6 +3128,29 @@ export default function App() {
               void runPlaceSearch(searchText)
             }}
           />
+          <button
+            type="button"
+            aria-label="Close place search"
+            onClick={() => { playPop(0.2); closeSearch() }}
+            style={{
+              position: 'absolute',
+              zIndex: 2,
+              top: 9,
+              right: 9,
+              width: 44,
+              height: 44,
+              padding: '0 0 3px',
+              border: '1px solid rgba(255, 135, 205, 0.82)',
+              borderRadius: '50%',
+              color: '#fff3fb',
+              background: 'linear-gradient(180deg, #f650aa, #a71567)',
+              boxShadow: '0 0 10px rgba(255, 63, 169, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.42)',
+              font: '900 26px/1 system-ui, sans-serif',
+              cursor: 'pointer',
+            }}
+          >
+            ×
+          </button>
           {!searching && searchText.trim() === '' && (
             <div className={styles.searchShortcuts}>
               <div className={styles.searchShortcutTitle}>GO NOW</div>
@@ -3028,7 +3169,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {searching && <div className={styles.searchNote}>searching…</div>}
+          {searching && <div className={styles.searchNote} role="status">searching…</div>}
           {!searching && searchHits.map(hit => (
             <button
               key={hit.name}

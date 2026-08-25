@@ -55,6 +55,9 @@ export interface ClayMapProps {
   /** The side-rail weather control owns this state; the map owns the panel. */
   weatherOpen: boolean
   onWeatherOpenChange: (open: boolean) => void
+  /** Search/weather are true modal cards; suppress the map's own edge tools
+   *  while either is open so they cannot show through around the card. */
+  controlsObscured?: boolean
   /** Five real daily readings from the same weather service as current conditions. */
   weatherForecast?: Array<{
     date: string
@@ -63,6 +66,9 @@ export interface ClayMapProps {
     icon: string
     mode: WeatherMode
   }>
+  /** Distinguishes a forecast still in flight from a failed/empty response so
+   *  the always-available weather modal can explain either state. */
+  weatherForecastStatus?: 'loading' | 'ready' | 'error'
   /** Current local reading, kept separate from the daily high/low strip. */
   weatherTemp?: number | null
   /** Candidate real-world targets for the first post-globe lock. */
@@ -1307,7 +1313,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, weatherForecast = [], weatherTemp = null, pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
+function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -1330,6 +1336,31 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       ? [requestedPickLng, requestedPickLat]
       : null
   const containerRef = useRef<HTMLDivElement>(null)
+  const weatherCloseRef = useRef<HTMLButtonElement>(null)
+  const closeWeather = useCallback(() => {
+    playPop()
+    onWeatherOpenChange(false)
+  }, [onWeatherOpenChange])
+  const handleWeatherDialogKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeWeather()
+      return
+    }
+    // Close is the only interactive element in this read-only forecast. Keep
+    // keyboard focus inside the modal instead of letting it fall through to
+    // controls behind the map iframe.
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      weatherCloseRef.current?.focus()
+    }
+  }, [closeWeather])
+  useEffect(() => {
+    if (!weatherOpen) return
+    const frame = window.requestAnimationFrame(() => weatherCloseRef.current?.focus({ preventScroll: true }))
+    return () => window.cancelAnimationFrame(frame)
+  }, [weatherOpen])
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([])
   const radiusPreviewPinRef = useRef<mapboxgl.Marker | null>(null)
@@ -4928,6 +4959,9 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   // borders and stay translucent so the map is never fully blanked out.
   const cloudBand = Math.max(0, 1 - Math.abs((zoomValue - 6.5) / 1.75))
   const cloudScale = 0.7 + Math.max(0, zoomValue - 4.75) * 0.4
+  const weatherToday = weatherForecast[0]
+  const weatherReading = weatherTemp ?? weatherToday?.high ?? null
+  const hasWeatherForecast = weatherForecast.length > 0
 
   return (
     <>
@@ -4948,7 +4982,26 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
             fontWeight: 800,
           }}
         >
-          {mapFailure}
+          <div>
+            <div>{mapFailure}</div>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              style={{
+                marginTop: 18,
+                minWidth: 132,
+                minHeight: 44,
+                border: '1px solid rgba(255,255,255,.7)',
+                borderRadius: 999,
+                background: '#f63b9a',
+                color: '#fff',
+                font: '900 14px system-ui, sans-serif',
+                letterSpacing: '.08em',
+              }}
+            >
+              TRY AGAIN
+            </button>
+          </div>
         </div>
       )}
       {!REALISTIC_MAP && (
@@ -5206,61 +5259,108 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         </button>
       )}
 
-      {weatherOpen && weatherForecast.length > 0 && (
+      {weatherOpen && (
         <button
           type="button"
           className={styles.weatherDismissLayer}
-          aria-label="Close weather forecast"
-          onClick={() => { playPop(); onWeatherOpenChange(false) }}
+          aria-hidden="true"
+          tabIndex={-1}
+          onClick={closeWeather}
         />
       )}
 
-      {weatherOpen && weatherForecast.length > 0 && (
+      {weatherOpen && (
         <section
           className={styles.weatherForecast}
-          aria-label="Five day weather forecast"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="poplur-weather-title"
+          aria-describedby={!hasWeatherForecast ? 'poplur-weather-status' : undefined}
+          aria-busy={weatherForecastStatus === 'loading'}
+          onKeyDown={handleWeatherDialogKeyDown}
         >
           <header className={styles.weatherTitleBar}>
             <div>
-              <span className={styles.weatherKicker}>LOCAL WEATHER</span>
-              <span className={styles.weatherUpdated}>Live conditions</span>
+              <span className={styles.weatherKicker} id="poplur-weather-title">LOCAL WEATHER</span>
+              <span className={styles.weatherUpdated}>
+                {weatherForecastStatus === 'loading'
+                  ? 'Updating conditions'
+                  : weatherForecastStatus === 'error' ? 'Weather service unavailable' : 'Live conditions'}
+              </span>
             </div>
             <button
+              ref={weatherCloseRef}
               type="button"
               className={styles.weatherCardClose}
               aria-label="Close forecast"
-              onClick={() => { playPop(); onWeatherOpenChange(false) }}
+              onClick={closeWeather}
             >
               ×
             </button>
           </header>
           <div className={styles.weatherNow}>
             <div className={styles.weatherNowCopy}>
-              <span className={styles.weatherReading}>{Math.round(weatherTemp ?? weatherForecast[0].high)}°</span>
-              <span className={styles.weatherCondition}>{weatherConditionLabel(weatherMode)}</span>
-              <span className={styles.weatherRange}>H {Math.round(weatherForecast[0].high)}° · L {Math.round(weatherForecast[0].low)}°</span>
+              <span className={styles.weatherReading}>
+                {weatherForecastStatus === 'error' || weatherReading == null ? '–' : Math.round(weatherReading)}°
+              </span>
+              <span className={styles.weatherCondition}>
+                {weatherForecastStatus === 'loading'
+                  ? 'Getting your forecast…'
+                  : weatherForecastStatus === 'error' ? 'Conditions unavailable' : weatherConditionLabel(weatherMode)}
+              </span>
+              <span className={styles.weatherRange}>
+                {weatherToday
+                  ? `H ${Math.round(weatherToday.high)}° · L ${Math.round(weatherToday.low)}°`
+                  : weatherForecastStatus === 'loading' ? 'Fetching high / low' : 'High / low unavailable'}
+              </span>
             </div>
-            <WeatherSticker mode={weatherMode} className={styles.weatherHeroSticker} />
+            {weatherForecastStatus === 'ready' ? (
+              <WeatherSticker mode={weatherMode} className={styles.weatherHeroSticker} />
+            ) : (
+              <span className={styles.weatherHeroStatus} aria-hidden="true">
+                {weatherForecastStatus === 'loading' ? '…' : '!'}
+              </span>
+            )}
           </div>
-          <div className={styles.weatherStripMeta}>
-            <span>5-day forecast</span>
-            <span>High / low</span>
-          </div>
-          <div className={styles.weatherDays}>
-            {weatherForecast.slice(0, 5).map(day => (
-              <article key={day.date}>
-                <strong>{new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(`${day.date}T12:00:00`))}</strong>
-                <WeatherSticker mode={day.mode} className={styles.weatherDayIcon} />
-                <span>{Math.round(day.high)}°</span>
-                <i>{Math.round(day.low)}°</i>
-              </article>
-            ))}
-          </div>
+          {hasWeatherForecast ? (
+            <>
+              <div className={styles.weatherStripMeta}>
+                <span>5-day forecast</span>
+                <span>High / low</span>
+              </div>
+              <div className={styles.weatherDays}>
+                {weatherForecast.slice(0, 5).map(day => (
+                  <article key={day.date}>
+                    <strong>{new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(`${day.date}T12:00:00`))}</strong>
+                    <WeatherSticker mode={day.mode} className={styles.weatherDayIcon} />
+                    <span>{Math.round(day.high)}°</span>
+                    <i>{Math.round(day.low)}°</i>
+                  </article>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div
+              className={styles.weatherForecastState}
+              id="poplur-weather-status"
+              role="status"
+              aria-live="polite"
+            >
+              <strong>
+                {weatherForecastStatus === 'loading' ? 'Updating forecast…' : 'Forecast unavailable'}
+              </strong>
+              <span>
+                {weatherForecastStatus === 'loading'
+                  ? 'Getting the latest five-day outlook.'
+                  : 'Live weather could not be reached. Try the forecast again later.'}
+              </span>
+            </div>
+          )}
         </section>
       )}
 
       <div
-        className={styles.zoomWrap}
+        className={controlsObscured ? `${styles.zoomWrap} ${styles.mapControlsObscured}` : styles.zoomWrap}
         style={{
           // The knob is a pre-rendered view of the real 3D object at this
           // zoom band. Unlike decoding a GLB just to decorate a control, this
@@ -5279,7 +5379,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         aria-valuemin={ZOOM_MIN}
         aria-valuemax={ZOOM_MAX}
         aria-valuenow={Number(zoomValue.toFixed(2))}
-        tabIndex={0}
+        aria-hidden={controlsObscured ? true : undefined}
+        tabIndex={controlsObscured ? -1 : 0}
         onPointerDown={handleZoomDown}
         onPointerMove={handleZoomMove}
         onPointerUp={handleZoomUp}
@@ -5302,10 +5403,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       <button
         type="button"
         key={`takeover-${takeoverFace}`}
-        className={styles.colorCircle}
+        className={controlsObscured ? `${styles.colorCircle} ${styles.mapControlsObscured}` : styles.colorCircle}
         style={{ '--takeoverFace': takeoverFace } as React.CSSProperties}
         aria-label="Change your takeover colour"
+        aria-hidden={controlsObscured ? true : undefined}
         title="Takeover colour"
+        disabled={controlsObscured}
+        tabIndex={controlsObscured ? -1 : 0}
         onClick={() => randomizeTakeoverColor()}
       />
 

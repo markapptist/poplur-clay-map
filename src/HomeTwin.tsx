@@ -20,7 +20,7 @@ import { onEngagementLogged } from './engagementLog'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
-import HoldMenuTwin, { isResumablePage, tabPageScreens } from './HoldMenuTwin'
+import HoldMenuTwin, { isResumablePage, tabPageScreens, type HoldMenuFocus } from './HoldMenuTwin'
 import { FaceTimeOverlay } from './MailScreen'
 import LoadingGlobe from './LoadingGlobe'
 import TopChrome from './TopChrome'
@@ -150,10 +150,6 @@ const FACETIME_CONTACT_MODEL = 'poplur_cube_contact.glb'
 // one-screen-two-states route MAIL's envelope uses.
 const WALLET_SEND_MODEL = 'poplur_cube_coin_stack.glb'
 const WALLET_CASHOUT_MODEL = 'poplur_cube_cash_stack.glb'
-// DIRECTIONS is an action tile (mapAction, no subscreen), so this is worn
-// only as a wheel-focus PREVIEW — see wheelFocusScreen below — never as
-// committed cubeScreen state.
-const DIRECTIONS_ARROW_MODEL = 'poplur_cube_directions_arrow.glb'
 // Settings' inner pages, over poplur-settings-page. PROFILE (background) and
 // APP ICON are both "change how this looks", so they share one paint bucket
 // rather than two near-identical cubes; VERIFICATION gets its own. Supplied
@@ -808,12 +804,6 @@ const MAP_SETTLE_MS = (() => {
 // short native render lease. This is a transition budget, not an idle loop.
 const TAB_TRANSITION_LEASE_MS = 900
 
-// Longest the boot cover may sit over a mounting map before it lifts on its own.
-// The cover normally comes off on the map's first postMessage; this is the
-// backstop for a shell where that message never lands, so a failure mode is a
-// visible booting map rather than a permanently blank panel.
-const MAP_COVER_MAX_MS = 1500
-
 // How long the parked map iframe survives after its tab stops being front.
 // 0 tore it down on leave, which made every return a full Mapbox reboot — the
 // 20 Aug burn log's rapid tab cycling re-fronted the map every 20-75s, and the
@@ -1377,12 +1367,32 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-wallet-page', onPage)
     return () => window.removeEventListener('poplur-wallet-page', onPage)
   }, [])
-  // The hold-menu wheel's centered slot, reported live as it scrolls — not
-  // committed state, just a preview. DIRECTIONS is an action tile with no
-  // subscreen of its own (see SUBSCREEN_CUBE_MODEL's comment on that
-  // category), so scrolling past it in the wheel is the only moment its
-  // arrow object ever gets to appear on the cube.
-  const [wheelFocusScreen, setWheelFocusScreen] = useState<string | null>(null)
+  // The hold-menu wheel's centered tile, reported live as it scrolls — not
+  // committed state, just a preview. Keep the whole tile identity because
+  // PHOTO and VIDEO intentionally share a screen id while wearing different
+  // physical objects, and TOUR/DIRECTIONS never open a screen at all.
+  const [wheelFocus, setWheelFocus] = useState<HoldMenuFocus | null>(null)
+  const cubeModelStageRef = useRef<HTMLDivElement | null>(null)
+  const wheelPulseAnimationRef = useRef<Animation | null>(null)
+  const handleWheelFocusChange = useCallback((focus: HoldMenuFocus | null) => {
+    setWheelFocus(focus)
+    wheelPulseAnimationRef.current?.cancel()
+    wheelPulseAnimationRef.current = null
+    if (!focus || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const stage = cubeModelStageRef.current
+    if (!stage || typeof stage.animate !== 'function') return
+    // The model swap handles tiles whose objects differ. This small nested
+    // pulse is still required when adjacent tiles share an object (Studio and
+    // Music), so literally every wheel notch has visible feedback without
+    // remounting the WebGL renderer.
+    wheelPulseAnimationRef.current = stage.animate([
+      { transform: 'scale3d(1, 1, 1)' },
+      { transform: 'scale3d(.9, .82, 1)', offset: 0.24 },
+      { transform: 'scale3d(1.08, 1.11, 1)', offset: 0.58 },
+      { transform: 'scale3d(1, 1, 1)' },
+    ], { duration: 260, easing: 'cubic-bezier(.16, 1, .3, 1)' })
+  }, [])
+  useEffect(() => () => wheelPulseAnimationRef.current?.cancel(), [])
   // Which page of Settings is up: 'root' (the list), or one of its sub-pages.
   // Only three of them change the cube; the rest fall through to the gear.
   const [settingsPage, setSettingsPage] = useState<string>('root')
@@ -1526,7 +1536,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // cube is actually wearing. They differ only for the length of the swap, and
   // the model changes at the expanded peak so the handoff reads as one
   // continuous clay pop rather than a disappearance and reappearance.
-  const [appliedCubeScreen, setAppliedCubeScreen] = useState<string | null>(null)
   const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab, mapNight, mapMoon))
   // Which swap the navigator uses, chosen in Settings > Cube change. Read live
   // so flipping it there is felt on the very next tab swipe. This setting had
@@ -1573,8 +1582,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const cubeModelReadyTimer = useRef<number | null>(null)
   const cubeModelReadyFrame = useRef<number | null>(null)
   const cubeSwapEnterSound = useRef(false)
-  const pendingCubeSwap = useRef<{ model: string; screen: string | null } | null>(null)
-  const awaitingCubeModelRef = useRef<string | null>(null)
+  const pendingCubeSwap = useRef<{ model: string; withSound: boolean } | null>(null)
+  const awaitingCubeModelRef = useRef<{ model: string; withSound: boolean } | null>(null)
   const [photoPopping, setPhotoPopping] = useState(false)
 
   // Start in the measurement system implied by the device locale. Tapping the
@@ -1671,6 +1680,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)
+  const [mapFailedVisible, setMapFailedVisible] = useState(false)
+  const [mapOverlayOpen, setMapOverlayOpen] = useState(false)
+  const dismissMapOverlay = useCallback(() => {
+    mapFrameRef.current?.contentWindow?.postMessage({ type: 'poplur-map-dismiss-overlay' }, '*')
+  }, [])
   // The map is a separate document. Its sound-on bootstrap can complete after
   // the parent radio's first focus broadcast and otherwise claim the floor
   // back for ambience. Reassert the active boot station after every genuine
@@ -1696,6 +1710,47 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // down, so the rapid map↔feed↔camera bouncing of real use does not pay a
   // full Mapbox reboot per return. Android drops on leave (its shell trade).
   const [mapMounted, setMapMounted] = useState(!NATIVE_ADAPTIVE_MAP && initialTab === 'map')
+  const [mapReloadNonce, setMapReloadNonce] = useState(0)
+  const mapRetryCountRef = useRef(0)
+  const mapRetryTimerRef = useRef<number | null>(null)
+  const mapFrontRef = useRef(initialTab === 'map')
+  const scheduleMapRetry = useCallback(() => {
+    // A parked iframe is deliberately asleep. Do not wake Mapbox, network,
+    // and WebGL behind another tab just because its last request failed.
+    if (NATIVE_ADAPTIVE_MAP || !mapFrontRef.current || mapRetryTimerRef.current !== null) return
+    setMapReady(false)
+    setMapFailedVisible(false)
+    setMapPainted(false)
+    setMapOverlayOpen(false)
+    if (mapRetryCountRef.current >= 2) {
+      // The parent owns the final error UI. A completely broken iframe never
+      // runs enough code to draw its own card, so relying on the child here
+      // would reveal the same blank surface this recovery path is for.
+      setMapFailedVisible(true)
+      return
+    }
+    mapRetryCountRef.current += 1
+    const delay = 500 + mapRetryCountRef.current * 300
+    mapRetryTimerRef.current = window.setTimeout(() => {
+      mapRetryTimerRef.current = null
+      setMapReloadNonce(nonce => nonce + 1)
+    }, delay)
+  }, [])
+  const retryMapNow = useCallback(() => {
+    if (mapRetryTimerRef.current !== null) {
+      window.clearTimeout(mapRetryTimerRef.current)
+      mapRetryTimerRef.current = null
+    }
+    mapRetryCountRef.current = 0
+    setMapReady(false)
+    setMapFailedVisible(false)
+    setMapPainted(false)
+    setMapOverlayOpen(false)
+    setMapReloadNonce(nonce => nonce + 1)
+  }, [])
+  useEffect(() => () => {
+    if (mapRetryTimerRef.current !== null) window.clearTimeout(mapRetryTimerRef.current)
+  }, [])
 
   // ── Engagement must not depend on the map being mounted ───────────────────
   //
@@ -1822,7 +1877,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // A true background event is delivered explicitly by native, so fail open
   // whenever the document remains visible.
   const surfaceVisible = iOSNativeShell ? (nativeAppActive || pageVisible) : pageVisible
-  // Has the map's own document painted since this iframe mounted?
+  mapFrontRef.current = activeTab === 'map' && committedTab === 'map' && surfaceVisible
+  // Has the map actually reached a usable frame since this iframe mounted?
   //
   // A remount is a brand-new DOCUMENT, and until that document's CSS applies
   // WebKit fills the subframe with its base background — white, unless the
@@ -1831,9 +1887,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // why `.mapLayer`'s dark colour never hid it and the map tab still flashed
   // white on device. This flag drives an opaque cover in THIS document — already
   // painted, so it is dark from the frame the iframe attaches — and the cover
-  // lifts on the map's first postMessage, which cannot arrive before its
-  // document has rendered. The globe boot stays visible; only the pre-CSS gap
-  // is hidden.
+  // now lifts only on map-ready (or after retries expose the child's actionable
+  // error card). The old first-message rule revealed the grain/backdrop as soon
+  // as `poplur-map-loading` arrived, several seconds before Mapbox had tiles —
+  // exactly the blank gray screen seen on device.
   const [mapPainted, setMapPainted] = useState(NATIVE_ADAPTIVE_MAP)
   const [loadingMessage, setLoadingMessage] = useState(0)
   const [messageShown, setMessageShown] = useState(true)
@@ -2189,12 +2246,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const onMapMessage = (event: MessageEvent) => {
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
-      // Any message at all proves the map's document is up and has painted its
-      // own dark backdrop — the boot cover can come off. Deliberately not tied
-      // to `poplur-map-ready`: that waits for the globe, and hiding the globe
-      // boot is exactly what this app decided not to do.
-      setMapPainted(true)
-      if (event.data.type === 'poplur-map-loading') setMapReady(false)
+      if (event.data.type === 'poplur-map-loading') {
+        setMapReady(false)
+        setMapFailedVisible(false)
+        setMapPainted(false)
+        setMapOverlayOpen(false)
+      }
+      if (event.data.type === 'poplur-map-overlay') {
+        const open = Boolean(event.data.open)
+        setMapOverlayOpen(open)
+        // The popup lives inside the map iframe; the Hold menu lives in this
+        // parent at a higher stacking level. Mutual exclusion is the only way
+        // to guarantee the wheel/scrubber cannot cover Search or Weather.
+        if (open) setHoldOpen(false)
+      }
+      if (event.data.type === 'poplur-map-failed') {
+        scheduleMapRetry()
+      }
       if (event.data.type === 'poplur-map-night') {
         setMapNight(Boolean(event.data.night))
         if (event.data.moon === 'full' || event.data.moon === 'crescent') {
@@ -2318,7 +2386,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapPlace(event.data.place)
       }
       if (event.data.type === 'poplur-map-ready') {
+        if (mapRetryTimerRef.current !== null) {
+          window.clearTimeout(mapRetryTimerRef.current)
+          mapRetryTimerRef.current = null
+        }
+        mapRetryCountRef.current = 0
         setMapReady(true)
+        setMapFailedVisible(false)
+        setMapPainted(true)
         droppedClaimsRef.current.forEach(claim => {
           mapFrameRef.current?.contentWindow?.postMessage({ ...claim, replay: true }, '*')
         })
@@ -2808,7 +2883,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     if (!NATIVE_ADAPTIVE_MAP) return
     const mapVisible = activeTab === 'map' && committedTab === 'map' && surfaceVisible
-    const webOwnsWholeSurface = holdOpen || overlayOpen || activePermission !== null
+    const webOwnsWholeSurface = holdOpen || overlayOpen || mapOverlayOpen || activePermission !== null
       || subscreenFullscreen || composerOpen || feedAdSlotOpen || Boolean(incomingCall)
     document.documentElement.classList.toggle('native-map-live', mapVisible)
     if (mapVisible) setMapPlace(previous => previous ?? 'Current area')
@@ -2891,7 +2966,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       nativeHitSignatureRef.current = ''
       postNativeEvent({ type: 'nativeMapPresentation', active: false, passthrough: false, regions: [] })
     }
-  }, [activePermission, activeTab, committedTab, composerOpen, feedAdSlotOpen, holdOpen, incomingCall, overlayOpen, subscreenFullscreen, surfaceVisible])
+  }, [activePermission, activeTab, committedTab, composerOpen, feedAdSlotOpen, holdOpen, incomingCall, mapOverlayOpen, overlayOpen, subscreenFullscreen, surfaceVisible])
 
   const [mapTourTopics, setMapTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
   const handleMapTourTopicsChange = useCallback((topics: MapTourTopic[]) => {
@@ -2986,6 +3061,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       mapWindow?.postMessage({ type: 'poplur-map-dispose' }, '*')
       setMapMounted(false)
       setMapReady(false)
+      setMapFailedVisible(false)
+      setMapOverlayOpen(false)
     }
     // Covered and backgrounded surfaces are not a navigation animation. Drop
     // them synchronously instead of waiting for the cube's settle window.
@@ -3062,15 +3139,35 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   useEffect(() => {
     if (NATIVE_ADAPTIVE_MAP) { setMapPainted(true); return }
     if (!mapMounted) { setMapPainted(false); return }
-    const fallback = window.setTimeout(() => setMapPainted(true), MAP_COVER_MAX_MS)
-    return () => window.clearTimeout(fallback)
+    setMapPainted(false)
+  }, [mapMounted, mapReloadNonce])
+
+  useEffect(() => {
+    if (mapMounted) return
+    if (mapRetryTimerRef.current !== null) {
+      window.clearTimeout(mapRetryTimerRef.current)
+      mapRetryTimerRef.current = null
+    }
+    mapRetryCountRef.current = 0
+    setMapOverlayOpen(false)
+    setMapFailedVisible(false)
   }, [mapMounted])
 
-  // No loading screen over the map any more. The map itself opens on the globe
-  // (zoomed all the way out) and eases in once its tiles are actually ready —
-  // the overlay only ever hid a load that the user can now watch happen.
-  // ?map-loading=1 still forces it for GCL captures.
-  const loadingVisible = activeTab === 'map' && forceMapLoading
+  // The child normally reports its own 15-second style timeout. This slightly
+  // longer parent watchdog also covers a script/bootstrap failure where the
+  // child never gets far enough to post any failure at all.
+  useEffect(() => {
+    if (NATIVE_ADAPTIVE_MAP || !mapMounted || mapReady || mapFailedVisible
+      || activeTab !== 'map' || committedTab !== 'map' || !surfaceVisible) return
+    const watchdog = window.setTimeout(scheduleMapRetry, 18_000)
+    return () => window.clearTimeout(watchdog)
+  }, [activeTab, committedTab, mapFailedVisible, mapMounted, mapReady, mapReloadNonce, scheduleMapRetry, surfaceVisible])
+
+  // Keep a real loading surface over Mapbox's incomplete canvas. A cold style
+  // or tile request can take seconds in WKWebView; showing the partial grain
+  // layer made a healthy-but-loading map look broken.
+  const loadingVisible = activeTab === 'map' && committedTab === 'map'
+    && (!mapReady && !mapFailedVisible || forceMapLoading)
   useEffect(() => {
     if (!loadingVisible) return
     const iv = window.setInterval(() => {
@@ -3452,6 +3549,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }
 
   const changeChannel = (dir: 1 | -1) => {
+    // Search/Weather is a modal inside the iframe. The parent-owned page wheel
+    // cannot navigate behind it; the first cube/arrow gesture dismisses it.
+    if (activeTab === 'map' && mapOverlayOpen) {
+      dismissMapOverlay()
+      return
+    }
     // While Map's landmark tour is active, the persistent side arrows belong
     // to that tour. Route before pushScreen so the same physical press cannot
     // also enter a page or posted-pop walk in Home.
@@ -3550,6 +3653,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // recording, editing, zooming, a visited profile. Nothing below this
     // matters until the call is answered or declined.
     ? PHONE_RING_MODEL
+    // FaceTime is also an active call, not a profile-preview state.
+    : faceTimeActive
+    ? FACETIME_CONTACT_MODEL
     : composerOpen && composerEditing
     ? DIRECTOR_BOARD_MODEL
     : activeTab === 'feed' && committedTab === 'feed' && foodAdOpen
@@ -3563,10 +3669,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     : activeTab === 'post' && cubeScreen == null
     && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
-    // FaceTime is an active call, not a profile-preview state.  It must win
-    // over a preview that was still unwinding when the call arrived.
-    : ((faceTimeActive ? FACETIME_CONTACT_MODEL : undefined)
-      ?? avatarPreview
+    : (avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? CAMCORDER_MODEL : undefined)
       ?? (cubeScreen === 'profile-messages' && mailThreadOpen ? MAIL_ENVELOPE_OPEN_MODEL : undefined)
       // The wallet's inner pages: coins for SEND, cash for CASH OUT.
@@ -3587,12 +3690,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         ? STUDIO_MIC_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
-      // DIRECTIONS: the only preview in this chain rather than committed
-      // state — it fires straight from the wheel's centered slot, not from
-      // cubeScreen, because the tile never opens a subscreen (see
-      // SUBSCREEN_CUBE_MODEL's note on action tiles). Lowest priority: any
-      // real committed state above still wins.
-      ?? (wheelFocusScreen === 'map-directions' ? DIRECTIONS_ARROW_MODEL : undefined)
       // PHOTO mode wears the Kodak, same as the POST tab's idle default.
       // The lens is kept as its own constant but is not used as PHOTO's face
       // any more — the user asked PHOTO to read as "take the picture" rather
@@ -3635,18 +3732,25 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       beginCubeSwapEnter(false)
       return
     }
-    awaitingCubeModelRef.current = target.model
+    // Committing the page currently previewed by the wheel often keeps the
+    // exact same GLB. CubeTab3D will not emit a second model-ready callback for
+    // an unchanged URL, so settle immediately instead of hanging at the pop
+    // peak until the recovery timer fires.
+    if (target.model === appliedCubeModel) {
+      beginCubeSwapEnter(target.withSound)
+      return
+    }
+    awaitingCubeModelRef.current = target
     setAppliedCubeModel(target.model)
-    setAppliedCubeScreen(target.screen)
     setCubeSwapPhase('waiting')
     // A broken asset must not strand the navigator at its expanded peak.
     // Successful loads enter from onModelReady below; this is bounded recovery.
     cubeModelReadyTimer.current = window.setTimeout(() => {
       cubeModelReadyTimer.current = null
-      if (awaitingCubeModelRef.current !== target.model) return
-      beginCubeSwapEnter(true)
+      if (awaitingCubeModelRef.current !== target) return
+      beginCubeSwapEnter(target.withSound)
     }, 1_400)
-  }, [beginCubeSwapEnter])
+  }, [appliedCubeModel, beginCubeSwapEnter])
 
   const finishCubeSwapEnter = useCallback(() => {
     if (cubeSwapFallbackTimer.current) window.clearTimeout(cubeSwapFallbackTimer.current)
@@ -3661,10 +3765,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
 
   useEffect(() => {
-    const alreadyApplied = requestedCubeModel === appliedCubeModel && cubeScreen === appliedCubeScreen
+    const alreadyApplied = requestedCubeModel === appliedCubeModel
     // Replace the pending destination before the equality check. Rapid swipes
     // collapse into the latest request instead of displaying every crossing.
-    pendingCubeSwap.current = alreadyApplied ? null : { model: requestedCubeModel, screen: cubeScreen }
+    // Capture sound ownership NOW. Reading wheel state later, when a prepared
+    // GLB finishes decoding, caused a duplicate notch pop if the wheel closed
+    // first (and suppressed legitimate non-wheel swaps in the reverse race).
+    pendingCubeSwap.current = alreadyApplied ? null : {
+      model: requestedCubeModel,
+      withSound: wheelFocus === null,
+    }
     if (alreadyApplied) return
     // Reduced motion skips both transforms, but still waits for the prepared
     // model and keeps the requested pop sound when it becomes visible.
@@ -3672,12 +3782,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       const target = pendingCubeSwap.current
       pendingCubeSwap.current = null
       if (!target) return
-      awaitingCubeModelRef.current = target.model
+      awaitingCubeModelRef.current = target
       setAppliedCubeModel(target.model)
-      setAppliedCubeScreen(target.screen)
       setCubeSwapPhase('waiting')
       if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
-      cubeModelReadyTimer.current = window.setTimeout(() => beginCubeSwapEnter(true), 1_400)
+      cubeModelReadyTimer.current = window.setTimeout(() => beginCubeSwapEnter(target.withSound), 1_400)
       return
     }
     // Let an active exit/wait/enter finish. On returning to idle this effect
@@ -3690,20 +3799,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // replace an obsolete in-flight request immediately. Waiting for the old
       // 1.4s recovery window made fast Stats -> Mail -> Store navigation look
       // as though the subcube simply ignored the new screen.
-      awaitingCubeModelRef.current = target.model
+      awaitingCubeModelRef.current = target
       setAppliedCubeModel(target.model)
-      setAppliedCubeScreen(target.screen)
       if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
       if (target.model === appliedCubeModel) {
-        beginCubeSwapEnter(true)
+        beginCubeSwapEnter(target.withSound)
       } else {
-        cubeModelReadyTimer.current = window.setTimeout(() => beginCubeSwapEnter(true), 1_400)
+        cubeModelReadyTimer.current = window.setTimeout(() => beginCubeSwapEnter(target.withSound), 1_400)
       }
       return
     }
     if (cubeSwapPhase !== 'idle') return
     setCubeSwapPhase('exit')
-  }, [requestedCubeModel, appliedCubeModel, cubeScreen, appliedCubeScreen, cubeSwapPhase, beginCubeSwapEnter])
+  }, [requestedCubeModel, appliedCubeModel, cubeSwapPhase, beginCubeSwapEnter, wheelFocus])
 
   useEffect(() => {
     if (cubeSwapFallbackTimer.current) window.clearTimeout(cubeSwapFallbackTimer.current)
@@ -3874,6 +3982,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {mapMounted && (
         <>
           <iframe
+            key={`poplur-map-${mapReloadNonce}`}
             ref={mapFrameRef}
             data-poplur-screen="map"
             className={activeTab === 'map' ? styles.mapLayer : `${styles.mapLayer} ${styles.mapLayerIdle}`}
@@ -3892,7 +4001,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               to THIS document, which has already painted, so it is dark in the
               same frame the iframe attaches; the iframe's own background cannot
               do this job because a subframe paints its base background above it.
-              Lifts on the map's first message (see mapPainted). */}
+              Lifts only once the map is ready, or when its final retry exposes
+              the actionable error card (see mapPainted). */}
           <div
             aria-hidden="true"
             className={[
@@ -3915,7 +4025,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           two competing apps.  Keep this small rail above either renderer and
           relay its actions down to the map when the WebView is in use. */}
       {activeTab === 'map' && committedTab === 'map'
-        && !overlayOpen && activePermission === null && (
+        && !overlayOpen && !mapOverlayOpen && activePermission === null && (
         <div className={`${styles.nativeMapChrome}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}>
           <TabControlRail side="left" label="Map controls">
             <ClayMuteButton
@@ -4050,10 +4160,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         {mainSurfaceVisible && committedTab === 'post' && (
           <Camera
             captureMode={cameraCaptureMode}
-            // The translucent wheel is controls over the live lens, not a new
-            // heavyweight screen. Keep the preview alive behind it; a real
-            // Hold destination flips overlayOpen and unmounts Camera entirely.
-            surfaceVisible={!switchingScreens}
+            // Hold scrolling is UI over the lens, but it must not keep camera,
+            // ML and AR work live while the wheel and its previews animate.
+            // Camera preserves its last painted frame as the backdrop and
+            // resumes only after the menu closes.
+            surfaceVisible={!switchingScreens && !holdOpen}
             onComposingChange={handleComposingChange}
             onPhotoCapture={() => {
               setPopping(false)
@@ -4172,6 +4283,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             <div className={styles.mapLoadingTrack} role="progressbar" aria-label="Loading map">
               <span className={styles.mapLoadingFill} />
             </div>
+          </div>
+        </div>
+      )}
+
+      {mapFailedVisible && activeTab === 'map' && committedTab === 'map' && (
+        <div className={styles.mapFailure} role="alertdialog" aria-modal="true" aria-labelledby="map-failure-title">
+          <div className={styles.mapFailureCard}>
+            <h2 id="map-failure-title">MAP COULDN'T LOAD</h2>
+            <p>Check your connection, then try the map again.</p>
+            <button type="button" autoFocus onClick={retryMapNow}>TRY AGAIN</button>
           </div>
         </div>
       )}
@@ -4403,7 +4524,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             else if (e.animationName.includes('Pop')) setPopping(false)
           }}
         >
-          <div className={incomingCall ? `${styles.cubeModelStage} ${styles.cubeGlowing}` : styles.cubeModelStage}>
+          <div
+            ref={cubeModelStageRef}
+            className={[
+              styles.cubeModelStage,
+              wheelFocus ? styles.cubeModelStageWheelPreview : '',
+              incomingCall ? styles.cubeGlowing : '',
+            ].filter(Boolean).join(' ')}
+          >
             <CubeTab3D
               key={`cube-${uiRecoveryKey}`}
               size={cubeSize}
@@ -4416,7 +4544,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               // bounded navigator pool. Only this current model is rendered.
               prepareModelUrl={cubePreparationModel}
               onModelReady={url => {
-                if (url !== awaitingCubeModelRef.current) return
+                const awaiting = awaitingCubeModelRef.current
+                if (!awaiting || url !== awaiting.model) return
                 if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
                 cubeModelReadyTimer.current = null
                 awaitingCubeModelRef.current = null
@@ -4426,7 +4555,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 cubeModelReadyFrame.current = window.requestAnimationFrame(() => {
                   cubeModelReadyFrame.current = window.requestAnimationFrame(() => {
                     cubeModelReadyFrame.current = null
-                    beginCubeSwapEnter(true)
+                    beginCubeSwapEnter(awaiting.withSound)
                   })
                 })
               }}
@@ -4447,6 +4576,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                   return
                 }
                 playPop()
+                if (activeTab === 'map' && mapOverlayOpen) {
+                  dismissMapOverlay()
+                  return
+                }
                 // A deliberate long-press asks for the WHEEL. With the menu
                 // already up — standing on a page, or on the wheel itself —
                 // the live instance lays the wheel over what is there. It must
@@ -4462,6 +4595,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 setHoldOpen(true)
               }}
             />
+            {wheelFocus && (wheelFocus.glyph ? (
+              <span className={styles.wheelCubePreviewGlyph} aria-hidden="true">{wheelFocus.glyph}</span>
+            ) : (
+              <img
+                key={`${wheelFocus.icon}-${wheelFocus.title}`}
+                className={styles.wheelCubePreview}
+                src={`holdmenu/${wheelFocus.icon}.${wheelFocus.format ?? 'png'}`}
+                alt=""
+                draggable={false}
+                aria-hidden="true"
+              />
+            ))}
           </div>
           {fpsCubeMode && (
             <FpsCubeOverlay size={cubeSize} />
@@ -4622,7 +4767,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           currentFeedChannelId={CHANNELS[chanIndex]?.id}
           onTuneFeedChannel={tuneFeedChannel}
           onSubscreenChange={handleSubscreenChange}
-          onWheelFocusChange={setWheelFocusScreen}
+          onWheelFocusChange={handleWheelFocusChange}
           bindArrows={bindSubscreenArrows}
           bindGoBack={fn => { goBackRef.current = fn }}
           incomingCall={incomingCall}

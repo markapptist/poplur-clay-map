@@ -209,6 +209,58 @@
   animation: mapLoadingBgFade 2.4s ease-in-out forwards;
 }
 
+.mapFailure {
+  position: absolute;
+  inset: 0;
+  z-index: 265;
+  display: grid;
+  place-items: center;
+  padding: max(96px, calc(env(safe-area-inset-top) + 70px)) 22px max(120px, calc(env(safe-area-inset-bottom) + 92px));
+  color: #fff4fb;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(246, 59, 154, .24), transparent 38%),
+    rgba(5, 4, 7, .92);
+}
+
+.mapFailureCard {
+  width: min(100%, 360px);
+  padding: 26px 22px 22px;
+  border: 1px solid rgba(255, 155, 213, .62);
+  border-radius: 24px;
+  background: linear-gradient(155deg, rgba(45, 11, 39, .97), rgba(14, 9, 24, .98));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .14);
+  text-align: center;
+}
+
+.mapFailureCard h2 {
+  margin: 0;
+  color: #ff8dca;
+  font: 950 19px/1.1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: .08em;
+}
+
+.mapFailureCard p {
+  margin: 10px 0 20px;
+  color: rgba(255, 239, 249, .82);
+  font: 750 14px/1.4 system-ui, -apple-system, sans-serif;
+}
+
+.mapFailureCard button {
+  min-width: 148px;
+  min-height: 48px;
+  padding: 0 24px;
+  border: 1px solid rgba(255, 222, 241, .88);
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(180deg, #ff62b6, #c51b79);
+  box-shadow: 0 8px 20px rgba(246, 59, 154, .36), inset 0 1px 0 rgba(255, 255, 255, .45);
+  font: 950 14px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: .08em;
+  cursor: pointer;
+}
+
+.mapFailureCard button:active { transform: scale(.96); }
+
 .mapLoadingGlobeHost {
   position: absolute;
   inset: 0;
@@ -1414,9 +1466,46 @@
 }
 
 .cubeModelStage {
+  position: relative;
   width: 100%;
   height: 100%;
   transform-origin: 50% 50%;
+}
+
+/* The Hold wheel changes faster than Draco GLBs can be decoded safely on a
+   phone. Its centered object is therefore the already-shipped transparent
+   clay render; the one persistent WebGL navigator stays mounted and idle
+   underneath, then is revealed unchanged when the wheel closes. */
+.cubeModelStageWheelPreview > :global([data-cube-renderer]) {
+  opacity: 0;
+}
+
+.wheelCubePreview,
+.wheelCubePreviewGlyph {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.wheelCubePreview {
+  object-fit: contain;
+  filter:
+    drop-shadow(0 5px 0 rgba(70, 7, 40, .72))
+    drop-shadow(0 14px 18px rgba(0, 0, 0, .48))
+    drop-shadow(0 0 16px rgba(246, 59, 154, .28));
+}
+
+.wheelCubePreviewGlyph {
+  display: grid;
+  place-items: center;
+  color: #ff8ac6;
+  font-size: 72px;
+  font-weight: 950;
+  text-shadow: 0 8px 16px rgba(0, 0, 0, .62);
 }
 
 /* `filter`, not `transform` — this can sit on the same element as any of the
