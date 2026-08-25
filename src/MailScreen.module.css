@@ -5,13 +5,11 @@
   flex-direction: column;
   background: #fef0f5;
   overflow: hidden;
-  /* Mail owns its complete interaction area. The home chrome stands down
-     while a chat is open, so leaving a huge reserved logo/dock gutter here
-     would just strand the conversation and composer in the middle of a phone.
-     Safe-area padding preserves the system status/home indicators without
-     letting the persistent cube and radius card cover the actual message UI. */
-  padding-top: max(58px, calc(env(safe-area-inset-top, 0px) + 16px));
-  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  /* Mail is a Home subscreen like Store and Stats: preserve the wordmark at
+     the top and the arrows/cube/radius dock at the bottom. The content owns the
+     space between them, so neither the composer nor a chat row can be covered. */
+  padding-top: max(100px, calc(env(safe-area-inset-top, 0px) + 64px));
+  padding-bottom: calc(18px + var(--cube-size, clamp(124px, 37vw, 176px)) + 14px + env(safe-area-inset-bottom, 0px));
 }
 
 /* ── Thread list (Chats) ───────────────────────────────────────────────── */
@@ -78,7 +76,11 @@
   display: grid;
   gap: 0;
   padding: 0 0 20px;
-  filter: drop-shadow(0 14px 20px rgba(73, 39, 54, 0.10));
+  /* Every thread card already owns its clay shadow. Filtering the entire
+     scrolling layer forced an extra full-list offscreen pass during Mail's
+     first paint, including the transparent space between cards. Keeping the
+     per-card shadows preserves the look and removes that avoidable arrival
+     cost on the phone. */
 }
 
 /* Each row is a stage: the delete action sits under the card, the card slides
@@ -148,7 +150,6 @@
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
-  will-change: transform;
 }
 
 .thread:active {

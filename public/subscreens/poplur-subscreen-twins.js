@@ -172,7 +172,6 @@ const groups = {
       { id: 'camera-roll', title: 'Camera Roll', detail: 'showCameraRollWindow', icon: H.cameraRoll, render: () => cameraRoll() },
       { id: 'camera-create', title: 'Create', detail: 'OpenCreatorRequested', icon: H.create, render: () => creatorScreen() },
       { id: 'camera-preview', title: 'Preview', detail: 'CapturePreviewOverlay', icon: H.tvGuide, render: () => cameraPreview() },
-      { id: 'camera-live', title: 'Live', detail: 'LiveVideoStatusBadge', icon: H.tvGuide, render: () => cameraLive() },
       { id: 'camera-chat', title: 'Chat', detail: 'OpenDMsRequested', icon: H.chat, render: () => messagesScreen('Camera') },
       { id: 'camera-store', title: 'Store', detail: 'OpenPoplurStoreRequested', icon: H.store, render: () => storeScreen() },
     ],
@@ -2362,7 +2361,7 @@ function cameraCapture() {
         <span>@creator</span>
       </div>
       <div class="camera-focus"></div>
-      <div class="camera-hint">The cube is the shutter · Hold it for Photo, Video, or Live</div>
+      <div class="camera-hint">The cube is the shutter · Hold it for Photo or Video</div>
     </div>
   `;
 }
@@ -2411,20 +2410,6 @@ function cameraPreview() {
         <div class="preview-action"><i class="white">×</i><span>Retake</span></div>
         <div class="preview-action"><i class="red">✓</i><span>Keep</span></div>
       </div>
-    </div>
-  `;
-}
-
-function cameraLive() {
-  return `
-    <div class="ios-screen camera">
-      <div class="camera-preview"></div>
-      <div class="camera-top-controls">
-        <div class="camera-icon-btn">ϟ</div>
-        <div class="camera-icon-btn">↻</div>
-      </div>
-      <div class="live-status"><i></i><b>LIVE</b><span>1:42</span><span class="green">128 watching</span><span>Yonge-Dundas</span></div>
-      <div class="camera-focus"></div>
     </div>
   `;
 }

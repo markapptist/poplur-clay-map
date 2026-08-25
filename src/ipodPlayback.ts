@@ -7,6 +7,7 @@ import {
 } from './audioFocus'
 import { isRadioBackgroundEnabled } from './mapRadio'
 import { loadTrackBuffer, type Track } from './musicLibrary'
+import { setMusicPlayback } from './musicPlayback'
 
 // The iPod can outlive its React screen when the listener explicitly enables
 // background audio. Keep its short-lived WebAudio graph here rather than in a
@@ -34,6 +35,7 @@ const listeners = new Set<() => void>()
 
 function publish(next: IpodPlaybackSnapshot) {
   snapshot = next
+  setMusicPlayback('ipod', next.playingId !== null)
   listeners.forEach(listener => listener())
 }
 

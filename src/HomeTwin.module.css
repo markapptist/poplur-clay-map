@@ -267,6 +267,27 @@
   isolation: isolate;
 }
 
+/* Map startup gets one heavy renderer: Mapbox. This lightweight impression of
+   the approved dotted loading field is a static CSS layer — no canvas, rAF,
+   particles, GL context, or animated compositor surface competing underneath
+   the cover. */
+.mapLoadingGlobeStatic::before {
+  content: "";
+  position: absolute;
+  inset: 7% 5%;
+  z-index: 0;
+  opacity: .22;
+  pointer-events: none;
+  background-image: radial-gradient(circle, rgba(190, 218, 255, .92) 0 1.6px, transparent 1.9px);
+  background-size: 11px 11px;
+  mask-image: radial-gradient(ellipse 68% 45% at 50% 45%, #000 0 64%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 68% 45% at 50% 45%, #000 0 64%, transparent 78%);
+}
+
+.mapLoadingGlobeStatic .mapLoadingClayGlobe {
+  animation: none;
+}
+
 @keyframes mapLoadingBgFade {
   0% { background: #ff2d96; }
   50% { background: #9a3ad4; }
@@ -1472,10 +1493,46 @@
   transform-origin: 50% 50%;
 }
 
-/* The Hold wheel changes faster than Draco GLBs can be decoded safely on a
-   phone. Its centered object is therefore the already-shipped transparent
-   clay render; the one persistent WebGL navigator stays mounted and idle
-   underneath, then is revealed unchanged when the wheel closes. */
+.cubeDiscoGlisten::before,
+.cubeDiscoGlisten::after {
+  content: '';
+  position: absolute;
+  z-index: 4;
+  width: 22px;
+  aspect-ratio: 1;
+  pointer-events: none;
+  background: radial-gradient(circle, #fff 0 10%, #fff4cf 11% 19%, rgba(255,255,255,.72) 20% 28%, transparent 64%);
+  clip-path: polygon(50% 0, 59% 40%, 100% 50%, 59% 60%, 50% 100%, 41% 60%, 0 50%, 41% 40%);
+  filter: drop-shadow(0 0 7px rgba(255, 239, 176, .95));
+  animation: cubeDiscoSpark 1.55s ease-in-out infinite;
+}
+
+.cubeDiscoGlisten::before {
+  left: 24%;
+  top: 24%;
+}
+
+.cubeDiscoGlisten::after {
+  right: 22%;
+  top: 49%;
+  width: 15px;
+  animation-delay: -.72s;
+}
+
+@keyframes cubeDiscoSpark {
+  0%, 32%, 100% { opacity: 0; transform: scale(.35) rotate(0deg); }
+  43% { opacity: .95; transform: scale(1.16) rotate(18deg); }
+  58% { opacity: .25; transform: scale(.66) rotate(36deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cubeDiscoGlisten::before,
+  .cubeDiscoGlisten::after { animation: none; opacity: .72; }
+}
+
+/* Optional Settings > Hold Menu cubes > 2D mode. The default routes the
+   centred selection through the one persistent 3D navigator; this lightweight
+   path hides that renderer and uses the already-shipped transparent render. */
 .cubeModelStageWheelPreview > :global([data-cube-renderer]) {
   opacity: 0;
 }

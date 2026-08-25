@@ -395,39 +395,6 @@
   color: rgba(214, 246, 255, 0.9);
 }
 
-/* Closed captions belong beside the other always-available Feed actions, not
-   behind a long-press menu. This is a molded 44pt clay key so its size and
-   spacing match every control in TabControlRail without allocating WebGL. */
-/* The same faceted isometric-prism shell as the camera's Scan/AR buttons —
-   "CC" sits on the face like their sphere/text badge does, and the on/off
-   state reads through the glow, not a second line of text. */
-.ccGlyphButton {
-  display: block;
-  width: 44px;
-  height: 44px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: transform 120ms ease;
-}
-
-.ccGlyphButton:active { transform: translateY(1px) scale(.93); }
-
-.ccGlyph { display: block; filter: drop-shadow(0 3px 4px rgba(0, 0, 0, .62)); }
-
-.ccGlyphButton[aria-pressed="true"] .ccGlyph {
-  filter:
-    drop-shadow(0 3px 4px rgba(0, 0, 0, .62))
-    drop-shadow(0 0 8px rgba(43, 216, 255, .45));
-}
-
-.ccText {
-  font: 950 9px/1 ui-monospace, 'SF Mono', Menlo, monospace;
-}
-
 @keyframes feedCenterTextShader {
   to { background-position: -260% 0; }
 }

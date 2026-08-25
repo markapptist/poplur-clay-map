@@ -41,21 +41,25 @@ export function installMapIdleSnapshot(
   canvas: HTMLCanvasElement,
 ): MapIdleSnapshotController {
   const host = canvas.parentElement
-  const image = document.createElement('img')
-  image.alt = ''
-  image.draggable = false
-  image.decoding = 'async'
-  image.dataset.poplurMapStaticFrame = '1'
-  Object.assign(image.style, {
-    position: 'absolute',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    objectFit: 'fill',
-    display: 'none',
-    pointerEvents: 'none',
-    userSelect: 'none',
-  } satisfies Partial<CSSStyleDeclaration>)
+  const createSnapshotImage = () => {
+    const nextImage = document.createElement('img')
+    nextImage.alt = ''
+    nextImage.draggable = false
+    nextImage.decoding = 'async'
+    nextImage.dataset.poplurMapStaticFrame = '1'
+    Object.assign(nextImage.style, {
+      position: 'absolute',
+      inset: '0',
+      width: '100%',
+      height: '100%',
+      objectFit: 'fill',
+      display: 'none',
+      pointerEvents: 'none',
+      userSelect: 'none',
+    } satisfies Partial<CSSStyleDeclaration>)
+    return nextImage
+  }
+  let image = createSnapshotImage()
 
   // Put the retained frame immediately BELOW the live canvas. Markers that
   // Mapbox appends after the canvas therefore remain visible and selectable.
@@ -83,6 +87,8 @@ export function installMapIdleSnapshot(
   let captureRequested = true
   let snapshotReady = false
   let mapLoaded = map.loaded()
+  let snapshotGeneration = 0
+  let pendingImage: HTMLImageElement | null = null
 
   const setVisible = (visible: boolean) => {
     diagnostics.visible = visible
@@ -104,9 +110,12 @@ export function installMapIdleSnapshot(
         darkest = Math.min(darkest, brightness)
         lightest = Math.max(lightest, brightness)
       }
-      // A cleared WebGL backing store is uniformly black/transparent. Even
-      // Poplur's darkest space view has stars, atmosphere or terrain variation.
-      return lightest - darkest >= 8 || lightest >= 24
+      // A cleared backing store and the blue/gray fallback layer are both
+      // uniform. Brightness alone used to accept the latter as a valid map
+      // snapshot, hide the live canvas, and leave only HUD controls visible.
+      // Every real Poplur map view has terrain, labels, stars, or atmosphere
+      // variation, so require contrast instead of accepting a bright flat fill.
+      return lightest - darkest >= 8
     } catch {
       // Mapbox resources are CORS-enabled, but a future custom source may make
       // readback inspection unavailable. In that case trust the captured frame
@@ -138,9 +147,44 @@ export function installMapIdleSnapshot(
         captureRequested = true
         return
       }
-      image.src = next
-      snapshotReady = true
-      diagnostics.captures += 1
+      // Decode off-DOM, then atomically replace the retained frame. Assigning
+      // `src` directly to the visible image and immediately marking it ready
+      // let park() hide the WebGL canvas while WebKit was still decoding the
+      // JPEG; touching the map woke the canvas and made it appear to fix itself.
+      const generation = ++snapshotGeneration
+      pendingImage?.removeAttribute('src')
+      const candidate = createSnapshotImage()
+      pendingImage = candidate
+      candidate.src = next
+
+      const commit = () => {
+        if (disposed || generation !== snapshotGeneration || pendingImage !== candidate || !host) {
+          candidate.removeAttribute('src')
+          return
+        }
+        const previous = image
+        host.insertBefore(candidate, canvas)
+        image = candidate
+        pendingImage = null
+        snapshotReady = true
+        diagnostics.captures += 1
+        if (parked) setVisible(true)
+        previous.removeAttribute('src')
+        previous.remove()
+      }
+      const reject = () => {
+        if (generation !== snapshotGeneration || pendingImage !== candidate) return
+        pendingImage = null
+        candidate.removeAttribute('src')
+        captureRequested = true
+        if (!disposed && !parked) map.triggerRepaint()
+      }
+      if (typeof candidate.decode === 'function') {
+        void candidate.decode().then(commit, reject)
+      } else {
+        candidate.addEventListener('load', commit, { once: true })
+        candidate.addEventListener('error', reject, { once: true })
+      }
     } catch {
       // Keep the previous known-good frame. A failed readback must never replace
       // it with the exact black image this controller exists to prevent.
@@ -218,12 +262,15 @@ export function installMapIdleSnapshot(
     dispose() {
       if (disposed) return
       disposed = true
+      snapshotGeneration += 1
       map.off('idle', onIdle)
       map.off('load', onLoad)
       map.off('moveend', onMoveEnd)
       map.off('zoomend', onZoomEnd)
       map.off('render', onRender)
       setVisible(false)
+      pendingImage?.removeAttribute('src')
+      pendingImage = null
       image.removeAttribute('src')
       image.remove()
       staging.width = staging.height = 1

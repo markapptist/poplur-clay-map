@@ -13,8 +13,12 @@ import ClayMuteButton from './ClayMuteButton'
 import TabControlRail from './TabControlRail'
 import MapLevelButton from './MapLevelButton'
 import { WeatherMark } from './ClayMap'
+import { modeForCode, type WeatherMode } from './WeatherFX'
 import mapStyles from './App.module.css'
-import { cubeTransition, onTransitionChanged, screenTransition, type CubeTransition, type ScreenTransition } from './cubeTransitions'
+import {
+  cubeTransition, holdPreviewMode, onTransitionChanged, screenTransition,
+  type CubeTransition, type HoldPreviewMode, type ScreenTransition,
+} from './cubeTransitions'
 import { startEngagementChips, engagementVerb } from './engagement'
 import { onEngagementLogged } from './engagementLog'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
@@ -30,7 +34,7 @@ import {
 } from './motionPermission'
 import InCallBar from './InCallBar'
 import WebSignIn from './WebSignIn'
-import { acceptCall } from './webCall'
+import { acceptCall, callState, declineCall } from './webCall'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, popHaptic } from './pop'
 import { startRingtone, stopRingtone } from './phoneRingtones'
@@ -62,8 +66,15 @@ import { contentPostId, dropAt } from './postedContent'
 import { onProfileGenderChange, profileHeadModel } from './profileGender'
 import { POIS, type PopLevel } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
-import { skyShadeAt } from './skyCycle'
+import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
+import { getMusicPlaybackSnapshot, subscribeMusicPlayback } from './musicPlayback'
+import {
+  emptyDiscoCubeSession,
+  expireDiscoCubeSession,
+  reconcileDiscoCubeSession,
+  type DiscoCubeSession,
+} from './discoCubeSession'
 import {
   RADIUS_CHANGE_EVENT,
   nextRadiusInactivityAt,
@@ -112,6 +123,10 @@ const FOOD_AD_CUBE_MODEL = 'poplur_cube_fork_knife.glb'
 // The flash camera the profile wears while you are taking your picture.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
 const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
+// Sunrise through 11:59 local time wears the shipped lightweight sun. It uses
+// the same seasonal sunrise calculation as the map sky and the ordinary
+// one-shot POP swap, so there is no second renderer or animation loop.
+const MAP_MORNING_MODEL = 'poplur_sun_lite.glb'
 // At night the Map navigator uses one of the existing mobile-sized moon
 // assets, selected from the weather API's moon phase. Changing this URL flows
 // through the normal one-shot cube POP swap; it does not add another renderer
@@ -166,6 +181,20 @@ const SETTINGS_VERIFY_MODEL = 'poplur_cube_verification.glb'
 // only carries one model per screen id. The GLB is the 349KB decimation the
 // screen itself used to bake into a sprite, the mixer's weight class.
 const STUDIO_MIC_MODEL = 'poplur_mic_lite.glb'
+const RAIN_CUBE_MODEL = 'poplur_cube_rain_cloud.glb'
+const THUNDER_CUBE_MODEL = 'poplur_cube_thunder_cloud.glb'
+const DISCO_BALL_CUBE_MODEL = 'poplur_cube_disco_ball.glb'
+const DISCO_CUBE_MAX_MS = 30_000
+const WEATHER_REFRESH_MS = 5 * 60_000
+
+type WeatherCubeKind = 'rain' | 'thunder'
+
+function weatherCubeKind(mode: unknown): WeatherCubeKind | null {
+  if (mode === 'rain') return 'rain'
+  // Open-Meteo's thunder codes normalize to storm/hail as well as thunder.
+  if (mode === 'thunder' || mode === 'storm' || mode === 'hail') return 'thunder'
+  return null
+}
 
 // ── Last-page memory ─────────────────────────────────────────────────────────
 /** Where the app is standing: the tab, the hold-menu page on it (null = the
@@ -213,10 +242,11 @@ function tabNavigatorModel(
   tab: CubeTab,
   mapNight = false,
   mapMoon: 'full' | 'crescent' = 'crescent',
+  mapMorning = false,
 ): string {
   if (tab === 'map') {
-    if (!mapNight) return MAP_GLOBE_MODEL
-    return mapMoon === 'full' ? MAP_FULL_MOON_MODEL : MAP_NIGHT_MODEL
+    if (mapNight) return mapMoon === 'full' ? MAP_FULL_MOON_MODEL : MAP_NIGHT_MODEL
+    return mapMorning ? MAP_MORNING_MODEL : MAP_GLOBE_MODEL
   }
   if (tab === 'feed') return CLAY_TV_MODEL
   if (tab === 'post') return PROFILE_CAMERA_MODEL
@@ -409,6 +439,31 @@ function subscreenNavigatorModel(screen: string | null): string | undefined {
   if (!screen) return undefined
   if (screen === 'feed-games') return STATION_CONSOLE_MODEL
   return SUBSCREEN_CUBE_MODEL[screen]
+}
+
+/** The Hold Menu previews exactly one real object on the existing navigator.
+ *  Rail tiles remain lightweight PNGs; only the centred selection reaches the
+ *  one persistent WebGL renderer, so 3D does not multiply contexts or loops. */
+function holdFocusNavigatorModel(
+  focus: HoldMenuFocus,
+  tab: CubeTab,
+  mapNight: boolean,
+  mapMoon: 'full' | 'crescent',
+  mapMorning: boolean,
+  wornCube: string | null,
+): string | undefined {
+  if (focus.action === 'photo') return PROFILE_CAMERA_MODEL
+  if (focus.action === 'video') return CAMCORDER_MODEL
+  if (focus.action === 'profile') {
+    return wornNavigatorModel('profile', null, wornCube) ?? profileHeadModel()
+  }
+  if (focus.mapAction === 'tour') return 'poplur_cube_tour.glb'
+  if (focus.mapAction === 'directions') return 'poplur_cube_directions_arrow.glb'
+  if (focus.home) {
+    return wornNavigatorModel(tab, null, wornCube)
+      ?? tabNavigatorModel(tab, mapNight, mapMoon, mapMorning)
+  }
+  return subscreenNavigatorModel(focus.screen ?? null)
 }
 
 const IOS_STORE_PRODUCT_BY_CARD_ID: Record<string, string> = {
@@ -725,6 +780,7 @@ const CLAY_MAP_SRC = (() => {
   const front = '1'
   const lite = parentParams.get('mapLite')
   const mapNight = parentParams.get('map-night')
+  const weatherCycle = parentParams.get('weather-cycle')
   // The hidden map mounts while Home's custom location primer is visible.
   // Carry that gate into the iframe so its own startup geolocation cannot race
   // ahead and surface a raw browser/OS prompt behind the Poplur consent card.
@@ -732,10 +788,12 @@ const CLAY_MAP_SRC = (() => {
     || parentParams.get('permissions') === '1'
   const liteQuery = lite === '1' ? '&mapLite=1' : ''
   const nightQuery = mapNight === '1' || mapNight === '0' ? `&map-night=${mapNight}` : ''
+  const weatherQuery = weatherCycle === '1' || weatherCycle === '0'
+    ? `&weather-cycle=${weatherCycle}` : ''
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${locationQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${locationQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${locationQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${locationQuery}`
 })()
 
 function clockMapNight(): boolean {
@@ -745,6 +803,19 @@ function clockMapNight(): boolean {
     if (forced === '0') return false
   }
   return skyShadeAt().lightPreset === 'night'
+}
+
+/** The explicit day/night browser preview represents noon or midnight. Do not
+ * let the real device clock put a morning sun into that deterministic noon
+ * preview; production (no override) follows the seasonal local sunrise. */
+function clockMapMorning(): boolean {
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('day-cycle') === '1') return false
+    const forced = params.get('map-night')
+    if (forced === '1' || forced === '0') return false
+  }
+  return localSunriseToNoon()
 }
 
 // iOS experiment: keep this Home document and its approved clay HUD, but let
@@ -925,11 +996,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
   const [mapNight, setMapNight] = useState(clockMapNight)
   const [mapMoon, setMapMoon] = useState<'full' | 'crescent'>(() => moonPhase(new Date()).model)
+  const [mapMorning, setMapMorning] = useState(clockMapMorning)
   // The embedded map reports the same state below. Refresh once when a tab
   // change reaches Map; only the native renderer, which has no iframe report,
   // needs a minute clock while Map is actually visible.
   useEffect(() => {
-    const sync = () => setMapNight(clockMapNight())
+    const sync = () => {
+      setMapNight(clockMapNight())
+      setMapMorning(clockMapMorning())
+    }
     sync()
     if (!NATIVE_ADAPTIVE_MAP || activeTab !== 'map') return
     const interval = window.setInterval(sync, 60_000)
@@ -943,6 +1018,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // ref instead of capturing the initial tab forever.
   const activeTabRef = useRef(activeTab)
   activeTabRef.current = activeTab
+  const [mapWeatherSignal, setMapWeatherSignal] = useState<{
+    kind: WeatherCubeKind
+    changedAt: number
+  } | null>(null)
+  const [nativeMapCoordinate, setNativeMapCoordinate] = useState<{
+    latitude: number
+    longitude: number
+  } | null>(null)
+  const musicPlayback = useSyncExternalStore(
+    subscribeMusicPlayback,
+    getMusicPlaybackSnapshot,
+    getMusicPlaybackSnapshot,
+  )
+  const [discoCubeActive, setDiscoCubeActive] = useState(false)
+  const musicSessionRef = useRef<DiscoCubeSession>(emptyDiscoCubeSession())
+  const discoDeadlineTimerRef = useRef<number | null>(null)
+
   const activeStoreCheckoutRequestRef = useRef<string | null>(null)
   // Preserve the best location across a map iframe remount. An already-active
   // opt-in radio session can reassert itself when that child becomes ready,
@@ -960,6 +1052,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       const lng = Number(nested?.longitude)
       if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return
       radioLocationRef.current = { lat, lng }
+      if (NATIVE_ADAPTIVE_MAP) setNativeMapCoordinate({ latitude: lat, longitude: lng })
       startRadioOnBoot(lat, lng)
     }
     const onLocation = (event: Event) => applyLocation((event as CustomEvent).detail)
@@ -1536,13 +1629,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // cube is actually wearing. They differ only for the length of the swap, and
   // the model changes at the expanded peak so the handoff reads as one
   // continuous clay pop rather than a disappearance and reappearance.
-  const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab, mapNight, mapMoon))
+  const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab, mapNight, mapMoon, mapMorning))
   // Which swap the navigator uses, chosen in Settings > Cube change. Read live
   // so flipping it there is felt on the very next tab swipe. This setting had
   // no consumer at all: it persisted and read back in Settings while nothing
   // in the app ever asked for it, so the toggle moved and the cube did not.
   const [cubeSwapMode, setCubeSwapMode] = useState<CubeTransition>(() => cubeTransition())
-  useEffect(() => onTransitionChanged(() => setCubeSwapMode(cubeTransition())), [])
+  const [holdCubePreviewMode, setHoldCubePreviewMode] = useState<HoldPreviewMode>(() => holdPreviewMode())
+  useEffect(() => onTransitionChanged(() => {
+    setCubeSwapMode(cubeTransition())
+    setHoldCubePreviewMode(holdPreviewMode())
+  }), [])
   /** Which way the tabs moved, so a slide travels the way you swiped. */
   const pushScreenRef = useRef<((dir: 1 | -1, axis: 'x' | 'y') => void) | null>(null)
   /**
@@ -1981,14 +2078,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
 
   const incomingCallTimer = useRef<number | null>(null)
+  const incomingCallIdRef = useRef('')
   useEffect(() => {
     postNativeEvent({ type: 'callWatchIncoming' })
     const onCallEvent = (event: MessageEvent) => {
       if (event.source !== window || !event.data || typeof event.data !== 'object') return
       if (event.data.type === 'poplurCallIncoming') {
-        if (incomingCallTimer.current) window.clearTimeout(incomingCallTimer.current)
+        const timedCallId = String(event.data.callId ?? '')
+        if (!timedCallId || incomingCallIdRef.current === timedCallId) return
+        // Keep one honest call surface. A second caller while another call is
+        // ringing/negotiating/connected receives a busy decline instead of
+        // replacing the first popup or leaving an unanswerable ringing doc.
+        if (incomingCallIdRef.current || callState().phase !== 'idle') {
+          declineCall(timedCallId)
+          return
+        }
+        incomingCallIdRef.current = timedCallId
         setIncomingCall({
-          callId: event.data.callId ?? '',
+          callId: timedCallId,
           callerId: event.data.callerId ?? '',
           callerName: event.data.callerName ?? 'Unknown',
           video: event.data.video === true,
@@ -2003,10 +2110,33 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         popHaptic()
         window.setTimeout(popHaptic, 260)
         window.setTimeout(popHaptic, 520)
-        incomingCallTimer.current = window.setTimeout(() => { stopRingtone(); setIncomingCall(null) }, 30_000)
+        incomingCallTimer.current = window.setTimeout(() => {
+          stopRingtone()
+          declineCall(timedCallId)
+          if (incomingCallIdRef.current === timedCallId) incomingCallIdRef.current = ''
+          setIncomingCall(null)
+        }, 30_000)
+      }
+      if (event.data.type === 'poplurCallIncomingUnavailable') {
+        const unavailableId = String(event.data.callId ?? '')
+        // A ringing-query removal also happens when we accept and advance the
+        // document to connected. Accept clears this ref first, so only a call
+        // that is still visibly pending is dismissed here.
+        if (!unavailableId || unavailableId !== incomingCallIdRef.current) return
+        if (incomingCallTimer.current) {
+          window.clearTimeout(incomingCallTimer.current)
+          incomingCallTimer.current = null
+        }
+        incomingCallIdRef.current = ''
+        stopRingtone()
+        setIncomingCall(null)
       }
       if (event.data.type === 'poplurCallEnded') {
+        const endedId = String(event.data.callId ?? '')
+        const activeId = callState().callId
+        if (endedId && endedId !== incomingCallIdRef.current && endedId !== activeId) return
         if (incomingCallTimer.current) { window.clearTimeout(incomingCallTimer.current); incomingCallTimer.current = null }
+        incomingCallIdRef.current = ''
         stopRingtone()
         setIncomingCall(null)
         setIncomingFaceTime(null)
@@ -2016,12 +2146,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => {
       window.removeEventListener('message', onCallEvent)
       if (incomingCallTimer.current) window.clearTimeout(incomingCallTimer.current)
+      incomingCallIdRef.current = ''
     }
   }, [])
 
   const acceptIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string; video?: boolean }) => {
     playPop()
     stopRingtone()
+    if (incomingCallTimer.current) {
+      window.clearTimeout(incomingCallTimer.current)
+      incomingCallTimer.current = null
+    }
+    if (incomingCallIdRef.current === call.callId) incomingCallIdRef.current = ''
     // A video intent is explicit on the rendezvous.  Keep ordinary calls on
     // the phone LCD, but let FaceTime open its shared stream surface while
     // acceptCall requests camera tracks before the answer is produced.
@@ -2035,7 +2171,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const declineIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string }) => {
     playPop()
     stopRingtone()
-    postNativeEvent({ type: 'callDecline', callId: call.callId })
+    if (incomingCallTimer.current) {
+      window.clearTimeout(incomingCallTimer.current)
+      incomingCallTimer.current = null
+    }
+    if (incomingCallIdRef.current === call.callId) incomingCallIdRef.current = ''
+    declineCall(call.callId)
     setIncomingCall(null)
   }, [])
 
@@ -2251,6 +2392,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapFailedVisible(false)
         setMapPainted(false)
         setMapOverlayOpen(false)
+        setMapWeatherSignal(null)
+      }
+      if (event.data.type === 'poplur-map-weather') {
+        const kind = weatherCubeKind(event.data.mode)
+        setMapWeatherSignal(previous => {
+          if (!kind) return null
+          return previous?.kind === kind
+            ? previous
+            : { kind, changedAt: Date.now() }
+        })
       }
       if (event.data.type === 'poplur-map-overlay') {
         const open = Boolean(event.data.open)
@@ -2265,6 +2416,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
       if (event.data.type === 'poplur-map-night') {
         setMapNight(Boolean(event.data.night))
+        if (typeof event.data.morning === 'boolean') {
+          setMapMorning(event.data.morning)
+        }
         if (event.data.moon === 'full' || event.data.moon === 'crescent') {
           setMapMoon(event.data.moon)
         }
@@ -2718,22 +2872,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-native-feed-ad', onFeedAd)
     return () => window.removeEventListener('poplur-native-feed-ad', onFeedAd)
   }, [])
-  // Mail now owns an ordinary close/back route and its own safe-area-aware
-  // composer. Keeping the persistent home chrome over it made the cube and
-  // radius counter intercept the bottom of a DM; hide that chrome for Mail
-  // itself. A video call is the exception: it deliberately keeps the contact
-  // cube visible, and the call overlay reserves the dock around it.
-  const mailChromeGone = cubeScreen === 'profile-messages' && overlayOpen && !faceTimeActive
   /** Chrome fully away — the feed's player mode, a subscreen, an ad slot,
    *  or the post composer (trapped inside contentLayer z-index 4, so the
    *  chrome at 260 must stand down for the composer to be tappable). */
-  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || composerOpen || mailChromeGone
+  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || composerOpen
   /** The cube's own version of chromeGone, composerOpen excluded: the capture
    *  preview and post composer are a home surface, not a takeover, and
    *  PostComposer/VFXStudio already reserve --composer-home-clearance so the
    *  cube has room to sit below them unobstructed — the cube going with the
    *  rest of the chrome left nothing there to reserve room for. */
-  const cubeChromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || mailChromeGone
+  const cubeChromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen
   // Games run full-bleed under the HUD (GamesScreen.module.css), so the
   // wordmark and the bottom stat row sat on top of the console art the whole
   // time a game was open. Unlike subscreenFullscreen this does NOT take the
@@ -2857,11 +3005,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // zoom, and the renderer alone decides when close detail becomes 3D.
   useEffect(() => {
     if (!NATIVE_ADAPTIVE_MAP) return
-    const onState = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        zoom?: unknown
-        place?: unknown
-      }>).detail
+    type NativeMapState = {
+      zoom?: unknown
+      place?: unknown
+      latitude?: unknown
+      longitude?: unknown
+    }
+    const applyState = (detail: NativeMapState | null | undefined) => {
       if (typeof detail?.zoom === 'number' && Number.isFinite(detail.zoom)) {
         const zoom = Math.max(0, Math.min(1, detail.zoom))
         if (!nativeZoomDraggingRef.current && performance.now() >= nativeZoomSyncHoldUntilRef.current) {
@@ -2870,10 +3020,78 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         }
       }
       if (typeof detail?.place === 'string' && detail.place.trim()) setMapPlace(detail.place.trim())
+      const latitude = Number(detail?.latitude)
+      const longitude = Number(detail?.longitude)
+      if (Number.isFinite(latitude) && Math.abs(latitude) <= 90
+        && Number.isFinite(longitude) && Math.abs(longitude) <= 180) {
+        // MapKit reports many tiny camera-settle deltas. Weather resolution is
+        // coarser than that, so retain the current coordinate within ~1 km and
+        // avoid turning one pan into a burst of forecast requests.
+        setNativeMapCoordinate(previous => previous
+          && Math.abs(previous.latitude - latitude) < 0.01
+          && Math.abs(previous.longitude - longitude) < 0.01
+          ? previous
+          : { latitude, longitude })
+      }
     }
+    const onState = (event: Event) => applyState((event as CustomEvent<NativeMapState>).detail)
     window.addEventListener('poplur-native-map-state', onState)
+    // Native MapKit can settle before React installs this listener. The bridge
+    // retains its latest snapshot so the initial coordinate (and therefore
+    // weather cube) does not depend on the user panning the map once.
+    applyState((window as typeof window & {
+      __poplurLatestNativeMapState?: NativeMapState
+    }).__poplurLatestNativeMapState)
     return () => window.removeEventListener('poplur-native-map-state', onState)
   }, [])
+
+  // Native MapKit replaces the embedded App.tsx map on iPhone, so Home owns
+  // that renderer's weather refresh. It uses the coordinates carried by the
+  // existing native-map-state bridge and only polls while Map is front-most.
+  useEffect(() => {
+    if (!NATIVE_ADAPTIVE_MAP || activeTab !== 'map' || committedTab !== 'map'
+      || !nativeMapCoordinate) return
+    let controller: AbortController | null = null
+    const refresh = () => {
+      controller?.abort()
+      controller = new AbortController()
+      const unit = shouldUseMiles() ? 'fahrenheit' : 'celsius'
+      const { latitude, longitude } = nativeMapCoordinate
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=weather_code&temperature_unit=${unit}&timezone=auto`
+      void fetch(url, { cache: 'no-store', signal: controller.signal })
+        .then(response => {
+          if (!response.ok) throw new Error(`Weather request failed: ${response.status}`)
+          return response.json()
+        })
+        .then(json => {
+          const code = Number(json.current?.weather_code)
+          if (!Number.isFinite(code)) return
+          const kind = weatherCubeKind(modeForCode(code))
+          setMapWeatherSignal(previous => {
+            if (!kind) return null
+            return previous?.kind === kind
+              ? previous
+              : { kind, changedAt: Date.now() }
+          })
+        })
+        .catch(error => {
+          if ((error as { name?: string } | null)?.name === 'AbortError') return
+          // Keep the last confirmed condition through a transient network
+          // failure; inventing clear weather would pop the cube back falsely.
+        })
+    }
+    refresh()
+    const interval = window.setInterval(refresh, WEATHER_REFRESH_MS)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      controller?.abort()
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [activeTab, committedTab, nativeMapCoordinate])
 
   // A transparent WKWebView is still a full-screen UIKit hit target. Report
   // the real, currently visible HUD rectangles to native; its managed WebView
@@ -2945,7 +3163,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // governor-ok: one-shot layout read after an observed HUD change; publishRegions never re-arms it
       frame = window.requestAnimationFrame(publishRegions)
     }
-    schedule()
+    // Effects run after this HUD commit, so publish the ownership handshake
+    // synchronously once. Relying only on governed rAF allowed a cold native
+    // MapKit path to remain transparent until the first touch woke that clock.
+    publishRegions()
     settleTimer = window.setTimeout(schedule, 360)
     window.addEventListener('resize', schedule)
     window.visualViewport?.addEventListener('resize', schedule)
@@ -3648,6 +3869,80 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // over (Filters/VFX Studio), but cameraCaptureMode can still read 'video'
   // from the shot you just took, and that stale mode must not win the cube
   // back from the editor that is actually on screen.
+  const weatherCubeModel = activeTab === 'map' && committedTab === 'map'
+    ? mapWeatherSignal?.kind === 'thunder'
+      ? THUNDER_CUBE_MODEL
+      : mapWeatherSignal?.kind === 'rain'
+        ? RAIN_CUBE_MODEL
+        : null
+    : null
+  const cameraCubeOverridesEvent = activeTab === 'post'
+    && cubeScreen == null
+    && (cameraZooming || cameraCaptureMode === 'video' || recordMs != null)
+  const discoCubeVisible = weatherCubeModel == null
+    && incomingCall == null
+    && !faceTimeActive
+    && !(composerOpen && composerEditing)
+    && !cameraCubeOverridesEvent
+
+  // One bounded disco appearance per continuous music session. Its budget is
+  // visible time: rain, calls and active camera work pause the countdown, and
+  // music stopping still clears it immediately. The deadline lives in a ref
+  // so React Strict Mode can clean up and re-run without losing the session.
+  useEffect(() => {
+    if (discoDeadlineTimerRef.current !== null) {
+      window.clearTimeout(discoDeadlineTimerRef.current)
+      discoDeadlineTimerRef.current = null
+    }
+    const decision = reconcileDiscoCubeSession(
+      musicSessionRef.current,
+      musicPlayback.playing,
+      Date.now(),
+      DISCO_CUBE_MAX_MS,
+      discoCubeVisible,
+    )
+    musicSessionRef.current = decision.session
+    setDiscoCubeActive(decision.active)
+    if (!decision.active || decision.remainingMs == null || decision.session.deadline == null) return
+    const deadline = decision.session.deadline
+    discoDeadlineTimerRef.current = window.setTimeout(() => {
+      const current = musicSessionRef.current
+      discoDeadlineTimerRef.current = null
+      const expired = expireDiscoCubeSession(current, deadline)
+      if (expired === current) return
+      musicSessionRef.current = expired
+      setDiscoCubeActive(false)
+    }, decision.remainingMs)
+    return () => {
+      if (discoDeadlineTimerRef.current !== null) {
+        window.clearTimeout(discoDeadlineTimerRef.current)
+        discoDeadlineTimerRef.current = null
+      }
+    }
+  }, [discoCubeVisible, musicPlayback.playing])
+
+  // Weather wins while Map is the current surface; music remains global. When
+  // either signal clears, this falls through to the model for the page the
+  // user is on NOW rather than restoring a captured, potentially stale URL.
+  const eventCubeModel = weatherCubeModel ?? (discoCubeActive ? DISCO_BALL_CUBE_MODEL : null)
+  const cubeEventSignal = weatherCubeModel
+    ? mapWeatherSignal?.kind ?? 'none'
+    : discoCubeActive
+      ? 'music'
+      : 'none'
+  const wheelPreviewModel = holdCubePreviewMode === '3d'
+    && wheelFocus
+    ? holdFocusNavigatorModel(
+        wheelFocus,
+        activeTab,
+        mapNight,
+        mapMoon,
+        mapMorning,
+        wornCube,
+      )
+    : undefined
+  const showWheel2DPreview = holdCubePreviewMode === '2d'
+    && wheelFocus != null
   const requestedCubeModel = incomingCall
     // A ringing call outranks anything else the cube is wearing or doing —
     // recording, editing, zooming, a visited profile. Nothing below this
@@ -3658,8 +3953,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     ? FACETIME_CONTACT_MODEL
     : composerOpen && composerEditing
     ? DIRECTOR_BOARD_MODEL
-    : activeTab === 'feed' && committedTab === 'feed' && foodAdOpen
-    ? FOOD_AD_CUBE_MODEL
+    // In the default Hold Menu mode, the centred tile becomes the navigator's
+    // one real 3D object. Calls and the active editor above still outrank it;
+    // ambient rain/music below yield while the user deliberately scrolls.
+    // Ordinary tab/camera/event state resumes when the wheel closes.
+    : wheelPreviewModel
+    ? wheelPreviewModel
     // Zooming pops the navigator to the bare lens and back. Deliberately ABOVE
     // the video branch: zoom is the glass doing the work whether you are
     // taking a photo or recording, so the camcorder gets the same pop and
@@ -3669,6 +3968,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     : activeTab === 'post' && cubeScreen == null
     && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
+    : eventCubeModel
+    ? eventCubeModel
+    : activeTab === 'feed' && committedTab === 'feed' && foodAdOpen
+    ? FOOD_AD_CUBE_MODEL
     : (avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? CAMCORDER_MODEL : undefined)
       ?? (cubeScreen === 'profile-messages' && mailThreadOpen ? MAIL_ENVELOPE_OPEN_MODEL : undefined)
@@ -3694,7 +3997,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // The lens is kept as its own constant but is not used as PHOTO's face
       // any more — the user asked PHOTO to read as "take the picture" rather
       // than "line up the shot".
-      ?? tabNavigatorModel(activeTab, mapNight, mapMoon))
+      ?? tabNavigatorModel(activeTab, mapNight, mapMoon, mapMorning))
 
   // Keep one likely destination decoded but detached. The tab ring's forward
   // neighbour matches a left swipe (Camera -> Feed); the model that was just
@@ -3705,8 +4008,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const cubePreparationModel = requestedCubeModel !== appliedCubeModel
     ? requestedCubeModel
     : cubeScreen
-      ? tabNavigatorModel(activeTab, mapNight, mapMoon)
-      : tabNavigatorModel(TAB_ORDER[nextTabIndex], mapNight, mapMoon)
+      ? tabNavigatorModel(activeTab, mapNight, mapMoon, mapMorning)
+      : tabNavigatorModel(TAB_ORDER[nextTabIndex], mapNight, mapMoon, mapMorning)
 
   const beginCubeSwapEnter = useCallback((withSound: boolean) => {
     if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
@@ -3879,6 +4182,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // wired directly on CubeTab3D rather than through this chain (see
     // onDoubleTap below); nothing else in the app uses that gesture yet.
     if (incomingCall) { acceptIncomingCall(incomingCall); return }
+    // The contact cube remains visible as Home chrome during a video call, but
+    // it must never fall through to the map composer, feed action, camera
+    // shutter, or Mail back route underneath the call surface. Call controls
+    // in FaceTimeOverlay own mute/camera/end explicitly.
+    if (faceTimeActive) { playPop(); return }
     // FPS cube mode: tap fires the weapon
     if (fpsCubeModeRef.current) {
       window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'fire', pressed: true } }))
@@ -3970,7 +4278,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* The wordmark stays up on EVERY subscreen, Settings included: it belongs
           to the home view. Settings reserves room for it in its own top padding
           rather than hiding it. */}
-      <div className={`${styles.universalTitle}${gamesChromeMuted || mailChromeGone ? ` ${styles.chromeHidden}` : ''}`}>
+      <div className={`${styles.universalTitle}${gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}>
         <TopChrome />
       </div>
       {/* The map iframe mounts on first Map visit and survives a tab leave in
@@ -4478,6 +4786,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       <div
         data-poplur-cube
         data-poplur-cube-swap={cubeSwapPhase}
+        data-poplur-cube-event={cubeEventSignal}
         // A ringing call must never fade to idle or hide behind a fullscreen
         // subscreen/ad the way the ordinary chrome does — it forces both off
         // and adds the halo/shake treatment instead.
@@ -4528,8 +4837,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             ref={cubeModelStageRef}
             className={[
               styles.cubeModelStage,
-              wheelFocus ? styles.cubeModelStageWheelPreview : '',
+              showWheel2DPreview ? styles.cubeModelStageWheelPreview : '',
               incomingCall ? styles.cubeGlowing : '',
+              appliedCubeModel === DISCO_BALL_CUBE_MODEL ? styles.cubeDiscoGlisten : '',
             ].filter(Boolean).join(' ')}
           >
             <CubeTab3D
@@ -4595,7 +4905,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 setHoldOpen(true)
               }}
             />
-            {wheelFocus && (wheelFocus.glyph ? (
+            {showWheel2DPreview && wheelFocus && (wheelFocus.glyph ? (
               <span className={styles.wheelCubePreviewGlyph} aria-hidden="true">{wheelFocus.glyph}</span>
             ) : (
               <img
@@ -4633,7 +4943,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           was a testing shortcut that kept leaking into views of the app. Turn
           the cube, or long-press it for the hold menu. */}
 
-      {/* InCallBar removed — active call UI lives inside PhoneScreen's LCD */}
+      {/* Phone owns its full LCD controls while visible. If an audio call is
+          accepted elsewhere (or the user leaves Phone mid-call), this compact
+          bar preserves mute/end controls. Video calls keep their own surface. */}
+      <InCallBar hidden={faceTimeActive || cubeScreen === 'profile-phone'} />
       <WebSignIn />
 
       {/* A ringing call interrupts anything, including the hold menu — unlike

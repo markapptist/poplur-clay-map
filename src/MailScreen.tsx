@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import styles from './MailScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
@@ -167,6 +166,7 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
 }) {
   const cardRef = useRef<HTMLDivElement>(null)
   const drag = useRef({ pointerId: -1, startX: 0, startY: 0, dx: 0, axis: null as 'x' | 'y' | null, from: 0 })
+  const hasSettledOnce = useRef(false)
 
   const settle = useCallback((x: number, animate: boolean) => {
     const card = cardRef.current
@@ -175,7 +175,13 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
     card.style.transform = `translate3d(${x}px, 0, 0)`
   }, [])
 
-  useEffect(() => { settle(open ? -SWIPE_OPEN_PX : 0, true) }, [open, settle])
+  useEffect(() => {
+    // Mount directly at rest. Animating every inbox card from its implicit
+    // transform during Mail's first paint creates compositor work the user
+    // cannot see; later open/close changes still spring normally.
+    settle(open ? -SWIPE_OPEN_PX : 0, hasSettledOnce.current)
+    hasSettledOnce.current = true
+  }, [open, settle])
 
   const onPointerDown = (e: React.PointerEvent) => {
     drag.current = {
@@ -396,7 +402,7 @@ export function FaceTimeOverlay({
       ? direction === 'incoming' ? `${who} is calling you` : `Waiting for ${who} to answer`
       : 'Setting up the call securely'
 
-  return createPortal(
+  return (
     <section className={styles.ftOverlay} role="dialog" aria-modal="true" aria-label={`FaceTime with ${who}`}>
       <header className={styles.ftHeader}>
         <span className={styles.ftBrandMark} aria-hidden="true">P</span>
@@ -453,7 +459,7 @@ export function FaceTimeOverlay({
             <span className={styles.ftCubeFace}>{initial}</span>
           </div>
           <strong>{who}</strong>
-          <span className={styles.ftCallKind}>FaceTime video via Poplur DM</span>
+          <span className={styles.ftCallKind}>Poplur video call</span>
           <b>{callHeading}</b>
           <small>{callDetail}</small>
         </div>
@@ -475,8 +481,7 @@ export function FaceTimeOverlay({
           <span>END</span>
         </button>
       </div>
-    </section>,
-    document.body,
+    </section>
   )
 }
 
@@ -621,11 +626,15 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
   }, [faceTimeWith])
 
   const closeThread = useCallback(() => {
+    // Leaving a DM while its video surface is active must not strand the
+    // WebRTC camera/mic behind the compact audio call bar. End the media
+    // session before unmounting the only video controls.
+    if (faceTimeWith) hangupCall()
     setFaceTimeWith(null)
     setComposerText('')
     setActiveThread(null)
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
-  }, [])
+  }, [faceTimeWith])
 
   // Retain the cube gesture as a convenient back route, but Messages also has
   // an ordinary visible back control now. The home chrome no longer has to sit

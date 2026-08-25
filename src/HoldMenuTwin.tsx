@@ -921,8 +921,15 @@ export default function HoldMenuTwin({
     movedRef.current += Math.abs(dy)
     scrub(-dy) // drag up (negative dy) → advance
   }
-  const onPointerUp = () => {
+  const onPointerUp = (e: React.PointerEvent) => {
     draggingRef.current = false
+    // Safari can coalesce (or omit) intermediate pointermove events during a
+    // fast finger scrub. The release coordinate is an independent backstop so
+    // a real drag can never be mistaken for a stationary tile tap.
+    movedRef.current = Math.max(
+      movedRef.current,
+      Math.hypot(e.clientX - downPtRef.current.x, e.clientY - downPtRef.current.y),
+    )
     if (movedRef.current < 6) {
       const el = document.elementFromPoint(downPtRef.current.x, downPtRef.current.y)
       const btn = (el as Element | null)?.closest('[data-index]') as HTMLElement | null
@@ -1253,6 +1260,12 @@ export default function HoldMenuTwin({
                   consumedTileTapRef.current = false
                   return
                 }
+                // Pointer capture keeps the original tile as the click target
+                // even after a long scrub. Without this guard, lifting a
+                // finger after scrolling could open whichever tile the drag
+                // started on. A fresh tap resets movedRef on pointer-down, so
+                // keyboard and intentional taps are unchanged.
+                if (movedRef.current >= 6) return
                 activateItem(it)
               }}
               onPointerDown={e => e.preventDefault()}

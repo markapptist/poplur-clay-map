@@ -405,19 +405,40 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
 
       {mode === 'searching' && (
         <form className={styles.searchCard} aria-busy={isRouting} onSubmit={e => { e.preventDefault(); void search() }}>
-          <input
-            autoFocus required value={query} disabled={isRouting}
-            onChange={e => { setQuery(e.target.value); setError(null) }}
-            onKeyDown={e => {
-              if (e.key !== 'Enter') return
-              e.preventDefault()
-              void search()
-            }}
-            placeholder="Where to?" className={styles.searchInput}
-          />
+          <div className={styles.searchHeader}>
+            <span className={styles.searchBadge} aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M12 21s6-5.38 6-11A6 6 0 0 0 6 10c0 5.62 6 11 6 11Z" />
+                <circle cx="12" cy="10" r="2.2" />
+              </svg>
+            </span>
+            <span className={styles.searchHeading}>
+              <small>POPLUR DIRECTIONS</small>
+              <strong>Find your way</strong>
+            </span>
+            <span className={styles.searchReady}><i />Ready</span>
+          </div>
+          <label className={styles.destinationField}>
+            <span>DESTINATION</span>
+            <input
+              autoFocus required value={query} disabled={isRouting}
+              onChange={e => { setQuery(e.target.value); setError(null) }}
+              onKeyDown={e => {
+                if (e.key !== 'Enter') return
+                e.preventDefault()
+                void search()
+              }}
+              placeholder="Search a place" className={styles.searchInput}
+            />
+          </label>
+          <div className={styles.routeOrigin} aria-label="Route starts at your location">
+            <span className={styles.originDot} aria-hidden="true" />
+            <span>FROM</span>
+            <strong>Your location</strong>
+          </div>
           <div className={styles.searchRow}>
             <button type="button" className={styles.ghostBtn} disabled={isRouting} onClick={() => { setMode('idle'); setError(null) }}>Cancel</button>
-            <button type="submit" className={styles.goBtn} disabled={isRouting}>{isRouting ? 'Routing…' : 'Search'}</button>
+            <button type="submit" className={styles.goBtn} disabled={isRouting}>{isRouting ? 'Routing…' : 'Search route'}</button>
           </div>
           {error && <div className={styles.err} role="alert" aria-live="polite">{error}</div>}
         </form>

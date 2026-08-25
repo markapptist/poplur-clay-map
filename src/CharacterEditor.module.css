@@ -139,18 +139,21 @@
 
 .avatarHeightControl,
 .avatarStatureControl {
-  position: relative;
   pointer-events: auto;
+  display: grid;
+  place-items: center;
 }
 
 .avatarHeightControl {
-  flex: 0 0 44px;
+  grid-area: height;
   width: 44px;
+  align-self: center;
 }
 
 .avatarStatureControl {
-  flex: 0 1 150px;
-  width: 100%;
+  grid-area: stature;
+  width: min(176px, 100%);
+  justify-self: center;
 }
 
 /* Transparent map-style scale rails. The striped fill is the only rail
@@ -163,8 +166,20 @@
   background: transparent;
 }
 
-.scaleControl { width: 100%; height: 34px; }
-.scaleControlVertical { width: 38px; height: 98px; }
+.scaleControl { width: 100%; height: 48px; grid-template-rows: 12px 1fr; gap: 3px; }
+.scaleControlVertical { width: 44px; height: 120px; grid-template-rows: 14px 1fr; gap: 4px; }
+
+.scaleLabel {
+  color: rgba(255, 249, 253, .98);
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: .11em;
+  line-height: 1;
+  text-transform: uppercase;
+  text-shadow: 0 1px 2px rgba(48, 2, 30, .92), 0 0 8px rgba(255, 82, 173, .72);
+}
+
+.scaleControlVertical .scaleLabel { font-size: 7px; letter-spacing: .05em; }
 
 .scaleRail {
   position: relative;
@@ -252,16 +267,27 @@
 .previewToggle small,
 .previewToggleActive small { font-size: 7px; font-weight: 850; letter-spacing: .12em; }
 
-.studioPopup {
+.studioLayout {
   position: absolute;
   z-index: 5;
-  right: auto;
-  top: 50%;
-  bottom: auto;
-  left: 50%;
-  width: min(calc(100% - 30px), 390px);
+  inset: max(96px, calc(env(safe-area-inset-top, 0px) + 62px)) 8px
+    calc(18px + var(--cube-size, clamp(124px, 37vw, 176px)) + env(safe-area-inset-bottom, 0px)) 8px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 390px);
+  grid-template-areas:
+    'height panel'
+    '. stature';
+  gap: 8px;
+  place-content: center;
+  pointer-events: none;
+}
+
+.studioPopup {
+  position: relative;
+  grid-area: panel;
+  width: 100%;
   max-width: none;
-  max-height: calc(100dvh - 32px);
+  max-height: 100%;
   margin: 0;
   padding: 8px;
   box-sizing: border-box;
@@ -272,6 +298,7 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 18px 42px rgba(37, 4, 26, .34);
   backdrop-filter: blur(22px) saturate(1.1);
   animation: studioPopupIn 180ms ease-out both;
+  pointer-events: auto;
 }
 
 .styleDock {
@@ -291,50 +318,9 @@
   box-shadow: none;
 }
 
-.studioScaleControls {
-  width: 100%;
-  min-height: 104px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  margin: 0 auto;
-  padding: 7px 14px 8px;
-  border-top: 1px solid rgba(74, 25, 58, .14);
-  box-sizing: border-box;
-  pointer-events: auto;
-}
-
-/* The names sit on the frame instead of competing with the compact controls. */
-.scaleExteriorLabel {
-  position: absolute;
-  z-index: 1;
-  color: rgba(255, 249, 253, .96);
-  font-size: 10px;
-  font-weight: 950;
-  letter-spacing: .14em;
-  line-height: 1;
-  pointer-events: none;
-  text-transform: uppercase;
-  text-shadow: 0 1px 2px rgba(48, 2, 30, .92), 0 0 8px rgba(255, 82, 173, .72);
-}
-
-.heightExteriorLabel {
-  bottom: 18px;
-  left: -30px;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-}
-
-.statureExteriorLabel {
-  bottom: -25px;
-  left: calc(50% + 30px);
-  transform: translateX(-50%);
-}
-
 @keyframes studioPopupIn {
-  from { opacity: 0; transform: translate(-50%, calc(-50% + 14px)) scale(.985); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  from { opacity: 0; transform: translateY(14px) scale(.985); }
+  to { opacity: 1; transform: none; }
 }
 
 .dockHeading {

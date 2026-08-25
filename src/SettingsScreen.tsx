@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  cubeTransition, screenTransition, setCubeTransition, setScreenTransition,
-  type CubeTransition, type ScreenTransition,
+  cubeTransition, holdPreviewMode, screenTransition, setCubeTransition,
+  setHoldPreviewMode, setScreenTransition,
+  type CubeTransition, type HoldPreviewMode, type ScreenTransition,
 } from './cubeTransitions'
 import styles from './SettingsScreen.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -132,6 +133,7 @@ export default function SettingsScreen({ bindBack }: {
   const [radioScope, setRadioScopeState] = useState<RadioScope>(readRadioScope)
   const [screenMode, setScreenMode] = useState<ScreenTransition>(() => screenTransition())
   const [cubeMode, setCubeMode] = useState<CubeTransition>(() => cubeTransition())
+  const [holdCubeMode, setHoldCubeMode] = useState<HoldPreviewMode>(() => holdPreviewMode())
   const [controlSide, setControlSideState] = useState<ControlSide>(readControlSide)
   const [profileTheme, setProfileThemeState] = useState<ProfileTheme>(readSelectedProfileTheme)
   const [appIcon, setAppIcon] = useState<AppIconOption>(readSelectedAppIcon)
@@ -389,6 +391,22 @@ export default function SettingsScreen({ bindBack }: {
                   <i>How the navigator swaps when you swipe between tabs.</i>
                 </span>
                 <span className={styles.rowValue}>{cubeMode === 'slide' ? 'Slide' : 'Roll'}</span>
+              </button>
+
+              <button
+                type="button"
+                className={styles.row}
+                onClick={() => {
+                  const next: HoldPreviewMode = holdPreviewMode() === '3d' ? '2d' : '3d'
+                  setHoldPreviewMode(next)
+                  setHoldCubeMode(next)
+                }}
+              >
+                <span className={styles.rowText}>
+                  <b>Hold Menu cubes</b>
+                  <i>Use real 3D objects or lightweight 2D renders while scrolling.</i>
+                </span>
+                <span className={styles.rowValue}>{holdCubeMode === '3d' ? '3D' : '2D'}</span>
               </button>
 
               <button type="button" className={styles.row} onClick={() => openPage('home')}>

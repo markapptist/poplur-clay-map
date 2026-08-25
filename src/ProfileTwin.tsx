@@ -7,7 +7,7 @@ import { usePullToRefresh } from './usePullToRefresh'
 import { OTHER_POPS } from './data'
 import { feedUrl } from './assetPacks'
 import { playPop } from './pop'
-import { isGateMuted, onGateChange } from './audioGate'
+import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
@@ -27,11 +27,18 @@ import {
 } from './notifications'
 import ClaySwayObject, { primeMotionPermission } from './ClaySwayObject'
 import CameraRoll from './CameraRoll'
-import { radiusStats } from './radiusLedger'
+import {
+  radiusStats,
+  recordPostComment,
+  recordPostDislike,
+  recordPostLike,
+} from './radiusLedger'
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 import TabControlRail from './TabControlRail'
+import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
+import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 import {
   DEFAULT_PROFILE_THEME,
   applyNativeProfileTheme,
@@ -693,12 +700,23 @@ export default function ProfileTwin({
   const [faceAsk, setFaceAsk] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
   const [viewerPlaying, setViewerPlaying] = useState(false)
+  const [viewerMuted, setViewerMuted] = useState(isUserMuted)
+  const [viewerCaptionsOn, setViewerCaptionsOn] = useState(false)
+  const [viewerCommentsAtEnd, setViewerCommentsAtEnd] = useState(readFeedCommentsAtEnd)
+  const [viewerCommentOpen, setViewerCommentOpen] = useState(false)
+  const [viewerCommentText, setViewerCommentText] = useState('')
+  const [viewerComments, setViewerComments] = useState<Record<string, string[]>>({})
+  const [deletePromptPost, setDeletePromptPost] = useState<Post | null>(null)
+  const [deletePending, setDeletePending] = useState<{ requestId: string; postId: string } | null>(null)
   // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
   // to the OS share sheet / clipboard for outside.
   const [shareOpen, setShareOpen] = useState(false)
   const [mailingUser, setMailingUser] = useState(false)
   const [mailText, setMailText] = useState('')
   const [shareNote, setShareNote] = useState<string | null>(null)
+  const viewerCovered = shareOpen || viewerCommentOpen || deletePromptPost != null || deletePending != null
+
+  useEffect(() => onGateChange(() => setViewerMuted(isUserMuted())), [])
 
   // The avatar loop is a real decoder, not decorative CSS. Keep it only while
   // the avatar itself is the visible experience; fullscreen Profile layers can
@@ -934,21 +952,21 @@ export default function ProfileTwin({
   // until the user closes/covers it. Only a real lifecycle boundary retires
   // the decoder; there is no foreground timer or replay affordance.
   useEffect(() => {
-    if (viewerIdx == null || document.hidden || shareOpen) retireViewer()
+    if (viewerIdx == null || document.hidden || viewerCovered) retireViewer()
     else setViewerPlaying(true)
-  }, [mode, retireViewer, shareOpen, viewerIdx])
+  }, [mode, retireViewer, viewerCovered, viewerIdx])
 
   useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
     if (!snapshot.isForeground) retireViewer()
   }), [retireViewer])
 
   useEffect(() => {
-    if (shareOpen) retireViewer()
-  }, [retireViewer, shareOpen])
+    if (viewerCovered) retireViewer()
+  }, [retireViewer, viewerCovered])
 
   useEffect(() => {
     const video = viewerVideoRef.current
-    if (!video || viewerIdx == null || !viewerPlaying || shareOpen) return
+    if (!video || viewerIdx == null || !viewerPlaying || viewerCovered) return
     if (!video.getAttribute('src')) {
       const available = mode === 'liked' ? LIKED : profilePostsRef.current
       const selected = available.length ? available[viewerIdx % available.length] : null
@@ -973,7 +991,7 @@ export default function ProfileTwin({
       window.removeEventListener('pagehide', retireViewer)
       releaseViewerMedia(video)
     }
-  }, [mode, retireViewer, shareOpen, viewerIdx, viewerPlaying])
+  }, [mode, retireViewer, viewerCovered, viewerIdx, viewerPlaying])
 
   const openNotifs = () => {
     if (notifCloseTimerRef.current != null) {
@@ -1140,6 +1158,8 @@ export default function ProfileTwin({
   capturingRef.current = capturing
   const captureSourceRef = useRef(captureSource)
   captureSourceRef.current = captureSource
+  const viewerCoveredRef = useRef(viewerCovered)
+  viewerCoveredRef.current = viewerCovered
   useEffect(() => {
     if (!bindArrows) return
     bindArrows(dir => {
@@ -1150,6 +1170,9 @@ export default function ProfileTwin({
         return true
       }
       if (viewerIdxRef.current != null) {
+        // A confirmation/share/comment sheet owns the arrows while it is up;
+        // never switch the post underneath a decision the user is making.
+        if (viewerCoveredRef.current) return true
         const posts = modeRef.current === 'liked' ? LIKED : profilePostsRef.current
         if (!posts.length) return true
         setViewerIdx(i => (i == null ? i : ((i + dir) % posts.length + posts.length) % posts.length))
@@ -1167,10 +1190,12 @@ export default function ProfileTwin({
   // Kept in a ref-read closure so the handler registers once and still sees
   // current state.
   const backStateRef = useRef({
-    shareOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+    shareOpen, viewerCommentOpen, deletePrompt: deletePromptPost != null, deletePending: deletePending != null,
+    viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
   })
   backStateRef.current = {
-    shareOpen, viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+    shareOpen, viewerCommentOpen, deletePrompt: deletePromptPost != null, deletePending: deletePending != null,
+    viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
   }
   const onBackToOwnRef = useRef(onBackToOwn)
   onBackToOwnRef.current = onBackToOwn
@@ -1181,6 +1206,9 @@ export default function ProfileTwin({
     bindGoBack(() => {
       const s = backStateRef.current
       if (s.shareOpen) { setShareOpen(false); return true }
+      if (s.viewerCommentOpen) { setViewerCommentOpen(false); return true }
+      if (s.deletePrompt) { setDeletePromptPost(null); return true }
+      if (s.deletePending) return true
       if (s.viewerIdx != null) { setViewerIdx(null); return true }
       if (s.capturing) { setCapturing(false); return true }
       if (s.showNotifs) { closeNotifsRef.current(); return true }
@@ -1722,6 +1750,96 @@ export default function ProfileTwin({
     }
   }
 
+  const toggleViewerMute = () => {
+    const next = !isUserMuted()
+    setUserMuted(next)
+    setViewerMuted(next)
+    playPop()
+  }
+
+  const toggleViewerCommentsAtEnd = () => {
+    const next = writeFeedCommentsAtEnd(!viewerCommentsAtEnd)
+    setViewerCommentsAtEnd(next)
+    playPop()
+    flashNote(next ? 'End comments on' : 'End comments off')
+  }
+
+  const reactToViewerPost = (direction: 'up' | 'down') => {
+    if (!viewerPost) return
+    const postId = viewerPost.id ?? viewerPost.video
+    if (direction === 'up') recordPostLike(postId, 1)
+    else recordPostDislike(postId, 1)
+    playPop()
+    flashNote(direction === 'up' ? '+1 radius' : '−1 radius')
+  }
+
+  const sendViewerComment = () => {
+    const body = viewerCommentText.trim()
+    if (!body || !viewerPost) return
+    const postId = viewerPost.id ?? viewerPost.video
+    setViewerComments(current => ({
+      ...current,
+      [postId]: [...(current[postId] ?? []), body],
+    }))
+    recordPostComment(postId, 2)
+    setViewerCommentText('')
+    setViewerCommentOpen(false)
+    playPop()
+    flashNote('Comment posted · +2 radius')
+  }
+
+  const confirmViewerDelete = () => {
+    const post = deletePromptPost
+    const postId = post?.id?.trim()
+    if (!post || !postId || deletePending) return
+    const requestId = `profile-delete-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    setDeletePromptPost(null)
+    setDeletePending({ requestId, postId })
+    playPop()
+    if (!postNativeEvent({ type: 'deleteProfilePost', requestId, postId })) {
+      setDeletePending(null)
+      setDeletePromptPost(post)
+      flashNote('Delete is only available in the app')
+    }
+  }
+
+  useEffect(() => {
+    const receiveDeleteResult = (event: Event) => {
+      const result = (event as CustomEvent<{
+        requestId?: string
+        postId?: string
+        ok?: boolean
+        error?: string
+      }>).detail
+      const pending = deletePending
+      if (!pending || result?.requestId !== pending.requestId || result?.postId !== pending.postId) return
+      setDeletePending(null)
+      if (!result.ok) {
+        flashNote(result.error?.trim() || 'Could not delete this post')
+        return
+      }
+      retireViewer()
+      setUploadedPosts(current => current.filter(post => post.id !== pending.postId))
+      setViewerIdx(null)
+      setViewerCommentOpen(false)
+      setShareOpen(false)
+      setDeletePromptPost(null)
+      flashNote('Post deleted')
+      postNativeEvent({ type: 'requestProfilePosts' })
+    }
+    window.addEventListener('poplur-native-profile-post-delete-result', receiveDeleteResult)
+    return () => window.removeEventListener('poplur-native-profile-post-delete-result', receiveDeleteResult)
+  }, [deletePending, retireViewer])
+
+  useEffect(() => {
+    if (!deletePending) return
+    const timer = window.setTimeout(() => {
+      setDeletePending(current => current?.requestId === deletePending.requestId ? null : current)
+      flashNote('Delete timed out — the post is still here')
+    }, 10_000)
+    return () => window.clearTimeout(timer)
+  }, [deletePending])
+
   // Viewer audio follows the gate (mute button, backgrounding).
   useEffect(() => {
     if (viewerIdx == null) return
@@ -1737,9 +1855,17 @@ export default function ProfileTwin({
   const posts = mode === 'liked' ? LIKED : profilePosts
   const viewerPost = viewerIdx != null && posts.length ? posts[viewerIdx % posts.length] : null
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
+  const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
+  const viewerPostComments = viewerPostId ? (viewerComments[viewerPostId] ?? []) : []
   // Someone else's profile: their handle, their picture, and none of your own
   // controls (you cannot set another person's photo or read their bell).
   const visiting = Boolean(viewUser)
+  const canDeleteViewerPost = Boolean(
+    viewerPost?.id
+    && !visiting
+    && mode === 'media'
+    && uploadedPostsLoaded,
+  )
   const displayedProfileTheme = visiting || failedProfileThemeID === selectedProfileTheme.id
     ? DEFAULT_PROFILE_THEME
     : selectedProfileTheme
@@ -1811,6 +1937,7 @@ export default function ProfileTwin({
           aria-hidden="true"
         />
       )}
+      {viewerPost == null && (
       <TabControlRail side={controlSide} label="Profile controls">
         {!visiting && (
           <button
@@ -1847,6 +1974,7 @@ export default function ProfileTwin({
           </button>
         )}
       </TabControlRail>
+      )}
       <div className={styles.header}>
         <div className={styles.avatarWrap}>
           <div className={styles.avatarFrame} />
@@ -2156,7 +2284,7 @@ export default function ProfileTwin({
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}
       {viewerPost && (
         <div className={styles.viewer}>
-          {viewerPostIsVideo && viewerPlaying && !shareOpen ? (
+          {viewerPostIsVideo && viewerPlaying && !viewerCovered ? (
             <video
               key={viewerPost.video}
               ref={viewerVideoRef}
@@ -2178,22 +2306,92 @@ export default function ProfileTwin({
             />
           )}
           <span className={styles.tileScan} aria-hidden="true" />
+          <PostActionRail
+            side={controlSide}
+            label="Profile post controls"
+            muted={viewerMuted}
+            captionsOn={viewerCaptionsOn}
+            commentsAtEnd={viewerCommentsAtEnd}
+            onToggleMute={toggleViewerMute}
+            onShare={() => { playPop(); setShareOpen(true) }}
+            onToggleCaptions={() => { playPop(); setViewerCaptionsOn(value => !value) }}
+            onToggleCommentsAtEnd={toggleViewerCommentsAtEnd}
+            onComment={() => { playPop(); setViewerCommentOpen(true) }}
+            onLike={() => reactToViewerPost('up')}
+            onDislike={() => reactToViewerPost('down')}
+            onDelete={canDeleteViewerPost ? () => { playPop(); setDeletePromptPost(viewerPost) } : undefined}
+            deletePending={deletePending != null}
+          />
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>
-            {/* Real moulded clay, same renderer as the channel arrows — not a
-                CSS impression of it. */}
-            <div className={styles.viewerTools}>
-              <ClayCornerButton
-                kind="share"
-                label="Share this pop"
-                size={46}
-                onPress={() => { playPop(); setShareOpen(true) }}
-              />
-              {/* No ✕ — the cube closes the viewer. */}
-            </div>
           </div>
           <p className={styles.viewerTitle}>{viewerPost.title}</p>
+          {viewerCaptionsOn && (
+            <p className={styles.viewerCaptions} aria-live="polite">{viewerPost.title}</p>
+          )}
           <p className={styles.viewerHint}>▲ ▼ browse your posts</p>
+
+          {viewerCommentOpen && (
+            <div className={styles.viewerDialogScrim} onClick={() => setViewerCommentOpen(false)}>
+              <div
+                className={styles.viewerDialog}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Comment on this post"
+                onClick={event => event.stopPropagation()}
+              >
+                <h2>Comments</h2>
+                <div className={styles.viewerCommentList}>
+                  {viewerPostComments.length ? viewerPostComments.map((comment, index) => (
+                    <p key={`${viewerPostId}-${index}`}><strong>@you</strong> {comment}</p>
+                  )) : (
+                    <p className={styles.viewerDialogEmpty}>No comments yet.</p>
+                  )}
+                </div>
+                <div className={styles.viewerCommentComposer}>
+                  <input
+                    value={viewerCommentText}
+                    placeholder="Say something…"
+                    maxLength={280}
+                    autoFocus
+                    onChange={event => setViewerCommentText(event.target.value)}
+                    onKeyDown={event => { if (event.key === 'Enter') sendViewerComment() }}
+                  />
+                  <button type="button" onClick={sendViewerComment} disabled={!viewerCommentText.trim()}>Post</button>
+                </div>
+                <button type="button" className={styles.viewerDialogCancel} onClick={() => setViewerCommentOpen(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {deletePromptPost && !deletePending && (
+            <div className={styles.viewerDialogScrim} onClick={() => setDeletePromptPost(null)}>
+              <div
+                className={`${styles.viewerDialog} ${styles.viewerDeleteDialog}`}
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="profile-delete-title"
+                aria-describedby="profile-delete-copy"
+                onClick={event => event.stopPropagation()}
+              >
+                <h2 id="profile-delete-title">Delete this post?</h2>
+                <p id="profile-delete-copy">It will be removed from your profile. This cannot be undone.</p>
+                <div className={styles.viewerDialogActions}>
+                  <button type="button" onClick={() => setDeletePromptPost(null)}>Keep it</button>
+                  <button type="button" className={styles.viewerDialogDanger} onClick={confirmViewerDelete}>Delete</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {deletePending && (
+            <div className={styles.viewerDialogScrim}>
+              <div className={`${styles.viewerDialog} ${styles.viewerDeleteDialog}`} role="status" aria-live="polite">
+                <h2>Deleting post…</h2>
+                <p>Removing it from your profile.</p>
+              </div>
+            </div>
+          )}
 
           {/* ── Poplur share alert: DM inside, or hand it to the OS ── */}
           {shareOpen && (

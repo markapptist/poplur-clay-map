@@ -609,6 +609,19 @@
   will-change: bottom;
 }
 
+/* A landmark arrives as the object itself—still no bubble or button backing.
+   This is one finite transform on a cached PNG, not another 3D renderer. */
+.zoomThumbLandmark {
+  animation: zoomLandmarkPop 360ms cubic-bezier(0.18, 0.86, 0.28, 1.28) both;
+  transform-origin: center;
+}
+
+@keyframes zoomLandmarkPop {
+  0% { transform: scale(0.45) rotate(-8deg); opacity: 0; }
+  72% { transform: scale(1.12) rotate(2deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+
 /* The globe stage is the map's outward-facing cube. It keeps a slow 3D turn
    even after the ambient scene idles, so the world still feels alive without
    restarting Mapbox or any WebGL renderer. */

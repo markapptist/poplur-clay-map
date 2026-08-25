@@ -58,6 +58,11 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun1.l.google.com:19302' },
 ]
 
+// Keep unanswered calls bounded. This starts only after signalling has opened
+// the rendezvous (not while the browser is still asking for mic/camera access),
+// and is cleared as soon as the far side's answer is applied.
+const OUTGOING_NO_ANSWER_MS = 30_000
+
 // Signalling transport. Inside the app the native bridge carries the messages;
 // in a plain browser they go to the web Firestore backend, which is loaded
 // lazily so the firebase client never initialises inside the native shell.
@@ -90,6 +95,11 @@ let phase: CallPhase = 'idle'
 let muted = false
 let connectedAt: number | null = null
 let videoRequested = false
+let outgoingNoAnswerTimer: number | null = null
+// Invalidates async media acquisition when the user ends/back-outs before a
+// getUserMedia permission prompt resolves. Every new attempt gets its own id;
+// cleanup advances it so late promises cannot revive a dead call.
+let callAttemptGeneration = 0
 
 // The far side's ICE can arrive before its description is set; applying a
 // candidate before setRemoteDescription throws, so hold them until the
@@ -142,6 +152,21 @@ function setPhase(p: CallPhase): void {
   emit()
 }
 
+function clearOutgoingNoAnswerTimer(): void {
+  if (outgoingNoAnswerTimer === null) return
+  window.clearTimeout(outgoingNoAnswerTimer)
+  outgoingNoAnswerTimer = null
+}
+
+function armOutgoingNoAnswerTimer(id: string): void {
+  clearOutgoingNoAnswerTimer()
+  outgoingNoAnswerTimer = window.setTimeout(() => {
+    outgoingNoAnswerTimer = null
+    if (!isCaller || !outgoing || phase !== 'calling' || callId !== id) return
+    hangup()
+  }, OUTGOING_NO_ANSWER_MS)
+}
+
 function ensureRemoteAudio(): HTMLAudioElement {
   if (remoteAudio) return remoteAudio
   const el = document.createElement('audio')
@@ -153,17 +178,13 @@ function ensureRemoteAudio(): HTMLAudioElement {
   return el
 }
 
-async function ensureLocalMedia(video: boolean): Promise<MediaStream | null> {
-  if (localStream && (!video || localStream.getVideoTracks().length > 0)) return localStream
-  // A call cannot upgrade an already-published audio stream in place without
-  // renegotiating. There is only one active call, so clean up the stale stream
-  // before taking the video-capable one requested by FaceTime.
-  localStream?.getTracks().forEach(track => track.stop())
-  localStream = null
+async function acquireLocalMedia(video: boolean): Promise<MediaStream | null> {
+  // Keep the result local until the caller validates its attempt generation.
+  // A permission prompt can resolve after an old call was canceled and a new
+  // one started; publishing here would let that stale result overwrite the
+  // new call's stream before either continuation can defend itself.
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video })
-    emitMedia()
-    return localStream
+    return await navigator.mediaDevices.getUserMedia({ audio: true, video })
   } catch (err) {
     console.warn(`[webCall] ${video ? 'camera or microphone' : 'microphone'} unavailable/denied`, err)
     return null
@@ -221,6 +242,9 @@ function buildPeer(): RTCPeerConnection {
  */
 export async function placeCall(peerId: string, name: string, callerName?: string, options: CallOptions = {}): Promise<void> {
   if (phase !== 'idle') return
+  const attempt = ++callAttemptGeneration
+  localStream?.getTracks().forEach(track => track.stop())
+  localStream = null
   peerName = name
   isCaller = true
   outgoing = true
@@ -228,8 +252,14 @@ export async function placeCall(peerId: string, name: string, callerName?: strin
   emitMedia()
   setPhase('calling')
 
-  const media = await ensureLocalMedia(videoRequested)
+  const media = await acquireLocalMedia(videoRequested)
+  if (attempt !== callAttemptGeneration || snapshot().phase !== 'calling' || !isCaller) {
+    media?.getTracks().forEach(track => track.stop())
+    return
+  }
   if (!media) { cleanup('ended'); return }
+  localStream = media
+  emitMedia()
 
   // Native bridge inside the app; the web Firestore backend in a plain browser.
   // Either way the rendezvous opens and answers with poplurCallStarted.
@@ -237,13 +267,32 @@ export async function placeCall(peerId: string, name: string, callerName?: strin
   // before it has received the SDP offer so an incoming FaceTime can open its
   // camera and the shared video surface, while ordinary phone calls remain
   // audio-only.
-  sendSignal({ type: 'callStart', otherId: peerId, callerName, video: videoRequested })
+  sendSignal({
+    type: 'callStart',
+    otherId: peerId,
+    callerName,
+    video: videoRequested,
+    requestId: String(attempt),
+  })
 }
 
-async function onCallStarted(id: string, ok: boolean): Promise<void> {
-  if (!isCaller) return
+async function onCallStarted(id: string, ok: boolean, requestId: string): Promise<void> {
+  const responseGeneration = Number(requestId)
+  if (
+    !Number.isFinite(responseGeneration)
+    || responseGeneration !== callAttemptGeneration
+    || !isCaller
+    || phase !== 'calling'
+  ) {
+    // The host may have opened the Firestore rendezvous before the caller
+    // canceled. Close that late document so the other person never rings for
+    // a call that no longer has a UI/media owner.
+    if (ok && id) sendSignal({ type: 'callEnd', callId: id })
+    return
+  }
   if (!ok || !id) { cleanup('ended'); return }
   callId = id
+  armOutgoingNoAnswerTimer(id)
   pc = buildPeer()
   const offer = await pc.createOffer({
     offerToReceiveAudio: true,
@@ -258,7 +307,10 @@ async function onCallStarted(id: string, ok: boolean): Promise<void> {
  * caller's offer then arrives as `poplurCallDescription` and we answer it.
  */
 export async function acceptCall(id: string, name: string, options: CallOptions = {}): Promise<void> {
-  if (phase === 'connected' || phase === 'connecting') return
+  if (phase !== 'idle') return
+  const attempt = ++callAttemptGeneration
+  localStream?.getTracks().forEach(track => track.stop())
+  localStream = null
   callId = id
   peerName = name
   isCaller = false
@@ -267,8 +319,14 @@ export async function acceptCall(id: string, name: string, options: CallOptions 
   emitMedia()
   setPhase('connecting')
 
-  const media = await ensureLocalMedia(videoRequested)
+  const media = await acquireLocalMedia(videoRequested)
+  if (attempt !== callAttemptGeneration || snapshot().phase !== 'connecting' || isCaller || callId !== id) {
+    media?.getTracks().forEach(track => track.stop())
+    return
+  }
   if (!media) { hangup(); return }
+  localStream = media
+  emitMedia()
 
   pc = buildPeer()
   sendSignal({ type: 'callAccept', callId })
@@ -282,6 +340,7 @@ async function onRemoteDescription(sdpType: string, sdp: string): Promise<void> 
       await pc.setRemoteDescription({ type: 'answer', sdp })
       remoteDescriptionSet = true
       flushCandidates()
+      clearOutgoingNoAnswerTimer()
       setPhase('connecting')
     } else {
       if (sdpType !== 'offer') return
@@ -323,7 +382,17 @@ export function hangup(): void {
   cleanup('ended')
 }
 
+/** Decline a ringing call through whichever signalling transport is active. */
+export function declineCall(id: string): void {
+  const resolved = id.trim()
+  if (!resolved) return
+  sendSignal({ type: 'callDecline', callId: resolved })
+  if (callId === resolved && phase !== 'idle') cleanup('ended')
+}
+
 function cleanup(finalPhase: CallPhase): void {
+  callAttemptGeneration += 1
+  clearOutgoingNoAnswerTimer()
   try { pc?.getSenders().forEach(s => s.track?.stop()) } catch { /* already closing */ }
   try { pc?.close() } catch { /* already closed */ }
   pc = null
@@ -359,7 +428,7 @@ export function installCallBridge(): void {
     if (!d || typeof d !== 'object') return
     switch (d.type) {
       case 'poplurCallStarted':
-        void onCallStarted(String(d.callId ?? ''), d.ok !== false)
+        void onCallStarted(String(d.callId ?? ''), d.ok !== false, String(d.requestId ?? ''))
         break
       case 'poplurCallDescription':
         if (d.callId === callId) void onRemoteDescription(String(d.sdpType ?? ''), String(d.sdp ?? ''))

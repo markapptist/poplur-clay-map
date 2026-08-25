@@ -10,6 +10,7 @@ import { acquireClayRenderer, blitClayScene, releaseClayRenderer } from './clayB
 
 const CLAY = 0xef62a6
 const GOLD = 0xffc93d
+const DANGER = 0xe33f58
 
 // Lightning bolt profile, centred.
 function boltShape(): THREE.Shape {
@@ -97,7 +98,7 @@ export default function ClayCornerButton({
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
     | 'heart' | 'thumbUp' | 'thumbDown' | 'comment' | 'comments' | 'play' | 'seekBack' | 'seekFwd'
-    | 'roll' | 'live'
+    | 'roll' | 'live' | 'delete'
   active?: boolean
   label: string
   onPress: () => void
@@ -181,6 +182,7 @@ export default function ClayCornerButton({
     const restEmissive = new THREE.Color(0x2a0616)
     const litEmissive = new THREE.Color(0xff2d96)
     const clayColor = new THREE.Color(CLAY)
+    const dangerColor = new THREE.Color(DANGER)
     const goldColor = new THREE.Color(GOLD)
     const litHeart = new THREE.Color(0xff2d96)   // favourited: hot pink clay
     const litLive = new THREE.Color(0xff2d4b)   // on air: the recording red
@@ -318,6 +320,20 @@ export default function ClayCornerButton({
       const glass = mesh(discShape(0.22))
       glass.position.set(0.25, 0, 0.42)
       root.add(body, finder, lens, glass)
+    } else if (kind === 'delete') {
+      // A real moulded bin, rather than borrowing the close X. Destructive
+      // ownership is then legible before the label is spoken or read.
+      const body = mesh(barShape(1.46, 1.62, 0.22))
+      body.position.set(0, -0.18, 0)
+      const lid = mesh(barShape(1.92, 0.28, 0.13))
+      lid.position.set(0, 0.86, 0.05)
+      const handle = mesh(barShape(0.72, 0.24, 0.12))
+      handle.position.set(0, 1.15, 0.04)
+      const grooveLeft = mesh(barShape(0.16, 1.04, 0.08), creamMat)
+      grooveLeft.position.set(-0.38, -0.2, 0.27)
+      const grooveRight = mesh(barShape(0.16, 1.04, 0.08), creamMat)
+      grooveRight.position.set(0.38, -0.2, 0.27)
+      root.add(body, lid, handle, grooveLeft, grooveRight)
     } else if (kind === 'roll') {
       // Camera roll: two moulded photo frames, the back one peeking out from
       // behind the front — a stack of pictures you can reach into. The front
@@ -367,7 +383,7 @@ export default function ClayCornerButton({
         const litColor = kind === 'heart' || kind === 'comments'
           ? litHeart
           : kind === 'live' ? litLive : goldColor
-        mat.color.copy(lit ? litColor : clayColor)
+        mat.color.copy(lit ? litColor : kind === 'delete' ? dangerColor : clayColor)
       }
       pulse.current += (0 - pulse.current) * 0.12
       const restScale = kind === 'capture' ? 1.32 : kind === 'close' ? 1.18 : 0.9
@@ -414,7 +430,7 @@ export default function ClayCornerButton({
     close: '✕', flash: '⚡', flip: '⟳', share: '↑', link: '🔗',
     send: '➤', capture: '◉', mail: '✉', search: '⌕', locate: '◎',
     comment: '◌', comments: '•••', heart: '♥', thumbUp: '👍', thumbDown: '👎',
-    roll: '▤', live: '⦿',
+    roll: '▤', live: '⦿', delete: '⌫',
   }
 
   if (prism) {

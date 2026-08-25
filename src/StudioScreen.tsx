@@ -3,6 +3,7 @@ import styles from './StudioScreen.module.css'
 import { playPop } from './pop'
 import { modelSprite } from './modelSprite'
 import { requestAudioFocus, releaseAudioFocus, registerAudioOwner } from './audioFocus'
+import { setMusicPlayback } from './musicPlayback'
 import { mixdown, type RenderTarget } from './studioMixdown'
 import { HOME, haversineKm } from './reach'
 import { OTHER_POPS } from './data'
@@ -275,7 +276,12 @@ export default function StudioScreen({
       setRecording(false)
       stopCaptureRef.current(true)
     })
-    return () => { unregister(); releaseAudioFocus('studio') }
+    return () => {
+      unregister()
+      setMusicPlayback('studio-take', false)
+      setMusicPlayback('studio-song', false)
+      releaseAudioFocus('studio')
+    }
   }, [])
 
   // Tell the shell which stage of the pipeline is up, so the cube navigator
@@ -652,9 +658,17 @@ export default function StudioScreen({
   const startedAt = useRef(0)
   const nextStepRef = useRef({ step: 0, when: 0 })
   useEffect(() => {
-    if (!playing) return
+    if (!playing) {
+      setMusicPlayback('studio-transport', false)
+      return
+    }
     const { ctx } = engine()
+    let disposed = false
     void ctx.resume()
+      .then(() => {
+        if (!disposed && ctx.state === 'running') setMusicPlayback('studio-transport', true)
+      })
+      .catch(() => setMusicPlayback('studio-transport', false))
     // The take rides the transport, GarageBand-style: press play and your
     // recording comes in over the beat from the top, gated by the Lead Vocal
     // lane's mute. playTake stays for auditioning the raw take alone.
@@ -699,7 +713,13 @@ export default function StudioScreen({
       const total = 16 * BARS * stepDur()
       setPos(((ctx.currentTime - startedAt.current) % total) / total)
     }, 25)
-    return () => { window.clearInterval(tick); take?.pause(); songAudio.current?.pause() }
+    return () => {
+      disposed = true
+      setMusicPlayback('studio-transport', false)
+      window.clearInterval(tick)
+      take?.pause()
+      songAudio.current?.pause()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, genre])
 
@@ -1433,7 +1453,7 @@ export default function StudioScreen({
         </div>
       </header>
 
-      {songUrl && <audio ref={songAudio} src={songUrl} preload="auto" />}
+      {songUrl && <audio ref={songAudio} data-poplur-music="studio-song" src={songUrl} preload="auto" />}
       {aiError && <div className={styles.aiNotice} role="status">{aiError}</div>}
       {nav === 'EXPORT' && (
         <section className={styles.card} aria-label="Export">
@@ -1577,7 +1597,7 @@ export default function StudioScreen({
               <i key={i} style={{ height: `${Math.min(100, h)}%` }} />
             ))}
           </div>
-          {takeUrl && <audio ref={takeAudio} src={takeUrl} preload="auto" />}
+          {takeUrl && <audio ref={takeAudio} data-poplur-music="studio-take" src={takeUrl} preload="auto" />}
 
           <div className={styles.recGrid}>
             <div className={styles.micWrap}>

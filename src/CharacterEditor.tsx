@@ -115,7 +115,8 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
         <span className={styles.characterShadow} aria-hidden='true' />
       </div>
 
-      {studioOpen && <aside className={styles.studioPopup} aria-label='Character studio'>
+      {studioOpen && <div className={styles.studioLayout}>
+      <aside className={styles.studioPopup} aria-label='Character studio'>
       <section className={styles.styleDock} aria-label='Build your character'>
         <div className={styles.dockHeading}>
           <strong>Character studio</strong>
@@ -164,17 +165,14 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
           </>}
         </div>
       </section>
-      <div className={styles.studioScaleControls} aria-label='Character size controls'>
-        <div className={styles.avatarHeightControl}>
-          <ScaleKnobControl label='Height' value={character.heightScale ?? 0.95} vertical onChange={value => apply({ heightScale: value })} />
-        </div>
-        <div className={styles.avatarStatureControl}>
-          <ScaleKnobControl label='Stature' value={character.statureScale ?? 0.96} onChange={value => apply({ statureScale: value })} />
-        </div>
+      </aside>
+      <div className={styles.avatarHeightControl} aria-label='Character height control'>
+        <ScaleKnobControl label='Height' value={character.heightScale ?? 0.95} vertical onChange={value => apply({ heightScale: value })} />
       </div>
-      <span className={`${styles.scaleExteriorLabel} ${styles.heightExteriorLabel}`} aria-hidden='true'>Height</span>
-      <span className={`${styles.scaleExteriorLabel} ${styles.statureExteriorLabel}`} aria-hidden='true'>Stature</span>
-      </aside>}
+      <div className={styles.avatarStatureControl} aria-label='Character stature control'>
+        <ScaleKnobControl label='Stature' value={character.statureScale ?? 0.96} onChange={value => apply({ statureScale: value })} />
+      </div>
+      </div>}
     </main>
   )
 }
@@ -201,7 +199,8 @@ function ScaleKnobControl({ label, value, vertical = false, onChange }: { label:
     const ratio = vertical
       ? 1 - Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
       : Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
-    onChange(steps[Math.round(ratio * (steps.length - 1))])
+    const next = Math.round(ratio * (steps.length - 1))
+    if (next !== active) onChange(steps[next])
   }
   const updateFromKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
@@ -210,8 +209,10 @@ function ScaleKnobControl({ label, value, vertical = false, onChange }: { label:
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? steps.length - 1 : Math.max(0, Math.min(steps.length - 1, active + delta))
     onChange(steps[next])
   }
-  return <div className={vertical ? styles.scaleControlVertical : styles.scaleControl} role='group' aria-label={`${label} control`}>
-    <div className={styles.scaleRail} role='slider' tabIndex={0} aria-label={label} aria-valuemin={0} aria-valuemax={3} aria-valuenow={active} aria-valuetext={SCALE_LABELS[active]} style={{ '--scale-progress': `${active / (steps.length - 1) * 100}%`, '--scale-position': `${active / (steps.length - 1) * 100}%` } as React.CSSProperties} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); updateFromPointer(event) }} onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) updateFromPointer(event) }} onKeyDown={updateFromKey}>
+  const labelId = `character-${label.toLowerCase()}-label`
+  return <div className={vertical ? styles.scaleControlVertical : styles.scaleControl} role='group' aria-labelledby={labelId}>
+    <span id={labelId} className={styles.scaleLabel}>{label}</span>
+    <div className={styles.scaleRail} role='slider' tabIndex={0} aria-labelledby={labelId} aria-valuemin={0} aria-valuemax={3} aria-valuenow={active} aria-valuetext={SCALE_LABELS[active]} style={{ '--scale-progress': `${active / (steps.length - 1) * 100}%`, '--scale-position': `${active / (steps.length - 1) * 100}%` } as React.CSSProperties} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); updateFromPointer(event) }} onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) updateFromPointer(event) }} onKeyDown={updateFromKey}>
       <span className={styles.scaleThumb} aria-hidden='true'>{SCALE_LABELS[active]}</span>
     </div>
   </div>
