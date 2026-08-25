@@ -490,7 +490,7 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
 
         <div className={themeRebooting ? `${styles.lcd} ${styles.lcdBlue}` : styles.lcd} aria-live="polite">
           <div className={styles.topline} aria-hidden="true">
-            <span>▮▮▮ ⋮</span><span>▮▮</span>
+            <span>PT&amp;T WIRELESS</span><span>▮▮▮</span>
           </div>
 
           {themeRebooting ? (

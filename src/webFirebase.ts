@@ -17,6 +17,7 @@ import {
   type Auth, type User,
 } from 'firebase/auth'
 import { getFirestore, type Firestore } from 'firebase/firestore'
+import { setAccountAuth } from './accountStore'
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDbDM14RX9pIBk4NB-paCArt_7UZBt6OYM',
@@ -56,7 +57,14 @@ export function currentDisplayName(): string | null {
 }
 
 export function onUser(cb: (user: User | null) => void): () => void {
-  return onAuthStateChanged(ensure().auth, cb)
+  return onAuthStateChanged(ensure().auth, user => {
+    setAccountAuth(user ? {
+      uid: user.uid,
+      displayName: user.displayName ?? (user.email ? user.email.split('@')[0] : null),
+      source: 'firebase',
+    } : null)
+    cb(user)
+  })
 }
 
 export async function webSignIn(email: string, password: string): Promise<User> {

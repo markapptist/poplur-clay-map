@@ -27,6 +27,11 @@ import {
 } from './notifications'
 import ClaySwayObject, { primeMotionPermission } from './ClaySwayObject'
 import CameraRoll from './CameraRoll'
+import CameraARButton from './CameraARButton'
+import ARFilters from './ARFilters'
+import FaceAROverlay from './FaceAROverlay'
+import { arFilterCatalog } from './arFilterCatalog'
+import type { Detection } from './mlDetect'
 import {
   radiusStats,
   recordPostComment,
@@ -48,6 +53,12 @@ import {
 } from './profileThemes'
 import { takeProfileMode } from './profileMode'
 import { refreshedProfilePhotoSource, usableProfilePhoto } from './profilePhoto'
+import {
+  accountSnapshot,
+  onAccountChange,
+  setAccountAuth,
+  setAccountProfile,
+} from './accountStore'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -484,6 +495,9 @@ function ProfileCallOverlay({ who, video, onEnd }: { who: string; video: boolean
   const [muted, setMuted] = useState(false)
   const [cameraOn, setCameraOn] = useState(video)
   const [elapsed, setElapsed] = useState(0)
+  const [arOpen, setArOpen] = useState(false)
+  const [arFilter, setArFilter] = useState('none')
+  const arFilterCss = arFilterCatalog().filters.find(filter => filter.id === arFilter)?.css ?? 'none'
 
   useEffect(() => {
     let alive = true
@@ -525,12 +539,23 @@ function ProfileCallOverlay({ who, video, onEnd }: { who: string; video: boolean
 
   return createPortal(
     <section className={styles.callOverlay} role="dialog" aria-modal="true" aria-label={`${video ? 'Video' : 'Voice'} call with ${who}`}>
-      {video && <video ref={localVideoRef} autoPlay muted playsInline className={cameraOn ? styles.callVideo : `${styles.callVideo} ${styles.callVideoOff}`} />}
+      {video && <video ref={localVideoRef} autoPlay muted playsInline className={cameraOn ? styles.callVideo : `${styles.callVideo} ${styles.callVideoOff}`} style={arFilterCss === 'none' ? undefined : { filter: arFilterCss }} />}
+      {video && cameraOn && arFilter !== 'none' && (
+        <FaceAROverlay detections={[PROFILE_SELFIE_FACE]} filter={arFilter} mirrored allow3D={false} />
+      )}
       <div className={styles.callIdentity}>
         <img src={AVATAR_BY_HANDLE[who] ?? 'mark_talk0.png'} alt="" />
         <h2>{who}</h2>
         <p>{connected ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}` : 'CONNECTING...'}</p>
       </div>
+      {video && (
+        <div className={styles.callSideRail}>
+          <CameraARButton active={arOpen} size={42} onToggle={() => setArOpen(open => !open)} />
+        </div>
+      )}
+      {video && arOpen && (
+        <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
+      )}
       <div className={styles.callControls}>
         <button type="button" aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={muted} onClick={toggleMute}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
@@ -547,6 +572,19 @@ function ProfileCallOverlay({ who, video, onEnd }: { who: string; video: boolean
     </section>,
     document.body,
   )
+}
+
+// The selfie and one-to-one call camera are the only image subjects in these
+// flows. A fixed anchor avoids a continuous detector while still giving every
+// non-3D filter a clear, stable place to land over the local preview.
+const PROFILE_SELFIE_FACE: Detection = {
+  id: 'profile-selfie-face',
+  x: 0.29,
+  y: 0.20,
+  w: 0.42,
+  h: 0.42,
+  label: 'You',
+  confidence: 1,
 }
 
 export default function ProfileTwin({
@@ -728,6 +766,8 @@ export default function ProfileTwin({
   const [facingMode, setFacingMode] = useState<CaptureFacing>('user')
   const [torchOn, setTorchOn] = useState(false)
   const [torchAvailable, setTorchAvailable] = useState(false)
+  const [selfieArOpen, setSelfieArOpen] = useState(false)
+  const [selfieArFilter, setSelfieArFilter] = useState('none')
   const [showNotifs, setShowNotifs] = useState(false)
   const [notifsClosing, setNotifsClosing] = useState(false)
   const [faceAsk, setFaceAsk] = useState(false)
@@ -815,7 +855,7 @@ export default function ProfileTwin({
     const fromQuery = usableUsername(params?.get('username'))
     let stored: string | null = null
     try { stored = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
-    return fromQuery ?? stored ?? PROFILE_NAME_FALLBACK
+    return fromQuery ?? accountSnapshot().username ?? stored ?? PROFILE_NAME_FALLBACK
   })
   // Editing your own handle. There was no way to set one anywhere in the
   // shipping app: the only editor was the native EditProfileView, which the web
@@ -827,8 +867,19 @@ export default function ProfileTwin({
   if (persistedName.current === null) {
     // Seeded from real sources only. The fallback is a placeholder, never
     // something the account is believed to already hold.
-    try { persistedName.current = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
+    try {
+      persistedName.current = accountSnapshot().username
+        ?? usableUsername(window.localStorage.getItem('poplur.username'))
+    } catch { persistedName.current = accountSnapshot().username }
   }
+
+  useEffect(() => onAccountChange(snapshot => {
+    if (viewUser) return
+    const next = usableUsername(snapshot.username)
+    if (!next || next === persistedName.current) return
+    persistedName.current = next
+    setUsername(next)
+  }), [viewUser])
 
   const commitUsername = () => {
     setEditingName(false)
@@ -836,23 +887,48 @@ export default function ProfileTwin({
     if (!next || next === persistedName.current) return
     persistedName.current = next
     setUsername(next)
+    setAccountProfile({ username: next }, 'local')
     try { window.localStorage.setItem('poplur.username', next) } catch { /* embedded */ }
-    // Storage is the fallback, not the record. The account is the record, and
-    // this is the only path that reaches it.
+    // The canonical account store is the client-side source of truth here;
+    // the native bridge persists the same change to the remote account when
+    // this page is running inside the app shell.
     postNativeEvent({ type: 'saveProfileUsername', username: next })
   }
 
   useEffect(() => {
     if (!isNativeShell()) return
-    type NativeProfile = { username?: string; business?: boolean; photo?: string; video?: string }
+    type NativeProfile = {
+      uid?: string
+      username?: string
+      displayName?: string
+      business?: boolean
+      photo?: string
+      profilePictureURL?: string
+      video?: string
+      selfieVideoURL?: string
+    }
     const applyProfile = (value: unknown) => {
       const prof = value as NativeProfile
+      if (prof?.uid) {
+        setAccountAuth({ uid: prof.uid, displayName: prof.displayName, source: 'native' })
+      }
       const nextUsername = usableUsername(prof?.username)
       if (nextUsername) {
+        setAccountProfile({
+          username: nextUsername,
+          ...(prof.displayName !== undefined ? { displayName: prof.displayName } : {}),
+          ...(prof.business !== undefined ? { business: prof.business } : {}),
+        }, 'native')
         setUsername(nextUsername)
         try { window.localStorage.setItem('poplur.username', nextUsername) } catch { /* embedded */ }
         persistedName.current = nextUsername
       } else {
+        if (prof.displayName !== undefined || prof.business !== undefined) {
+          setAccountProfile({
+            ...(prof.displayName !== undefined ? { displayName: prof.displayName } : {}),
+            ...(prof.business !== undefined ? { business: prof.business } : {}),
+          }, 'native')
+        }
         // The ACCOUNT has no username and this device does — so lift ours up.
         //
         // The username only ever lived in this localStorage key. Nothing wrote
@@ -867,8 +943,9 @@ export default function ProfileTwin({
         try { local = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
         if (local) postNativeEvent({ type: 'saveProfileUsername', username: local })
       }
-      const nativePhoto = usableProfilePhoto(prof?.photo)
+      const nativePhoto = usableProfilePhoto(prof?.photo ?? prof?.profilePictureURL)
       if (nativePhoto) {
+        setAccountProfile({ photoURL: nativePhoto }, 'native')
         setPhoto(nativePhoto)
         // A native response may repeat the same durable URL after WebKit has
         // cached an earlier failure. State equality alone would not retry it.
@@ -886,8 +963,9 @@ export default function ProfileTwin({
           postNativeEvent({ type: 'saveProfilePhoto', photo: localPhoto })
         }
       }
-      const nativeVideo = usableSelfieVideo(prof?.video)
+      const nativeVideo = usableSelfieVideo(prof?.video ?? prof?.selfieVideoURL)
       if (nativeVideo) {
+        setAccountProfile({ videoURL: nativeVideo }, 'native')
         setSelfieVideo(nativeVideo)
         writeStoredSelfieVideo(nativeVideo)
         window.dispatchEvent(new CustomEvent('poplur-profile-media', {
@@ -1512,6 +1590,7 @@ export default function ProfileTwin({
     writeStoredPhoto(preview)
     setSelfieVideo(source)
     writeStoredSelfieVideo(source)
+    setAccountProfile({ photoURL: preview, videoURL: source }, 'local')
     if (nativePayload) postNativeEvent(nativePayload)
     // The poster is the profile picture, and it must reach the ACCOUNT, not
     // just this device: the shell uploads it and writes profilePictureURL.
@@ -1688,6 +1767,8 @@ export default function ProfileTwin({
     }
   }
 
+  const selfieArFilterCss = arFilterCatalog().filters.find(filter => filter.id === selfieArFilter)?.css ?? 'none'
+
   // Keep capture inside the Home stacking tree. Portalling it to <body> put it
   // above the shared cube/arrows regardless of their z-index, so the camera
   // lost the app's universal navigation controls.
@@ -1711,9 +1792,43 @@ export default function ProfileTwin({
             <p>Camera unavailable here.<br />Try a selfie video from your camera roll.</p>
           </div>
         ) : (
-          <video ref={videoRef} className={facingMode === 'user' ? styles.video : `${styles.video} ${styles.videoBack}`} playsInline muted />
+          <video
+            ref={videoRef}
+            className={facingMode === 'user' ? styles.video : `${styles.video} ${styles.videoBack}`}
+            style={selfieArFilterCss === 'none' ? undefined : { filter: selfieArFilterCss }}
+            playsInline
+            muted
+          />
+        )}
+        {captureSource === 'camera' && !camError && selfieArFilter !== 'none' && (
+          <FaceAROverlay
+            detections={[PROFILE_SELFIE_FACE]}
+            filter={selfieArFilter}
+            mirrored={facingMode === 'user'}
+            allow3D={false}
+          />
         )}
         {captureSource === 'camera' && <div className={styles.vfRing} />}
+        {captureSource === 'camera' && (
+          <div className={styles.captureSideRail}>
+            <CameraARButton active={selfieArOpen} size={42} onToggle={() => setSelfieArOpen(open => !open)} />
+            <button
+              type="button"
+              className={styles.captureFlip}
+              aria-label="Switch selfie camera"
+              onClick={() => {
+                playPop()
+                setFacingMode(mode => mode === 'user' ? 'environment' : 'user')
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h9l-2.4-2.4M17 17H8l2.4 2.4M18 7a7 7 0 010 10M6 17a7 7 0 010-10" /></svg>
+              <span>FLIP</span>
+            </button>
+          </div>
+        )}
+        {captureSource === 'camera' && selfieArOpen && (
+          <ARFilters active={selfieArFilter} onPick={setSelfieArFilter} onClose={() => setSelfieArOpen(false)} />
+        )}
         <div className={styles.captureBar}>
           {captureSource === 'camera' && cameraRollThumb && (
             <button

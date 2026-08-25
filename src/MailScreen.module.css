@@ -286,18 +286,24 @@
 }
 
 .dmCallButton {
-  width: 36px;
-  height: 36px;
+  width: 43px;
+  height: 43px;
   display: grid;
   place-items: center;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(244, 69, 156, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(244, 69, 156, 0.42);
-  color: #c81d5e;
+  align-content: center;
+  gap: 1px;
+  border: 1px solid rgba(233, 39, 132, 0.52);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 32% 18%, rgba(255, 255, 255, 0.82), transparent 24%),
+    linear-gradient(145deg, rgba(255, 202, 229, 0.92), rgba(255, 96, 172, 0.62) 58%, rgba(192, 20, 95, 0.8));
+  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.66), 0 3px 0 rgba(145, 18, 71, 0.48), 0 8px 14px rgba(173, 23, 88, 0.15);
+  color: #8e174c;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
+
+.dmCallButton:active:not(:disabled) { transform: translateY(2px); box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.55), 0 1px 0 rgba(145, 18, 71, 0.48); }
 
 .dmCallButton:disabled {
   opacity: 0.38;
@@ -305,9 +311,14 @@
 }
 
 .dmCallButton svg {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   fill: currentColor;
+}
+
+.dmCallButton span {
+  font: 900 6.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
 }
 
 .threadBack {
@@ -345,9 +356,88 @@
   -webkit-overflow-scrolling: touch;
 }
 
-.bubble {
+.messageWrap {
   align-self: flex-start;
+  display: grid;
+  justify-items: start;
+  gap: 3px;
   max-width: 78%;
+}
+
+.messageWrapMine {
+  align-self: flex-end;
+  justify-items: end;
+}
+
+/* Sticker messages are their own clay objects, not text bubbles with a flat
+   image dropped inside. They stay small enough to keep the conversation
+   readable and use only CSS paint — no extra decoder, canvas or WebGL work. */
+.stickerMessage {
+  width: min(154px, 58vw);
+  padding: 1px;
+}
+
+.stickerArt {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 1px;
+  width: 100%;
+  aspect-ratio: 1.18;
+  overflow: hidden;
+  border: 2px solid rgba(255, 232, 246, 0.9);
+  border-radius: 29% 24% 31% 20%;
+  color: #fff;
+  background:
+    radial-gradient(circle at 28% 16%, rgba(255, 255, 255, 0.76), transparent 18%),
+    linear-gradient(145deg, #ff92ca, #f52187 54%, #8e104b);
+  box-shadow:
+    inset 0 4px 10px rgba(255, 255, 255, 0.47),
+    inset 0 -8px 12px rgba(91, 5, 45, 0.38),
+    0 5px 0 rgba(97, 9, 49, 0.56),
+    0 10px 18px rgba(134, 16, 75, 0.25);
+  transform: rotate(-2deg);
+  text-align: center;
+  text-shadow: 0 2px 0 #8a164b, 0 4px 8px rgba(64, 0, 28, 0.56);
+}
+
+.stickerArt strong,
+.stickerIcon { position: relative; z-index: 1; }
+.stickerArt strong { max-width: 86%; font: 950 clamp(14px, 4.3vw, 21px)/.9 "Arial Rounded MT Bold", ui-rounded, system-ui, sans-serif; letter-spacing: -.045em; }
+.stickerIcon { font: 950 clamp(30px, 10vw, 48px)/.72 Georgia, serif; }
+.stickerIconLetter { display: block; }
+.stickerGlow { position: absolute; z-index: 0; width: 68%; aspect-ratio: 1; border-radius: 50%; background: rgba(255,255,255,.2); filter: blur(7px); transform: translate(-24%, -12%); }
+.stickerLiveDot { position: absolute; z-index: 2; top: 15%; right: 16%; width: 11px; aspect-ratio: 1; border-radius: 50%; background: #5dffbb; box-shadow: 0 0 0 3px rgba(255,255,255,.68), 0 0 12px #4cffad; }
+
+.stickerArt[data-sticker='heart'] { background: radial-gradient(circle at 28% 16%, rgba(255,255,255,.8), transparent 18%), linear-gradient(145deg, #ffb1cc, #eb3e75 54%, #941d45); transform: rotate(2deg); }
+.stickerArt[data-sticker='heart'] .stickerIcon { color: #fff8fc; font-size: clamp(43px, 13vw, 60px); }
+.stickerArt[data-sticker='here'] { background: radial-gradient(circle at 28% 16%, rgba(255,255,255,.74), transparent 18%), linear-gradient(145deg, #84eaff, #2db8df 51%, #15548f); transform: rotate(-3deg); }
+.stickerArt[data-sticker='here'] .stickerIcon { width: 38%; aspect-ratio: .84; display: grid; place-items: center; border-radius: 58% 58% 62% 10%; background: #f72686; border: 2px solid #ffd0e8; transform: rotate(45deg); font: 950 clamp(14px, 4.4vw, 22px)/1 ui-rounded, system-ui; }
+.stickerArt[data-sticker='here'] .stickerIconLetter { transform: rotate(-45deg); }
+.stickerArt[data-sticker='live'] { background: radial-gradient(circle at 72% 17%, rgba(255,255,255,.66), transparent 17%), linear-gradient(145deg, #6c2e93, #351454 53%, #160823); transform: rotate(1deg); }
+.stickerArt[data-sticker='live'] .stickerIcon { color: #64ffbf; font: 950 68px/.35 system-ui; text-shadow: 0 0 12px #54ffb2; }
+.stickerArt[data-sticker='call'] { background: radial-gradient(circle at 28% 16%, rgba(255,255,255,.76), transparent 18%), linear-gradient(145deg, #ffd588, #ed8d38 52%, #a73d19); transform: rotate(-1deg); }
+.stickerArt[data-sticker='call'] .stickerIcon { font: 950 clamp(45px, 13vw, 61px)/.63 system-ui; transform: rotate(-25deg); }
+.stickerArt[data-sticker='hype'] { background: radial-gradient(circle at 28% 16%, rgba(255,255,255,.76), transparent 18%), linear-gradient(145deg, #d2a9ff, #874cef 52%, #3e176f); transform: rotate(3deg); }
+.stickerArt[data-sticker='hype'] .stickerIcon { color: #fff287; text-shadow: 0 0 11px rgba(255,242,135,.84), 0 2px 0 #7b3cca; }
+
+.stickerArt[data-sticker-size='tray'] {
+  width: 82px;
+  min-width: 82px;
+  border-width: 1px;
+  border-radius: 26% 22% 29% 19%;
+  box-shadow: inset 0 3px 7px rgba(255,255,255,.46), inset 0 -5px 8px rgba(91,5,45,.31), 0 3px 0 rgba(97,9,49,.48), 0 6px 10px rgba(134,16,75,.18);
+}
+.stickerArt[data-sticker-size='tray'] strong { font-size: 11px; }
+.stickerArt[data-sticker-size='tray'] .stickerIcon { font-size: 27px; }
+.stickerArt[data-sticker-size='tray'][data-sticker='heart'] .stickerIcon { font-size: 35px; }
+.stickerArt[data-sticker-size='tray'][data-sticker='live'] .stickerIcon { font-size: 43px; }
+.stickerArt[data-sticker-size='tray'] .stickerLiveDot { width: 7px; box-shadow: 0 0 0 2px rgba(255,255,255,.68), 0 0 8px #4cffad; }
+
+.bubble {
+  max-width: 100%;
   padding: 11px 14px;
   border: 1px solid rgba(255, 255, 255, 0.54);
   border-radius: 18px 18px 18px 6px;
@@ -364,7 +454,6 @@
 }
 
 .mine {
-  align-self: flex-end;
   border-radius: 18px 18px 6px 18px;
   background:
     radial-gradient(circle at 22% 12%, rgba(255, 255, 255, 0.38), transparent 30%),
@@ -372,15 +461,94 @@
   color: white;
 }
 
+.delivery {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: rgba(74, 46, 61, 0.58);
+  font: 800 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.deliveryFailed {
+  color: #b21750;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.typingBubble {
+  align-self: flex-start;
+  display: flex;
+  gap: 4px;
+  padding: 11px 14px;
+  border-radius: 18px 18px 18px 6px;
+  background: linear-gradient(145deg, #fff, #e8d9e0);
+  box-shadow: 0 8px 15px rgba(67, 37, 51, 0.11);
+}
+
+.typingBubble i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a9507a;
+  animation: dmTyping 1.05s ease-in-out infinite;
+}
+.typingBubble i:nth-child(2) { animation-delay: .14s; }
+.typingBubble i:nth-child(3) { animation-delay: .28s; }
+
+@keyframes dmTyping {
+  0%, 60%, 100% { transform: translateY(0); opacity: .42; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
 .compose {
   flex: none;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 9px;
   padding: 12px 16px 8px;
   background: rgba(254, 240, 245, 0.94);
   backdrop-filter: blur(15px);
 }
+
+.stickerButton {
+  width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(188, 26, 106, .55);
+  border-radius: 15px;
+  color: #fff;
+  background: radial-gradient(circle at 30% 18%, rgba(255,255,255,.82), transparent 22%), linear-gradient(145deg, #ff9ccf, #ef2f8c 58%, #9a124f);
+  box-shadow: inset 0 2px 3px rgba(255,255,255,.68), 0 3px 0 rgba(122,10,58,.48), 0 7px 12px rgba(157,17,76,.18);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stickerButton span { display: grid; place-items: center; width: 23px; aspect-ratio: 1; border-radius: 8px; background: #351021; box-shadow: inset 0 1px 0 rgba(255,255,255,.32); font: 950 16px/1 ui-rounded, system-ui; }
+.stickerButton:active:not(:disabled) { transform: translateY(2px) scale(.96); box-shadow: inset 0 2px 3px rgba(255,255,255,.5), 0 1px 0 rgba(122,10,58,.48); }
+.stickerButtonOpen { color: #241d38; background: linear-gradient(145deg, #cbf7ff, #62ddec 56%, #2099b7); border-color: #44bacb; }
+.stickerButton:disabled { opacity: .42; cursor: default; }
+
+.stickerTray {
+  position: absolute;
+  z-index: 20;
+  left: 14px;
+  right: 14px;
+  bottom: calc(18px + var(--cube-size, clamp(124px, 37vw, 176px)) + 14px + env(safe-area-inset-bottom, 0px) + 64px);
+  padding: 10px;
+  border: 1px solid rgba(255, 201, 231, .75);
+  border-radius: 22px;
+  background: linear-gradient(155deg, rgba(68, 21, 57, .97), rgba(37, 11, 34, .98));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 16px 32px rgba(50, 7, 34, .32);
+  backdrop-filter: blur(18px);
+}
+
+.stickerTrayHeading { display: flex; align-items: center; justify-content: space-between; padding: 0 3px 8px; color: #ffb1d4; font: 900 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; }
+.stickerTrayHeading button { width: 23px; height: 23px; border: 0; border-radius: 50%; color: #fff; background: rgba(255,255,255,.14); font-size: 20px; line-height: 1; cursor: pointer; }
+.stickerGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); justify-items: center; gap: 10px 6px; }
+.stickerPick { display: grid; place-items: center; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.stickerPick:active { transform: translateY(2px) scale(.96); }
 
 .compose input {
   min-width: 0;
@@ -523,6 +691,74 @@
   box-shadow: 0 0 0 22px rgba(251, 61, 155, 0.07), 0 0 72px rgba(254, 45, 146, 0.48);
   animation: ftRingPulse 1.55s ease-in-out infinite;
 }
+
+/* Three lightweight Poplur call identities. They are pure CSS, so a call gets
+   a collectible look without allocating a 3D scene or video decoder before a
+   peer actually connects. Orbit is the default cube view; Ring and Duo are
+   chosen at random for each incoming/outgoing call. */
+.ftOrbitRail,
+.ftDuoStage {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+}
+
+[data-call-theme='orbit'] .ftOrbitRail {
+  width: min(70vw, 322px);
+  aspect-ratio: 1;
+  display: block;
+  opacity: 1;
+  border: 1px solid rgba(255, 192, 226, 0.48);
+  border-radius: 50%;
+  transform: rotateX(61deg) rotateZ(-19deg);
+  box-shadow: 0 0 0 17px rgba(249, 61, 157, 0.055);
+}
+
+[data-call-theme='orbit'] .ftOrbitRail i {
+  position: absolute;
+  width: 9px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #ffb3d7;
+  box-shadow: 0 0 14px #ff53ab;
+}
+[data-call-theme='orbit'] .ftOrbitRail i:nth-child(1) { left: 10%; top: 43%; }
+[data-call-theme='orbit'] .ftOrbitRail i:nth-child(2) { right: 11%; top: 35%; background: #8eeaff; box-shadow: 0 0 14px #54dfff; }
+[data-call-theme='orbit'] .ftOrbitRail i:nth-child(3) { left: 50%; bottom: 6%; width: 6px; }
+
+[data-call-theme='ring'] .ftRingingHalo {
+  width: min(72vw, 330px);
+  border-width: 2px;
+  border-color: rgba(255, 216, 238, 0.8);
+  box-shadow: 0 0 0 13px rgba(255, 88, 173, 0.13), 0 0 0 28px rgba(255, 88, 173, 0.055), 0 0 80px rgba(254, 45, 146, 0.54);
+}
+[data-call-theme='ring'] .ftContactCube { transform: rotateX(7deg) rotateY(-13deg) scale(0.9); }
+
+[data-call-theme='duo'] .ftRingingHalo { opacity: 0.22; transform: scale(1.1); }
+[data-call-theme='duo'] .ftContactCube { opacity: 0; position: absolute; }
+[data-call-theme='duo'] .ftDuoStage {
+  position: relative;
+  z-index: 1;
+  width: min(56vw, 236px);
+  height: min(38vw, 160px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 12px;
+  opacity: 1;
+  margin-bottom: 9px;
+}
+[data-call-theme='duo'] .ftDuoStage i {
+  display: block;
+  width: 40%;
+  aspect-ratio: .74;
+  border: 2px solid rgba(255, 224, 243, 0.7);
+  border-radius: 48% 48% 31% 31%;
+  background: radial-gradient(circle at 32% 20%, rgba(255,255,255,.72), transparent 18%), linear-gradient(145deg, #ff91c9, #eb1c80 58%, #67113a);
+  box-shadow: inset 0 4px 11px rgba(255,255,255,.36), 0 13px 25px rgba(255,31,147,.24);
+}
+[data-call-theme='duo'] .ftDuoStage i:last-child { transform: translateY(-19px); filter: hue-rotate(32deg) brightness(.78); }
+[data-call-theme='duo'] .ftDuoStage b { position: relative; z-index: 2; margin: 0 -18px 31px; color: #fff; font: 900 37px/1 Georgia, serif; text-shadow: 0 0 16px #ff3b9b; }
 
 .ftRingingAvatar,
 .ftFallbackAvatar {
@@ -734,6 +970,15 @@
   color: rgba(255, 203, 231, .82);
 }
 
+/* The filter control stays in the side rail during both ringing and live
+   video, leaving the primary mute/camera/end controls in their usual dock. */
+.ftSideRail {
+  position: absolute;
+  z-index: 28;
+  top: max(108px, calc(env(safe-area-inset-top, 0px) + 72px));
+  right: 14px;
+}
+
 /* Reserve the home dock. Now that .ftOverlay sits UNDER the chrome, the home
    HUD (arrows, cube, radius) paints over the bottom of this overlay, so that
    strip is no longer ours to use. The dock is `bottom: 18px` with a height of
@@ -754,8 +999,9 @@
   flex: none;
   display: flex;
   justify-content: center;
-  gap: 18px;
-  padding: 8px 0 calc(
+  gap: 9px;
+  margin: 0 auto;
+  padding: 7px 10px calc(
     18px + var(--cube-size, clamp(124px, 37vw, 176px)) + 14px + env(safe-area-inset-bottom, 0px)
   );
 }
@@ -767,11 +1013,11 @@
   place-items: center;
   align-content: center;
   gap: 2px;
-  border: 0;
+  border: 1px solid rgba(255, 180, 223, .36);
   border-radius: 50%;
   color: #fff;
-  background: linear-gradient(145deg, rgba(255, 255, 255, .26), rgba(123, 55, 93, .38));
-  box-shadow: inset 0 2px 4px rgba(255, 255, 255, .3), 0 5px 0 rgba(14, 4, 11, .46);
+  background: linear-gradient(145deg, rgba(255, 210, 234, .46), rgba(104, 36, 79, .72));
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, .34), 0 4px 0 rgba(14, 4, 11, .46), 0 0 0 5px rgba(255, 67, 159, .06);
   cursor: pointer;
 }
 
@@ -792,6 +1038,8 @@
   background: linear-gradient(145deg, #ff6e8d, #ed254b 60%, #a20d32) !important;
   box-shadow: inset 0 2px 4px rgba(255, 255, 255, .32), 0 5px 0 #6c0823 !important;
 }
+
+.ftControls button:active { transform: translateY(3px); box-shadow: inset 0 2px 4px rgba(255, 255, 255, .2), 0 1px 0 rgba(14, 4, 11, .46); }
 
 @media (prefers-reduced-motion: reduce) {
   .ftRingingHalo { animation: none; }

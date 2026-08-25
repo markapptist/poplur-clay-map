@@ -223,6 +223,7 @@ let profileStoreCheckoutSnapshot = null;
 let profileStoreTab = 'featured';
 let profileStoreSlide = 0;
 let storeCarouselTimer = null;
+let reportedStoreCardId = undefined;
 let profileStat = null;
 let profileSettingsPanel = null;
 let profileSettingsNotice = '';
@@ -1226,6 +1227,18 @@ function renderScreen() {
   }
   const group = groups[activeGroup];
   const item = group.screens.find(s => s.id === activeScreen) || group.screens[0];
+  // The Store's detail page is inside this iframe, while the physical
+  // navigator lives in HomeTwin. Publish just the selected card id; the host
+  // validates it against its model map before allowing a cube swap.
+  const storeCardId = item.id === 'profile-store' && profileStoreView === 'catalog'
+    ? profileStoreProduct
+    : null;
+  if (storeCardId !== reportedStoreCardId) {
+    reportedStoreCardId = storeCardId;
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'poplurStoreCardChange', cardId: storeCardId }, '*');
+    }
+  }
   screenEl.className = `screen ${activeGroup}-screen`;
   screenEl.innerHTML = item.render();
   if (item.id === 'profile-phone' && typeof window !== 'undefined' && window.setTimeout) {

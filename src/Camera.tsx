@@ -1841,10 +1841,12 @@ export default function Camera({
       >
         {slotBuilt(0) ? <CameraRoll lite active /> : emptySlot()}
         {slotBuilt(1) ? live('live-a', true) : emptySlot()}
-        {/* The real roll keeps its slot at all times so its scroll position and
-            tile count survive paging — `active` is what decides whether it
-            holds any media. */}
-        <CameraRoll active={rollActive} onDeny={onCloseRoll} onPick={setComposing} />
+        {/* Build the real roll only while it is visible or sliding. Its media,
+            observers and decoded thumbnails are released when Live owns the
+            camera surface. */}
+        {slotBuilt(2)
+          ? <CameraRoll active={rollActive} onDeny={onCloseRoll} onPick={setComposing} />
+          : emptySlot()}
         {slotBuilt(3) ? live('live-b', false) : emptySlot()}
       </div>
       {/* Every capture route — shutter, recording, roll pick — ends here. */}

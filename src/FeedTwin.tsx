@@ -553,6 +553,12 @@ export default function FeedTwin({
   // the next heavyweight screen mounts, so WebKit never has to choose between
   // an old Feed pipeline and a new camera/map workload.
   useEffect(() => {
+    if (!frontMost) {
+      decoderLeaseRef.current?.release()
+      decoderLeaseRef.current = null
+      setDecoderGranted(false)
+      return
+    }
     const lease = poplurResourcePool.acquire('media-decoder', 'feed', {
       priority: 100,
       onRevoke: () => {
@@ -571,7 +577,7 @@ export default function FeedTwin({
       lease?.release()
       if (decoderLeaseRef.current === lease) decoderLeaseRef.current = null
     }
-  }, [])
+  }, [frontMost])
 
   // A manually opened suggestion belongs to the post that was on screen when
   // the TV cube was tapped. Changing post/channel or covering the feed clears

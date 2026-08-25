@@ -168,7 +168,15 @@ export default memo(function ShaderVideoPlayer({ src, poster, className }: Props
       { threshold: 0.5 },
     )
     obs.observe(video)
-    return () => obs.disconnect()
+    return () => {
+      obs.disconnect()
+      window.clearTimeout(hideTimer.current)
+      hideTimer.current = 0
+      video.pause()
+      video.muted = true
+      video.removeAttribute('src')
+      video.load()
+    }
   }, [])
 
   useEffect(() => {
@@ -233,8 +241,11 @@ export default memo(function ShaderVideoPlayer({ src, poster, className }: Props
         c.gl.deleteShader(c.vs)
         c.gl.deleteShader(c.fs)
         c.gl.deleteProgram(c.prog)
+        c.gl.getExtension('WEBGL_lose_context')?.loseContext()
         glCtx.current = null
       }
+      canvas.width = 1
+      canvas.height = 1
     }
   }, [])
 

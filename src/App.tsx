@@ -2148,9 +2148,9 @@ export default function App() {
   // there is nobody to be winning against. The level switch (shell HUD, above
   // the channel arrows) puts other holders on the board — each in their OWN
   // colour, with their face on the pin standing in their territory.
-  // The visible control is numbered 1 → 2 → 3, so launch on Level 1 and let
-  // each press advance in the same order the lit sheets communicate.
-  const [popLevel, setPopLevel] = useState<PopLevel>('mine')
+  // The visible control is numbered 1 → 2 → 3. Launch with all three layers
+  // present so the first map frame explains the shared domination system.
+  const [popLevel, setPopLevel] = useState<PopLevel>('all')
   const [publishedPins, setPublishedPins] = useState<PopPin[]>([])
   // Values remain in radiusLedger; this revision only recomputes the visible
   // pin set after Home relays a signed reward or loss into this iframe.

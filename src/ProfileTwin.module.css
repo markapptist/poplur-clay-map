@@ -720,6 +720,7 @@
 .callIdentity img { width: 116px; height: 116px; object-fit: cover; border-radius: 50%; border: 4px solid #f63b9a; box-shadow: 0 0 28px rgba(246, 59, 154, 0.55); }
 .callIdentity h2 { margin: 0; font-size: 28px; }
 .callIdentity p { margin: 0; color: rgba(255,255,255,.72); font: 800 12px/1 ui-monospace, monospace; letter-spacing: .08em; }
+.callSideRail { position: absolute; z-index: 28; top: max(106px, calc(env(safe-area-inset-top, 0px) + 70px)); right: 14px; }
 .callControls { position: absolute; z-index: 3; bottom: max(34px, env(safe-area-inset-bottom)); display: flex; gap: 18px; }
 .callControls button { width: 58px; height: 58px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #fff; background: rgba(255,255,255,.18); }
 .callControls svg { width: 25px; height: 25px; fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
@@ -1402,6 +1403,38 @@
   pointer-events: none;
   z-index: 2;
 }
+
+/* The AR rail and camera flip live next to the viewfinder rather than in the
+   capture bar. That leaves the cube as the shutter and keeps filters within a
+   single thumb reach. */
+.captureSideRail {
+  position: absolute;
+  z-index: 28;
+  top: max(148px, calc(env(safe-area-inset-top, 0px) + 92px));
+  right: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.captureFlip {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 1px;
+  border: 1px solid rgba(255, 210, 238, 0.62);
+  border-radius: 13px;
+  color: #fff;
+  background: linear-gradient(145deg, #ff9fce, #e8358d 58%, #8d124d);
+  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.56), 0 4px 0 rgba(75, 4, 38, 0.58), 0 8px 14px rgba(0, 0, 0, 0.34);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.captureFlip:active { transform: translateY(2px) scale(0.96); }
+.captureFlip svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.captureFlip span { font: 900 7px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; }
 
 .camFallback {
   position: absolute;

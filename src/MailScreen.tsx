@@ -4,6 +4,17 @@ import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
 import { isNativeShell } from './nativeBridge'
+import CameraARButton from './CameraARButton'
+import ARFilters from './ARFilters'
+import FaceAROverlay from './FaceAROverlay'
+import { arFilterCatalog } from './arFilterCatalog'
+import type { Detection } from './mlDetect'
+import {
+  activeTyping,
+  createClientMessageId,
+  sentMessageStatus,
+  type DMDeliveryStatus,
+} from './dmContract'
 import {
   placeCall,
   hangup as hangupCall,
@@ -15,6 +26,79 @@ import {
   type CallSnapshot,
 } from './webCall'
 
+type CallVisualTheme = 'orbit' | 'ring' | 'duo'
+
+const CALL_VISUAL_THEMES: readonly CallVisualTheme[] = ['orbit', 'ring', 'duo']
+
+function chooseCallVisualTheme(): CallVisualTheme {
+  return CALL_VISUAL_THEMES[Math.floor(Math.random() * CALL_VISUAL_THEMES.length)]
+}
+
+// Calls already have a real video stream, so the filter rail deliberately uses
+// a stable, lightweight face anchor. This keeps costume placement responsive
+// without starting a second camera or continuous vision pass over FaceTime.
+const CALL_LOCAL_FACE: Detection = {
+  id: 'call-local-face',
+  x: 0.29,
+  y: 0.20,
+  w: 0.42,
+  h: 0.42,
+  label: 'You',
+  confidence: 1,
+}
+
+// Stickers travel through the existing DM text transport as a closed, compact
+// token. That keeps delivery, retries and Firestore history identical to a
+// regular message while each current client renders the Poplur artwork instead
+// of exposing implementation text. Unknown tokens remain ordinary text, so an
+// older client never loses a message.
+const POPLUR_STICKERS = [
+  { id: 'pop', label: 'POP!', caption: 'Make it pop' },
+  { id: 'heart', label: 'BIG LOVE', caption: 'Send love' },
+  { id: 'here', label: "I'M HERE", caption: 'Share your spot' },
+  { id: 'live', label: 'LIVE!', caption: 'Go live' },
+  { id: 'call', label: 'CALL ME', caption: 'Ask for a call' },
+  { id: 'hype', label: "LET'S GO", caption: 'Bring the hype' },
+] as const
+
+type PoplurStickerId = typeof POPLUR_STICKERS[number]['id']
+
+const stickerWire = (id: PoplurStickerId) => `[[poplur:sticker:${id}]]`
+
+function stickerFromText(text: string): PoplurStickerId | null {
+  const match = /^\[\[poplur:sticker:([a-z]+)\]\]$/.exec(text.trim())
+  if (!match) return null
+  return POPLUR_STICKERS.find(sticker => sticker.id === match[1])?.id ?? null
+}
+
+function stickerPreview(text: string): string {
+  const sticker = stickerFromText(text)
+  return sticker ? `${POPLUR_STICKERS.find(item => item.id === sticker)?.label ?? 'Poplur'} sticker` : text
+}
+
+function PoplurSticker({ id, size = 'message' }: { id: PoplurStickerId; size?: 'tray' | 'message' }) {
+  const sticker = POPLUR_STICKERS.find(item => item.id === id)
+  const icon = id === 'heart'
+    ? '♥'
+    : id === 'here'
+      ? 'P'
+      : id === 'live'
+        ? '•'
+        : id === 'call'
+          ? '⌁'
+          : id === 'hype'
+            ? '✦'
+            : 'P'
+  return (
+    <span className={styles.stickerArt} data-sticker={id} data-sticker-size={size} aria-label={sticker?.label} role="img">
+      <span className={styles.stickerGlow} aria-hidden="true" />
+      <span className={styles.stickerIcon} aria-hidden="true"><span className={styles.stickerIconLetter}>{icon}</span></span>
+      <strong>{sticker?.label}</strong>
+      {id === 'live' && <i className={styles.stickerLiveDot} aria-hidden="true" />}
+    </span>
+  )
+}
+
 interface Thread {
   id: string
   /** The actual Poplur account on the other side of this conversation. */
@@ -24,7 +108,15 @@ interface Thread {
   preview: string
   when: string
   unread: number
-  messages: Array<{ from: 'me' | 'them'; text: string }>
+  typing?: boolean
+  otherReadAtMillis?: number
+  messages: Array<{
+    id: string
+    from: 'me' | 'them'
+    text: string
+    createdAtMillis: number
+    status?: DMDeliveryStatus
+  }>
 }
 
 interface NativeThreadPayload {
@@ -34,11 +126,15 @@ interface NativeThreadPayload {
   title?: unknown
   preview?: unknown
   unread?: unknown
+  updatedAtMillis?: unknown
 }
 
 interface NativeMessagePayload {
+  id?: unknown
   from?: unknown
   text?: unknown
+  createdAtMillis?: unknown
+  pending?: unknown
 }
 
 const THREADS: Thread[] = [
@@ -50,8 +146,8 @@ const THREADS: Thread[] = [
     when: '2m',
     unread: 2,
     messages: [
-      { from: 'them', text: 'Hey — are you around the radius tonight?' },
-      { from: 'me', text: 'Yes. Send me the channel when it goes live.' },
+      { id: 'preview-a-1', from: 'them', text: 'Hey — are you around the radius tonight?', createdAtMillis: 1 },
+      { id: 'preview-a-2', from: 'me', text: 'Yes. Send me the channel when it goes live.', createdAtMillis: 2, status: 'read' },
     ],
   },
   {
@@ -62,8 +158,8 @@ const THREADS: Thread[] = [
     when: '18m',
     unread: 0,
     messages: [
-      { from: 'them', text: 'this is live right now' },
-      { from: 'me', text: 'I see it on channel 101.' },
+      { id: 'preview-b-1', from: 'them', text: 'this is live right now', createdAtMillis: 1 },
+      { id: 'preview-b-2', from: 'me', text: 'I see it on channel 101.', createdAtMillis: 2, status: 'sent' },
     ],
   },
   {
@@ -74,7 +170,7 @@ const THREADS: Thread[] = [
     when: '1h',
     unread: 1,
     messages: [
-      { from: 'them', text: 'Your Poplur Phone is ready for a video call.' },
+      { id: 'preview-c-1', from: 'them', text: 'Your Poplur Phone is ready for a video call.', createdAtMillis: 1 },
     ],
   },
   {
@@ -85,7 +181,7 @@ const THREADS: Thread[] = [
     when: '3h',
     unread: 0,
     messages: [
-      { from: 'them', text: 'Yonge-Dundas Square is popping. Want a quick tour?' },
+      { id: 'preview-d-1', from: 'them', text: 'Yonge-Dundas Square is popping. Want a quick tour?', createdAtMillis: 1 },
     ],
   },
 ]
@@ -110,9 +206,11 @@ function nativeThreads(value: unknown): Thread[] {
       initials,
       title,
       preview: typeof thread.preview === 'string' && thread.preview.trim()
-        ? thread.preview.trim()
+        ? stickerPreview(thread.preview.trim())
         : 'No messages yet',
-      when: 'now',
+      when: typeof thread.updatedAtMillis === 'number' && Number.isFinite(thread.updatedAtMillis)
+        ? relativeMessageTime(thread.updatedAtMillis)
+        : 'now',
       unread: typeof thread.unread === 'number' && Number.isFinite(thread.unread)
         ? Math.max(0, Math.floor(thread.unread))
         : 0,
@@ -128,8 +226,30 @@ function nativeMessages(value: unknown): Thread['messages'] {
     const message = raw as NativeMessagePayload
     const text = typeof message.text === 'string' ? message.text.trim() : ''
     if (!text) return []
-    return [{ from: message.from === 'me' ? 'me' : 'them', text }]
+    const createdAtMillis = typeof message.createdAtMillis === 'number'
+      && Number.isFinite(message.createdAtMillis)
+      ? message.createdAtMillis
+      : 0
+    return [{
+      id: typeof message.id === 'string' && message.id ? message.id : createClientMessageId(),
+      from: message.from === 'me' ? 'me' : 'them',
+      text,
+      createdAtMillis,
+      status: message.from === 'me'
+        ? sentMessageStatus(createdAtMillis, undefined, message.pending === true)
+        : undefined,
+    }]
   })
+}
+
+function relativeMessageTime(timestamp: number): string {
+  const elapsed = Math.max(0, Date.now() - timestamp)
+  const minutes = Math.floor(elapsed / 60_000)
+  if (minutes < 1) return 'now'
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+  return `${Math.floor(hours / 24)}d`
 }
 
 /** Deleted chats stay deleted across visits. The list is seeded locally (the
@@ -305,9 +425,16 @@ export function FaceTimeOverlay({
   const [localVideoReady, setLocalVideoReady] = useState(false)
   const [remoteVideoReady, setRemoteVideoReady] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [arOpen, setArOpen] = useState(false)
+  const [arFilter, setArFilter] = useState('none')
   const callBegan = useRef(false)
+  // A theme is chosen once for the call, rather than each render. This lets an
+  // incoming or outgoing call keep one visual identity through ringing,
+  // connection setup and the live video hand-off.
+  const callTheme = useRef<CallVisualTheme>(chooseCallVisualTheme()).current
   const connected = callSnap?.phase === 'connected'
   const initial = who.trim().charAt(0).toUpperCase() || '?'
+  const arFilterCss = arFilterCatalog().filters.find(filter => filter.id === arFilter)?.css ?? 'none'
 
   useEffect(() => {
     installCallBridge()
@@ -403,12 +530,12 @@ export function FaceTimeOverlay({
       : 'Setting up the call securely'
 
   return (
-    <section className={styles.ftOverlay} role="dialog" aria-modal="true" aria-label={`FaceTime with ${who}`}>
+    <section className={styles.ftOverlay} data-call-theme={callTheme} role="dialog" aria-modal="true" aria-label={`Video call with ${who}`}>
       <header className={styles.ftHeader}>
         <span className={styles.ftBrandMark} aria-hidden="true">P</span>
         <span>
           <b>POPLUR CALL</b>
-          <small>DM · VIDEO</small>
+          <small>PT&amp;T WIRELESS · VIDEO</small>
         </span>
         <span className={styles.ftLiveLamp}><i aria-hidden="true" />LIVE</span>
       </header>
@@ -446,13 +573,21 @@ export function FaceTimeOverlay({
               onPlaying={markLocalVideoReady}
               onEmptied={() => setLocalVideoReady(false)}
               className={localVideoReady && cameraOn ? `${styles.ftVideo} ${styles.ftVideoReady}` : styles.ftVideo}
+              style={arFilterCss === 'none' ? undefined : { filter: arFilterCss }}
             />
+            {cameraOn && arFilter !== 'none' && (
+              <FaceAROverlay detections={[CALL_LOCAL_FACE]} filter={arFilter} mirrored allow3D={false} />
+            )}
             <div className={styles.ftLocalLabel}>You</div>
           </div>
         </div>
       ) : (
         <div className={styles.ftRinging}>
           <div className={styles.ftRingingHalo} aria-hidden="true" />
+          <div className={styles.ftOrbitRail} aria-hidden="true"><i /><i /><i /></div>
+          <div className={styles.ftDuoStage} aria-hidden="true">
+            <i /><b>@</b><i />
+          </div>
           <div className={styles.ftContactCube} aria-hidden="true">
             <span className={styles.ftCubeTop} />
             <span className={styles.ftCubeSide} />
@@ -467,6 +602,12 @@ export function FaceTimeOverlay({
       <div className={styles.ftStatus}>
         {statusLabel}
       </div>
+      <div className={styles.ftSideRail}>
+        <CameraARButton active={arOpen} size={42} onToggle={() => setArOpen(open => !open)} />
+      </div>
+      {arOpen && (
+        <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
+      )}
       <div className={styles.ftControls}>
         <button type="button" aria-label={callSnap?.muted ? 'Unmute' : 'Mute'} aria-pressed={callSnap?.muted} onClick={toggleMute}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
@@ -493,8 +634,13 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
   const [faceTimeWith, setFaceTimeWith] = useState<{ id: string; name: string } | null>(null)
   const [liveThreads, setLiveThreads] = useState<Thread[] | null>(null)
   const [composerText, setComposerText] = useState('')
+  const [stickerTrayOpen, setStickerTrayOpen] = useState(false)
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => readDeletedThreads())
   const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null)
+  const remoteTypingTimerRef = useRef<number | null>(null)
+  const typingStopTimerRef = useRef<number | null>(null)
+  const typingSentForRef = useRef<string | null>(null)
+  const typingLastSentAtRef = useRef(0)
   const threads = (liveThreads ?? THREADS).filter(t => !deletedIds.has(t.id))
 
   // Pull to refresh, on the thread list only.
@@ -544,14 +690,95 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
       if (detail.type === 'poplurDMMessages' && typeof detail.threadId === 'string') {
         const threadId = detail.threadId
         const messages = nativeMessages(detail.messages)
+        setActiveThread(current => {
+          if (current?.id !== threadId) return current
+          const received = new Set(messages.map(message => message.id))
+          const unsettled = current.messages.filter(message =>
+            !received.has(message.id) && (message.status === 'sending' || message.status === 'failed'))
+          const next = [...messages, ...unsettled].map(message => message.from === 'me'
+            ? {
+                ...message,
+                status: message.status === 'failed'
+                  ? 'failed' as const
+                  : sentMessageStatus(
+                      message.createdAtMillis,
+                      current.otherReadAtMillis,
+                      message.status === 'sending',
+                    ),
+              }
+            : message)
+          return { ...current, messages: next }
+        })
+        return
+      }
+      if (detail.type === 'poplurDMThreadState' && typeof detail.threadId === 'string') {
+        const threadId = detail.threadId
+        const typingAtMillis = typeof detail.typingAtMillis === 'number'
+          ? detail.typingAtMillis
+          : undefined
+        const otherReadAtMillis = typeof detail.otherReadAtMillis === 'number'
+          ? detail.otherReadAtMillis
+          : undefined
+        const typing = activeTyping(typingAtMillis)
+        if (remoteTypingTimerRef.current != null) window.clearTimeout(remoteTypingTimerRef.current)
+        if (typing) {
+          const remaining = Math.max(100, 6_000 - (Date.now() - (typingAtMillis ?? 0)))
+          remoteTypingTimerRef.current = window.setTimeout(() => {
+            setActiveThread(current => current?.id === threadId ? { ...current, typing: false } : current)
+          }, remaining)
+        }
         setActiveThread(current => current?.id === threadId
-          ? { ...current, messages }
+          ? {
+              ...current,
+              typing,
+              otherReadAtMillis,
+              messages: current.messages.map(message => message.from === 'me'
+                ? {
+                    ...message,
+                    status: message.status === 'failed'
+                      ? 'failed'
+                      : sentMessageStatus(
+                          message.createdAtMillis,
+                          otherReadAtMillis,
+                          message.status === 'sending',
+                        ),
+                  }
+                : message),
+            }
+          : current)
+        return
+      }
+      if (detail.type === 'poplurDMSent' && typeof detail.clientMessageId === 'string') {
+        const clientMessageId = detail.clientMessageId
+        setActiveThread(current => current
+          ? {
+              ...current,
+              messages: current.messages.map(message => message.id === clientMessageId
+                ? { ...message, status: sentMessageStatus(message.createdAtMillis, current.otherReadAtMillis, false) }
+                : message),
+            }
           : current)
         return
       }
       if (detail.type === 'poplurDMSendFailed' && typeof detail.text === 'string') {
         const failedText = detail.text
-        setComposerText(current => current || failedText)
+        const clientMessageId = typeof detail.clientMessageId === 'string'
+          ? detail.clientMessageId
+          : ''
+        setActiveThread(current => current
+          ? {
+              ...current,
+              messages: current.messages.map(message => message.id === clientMessageId
+                ? { ...message, status: 'failed' }
+                : message),
+            }
+          : current)
+        // Current shells return the stable id and the failed bubble exposes a
+        // same-id retry. Older shells did not, so preserve their recovery path
+        // by returning ordinary text to the composer.
+        if (!clientMessageId && !stickerFromText(failedText)) {
+          setComposerText(current => current || failedText)
+        }
       }
     }
     window.addEventListener('poplur-dm-result', onResult)
@@ -563,6 +790,8 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     // first-visit render.
     if (isNativeShell()) refreshThreads()
     return () => {
+      if (remoteTypingTimerRef.current != null) window.clearTimeout(remoteTypingTimerRef.current)
+      if (typingStopTimerRef.current != null) window.clearTimeout(typingStopTimerRef.current)
       window.removeEventListener('poplur-dm-result', onResult)
       window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
     }
@@ -632,9 +861,45 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     if (faceTimeWith) hangupCall()
     setFaceTimeWith(null)
     setComposerText('')
+    setStickerTrayOpen(false)
     setActiveThread(null)
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'closeDMThread' } }))
   }, [faceTimeWith])
+
+  const sendTyping = useCallback((threadId: string, typing: boolean) => {
+    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+      detail: { type: 'setDMTyping', threadId, typing },
+    }))
+  }, [])
+
+  useEffect(() => {
+    if (typingStopTimerRef.current != null) window.clearTimeout(typingStopTimerRef.current)
+    const threadId = activeThread?.id
+    const previous = typingSentForRef.current
+    if (!threadId || !composerText.trim()) {
+      if (previous) sendTyping(previous, false)
+      typingSentForRef.current = null
+      typingLastSentAtRef.current = 0
+      return
+    }
+    if (previous && previous !== threadId) sendTyping(previous, false)
+    const now = Date.now()
+    if (previous !== threadId || now - typingLastSentAtRef.current >= 3_000) {
+      sendTyping(threadId, true)
+      typingLastSentAtRef.current = now
+    }
+    typingSentForRef.current = threadId
+    typingStopTimerRef.current = window.setTimeout(() => {
+      if (typingSentForRef.current === threadId) {
+        sendTyping(threadId, false)
+        typingSentForRef.current = null
+        typingLastSentAtRef.current = 0
+      }
+    }, 2_500)
+    return () => {
+      if (typingStopTimerRef.current != null) window.clearTimeout(typingStopTimerRef.current)
+    }
+  }, [activeThread?.id, composerText, sendTyping])
 
   // Retain the cube gesture as a convenient back route, but Messages also has
   // an ordinary visible back control now. The home chrome no longer has to sit
@@ -661,6 +926,7 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
 
   const openThread = useCallback((thread: Thread) => {
     setComposerText('')
+    setStickerTrayOpen(false)
     setActiveThread(thread)
     if (thread.otherId) {
       window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
@@ -673,11 +939,55 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
     const text = composerText.trim()
     if (!text || !activeThread?.otherId) return
     playPop()
+    const clientMessageId = createClientMessageId()
+    const optimistic = {
+      id: clientMessageId,
+      from: 'me' as const,
+      text,
+      createdAtMillis: Date.now(),
+      status: 'sending' as const,
+    }
+    setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
     setComposerText('')
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
-      detail: { type: 'sendDM', otherId: activeThread.otherId, text },
+      detail: { type: 'sendDM', otherId: activeThread.otherId, text, clientMessageId },
     }))
   }, [activeThread?.otherId, composerText])
+
+  const sendSticker = useCallback((stickerId: PoplurStickerId) => {
+    if (!activeThread?.otherId) return
+    playPop()
+    const text = stickerWire(stickerId)
+    const clientMessageId = createClientMessageId()
+    const optimistic = {
+      id: clientMessageId,
+      from: 'me' as const,
+      text,
+      createdAtMillis: Date.now(),
+      status: 'sending' as const,
+    }
+    setActiveThread(current => current ? { ...current, messages: [...current.messages, optimistic] } : current)
+    setStickerTrayOpen(false)
+    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+      detail: { type: 'sendDM', otherId: activeThread.otherId, text, clientMessageId },
+    }))
+  }, [activeThread?.otherId])
+
+  const retryMessage = useCallback((clientMessageId: string, text: string) => {
+    if (!activeThread?.otherId) return
+    playPop()
+    setActiveThread(current => current
+      ? {
+          ...current,
+          messages: current.messages.map(message => message.id === clientMessageId
+            ? { ...message, status: 'sending' }
+            : message),
+        }
+      : current)
+    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+      detail: { type: 'sendDM', otherId: activeThread.otherId, text, clientMessageId },
+    }))
+  }, [activeThread?.otherId])
 
   if (activeThread) {
     const canCall = Boolean(activeThread.otherId)
@@ -690,23 +1000,85 @@ export default function MailScreen({ onClose, onCallViaPhone }: {
           <div className={styles.avatar}>{activeThread.initials}</div>
           <div className={styles.toolbarInfo}>
             <h1>{activeThread.title}</h1>
-            <span>Active in your Poplur radius</span>
+            <span>{activeThread.typing ? 'typing…' : 'Active in your Poplur radius'}</span>
           </div>
           <button type="button" className={styles.dmCallButton} aria-label={`Call ${activeThread.title}`} disabled={!canCall} onClick={() => startPhoneCall(activeThread)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3l3 5-2 2c1.5 3 3 4.5 6 6l2-2 5 3-1 4c-8 1-16-7-17-15z" /></svg>
+            <span>CALL</span>
           </button>
           <button type="button" className={styles.dmCallButton} aria-label={`FaceTime ${activeThread.title}`} disabled={!canCall} onClick={() => startFaceTime(activeThread)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
+            <span>VIDEO</span>
           </button>
         </div>
-        <div className={styles.conversation}>
-          {activeThread.messages.map((m, i) => (
-            <div key={i} className={m.from === 'me' ? `${styles.bubble} ${styles.mine}` : styles.bubble}>
-              {m.text}
+        <div className={styles.conversation} aria-live="polite">
+          {activeThread.messages.map(m => {
+            const sticker = stickerFromText(m.text)
+            return (
+              <div key={m.id} className={m.from === 'me' ? `${styles.messageWrap} ${styles.messageWrapMine}` : styles.messageWrap}>
+                {sticker ? (
+                  <div className={styles.stickerMessage}>
+                    <PoplurSticker id={sticker} />
+                  </div>
+                ) : (
+                  <div className={m.from === 'me' ? `${styles.bubble} ${styles.mine}` : styles.bubble}>
+                    {m.text}
+                  </div>
+                )}
+                {m.from === 'me' && m.status === 'failed' ? (
+                  <button
+                    type="button"
+                    className={`${styles.delivery} ${styles.deliveryFailed}`}
+                    onClick={() => retryMessage(m.id, m.text)}
+                  >
+                    Not sent · Retry
+                  </button>
+                ) : m.from === 'me' && m.status ? (
+                  <small className={styles.delivery}>
+                    {m.status === 'sending' ? 'Sending…' : m.status === 'read' ? 'Read' : 'Sent'}
+                  </small>
+                ) : null}
+              </div>
+            )
+          })}
+          {activeThread.typing && (
+            <div className={styles.typingBubble} aria-label={`${activeThread.title} is typing`}>
+              <i /><i /><i />
             </div>
-          ))}
+          )}
         </div>
+        {stickerTrayOpen && (
+          <section className={styles.stickerTray} aria-label="Poplur sticker pack">
+            <div className={styles.stickerTrayHeading}>
+              <span>POPLUR POP PACK</span>
+              <button type="button" onClick={() => setStickerTrayOpen(false)} aria-label="Close stickers">×</button>
+            </div>
+            <div className={styles.stickerGrid}>
+              {POPLUR_STICKERS.map(sticker => (
+                <button
+                  type="button"
+                  key={sticker.id}
+                  className={styles.stickerPick}
+                  onClick={() => sendSticker(sticker.id)}
+                  aria-label={`Send ${sticker.caption} sticker`}
+                >
+                  <PoplurSticker id={sticker.id} size="tray" />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         <form className={styles.compose} onSubmit={e => { e.preventDefault(); sendMessage() }}>
+          <button
+            type="button"
+            className={stickerTrayOpen ? `${styles.stickerButton} ${styles.stickerButtonOpen}` : styles.stickerButton}
+            aria-label={stickerTrayOpen ? 'Close Poplur stickers' : 'Open Poplur stickers'}
+            aria-expanded={stickerTrayOpen}
+            disabled={!activeThread.otherId}
+            onClick={() => { playPop(); setStickerTrayOpen(open => !open) }}
+          >
+            <span>P</span>
+          </button>
           <input
             name="message"
             autoComplete="off"

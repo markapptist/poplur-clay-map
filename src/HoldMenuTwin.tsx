@@ -646,6 +646,11 @@ export default function HoldMenuTwin({
       if (event.source === frame.contentWindow && data.type === 'poplurStoreCheckoutRequested') {
         window.dispatchEvent(new CustomEvent('poplur-store-checkout-requested', { detail: data }))
       }
+      if (event.source === frame.contentWindow && data.type === 'poplurStoreCardChange') {
+        window.dispatchEvent(new CustomEvent('poplur-store-card-change', {
+          detail: { cardId: data.cardId },
+        }))
+      }
       // Add to Apple Wallet takes the same route for the same reason: PassKit
       // is native-only, and this store is a page inside a WebView.
       if (event.source === frame.contentWindow
@@ -655,7 +660,7 @@ export default function HoldMenuTwin({
       // Direct messages. The chat page has no Firebase, so its reads and writes
       // ride the same road: page -> here -> HomeTwin -> native -> Firestore.
       if (event.source === frame.contentWindow
-        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM',
+        && ['requestDMThreads', 'openDMThread', 'closeDMThread', 'sendDM', 'setDMTyping',
             'requestPhoneContacts', 'togglePhoneFavourite',
             'callStart', 'callAnswerJoin', 'callDescription', 'callCandidate',
             'callEnd', 'callWatchIncoming'].includes(data.type)) {
@@ -682,6 +687,8 @@ export default function HoldMenuTwin({
       const data = (event as CustomEvent<Record<string, unknown>>).detail
       if (data?.type === 'poplurDMThreads'
         || data?.type === 'poplurDMMessages'
+        || data?.type === 'poplurDMThreadState'
+        || data?.type === 'poplurDMSent'
         || data?.type === 'poplurDMSendFailed'
         || data?.type === 'poplurPhoneContacts'
         || String(data?.type ?? '').startsWith('poplurCall')) {
@@ -780,6 +787,10 @@ export default function HoldMenuTwin({
     // mechanical reel sounds when the opening shuffle begins.
     if (item.screen === 'feed-casino') primeCasinoAudio()
     playPop()
+    // Notify Home before mounting the destination. Parent and child updates
+    // are batched into one commit, so the outgoing heavy tab is removed rather
+    // than coexisting for a passive-effect frame with this subscreen.
+    onSubscreenChange?.(true, item.screen)
     setActiveScreen(item)
   }
 
@@ -1311,10 +1322,17 @@ export default function HoldMenuTwin({
   // drop you back on the tab's main screen: holding the cube on Chat left you
   // looking at the live camera.
   if (activeScreen) {
-    if (!wheelOverPage) return renderSubscreen()
+    // Screen identity is a teardown boundary even when two routes use the same
+    // component type (Camera Studio and Music both use StudioScreen).
+    const page = (
+      <React.Fragment key={`${activeScreen.screen}:${activeScreen.title}`}>
+        {renderSubscreen()}
+      </React.Fragment>
+    )
+    if (!wheelOverPage) return page
     return (
       <>
-        {renderSubscreen()}
+        {page}
         {renderWheel(true)}
       </>
     )
