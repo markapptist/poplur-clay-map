@@ -165,6 +165,32 @@
 .nativeMapZoomCity { transform: scale(1.05); }
 .nativeMapZoomGlobe { transform: scale(1.08); }
 
+/* The weather mark is the rail's final control, so its live reading can hang
+   directly beneath the 44px hit target without displacing or shrinking any
+   of the map controls above it. */
+.mapWeatherWithTemperature {
+  overflow: visible;
+}
+
+.mapWeatherTemperature {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  z-index: 2;
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  color: #7fe3ff;
+  -webkit-text-fill-color: #7fe3ff;
+  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.94);
+  paint-order: stroke fill;
+  font: 950 11px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: -0.02em;
+  filter:
+    drop-shadow(0 2px 0 rgba(5, 14, 46, 0.55))
+    drop-shadow(0 3px 6px rgba(0, 0, 0, 0.7));
+}
+
 /* Feed / Camera / Profile are explicitly above the always-mounted map.
    pointer-events: the layer itself must be transparent to touch — on the MAP
    tab it is empty but still full-screen, and it was swallowing every map

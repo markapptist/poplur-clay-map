@@ -19,6 +19,10 @@ import { feedUrl } from './assetPacks'
  *  Follows the existing dev-flag convention — kebab query param compared to
  *  '1', same as sample-claims, mapLite, day-cycle and sky-cycle. */
 const TAKEOVER_TEST = new URLSearchParams(window.location.search).get('takeover') === '1'
+const WEATHER_TEST_ENABLED = weatherTestHarnessEnabled(
+  window.location.search,
+  import.meta.env.DEV,
+)
 
 /** A claim set that covers the globe.
  *
@@ -55,6 +59,15 @@ import ClayChannelArrows from './ClayChannelArrows'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
+import {
+  WEATHER_TEST_MODES,
+  weatherTestHarnessEnabled,
+} from './weatherTestHarness'
+import {
+  formatWeatherTemperature,
+  weatherIconForMode,
+  weatherTemperatureUnit,
+} from './weatherPresentation'
 import ViewHarness, { harnessViewFromLocation } from './ViewHarness'
 // The map host and radio share one mixer so speech can lead while the station
 // remains audible underneath it.
@@ -121,68 +134,6 @@ import styles from './App.module.css'
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
 const WEATHER_REFRESH_MS = 5 * 60_000
-
-// Clay weather icons keyed by open-meteo weather codes
-// Clay-shaded weather icons: each body is filled with a soft radial "shader"
-// gradient plus a specular highlight, so they read as moulded clay like the
-// wordmark and pins rather than flat vector fills.
-const SHADERS = `
-<radialGradient id="wSun" cx="36%" cy="30%" r="76%">
-  <stop offset="0" stop-color="#FFF3B0"/><stop offset="0.55" stop-color="#FFD23F"/><stop offset="1" stop-color="#E8A200"/>
-</radialGradient>
-<radialGradient id="wCloud" cx="34%" cy="28%" r="82%">
-  <stop offset="0" stop-color="#FFFFFF"/><stop offset="0.6" stop-color="#FDEBF4"/><stop offset="1" stop-color="#D9C3D2"/>
-</radialGradient>
-<radialGradient id="wDark" cx="34%" cy="26%" r="84%">
-  <stop offset="0" stop-color="#CFC3CC"/><stop offset="0.6" stop-color="#A99CA6"/><stop offset="1" stop-color="#7C7079"/>
-</radialGradient>
-<linearGradient id="wDrop" x1="0" y1="0" x2="0" y2="1">
-  <stop offset="0" stop-color="#8FDBFF"/><stop offset="1" stop-color="#2C8FD6"/>
-</linearGradient>
-<radialGradient id="wIce" cx="34%" cy="28%" r="80%">
-  <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#A9C6D8"/>
-</radialGradient>
-<linearGradient id="wBolt" x1="0" y1="0" x2="0.4" y2="1">
-  <stop offset="0" stop-color="#FFE787"/><stop offset="1" stop-color="#F0A500"/>
-</linearGradient>
-`
-const gloss = (cx: number, cy: number, rx: number, ry: number) =>
-  `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="#fff" opacity="0.45"/>`
-
-const SUN_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><g stroke="#E8A200" stroke-width="3" stroke-linecap="round" opacity="0.95"><path d="M20 3v5M20 32v5M3 20h5M32 20h5M8 8l3.5 3.5M28.5 28.5L32 32M32 8l-3.5 3.5M11.5 28.5L8 32"/></g><circle cx="20" cy="20" r="10" fill="url(#wSun)" stroke="#D08F00" stroke-width="0.8"/>${gloss(16, 15.5, 3.6, 2.6)}</svg>`
-const CLOUD_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><ellipse cx="16" cy="24" rx="11" ry="8" fill="url(#wCloud)" stroke="#C8AFC0" stroke-width="0.8"/><ellipse cx="27" cy="21" rx="10" ry="8" fill="url(#wCloud)" stroke="#C8AFC0" stroke-width="0.8"/>${gloss(13, 20, 3.6, 2.2)}</svg>`
-const RAIN_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><g fill="url(#wDrop)"><path d="M13 25c1.6 2.4 2.6 3.8 2.6 5a2.6 2.6 0 1 1-5.2 0c0-1.2 1-2.6 2.6-5z"/><path d="M20 28c1.6 2.4 2.6 3.8 2.6 5a2.6 2.6 0 1 1-5.2 0c0-1.2 1-2.6 2.6-5z"/><path d="M27 25c1.6 2.4 2.6 3.8 2.6 5a2.6 2.6 0 1 1-5.2 0c0-1.2 1-2.6 2.6-5z"/></g><ellipse cx="20" cy="14" rx="12" ry="8" fill="url(#wCloud)" stroke="#C8AFC0" stroke-width="0.8"/>${gloss(15, 10.5, 4, 2.4)}</svg>`
-const SNOW_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><g fill="url(#wIce)" stroke="#8FB2C6" stroke-width="0.7"><circle cx="13" cy="30" r="2.9"/><circle cx="21" cy="33" r="2.9"/><circle cx="28" cy="29" r="2.9"/></g><ellipse cx="20" cy="16" rx="12" ry="8" fill="url(#wCloud)" stroke="#C8AFC0" stroke-width="0.8"/>${gloss(15, 12.5, 4, 2.4)}</svg>`
-const STORM_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><path d="M20 20 L15 30 L20 29 L17 38 L26 26 L21 27 L24 20 Z" fill="url(#wBolt)" stroke="#C98A00" stroke-width="0.8" stroke-linejoin="round"/><ellipse cx="20" cy="14" rx="12" ry="8" fill="url(#wDark)" stroke="#6C616A" stroke-width="0.8"/>${gloss(15, 10.5, 4, 2.4)}</svg>`
-const THUNDER_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><g fill="url(#wDrop)"><path d="M14 26c1.4 2.1 2.3 3.3 2.3 4.4a2.3 2.3 0 1 1-4.6 0c0-1.1.9-2.3 2.3-4.4z"/><path d="M26 26c1.4 2.1 2.3 3.3 2.3 4.4a2.3 2.3 0 1 1-4.6 0c0-1.1.9-2.3 2.3-4.4z"/></g><ellipse cx="20" cy="14" rx="12" ry="8" fill="url(#wDark)" stroke="#6C616A" stroke-width="0.8"/>${gloss(15, 10.5, 4, 2.4)}</svg>`
-const HAIL_ICON = `<svg viewBox="0 0 40 40"><defs>${SHADERS}</defs><g fill="url(#wIce)" stroke="#7E97A8" stroke-width="0.9"><circle cx="13" cy="29" r="3.1"/><circle cx="21" cy="33" r="3.1"/><circle cx="28" cy="28" r="3.1"/></g><ellipse cx="20" cy="14" rx="12" ry="8" fill="url(#wDark)" stroke="#6C616A" stroke-width="0.8"/>${gloss(15, 10.5, 4, 2.4)}</svg>`
-
-/** Icon follows the rendered weather mode, so previewing a mode updates it too. */
-// Fahrenheit is the local habit in the US (plus a handful of territories);
-// everyone else reads Celsius.
-function usesFahrenheit(): boolean {
-  if (typeof window === 'undefined') return false
-  const locale = navigator.languages?.[0] ?? navigator.language ?? 'en-CA'
-  try {
-    const region = new Intl.Locale(locale).region ?? ''
-    return ['US', 'BS', 'BZ', 'KY', 'PW', 'FM', 'MH', 'LR', 'PR', 'GU', 'VI'].includes(region)
-  } catch {
-    return /-US$/i.test(locale)
-  }
-}
-
-function weatherIconForMode(mode: WeatherMode): string {
-  switch (mode) {
-    case 'clear': return SUN_ICON
-    case 'cloudy':
-    case 'fog': return CLOUD_ICON
-    case 'rain': return RAIN_ICON
-    case 'thunder': return THUNDER_ICON
-    case 'storm': return STORM_ICON
-    case 'snow': return SNOW_ICON
-    case 'hail': return HAIL_ICON
-  }
-}
 
 // Brand-identity volume mark: clay-pink speaker with sound waves. Shown beside
 // the AI line whenever audio is playing.
@@ -603,6 +554,7 @@ export default function App() {
   const isMapEmbed = params.get('map') === '1'
   const focusedPostPicker = params.get('pickSpot') === '1'
   const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
+  const weatherUnit = weatherTemperatureUnit()
   const mapRef = useRef<mapboxgl.Map | null>(null)
   // Generation guard for the flat-map camera's three stages. Any new flight,
   // touch, stop, or background transition invalidates the outstanding stage
@@ -635,6 +587,21 @@ export default function App() {
   const [moonModel, setMoonModel] = useState<MapMoonModel>(() => moonPhase(new Date()).model)
   const [weatherOverride, setWeatherOverride] = useState<WeatherMode | null>(null)
   const [weatherOpen, setWeatherOpen] = useState(false)
+  const [weatherTestOpen, setWeatherTestOpen] = useState(WEATHER_TEST_ENABLED)
+  const closeWeatherTest = useCallback(() => {
+    // Closing a test restores the untouched Open-Meteo source immediately;
+    // simulated conditions never survive outside the named harness window.
+    setWeatherOverride(null)
+    setWeatherTestOpen(false)
+  }, [])
+  useEffect(() => {
+    if (!weatherTestOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeWeatherTest()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [closeWeatherTest, weatherTestOpen])
   // TEST ONLY: walk day → night → day so both skies can be checked without
   // waiting twelve hours. ?day-cycle=0 turns it off; dev builds only.
   useEffect(() => {
@@ -651,6 +618,7 @@ export default function App() {
   // and it cannot run in production because __DEV__ is compiled out.
   useEffect(() => {
     if (!import.meta.env.DEV) return
+    if (WEATHER_TEST_ENABLED) return
     if (new URLSearchParams(window.location.search).get('weather-cycle') !== '1') return
     const modes: WeatherMode[] = ['clear', 'cloudy', 'rain', 'thunder', 'storm', 'snow', 'hail', 'fog']
     let at = 0
@@ -1415,7 +1383,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const unit = usesFahrenheit() ? 'fahrenheit' : 'celsius'
+    const unit = weatherUnit === 'F' ? 'fahrenheit' : 'celsius'
     const [longitude, latitude] = navigationOrigin
     let controller: AbortController | null = null
     let confirmed = false
@@ -1453,7 +1421,7 @@ export default function App() {
         .catch(error => {
           if ((error as { name?: string } | null)?.name === 'AbortError') return
           if (!confirmed) {
-            setWeather(current => current ?? { temp: usesFahrenheit() ? 72 : 22, code: 1 })
+            setWeather(current => current ?? { temp: weatherUnit === 'F' ? 72 : 22, code: 1 })
             setWeatherForecast(current => current.length ? current : [])
             setWeatherForecastStatus(current => current === 'ready' ? current : 'error')
           }
@@ -1480,7 +1448,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onForeground)
       window.removeEventListener('message', onFront)
     }
-  }, [navigationOrigin])
+  }, [navigationOrigin, weatherUnit])
 
   // DEV: cycle weather / sky from the console to demo every overlay
   useEffect(() => {
@@ -3045,10 +3013,16 @@ export default function App() {
   }, [flyToCenter])
 
   const weatherMode: WeatherMode = weatherOverride ?? (weather ? modeForCode(weather.code) : 'clear')
+  const weatherTemperatureText = formatWeatherTemperature(weather?.temp ?? null)
   useEffect(() => {
     if (harnessView || !TOKEN || window.parent === window) return
-    window.parent.postMessage({ type: 'poplur-map-weather', mode: weatherMode }, '*')
-  }, [harnessView, weatherMode])
+    window.parent.postMessage({
+      type: 'poplur-map-weather',
+      mode: weatherMode,
+      temperature: weather?.temp ?? null,
+      unit: weatherUnit,
+    }, '*')
+  }, [harnessView, weather?.temp, weatherMode, weatherUnit])
 
   if (harnessView) {
     return (
@@ -3123,6 +3097,65 @@ export default function App() {
         onIntroComplete={handleIntroComplete}
         onGlobeReady={handleGlobeReady}
       />
+
+      {weatherTestOpen && (
+        <section
+          className={styles.weatherPicker}
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="poplur-weather-test-title"
+          data-poplur-weather-test
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
+        >
+          <header className={styles.weatherPickerHeader}>
+            <span>
+              <b id="poplur-weather-test-title">WEATHER TEST</b>
+              <small>{weatherOverride == null ? `LIVE · ${weatherMode}` : `SIMULATING · ${weatherOverride}`}</small>
+            </span>
+            <button
+              type="button"
+              className={styles.weatherPickerClose}
+              aria-label="Close weather test and restore live weather"
+              onClick={closeWeatherTest}
+            >
+              ×
+            </button>
+          </header>
+          <div className={styles.weatherPickerGrid}>
+            <button
+              type="button"
+              className={weatherOverride == null ? styles.weatherPickerOn : undefined}
+              aria-pressed={weatherOverride == null}
+              onClick={() => setWeatherOverride(null)}
+            >
+              LIVE
+            </button>
+            {WEATHER_TEST_MODES.map(mode => (
+              <button
+                type="button"
+                key={mode}
+                className={weatherOverride === mode ? styles.weatherPickerOn : undefined}
+                aria-pressed={weatherOverride === mode}
+                onClick={() => setWeatherOverride(mode)}
+              >
+                {mode.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <p>TEST ONLY · MAP STAYS INTERACTIVE</p>
+        </section>
+      )}
+      {WEATHER_TEST_ENABLED && !weatherTestOpen && (
+        <button
+          type="button"
+          className={styles.weatherTestLauncher}
+          aria-label="Open weather test window"
+          onClick={() => setWeatherTestOpen(true)}
+        >
+          WX TEST
+        </button>
+      )}
 
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
       <ClayNav
@@ -3200,13 +3233,19 @@ export default function App() {
         />
         <button
           type="button"
-          className={styles.mapWeatherToggle}
+          className={`${styles.mapWeatherToggle} ${styles.mapWeatherToggleWithTemp}`}
+          data-weather-mode={weatherMode}
           data-open={weatherOpen ? 'true' : 'false'}
-          aria-label={`Current weather: ${weatherMode}${weather ? `, ${weather.temp} degrees ${usesFahrenheit() ? 'Fahrenheit' : 'Celsius'}` : ''}. Show five day forecast`}
+          aria-label={`Current weather: ${weatherMode}${weather ? `, ${weather.temp} degrees ${weatherUnit === 'F' ? 'Fahrenheit' : 'Celsius'}` : ''}. Show five day forecast`}
           aria-expanded={weatherOpen}
           onClick={() => { playPop(0.25); toggleWeather() }}
         >
           <WeatherMark mode={weatherMode} icon={weatherIconMarkup} cloud={cloudBadge} compact />
+          {weatherTemperatureText && (
+            <span className={styles.mapWeatherTemperature} aria-hidden="true">
+              {weatherTemperatureText}
+            </span>
+          )}
         </button>
       </TabControlRail>}
       {/* The weather overlay itself: rain, snow, hail, lightning over the map. */}

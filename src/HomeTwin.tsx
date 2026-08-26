@@ -13,7 +13,14 @@ import ClayMuteButton from './ClayMuteButton'
 import TabControlRail from './TabControlRail'
 import MapLevelButton from './MapLevelButton'
 import { WeatherMark } from './ClayMap'
-import { modeForCode, type WeatherMode } from './WeatherFX'
+import { modeForCode } from './WeatherFX'
+import {
+  formatWeatherTemperature,
+  readWeatherPresentation,
+  weatherIconForMode,
+  weatherTemperatureUnit,
+  type WeatherPresentationSnapshot,
+} from './weatherPresentation'
 import mapStyles from './App.module.css'
 import {
   cubeTransition, holdPreviewMode, onTransitionChanged, screenTransition,
@@ -118,11 +125,6 @@ import {
  * cheapening what the user is looking at.
  */
 const CHROME_IDLE_MS = 30_000
-
-// The outer map rail appears above the native map as well as the web map. Keep
-// its weather affordance identical to the existing moulded-clay map mark — not
-// a replacement text glyph — while the map underneath owns live conditions.
-const MAP_RAIL_SUN_ICON = `<svg viewBox="0 0 40 40"><defs><radialGradient id="homeRailSun" cx="36%" cy="30%" r="76%"><stop offset="0" stop-color="#FFF3B0"/><stop offset="0.55" stop-color="#FFD23F"/><stop offset="1" stop-color="#E8A200"/></radialGradient></defs><g stroke="#E8A200" stroke-width="3" stroke-linecap="round" opacity="0.95"><path d="M20 3v5M20 32v5M3 20h5M32 20h5M8 8l3.5 3.5M28.5 28.5L32 32M32 8l-3.5 3.5M11.5 28.5L8 32"/></g><circle cx="20" cy="20" r="10" fill="url(#homeRailSun)" stroke="#D08F00" stroke-width="0.8"/><ellipse cx="16" cy="15.5" rx="3.6" ry="2.6" fill="#fff" opacity="0.45"/></svg>`
 
 // Browser twin of the iOS Home screen (map tab state), rebuilt from
 // HomeView.swift + RecordingCountdownView.swift + RadiusNumberDisplayFIXED.swift.
@@ -812,6 +814,7 @@ const CLAY_MAP_SRC = (() => {
   const lite = parentParams.get('mapLite')
   const mapNight = parentParams.get('map-night')
   const weatherCycle = parentParams.get('weather-cycle')
+  const weatherTest = parentParams.get('weather-test')
   // The hidden map mounts while Home's custom location primer is visible.
   // Carry that gate into the iframe so its own startup geolocation cannot race
   // ahead and surface a raw browser/OS prompt behind the Poplur consent card.
@@ -821,10 +824,11 @@ const CLAY_MAP_SRC = (() => {
   const nightQuery = mapNight === '1' || mapNight === '0' ? `&map-night=${mapNight}` : ''
   const weatherQuery = weatherCycle === '1' || weatherCycle === '0'
     ? `&weather-cycle=${weatherCycle}` : ''
+  const weatherTestQuery = weatherTest === '1' ? '&weather-test=1' : ''
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${locationQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${locationQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${locationQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${locationQuery}`
 })()
 
 function clockMapNight(): boolean {
@@ -989,6 +993,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     kind: WeatherCubeKind
     changedAt: number
   } | null>(null)
+  const [mapWeatherDisplay, setMapWeatherDisplay] = useState<WeatherPresentationSnapshot>(() => ({
+    mode: 'clear',
+    temperature: null,
+    unit: weatherTemperatureUnit(),
+  }))
   const [nativeMapCoordinate, setNativeMapCoordinate] = useState<{
     latitude: number
     longitude: number
@@ -2511,13 +2520,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )
       }
       if (event.data.type === 'poplur-map-weather') {
-        const kind = weatherCubeKind(event.data.mode)
-        setMapWeatherSignal(previous => {
-          if (!kind) return null
-          return previous?.kind === kind
+        const presentation = readWeatherPresentation(event.data)
+        if (presentation) {
+          setMapWeatherDisplay(previous => previous.mode === presentation.mode
+            && previous.temperature === presentation.temperature
+            && previous.unit === presentation.unit
             ? previous
-            : { kind, changedAt: Date.now() }
-        })
+            : presentation)
+          const kind = weatherCubeKind(presentation.mode)
+          setMapWeatherSignal(previous => {
+            if (!kind) return null
+            return previous?.kind === kind
+              ? previous
+              : { kind, changedAt: Date.now() }
+          })
+        }
       }
       if (event.data.type === 'poplur-map-overlay') {
         const open = Boolean(event.data.open)
@@ -3194,9 +3211,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const refresh = () => {
       controller?.abort()
       controller = new AbortController()
-      const unit = shouldUseMiles() ? 'fahrenheit' : 'celsius'
+      const displayUnit = weatherTemperatureUnit()
+      const unit = displayUnit === 'F' ? 'fahrenheit' : 'celsius'
       const { latitude, longitude } = nativeMapCoordinate
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=weather_code&temperature_unit=${unit}&timezone=auto`
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&temperature_unit=${unit}&timezone=auto`
       void fetch(url, { cache: 'no-store', signal: controller.signal })
         .then(response => {
           if (!response.ok) throw new Error(`Weather request failed: ${response.status}`)
@@ -3205,7 +3223,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         .then(json => {
           const code = Number(json.current?.weather_code)
           if (!Number.isFinite(code)) return
-          const kind = weatherCubeKind(modeForCode(code))
+          const mode = modeForCode(code)
+          const temperatureValue = Number(json.current?.temperature_2m)
+          const temperature = Number.isFinite(temperatureValue)
+            ? Math.round(temperatureValue)
+            : null
+          setMapWeatherDisplay(previous => previous.mode === mode
+            && previous.temperature === temperature
+            && previous.unit === displayUnit
+            ? previous
+            : { mode, temperature, unit: displayUnit })
+          const kind = weatherCubeKind(mode)
           setMapWeatherSignal(previous => {
             if (!kind) return null
             return previous?.kind === kind
@@ -4505,6 +4533,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     setPopping(true)
   }
 
+  const mapWeatherTemperatureText = formatWeatherTemperature(mapWeatherDisplay.temperature)
+  const mapWeatherAccessibleTemperature = mapWeatherDisplay.temperature == null
+    ? ''
+    : `, ${mapWeatherDisplay.temperature} degrees ${mapWeatherDisplay.unit === 'F' ? 'Fahrenheit' : 'Celsius'}`
+
   return (
     <section
       className={styles.home}
@@ -4617,11 +4650,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             />
             <button
               type="button"
-              className={mapStyles.mapWeatherToggle}
-              aria-label="Show weather forecast"
+              className={`${mapStyles.mapWeatherToggle} ${styles.mapWeatherWithTemperature}`}
+              data-weather-mode={mapWeatherDisplay.mode}
+              aria-label={`Current weather: ${mapWeatherDisplay.mode}${mapWeatherAccessibleTemperature}. Show weather forecast`}
               onClick={() => { playPop(0.25); sendMapAction('weather') }}
             >
-              <WeatherMark mode="clear" icon={MAP_RAIL_SUN_ICON} compact />
+              <WeatherMark
+                mode={mapWeatherDisplay.mode}
+                icon={weatherIconForMode(mapWeatherDisplay.mode)}
+                compact
+              />
+              {mapWeatherTemperatureText && (
+                <span className={styles.mapWeatherTemperature} aria-hidden="true">
+                  {mapWeatherTemperatureText}
+                </span>
+              )}
             </button>
           </TabControlRail>
           {NATIVE_ADAPTIVE_MAP && !nativeMapWebFallback && (
