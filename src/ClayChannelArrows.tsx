@@ -345,7 +345,7 @@ export default function ClayChannelArrows({
       {single !== 'down' && <button
         type="button"
         data-poplur-channel-control="up"
-        onPointerDown={() => press('up', onUp)}
+        onClick={() => press('up', onUp)}
         aria-label={upLabel}
         style={single
           ? { position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }
@@ -356,7 +356,7 @@ export default function ClayChannelArrows({
       {single !== 'up' && <button
         type="button"
         data-poplur-channel-control="down"
-        onPointerDown={() => press('down', onDown)}
+        onClick={() => press('down', onDown)}
         aria-label={downLabel}
         style={single
           ? { position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }

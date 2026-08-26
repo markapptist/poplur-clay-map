@@ -1015,3 +1015,11 @@
   top: auto;
   bottom: calc(18px + var(--shell-cube-size) + var(--shell-control-gap));
 }
+
+/* The story card owns navigation while it is visible. Keep the shared clay
+   renderer mounted but inert so each stop does not destroy and recreate a
+   WebGL context merely to swap control locations. */
+.popStepperNewsHidden {
+  visibility: hidden;
+  pointer-events: none;
+}

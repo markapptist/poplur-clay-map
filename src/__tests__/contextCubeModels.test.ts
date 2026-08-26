@@ -5,6 +5,7 @@ import {
   HAIL_CUBE_MODEL,
   HOME_CUBE_MODEL,
   SNOW_CUBE_MODEL,
+  isBreakingNewsCubeEvent,
   mapContextCubeModel,
   readMapNewsCubeEvent,
   weatherCubeKind,
@@ -30,6 +31,14 @@ describe('context cube models', () => {
     expect(mapContextCubeModel(true, 'snow')).toBe(BREAKING_NEWS_CUBE_MODEL)
     expect(mapContextCubeModel(false, 'hail')).toBe(HAIL_CUBE_MODEL)
     expect(mapContextCubeModel(false, null)).toBeNull()
+  })
+
+  it('reserves the breaking-news cube for breaking and live stories', () => {
+    expect(isBreakingNewsCubeEvent({ id: 'b', status: 'breaking' })).toBe(true)
+    expect(isBreakingNewsCubeEvent({ id: 'l', status: 'live' })).toBe(true)
+    expect(isBreakingNewsCubeEvent({ id: 'd', status: 'developing' })).toBe(false)
+    expect(isBreakingNewsCubeEvent({ id: 't', status: 'top' })).toBe(false)
+    expect(isBreakingNewsCubeEvent(null)).toBe(false)
   })
 
   it('validates the stable active-story signal and treats clear as inactive', () => {

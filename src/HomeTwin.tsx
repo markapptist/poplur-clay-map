@@ -26,6 +26,7 @@ import {
   BREAKING_NEWS_CUBE_MODEL,
   BROWSER_CUBE_MODEL,
   HOME_CUBE_MODEL,
+  isBreakingNewsCubeEvent,
   mapContextCubeModel,
   readMapNewsCubeEvent,
   weatherCubeKind,
@@ -3646,6 +3647,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // Ordinary tab leave. A new surface never shares memory with a parked
     // Mapbox document; teardown beats a warm-return cache for sustained use.
     drop()
+    // A command queued for this abandoned boot belongs to this visit only.
+    // Otherwise a stale focusNews/newsTour action can unexpectedly move the
+    // camera the next time Map is opened.
+    queuedMapActionsRef.current = []
   }, [activeTab, committedTab, surfaceVisible, subscreenRequested, activePermission, mapPickSpotLaunch, nativeMapWebFallback])
 
   // Do not mutate the iframe URL while it is still mounted: changing `src`
@@ -4172,7 +4177,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // precipitation. As soon as the visible story card clears, the same pure
   // resolver falls back to the current rain, thunder, snow or hail model.
   const mapContextModel = activeTab === 'map' && committedTab === 'map'
-    ? mapContextCubeModel(mapNewsEvent != null, mapWeatherSignal?.kind)
+    ? mapContextCubeModel(isBreakingNewsCubeEvent(mapNewsEvent), mapWeatherSignal?.kind)
     : null
   const breakingNewsCubeActive = mapContextModel === BREAKING_NEWS_CUBE_MODEL
   const weatherCubeModel = breakingNewsCubeActive ? null : mapContextModel

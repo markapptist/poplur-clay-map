@@ -69,9 +69,14 @@ describe('shared live news wire', () => {
     'https://192.168.1.4/story',
     'https://224.0.0.1/story',
     'https://[::1]/story',
+    'https://[::]/story',
+    'https://[::ffff:7f00:1]/story',
+    'https://[::ffff:127.0.0.1]/story',
     'https://[fc00::1]/story',
     'https://[fd12::1]/story',
     'https://[fe80::1]/story',
+    'https://[fec0::1]/story',
+    'https://[ff02::1]/story',
   ])('rejects a non-public source URL: %s', unsafeUrl => {
     expect(parseLiveNewsPayload([event({
       sources: [{ publisher: 'Unsafe', url: unsafeUrl }],

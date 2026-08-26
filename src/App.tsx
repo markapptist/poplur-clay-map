@@ -1745,6 +1745,10 @@ export default function App() {
     [liveNews.events, liveNews.stale],
   )
   const newsTourIndexRef = useRef(-1)
+  const newsNavigationFocusRef = useRef<'previous' | 'next' | null>(null)
+  const clearNewsNavigationFocus = useCallback(() => {
+    newsNavigationFocusRef.current = null
+  }, [])
   const newsStartSerialRef = useRef(0)
   const newsTourPendingRef = useRef(false)
   const [newsTourPending, setNewsTourPending] = useState(false)
@@ -1804,6 +1808,7 @@ export default function App() {
     setTourMode(null)
     setActiveNewsStop(null)
     newsTourIndexRef.current = -1
+    newsNavigationFocusRef.current = null
     reportNewsEvent(null)
     ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = false
     const map = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean; __tripping?: boolean }) | null
@@ -1832,6 +1837,7 @@ export default function App() {
     setTourMode(null)
     setActiveNewsStop(null)
     newsTourIndexRef.current = -1
+    newsNavigationFocusRef.current = null
     reportNewsEvent(null)
     const debugWindow = window as unknown as {
       __poplurTourOn?: boolean
@@ -2110,10 +2116,20 @@ export default function App() {
     if (newsTourPendingRef.current || tourModeRef.current === 'news') stopTour()
   }, [liveNews.stale, stopTour])
 
-  const stepNewsTour = useCallback((dir: -1 | 1) => {
+  const stepNewsTour = useCallback((dir: -1 | 1, restoreKeyboardFocus = false) => {
     if (!tourOnRef.current || tourModeRef.current !== 'news') return
-    if (!newsTourEvents.length) return
+    // A one-story edition has nowhere to step. Re-flying to the same point
+    // wastes four seconds of camera/GPU work and makes the control look broken.
+    if (newsTourEvents.length < 2) return
+    newsNavigationFocusRef.current = restoreKeyboardFocus
+      ? dir < 0 ? 'previous' : 'next'
+      : null
     tourAutoAdvanceRef.current = false
+    // An ambient-sleep edge can mark an in-flight automatic stop to pause on
+    // arrival. A deliberate arrow press supersedes that older intent; without
+    // clearing it, the newly selected manual story appears briefly and then
+    // disarms itself as soon as its camera frame settles.
+    tourPauseAfterStopRef.current = false
     cancelTourTimer(tourNextTimerRef.current)
     const base = newsTourIndexRef.current >= 0
       ? newsTourIndexRef.current
@@ -2191,15 +2207,18 @@ export default function App() {
 
   useEffect(() => onAmbientSleepChange(sleeping => {
     if (!sleeping || !tourOnRef.current) return
-    // A manually stepped news stop has no autonomous work left to shed: its
-    // camera flight is already bounded and the next move only happens after an
-    // arrow press. Keep that visible, manual state armed even if the ambient
-    // governor reaches its idle edge before the shell's foreground message is
-    // observed. A real tab/surface exit still calls stopTour synchronously via
-    // poplur-map-front, visibilitychange, or pagehide above.
-    if (tourModeRef.current === 'news'
-      && !tourAutoAdvanceRef.current
-      && document.visibilityState === 'visible') return
+    // News has a safe thermal downgrade of its own: cancel the automatic next
+    // stop, let the one bounded flight/card finish, and keep the arrows armed.
+    // Clearing the whole tour here made an attended story disappear merely
+    // because its 15-second decoration lease expired. A real tab/surface exit
+    // still calls stopTour synchronously via poplur-map-front,
+    // visibilitychange, or pagehide above.
+    if (tourModeRef.current === 'news') {
+      tourAutoAdvanceRef.current = false
+      tourPauseAfterStopRef.current = false
+      cancelTourTimer(tourNextTimerRef.current)
+      return
+    }
     // Ordinary 15-second idleness parks decoration during the landmark hold;
     // it must not cancel a tour the user just asked to watch. Backgrounding,
     // leaving Map, or a true protection rung still pauses the bounded pass.
@@ -3551,6 +3570,10 @@ export default function App() {
           stop={activeNewsStop.index + 1}
           total={activeNewsStop.total}
           onDismiss={stopTour}
+          focusDirection={newsNavigationFocusRef.current}
+          onNavigationFocusRestored={clearNewsNavigationFocus}
+          onPrevious={restoreFocus => stepNewsTour(-1, restoreFocus)}
+          onNext={restoreFocus => stepNewsTour(1, restoreFocus)}
           onRead={() => {
             const eventId = activeNewsStop.event.id
             stopTour()
@@ -3725,8 +3748,9 @@ export default function App() {
           intents distinct means a cross-frame timing change can never turn a
           tour press into a posted-pop traversal. */}
       <div
-        className={`${styles.popStepper}${isEmbedded ? ` ${styles.popStepperAboveCube}` : ''}`}
+        className={`${styles.popStepper}${isEmbedded ? ` ${styles.popStepperAboveCube}` : ''}${activeNewsStop ? ` ${styles.popStepperNewsHidden}` : ''}`}
         data-map-tour-step=""
+        aria-hidden={activeNewsStop ? true : undefined}
       >
         <ClayChannelArrows
           orientation="horizontal"
@@ -3741,16 +3765,25 @@ export default function App() {
             : popPosition ? `${popPosition.n}/${popPosition.of}` : ''}
           upLabel={tourMode === 'news' ? 'Previous news story' : tourOn ? 'Previous landmark' : 'Previous pop'}
           downLabel={tourMode === 'news' ? 'Next news story' : tourOn ? 'Next landmark' : 'Next pop'}
-          onUp={() => window.postMessage({
-            type: 'poplur-map-action',
-            action: tourMode === 'news' ? 'cycleNews' : tourOn ? 'cycleTourLandmark' : 'cyclePop',
-            dir: -1,
-          }, '*')}
-          onDown={() => window.postMessage({
-            type: 'poplur-map-action',
-            action: tourMode === 'news' ? 'cycleNews' : tourOn ? 'cycleTourLandmark' : 'cyclePop',
-            dir: 1,
-          }, '*')}
+          onUp={() => {
+            // These arrows already live in this map document. Invoke the news
+            // step synchronously instead of round-tripping through a same-page
+            // postMessage whose delivery can trail a camera/idle transition.
+            if (tourMode === 'news') { stepNewsTour(-1); return }
+            window.postMessage({
+              type: 'poplur-map-action',
+              action: tourOn ? 'cycleTourLandmark' : 'cyclePop',
+              dir: -1,
+            }, '*')
+          }}
+          onDown={() => {
+            if (tourMode === 'news') { stepNewsTour(1); return }
+            window.postMessage({
+              type: 'poplur-map-action',
+              action: tourOn ? 'cycleTourLandmark' : 'cyclePop',
+              dir: 1,
+            }, '*')
+          }}
         />
       </div>
 

@@ -19,6 +19,13 @@ export interface MapNewsCubeEvent {
   status: MapNewsCubeStatus
 }
 
+/** Only genuinely breaking/live focused stories borrow the exclamation cube. */
+export function isBreakingNewsCubeEvent(
+  event: MapNewsCubeEvent | null | undefined,
+): boolean {
+  return event?.status === 'breaking' || event?.status === 'live'
+}
+
 /** Validate the stable map-document → Home-shell story-card signal. */
 export function readMapNewsCubeEvent(value: unknown): MapNewsCubeEvent | null {
   if (!value || typeof value !== 'object') return null
