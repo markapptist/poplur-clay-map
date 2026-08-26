@@ -102,6 +102,10 @@ WARDROBE_ASSETS=(
   wardrobe-models/Hair_Long.glb
   wardrobe-models/Hair_BuzzedFemale.glb
   wardrobe-models/Hair_SimpleParted.glb
+  wardrobe-models/Poplur_Atelier_Jacket_Female.glb
+  wardrobe-models/Poplur_Atelier_Jacket_Male.glb
+  wardrobe-models/Poplur_Atelier_Trousers_Female.glb
+  wardrobe-models/Poplur_Atelier_Trousers_Male.glb
 )
 verify_wardrobe_assets() {
   local root="$1"

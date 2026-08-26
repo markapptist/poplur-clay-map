@@ -9,42 +9,73 @@
   max-height: 100%;
   box-sizing: border-box;
   display: grid;
-  /* A definite row. Without it the single auto row is content-sized, so the
-     device's `max-height: 100%` has no definite height to resolve against and
-     is ignored — the aspect-ratio box then takes its full height and spills off
-     both sides, which `overflow: hidden` quietly clipped. minmax(0, 1fr) makes
-     the row definite AND lets it shrink below content size. */
-  grid-template-rows: minmax(0, 1fr);
-  place-items: center;
+  grid-template-areas:
+    "mission"
+    "device"
+    "dashboard";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  place-items: stretch center;
+  gap: clamp(6px, 1.25cqh, 12px);
   overflow: hidden;
-  /* The product photo is intentionally isolated on white. Extending that same
-     white through the host removes the dark letterbox above and below the
-     portrait artwork without stretching the device. */
-  background: #fff;
-  padding: 0;
-  /* GamesScreen can be embedded inside a native WebView whose usable stage is
-     smaller than the browser's global vh/dvh. Query this exact game box so the
-     pet always fits the pixels actually available to it. */
+  padding:
+    max(8px, env(safe-area-inset-top))
+    12px
+    max(138px, calc(env(safe-area-inset-bottom) + 120px));
+  color: #fff;
+  /* The generated art is the production surface. The layered nebula and
+     repeating pin-stars stay visible if that asset is still downloading (or
+     a bundled build temporarily lacks it), so the game never falls back to a
+     white page again. */
+  background-color: #090319;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, .92) 0 1px, transparent 1.7px),
+    radial-gradient(circle, rgba(255, 134, 218, .58) 0 1.2px, transparent 2px),
+    radial-gradient(ellipse at 50% 49%, rgba(228, 192, 255, .92) 0%, rgba(130, 82, 193, .66) 31%, rgba(26, 8, 58, .68) 66%, rgba(4, 2, 13, .92) 100%),
+    url("games/poplurgatchi/assets/spacey-poplur-bg-v2.png");
+  background-position: 12px 18px, 70px 52px, center, center;
+  background-size: 132px 132px, 191px 191px, cover, cover;
+  background-repeat: repeat, repeat, no-repeat, no-repeat;
   container-type: size;
+  isolation: isolate;
+}
+
+.game::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(4, 1, 14, .4), transparent 24%, transparent 74%, rgba(4, 1, 14, .52)),
+    radial-gradient(ellipse at center, transparent 44%, rgba(3, 1, 10, .42));
 }
 
 .device {
   position: relative;
-  /* The image is 3:4. Use the largest 3:4 rectangle that fits the exact game
-     stage: full container width on a portrait phone, or full container height
-     in landscape. The stage owns the safe-area padding, so the shell and its
-     three percentage-positioned controls remain inside the usable viewport. */
-  width: min(100%, 75vh);
-  width: min(100cqw, 75cqh);
+  z-index: 1;
+  grid-area: device;
+  place-self: center;
+  width: min(100%, 75cqh);
   max-width: 100%;
   max-height: 100%;
   height: auto;
-  place-self: center;
   min-width: 0;
   min-height: 0;
   aspect-ratio: 1086 / 1448;
   box-sizing: border-box;
   user-select: none;
+  filter: drop-shadow(0 18px 30px rgba(2, 0, 12, .7));
+}
+
+.device::before {
+  content: "";
+  position: absolute;
+  inset: 4% 0 2%;
+  z-index: -1;
+  border-radius: 48%;
+  background: rgba(221, 179, 255, .3);
+  box-shadow: 0 0 44px rgba(255, 66, 176, .4), 0 0 86px rgba(90, 190, 255, .28);
 }
 
 .deviceImage {
@@ -53,10 +84,12 @@
   height: 100%;
   object-fit: contain;
   pointer-events: none;
+  filter: saturate(1.1) contrast(1.02);
 }
 
 .control {
   position: absolute;
+  z-index: 10;
   top: 74%;
   width: 18.5%;
   aspect-ratio: 1;
@@ -67,9 +100,13 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.confirm[data-cooling="true"] {
+  background: radial-gradient(circle, transparent 47%, rgba(255, 45, 139, .34) 50% 58%, transparent 61%);
+}
+
 .control:active {
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.42), rgba(255, 45, 139, 0.14) 54%, transparent 72%);
-  box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.75);
+  background: radial-gradient(circle, rgba(255, 255, 255, .42), rgba(255, 45, 139, .14) 54%, transparent 72%);
+  box-shadow: inset 0 0 10px rgba(255, 255, 255, .75);
 }
 
 .control:focus-visible {
@@ -83,74 +120,221 @@
 
 .selection {
   position: absolute;
+  z-index: 7;
   left: var(--select-x);
   top: var(--select-y);
   width: 9%;
   aspect-ratio: 1;
-  border: 3px solid #ff2d8b;
+  border: 3px solid var(--director-accent, #ff2d8b);
   border-radius: 10px;
-  box-shadow: 0 0 0 2px rgba(255,255,255,.84), 0 0 13px rgba(255,45,139,.9);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .84), 0 0 13px rgba(255, 45, 139, .9);
   transform: translate(-50%, -50%);
-  transition: left .2s cubic-bezier(.2,.9,.3,1.2), top .2s cubic-bezier(.2,.9,.3,1.2);
+  transition: left .2s cubic-bezier(.2, .9, .3, 1.2), top .2s cubic-bezier(.2, .9, .3, 1.2);
+}
+
+/* Missions and all persistent status copy live outside the photographed LCD.
+   That screen now shows only the pet and its built-in action icons. */
+.mission,
+.dashboard {
+  position: relative;
+  z-index: 4;
+  width: min(100%, 520px);
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .28);
+  color: #fff;
+  background: linear-gradient(145deg, rgba(35, 11, 69, .88), rgba(12, 5, 34, .82));
+  box-shadow: 0 12px 28px rgba(2, 0, 12, .46), inset 0 1px rgba(255, 255, 255, .13);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  pointer-events: none;
+}
+
+.mission {
+  grid-area: mission;
+  align-self: start;
+  min-height: 70px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 12px 10px;
+  border-radius: 15px;
+  font: 850 clamp(9px, 1.15cqh, 12px)/1.1 ui-monospace, "SF Mono", monospace;
+}
+
+.missionTop {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.missionTop span {
+  flex: none;
+  color: #ff8ed0;
+  font-size: .88em;
+  letter-spacing: .07em;
+}
+
+.missionTop b {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  text-overflow: ellipsis;
+}
+
+.mission p {
+  min-height: 2.05em;
+  margin: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgba(255, 255, 255, .9);
+  font-weight: 800;
+}
+
+.questRow {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.questTrack {
+  flex: 1 1 auto;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .16);
+}
+
+.questTrack > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--director-accent, #ff2d8b);
+  box-shadow: 0 0 10px var(--director-accent, #ff2d8b);
+  transition: width .28s ease;
+}
+
+.questRow strong {
+  flex: none;
+  color: #ff9cd7;
+  font-size: .9em;
+}
+
+.questRow small {
+  min-width: 0;
+  max-width: 34%;
+  overflow: hidden;
+  color: rgba(255, 255, 255, .72);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  font-size: .82em;
+}
+
+.dashboard {
+  grid-area: dashboard;
+  align-self: end;
+  min-height: 104px;
+  display: grid;
+  grid-template-rows: minmax(38px, auto) auto auto;
+  gap: 7px;
+  padding: 9px 10px 10px;
+  border-radius: 17px;
+  font-family: ui-monospace, "SF Mono", monospace;
 }
 
 .dialog {
-  position: absolute;
-  left: 24.5%;
-  right: 24.5%;
-  top: 44.5%;
-  min-height: 11.5%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  padding: 8px 10px;
-  border: 3px solid #5a215e;
-  background: rgba(255, 246, 207, 0.94);
-  color: #411443;
-  font: 900 clamp(11px, 1.05cqh, 18px)/1.18 ui-monospace, "SF Mono", monospace;
-  box-shadow: 3px 3px 0 rgba(75, 22, 77, 0.36);
+  overflow: hidden;
+  color: #fff;
+  font: 850 clamp(9px, 1.18cqh, 12px)/1.13 ui-monospace, "SF Mono", monospace;
   opacity: 1;
   transform: translateY(0);
   transition: opacity .28s ease, transform .28s ease;
-  pointer-events: none;
 }
 
 .dialogHidden {
   opacity: 0;
-  transform: translateY(-6px);
+  transform: translateY(-4px);
 }
 
 .dialog strong {
-  color: #d40f74;
+  color: #ff8ed0;
+  letter-spacing: .04em;
 }
 
 .dialog span {
   white-space: pre-line;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgba(255, 255, 255, .86);
+}
+
+.progressHud {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, .14);
+  color: #fff;
+  font: 950 clamp(8px, 1.03cqh, 11px)/1 ui-monospace, "SF Mono", monospace;
+}
+
+.progressHud span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progressHud span:not(:first-child) {
+  color: #ff9bd6;
 }
 
 .stats {
-  position: absolute;
-  left: 25%;
-  right: 25%;
-  top: 56.8%;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 2px;
-  color: #4e1551;
-  font: 900 clamp(7px, .52cqh, 10px)/1 ui-monospace, monospace;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  color: rgba(255, 255, 255, .9);
+  font: 900 clamp(7px, .9cqh, 10px)/1 ui-monospace, monospace;
   text-align: center;
+}
+
+.stats span {
+  min-width: 0;
+  padding: 5px 2px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .07);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .burst,
 .burstIdle {
   position: absolute;
   left: 50%;
-  top: 42%;
+  z-index: 8;
+  top: 47%;
   display: flex;
   gap: 8px;
-  color: #ff2d8b;
+  color: var(--director-accent, #ff2d8b);
   font-size: clamp(12px, 2.4vh, 22px);
+  text-shadow: 0 0 10px #fff;
   pointer-events: none;
 }
 
@@ -168,8 +352,45 @@
   100% { opacity: 0; transform: translate(-50%, -36px) scale(.85); }
 }
 
+/* Short landscape stages cannot afford vertical HUD bands. Put the two glass
+   panels beside the device while keeping the same DOM and focus order. */
+@media (min-aspect-ratio: 4 / 3) {
+  .game {
+    grid-template-areas: "mission device dashboard";
+    grid-template-columns: minmax(130px, .8fr) minmax(190px, 1.35fr) minmax(150px, .85fr);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: center;
+    gap: clamp(8px, 1.7vw, 20px);
+    padding:
+      max(10px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(10px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .mission,
+  .dashboard {
+    width: 100%;
+    align-self: center;
+  }
+
+  .mission,
+  .dashboard {
+    min-height: 0;
+  }
+
+  .stats {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .stats span:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .selection { transition: none; }
   .dialog { transition: none; }
+  .questTrack > span { transition: none; }
   .burst { animation-duration: .01ms; }
 }

@@ -92,10 +92,16 @@ type CasinoAdvertiser = {
   verifiedNearby: boolean
 }
 
+const CASINO_FALLBACK_IMAGE = `${import.meta.env.BASE_URL}casino/marquee.png`
+
 const TORONTO_CASINO_FALLBACK: CasinoAdvertiser = {
   name: 'Great Canadian Casino Resort Toronto',
   detail: 'Casino and live entertainment',
   website: 'https://greatcanadian.com/locations/toronto/',
+  // The directory and Commons lookup are best-effort network enrichments.
+  // The sponsored card must still have real creative on first paint, offline,
+  // and when a venue has no tagged media.
+  imageUrl: CASINO_FALLBACK_IMAGE,
   verifiedNearby: true,
 }
 
@@ -341,6 +347,24 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const [paysOpen, setPaysOpen] = useState(false)
   const [promoOpen, setPromoOpen] = useState(false)
   const advertiser = useNearbyCasinoAdvertiser()
+  const [failedMediaUrls, setFailedMediaUrls] = useState<string[]>([])
+
+  useEffect(() => {
+    setFailedMediaUrls([])
+  }, [advertiser.imageUrl, advertiser.videoUrl])
+
+  const markMediaFailed = (url: string) => {
+    setFailedMediaUrls(current => current.includes(url) ? current : [...current, url])
+  }
+  const casinoVideoUrl = advertiser.videoUrl && !failedMediaUrls.includes(advertiser.videoUrl)
+    ? advertiser.videoUrl
+    : undefined
+  const preferredCasinoImage = advertiser.imageUrl ?? CASINO_FALLBACK_IMAGE
+  const casinoImageUrl = !failedMediaUrls.includes(preferredCasinoImage)
+    ? preferredCasinoImage
+    : preferredCasinoImage !== CASINO_FALLBACK_IMAGE && !failedMediaUrls.includes(CASINO_FALLBACK_IMAGE)
+      ? CASINO_FALLBACK_IMAGE
+      : undefined
 
   const landedRef = useRef(0)
   const ceilingRef = useRef<number | null>(null)
@@ -707,10 +731,24 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
           >
             <span className={styles.adBurst} aria-hidden="true">★ LIVE ★</span>
             <span className={styles.promoEyebrow}>SPONSORED CASINO · NEAR YOUR RADIUS</span>
-            {advertiser.videoUrl ? (
-              <video className={styles.casinoMedia} src={advertiser.videoUrl} poster={advertiser.imageUrl} autoPlay muted loop playsInline />
-            ) : advertiser.imageUrl ? (
-              <img className={styles.casinoMedia} src={advertiser.imageUrl} alt={`${advertiser.name} venue`} />
+            {casinoVideoUrl ? (
+              <video
+                className={styles.casinoMedia}
+                src={casinoVideoUrl}
+                poster={casinoImageUrl}
+                autoPlay
+                muted
+                loop
+                playsInline
+                onError={() => markMediaFailed(casinoVideoUrl)}
+              />
+            ) : casinoImageUrl ? (
+              <img
+                className={styles.casinoMedia}
+                src={casinoImageUrl}
+                alt={`${advertiser.name} venue`}
+                onError={() => markMediaFailed(casinoImageUrl)}
+              />
             ) : (
               <div className={styles.casinoMediaFallback}>LIVE VENUE MEDIA</div>
             )}

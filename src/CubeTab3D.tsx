@@ -10,12 +10,12 @@ import { preloadPop, primePopAudio } from './pop'
 import { askForMotion } from './motionPermission'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
+import { mapGlobeSpinIsActive } from './mapThermalPolicy'
 
 declare global {
   interface Window {
     __poplurDisplayActive?: () => boolean
-    /** HomeTwin's chrome-idle flag: true after 10s untouched. The globe's
-        authored spin reads it so the turn rests exactly when the HUD ghosts. */
+    /** HomeTwin's chrome-idle flag: true after 30s untouched. */
     __poplurChromeIdle?: boolean
     /** Globe-spin state, readable rather than inferred — the same contract
         __poplurChromeIdle exists for. A parked loop and a loop that is running
@@ -26,7 +26,7 @@ declare global {
         which precondition is holding it back. */
     __poplurGlobeSpin?: {
       spinning: boolean
-      gate: 'spinning' | 'hidden' | 'display-off' | 'chrome-idle' | 'not-map-tab' | 'not-globe' | 'parked'
+      gate: 'spinning' | 'hidden' | 'display-off' | 'chrome-idle' | 'spin-complete' | 'not-map-tab' | 'not-globe' | 'parked'
       at: number
     }
     __poplurDisplayRAF?: (callback: FrameRequestCallback) => number
@@ -129,10 +129,15 @@ const FRONT_ONLY_MODELS = new Set([
   'poplur_cube_verification.glb',
   'poplur_cube_paint_bucket.glb',
   'poplur_cube_directions_arrow.glb',
-  // The supplied rain cloud is intentionally a shallow hero-facing relief;
-  // both weather objects should keep their readable face toward the viewer.
+  // Supplied image-to-3D objects are hero-facing reliefs. They still move,
+  // but remain inside the tight envelope that keeps the readable face forward.
+  'poplur_cube_home.glb',
+  'poplur_cube_at_sign.glb',
+  'poplur_cube_breaking_news.glb',
   'poplur_cube_rain_cloud.glb',
   'poplur_cube_thunder_cloud.glb',
+  'poplur_cube_snow_cloud.glb',
+  'poplur_cube_hail_cloud.glb',
 ])
 /** The grip the camcorder reads as level. A handset held to film sits around
     60° off the tabletop, not flat and not upright, so that is the pose that
@@ -263,6 +268,7 @@ const CUBE_MODEL = DEFAULT_CUBE_MODEL
 const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
 const TSHIRT_MODEL = 'poplur_cube_tshirt.glb'
 const DISCO_BALL_MODEL = 'poplur_cube_disco_ball.glb'
+const AIRPORT_AIRPLANE_MODEL = 'poplur_airplane_lite.glb'
 
 /** The clay GLBs use Draco or Meshopt compression depending on which asset
     pipeline produced them. A bare GLTFLoader downloads either format and then
@@ -340,6 +346,14 @@ const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> 
   // so a quarter turn about Y sends the lens to -Z (into the screen) and
   // brings the rear face to the camera.
   [CAMCORDER_MODEL]: { x: 0, y: -Math.PI / 2, z: 0 },
+  // The airplane's authoring pose is level and side-on. Match the attractive
+  // three-quarter/top pose already used by its map sprite so the nose, wings,
+  // windows and Poplur tail mark are all readable in the navigator.
+  [AIRPORT_AIRPLANE_MODEL]: {
+    x: THREE.MathUtils.degToRad(10),
+    y: THREE.MathUtils.degToRad(-35),
+    z: 0,
+  },
   // Meshy's image-to-3d only ever saw one side of the source photo — the
   // opposite face is its own guess, and the guess is a bumpy, illegible mess
   // (confirmed by a 9-pose render probe: roll0/roll180/yaw180 all show the
@@ -859,15 +873,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     const mapGlobeIsVisible = () =>
       document.visibilityState === 'visible'
       && (window.__poplurDisplayActive?.() ?? true)
-      // Rests with the chrome (user-ordered 19 Aug, superseding the 18 Aug
-      // "always turning": "the phone should not be heating up at all"). The
-      // spin runs the whole time the screen is attended and parks on the same
-      // untouched beat that ghosts the HUD (CHROME_IDLE_MS, 30s), so an app
-      // left face-up on a
-      // table stops paying display-rate frames for a turn nobody is watching.
-      // The document-level pointerdown listener below wakes the loop, and
-      // HomeTwin's own capture-phase wake flips the flag back first, so the
-      // very touch that un-ghosts the chrome also restarts the turn.
+      // Eligibility is separate from the bounded turn deadline. The globe can
+      // remain visible without retaining a second continuous WebGL loop beside
+      // Mapbox; model arrival and genuine interactions extend globeSpinUntil.
       && window.__poplurChromeIdle !== true
       && isMapGlobe()
     const discoBallIsVisible = () =>
@@ -1417,10 +1425,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     window.addEventListener('poplur-motion-tuning', onMotionTuning)
     // Any touch anywhere is what un-idles the chrome (HomeTwin's own
     // capture-phase listener flips __poplurChromeIdle first — it registered
-    // earlier, so it runs earlier). This one only wakes the parked loop so
-    // the globe's turn resumes on that same touch instead of waiting for the
-    // next canvas gesture or motion sample.
-    const onAnyPress = () => { wakeLoopRef.current() }
+    // earlier, so it runs earlier). Give the globe one short acknowledgement
+    // turn, then let the demand-driven renderer park again.
+    const onAnyPress = () => { armGlobeSpin(1200) }
     document.addEventListener('pointerdown', onAnyPress, { capture: true, passive: true })
 
     // ---- finite pitch + event-driven render loop ----
@@ -1534,23 +1541,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         needsRender = true
       }
 
-      // Turning while you can see it AND are with it. The 18 Aug order made
-      // this spin never expire; the 19 Aug heat order rests it with the
-      // chrome instead — mapGlobeIsVisible() now includes the chrome-idle
-      // flag, so the turn parks once the chrome goes idle and the first touch
-      // brings it straight back. This used
-      // to expire — armed for 8s at boot and re-armed by interaction — so the
-      // globe stopped on its own and read as broken: "why does this turn off
-      // by itself". The spin is the object's character, not an entrance
-      // flourish, so it no longer has a deadline.
-      //
-      // `mapGlobeIsVisible()` is still the gate, and it is the one that
-      // matters: the globe turns only while the document is visible, the
-      // display is active, the MAP tab is the one on screen, and the loaded
-      // object is actually the globe. Leave the tab, background the app or
-      // lock the phone and it stops — so "always" costs frames only while
-      // someone is looking at it.
-      const globeAnimating = mapGlobeIsVisible()
+      // The globe keeps its character through an eight-second arrival turn and
+      // short interaction tails, then remains visibly planted and renders only
+      // when something actually changes. This removes a permanent 20 Hz WebGL
+      // owner from the same screen as the 3D map without changing the model.
+      const globeEligible = mapGlobeIsVisible()
+      const globeAnimating = mapGlobeSpinIsActive(globeEligible, now, globeSpinUntil)
       // Report WHY, so a rested spin and a dead one are distinguishable from
       // outside. Cheap: object literal on an already-running frame.
       window.__poplurGlobeSpin = {
@@ -1560,7 +1556,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
             : !(window.__poplurDisplayActive?.() ?? true) ? 'display-off'
               : window.__poplurChromeIdle === true ? 'chrome-idle'
                 : targetTabRef.current !== 'map' ? 'not-map-tab'
-                  : 'not-globe',
+                  : !isMapGlobe() ? 'not-globe'
+                    : 'spin-complete',
         at: now,
       }
       if (globeAnimating) {

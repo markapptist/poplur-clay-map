@@ -25,3 +25,9 @@ export function refreshedProfilePhotoSource(photo: string, revision: number): st
   }
 }
 
+/** A cache nonce that never repeats within one run and does not restart at 1. */
+export function nextProfilePhotoReloadRevision(current: number, now = Date.now()): number {
+  const safeCurrent = Number.isFinite(current) ? Math.max(0, Math.trunc(current)) : 0
+  const safeNow = Number.isFinite(now) ? Math.max(0, Math.trunc(now)) : 0
+  return Math.max(safeNow, safeCurrent + 1)
+}

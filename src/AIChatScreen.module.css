@@ -1,11 +1,15 @@
 .screen {
+  --ai-home-clearance:
+    calc(18px + var(--cube-size, 176px) + 32px + env(safe-area-inset-bottom));
+  --ai-bottom-clearance:
+    max(var(--ai-home-clearance), calc(var(--ai-keyboard-inset, 0px) + 12px));
   position: absolute;
   inset: 0;
   z-index: 1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
-  padding-bottom: calc(10px + var(--cube-size, 176px) * .56 + env(safe-area-inset-bottom));
+  padding-bottom: var(--ai-bottom-clearance);
   color: #28141e;
   background:
     radial-gradient(circle at 13% 18%, rgba(255, 156, 205, .44), transparent 28%),
@@ -22,7 +26,8 @@
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: calc(18px + var(--cube-size, 176px) + env(safe-area-inset-bottom));
+  padding-bottom: var(--ai-bottom-clearance);
+  scroll-padding-bottom: var(--ai-bottom-clearance);
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
@@ -32,7 +37,7 @@
   display: grid;
   /* This state keeps its composer fixed. Reserve the whole floating cube,
      not just its lower half, so the composer never sits behind home chrome. */
-  padding-bottom: calc(18px + var(--cube-size, 176px) + env(safe-area-inset-bottom));
+  padding-bottom: var(--ai-bottom-clearance);
 }
 
 .starField {
@@ -181,7 +186,7 @@
 .homeScreen .inputBar {
   order: 2;
   flex: 0 0 auto;
-  margin: 12px 14px 0;
+  margin: 12px 14px 18px;
 }
 
 .welcome {
@@ -379,6 +384,18 @@
   opacity: .67;
   font: 900 8px/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   letter-spacing: .1em;
+}
+
+.continuePost {
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid #ff6bb2;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(145deg, #ff63ad, #d5106d);
+  box-shadow: 0 5px 0 #920947, 0 10px 22px rgba(218, 20, 113, .24);
+  font: 950 14px/1 system-ui, sans-serif;
+  cursor: pointer;
 }
 
 .userMessage {

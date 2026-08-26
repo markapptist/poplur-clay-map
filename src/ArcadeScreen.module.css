@@ -105,22 +105,8 @@
 .arrowRight:active::before { transform: translate(-65%, -50%) rotate(45deg) scale(0.82); }
 
 /* ── Screen ───────────────────────────────────────────────────────────────
-   The emulator surface, clipped to the skin's screen opening. Transparent until
-   a core attaches, so the shell's own painted screen reads through rather than
-   sitting behind an empty black rectangle. */
+   The canonical canvas game, clipped to the skin's painted screen opening. */
 .screen { position: absolute; overflow: hidden; }
-.screenCanvas {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  /* fill, not contain: the shell's opening is 1.12 (a Game Boy Color shape)
-     while the GBA frame is 1.5, so contain left 92px of dead bars — a quarter
-     of the screen. Filling stretches the picture vertically about a third.
-     That is a deliberate trade: every pixel of the game stays visible and the
-     screen looks switched on, where cover would crop the HP bars and menu text
-     that sit against the left and right edges. */
-  object-fit: fill;
-  display: block;
-}
 
 /* ── Boot ─────────────────────────────────────────────────────────────────
    The SHELL'S OWN painted splash comes on. This is not a cover that replaces

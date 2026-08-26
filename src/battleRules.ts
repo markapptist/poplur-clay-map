@@ -18,7 +18,7 @@ export const TYPE_CHART: Record<CreatureType, { strong: CreatureType[]; weak: Cr
   stone: { strong: ['ember', 'spark'],  weak: ['tide', 'bloom'] },
   gale:  { strong: ['bloom', 'beast'],  weak: ['ember', 'spark'] },
   shade: { strong: ['beast', 'spark'],  weak: ['gale', 'ember'] },
-  beast: { strong: ['shade', 'stone'],  weak: ['gale', 'shade'] },
+  beast: { strong: ['shade', 'stone'],  weak: ['gale', 'tide'] },
 }
 
 /** Each element is drawn by the creature on Poplur's sheet that already looks
@@ -37,14 +37,14 @@ export const TYPE_FX: Record<CreatureType, string> = {
 }
 
 export const TYPE_ART: Record<CreatureType, string> = {
-  ember: 'galaxy_slug',    // fire and stars
-  tide:  'blue_elephant',
-  bloom: 'leaf_fox',
-  spark: 'golden_bunny',
-  stone: 'lava_golem',     // a rock brute
-  gale:  'cloud_sheep',
-  shade: 'shadow_bat',
-  beast: 'pink_cat',
+  ember: 'starcoal_v2',
+  tide:  'ripplephant_v2',
+  bloom: 'petalynx_v2',
+  spark: 'voltbit_v2',
+  stone: 'magmacore_v2',
+  gale:  'nimbushee_v2',
+  shade: 'noctivane_v2',
+  beast: 'bubblecat_v2',
 }
 
 export interface MoveSpec {
@@ -59,11 +59,39 @@ export interface CreatureSpec {
 }
 export interface ZoneSpec {
   id: string; displayName: string; encounters: string[]; levelMin: number; levelMax: number
+  trainers?: TrainerSpec[]
+}
+export interface TeamMemberSpec {
+  species: string
+  level: number
+}
+export interface TrainerSpec {
+  id: string
+  displayName: string
+  title: string
+  team: TeamMemberSpec[]
+}
+export interface ArenaSpec {
+  id: string
+  zoneId: string
+  leaderName: string
+  leaderTitle: string
+  badgeName: string
+  specialty: CreatureType
+  team: TeamMemberSpec[]
+}
+export interface ChampionSpec {
+  id: string
+  displayName: string
+  title: string
+  team: TeamMemberSpec[]
 }
 export interface GameSpec {
   title: string; description: string; rivalName: string; championName: string
   partySize: number; starters: string[]
   moves: MoveSpec[]; creatures: CreatureSpec[]; zones: ZoneSpec[]
+  arenas?: ArenaSpec[]
+  champion?: ChampionSpec
 }
 
 export interface Mon {
@@ -71,6 +99,28 @@ export interface Mon {
   level: number
   hp: number
   maxHp: number
+}
+
+export type BattleKind = 'wild' | 'trainer' | 'arena' | 'champion'
+
+export interface BattleOpponent {
+  id: string
+  kind: BattleKind
+  displayName: string
+  title: string
+  team: Mon[]
+}
+
+/** A reviewed last-resort move keeps a malformed/generated move list playable.
+ *  It is intentionally ordinary: provider-authored data cannot invent damage
+ *  rules by omitting or renaming a move. */
+export const STRUGGLE_MOVE: MoveSpec = {
+  id: 'struggle',
+  displayName: 'Struggle',
+  type: 'beast',
+  power: 35,
+  accuracy: 100,
+  effect: 'none',
 }
 
 export function makeMon(spec: CreatureSpec, level: number): Mon {
@@ -113,18 +163,47 @@ export function resolveHit(attacker: Mon, defender: Mon, move: MoveSpec, roll = 
 
 /** Weaker and rarer creatures are harder; a hurt one is easier. */
 export function catchOdds(wild: Mon): number {
-  return Math.min(95, wild.spec.catchRate + ((wild.maxHp - wild.hp) / wild.maxHp) * 60)
+  const maxHp = Math.max(1, wild.maxHp)
+  const missingHp = Math.max(0, Math.min(maxHp, maxHp - wild.hp))
+  return Math.max(1, Math.min(95, wild.spec.catchRate + (missingHp / maxHp) * 60))
 }
 
 export function movesOf(spec: GameSpec, mon: Mon): MoveSpec[] {
-  return mon.spec.moves
+  const moves = mon.spec.moves
     .map(id => spec.moves.find(m => m.id === id))
     .filter((m): m is MoveSpec => !!m)
+  return moves.length ? moves : [STRUGGLE_MOVE]
 }
 
-export function rollEncounter(spec: GameSpec, zone: ZoneSpec, roll = Math.random): Mon {
-  const species = zone.encounters[Math.floor(roll() * zone.encounters.length)]
-  const found = spec.creatures.find(c => c.species === species)!
-  const level = zone.levelMin + Math.floor(roll() * (zone.levelMax - zone.levelMin + 1))
+export function rollEncounter(spec: GameSpec, zone: ZoneSpec, roll = Math.random): Mon | null {
+  const encounters = zone.encounters
+    .map(species => spec.creatures.find(creature => creature.species === species))
+    .filter((creature): creature is CreatureSpec => !!creature)
+  if (!encounters.length) return null
+
+  const encounterRoll = Math.max(0, Math.min(0.999999, roll()))
+  const found = encounters[Math.floor(encounterRoll * encounters.length)]
+  const min = Math.max(1, Math.min(zone.levelMin, zone.levelMax))
+  const max = Math.max(min, zone.levelMin, zone.levelMax)
+  const levelRoll = Math.max(0, Math.min(0.999999, roll()))
+  const level = min + Math.floor(levelRoll * (max - min + 1))
   return makeMon(found, level)
+}
+
+/** Convert authored campaign teams at the trust boundary. Unknown creatures
+ * are dropped and levels are clamped, so a malformed remote spec cannot make
+ * an unwinnable or unbounded battle. */
+export function makeBattleOpponent(
+  spec: GameSpec,
+  opponent: Omit<BattleOpponent, 'team'> & { team: TeamMemberSpec[] },
+): BattleOpponent | null {
+  const team = opponent.team.flatMap(member => {
+    const creature = spec.creatures.find(candidate => candidate.species === member.species)
+    if (!creature) return []
+    const level = Number.isFinite(member.level)
+      ? Math.max(1, Math.min(100, Math.floor(member.level)))
+      : 1
+    return [makeMon(creature, level)]
+  }).slice(0, 6)
+  return team.length ? { ...opponent, team } : null
 }

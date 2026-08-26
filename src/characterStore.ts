@@ -9,6 +9,7 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 const STORAGE_KEY = 'poplur.character.v2'
 
 import type { PartSlot } from './characterParts'
+import type { FashionOutfit } from './characterFashion'
 
 export type HairStyle = 'short' | 'long' | 'buzz' | 'curly'
 export type BodyShape = 'slim' | 'athletic' | 'curvy'
@@ -31,6 +32,9 @@ export interface PoplurCharacter {
       Colour fields above drive the SVG fallback; once the art library's core
       slots have parts, these ids pick which part sheet each slot wears. */
   outfit?: Partial<Record<PartSlot, string>>
+  /** Independently swappable 3D garments used by the try-on studio. Kept
+      separate from layered-art part ids in `outfit`. */
+  fashionOutfit?: FashionOutfit
   updatedAt: number
 }
 

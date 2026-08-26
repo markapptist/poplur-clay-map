@@ -9,6 +9,7 @@ import womanShortAvatar from './assets/avatars/poplur-avatar-woman-short-v1.png'
 import womanCurlyAvatar from './assets/avatars/poplur-avatar-woman-curly-v1.png'
 import manShortAvatar from './assets/avatars/poplur-avatar-man-short-v1.png'
 import manLongAvatar from './assets/avatars/poplur-avatar-man-long-v1.png'
+import { coerceFashionStyle } from './characterFashion'
 import styles from './AvatarStudioCharacter.module.css'
 
 export type StudioCategory = 'body' | 'hair' | 'face' | 'top' | 'bottoms' | 'extras'
@@ -24,6 +25,10 @@ export const STUDIO_OPTIONS = { hairStyles, bodyShapes, faceStyles, SKIN_TONES, 
     respond to the same saved selections used elsewhere in Poplur. */
 export function studioInitialCharacter(saved: PoplurCharacter | null): PoplurCharacter {
   const gender = saved?.gender === 'male' ? 'male' : 'female'
+  // Migrate this studio's older un-namespaced choices, while leaving the
+  // layered-art outfit untouched for renderers that own those part ids.
+  const legacyFashion = saved?.outfit
+  const storedFashion = saved?.fashionOutfit
   return {
     gender,
     skinTone: saved?.skinTone ?? (gender === 'male' ? '#6E4630' : '#C98B62'),
@@ -36,7 +41,12 @@ export function studioInitialCharacter(saved: PoplurCharacter | null): PoplurCha
     eyeColor: saved?.eyeColor ?? '#4A3524',
     topColor: saved?.topColor ?? '#D4537E',
     bottomColor: saved?.bottomColor ?? '#185FA5',
-    outfit: { top: saved?.outfit?.top ?? 'jacket', bottom: saved?.outfit?.bottom ?? 'jeans', shoes: saved?.outfit?.shoes ?? 'sneakers', accessory: saved?.outfit?.accessory ?? 'none' },
+    outfit: saved?.outfit ? { ...saved.outfit } : undefined,
+    fashionOutfit: {
+      top: coerceFashionStyle('top', storedFashion?.top ?? legacyFashion?.top),
+      bottom: coerceFashionStyle('bottom', storedFashion?.bottom ?? legacyFashion?.bottom),
+      accessory: coerceFashionStyle('accessory', storedFashion?.accessory ?? legacyFashion?.accessory),
+    },
     updatedAt: saved?.updatedAt ?? 0,
   }
 }
@@ -46,7 +56,7 @@ export default function AvatarStudioCharacter({ character, height = 420 }: { cha
   const portrait = selectPortrait(avatar)
   const bodyClass = avatar.bodyShape === 'athletic' ? styles.athletic : avatar.bodyShape === 'curvy' ? styles.curvy : styles.slim
   const hairClass = avatar.hairStyle === 'short' ? styles.shortHair : avatar.hairStyle === 'curly' ? styles.curlyHair : avatar.hairStyle === 'buzz' ? styles.buzzHair : styles.longHair
-  const accessory = avatar.outfit?.accessory ?? 'none'
+  const accessory = avatar.fashionOutfit?.accessory ?? 'none'
   const portraitFilter = colourGrade(avatar)
 
   return (

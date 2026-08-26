@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import styles from './MailScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
@@ -603,12 +604,13 @@ export function FaceTimeOverlay({
     remoteStream: null,
     video: true,
   })
-  const [frontCamera, setFrontCamera] = useState(true)
+  const [cameraOn, setCameraOn] = useState(true)
   const [localVideoReady, setLocalVideoReady] = useState(false)
   const [remoteVideoReady, setRemoteVideoReady] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
+  const callTheme = useRef(['orbit', 'ring', 'duo'][Math.floor(Math.random() * 3)] as 'orbit' | 'ring' | 'duo').current
   const callBegan = useRef(false)
   const connected = callSnap?.phase === 'connected'
   const initial = who.trim().charAt(0).toUpperCase() || '?'
@@ -669,19 +671,10 @@ export function FaceTimeOverlay({
     toggleCallMute()
     playPop()
   }
-  const flipCamera = async () => {
-    const track = media.localStream?.getVideoTracks()[0]
-    if (!track) return
-    const nextIsFront = !frontCamera
-    try {
-      await track.applyConstraints({
-        facingMode: { ideal: nextIsFront ? 'user' : 'environment' },
-      })
-      setFrontCamera(nextIsFront)
-    } catch {
-      // A few WebKit versions cannot switch the active capture source without
-      // replacing its sender. Keep the call intact instead of dropping video.
-    }
+  const toggleCamera = () => {
+    const next = !cameraOn
+    media.localStream?.getVideoTracks().forEach(track => { track.enabled = next })
+    setCameraOn(next)
     playPop()
   }
 
@@ -701,14 +694,21 @@ export function FaceTimeOverlay({
     ? direction === 'incoming' ? 'Incoming video call…' : 'Calling…'
     : 'Connecting…'
 
-  return (
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <section
       className={styles.ftOverlay}
       data-call-state={connected ? 'connected' : 'connecting'}
+      data-call-theme={callTheme}
       role="dialog"
       aria-modal="true"
       aria-label={`Video call with ${who}`}
     >
+      <header className={styles.ftHeader}>
+        <span className={styles.ftBrandMark} aria-hidden="true">P</span>
+        <span><b>POPLUR CALL</b><small>DM · VIDEO</small></span>
+        <span className={styles.ftLiveLamp}><i aria-hidden="true" />LIVE</span>
+      </header>
       <div className={styles.ftRemotePane}>
         {connected ? (
           <>
@@ -733,12 +733,18 @@ export function FaceTimeOverlay({
           </>
         ) : (
           <div className={styles.ftRinging}>
-            <div className={styles.ftPulseAvatar} aria-hidden="true">
-              <i /><i /><i />
-              <span>{initial}</span>
+            <div className={styles.ftRingingHalo} aria-hidden="true" />
+            <div className={styles.ftOrbitRail} aria-hidden="true"><i /><i /><i /></div>
+            <div className={styles.ftContactCube} aria-hidden="true">
+              <span className={styles.ftCubeTop} />
+              <span className={styles.ftCubeSide} />
+              <span className={styles.ftCubeFace}>{initial}</span>
             </div>
+            <div className={styles.ftDuoStage} aria-hidden="true"><i /><b>+</b><i /></div>
             <strong>{who}</strong>
-            <span>{connectionLabel}</span>
+            <span className={styles.ftCallKind}>FaceTime video via Poplur DM</span>
+            <b>{connected ? 'CONNECTED' : direction === 'incoming' ? 'INCOMING VIDEO CALL' : 'CALLING FROM DM'}</b>
+            <small>{connectionLabel}</small>
           </div>
         )}
       </div>
@@ -758,13 +764,13 @@ export function FaceTimeOverlay({
           onEmptied={() => setLocalVideoReady(false)}
           className={[
             styles.ftVideo,
-            localVideoReady ? styles.ftVideoReady : '',
-            frontCamera ? styles.ftLocalVideoMirrored : '',
+            localVideoReady && cameraOn ? styles.ftVideoReady : '',
+            cameraOn ? styles.ftLocalVideoMirrored : '',
           ].filter(Boolean).join(' ')}
           style={arFilterCss === 'none' ? undefined : { filter: arFilterCss }}
         />
         {arFilter !== 'none' && (
-          <FaceAROverlay detections={[CALL_LOCAL_FACE]} filter={arFilter} mirrored={frontCamera} allow3D={false} />
+          <FaceAROverlay detections={[CALL_LOCAL_FACE]} filter={arFilter} mirrored allow3D={false} />
         )}
         <div className={styles.ftLocalLabel}>{arFilter === 'none' ? 'You' : arFilter}</div>
       </div>
@@ -791,15 +797,16 @@ export function FaceTimeOverlay({
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14c5-4 11-4 16 0l-3 4-4-2H11l-4 2z" /></svg>
           <span>End</span>
         </button>
-        <button type="button" aria-label="Flip camera" disabled={!localHasCamera} onClick={() => { void flipCamera() }}>
+        <button type="button" aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'} aria-pressed={!cameraOn} disabled={!localHasCamera} onClick={toggleCamera}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 7h3l2-2h6l2 2h3v11H4zM8 12a4 4 0 108 0 4 4 0 00-8 0z" />
             <path d="M4 4h5M4 4l2-2M4 4l2 2M20 20h-5M20 20l-2-2M20 20l-2 2" fill="none" />
           </svg>
-          <span>Flip</span>
+          <span>{cameraOn ? 'Camera' : 'Camera off'}</span>
         </button>
       </div>
-    </section>
+    </section>,
+    document.body,
   )
 }
 

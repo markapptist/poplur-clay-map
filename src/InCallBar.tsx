@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import styles from './InCallBar.module.css'
-import { subscribeCall, installCallBridge, toggleMute, hangup, type CallSnapshot } from './webCall'
+import {
+  subscribeCall,
+  installCallBridge,
+  toggleMute,
+  hangup,
+  type CallContext,
+  type CallSnapshot,
+} from './webCall'
+import { callContextIsOwned } from './callContext'
 import { playPop } from './pop'
 
 // The live-call bar. It floats above whatever screen you were on when the call
@@ -16,7 +24,14 @@ function clock(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-export default function InCallBar({ hidden = false }: { hidden?: boolean }) {
+export default function InCallBar({
+  hidden = false,
+  ownedContext,
+}: {
+  hidden?: boolean
+  /** Hide only when the visible screen owns this exact call context. */
+  ownedContext?: CallContext
+}) {
   const [call, setCall] = useState<CallSnapshot | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
@@ -32,7 +47,12 @@ export default function InCallBar({ hidden = false }: { hidden?: boolean }) {
     return () => window.clearInterval(id)
   }, [call?.phase])
 
-  if (hidden || !call || call.phase === 'idle') return null
+  if (
+    hidden
+    || !call
+    || call.phase === 'idle'
+    || callContextIsOwned(call.context, ownedContext)
+  ) return null
 
   const label =
     call.phase === 'calling' ? 'CALLING'

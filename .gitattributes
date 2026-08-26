@@ -1,6 +1,7 @@
 *.glb filter=lfs diff=lfs merge=lfs -text
 public/poplur_clay_mail_navigator.glb -filter -diff -merge text=auto
 public/poplur_sun_lite.glb -filter -diff -merge -text
+public/poplur_airplane_lite.glb -filter -diff -merge -text
 public/landmarks/*.glb -filter -diff -merge text=auto
 public/poplur_cube_*.glb -filter -diff -merge text=auto
 public/poplur_female_head_navigator.glb -filter -diff -merge text=auto

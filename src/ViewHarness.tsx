@@ -2,10 +2,17 @@ import React, { useEffect, useMemo, useState } from 'react'
 import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import UploadFlowReview from './UploadFlowReview'
-import ArcadeScreen from './ArcadeScreen'
-import PoplurGame from './PoplurGame'
-import GamesScreen from './GamesScreen'
+import { offlineGameDirector } from './gameDirector'
 import styles from './ViewHarness.module.css'
+
+// These routes bring the full game runtimes, generated creature art resolver,
+// and model-viewer controller with them. The normal home/map harness must not
+// parse all of that on every launch when no game is open.
+const ArcadeScreen = React.lazy(() => import('./ArcadeScreen'))
+const PoplurGame = React.lazy(() => import('./PoplurGame'))
+const GamesScreen = React.lazy(() => import('./GamesScreen'))
+
+const HARNESS_ARCADE_DIRECTOR = offlineGameDirector('arcade')
 
 export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle'
 
@@ -122,18 +129,41 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     [baseView, view],
   )
 
+  const gameFallback = (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{ display: 'grid', placeItems: 'center', width: '100vw', height: '100vh', background: '#100b1c', color: '#fff' }}
+    >
+      Loading game…
+    </div>
+  )
+
   if (view === 'uploadflows') return <UploadFlowReview />
   // Standalone like uploadflows: the Arcade shell is its own surface, not a tab
   // inside the tabbed home.
-  if (view === 'arcade') return <ArcadeScreen />
+  if (view === 'arcade') return (
+    <React.Suspense fallback={gameFallback}>
+      <ArcadeScreen director={HARNESS_ARCADE_DIRECTOR} />
+    </React.Suspense>
+  )
   if (view === 'battle') return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh', background: '#101828' }}>
-      <PoplurGame specUrl={`${import.meta.env.BASE_URL}games/arcade/cinder-isles.json`} />
-    </div>
+    <React.Suspense fallback={gameFallback}>
+      <div style={{ position: 'relative', width: '100vw', height: '100vh', background: '#101828' }}>
+        <PoplurGame
+          specUrl={`${import.meta.env.BASE_URL}games/arcade/cinder-isles.json`}
+          director={HARNESS_ARCADE_DIRECTOR}
+        />
+      </div>
+    </React.Suspense>
   )
   // The games LIST, reachable without spinning the hold-menu wheel to it (the
   // wheel culls to five tiles, so GAMES is not always on screen).
-  if (view === 'games') return <GamesScreen onClose={() => setHarnessView('home')} />
+  if (view === 'games') return (
+    <React.Suspense fallback={gameFallback}>
+      <GamesScreen onClose={() => setHarnessView('home')} />
+    </React.Suspense>
+  )
 
   return (
     <div className={styles.stage}>

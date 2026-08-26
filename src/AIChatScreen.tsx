@@ -2,12 +2,14 @@ import React, { useEffect, useRef, useState } from 'react'
 import styles from './AIChatScreen.module.css'
 import { playPop } from './pop'
 import { takePendingAICompose } from './cameraStore'
+import { generateWithPoplurAI, prepareAIImageSource } from './aiGeneration'
 
 type ChatMessage = {
   id: number
   role: 'user' | 'assistant'
   text: string
   attachment?: string
+  generated?: boolean
 }
 
 type RecognitionAlternative = { transcript: string }
@@ -75,17 +77,8 @@ function speechRecognitionConstructor(): VoiceRecognitionConstructor | undefined
   return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition
 }
 
-function assistantReply(prompt: string): string {
-  const lower = prompt.toLowerCase()
-  if (lower.includes('cinematic')) return 'I can give it a cinematic grade, wider framing, and a slower final beat. Add a photo or video when you are ready.'
-  if (lower.includes('caption')) return 'Tell me the mood and who you want to reach. I will give you a few caption directions.'
-  if (lower.includes('campaign')) return 'Share the product, place, and audience. I will turn that into a sharp creative plan.'
-  if (lower.includes('music')) return 'I can build the cut around a track. Upload the clip and describe the energy.'
-  return 'Got it. Add any media you want me to work with, or tell me one more detail about the result.'
-}
-
 export default function AIChatScreen({
-  onClose: _onClose,
+  onClose,
   bindBack,
 }: {
   onClose: () => void
@@ -96,6 +89,7 @@ export default function AIChatScreen({
   const [input, setInput] = useState('')
   const [attachment, setAttachment] = useState<{ name: string; url?: string } | null>(null)
   const [thinking, setThinking] = useState(false)
+  const [composerHandoff, setComposerHandoff] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [smartMode, setSmartMode] = useState(true)
   const [searchMode, setSearchMode] = useState(false)
@@ -106,12 +100,46 @@ export default function AIChatScreen({
   const replyTimer = useRef<number | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
   const promptInput = useRef<HTMLInputElement | null>(null)
+  const inputBar = useRef<HTMLFormElement | null>(null)
   const conversation = useRef<HTMLDivElement | null>(null)
   const screen = useRef<HTMLElement | null>(null)
   const objectUrls = useRef(new Set<string>())
   const recognition = useRef<VoiceRecognition | null>(null)
   const dictatedPrefix = useRef('')
-  const layoutOrigin = useRef({ x: 0, y: 0 })
+
+  const requestGeneration = (prompt: string, sourceSrc?: string) => {
+    const requested = prompt.trim() || 'Create an original Poplur social image.'
+    setThinking(true)
+    const source = sourceSrc ? prepareAIImageSource(sourceSrc) : Promise.resolve(undefined)
+    void source.then(sourceImage => generateWithPoplurAI({
+      prompt: requested,
+      sourceImage,
+      metadata: { surface: 'ai_chat' },
+    }))
+      .then(result => {
+        if (result.status !== 'completed' || !result.outputUrl) {
+          throw new Error('Your AI job is still processing. Please try again shortly.')
+        }
+        const outputUrl = result.outputUrl
+        setMessages(current => [
+          ...current,
+          {
+            id: nextId.current++,
+            role: 'assistant',
+            text: 'Created with Poplur AI. Review it before you post.',
+            attachment: outputUrl,
+            generated: true,
+          },
+        ])
+      })
+      .catch(error => {
+        setMessages(current => [
+          ...current,
+          { id: nextId.current++, role: 'assistant', text: error instanceof Error ? error.message : 'Poplur AI could not generate that right now.' },
+        ])
+      })
+      .finally(() => setThinking(false))
+  }
 
   useEffect(() => () => {
     if (replyTimer.current) window.clearTimeout(replyTimer.current)
@@ -126,8 +154,18 @@ export default function AIChatScreen({
   useEffect(() => {
     const job = takePendingAICompose()
     if (!job) return
-    setAttachment({ name: job.media.kind === 'video' ? 'Your recording' : 'Your capture', url: job.media.src })
-    if (job.prompt.trim()) setInput(job.prompt)
+    const prompt = job.prompt.trim() || 'Use Poplur AI on this capture.'
+    setComposerHandoff(true)
+    setView('chat')
+    setMessages([{
+      id: nextId.current++,
+      role: 'user',
+      text: prompt,
+      attachment: job.media.src,
+    }])
+    setInput('')
+    setAttachment(null)
+    requestGeneration(prompt, job.media.kind === 'photo' ? job.media.src : undefined)
   }, [])
 
   useEffect(() => {
@@ -136,9 +174,41 @@ export default function AIChatScreen({
 
   useEffect(() => {
     const viewport = window.visualViewport
-    const holdHomeLayout = () => window.scrollTo(layoutOrigin.current.x, layoutOrigin.current.y)
-    viewport?.addEventListener('resize', holdHomeLayout)
-    return () => viewport?.removeEventListener('resize', holdHomeLayout)
+    const syncKeyboardClearance = () => {
+      const root = screen.current
+      if (!root) return
+      const viewportBottom = viewport
+        ? viewport.offsetTop + viewport.height
+        : window.innerHeight
+      const keyboardInset = Math.max(0, root.getBoundingClientRect().bottom - viewportBottom)
+      root.style.setProperty('--ai-keyboard-inset', `${Math.round(keyboardInset)}px`)
+
+      // The home state is the scroll owner. Once the keyboard has changed the
+      // visual viewport, advance only that local scroller by the exact amount
+      // needed to keep the composer comfortably tappable above the keyboard.
+      if (document.activeElement !== promptInput.current || !root.classList.contains(styles.homeScreen)) return
+      // governor-ok: one-shot keyboard-layout correction from a viewport event; it never self-schedules.
+      window.requestAnimationFrame(() => {
+        const formBottom = inputBar.current?.getBoundingClientRect().bottom
+        const currentViewportBottom = viewport
+          ? viewport.offsetTop + viewport.height
+          : window.innerHeight
+        if (formBottom !== undefined && formBottom > currentViewportBottom - 12) {
+          root.scrollTop += formBottom - currentViewportBottom + 12
+        }
+      })
+    }
+
+    syncKeyboardClearance()
+    viewport?.addEventListener('resize', syncKeyboardClearance)
+    viewport?.addEventListener('scroll', syncKeyboardClearance)
+    window.addEventListener('resize', syncKeyboardClearance)
+    return () => {
+      viewport?.removeEventListener('resize', syncKeyboardClearance)
+      viewport?.removeEventListener('scroll', syncKeyboardClearance)
+      window.removeEventListener('resize', syncKeyboardClearance)
+      screen.current?.style.removeProperty('--ai-keyboard-inset')
+    }
   }, [])
 
   // Create home and a live conversation are two levels of the same screen.
@@ -175,7 +245,7 @@ export default function AIChatScreen({
 
   const send = (value = input) => {
     const text = value.trim()
-    if (!text && !attachment) return
+    if (thinking || (!text && !attachment)) return
     recognition.current?.stop()
     playPop()
     setView('chat')
@@ -191,16 +261,7 @@ export default function AIChatScreen({
     setInput('')
     setAttachment(null)
     setDictationNote('')
-    setThinking(true)
-    if (replyTimer.current) window.clearTimeout(replyTimer.current)
-    replyTimer.current = window.setTimeout(() => {
-      setMessages(current => [
-        ...current,
-        { id: nextId.current++, role: 'assistant', text: assistantReply(text || attachment?.name || '') },
-      ])
-      setThinking(false)
-      replyTimer.current = null
-    }, 650)
+    requestGeneration(text || attachment?.name || '', attachment?.url)
   }
 
   const dictate = () => {
@@ -366,16 +427,32 @@ export default function AIChatScreen({
 
         {messages.map(message => (
           <article className={message.role === 'user' ? styles.userMessage : styles.assistantMessage} key={message.id}>
-            <span className={styles.messageAuthor}>{message.role === 'assistant' ? 'P  POPLUR AI' : 'YOU'}</span>
+            <span className={styles.messageAuthor}>{message.role === 'assistant' ? 'P  POPLUR AI' : 'YOU'}{message.generated ? ' · AI IMAGE' : ''}</span>
             {message.attachment && <img src={message.attachment} alt="" />}
             <p>{message.text}</p>
           </article>
         ))}
 
         {thinking && <div className={styles.typing} aria-label="Poplur AI is responding"><i /><i /><i /></div>}
+        {composerHandoff && !thinking && messages.some(message => message.generated && message.attachment) && (
+          <button
+            type="button"
+            className={styles.continuePost}
+            onClick={() => {
+              playPop()
+              const generated = [...messages].reverse().find(message => message.generated && message.attachment)
+              window.dispatchEvent(new CustomEvent('poplur-ai-compose-finished', {
+                detail: generated?.attachment ? { media: { kind: 'photo', src: generated.attachment } } : undefined,
+              }))
+              onClose()
+            }}
+          >
+            Continue to post
+          </button>
+        )}
       </div>
 
-      <form className={styles.inputBar} onSubmit={event => { event.preventDefault(); send() }}>
+      <form ref={inputBar} className={styles.inputBar} onSubmit={event => { event.preventDefault(); send() }}>
         {attachment && (
           <div className={styles.attachment}>
             {attachment.url && <img src={attachment.url} alt="" />}
@@ -422,12 +499,13 @@ export default function AIChatScreen({
             placeholder="Message Poplur AI"
             aria-label="Message Poplur AI"
             onFocus={() => {
-              layoutOrigin.current = { x: window.scrollX, y: window.scrollY }
-              // governor-ok: one-shot keyboard-layout scroll correction; this callback never rearms itself.
-              window.requestAnimationFrame(() => window.scrollTo(layoutOrigin.current.x, layoutOrigin.current.y))
+              // governor-ok: one-shot local reveal after the keyboard begins
+              // resizing the visual viewport; the viewport listener above
+              // applies the exact remaining correction once it settles.
+              window.requestAnimationFrame(() => inputBar.current?.scrollIntoView({ block: 'nearest' }))
             }}
           />
-          <button type="submit" className={styles.send} aria-label="Send message" disabled={!input.trim() && !attachment}>↑</button>
+          <button type="submit" className={styles.send} aria-label="Send message" disabled={thinking || (!input.trim() && !attachment)}>↑</button>
         </div>
         {dictationNote && <p className={styles.dictationNote} role="status">{dictationNote}</p>}
         <div className={styles.modes}>

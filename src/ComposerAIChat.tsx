@@ -11,6 +11,8 @@ export default function ComposerAIChat({
   onGenerate,
   onUseOriginal,
   poster,
+  status,
+  generating = false,
 }: {
   media: { kind: 'photo' | 'video'; src: string }
   poster?: string | null
@@ -18,6 +20,8 @@ export default function ComposerAIChat({
   onPromptChange: (value: string) => void
   onGenerate: () => void
   onUseOriginal: () => void
+  status?: string | null
+  generating?: boolean
 }) {
   return (
     <section className={styles.chat} aria-label="Poplur AI post chat">
@@ -27,14 +31,20 @@ export default function ComposerAIChat({
           <strong>poplur <b>AI</b></strong>
           <small><i /> CAPTURE ATTACHED</small>
         </span>
-        <button type="button" aria-label="AI chat settings">•••</button>
       </header>
+
+      <div className={styles.finishBar}>
+        <span><b>FINISH CREATION</b><small>Keep your edit or give Poplur AI one clear direction.</small></span>
+        <button type="button" disabled={generating} onClick={onUseOriginal}><b aria-hidden="true">✓</b> Use this edit</button>
+      </div>
 
       <div className={styles.conversation}>
         <article className={styles.assistantMessage}>
           <span>P&nbsp;&nbsp;POPLUR AI</span>
-          <p>I have your capture. What should I turn it into?</p>
+          <p>I’ll use your photo and direction to make an AI edit. Keep this edit, or use the generated result.</p>
         </article>
+
+        {status && <p className={styles.status} role="status">{status}</p>}
 
         <div className={styles.attachment}>
           {media.kind === 'video' ? (
@@ -47,7 +57,7 @@ export default function ComposerAIChat({
           ) : (
             <img src={media.src} alt="Capture attached to Poplur AI" />
           )}
-          <span><b>{media.kind === 'video' ? 'YOUR RECORDING' : 'YOUR CAPTURE'}</b><small>Ready for generation</small></span>
+          <span><b>{media.kind === 'video' ? 'YOUR RECORDING' : 'YOUR CAPTURE'}</b><small>{media.kind === 'photo' ? 'Will be sent securely for this edit' : 'Reference while you write your prompt'}</small></span>
           <em>✓</em>
         </div>
 
@@ -60,7 +70,6 @@ export default function ComposerAIChat({
 
       <div className={styles.composer}>
         <div className={styles.inputRow}>
-          <button type="button" className={styles.addButton} aria-label="Add reference">+</button>
           <textarea
             value={prompt}
             maxLength={500}
@@ -69,11 +78,11 @@ export default function ComposerAIChat({
             aria-label="Message Poplur AI"
             onChange={event => onPromptChange(event.currentTarget.value)}
           />
-          <button type="button" className={styles.sendButton} aria-label="Generate with Poplur AI" disabled={!prompt.trim()} onClick={onGenerate}>↑</button>
+          <button type="button" className={styles.sendButton} aria-label="Generate with Poplur AI" disabled={!prompt.trim() || generating} onClick={onGenerate}>{generating ? '…' : '↑'}</button>
         </div>
         <div className={styles.modes}>
           <span>SMART</span><span>VFX AWARE</span>
-          <button type="button" onClick={onUseOriginal}>Use original</button>
+          <small>AI changes are optional</small>
         </div>
       </div>
     </section>

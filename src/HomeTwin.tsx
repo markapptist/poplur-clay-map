@@ -12,6 +12,7 @@ import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
 import TabControlRail from './TabControlRail'
 import MapLevelButton from './MapLevelButton'
+import MapNewsButton from './MapNewsButton'
 import { WeatherMark } from './ClayMap'
 import { modeForCode } from './WeatherFX'
 import {
@@ -21,6 +22,16 @@ import {
   weatherTemperatureUnit,
   type WeatherPresentationSnapshot,
 } from './weatherPresentation'
+import {
+  BREAKING_NEWS_CUBE_MODEL,
+  BROWSER_CUBE_MODEL,
+  HOME_CUBE_MODEL,
+  mapContextCubeModel,
+  readMapNewsCubeEvent,
+  weatherCubeKind,
+  type MapNewsCubeEvent,
+  type WeatherCubeKind,
+} from './contextCubeModels'
 import mapStyles from './App.module.css'
 import {
   cubeTransition, holdPreviewMode, onTransitionChanged, screenTransition,
@@ -45,7 +56,8 @@ import {
 } from './motionPermission'
 import InCallBar from './InCallBar'
 import WebSignIn from './WebSignIn'
-import { acceptCall, callState, declineCall, hangup as hangupCall } from './webCall'
+import { acceptCall, callState, declineCall, hangup as hangupCall, type CallContext } from './webCall'
+import { normalizeCallContext } from './callContext'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, popHaptic } from './pop'
 import { startRingtone, stopRingtone } from './phoneRingtones'
@@ -66,11 +78,23 @@ import {
   wakeManagedRendering,
 } from './nativeBridge'
 import {
+  nativeFeedPostsSnapshot,
+  onNativeFeedPosts,
+  requestNativeFeedPosts,
+} from './nativeFeedPosts'
+import { nextInterceptingChannelIndex } from './feedChannelSelection'
+import {
   claimReplaysBeforeQueuedActions,
   enqueueMapFallbackAction,
   nativeMapHandlesAction,
   type QueuedMapAction,
 } from './nativeMapFallback'
+import { readMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
+import ConquerGlance from './ConquerGlance'
+import {
+  AIRPORT_CUBE_DISPLAY_MS,
+  AIRPORT_NAVIGATOR_MODEL,
+} from './mapAirportCube'
 import type { HarnessView } from './ViewHarness'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
 import {
@@ -86,6 +110,7 @@ import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
 import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
 import { packBase } from './assetPacks'
+import { normalizeInAppBrowserURL, POPLUR_OPEN_FEED_BROWSER_EVENT } from './inAppBrowser'
 import { getMusicPlaybackSnapshot, subscribeMusicPlayback } from './musicPlayback'
 import {
   emptyDiscoCubeSession,
@@ -115,6 +140,7 @@ import {
   sectionFromIpodEvent,
   type IpodSection,
 } from './ipodNavigation'
+import { homeSurfaceIsVisible } from './mapThermalPolicy'
 
 
 /**
@@ -135,13 +161,6 @@ const CHROME_IDLE_MS = 30_000
 // press-and-hold to open the hold menu twin. Pills track the front face;
 // clicking the already-front face's pill opens that tab's screen twin.
 
-/** The clay TV the navigator becomes while the TV Guide is open. Supplied art
-    in public/, like every other clay model — never a drawn substitute. */
-// Navigator-specific LODs retain all four 1024px JPEG material maps. Geometry
-// is Draco-compressed into a 40k-150k triangle range, and CubeTab3D holds only
-// the visible model plus one prepared destination. This keeps Meshy's surface
-// detail without putting the 23-47MB authoring masters on a phone.
-const CLAY_TV_MODEL = 'clay_tv.glb'
 /** Food context briefly turns the TV navigator into the supplied fork/knife
     cube. A continuous mention is capped below, so this never becomes a
     permanent channel-level replacement. */
@@ -212,8 +231,6 @@ const POST_VERIFIED_CUBE_DISPLAY_MS = 2_600
 // only carries one model per screen id. The GLB is the 349KB decimation the
 // screen itself used to bake into a sprite, the mixer's weight class.
 const STUDIO_MIC_MODEL = 'poplur_mic_lite.glb'
-const RAIN_CUBE_MODEL = 'poplur_cube_rain_cloud.glb'
-const THUNDER_CUBE_MODEL = 'poplur_cube_thunder_cloud.glb'
 const DISCO_BALL_CUBE_MODEL = 'poplur_cube_disco_ball.glb'
 const DISCO_CUBE_MAX_MS = 30_000
 const FOOD_CUBE_MAX_MS = 30_000
@@ -221,15 +238,6 @@ const FOOD_CUBE_MAX_MS = 30_000
 // earns the ambient disco moment. Navigation restarts this dwell below.
 const DISCO_CUBE_MIN_MUSIC_MS = 20_000
 const WEATHER_REFRESH_MS = 5 * 60_000
-
-type WeatherCubeKind = 'rain' | 'thunder'
-
-function weatherCubeKind(mode: unknown): WeatherCubeKind | null {
-  if (mode === 'rain') return 'rain'
-  // Open-Meteo's thunder codes normalize to storm/hail as well as thunder.
-  if (mode === 'thunder' || mode === 'storm' || mode === 'hail') return 'thunder'
-  return null
-}
 
 // ── Last-page memory ─────────────────────────────────────────────────────────
 /** Where the app is standing: the tab, the hold-menu page on it (null = the
@@ -283,7 +291,10 @@ function tabNavigatorModel(
     if (mapNight) return mapMoon === 'full' ? MAP_FULL_MOON_MODEL : MAP_NIGHT_MODEL
     return mapMorning ? MAP_MORNING_MODEL : MAP_GLOBE_MODEL
   }
-  if (tab === 'feed') return CLAY_TV_MODEL
+  // The public Home view boots onto Feed, so Feed's root is the one concrete
+  // Home destination in this four-tab shell. Its home tile resolves through
+  // this same function and therefore previews the same supplied house.
+  if (tab === 'feed') return HOME_CUBE_MODEL
   if (tab === 'post') return PROFILE_CAMERA_MODEL
   return profileHeadModel()
 }
@@ -366,10 +377,14 @@ function wornNavigatorModel(
 // simply absent on a phone. The phase-aware moon navigator above therefore
 // uses the decimated root assets too, so it works identically on iOS/Android.
 const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
+  // Conquer holds the same lightweight 3D pin used by map posting. The 28MB
+  // source pin lives under models/ and is intentionally excluded from phones;
+  // this 127KB root asset stays in every mobile bundle and reuses the one
+  // persistent navigator renderer while the map is removed behind the page.
+  'map-conquer': 'poplur_pin_lite.glb',
   // A supplied remote for the guide itself, decimated the same way as the
-  // rest of this set. NOT CLAY_TV_MODEL — that constant is also the feed
-  // tab's own idle default (tabNavigatorModel above), so repointing it here
-  // would have quietly changed the plain feed tab's look along with TV GUIDE.
+  // rest of this set. It is deliberately separate from Home's house above, so
+  // opening TV GUIDE changes only this subscreen's object.
   'feed-tvguide': 'poplur_cube_tv_remote.glb',
   // The radio screen has its own radio now. The TV stood in here for want of
   // one; the supplied Meshy export is 24MB, decimated to 147KB by the same
@@ -393,6 +408,9 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // the mixer's 329KB, which this map already carries. poplur_cube_news.glb is
   // gone: it had exactly one reference, this line.
   'feed-news': 'poplur_newspaper.glb',
+  // Browser is a deliberate Feed destination, so it wears the supplied @
+  // object while pages remain inside Poplur.
+  'feed-browser': BROWSER_CUBE_MODEL,
   // CREATE takes the supplied laptop — the AI chat runs through a screen, not
   // a camera gesture, so a laptop reads truer than the old bare cube.
   'camera-ai-chat': 'poplur_cube_laptop.glb',
@@ -409,6 +427,7 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // you are here.
   'profile-notifications': 'poplur_bell.glb',
   'profile-stats': 'poplur_cube_bargraph.glb',
+  'profile-house': 'poplur_building_navigator.glb',
   'profile-store': 'poplur_cube_shopping_bag.glb',
   // A dial/gear face rather than the old plain cube. Named _gear, not
   // _settings2, to keep it unmistakably apart from the orphaned
@@ -815,6 +834,8 @@ const CLAY_MAP_SRC = (() => {
   const mapNight = parentParams.get('map-night')
   const weatherCycle = parentParams.get('weather-cycle')
   const weatherTest = parentParams.get('weather-test')
+  const newsTest = parentParams.get('news-test')
+  const rawTourSpeed = Number(parentParams.get('tour-speed'))
   // The hidden map mounts while Home's custom location primer is visible.
   // Carry that gate into the iframe so its own startup geolocation cannot race
   // ahead and surface a raw browser/OS prompt behind the Poplur consent card.
@@ -825,10 +846,14 @@ const CLAY_MAP_SRC = (() => {
   const weatherQuery = weatherCycle === '1' || weatherCycle === '0'
     ? `&weather-cycle=${weatherCycle}` : ''
   const weatherTestQuery = weatherTest === '1' ? '&weather-test=1' : ''
+  const newsTestQuery = newsTest === '1' ? '&news-test=1' : ''
+  const tourSpeedQuery = Number.isFinite(rawTourSpeed) && rawTourSpeed >= 0.1 && rawTourSpeed <= 5
+    ? `&tour-speed=${encodeURIComponent(rawTourSpeed)}`
+    : ''
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${locationQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${locationQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${tourSpeedQuery}${locationQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${tourSpeedQuery}${locationQuery}`
 })()
 
 function clockMapNight(): boolean {
@@ -884,79 +909,6 @@ const MAP_SETTLE_MS = (() => {
 // short native render lease. This is a transition budget, not an idle loop.
 const TAB_TRANSITION_LEASE_MS = 900
 
-function FpsCubeOverlay({ size }: { size: number }) {
-  const pointer = useRef<number | null>(null)
-  const startPos = useRef({ x: 0, y: 0 })
-  const downTime = useRef(0)
-  const moved = useRef(false)
-  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const holdFired = useRef(false)
-  const dispatch = (control: string, values: Record<string, unknown> = {}) => {
-    window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control, ...values } }))
-  }
-  const limit = size * 0.35
-  const cancelHold = () => { if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null } }
-  return (
-    <div
-      style={{
-        position: 'absolute', inset: 0, zIndex: 40,
-        touchAction: 'none', cursor: 'grab', borderRadius: '50%',
-      }}
-      onPointerDown={e => {
-        pointer.current = e.pointerId
-        startPos.current = { x: e.clientX, y: e.clientY }
-        downTime.current = performance.now()
-        moved.current = false
-        holdFired.current = false
-        cancelHold()
-        holdTimer.current = setTimeout(() => {
-          holdTimer.current = null
-          holdFired.current = true
-          dispatch('pause', { pressed: true })
-        }, 500)
-        try { e.currentTarget.setPointerCapture(e.pointerId) } catch {}
-        e.preventDefault()
-      }}
-      onPointerMove={e => {
-        if (pointer.current !== e.pointerId) return
-        const dx = e.clientX - startPos.current.x
-        const dy = e.clientY - startPos.current.y
-        if (!moved.current && Math.hypot(dx, dy) > 6) {
-          moved.current = true
-          cancelHold()
-        }
-        if (!moved.current) return
-        const normalize = (v: number) => {
-          const u = Math.max(-1, Math.min(1, v / limit))
-          return Math.abs(u) < 0.08 ? 0 : u
-        }
-        dispatch('move', { x: normalize(dx), y: -normalize(dy) })
-        e.preventDefault()
-      }}
-      onPointerUp={e => {
-        if (pointer.current !== e.pointerId) return
-        pointer.current = null
-        cancelHold()
-        if (moved.current) {
-          dispatch('move', { x: 0, y: 0 })
-        } else if (!holdFired.current && performance.now() - downTime.current < 350) {
-          dispatch('fire', { pressed: true })
-          setTimeout(() => dispatch('fire', { pressed: false }), 100)
-        }
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-          e.currentTarget.releasePointerCapture(e.pointerId)
-        }
-      }}
-      onPointerCancel={e => {
-        if (pointer.current !== e.pointerId) return
-        pointer.current = null
-        cancelHold()
-        dispatch('move', { x: 0, y: 0 })
-      }}
-    />
-  )
-}
-
 export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'viewfinder' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'viewfinder' | 'roll' }) {
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
@@ -967,6 +919,22 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // settled centre and sends one cloud-pack GLB URL. Null means the ordinary
   // phase-aware map object (globe/sun/moon) owns the navigator again.
   const [mapCountryFlagModel, setMapCountryFlagModel] = useState<string | null>(null)
+  const [mapAirportSignal, setMapAirportSignal] = useState<{
+    id: string
+    name: string
+    changedAt: number
+  } | null>(null)
+  // One crossing gets one bounded airport moment. Clearing locally after the
+  // pop does not re-arm it: the map stays silent until the airport actually
+  // leaves view and a later settled camera crosses it again.
+  useEffect(() => {
+    if (!mapAirportSignal) return
+    const signal = mapAirportSignal
+    const timer = window.setTimeout(() => {
+      setMapAirportSignal(current => current?.changedAt === signal.changedAt ? null : current)
+    }, AIRPORT_CUBE_DISPLAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [mapAirportSignal])
   const [mapMorning, setMapMorning] = useState(clockMapMorning)
   // The embedded map reports the same state below. Refresh once when a tab
   // change reaches Map; only the native renderer, which has no iframe report,
@@ -1206,6 +1174,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       const params = new URLSearchParams(window.location.search)
       // The harness's ?holdScreen deep-link owns the boot when present.
       if (params.get('holdScreen')) return null
+      // UploadFlowReview embeds a clean camera viewfinder for its Capture
+      // step.  Last-page memory must not reopen an unrelated hold-menu page
+      // (most visibly Poplur AI chat) over that review-only camera iframe.
+      if (params.get('uploadReview') === '1') return null
       const saved = readLastScreens()[initialTab] ?? null
       // Only a REAL page may reopen at boot. This is the guard that makes
       // launch-resume safe: an id that no longer names a page resumes NOTHING
@@ -1254,6 +1226,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   activeTabLiveRef.current = activeTab
   /** Set by the cube-swipe handler for the tab it targets; consumed once. */
   const gestureSwitchRef = useRef<CubeTab | null>(null)
+  /** A direct cross-tab destination (such as an ad → Feed Browser). Unlike a
+      swipe, it must win over the incoming tab's remembered page. */
+  const forcedTabPageRef = useRef<{ tab: CubeTab; screen: string } | null>(null)
   // ── Screen history: the cube's back step ──────────────────────────────────
   // Where the app is standing is one triple — which tab, which hold-menu page
   // on it, and whose profile if a visited one is up. Every change to that
@@ -1285,9 +1260,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     lastOpenSubscreenRef.current = readLastScreens()[activeTab] ?? null
     // The gesture rule is all that is left: swiping back to a tab reopens the
     // page you left it on, and arriving any other way opens the tab bare.
-    const wanted = gestureSwitchRef.current === activeTab
-      ? lastOpenSubscreenRef.current
-      : null
+    const forced = forcedTabPageRef.current
+    const wanted = forced?.tab === activeTab
+      ? forced.screen
+      : gestureSwitchRef.current === activeTab
+        ? lastOpenSubscreenRef.current
+        : null
+    if (forced?.tab === activeTab) forcedTabPageRef.current = null
     gestureSwitchRef.current = null
     setResume(current => ({ screen: wanted, n: current.n + 1 }))
     setHoldOpen(wanted != null)
@@ -1437,6 +1416,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     setResume(current => ({ screen: 'profile-notifications', n: current.n + 1 }))
     setHoldOpen(true)
   }, [notifOpenNonce])
+
+  // Ads and source credits do not open a new tab. They first move the person
+  // to Feed → Browser, then that screen presents the same isolated native
+  // browser controller (or its sandboxed web preview) from inside Poplur.
+  const [feedBrowserURL, setFeedBrowserURL] = useState<string | null>(null)
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const url = normalizeInAppBrowserURL((event as CustomEvent<{ url?: unknown }>).detail?.url)
+      if (!url) return
+      setFeedBrowserURL(url)
+      if (activeTabLiveRef.current !== 'feed') {
+        // The tab-change effect owns the handoff while Feed is moving in; give
+        // it the explicit Browser destination so it cannot replace this link
+        // with Feed's remembered page (or close the new screen outright).
+        forcedTabPageRef.current = { tab: 'feed', screen: 'feed-browser' }
+        setActiveTab('feed')
+        return
+      }
+      setActiveTab('feed')
+      setResume(current => ({ screen: 'feed-browser', n: current.n + 1 }))
+      setHoldOpen(true)
+    }
+    window.addEventListener(POPLUR_OPEN_FEED_BROWSER_EVENT, onOpen)
+    return () => window.removeEventListener(POPLUR_OPEN_FEED_BROWSER_EVENT, onOpen)
+  }, [])
 
   // A system DM notification lands in the reachable web Mail page. Native
   // supplies only the canonical thread id; Mail waits for its live thread
@@ -1604,6 +1608,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     callerName: string
     /** True only for a caller that explicitly requested FaceTime video. */
     video?: boolean
+    /** Surface that will own controls after this call is accepted. */
+    context: CallContext
   } | null>(null)
 
   /** What the cube was answering to a moment ago; see handleSubscreenChange.
@@ -1839,16 +1845,58 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [profilePostCount, setProfilePostCount] = useState(0)
   // Left slot: channel up/down changer — drives the feed's channel directly.
   const [chanIndex, setChanIndex] = useState(0)
+  const feedEntryVisitRef = useRef(0)
+  const autoTunedFeedChannelRef = useRef<number | null>(null)
+  const skipNextFeedAutoTuneRef = useRef(false)
+  const interceptingFeedPosts = useSyncExternalStore(
+    onNativeFeedPosts,
+    nativeFeedPostsSnapshot,
+    nativeFeedPostsSnapshot,
+  )
   const tuneFeedChannel = useCallback((channelId: string) => {
     const nextIndex = CHANNELS.findIndex(channel => channel.id === channelId)
     if (nextIndex < 0) return
+    skipNextFeedAutoTuneRef.current = true
+    autoTunedFeedChannelRef.current = null
     setChanIndex(nextIndex)
     setActiveTab('feed')
     setHoldOpen(false)
   }, [])
+  // Feed TV opens on something actually intercepting the viewer, rather than
+  // pinning every visit to CH 101. Native posts are the authoritative live
+  // candidates; the catalogue only rotates in browser-preview/empty states.
+  useEffect(() => {
+    if (activeTab !== 'feed') return
+    requestNativeFeedPosts()
+    if (skipNextFeedAutoTuneRef.current) {
+      skipNextFeedAutoTuneRef.current = false
+      return
+    }
+    const visit = ++feedEntryVisitRef.current
+    setChanIndex(current => {
+      const next = nextInterceptingChannelIndex(CHANNELS, nativeFeedPostsSnapshot(), current, visit)
+      autoTunedFeedChannelRef.current = next
+      return next
+    })
+  }, [activeTab])
+  // A Feed entry may happen before the native bridge has returned. Retune one
+  // time when real interception rows arrive, unless the viewer deliberately
+  // selected a channel in the meantime.
+  useEffect(() => {
+    if (activeTab !== 'feed' || !interceptingFeedPosts.length) return
+    const visit = feedEntryVisitRef.current
+    setChanIndex(current => {
+      if (autoTunedFeedChannelRef.current !== current) return current
+      const next = nextInterceptingChannelIndex(CHANNELS, interceptingFeedPosts, current, visit)
+      autoTunedFeedChannelRef.current = next
+      return next
+    })
+  }, [activeTab, interceptingFeedPosts])
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
+  const [mapConquerSnapshot, setMapConquerSnapshot] = useState<MapConquerSnapshot | null>(null)
+  const [mapConquerAtFarthestZoom, setMapConquerAtFarthestZoom] = useState(false)
   const mapFrontRef = useRef(initialTab === 'map')
   const [nativeMapWebFallback, setNativeMapWebFallback] = useState(false)
   const nativeMapWebFallbackRef = useRef(false)
@@ -1910,8 +1958,38 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
       return
     }
-    postWebMapAction(action, detail)
+    // The web map is an exclusive heavy surface and is deliberately unmounted
+    // behind Feed/subscreens. Cross-surface actions (notably News -> Map) can
+    // therefore arrive during the short remount. Queue them exactly like the
+    // native fallback instead of posting into a missing contentWindow.
+    if (!mapReadyRef.current || !mapFrameRef.current?.contentWindow) {
+      queueMapAction(action, detail)
+    } else {
+      postWebMapAction(action, detail)
+    }
   }, [beginNativeMapWebFallback, postWebMapAction, queueMapAction])
+
+  // A newspaper story can hand the exact canonical event back to the map. One
+  // validated command closes News and exposes Map; sendMapAction retains the
+  // focus while the exclusive Mapbox iframe remounts, then applies it at ready.
+  useEffect(() => {
+    const onFocusNews = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: unknown; title?: unknown; coords?: unknown }>).detail
+      const id = typeof detail?.id === 'string' ? detail.id.slice(0, 180) : ''
+      const title = typeof detail?.title === 'string' ? detail.title.slice(0, 220) : ''
+      const raw = detail?.coords
+      if (!id || !Array.isArray(raw) || raw.length !== 2) return
+      const longitude = Number(raw[0])
+      const latitude = Number(raw[1])
+      if (!Number.isFinite(longitude) || Math.abs(longitude) > 180
+        || !Number.isFinite(latitude) || Math.abs(latitude) > 90) return
+      setHoldOpen(false)
+      setActiveTab('map')
+      sendMapAction('focusNews', { id, title, coords: [longitude, latitude] })
+    }
+    window.addEventListener('poplur-news-focus-map', onFocusNews)
+    return () => window.removeEventListener('poplur-news-focus-map', onFocusNews)
+  }, [sendMapAction])
 
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
@@ -2073,12 +2151,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-native-app-lifecycle', onLifecycle)
     return () => window.removeEventListener('poplur-native-app-lifecycle', onLifecycle)
   }, [iOSNativeShell])
-  // A live native shell may report `pagehide` during an incoming call or an
-  // interrupted permission prompt. Its Home view is still on screen, and
-  // hiding every React surface here leaves only the persistent HUD on black.
-  // A true background event is delivered explicitly by native, so fail open
-  // whenever the document remains visible.
-  const surfaceVisible = iOSNativeShell ? (nativeAppActive || pageVisible) : pageVisible
+  // A live native shell may report `pagehide` during a transient system cover,
+  // but Swift deliberately keeps `nativeAppActive` true for that case. A real
+  // background transition sets it false. Let that host signal win: WebKit can
+  // leave visibilityState="visible" while backgrounded, and OR-ing the two
+  // values kept the map iframe and WebGL context resident off-screen.
+  const surfaceVisible = homeSurfaceIsVisible(iOSNativeShell, nativeAppActive, pageVisible)
   mapFrontRef.current = activeTab === 'map' && committedTab === 'map' && surfaceVisible
     && activePermission === null
   // Has the map actually reached a usable frame since this iframe mounted?
@@ -2197,6 +2275,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           callerId: event.data.callerId ?? '',
           callerName: event.data.callerName ?? 'Unknown',
           video: event.data.video === true,
+          context: normalizeCallContext(event.data.context),
         })
         startRingtone()
         // A few real haptic taps, not a loop: most phones buzz a handful of
@@ -2248,7 +2327,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [])
 
-  const acceptIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string; video?: boolean }) => {
+  const acceptIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string; video?: boolean; context?: CallContext }) => {
     playPop()
     stopRingtone()
     if (incomingCallTimer.current) {
@@ -2262,7 +2341,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (call.video) {
       setIncomingFaceTime({ callerId: call.callerId, callerName: call.callerName })
     }
-    void acceptCall(call.callId, call.callerName, { video: call.video === true })
+    void acceptCall(call.callId, call.callerName, {
+      video: call.video === true,
+      context: normalizeCallContext(call.context),
+    })
     setIncomingCall(null)
   }, [])
 
@@ -2428,7 +2510,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         // "Loading…" forever in a browser.
         if (detail.type === 'requestPhoneContacts') {
           window.dispatchEvent(new CustomEvent('poplur-dm-result', {
-            detail: { type: 'poplurPhoneContacts', contacts: [] },
+            detail: {
+              type: 'poplurPhoneContacts',
+              contacts: [],
+              ...(typeof detail.requestId === 'string' ? { requestId: detail.requestId } : {}),
+            },
           }))
         }
       }
@@ -2511,6 +2597,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapOverlayOpen(false)
         setMapWeatherSignal(null)
         setMapCountryFlagModel(null)
+        setMapAirportSignal(null)
+        setMapNewsTourOn(false)
+        setMapNewsEvent(null)
+        setMapConquerAtFarthestZoom(false)
       }
       if (event.data.type === 'poplur-map-country-flag') {
         setMapCountryFlagModel(
@@ -2518,6 +2608,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             ? event.data.modelUrl
             : null,
         )
+      }
+      if (event.data.type === 'poplur-map-airport') {
+        const id = typeof event.data.airportId === 'string'
+          ? event.data.airportId.trim().slice(0, 180)
+          : ''
+        if (!id) {
+          setMapAirportSignal(null)
+        } else {
+          const name = typeof event.data.name === 'string' && event.data.name.trim()
+            ? event.data.name.trim().slice(0, 180)
+            : 'Airport'
+          setMapAirportSignal({ id, name, changedAt: Date.now() })
+        }
       }
       if (event.data.type === 'poplur-map-weather') {
         const presentation = readWeatherPresentation(event.data)
@@ -2536,6 +2639,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           })
         }
       }
+      if (event.data.type === 'poplur-map-conquer') {
+        const snapshot = readMapConquerSnapshot(event.data.snapshot)
+        if (snapshot) {
+          setMapConquerSnapshot(snapshot)
+          setMapConquerAtFarthestZoom(event.data.atFarthestZoom === true)
+        }
+      }
       if (event.data.type === 'poplur-map-overlay') {
         const open = Boolean(event.data.open)
         setMapOverlayOpen(open)
@@ -2546,6 +2656,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
       if (event.data.type === 'poplur-map-failed') {
         setMapCountryFlagModel(null)
+        setMapAirportSignal(null)
+        setMapNewsTourOn(false)
+        setMapNewsEvent(null)
         scheduleMapRetry()
       }
       if (event.data.type === 'poplur-map-night') {
@@ -2647,6 +2760,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           ? { n: index + 1, of: total }
           : null)
       }
+      if (event.data.type === 'poplur-map-news-tour') {
+        setMapNewsTourOn(Boolean(event.data.on))
+        const count = Number(event.data.count)
+        setMapNewsCount(Number.isInteger(count) && count > 0 ? Math.min(count, 99) : 0)
+      }
+      if (event.data.type === 'poplur-map-news-event') {
+        setMapNewsEvent(readMapNewsCubeEvent(event.data))
+      }
+      if (event.data.type === 'poplur-map-open-news') {
+        const eventId = typeof event.data.eventId === 'string'
+          ? event.data.eventId.trim().slice(0, 180)
+          : ''
+        if (eventId) {
+          setActiveTab('feed')
+          setNewsOpenRequest(current => ({ eventId, nonce: (current?.nonce ?? 0) + 1 }))
+        }
+      }
       // A pop pin was tapped. The pin is a PERSON before it is a place, so this
       // goes to their profile with the post that took that ground lit up — for
       // your own pins that is your own grid, no visit.
@@ -2683,16 +2813,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapReady(true)
         setMapFailedVisible(false)
         setMapPainted(true)
-        const queued = nativeMapWebFallbackRef.current
-          ? queuedMapActionsRef.current
-          : []
+        // Both the native fallback and the ordinary web shell can receive an
+        // action while the exclusive Mapbox iframe is remounting. Flush the
+        // shared bounded queue only after the child reports genuine readiness.
+        const queued = queuedMapActionsRef.current
         claimReplaysBeforeQueuedActions(droppedClaimsRef.current, queued).forEach(claim => {
           mapFrameRef.current?.contentWindow?.postMessage({ ...claim, replay: true }, '*')
         })
-        if (nativeMapWebFallbackRef.current) {
-          queuedMapActionsRef.current = []
-          queued.forEach(item => postWebMapAction(item.action, item.detail))
-        }
+        queuedMapActionsRef.current = []
+        queued.forEach(item => postWebMapAction(item.action, item.detail))
         if (window.parent !== window) window.parent.postMessage({ type: 'poplur-home-ready' }, '*')
         postNativeEvent({ type: 'homeReady' })
       }
@@ -2732,7 +2861,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         // switch, so the feed opens already on the post.
         if (poi) {
           const chIdx = CHANNELS.findIndex(c => c.id === poi.channel)
-          if (chIdx >= 0) setChanIndex(chIdx)
+          if (chIdx >= 0) {
+            skipNextFeedAutoTuneRef.current = true
+            autoTunedFeedChannelRef.current = null
+            setChanIndex(chIdx)
+          }
         }
         engagementSeqRef.current += 1
         setFeedEngagement({
@@ -3051,19 +3184,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     window.addEventListener('poplur-games-chrome-mute', onGamesChrome)
     return () => window.removeEventListener('poplur-games-chrome-mute', onGamesChrome)
   }, [])
-  const [fpsCubeMode, setFpsCubeMode] = useState(false)
-  const fpsCubeModeRef = useRef(false)
-  useEffect(() => {
-    const onFpsCube = (event: Event) => {
-      const on = Boolean((event as CustomEvent<{ on?: boolean }>).detail?.on)
-      setFpsCubeMode(on)
-      fpsCubeModeRef.current = on
-    }
-    window.addEventListener('poplur-fps-cube-controller', onFpsCube)
-    return () => window.removeEventListener('poplur-fps-cube-controller', onFpsCube)
-  }, [])
   const [mapTourOn, setMapTourOn] = useState(false)
   const [mapTourPosition, setMapTourPosition] = useState<{ n: number; of: number } | null>(null)
+  const [mapNewsTourOn, setMapNewsTourOn] = useState(false)
+  const [mapNewsCount, setMapNewsCount] = useState(0)
+  const [mapNewsEvent, setMapNewsEvent] = useState<MapNewsCubeEvent | null>(null)
+  const [newsOpenRequest, setNewsOpenRequest] = useState<{ eventId: string; nonce: number } | null>(null)
+  useEffect(() => {
+    if (!newsOpenRequest || activeTab !== 'feed') return
+    setResume(current => ({ screen: 'feed-news', n: current.n + 1 }))
+    setHoldOpen(true)
+  }, [activeTab, newsOpenRequest])
   const [mapPopLevel, setMapPopLevel] = useState<PopLevel>('all')
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
@@ -3943,6 +4074,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // While Map's landmark tour is active, the persistent side arrows belong
     // to that tour. Route before pushScreen so the same physical press cannot
     // also enter a page or posted-pop walk in Home.
+    if (activeTab === 'map' && mapNewsTourOn) {
+      sendMapAction('cycleNews', { dir })
+      return
+    }
     if (activeTab === 'map' && mapTourOn) {
       sendMapAction('cycleTourLandmark', { dir })
       return
@@ -4033,12 +4168,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // over (Filters/VFX Studio), but cameraCaptureMode can still read 'video'
   // from the shot you just took, and that stale mode must not win the cube
   // back from the editor that is actually on screen.
-  const weatherCubeModel = activeTab === 'map' && committedTab === 'map'
-    ? mapWeatherSignal?.kind === 'thunder'
-      ? THUNDER_CUBE_MODEL
-      : mapWeatherSignal?.kind === 'rain'
-        ? RAIN_CUBE_MODEL
-        : null
+  // Breaking/live news is a focused Map stop and therefore outranks ambient
+  // precipitation. As soon as the visible story card clears, the same pure
+  // resolver falls back to the current rain, thunder, snow or hail model.
+  const mapContextModel = activeTab === 'map' && committedTab === 'map'
+    ? mapContextCubeModel(mapNewsEvent != null, mapWeatherSignal?.kind)
+    : null
+  const breakingNewsCubeActive = mapContextModel === BREAKING_NEWS_CUBE_MODEL
+  const weatherCubeModel = breakingNewsCubeActive ? null : mapContextModel
+  const airportCubeModel = activeTab === 'map' && committedTab === 'map'
+    && cubeScreen == null && mapAirportSignal
+    ? AIRPORT_NAVIGATOR_MODEL
     : null
   const cameraCubeOverridesEvent = activeTab === 'post'
     && cubeScreen == null
@@ -4056,7 +4196,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   ].join(':')
   const discoNavigationContextRef = useRef(discoNavigationContext)
   discoNavigationContextRef.current = discoNavigationContext
-  const discoCubeVisible = weatherCubeModel == null
+  const discoCubeVisible = mapContextModel == null
     && incomingCall == null
     && !faceTimeActive
     && !(composerOpen && composerEditing)
@@ -4153,20 +4293,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [foodAdOpen])
 
-  // Weather wins while Map is the current surface; music remains global. When
-  // either signal clears, this falls through to the model for the page the
-  // user is on NOW rather than restoring a captured, potentially stale URL.
+  // Focused Map news and weather win while Map is the current surface; music
+  // remains global. When those signals clear, this falls through to the model
+  // for the page the user is on NOW rather than restoring a stale URL.
   const discoCubeActiveHere = discoCubeActive
     && discoCubeVisible
     && musicSessionRef.current.contextKey === discoNavigationContext
-  const eventCubeModel = weatherCubeModel ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
+  const eventCubeModel = mapContextModel ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
   const cubeEventSignal = postVerifiedCubeActive
     ? 'posted'
-    : weatherCubeModel
-      ? mapWeatherSignal?.kind ?? 'none'
-      : discoCubeActiveHere
-        ? 'music'
-        : 'none'
+    : breakingNewsCubeActive
+      ? `map-news:${mapNewsEvent?.status ?? 'unknown'}:${mapNewsEvent?.id ?? 'unknown'}`
+      : airportCubeModel
+        ? `airport:${mapAirportSignal?.id ?? 'unknown'}`
+        : weatherCubeModel
+          ? mapWeatherSignal?.kind ?? 'none'
+          : discoCubeActiveHere
+            ? 'music'
+            : 'none'
   const wheelPreviewModel = holdCubePreviewMode === '3d'
     && wheelFocus
     ? holdFocusNavigatorModel(
@@ -4215,6 +4359,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // kept above a still-mounted Podcast room, where cubeScreen remains Studio.
     : ipodCubeModel
     ? ipodCubeModel
+    // A visible breaking/live story is the deliberate Map action right now.
+    // It must temporarily outrank an airport we happen to be flying over;
+    // clearing the story immediately falls through to that airplane again.
+    : breakingNewsCubeActive && mapContextModel
+    ? mapContextModel
+    // Passing a visible airport briefly turns the one navigator into the
+    // decimated clay airplane. It outranks world flags and ambient effects,
+    // but every deliberate interaction above still owns the object first.
+    : airportCubeModel
+    ? airportCubeModel
     // The country under the settled world-map centre becomes the navigator.
     // It outranks ambient weather/music only on the unobscured Map root and
     // drops out immediately when the iframe reports that the camera zoomed in.
@@ -4454,14 +4608,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // shutter, or Mail back route underneath the call surface. Call controls
     // in FaceTimeOverlay own mute/camera/end explicitly.
     if (faceTimeActive) { playPop(); return }
-    // FPS cube mode: tap fires the weapon
-    if (fpsCubeModeRef.current) {
-      window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'fire', pressed: true } }))
-      window.setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'fire', pressed: false } }))
-      }, 100)
-      return
-    }
     // MAIL thread: the cube is how you leave a conversation, back to the
     // thread list. MailScreen answers the event and closes the thread; the
     // cube's next tap runs the normal subscreen back below.
@@ -4550,7 +4696,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* The wordmark stays up on EVERY subscreen, Settings included: it belongs
           to the home view. Settings reserves room for it in its own top padding
           rather than hiding it. */}
-      <div className={`${styles.universalTitle}${gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}>
+      <div
+        className={`${styles.universalTitle}${gamesChromeMuted ? ` ${styles.chromeHidden}` : ''}`}
+        hidden={composerOpen}
+      >
         <TopChrome />
       </div>
       {/* The map iframe is an exclusive heavy surface. It is unmounted whenever
@@ -4588,6 +4737,21 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             ].filter(Boolean).join(' ')}
           />
         </>
+      )}
+
+      {activeTab === 'map' && committedTab === 'map'
+        && !overlayOpen && !mapOverlayOpen && activePermission === null
+        && !holdOpen && (!NATIVE_ADAPTIVE_MAP || nativeMapWebFallback)
+        && mapConquerAtFarthestZoom && (
+        <ConquerGlance
+          snapshot={mapConquerSnapshot}
+          atFarthestZoom={mapConquerAtFarthestZoom}
+          onOpen={() => {
+            playPop()
+            setResume(current => ({ screen: 'map-conquer', n: current.n + 1 }))
+            setHoldOpen(true)
+          }}
+        />
       )}
 
       {/* Native renderer, original skin. These are the same clay controls the
@@ -4639,6 +4803,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               still
               activateOnClick
               onPress={() => { playPop(0.25); sendMapAction('tour') }}
+            />
+            <MapNewsButton
+              active={mapNewsTourOn}
+              count={mapNewsCount}
+              onPress={() => { playPop(0.25); sendMapAction('newsTour') }}
             />
             <MapLevelButton
               level={mapPopLevel}
@@ -5124,11 +5293,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               // why this defaults to 0).
               doubleTapWindowMs={incomingCall ? 260 : 0}
               onHold={() => {
-                // FPS mode: long-press pauses
-                if (fpsCubeModeRef.current) {
-                  window.dispatchEvent(new CustomEvent('poplur-fps-cube-input', { detail: { control: 'pause', pressed: true } }))
-                  return
-                }
                 playPop()
                 if (activeTab === 'map' && mapOverlayOpen) {
                   dismissMapOverlay()
@@ -5162,9 +5326,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               />
             ))}
           </div>
-          {fpsCubeMode && (
-            <FpsCubeOverlay size={cubeSize} />
-          )}
         </div>
       </div>
 
@@ -5190,7 +5351,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {/* Phone owns its full LCD controls while visible. If an audio call is
           accepted elsewhere (or the user leaves Phone mid-call), this compact
           bar preserves mute/end controls. Video calls keep their own surface. */}
-      <InCallBar hidden={faceTimeActive || cubeScreen === 'profile-phone'} />
+      <InCallBar
+        hidden={faceTimeActive || cubeScreen === 'profile-phone'}
+        ownedContext={cubeScreen === 'profile-house' ? 'house' : undefined}
+      />
       <WebSignIn />
 
       {/* A ringing call interrupts anything, including the hold menu — unlike
@@ -5294,6 +5458,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           tab={activeTab}
           initialScreen={resume.screen ?? undefined}
           initialDMThreadId={resume.screen === 'profile-messages' ? dmOpenRequest?.threadId : undefined}
+          initialBrowserURL={resume.screen === 'feed-browser' ? feedBrowserURL ?? undefined : undefined}
+          initialNewsEventId={resume.screen === 'feed-news' ? newsOpenRequest?.eventId : undefined}
           wheelOverNonce={wheelOverNonce}
           onClose={reason => {
             // Waving the wheel away leaves you exactly where it found you.
@@ -5322,6 +5488,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           tourOn={mapTourOn}
           mapTourTopics={mapTourTopics}
           onMapTourTopicsChange={handleMapTourTopicsChange}
+          mapConquerSnapshot={mapConquerSnapshot}
           currentFeedChannelId={CHANNELS[chanIndex]?.id}
           onTuneFeedChannel={tuneFeedChannel}
           onSubscreenChange={handleSubscreenChange}

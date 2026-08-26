@@ -7,9 +7,10 @@ import {
 
 export const COUNTRY_FLAGS_PACK_ID = 'country-flags'
 
-/** "All the way out" has a small tolerance because a spring/pinch commonly
- * settles a few hundredths above Mapbox's configured minimum. */
-export const WORLD_FLAG_ZOOM_EPSILON = 0.22
+/** Country flags are reserved for the actual world view. A tiny rounding
+ * allowance keeps an exact slider/minimum landing stable, but a pinch even a
+ * little way into the map immediately restores the normal map navigator. */
+export const WORLD_FLAG_ZOOM_EPSILON = 0.02
 
 export type CountryMapFeature = {
   properties?: Record<string, unknown> | null

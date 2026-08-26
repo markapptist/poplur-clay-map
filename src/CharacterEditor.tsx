@@ -5,7 +5,17 @@ import {
 } from './characterStore'
 import { STUDIO_OPTIONS, studioInitialCharacter, type StudioCategory } from './AvatarStudioCharacter'
 import ThreeAvatarStudio from './ThreeAvatarStudio'
+import FittedAvatarWardrobe from './FittedAvatarWardrobe'
 import { WARDROBE_SCENE_SRC } from './characterParts'
+import {
+  ACCESSORY_FASHION_STYLES,
+  BOTTOM_FASHION_STYLES,
+  TOP_FASHION_STYLES,
+  type FashionSlot,
+  type FashionStyle,
+  type FashionStyleIdBySlot,
+} from './characterFashion'
+import { loadWardrobeCatalog, type RemoteWardrobeStyles } from './wardrobeGarmentApi'
 import { playPop } from './pop'
 import styles from './CharacterEditor.module.css'
 
@@ -20,35 +30,103 @@ const STYLE_CATEGORIES: { id: StudioCategory, label: string }[] = [
 
 const CATEGORY_HINTS: Record<StudioCategory, string> = {
   body: 'Identity, build & skin', hair: 'Hair cut & colour', face: 'Face & eye colour',
-  top: 'Top style & colour', bottoms: 'Bottom style & colour', extras: 'Finishing touches',
+  top: 'Everyday and Poplur Atelier tops', bottoms: 'Everyday and Poplur Atelier bottoms',
+  extras: 'Accessories and runway finishing touches',
 }
 
-type OutfitSlot = 'top' | 'bottom' | 'accessory'
 type CubePressBinder = (handler: (() => boolean) | null) => void
 
 /** Full-screen, original local character creator. Every choice is rendered
     on-device; it does not require a paid avatar API. */
 export default function CharacterEditor({ bindCubePress }: { bindCubePress?: CubePressBinder }) {
+  const wardrobeRef = useRef<HTMLElement | null>(null)
+  const studioPopupRef = useRef<HTMLElement | null>(null)
+  const studioDragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    baseX: number
+    baseY: number
+    popupRect: DOMRect
+    stageRect: DOMRect
+  } | null>(null)
   const [character, setCharacter] = useState<PoplurCharacter>(() => studioInitialCharacter(readCharacter()))
   const characterRef = useRef(character)
   const [activeCategory, setActiveCategory] = useState<StudioCategory>('body')
   const [sceneReady, setSceneReady] = useState(false)
-  const [studioOpen, setStudioOpen] = useState(false)
+  const [remoteFashion, setRemoteFashion] = useState<RemoteWardrobeStyles>({ top: [], bottom: [] })
+  const [wardrobeProvider, setWardrobeProvider] = useState<'avaturn' | 'poplur'>(() => {
+    try {
+      const saved = localStorage.getItem('poplur.wardrobe.provider.v1')
+      return saved === 'poplur' ? 'poplur' : 'avaturn'
+    } catch { return 'avaturn' }
+  })
+  // Wardrobe opens ready to dress the character. The cube still toggles the
+  // studio and saves on close, but users no longer arrive at an inert model.
+  const [studioOpen, setStudioOpen] = useState(true)
+  const [studioOffset, setStudioOffset] = useState({ x: 0, y: 0 })
+
+  const chooseWardrobeProvider = useCallback((provider: 'avaturn' | 'poplur') => {
+    setWardrobeProvider(provider)
+    try { localStorage.setItem('poplur.wardrobe.provider.v1', provider) } catch { /* private browsing */ }
+  }, [])
+
+  const beginStudioDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest('button')) return
+    const popup = studioPopupRef.current
+    const stage = wardrobeRef.current
+    if (!popup || !stage) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    studioDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: studioOffset.x,
+      baseY: studioOffset.y,
+      popupRect: popup.getBoundingClientRect(),
+      stageRect: stage.getBoundingClientRect(),
+    }
+  }, [studioOffset])
+
+  const moveStudioDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = studioDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const dx = event.clientX - drag.startX
+    const dy = event.clientY - drag.startY
+    const inset = 8
+    const minX = drag.baseX + drag.stageRect.left + inset - drag.popupRect.left
+    const maxX = drag.baseX + drag.stageRect.right - inset - drag.popupRect.right
+    const minY = drag.baseY + drag.stageRect.top + inset - drag.popupRect.top
+    const maxY = drag.baseY + drag.stageRect.bottom - inset - drag.popupRect.bottom
+    setStudioOffset({
+      x: Math.max(Math.min(minX, maxX), Math.min(Math.max(minX, maxX), drag.baseX + dx)),
+      y: Math.max(Math.min(minY, maxY), Math.min(Math.max(minY, maxY), drag.baseY + dy)),
+    })
+  }, [])
+
+  const endStudioDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (studioDragRef.current?.pointerId !== event.pointerId) return
+    studioDragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }, [])
 
   const apply = useCallback((patch: Partial<PoplurCharacter>) => {
     playPop()
     setCharacter(current => {
       const next = studioInitialCharacter({ ...current, ...patch, updatedAt: Date.now() })
       characterRef.current = next
+      saveCharacter(next)
       return next
     })
   }, [])
 
-  const setOutfitPart = useCallback((slot: OutfitSlot, id: string) => {
+  const setOutfitPart = useCallback(<Slot extends FashionSlot,>(slot: Slot, id: FashionStyleIdBySlot[Slot]) => {
     playPop()
     setCharacter(current => {
-      const next = studioInitialCharacter({ ...current, outfit: { ...current.outfit, [slot]: id }, updatedAt: Date.now() })
+      const next = studioInitialCharacter({ ...current, fashionOutfit: { ...current.fashionOutfit, [slot]: id }, updatedAt: Date.now() })
       characterRef.current = next
+      saveCharacter(next)
       return next
     })
   }, [])
@@ -57,6 +135,7 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
     playPop()
     const next = studioInitialCharacter(null)
     characterRef.current = next
+    saveCharacter(next)
     setCharacter(next)
   }, [])
 
@@ -71,13 +150,14 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
         hairStyle: pick(STUDIO_OPTIONS.hairStyles), bodyShape: pick(STUDIO_OPTIONS.bodyShapes),
         faceStyle: pick(STUDIO_OPTIONS.faceStyles), eyeColor: pick(STUDIO_OPTIONS.EYE_COLORS),
         topColor: pick(STUDIO_OPTIONS.TOP_COLORS), bottomColor: pick(STUDIO_OPTIONS.BOTTOM_COLORS),
-        outfit: {
-          ...current.outfit, top: pick(['tee', 'hoodie', 'jacket'] as const),
-          bottom: pick(['jeans', 'shorts', 'skirt'] as const), accessory: pick(['none', 'glasses', 'cap', 'chain'] as const),
+        fashionOutfit: {
+          ...current.fashionOutfit, top: pick(TOP_FASHION_STYLES).id,
+          bottom: pick(BOTTOM_FASHION_STYLES).id, accessory: pick(ACCESSORY_FASHION_STYLES).id,
         },
         updatedAt: Date.now(),
       })
       characterRef.current = next
+      saveCharacter(next)
       return next
     })
   }, [])
@@ -103,23 +183,54 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
     return () => bindCubePress?.(null)
   }, [bindCubePress, toggleStudioFromCube])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    // Catalog discovery is intentionally non-blocking. The room and current
+    // character appear first; fitted garments are added when Poplur's API is
+    // reachable, without starting another renderer or reloading the body.
+    void loadWardrobeCatalog(controller.signal).then(styles => {
+      if (!controller.signal.aborted) setRemoteFashion(styles)
+    })
+    return () => controller.abort()
+  }, [])
+
+  const topFashionStyles: readonly FashionStyle[] = [...TOP_FASHION_STYLES, ...remoteFashion.top]
+  const bottomFashionStyles: readonly FashionStyle[] = [...BOTTOM_FASHION_STYLES, ...remoteFashion.bottom]
+
   return (
-    <main className={styles.wardrobe} data-wardrobe-surface='poplur-fullscreen'>
+    <main ref={wardrobeRef} className={styles.wardrobe} data-wardrobe-surface='poplur-fullscreen'>
       <div className={styles.roomFallback} aria-hidden='true' />
       <img src={WARDROBE_SCENE_SRC} alt='' className={sceneReady ? styles.roomBlurReady : styles.roomBlur} draggable={false} aria-hidden='true' />
       <img src={WARDROBE_SCENE_SRC} alt='Your Poplur wardrobe room' className={sceneReady ? styles.roomArtReady : styles.roomArt} draggable={false} onLoad={() => setSceneReady(true)} onError={event => { setSceneReady(false); event.currentTarget.style.display = 'none' }} />
       <div className={styles.roomLight} aria-hidden='true' />
 
-      <div className={styles.characterStage}>
-        <ThreeAvatarStudio character={character} mode='3d' />
+      {wardrobeProvider === 'avaturn' && <FittedAvatarWardrobe onUseClassic={() => chooseWardrobeProvider('poplur')} />}
+
+      {wardrobeProvider === 'poplur' && <><div className={styles.characterStage}>
+        <ThreeAvatarStudio character={character} mode='3d' remoteFashion={remoteFashion} />
         <span className={styles.characterShadow} aria-hidden='true' />
       </div>
 
+      <button type='button' className={styles.fittedWardrobeButton} onClick={() => chooseWardrobeProvider('avaturn')}>
+        <strong>Fitted wardrobe</strong><small>Free avatar fitting</small>
+      </button>
+
       {studioOpen && <div className={styles.studioLayout}>
-      <aside className={styles.studioPopup} aria-label='Character studio'>
+      <aside
+        ref={studioPopupRef}
+        className={styles.studioPopup}
+        aria-label='Character studio'
+        style={{ '--studio-x': `${studioOffset.x}px`, '--studio-y': `${studioOffset.y}px` } as React.CSSProperties}
+      >
       <section className={styles.styleDock} aria-label='Build your character'>
-        <div className={styles.dockHeading}>
-          <strong>Character studio</strong>
+        <div
+          className={styles.dockHeading}
+          onPointerDown={beginStudioDrag}
+          onPointerMove={moveStudioDrag}
+          onPointerUp={endStudioDrag}
+          onPointerCancel={endStudioDrag}
+        >
+          <strong><span className={styles.dragGrip} aria-hidden='true'>⠿</span> Character studio</strong>
           <div className={styles.dockActions}>
             <button type='button' className={styles.shuffleButton} onClick={shuffle}>Shuffle</button>
             <button type='button' className={styles.resetButton} onClick={reset}>Reset</button>
@@ -150,18 +261,15 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
             {STUDIO_OPTIONS.EYE_COLORS.map(color => <ColorChoice key={color} color={color} active={character.eyeColor === color} onPick={() => apply({ eyeColor: color })} />)}
           </>}
           {activeCategory === 'top' && <>
-            {['tee', 'hoodie', 'jacket'].map(style => <StyleChoice key={style} label={title(style)} active={character.outfit?.top === style} onPick={() => setOutfitPart('top', style)} />)}
+            {topFashionStyles.map(style => <FashionChoice key={style.id} style={style} active={character.fashionOutfit?.top === style.id} onPick={() => setOutfitPart('top', style.id)} />)}
             {STUDIO_OPTIONS.TOP_COLORS.map(color => <ColorChoice key={color} color={color} active={character.topColor === color} onPick={() => apply({ topColor: color })} />)}
           </>}
           {activeCategory === 'bottoms' && <>
-            {['jeans', 'shorts', 'skirt'].map(style => <StyleChoice key={style} label={title(style)} active={character.outfit?.bottom === style} onPick={() => setOutfitPart('bottom', style)} />)}
+            {bottomFashionStyles.map(style => <FashionChoice key={style.id} style={style} active={character.fashionOutfit?.bottom === style.id} onPick={() => setOutfitPart('bottom', style.id)} />)}
             {STUDIO_OPTIONS.BOTTOM_COLORS.map(color => <ColorChoice key={color} color={color} active={character.bottomColor === color} onPick={() => apply({ bottomColor: color })} />)}
           </>}
           {activeCategory === 'extras' && <>
-            <StyleChoice label='None' glyph='—' active={character.outfit?.accessory === 'none'} onPick={() => setOutfitPart('accessory', 'none')} />
-            <StyleChoice label='Glasses' glyph='⌐' active={character.outfit?.accessory === 'glasses'} onPick={() => setOutfitPart('accessory', 'glasses')} />
-            <StyleChoice label='Cap' glyph='⌒' active={character.outfit?.accessory === 'cap'} onPick={() => setOutfitPart('accessory', 'cap')} />
-            <StyleChoice label='Chain' glyph='◆' active={character.outfit?.accessory === 'chain'} onPick={() => setOutfitPart('accessory', 'chain')} />
+            {ACCESSORY_FASHION_STYLES.map(style => <FashionChoice key={style.id} style={style} active={character.fashionOutfit?.accessory === style.id} onPick={() => setOutfitPart('accessory', style.id)} />)}
           </>}
         </div>
       </section>
@@ -172,7 +280,7 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
       <div className={styles.avatarStatureControl} aria-label='Character stature control'>
         <ScaleKnobControl label='Stature' value={character.statureScale ?? 0.96} onChange={value => apply({ statureScale: value })} />
       </div>
-      </div>}
+      </div>}</>}
     </main>
   )
 }
@@ -183,8 +291,13 @@ function ColorChoice({ color, active, onPick }: { color: string, active: boolean
   return <button type='button' className={active ? styles.colorChoiceActive : styles.colorChoice} style={{ '--choice-color': color } as React.CSSProperties} onClick={onPick} aria-label={`Colour ${color}`} aria-pressed={active}><span aria-hidden='true' /></button>
 }
 
-function StyleChoice({ label, glyph, active, onPick }: { label: string, glyph?: string, active: boolean, onPick: () => void }) {
-  return <button type='button' className={active ? styles.layerChoiceActive : styles.layerChoice} onClick={onPick} aria-pressed={active}><span className={styles.choiceGlyph} aria-hidden='true'>{glyph ?? label.slice(0, 1)}</span><small>{label}</small></button>
+function FashionChoice({ style, active, onPick }: { style: FashionStyle, active: boolean, onPick: () => void }) {
+  return <StyleChoice label={style.label} glyph={style.glyph} atelier={style.tier === 'atelier'} active={active} onPick={onPick} />
+}
+
+function StyleChoice({ label, glyph, atelier = false, active, onPick }: { label: string, glyph?: string, atelier?: boolean, active: boolean, onPick: () => void }) {
+  const accessibleLabel = atelier ? `${label}, Poplur Atelier` : label
+  return <button type='button' className={active ? styles.layerChoiceActive : styles.layerChoice} data-fashion-tier={atelier ? 'atelier' : 'classic'} onClick={onPick} aria-label={accessibleLabel} aria-pressed={active}><span className={styles.choiceGlyph} aria-hidden='true'>{glyph ?? label.slice(0, 1)}</span><span className={styles.choiceLabel}><small>{label}</small>{atelier && <em>Atelier</em>}</span></button>
 }
 
 const HEIGHT_STEPS = [0.84, 0.9, 0.96, 1] as const

@@ -18,6 +18,15 @@
   font-family: system-ui, -apple-system, "SF Pro Rounded", sans-serif;
 }
 
+/* UploadFlowReview already supplies the phone frame and does not render the
+   persistent home cube over its contents. Reserving another 208px for that
+   absent cube squeezed every workbench screen upward and made controls look
+   misaligned. Production keeps the full clearance; only the review frame uses
+   a normal safe-area gutter. */
+.reviewStage {
+  --composer-home-clearance: calc(18px + env(safe-area-inset-bottom));
+}
+
 .bar {
   flex: 0 0 auto;
   display: flex;
@@ -532,7 +541,11 @@
   font-size: 12.5px; font-weight: 700; color: rgba(255, 255, 255, 0.8);
 }
 .radiusRow b { color: #7bffa0; }
-.radiusRow input { accent-color: #f63b9a; }
+.radiusRow input {
+  width: 100%;
+  min-height: 44px;
+  accent-color: #f63b9a;
+}
 
 .publishDisclosure {
   display: grid;
@@ -562,6 +575,8 @@
 .publishDisclosure small { color: rgba(220, 249, 255, 0.66); font: 750 9px/1.4 system-ui, sans-serif; }
 
 .rightsRow {
+  min-height: 44px;
+  box-sizing: border-box;
   display: flex;
   align-items: flex-start;
   gap: 9px;

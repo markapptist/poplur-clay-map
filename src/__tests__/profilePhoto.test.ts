@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { refreshedProfilePhotoSource, usableProfilePhoto } from '../profilePhoto'
+import {
+  nextProfilePhotoReloadRevision,
+  refreshedProfilePhotoSource,
+  usableProfilePhoto,
+} from '../profilePhoto'
 
 describe('profile photo reload sources', () => {
   it('busts a stale URL cache without discarding existing signed parameters', () => {
@@ -20,5 +24,12 @@ describe('profile photo reload sources', () => {
     expect(usableProfilePhoto('poplur-clay://app/captures/profile.jpg')).toBeTruthy()
     expect(usableProfilePhoto('https://example.com/profile.jpg')).toBeTruthy()
     expect(usableProfilePhoto('javascript:alert(1)')).toBeNull()
+  })
+
+  it('uses a cache nonce that stays unique across retries and remounts', () => {
+    expect(nextProfilePhotoReloadRevision(0, 1_000)).toBe(1_000)
+    expect(nextProfilePhotoReloadRevision(1_000, 1_000)).toBe(1_001)
+    // A fresh component starts at zero but still cannot repeat the old URL.
+    expect(nextProfilePhotoReloadRevision(0, 2_000)).toBe(2_000)
   })
 })

@@ -11,6 +11,7 @@ import ClayCornerButton from './ClayCornerButton'
 import ShaderVideoPlayer from './ShaderVideoPlayer'
 import TabControlRail from './TabControlRail'
 import { useControlSide } from './controlPlacement'
+import { openInPoplurBrowser } from './inAppBrowser'
 import {
   distanceKm,
   onNewsMessages,
@@ -19,6 +20,13 @@ import {
   type NewsMessage,
   type NewsMediaAttachment,
 } from './newsMessages'
+import {
+  liveNewsRadiusKm,
+  liveNewsWhen,
+  useLiveNews,
+  type LiveNewsEvent,
+  type LiveNewsMedia,
+} from './liveNews'
 
 // THE POPLUR TIMES — the News screen.
 //
@@ -39,9 +47,13 @@ import {
 // you chose, and their map plate is the actual ground you claimed — everything
 // below them is the synthetic edition until the live service takes over.
 
+type EntryMediaAttachment = NewsMediaAttachment & Partial<Pick<LiveNewsMedia,
+  'credit' | 'sourceUrl' | 'rights'
+>>
+
 export interface Entry {
   id: string
-  kind: 'dispatch' | 'message'
+  kind: 'dispatch' | 'message' | 'liveNews'
   who: string
   handle: string
   avatar?: string
@@ -59,8 +71,10 @@ export interface Entry {
   /** real drops know where they are: lng, lat */
   coords?: [number, number]
   /** attached images or video */
-  media?: NewsMediaAttachment[]
+  media?: EntryMediaAttachment[]
   verified?: 'verified' | 'confirmed'
+  headline?: string
+  liveEvent?: LiveNewsEvent
 }
 
 const AVATARS = [
@@ -203,7 +217,8 @@ function snapshotFor(entry: Entry): string | null {
   const pin = `pin-l+f63b9a(${lng.toFixed(4)},${lat.toFixed(4)})`
   return `https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/${pin}/`
     + `${lng.toFixed(4)},${lat.toFixed(4)},${zoom},0/640x360@2x`
-    + `?access_token=${MAPBOX_TOKEN}&logo=false&attribution=false`
+    // Keep Mapbox's default logo and attribution visible on every plate.
+    + `?access_token=${MAPBOX_TOKEN}`
 }
 
 // Your own drops always run, even when the radius you chose does not reach
@@ -229,6 +244,31 @@ function myEntries(list: NewsMessage[], nowMs: number): Entry[] {
   }))
 }
 
+function liveEntries(list: LiveNewsEvent[], nowMs: number): Entry[] {
+  return list.map(event => ({
+    id: `live-news-${event.id}`,
+    kind: 'liveNews' as const,
+    who: 'Poplur News',
+    handle: '@poplurnews',
+    avatar: '/holdmenu/News.png',
+    headline: event.title,
+    body: event.summary,
+    radiusKm: liveNewsRadiusKm(event),
+    distanceKm: +distanceKm(HOME, event.coords[0], event.coords[1]).toFixed(1),
+    when: liveNewsWhen(event, nowMs),
+    replies: 0,
+    repops: 0,
+    likes: 0,
+    coords: event.coords,
+    // Keep provider attribution attached to the exact asset. User-created
+    // NewsMediaAttachment records deliberately have none of these fields and
+    // continue through the same renderer without a credit row.
+    media: event.media.map(item => ({ ...item })),
+    verified: event.sources.length >= 2 ? 'verified' as const : 'confirmed' as const,
+    liveEvent: event,
+  }))
+}
+
 function editionStamp(now: Date) {
   return {
     date: now.toLocaleDateString(undefined, {
@@ -248,7 +288,41 @@ function VerifyBadge({ tier }: { tier: 'verified' | 'confirmed' }) {
   )
 }
 
-function EntryMedia({ media, large }: { media: NewsMediaAttachment[], large?: boolean }) {
+function MediaCredits({ media }: { media: EntryMediaAttachment[] }) {
+  const credited = media
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => Boolean(item.credit))
+  if (!credited.length) return null
+
+  return (
+    <figcaption className={styles.mediaCredits}>
+      {credited.map(({ item, index }) => (
+        <span className={styles.mediaCreditLine} key={`${item.src}-${index}`}>
+          <span className={styles.mediaCreditText}>
+            {media.length > 1 ? `${index + 1}. ` : ''}{item.credit}
+            {item.rights ? ` · ${item.rights.replace(/-/g, ' ').toUpperCase()}` : ''}
+          </span>
+          {item.sourceUrl && (
+            <button
+              type="button"
+              className={styles.mediaCreditButton}
+              aria-label={`Open source for ${item.credit}`}
+              onClick={event => {
+                event.preventDefault()
+                event.stopPropagation()
+                openInPoplurBrowser(item.sourceUrl)
+              }}
+            >
+              SOURCE ›
+            </button>
+          )}
+        </span>
+      ))}
+    </figcaption>
+  )
+}
+
+function EntryMedia({ media, large }: { media: EntryMediaAttachment[], large?: boolean }) {
   if (!media.length) return null
   const first = media[0]
 
@@ -256,6 +330,7 @@ function EntryMedia({ media, large }: { media: NewsMediaAttachment[], large?: bo
     return (
       <figure className={large ? styles.mediaCardLarge : styles.mediaCard}>
         <ShaderVideoPlayer src={first.src} poster={first.poster} />
+        <MediaCredits media={[first]} />
       </figure>
     )
   }
@@ -263,7 +338,8 @@ function EntryMedia({ media, large }: { media: NewsMediaAttachment[], large?: bo
   if (media.length === 1) {
     return (
       <figure className={large ? styles.mediaCardLarge : styles.mediaCard}>
-        <img className={styles.mediaSingle} src={first.src} alt="" loading="lazy" draggable={false} />
+        <img className={styles.mediaSingle} src={first.src} alt={first.credit ?? ''} loading="lazy" draggable={false} />
+        <MediaCredits media={media} />
       </figure>
     )
   }
@@ -271,19 +347,22 @@ function EntryMedia({ media, large }: { media: NewsMediaAttachment[], large?: bo
   return (
     <figure className={large ? styles.mediaGridLarge : styles.mediaGrid}>
       {media.slice(0, 4).map((m, i) => (
-        <img key={i} className={styles.mediaGridImg} src={m.src} alt="" loading="lazy" draggable={false} />
+        <img key={i} className={styles.mediaGridImg} src={m.src} alt={m.credit ?? ''} loading="lazy" draggable={false} />
       ))}
+      <MediaCredits media={media.slice(0, 4)} />
     </figure>
   )
 }
 
-export default function NewsPaper({ onClose, bindBack }: {
+export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   onClose: () => void
   /** The cube's back button, lent down from the hold menu. The paper NESTS —
       a story opens as a full page over the edition, and the drawer lays over
       both — so it hands its one-level-back up rather than printing a "‹ BACK"
       of its own. See HoldMenuTwin's nativeBackRef. */
   bindBack?: (fn: (() => boolean) | null) => void
+  /** A map popup can open this exact canonical event, not just the edition. */
+  initialEventId?: string | null
 }) {
   /** One step back through the paper's own nesting, read through a ref so the
       binding below stays stable and the Escape handler above can reach it. */
@@ -304,6 +383,7 @@ export default function NewsPaper({ onClose, bindBack }: {
   // composer runs in the iframe, which has its own module state.
   const [dropped, setDropped] = useState<NewsMessage[]>(() => readNewsMessages())
   useEffect(() => onNewsMessages(setDropped), [])
+  const liveNews = useLiveNews()
   const [exhausted, setExhausted] = useState(false)
   /** Bumped by a refresh: the presses set a genuinely new edition. */
   const [edition, setEdition] = useState(0)
@@ -321,11 +401,14 @@ export default function NewsPaper({ onClose, bindBack }: {
   const pullHead = useRef<HTMLDivElement>(null)
 
   const entries = useMemo(() => {
-    // What you dropped leads the edition; the rest of the paper follows.
-    const all: Entry[] = myEntries(dropped, now.getTime())
+    // The same canonical live events shown on the map lead the world edition.
+    // Your own map drops follow them, then the local synthetic community pages
+    // remain as an offline fallback while the production wire is unavailable.
+    const all: Entry[] = liveEntries(liveNews.events, now.getTime())
+    all.push(...myEntries(dropped, now.getTime()))
     for (let p = 0; p < pages; p += 1) all.push(...buildPage(p, edition))
     return all
-  }, [pages, dropped, now, edition])
+  }, [pages, dropped, now, edition, liveNews.events])
 
   // Keep setting type while the presses have something in reach.
   const loadMore = useCallback(() => {
@@ -389,6 +472,23 @@ export default function NewsPaper({ onClose, bindBack }: {
   /** The story opened as a full page, the way a tweet opens. */
   const [detail, setDetail] = useState<Entry | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  const requestedEventFromUrl = useMemo(() => typeof window === 'undefined'
+    ? null
+    : new URLSearchParams(window.location.search).get('newsEvent'), [])
+  const requestedEventId = initialEventId ?? requestedEventFromUrl
+  const didConsumeRequestedEvent = useRef(false)
+  useEffect(() => {
+    if (!requestedEventId || didConsumeRequestedEvent.current) return
+    const match = entries.find(entry => entry.liveEvent?.id === requestedEventId)
+    if (!match) return
+    // The live wire is asynchronous, so wait until the requested canonical
+    // event appears — then consume the request exactly once. Re-stamping the
+    // edition every 30 seconds must not reopen it after cube-back or replace a
+    // different story the reader deliberately chose.
+    didConsumeRequestedEvent.current = true
+    setDetail(match)
+  }, [entries, requestedEventId])
 
   // The persistent RADIUS card follows a story only after the reader opens
   // that story. The edition itself stays visually and computationally quiet:
@@ -481,10 +581,12 @@ export default function NewsPaper({ onClose, bindBack }: {
     // above what you were reading. Simulated until the live wire lands — the
     // banner says "new", not "live", so it never overstates itself.
     setEdition(e => e + 1)
-    setFreshCount(8)
-    window.setTimeout(() => setFreshCount(0), 4200)
+    void liveNews.refresh().then(next => {
+      setFreshCount(next.events.length)
+      window.setTimeout(() => setFreshCount(0), 4200)
+    })
     scrollHost.current?.scrollTo({ top: 0 })
-  }, [])
+  }, [liveNews.refresh])
 
   // The paper is an endless timeline, so give the reader a way back up that
   // is not a hundred flicks: a side control that appears once the masthead is
@@ -535,7 +637,7 @@ export default function NewsPaper({ onClose, bindBack }: {
         <header className={styles.masthead}>
           <div className={styles.mastRule}>
             <span>NO. {1200 + entries.length}</span>
-            <span>WITHIN YOUR RADIUS</span>
+            <span>{liveNews.events.length ? 'WORLD WIRE + YOUR RADIUS' : 'WITHIN YOUR RADIUS'}</span>
             <span>FREE</span>
           </div>
           <h1 className={`${styles.title} ${styles.inkShader}`}>The Poplur Times</h1>
@@ -545,18 +647,41 @@ export default function NewsPaper({ onClose, bindBack }: {
           </div>
         </header>
 
+        {(liveNews.loading || liveNews.source !== 'empty' || liveNews.error) && (
+          <div className={styles.wireStatus} data-source={liveNews.source} role="status">
+            <span>{liveNews.loading ? 'UPDATING WIRE' : liveNews.source === 'preview' ? 'LIVE WIRE PREVIEW' : liveNews.stale ? 'SAVED EDITION' : 'LIVE WORLD WIRE'}</span>
+            <b>{liveNews.loading
+              ? 'Checking trusted sources…'
+              : liveNews.error ?? `${liveNews.events.length} geolocated ${liveNews.events.length === 1 ? 'story' : 'stories'} shared with the map`}</b>
+          </div>
+        )}
+
         {lead && (
           <article
             className={styles.lead}
+            role="button"
+            tabIndex={0}
+            aria-label={`Open ${lead.headline ?? lead.who}`}
+            onClick={() => { playPop(); setDetail(lead) }}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                playPop()
+                setDetail(lead)
+              }
+            }}
           >
             <div className={styles.kicker}>
-              {lead.kind === 'dispatch' ? 'MAP DISPATCH' : lead.mine ? 'YOUR POP' : 'FROM THE STREET'}
+              {lead.liveEvent
+                ? `${lead.liveEvent.preview ? 'PREVIEW' : lead.liveEvent.status.toUpperCase()} · ${lead.liveEvent.place.toUpperCase()}`
+                : lead.kind === 'dispatch' ? 'MAP DISPATCH' : lead.mine ? 'YOUR POP' : 'FROM THE STREET'}
             </div>
-            <h2 className={`${styles.leadHead} ${styles.inkShader}`}>{lead.body.split(/[:.]/)[0]}</h2>
+            <h2 className={`${styles.leadHead} ${styles.inkShader}`}>{lead.headline ?? lead.body.split(/[:.]/)[0]}</h2>
             <p className={styles.leadBody}>
               <span className={styles.dropCap}>{lead.body.trim()[0]}</span>
               {lead.body.trim().slice(1)}
             </p>
+            {lead.media?.length ? <EntryMedia media={lead.media} large /> : null}
             {snapshotFor(lead) && (
               <figure className={styles.plate}>
                 <img className={styles.plateImg} src={snapshotFor(lead)!} alt="Map of the area this story covers" loading="lazy" />
@@ -566,8 +691,8 @@ export default function NewsPaper({ onClose, bindBack }: {
               </figure>
             )}
             <div className={styles.byline}>
-              By {lead.who} · {lead.radiusKm} km radius · {lead.distanceKm} km away
-              {' · '}{lead.when === 'now' ? 'just now' : `${lead.when} ago`}
+              By {lead.who} · {lead.liveEvent ? `${lead.liveEvent.sources.length} confirmed sources` : `${lead.radiusKm} km radius`}
+              {' · '}{lead.distanceKm} km away · {lead.when === 'now' ? 'just now' : `${lead.when} ago`}
             </div>
           </article>
         )}
@@ -590,7 +715,7 @@ export default function NewsPaper({ onClose, bindBack }: {
           {rest.map(entry => (
             <article
               key={entry.id}
-              className={entry.kind === 'dispatch' ? `${styles.entry} ${styles.entryAi}` : styles.entry}
+              className={entry.kind === 'dispatch' || entry.kind === 'liveNews' ? `${styles.entry} ${styles.entryAi}` : styles.entry}
               role="button"
               tabIndex={0}
               aria-label={`Open ${entry.who}'s post`}
@@ -614,11 +739,17 @@ export default function NewsPaper({ onClose, bindBack }: {
                   <span className={styles.dot}>·</span>
                   <span className={styles.when}>{entry.when}</span>
                   {entry.kind === 'dispatch' && <span className={styles.aiTag}>MAP DISPATCH</span>}
+                  {entry.liveEvent && (
+                    <span className={`${styles.aiTag} ${styles.liveTag}`}>
+                      {entry.liveEvent.preview ? 'PREVIEW' : entry.liveEvent.status.toUpperCase()}
+                    </span>
+                  )}
                   {entry.mine && <span className={styles.mineTag}>YOUR POP</span>}
                 </div>
+                {entry.headline && <h3 className={styles.entryHeadline}>{entry.headline}</h3>}
                 <p className={styles.body}>{entry.body}</p>
                 {entry.media?.length ? <EntryMedia media={entry.media} /> : null}
-                {(entry.kind === 'dispatch' || entry.mine) && snapshotFor(entry) && (
+                {(entry.kind === 'dispatch' || entry.kind === 'liveNews' || entry.mine) && snapshotFor(entry) && (
                   <figure className={styles.plateSmall}>
                     <img
                       className={styles.plateImg}
@@ -629,7 +760,9 @@ export default function NewsPaper({ onClose, bindBack }: {
                     <figcaption className={styles.plateCap}>
                       {entry.mine
                         ? `YOUR GROUND · ${entry.radiusKm} KM RADIUS`
-                        : `THE MAP · ${entry.distanceKm} KM OUT`}
+                        : entry.liveEvent
+                          ? `${entry.liveEvent.place.toUpperCase()} · VIEW ON THE NEWS TOUR`
+                          : `THE MAP · ${entry.distanceKm} KM OUT`}
                     </figcaption>
                   </figure>
                 )}
@@ -673,45 +806,58 @@ export default function NewsPaper({ onClose, bindBack }: {
                   the whole app, and a story is exactly the case it was built
                   for: tap it and you are on the edition again. */}
               <span className={styles.detailKicker}>
-                {detail.kind === 'dispatch' ? 'MAP DISPATCH' : detail.mine ? 'YOUR POP' : 'POST'}
+                {detail.liveEvent
+                  ? `${detail.liveEvent.preview ? 'PREVIEW' : detail.liveEvent.status.toUpperCase()} · POPLUR NEWS`
+                  : detail.kind === 'dispatch' ? 'MAP DISPATCH' : detail.mine ? 'YOUR POP' : 'POST'}
               </span>
             </div>
 
             <div className={styles.detailScroll}>
-              <button className={styles.detailWho} onClick={() => openProfileFor(detail.handle)}>
+              <button className={styles.detailWho} onClick={() => detail.liveEvent ? undefined : openProfileFor(detail.handle)}>
                 <img src={detail.avatar} alt="" draggable={false} />
                 <span>
                   <b>{detail.who}{detail.verified && <VerifyBadge tier={detail.verified} />}</b>
-                  <i>{detail.handle} · view profile</i>
+                  <i>{detail.liveEvent ? `${detail.liveEvent.sources.length} source${detail.liveEvent.sources.length === 1 ? '' : 's'} · ${detail.liveEvent.place}` : `${detail.handle} · view profile`}</i>
                 </span>
               </button>
 
               <p className={styles.detailBody}>{detail.body}</p>
               {detail.media?.length ? <EntryMedia media={detail.media} large /> : null}
-              <p className={styles.detailWhen}>{detail.when} ago</p>
+              <p className={styles.detailWhen}>{detail.when === 'now' ? 'just now' : `${detail.when} ago`}</p>
+
+              {detail.liveEvent && (
+                <div className={styles.detailSources}>
+                  <p>{detail.liveEvent.preview ? 'PREVIEW SUMMARY' : 'SOURCE SUMMARY'} · CHECK THE ORIGINAL REPORTING</p>
+                  {detail.liveEvent.sources.map(source => (
+                    <button key={source.url} type="button" onClick={() => openInPoplurBrowser(source.url)}>
+                      <span>{source.publisher}</span><i>READ SOURCE ›</i>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Reach stays useful without printing a coordinate pair that can
                   be copied into another map. Public posts show only an area;
                   private/ghost posts arrive without a public origin at all. */}
               <dl className={styles.detailFacts}>
                 <div>
-                  <dt>RADIUS</dt>
-                  <dd>{detail.radiusKm} km</dd>
+                  <dt>{detail.liveEvent ? 'EVENT AREA' : 'RADIUS'}</dt>
+                  <dd>{detail.liveEvent ? detail.liveEvent.scope : `${detail.radiusKm} km`}</dd>
                 </div>
                 <div>
                   <dt>FROM YOU</dt>
                   <dd>{detail.distanceKm} km</dd>
                 </div>
                 <div>
-                  <dt>POSTED AT</dt>
-                  <dd className={styles.detailCoords}>Approximate map area</dd>
+                  <dt>{detail.liveEvent ? 'CONFIDENCE' : 'POSTED AT'}</dt>
+                  <dd className={styles.detailCoords}>{detail.liveEvent ? `${Math.round(detail.liveEvent.confidence * 100)}% source match` : 'Approximate map area'}</dd>
                 </div>
               </dl>
 
               {plate ? (
                 <figure className={styles.detailPlate}>
                   <img src={plate} alt={`Map of where ${detail.who} posted this`} loading="lazy" />
-                  <figcaption>THE GROUND THIS WAS POSTED ON · {detail.radiusKm} KM RADIUS</figcaption>
+                  <figcaption>{detail.liveEvent ? `${detail.liveEvent.place.toUpperCase()} · PROVIDER-SUPPLIED AREA` : `THE GROUND THIS WAS POSTED ON · ${detail.radiusKm} KM RADIUS`}</figcaption>
                 </figure>
               ) : (
                 <p className={styles.detailNoPlate}>
@@ -725,9 +871,22 @@ export default function NewsPaper({ onClose, bindBack }: {
                 <span>♥ {detail.likes + (liked.has(detail.id) ? 1 : 0)}</span>
               </div>
 
-              <button className={styles.detailProfile} onClick={() => openProfileFor(detail.handle)}>
-                OPEN {detail.who.toUpperCase()}’S PROFILE
-              </button>
+              {detail.liveEvent && (
+                <button
+                  className={styles.detailMap}
+                  onClick={() => window.dispatchEvent(new CustomEvent('poplur-news-focus-map', {
+                    detail: { id: detail.liveEvent?.id, title: detail.liveEvent?.title, coords: detail.liveEvent?.coords },
+                  }))}
+                >
+                  VIEW THIS STORY ON THE MAP
+                </button>
+              )}
+
+              {!detail.liveEvent && (
+                <button className={styles.detailProfile} onClick={() => openProfileFor(detail.handle)}>
+                  OPEN {detail.who.toUpperCase()}’S PROFILE
+                </button>
+              )}
             </div>
           </div>
         )
@@ -737,8 +896,8 @@ export default function NewsPaper({ onClose, bindBack }: {
         id="news"
         title="THE POPLUR TIMES"
         lines={[
-          'Tap a story to open it, with the ground it was posted on.',
-          'Pull down for a new edition.',
+          'Live stories and the map use the same source-backed event.',
+          'Pull down to update the world wire.',
           'The menu searches posts and people.',
         ]}
       />

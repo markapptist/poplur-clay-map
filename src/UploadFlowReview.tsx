@@ -1,116 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ModelViewerElement } from '@google/model-viewer'
 import PostComposer, { type ComposerTarget, type PostComposerStep } from './PostComposer'
-import VideoEditor from './VideoEditor'
 import { playPop } from './pop'
+import {
+  resolveUploadReviewRoute,
+  screensForUploadFlow,
+  type UploadFlowId,
+  type UploadMediaKind,
+  type UploadReviewScreenId,
+} from './uploadFlowCatalog'
 import styles from './UploadFlowReview.module.css'
-
-ModelViewerElement.meshoptDecoderLocation = `${import.meta.env.BASE_URL}meshopt_decoder.js`
-
-type FlowId = 'camera' | 'map'
-type ScreenId =
-  | 'location'
-  | 'capture'
-  | 'confirm'
-  | 'edit'
-  | 'video'
-  | 'effects'
-  | 'choice'
-  | 'ai'
-  | 'channel'
-  | 'location-return'
-  | 'channel-ready'
-  | 'uploading'
-  | 'posted'
-
-interface ReviewScreen {
-  id: ScreenId
-  label: string
-  note: string
-  gap?: boolean
-}
-
-const CAMERA_FLOW: ReviewScreen[] = [
-  { id: 'capture', label: 'Capture', note: 'Live camera: photo or video' },
-  { id: 'confirm', label: 'Keep or redo', note: 'Capture confirmation', gap: true },
-  { id: 'edit', label: 'Filters', note: 'Photo grade and video filter' },
-  { id: 'video', label: 'Trim and music', note: 'Video-only editor' },
-  { id: 'effects', label: 'VFX Studio', note: 'Timed 3D objects and native particle effects' },
-  { id: 'choice', label: 'Original or AI', note: 'Choose before generation' },
-  { id: 'ai', label: 'Poplur AI', note: 'Chat with the attached capture' },
-  { id: 'channel', label: 'Channel', note: 'Choose a channel and preview the post' },
-  { id: 'location-return', label: 'Location', note: 'Preview the radius over 3D terrain' },
-  { id: 'channel-ready', label: 'Ready to post', note: 'Content and confirmed mini-map' },
-  { id: 'uploading', label: 'Uploading', note: 'Clay globe transfer' },
-  { id: 'posted', label: 'Posted', note: 'Celebration and camera reset' },
-]
-
-const MAP_FLOW: ReviewScreen[] = [
-  { id: 'location', label: 'Location', note: 'Choose a spot and claim radius' },
-  { id: 'capture', label: 'Capture', note: 'Camera opens with the spot retained' },
-  { id: 'confirm', label: 'Keep or redo', note: 'Capture confirmation', gap: true },
-  { id: 'edit', label: 'Filters', note: 'Photo grade and video filter' },
-  { id: 'video', label: 'Trim and music', note: 'Video-only editor' },
-  { id: 'effects', label: 'VFX Studio', note: 'Timed 3D objects and native particle effects' },
-  { id: 'choice', label: 'Original or AI', note: 'Choose before generation' },
-  { id: 'ai', label: 'Poplur AI', note: 'Chat with the attached capture' },
-  { id: 'channel-ready', label: 'Ready to post', note: 'Content and confirmed mini-map' },
-  { id: 'uploading', label: 'Uploading', note: 'Clay globe transfer' },
-  { id: 'posted', label: 'Posted', note: 'Celebration and map reset' },
-]
 
 const SAMPLE_PHOTO = '/feed/posters/ad-food.jpg'
 const SAMPLE_VIDEO = '/feed/ad-food.mp4'
 const SAMPLE_TARGET: ComposerTarget = { lat: 43.6532, lng: -79.3832, radiusKm: 3.5, resume: true }
 
-function screensFor(flow: FlowId): ReviewScreen[] {
-  return flow === 'camera' ? CAMERA_FLOW : MAP_FLOW
-}
-
-function readRoute(): { flow: FlowId; screen: ScreenId } {
-  const params = new URLSearchParams(window.location.search)
-  const flow: FlowId = params.get('flow') === 'map' ? 'map' : 'camera'
-  const screens = screensFor(flow)
-  const requested = params.get('screen') as ScreenId | null
-  const screen = screens.some(item => item.id === requested) ? requested! : screens[0].id
-  return { flow, screen }
-}
-
-function writeRoute(flow: FlowId, screen: ScreenId): void {
+function writeRoute(flow: UploadFlowId, screen: UploadReviewScreenId, media: UploadMediaKind): void {
   const url = new URL(window.location.href)
   url.searchParams.set('view', 'uploadflows')
   url.searchParams.set('flow', flow)
   url.searchParams.set('screen', screen)
+  url.searchParams.set('media', media)
   window.history.replaceState(null, '', url)
-}
-
-function CaptureConfirmation() {
-  return (
-    <section className={styles.captureReview} aria-label="Capture confirmation review">
-      <img src={SAMPLE_PHOTO} alt="Captured post preview" />
-      <div className={styles.captureShade} />
-      <div className={styles.captureScroll}>
-        <div className={styles.flowBrand}>
-          <img src="/logo_icon.png" alt="" />
-          <span>CAPTURE READY</span>
-        </div>
-        <div className={styles.captureTitle}>
-          <span>PHOTO · ORIGINAL</span>
-          <strong>Keep this shot?</strong>
-        </div>
-        <div className={styles.captureActions}>
-          <button type="button" className={styles.redoButton}>
-            <b aria-hidden="true">↺</b>
-            <span>Redo</span>
-          </button>
-          <button type="button" className={styles.keepButton}>
-            <b aria-hidden="true">✓</b>
-            <span>Keep photo</span>
-          </button>
-        </div>
-      </div>
-    </section>
-  )
 }
 
 const UPLOAD_LINES = [
@@ -121,23 +31,25 @@ const UPLOAD_LINES = [
 ]
 
 function UploadGlobeModel() {
-  return React.createElement('model-viewer', {
-    class: styles.uploadGlobeModel,
-    src: '/poplur-globe-lite.glb',
-    alt: 'Spinning Poplur clay globe',
-    'camera-orbit': '20deg 72deg 3.7m',
-    'field-of-view': '28deg',
-    exposure: '1.15',
-    shadowIntensity: '1.1',
-    shadowSoftness: '.8',
-    'auto-rotate': true,
-    'rotation-per-second': '28deg',
-    interactionPrompt: 'none',
-    disableZoom: true,
-  })
+  // Uploading is network-bound; a continuously-rendering WebGL model made the
+  // progress screen needlessly hot and could fail as a blank rectangle when a
+  // review browser had no GPU context. The same clay globe is rendered as the
+  // lightweight authored sprite here, while the barber-pole progress still
+  // supplies motion and status.
+  return <img className={styles.uploadGlobeModel} src="/sprites/zoom_globe_y20_p12_s256.png" alt="Poplur clay globe" />
 }
 
-function UploadingScreen({ complete = false, flow, onReset }: { complete?: boolean; flow: FlowId; onReset?: () => void }) {
+function UploadingScreen({
+  complete = false,
+  flow,
+  radius,
+  onReset,
+}: {
+  complete?: boolean
+  flow: UploadFlowId
+  radius: number
+  onReset?: () => void
+}) {
   const [line, setLine] = useState(0)
 
   useEffect(() => {
@@ -158,7 +70,7 @@ function UploadingScreen({ complete = false, flow, onReset }: { complete?: boole
       <div className={styles.statusScroll}>
         <div className={styles.uploadWordmark}>
           <img src="/logo_text.png" alt="Poplur" />
-          <span>{complete ? 'UPLOAD COMPLETE' : 'UPLOADING YOUR POP'}</span>
+          <span>{complete ? 'UPLOAD COMPLETE' : 'UPLOAD PREVIEW'}</span>
         </div>
         {!complete && (
           <div className={styles.globeProgress}>
@@ -192,10 +104,10 @@ function UploadingScreen({ complete = false, flow, onReset }: { complete?: boole
             <span className={styles.postedLine}>POP IS LIVE</span>
             <h2 className={styles.postedLine}>Congratulations!</h2>
             <p className={styles.postedLine}>CH 101 · FOOD</p>
-            <div className={`${styles.postedRadius} ${styles.postedLine}`}><b>3.5</b><span>km radius</span></div>
+            <div className={`${styles.postedRadius} ${styles.postedLine}`}><b>{radius.toFixed(1)}</b><span>km radius</span></div>
             <small className={styles.postedLine}>{flow === 'map' ? 'Pinned to your confirmed location' : 'Added to your profile'}</small>
             <button type="button" className={styles.resetCube} onClick={onReset} aria-label={flow === 'map' ? 'Return to map' : 'Return to camera'}>
-              <img src="/sprites/poplur_camera_kodak_y0_p14_s320.png" alt="" />
+              <img src={flow === 'map' ? '/sprites/zoom_globe_y20_p12_s256.png' : '/sprites/poplur_camera_kodak_y0_p14_s320.png'} alt="" />
               <span>{flow === 'map' ? 'BACK TO MAP' : 'BACK TO CAMERA'}</span>
             </button>
           </div>
@@ -205,12 +117,25 @@ function UploadingScreen({ complete = false, flow, onReset }: { complete?: boole
   )
 }
 
-function LocationRadiusPreview() {
+function LocationRadiusPreview({
+  radius,
+  target,
+  onRadiusChange,
+  onTargetChange,
+  onContinue,
+  flow,
+}: {
+  radius: number
+  target: ComposerTarget
+  onRadiusChange: (radius: number) => void
+  onTargetChange: (target: ComposerTarget) => void
+  onContinue: () => void
+  flow: UploadFlowId
+}) {
   const RADIUS_MIN = .5
   const RADIUS_MAX = 25
   const RADIUS_STEP = .5
-  const RADIUS_ORB_SIZE = 22
-  const [radius, setRadius] = useState(3.5)
+  const RADIUS_ORB_SIZE = 28
   const [radiusPalette, setRadiusPalette] = useState({
     face: '#F63B9A',
     fillA: '#ffe1f1',
@@ -218,6 +143,7 @@ function LocationRadiusPreview() {
     fillC: '#f53c99',
   })
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
+  const initialTargetRef = useRef(target)
   const radiusRailRef = useRef<HTMLDivElement>(null)
   const draggingRadiusRef = useRef(false)
   const radiusRatio = (radius - RADIUS_MIN) / (RADIUS_MAX - RADIUS_MIN)
@@ -232,12 +158,10 @@ function LocationRadiusPreview() {
   const commitRadius = useCallback((rawRadius: number, withSound = true) => {
     const stepped = RADIUS_MIN + Math.round((rawRadius - RADIUS_MIN) / RADIUS_STEP) * RADIUS_STEP
     const nextRadius = Math.max(RADIUS_MIN, Math.min(RADIUS_MAX, stepped))
-    setRadius(current => {
-      if (current === nextRadius) return current
-      if (withSound) playPop(.2)
-      return nextRadius
-    })
-  }, [])
+    if (radius === nextRadius) return
+    if (withSound) playPop(.2)
+    onRadiusChange(nextRadius)
+  }, [onRadiusChange, radius])
 
   const setRadiusFromPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const rail = radiusRailRef.current
@@ -252,17 +176,25 @@ function LocationRadiusPreview() {
   }, [radius, updateTerrain])
 
   useEffect(() => {
-    const onPalette = (event: MessageEvent) => {
+    const onMapMessage = (event: MessageEvent) => {
       if (event.source !== mapFrameRef.current?.contentWindow) return
-      if (event.data?.type !== 'poplur-radius-palette') return
-      const next = event.data.palette as Partial<typeof radiusPalette> | undefined
-      const valid = (value: unknown): value is string => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
-      if (!next || !valid(next.face) || !valid(next.fillA) || !valid(next.fillB) || !valid(next.fillC)) return
-      setRadiusPalette({ face: next.face, fillA: next.fillA, fillB: next.fillB, fillC: next.fillC })
+      if (event.data?.type === 'poplur-radius-palette') {
+        const next = event.data.palette as Partial<typeof radiusPalette> | undefined
+        const valid = (value: unknown): value is string => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
+        if (!next || !valid(next.face) || !valid(next.fillA) || !valid(next.fillB) || !valid(next.fillC)) return
+        setRadiusPalette({ face: next.face, fillA: next.fillA, fillB: next.fillB, fillC: next.fillC })
+        return
+      }
+      if (event.data?.type === 'poplur-radius-location') {
+        const lat = Number(event.data.lat)
+        const lng = Number(event.data.lng)
+        if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lng) || Math.abs(lng) > 180) return
+        onTargetChange({ lat, lng, radiusKm: radius, resume: true })
+      }
     }
-    window.addEventListener('message', onPalette)
-    return () => window.removeEventListener('message', onPalette)
-  }, [])
+    window.addEventListener('message', onMapMessage)
+    return () => window.removeEventListener('message', onMapMessage)
+  }, [onTargetChange, radius])
 
   const handleRadiusKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     let nextRadius: number | null = null
@@ -282,11 +214,17 @@ function LocationRadiusPreview() {
       <iframe
         ref={mapFrameRef}
         title="Angled 3D building map"
-        src="/?map=1&front=1&radiusReview=1"
+        src={`/?map=1&front=1&radiusReview=1&pickLat=${initialTargetRef.current.lat}&pickLng=${initialTargetRef.current.lng}`}
         onLoad={() => updateTerrain(radius)}
       />
+      <div className={styles.locationIntro}>
+        <span>POST LOCATION</span>
+        <strong>{flow === 'map' ? 'Choose your starting spot' : 'Place your finished pop'}</strong>
+        <small>Tap the map to place the pin, then set how far this pop can reach.</small>
+        <em>PIN {target.lat.toFixed(4)}, {target.lng.toFixed(4)}</em>
+      </div>
       <div
-        className={styles.radiusPicker}
+        className={styles.locationControls}
         style={{
           '--radius-face': radiusPalette.face,
           '--radius-fill-a': radiusPalette.fillA,
@@ -294,42 +232,48 @@ function LocationRadiusPreview() {
           '--radius-fill-c': radiusPalette.fillC,
         } as React.CSSProperties}
       >
-        <span><b>CLAIM RADIUS</b><strong>{radius.toFixed(1)} km</strong></span>
-        <div
-          className={styles.radiusControl}
-          role="slider"
-          tabIndex={0}
-          aria-label="Claim radius"
-          aria-valuemin={RADIUS_MIN}
-          aria-valuemax={RADIUS_MAX}
-          aria-valuenow={radius}
-          aria-valuetext={`${radius.toFixed(1)} kilometres`}
-          onKeyDown={handleRadiusKey}
-          onPointerDown={event => {
-            draggingRadiusRef.current = true
-            event.currentTarget.setPointerCapture(event.pointerId)
-            setRadiusFromPointer(event)
-          }}
-          onPointerMove={event => {
-            if (draggingRadiusRef.current) setRadiusFromPointer(event)
-          }}
-          onPointerUp={event => {
-            draggingRadiusRef.current = false
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-          }}
-          onPointerCancel={() => { draggingRadiusRef.current = false }}
-          onLostPointerCapture={() => { draggingRadiusRef.current = false }}
-        >
+        <div className={styles.radiusPicker}>
+          <span><b>CLAIM RADIUS</b><strong>{radius.toFixed(1)} km</strong></span>
           <div
-            ref={radiusRailRef}
-            className={styles.radiusRail}
-            style={{ '--radius-progress': `${radiusRatio * 100}%` } as React.CSSProperties}
-            aria-hidden="true"
-          />
-          <i className={styles.radiusOrb} style={{ left: radiusPosition }} aria-hidden="true" />
+            className={styles.radiusControl}
+            role="slider"
+            tabIndex={0}
+            aria-label="Claim radius"
+            aria-valuemin={RADIUS_MIN}
+            aria-valuemax={RADIUS_MAX}
+            aria-valuenow={radius}
+            aria-valuetext={`${radius.toFixed(1)} kilometres`}
+            onKeyDown={handleRadiusKey}
+            onPointerDown={event => {
+              draggingRadiusRef.current = true
+              event.currentTarget.setPointerCapture(event.pointerId)
+              setRadiusFromPointer(event)
+            }}
+            onPointerMove={event => {
+              if (draggingRadiusRef.current) setRadiusFromPointer(event)
+            }}
+            onPointerUp={event => {
+              draggingRadiusRef.current = false
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+            }}
+            onPointerCancel={() => { draggingRadiusRef.current = false }}
+            onLostPointerCapture={() => { draggingRadiusRef.current = false }}
+          >
+            <div
+              ref={radiusRailRef}
+              className={styles.radiusRail}
+              style={{ '--radius-progress': `${radiusRatio * 100}%` } as React.CSSProperties}
+              aria-hidden="true"
+            />
+            <i className={styles.radiusOrb} style={{ left: radiusPosition }} aria-hidden="true" />
+          </div>
         </div>
+        <button type="button" className={styles.locationContinue} onClick={() => { playPop(); onContinue() }}>
+          <span>{flow === 'map' ? 'Save spot & open camera' : 'Use this spot'}</span>
+          <b aria-hidden="true">→</b>
+        </button>
       </div>
     </section>
   )
@@ -337,107 +281,185 @@ function LocationRadiusPreview() {
 
 function ComposerReview({
   step,
-  withTarget,
-  useVideo = false,
+  target,
+  media,
+  onStepChange,
+  onRadiusChange,
+  onRequestLocation,
 }: {
   step: PostComposerStep
-  withTarget: boolean
-  useVideo?: boolean
+  target?: ComposerTarget
+  media: UploadMediaKind
+  onStepChange: (step: PostComposerStep) => void
+  onRadiusChange: (radius: number) => void
+  onRequestLocation: () => void
 }) {
   return (
     <PostComposer
-      media={useVideo ? { kind: 'video', src: SAMPLE_VIDEO, length: '0:10' } : { kind: 'photo', src: SAMPLE_PHOTO }}
-      target={withTarget ? SAMPLE_TARGET : undefined}
+      media={media === 'video' ? { kind: 'video', src: SAMPLE_VIDEO, length: '0:10' } : { kind: 'photo', src: SAMPLE_PHOTO }}
+      target={target}
       initialStep={step}
       reviewMode
       onClose={() => {}}
+      onStepChange={onStepChange}
+      onRadiusChange={onRadiusChange}
+      onRequestLocation={onRequestLocation}
     />
   )
 }
 
-function ScreenPreview({
+function composerStepForScreen(screen: UploadReviewScreenId): PostComposerStep | null {
+  if (screen === 'edit' || screen === 'effects' || screen === 'finish') return screen
+  if (screen === 'publish') return 'channel'
+  return null
+}
+
+function NonComposerPreview({
   flow,
   screen,
   motionLabOpen,
+  radius,
+  target,
+  onRadiusChange,
+  onTargetChange,
+  onLocationContinue,
   onReset,
 }: {
-  flow: FlowId
-  screen: ScreenId
+  flow: UploadFlowId
+  screen: UploadReviewScreenId
   motionLabOpen: boolean
+  radius: number
+  target: ComposerTarget
+  onRadiusChange: (radius: number) => void
+  onTargetChange: (target: ComposerTarget) => void
+  onLocationContinue: () => void
   onReset: () => void
 }) {
   if (screen === 'capture') {
     const motionLab = motionLabOpen ? '&motion-lab=1' : ''
-    return <iframe title="Live camera upload screen" src={`/?view=camera&uploadReview=1${motionLab}`} />
+    return (
+      <div className={styles.captureFrame}>
+        <iframe title="Live camera upload screen" src={`/?view=camera&uploadReview=1${motionLab}`} />
+        {flow === 'map' && (
+          <div className={styles.retainedSpot}>
+            <img src="/sprites/poplur_pin_lite_y0_p0_s256.png" alt="" />
+            <span><b>MAP SPOT SAVED</b><small>{radius.toFixed(1)} km radius retained</small></span>
+          </div>
+        )}
+      </div>
+    )
   }
-  if (screen === 'location' || screen === 'location-return') {
-    return <LocationRadiusPreview />
+  if (screen === 'location') {
+    return (
+      <LocationRadiusPreview
+        radius={radius}
+        target={target}
+        onRadiusChange={onRadiusChange}
+        onTargetChange={onTargetChange}
+        onContinue={onLocationContinue}
+        flow={flow}
+      />
+    )
   }
-  if (screen === 'confirm') return <CaptureConfirmation />
-  if (screen === 'video') {
-    return <VideoEditor src={SAMPLE_VIDEO} onCancel={() => {}} onDone={() => {}} />
-  }
-  if (screen === 'uploading') return <UploadingScreen flow={flow} />
-  if (screen === 'posted') return <UploadingScreen flow={flow} complete onReset={onReset} />
-
-  const step: PostComposerStep = screen === 'effects'
-    ? 'effects'
-    : screen === 'choice'
-      ? 'choice'
-      : screen === 'ai'
-        ? 'ai'
-        : screen === 'channel' || screen === 'channel-ready'
-          ? 'channel'
-          : 'edit'
-  const withTarget = flow === 'map' || screen === 'channel-ready'
-  return <ComposerReview step={step} withTarget={withTarget} useVideo={screen === 'effects'} />
+  if (screen === 'uploading') return <UploadingScreen flow={flow} radius={radius} />
+  if (screen === 'posted') return <UploadingScreen flow={flow} radius={radius} complete onReset={onReset} />
+  return null
 }
 
 export default function UploadFlowReview() {
-  const initial = useMemo(readRoute, [])
-  const [flow, setFlow] = useState<FlowId>(initial.flow)
-  const [screen, setScreen] = useState<ScreenId>(initial.screen)
-  const [motionLabOpen, setMotionLabOpen] = useState(true)
-  const screens = screensFor(flow)
+  const initial = useMemo(() => resolveUploadReviewRoute(window.location.search), [])
+  const [flow, setFlow] = useState<UploadFlowId>(initial.flow)
+  const [screen, setScreen] = useState<UploadReviewScreenId>(initial.screen)
+  const [media, setMedia] = useState<UploadMediaKind>(initial.media)
+  const [motionLabOpen, setMotionLabOpen] = useState(false)
+  const [radius, setRadius] = useState(SAMPLE_TARGET.radiusKm ?? 3.5)
+  const [target, setTarget] = useState<ComposerTarget>(SAMPLE_TARGET)
+  const [composerRouteStep, setComposerRouteStep] = useState<PostComposerStep>(
+    composerStepForScreen(initial.screen) ?? 'edit',
+  )
+  const screens = screensForUploadFlow(flow)
   const current = screens.find(item => item.id === screen) ?? screens[0]
+  const currentIndex = screens.findIndex(item => item.id === current.id)
+  const currentComposerStep = composerStepForScreen(current.id)
+  const composerVisible = currentComposerStep !== null
+  const canChooseMedia = ['capture', 'edit', 'effects', 'finish', 'publish'].includes(current.id)
 
   useEffect(() => {
     document.title = `Poplur upload review — ${flow} / ${current.label}`
-    writeRoute(flow, current.id)
-  }, [current.id, current.label, flow])
+    writeRoute(flow, current.id, media)
+  }, [current.id, current.label, flow, media])
 
-  const chooseFlow = (next: FlowId) => {
-    const first = screensFor(next)[0].id
+  useEffect(() => {
+    if (currentComposerStep) setComposerRouteStep(currentComposerStep)
+  }, [currentComposerStep])
+
+  const chooseFlow = (next: UploadFlowId) => {
+    const first = screensForUploadFlow(next)[0].id
+    playPop(.18)
     setFlow(next)
     setScreen(first)
+    setRadius(SAMPLE_TARGET.radiusKm ?? 3.5)
+    setTarget(SAMPLE_TARGET)
+    setComposerRouteStep('edit')
+  }
+
+  const chooseScreen = (next: UploadReviewScreenId) => {
+    playPop(.16)
+    setScreen(next)
+  }
+
+  const handleComposerStepChange = useCallback((next: PostComposerStep) => {
+    setComposerRouteStep(next)
+    if (next === 'channel') {
+      setScreen(flow === 'camera' && screen === 'finish' ? 'location' : 'publish')
+      return
+    }
+    setScreen(next)
+  }, [flow, screen])
+
+  const composerTarget = flow === 'map' || current.id === 'publish'
+    ? { ...target, radiusKm: radius }
+    : undefined
+
+  const goRelative = (offset: -1 | 1) => {
+    const next = screens[currentIndex + offset]
+    if (next) chooseScreen(next.id)
   }
 
   return (
     <main className={styles.workspace}>
       <aside className={styles.sidebar}>
-        <div className={styles.heading}>
-          <span>POPLUR REVIEW</span>
-          <h1>Upload flows</h1>
+        <div className={styles.sidebarTop}>
+          <div className={styles.heading}>
+            <span>POPLUR REVIEW</span>
+            <h1>Upload pipeline</h1>
+            <p>One draft · eight distinct stages</p>
+          </div>
+          <div className={styles.flowTabs} role="tablist" aria-label="Upload entry flow">
+            <button type="button" role="tab" aria-selected={flow === 'camera'} className={flow === 'camera' ? styles.flowActive : ''} onClick={() => chooseFlow('camera')}>Camera first</button>
+            <button type="button" role="tab" aria-selected={flow === 'map'} className={flow === 'map' ? styles.flowActive : ''} onClick={() => chooseFlow('map')}>Map first</button>
+          </div>
         </div>
-        <div className={styles.flowTabs} role="tablist" aria-label="Upload entry flow">
-          <button type="button" className={flow === 'camera' ? styles.flowActive : ''} onClick={() => chooseFlow('camera')}>Camera first</button>
-          <button type="button" className={flow === 'map' ? styles.flowActive : ''} onClick={() => chooseFlow('map')}>Map first</button>
-        </div>
-        <ol className={styles.screenList}>
+        <ol className={styles.screenList} aria-label={`${flow} upload stages`}>
           {screens.map((item, index) => (
             <li key={item.id}>
               <button
                 type="button"
+                aria-current={item.id === current.id ? 'step' : undefined}
                 className={item.id === current.id ? styles.screenActive : ''}
-                onClick={() => setScreen(item.id)}
+                onClick={() => chooseScreen(item.id)}
               >
                 <b>{String(index + 1).padStart(2, '0')}</b>
                 <span><strong>{item.label}</strong><small>{item.note}</small></span>
-                {item.gap && <em>GAP</em>}
               </button>
             </li>
           ))}
         </ol>
+        <footer className={styles.sidebarFooter}>
+          <button type="button" aria-label="Previous upload stage" disabled={currentIndex === 0} onClick={() => goRelative(-1)}>←</button>
+          <span><b>{currentIndex + 1}</b> / {screens.length}</span>
+          <button type="button" aria-label="Next upload stage" disabled={currentIndex === screens.length - 1} onClick={() => goRelative(1)}>→</button>
+        </footer>
       </aside>
 
       <section className={styles.previewArea}>
@@ -447,6 +469,12 @@ export default function UploadFlowReview() {
             <h2>{current.label}</h2>
           </div>
           <div className={styles.previewTools}>
+            {canChooseMedia && (
+              <div className={styles.mediaTabs} role="group" aria-label="Preview media kind">
+                <button type="button" aria-pressed={media === 'photo'} className={media === 'photo' ? styles.mediaActive : ''} onClick={() => setMedia('photo')}>Photo</button>
+                <button type="button" aria-pressed={media === 'video'} className={media === 'video' ? styles.mediaActive : ''} onClick={() => setMedia('video')}>Video</button>
+              </div>
+            )}
             {current.id === 'capture' && (
               <button
                 type="button"
@@ -462,13 +490,29 @@ export default function UploadFlowReview() {
           </div>
         </header>
         <div className={styles.device}>
-          <div key={`${flow}-${current.id}`} className={styles.deviceViewport}>
-            <ScreenPreview
+          <div className={styles.deviceViewport} data-testid="upload-device">
+            <div className={`${styles.composerLayer} ${composerVisible ? '' : styles.composerLayerHidden}`} aria-hidden={!composerVisible}>
+              <ComposerReview
+                key={`${flow}-${media}`}
+                step={composerRouteStep}
+                target={composerTarget}
+                media={media}
+                onStepChange={handleComposerStepChange}
+                onRadiusChange={setRadius}
+                onRequestLocation={() => setScreen('location')}
+              />
+            </div>
+            {!composerVisible && <NonComposerPreview
               flow={flow}
               screen={current.id}
               motionLabOpen={motionLabOpen}
+              radius={radius}
+              target={{ ...target, radiusKm: radius }}
+              onRadiusChange={setRadius}
+              onTargetChange={setTarget}
+              onLocationContinue={() => setScreen(flow === 'map' ? 'capture' : 'publish')}
               onReset={() => setScreen(flow === 'map' ? 'location' : 'capture')}
-            />
+            />}
           </div>
         </div>
       </section>

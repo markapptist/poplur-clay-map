@@ -14,12 +14,18 @@
   background: #08060d;
   color: #fff2f8;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-width: none;
   /* Same reservation as the radio deck: the home chrome is drawn over the
      bottom of this stage by the shell, so the track picker must not run
      underneath the cube. See RadioScreen.module.css .deck. */
-  padding-bottom: calc(var(--cube-size, 96px) + 72px);
+  padding-bottom: var(--composer-home-clearance, calc(var(--cube-size, 96px) + 72px));
 }
+.editor::-webkit-scrollbar { display: none; }
 
 .head {
   flex: none;
@@ -277,7 +283,7 @@
 
 /* ── Molded clay workbench ──────────────────────────────────────────────── */
 .editor {
-  padding-bottom: calc(var(--cube-size, 96px) + 52px);
+  padding-bottom: var(--composer-home-clearance, calc(var(--cube-size, 96px) + 52px));
   background:
     radial-gradient(circle at 50% 12%, rgba(75, 205, 238, 0.08), transparent 24%),
     #09080b;
@@ -302,7 +308,7 @@
 .headTitle b { font: 950 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .headBtn {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 10px;
   border: 1px solid rgba(255, 218, 237, 0.17);
   border-radius: 8px;
@@ -353,7 +359,7 @@
   box-shadow: inset 0 5px 10px rgba(0, 0, 0, 0.64), 0 5px 0 #050406;
 }
 .selection { border-color: #ff5daa; box-shadow: inset 0 0 0 1px rgba(255, 139, 197, 0.34); }
-.handle { width: 18px; margin-left: -9px; border-radius: 5px; background: linear-gradient(90deg, #9f0b57, #ff63ad); box-shadow: 0 0 12px rgba(255, 45, 145, 0.48); }
+.handle { width: 28px; margin-left: -14px; border-radius: 5px; background: linear-gradient(90deg, #9f0b57, #ff63ad); box-shadow: 0 0 12px rgba(255, 45, 145, 0.48); }
 .playhead { background: #8de9ff; }
 
 .sound {
@@ -418,7 +424,7 @@
 .note { border-radius: 8px; }
 
 @media (max-height: 720px) {
-  .editor { padding-bottom: calc(var(--cube-size, 82px) + 36px); }
+  .editor { padding-bottom: var(--composer-home-clearance, calc(var(--cube-size, 82px) + 36px)); }
   .stage { min-height: 170px; }
   .sound { padding-block: 7px; }
   .tracksHead { padding-top: 7px; }

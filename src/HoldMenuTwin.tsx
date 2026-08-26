@@ -8,7 +8,6 @@ import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
 import MapIpod from './MapIpod'
 import PhoneScreen from './PhoneScreen'
-import GamesScreen from './GamesScreen'
 import CasinoScreen from './CasinoScreen'
 import { primeCasinoAudio } from './casinoAudio'
 import MapShowMe from './MapShowMe'
@@ -23,12 +22,21 @@ import StatsScreen from './StatsScreen'
 import TrophyRoomScreen from './TrophyRoomScreen'
 import WalletScreen from './WalletScreen'
 import AppsScreen from './AppsScreen'
+import PoplurBrowserScreen from './PoplurBrowserScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
 import { CAMERA_HOLD_MENU_ITEMS } from './cameraNavigation'
 import { isRetiredNavigationScreen } from './retiredNavigationRoutes'
 import { announceIpodSection } from './ipodNavigation'
+import ConquerScreen from './ConquerScreen'
+import type { MapConquerSnapshot } from './mapConquer'
+
+// Games pulls in the FPS bridge, model-viewer controller, and both local game
+// runtimes. Load it only after the GAMES tile is opened so every ordinary map,
+// feed, camera, and profile launch stays out of that parse path.
+const GamesScreen = React.lazy(() => import('./GamesScreen'))
+const HouseScreen = React.lazy(() => import('./HouseScreen'))
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -86,6 +94,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   // is not search.
   map: [
     { icon: 'Map', title: 'MAP', screen: 'map-home', home: true },
+    { icon: 'Trophy', title: 'CONQUER', screen: 'map-conquer', native: true },
     // The RADIO subscreen is back (station deck, real geo-searched stations) —
     // what stayed removed is the radio woven into the map experience itself
     // (tour beds, stingers, ticker readout). The AI voice remains the map's
@@ -114,6 +123,9 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // It lives in the feed like TV and NEWS — a channel you visit, not a
     // tool. Its own icon now (a supplied clay slot machine).
     { icon: 'Casino', title: 'CASINO', screen: 'feed-casino', native: true },
+    // Links from feed ads land on this app-owned Browser page rather than
+    // sending people to Safari or a fresh tab.
+    { icon: 'Search', title: 'BROWSER', screen: 'feed-browser', native: true },
     // The mini-app folder: everything this account has made with the AI
     // builder, seeded with Poplur Flashlight. See miniApps.ts for the schema.
     { icon: 'Apps', title: 'APPS', screen: 'feed-apps', native: true },
@@ -126,6 +138,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   ],
   profile: [
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', home: true },
+    { icon: 'Home', title: 'HOUSE', screen: 'profile-house', native: true },
     // Wears the supplied mailbox render — the same object the screen's own
     // navigator cube wears at rest (poplur_cube_mailbox.glb).
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', native: true },
@@ -269,12 +282,15 @@ export default function HoldMenuTwin({
   tourOn,
   mapTourTopics,
   onMapTourTopicsChange,
+  mapConquerSnapshot,
   currentFeedChannelId,
   onTuneFeedChannel,
   onSubscreenChange,
   onWheelFocusChange,
   initialScreen,
   initialDMThreadId,
+  initialBrowserURL,
+  initialNewsEventId,
   wheelOverNonce = 0,
   bindGoBack,
   bindArrows,
@@ -296,6 +312,9 @@ export default function HoldMenuTwin({
   /** June-style checklist controlling which kinds of places the tour visits. */
   mapTourTopics?: MapTourTopic[]
   onMapTourTopicsChange?: (topics: MapTourTopic[]) => void
+  /** Last settled map ranking. Conquer is a separate lightweight screen, so
+      it consumes this snapshot after the live map has been unmounted. */
+  mapConquerSnapshot?: MapConquerSnapshot | null
   /** Feed selection shared with TV Guide so a selected row can tune Home. */
   currentFeedChannelId?: string
   onTuneFeedChannel?: (channelId: string) => void
@@ -316,6 +335,10 @@ export default function HoldMenuTwin({
   /** A system-notification deep link. Mail validates it against the live native
       thread snapshot before opening anything. */
   initialDMThreadId?: string
+  /** A safe ad/source destination supplied by Home's Feed Browser route. */
+  initialBrowserURL?: string
+  /** Canonical live-news event selected by a map popup. */
+  initialNewsEventId?: string
   /** Bumped by a cube long-press. With a page up, the wheel opens ON TOP of it
       rather than replacing it — the page is where the tab is standing, and
       asking for the menu is not asking to leave it. Ignored on mount so a
@@ -1024,6 +1047,13 @@ export default function HoldMenuTwin({
   // `activeScreen` is a const, so its narrowing survives into this closure.
   const renderSubscreen = () => {
     if (!activeScreen) return null
+    if (activeScreen.native && activeScreen.screen === 'map-conquer') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Conquer Board">
+          <ConquerScreen snapshot={mapConquerSnapshot ?? null} />
+        </div>
+      )
+    }
     if (activeScreen.native && activeScreen.screen === 'map-show-me') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Choose map tour places">
@@ -1095,7 +1125,18 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'feed-news') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Times">
-          <NewsPaper onClose={() => { playPop(); onClose() }} bindBack={bindNativeBack} />
+          <NewsPaper
+            onClose={() => { playPop(); onClose() }}
+            bindBack={bindNativeBack}
+            initialEventId={initialNewsEventId}
+          />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'feed-browser') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Browser">
+          <PoplurBrowserScreen initialURL={initialBrowserURL} bindBack={bindNativeBack} />
         </div>
       )
     }
@@ -1113,7 +1154,9 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'feed-games') {
       return (
         <div className={`${styles.subscreenStage} ${styles.gameStage}`} role="dialog" aria-label="Games">
-          <GamesScreen onClose={() => { playPop(); onClose() }} />
+          <React.Suspense fallback={<div role="status" aria-live="polite">Loading games…</div>}>
+            <GamesScreen onClose={() => { playPop(); onClose() }} />
+          </React.Suspense>
         </div>
       )
     }
@@ -1156,6 +1199,15 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Stats">
           <StatsScreen onClose={() => { playPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-house') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="House">
+          <React.Suspense fallback={<div role="status" aria-live="polite">Opening your house…</div>}>
+            <HouseScreen />
+          </React.Suspense>
         </div>
       )
     }

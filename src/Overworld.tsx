@@ -13,6 +13,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { GameSpec, ZoneSpec } from './battleRules'
+import type { GameDirectorSession } from './gameDirector'
 import { sfxCursor, sfxEncounter } from './retroAudio'
 import styles from './CreatureBattle.module.css'
 
@@ -25,12 +26,12 @@ const ROWS = 14
 
 type Dir = 'down' | 'up' | 'left' | 'right'
 
-/** Which of the 15 protagonist frames belong to each facing. */
-const WALK_FRAMES: Record<Dir, number[]> = {
-  down:  [1, 2, 3],
-  up:    [4, 5, 6],
-  left:  [10, 11, 12],
-  right: [10, 11, 12],     // mirrored when drawn
+/** Three clean, normalized poses for every facing direction. */
+const WALK_FRAMES: Record<Dir, string[]> = {
+  down:  ['down_01', 'down_02', 'down_03'],
+  up:    ['up_01', 'up_02', 'up_03'],
+  left:  ['left_01', 'left_02', 'left_03'],
+  right: ['right_01', 'right_02', 'right_03'],
 }
 
 interface Decoration { art: string; col: number; row: number; w: number; h: number; solid: boolean }
@@ -73,13 +74,33 @@ interface Props {
    *  battle drew no creatures at all. */
   artUrl: (file: string) => string
   zone: ZoneSpec
+  director: GameDirectorSession
+  balls: number
+  tonics: number
+  revives: number
+  wins: number
+  badges: string[]
+  partyCount: number
+  captures: number
+  objective: string
+  notice: string
+  challengeLabel: string
+  /** A/start on the physical shell launches the next gated campaign battle. */
+  onChallenge: () => void
   /** Called when the grass produces something. */
   onEncounter: () => void
 }
 
-export default function Overworld({ spec, zone, artUrl, onEncounter }: Props) {
+export default function Overworld({
+  spec, zone, artUrl, director, balls, tonics, revives, wins, badges, partyCount,
+  captures, objective, notice, challengeLabel, onChallenge, onEncounter,
+}: Props) {
   const artUrlRef = useRef(artUrl)
   artUrlRef.current = artUrl
+  const onEncounterRef = useRef(onEncounter)
+  onEncounterRef.current = onEncounter
+  const onChallengeRef = useRef(onChallenge)
+  onChallengeRef.current = onChallenge
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const art = useRef(new Map<string, HTMLImageElement>())
   const [pos, setPos] = useState({ col: 7, row: 5 })
@@ -88,6 +109,11 @@ export default function Overworld({ spec, zone, artUrl, onEncounter }: Props) {
   const [ready, setReady] = useState(false)
   /** Steps taken in grass since the last encounter, so they are not instant. */
   const grassSteps = useRef(0)
+  const encounterTimer = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (encounterTimer.current !== null) window.clearTimeout(encounterTimer.current)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -95,7 +121,9 @@ export default function Overworld({ spec, zone, artUrl, onEncounter }: Props) {
       ...new Set(DECOR.map(d => d.art)).values(),
     ].map(a => [a, `tileset/${a}.png`])
     for (const frames of Object.values(WALK_FRAMES)) {
-      for (const f of frames) want.push([`hero${f}`, `characters/protagonist_gold_cap/frame_${String(f).padStart(2, '0')}.png`])
+      for (const frame of frames) {
+        want.push([`hero:${frame}`, `characters/protagonist_gold_cap_v2/${frame}.png`])
+      }
     }
     void Promise.all(want.map(([key, path]) => new Promise<void>(resolve => {
       const img = new Image()
@@ -118,14 +146,22 @@ export default function Overworld({ spec, zone, artUrl, onEncounter }: Props) {
     const camX = Math.max(0, Math.min(COLS * TILE - W, pos.col * TILE + TILE / 2 - W / 2))
     const camY = Math.max(0, Math.min(ROWS * TILE - H + 60, pos.row * TILE + TILE / 2 - H / 2))
 
-    // Ground: grass, with a lighter clearing so the space reads as a place.
-    g.fillStyle = '#5ea653'
+    // Each authored zone gets a stable palette, so unlocking a route changes
+    // the place rather than merely replacing the name on the same map.
+    const zoneIndex = Math.max(0, spec.zones.findIndex(candidate => candidate.id === zone.id))
+    const palettes = [
+      ['#5ea653', '#67ad5a', '#589e4d'],
+      ['#486c73', '#527b80', '#3f626c'],
+      ['#8a6848', '#9b7952', '#78583f'],
+    ] as const
+    const palette = palettes[zoneIndex % palettes.length]
+    g.fillStyle = palette[0]
     g.fillRect(0, 0, W, H)
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         // A little variation per tile, deterministic so it does not shimmer.
         const n = (c * 7 + r * 13) % 5
-        g.fillStyle = n === 0 ? '#67ad5a' : n === 1 ? '#589e4d' : '#5ea653'
+        g.fillStyle = n === 0 ? palette[1] : n === 1 ? palette[2] : palette[0]
         g.fillRect(c * TILE - camX, r * TILE - camY, TILE, TILE)
       }
     }
@@ -139,34 +175,74 @@ export default function Overworld({ spec, zone, artUrl, onEncounter }: Props) {
 
     // The player, drawn last so nothing hides them.
     const frames = WALK_FRAMES[dir]
-    const hero = art.current.get(`hero${frames[step % frames.length]}`)
+    const hero = art.current.get(`hero:${frames[step % frames.length]}`)
     if (hero) {
       const x = pos.col * TILE - camX
       const y = pos.row * TILE - camY
-      g.save()
-      if (dir === 'right') { g.translate(x + TILE, y); g.scale(-1, 1); g.drawImage(hero, 0, -10, TILE, TILE + 10) }
-      else g.drawImage(hero, x, y - 10, TILE, TILE + 10)
-      g.restore()
+      const heroSize = 46
+      g.drawImage(hero, x + (TILE - heroSize) / 2, y + TILE - heroSize, heroSize, heroSize)
     }
 
     // Zone name, so the player knows where the generated game has put them.
     g.fillStyle = 'rgba(14,20,36,0.9)'
     g.strokeStyle = '#f5f2e8'
     g.lineWidth = 2
-    g.beginPath(); g.roundRect(8, 8, 150, 32, 8); g.fill(); g.stroke()
+    g.beginPath(); g.roundRect(8, 8, 176, 32, 8); g.fill(); g.stroke()
     g.fillStyle = '#ffffff'
     g.font = 'bold 13px ui-monospace, monospace'
     g.textBaseline = 'middle'
     g.fillText(zone.displayName, 20, 25)
 
-    if (isTallGrass(pos.col, pos.row)) {
-      g.fillStyle = 'rgba(14,20,36,0.9)'
-      g.beginPath(); g.roundRect(8, H - 40, 220, 30, 8); g.fill(); g.stroke()
-      g.fillStyle = '#ffd84d'
-      g.font = '12px ui-monospace, monospace'
-      g.fillText('Something rustles in the grass...', 20, H - 25)
+    g.fillStyle = 'rgba(14,20,36,0.9)'
+    g.beginPath(); g.roundRect(W - 184, 8, 176, 32, 8); g.fill(); g.stroke()
+    g.fillStyle = '#ffffff'
+    g.font = 'bold 11px ui-monospace, monospace'
+    g.fillText(`B${balls} T${tonics} R${revives} W${wins}`, W - 172, 25)
+
+    // The badge case stays visible on every route. Eight authored slots make
+    // the campaign scope legible from the first minute, and earned badges use
+    // the live director accent without changing their progression identity.
+    g.fillStyle = 'rgba(14,20,36,0.84)'
+    g.beginPath(); g.roundRect(8, 46, 176, 24, 7); g.fill(); g.stroke()
+    g.font = 'bold 8px ui-monospace, monospace'
+    g.fillStyle = '#cfd8ee'
+    g.fillText('BADGES', 16, 59)
+    for (let index = 0; index < 8; index += 1) {
+      const x = 67 + index * 13
+      g.fillStyle = index < badges.length ? director.accentColor : '#2b3550'
+      g.strokeStyle = index < badges.length ? '#ffffff' : '#69758f'
+      g.lineWidth = 1
+      g.beginPath()
+      g.moveTo(x, 52); g.lineTo(x + 4, 56); g.lineTo(x, 64); g.lineTo(x - 4, 56); g.closePath()
+      g.fill(); g.stroke()
     }
-  }, [pos, dir, zone, ready])
+
+    const cardY = H - 108
+    g.fillStyle = 'rgba(14,20,36,0.94)'
+    g.beginPath(); g.roundRect(8, cardY, W - 16, 100, 9); g.fill(); g.stroke()
+    g.fillStyle = director.accentColor
+    g.fillRect(10, cardY + 2, 4, 96)
+    g.textBaseline = 'top'
+    const fit = (value: string, width = W - 54) => {
+      if (g.measureText(value).width <= width) return value
+      let clipped = value
+      while (clipped.length > 1 && g.measureText(`${clipped}…`).width > width) clipped = clipped.slice(0, -1)
+      return `${clipped}…`
+    }
+    const line = (value: string, y: number, color: string, font: string) => {
+      g.fillStyle = color
+      g.font = font
+      g.fillText(fit(value), 22, y)
+    }
+    const source = director.source === 'ai' ? 'AI LIVE' : 'OFFLINE'
+    line(`${director.title}  [${source}]`, cardY + 7, '#ffffff', 'bold 11px ui-monospace, monospace')
+    const latestBadge = badges[badges.length - 1] ?? 'NO BADGES YET'
+    line(`BADGES ${badges.length}/8  •  ${latestBadge}  •  PARTY ${partyCount}  •  CAUGHT ${captures}`, cardY + 23, '#a9bbdc', 'bold 9px ui-monospace, monospace')
+    line(`GOAL ${objective}`, cardY + 38, '#ffd84d', 'bold 9px ui-monospace, monospace')
+    line(`A/START ${challengeLabel}`, cardY + 53, director.accentColor, 'bold 9px ui-monospace, monospace')
+    line(`MISSION ${director.specialMechanic}`, cardY + 68, '#ffffff', '9px ui-monospace, monospace')
+    line(isTallGrass(pos.col, pos.row) ? 'Grass rustles — keep moving!' : notice, cardY + 83, '#a9bbdc', '9px ui-monospace, monospace')
+  }, [pos, dir, zone, ready, spec, director, balls, tonics, revives, wins, badges, partyCount, captures, objective, notice, challengeLabel])
 
   useEffect(() => { draw() }, [draw])
 
@@ -183,26 +259,31 @@ export default function Overworld({ spec, zone, artUrl, onEncounter }: Props) {
       if (isTallGrass(next.col, next.row)) {
         grassSteps.current += 1
         // Not every step: an encounter on the first one reads as a trap.
-        if (grassSteps.current >= 2 && Math.random() < 0.34) {
+        if (grassSteps.current >= 2 && Math.random() < 0.34 && encounterTimer.current === null) {
           grassSteps.current = 0
           sfxEncounter()
-          window.setTimeout(onEncounter, 260)
+          encounterTimer.current = window.setTimeout(() => {
+            encounterTimer.current = null
+            onEncounterRef.current()
+          }, 260)
         }
       }
       return next
     })
-  }, [onEncounter])
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowUp') move('up')
-      else if (e.key === 'ArrowDown') move('down')
-      else if (e.key === 'ArrowLeft') move('left')
-      else if (e.key === 'ArrowRight') move('right')
+      if (e.key === 'ArrowUp') { e.preventDefault(); move('up') }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); move('down') }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); move('left') }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); move('right') }
+      else if (e.key === 'z' || e.key === 'Enter') { e.preventDefault(); onChallengeRef.current() }
     }
     const onShell = (e: Event) => {
       const b = (e as CustomEvent<{ button: string }>).detail?.button
       if (b === 'up' || b === 'down' || b === 'left' || b === 'right') move(b)
+      else if (b === 'a' || b === 'start') onChallengeRef.current()
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('poplur-retro-button', onShell as EventListener)
@@ -212,6 +293,5 @@ export default function Overworld({ spec, zone, artUrl, onEncounter }: Props) {
     }
   }, [move])
 
-  void spec
   return <canvas ref={canvasRef} width={W} height={H} className={styles.canvas} data-overworld="ready" aria-label="Overworld" />
 }

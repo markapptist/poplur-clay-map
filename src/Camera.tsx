@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
 import ClayCornerButton from './ClayCornerButton'
 import ClayMuteButton from './ClayMuteButton'
@@ -417,8 +417,12 @@ export default function Camera({
   const composerBackRef = useRef<(() => void) | null>(null)
   const composingRef = useRef(false)
   composingRef.current = Boolean(composing)
-  useEffect(() => {
-    onComposingChange?.(Boolean(composing))
+  useLayoutEffect(() => {
+    const open = Boolean(composing)
+    onComposingChange?.(open)
+    return () => {
+      if (open) onComposingChange?.(false)
+    }
   }, [composing, onComposingChange])
 
   // Camera, roll and composer share one mounted pager. Native therefore needs

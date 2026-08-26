@@ -57,19 +57,16 @@ function bootUrl(set: string): string {
 const BOOT_FRAMES = 16
 const BOOT_FRAME_MS = 112
 
-/** Left%, top%, width%, height% — the artwork's own key positions (see the
- *  git history on this array for the raw x/y pixel measurements) run through
- *  this stage's crop (object-fit:cover on .rest, ~359x788 against the
- *  1024x1536 source): vertical is untouched since the crop is width-only,
- *  horizontal is remapped through the same crop .lcd uses. Drifts on a stage
- *  with a meaningfully different aspect ratio, same as .lcd. */
+/** Left%, top%, width%, height% in the 1024x1536 handset artwork. The device
+ *  now keeps that 2:3 ratio, so hit zones and the LCD stay registered at every
+ *  shell size. */
 const KEYS: Array<[key: string, left: number, top: number, w: number, h: number]> = [
-  ['1', 9.6, 61.2, 24.4, 5.8], ['2', 37.1, 61.2, 24.4, 5.8], ['3', 64.8, 61.2, 24.4, 5.8],
-  ['4', 9.6, 67.6, 24.4, 6.0], ['5', 37.1, 67.6, 24.4, 6.0], ['6', 64.8, 67.6, 24.4, 6.0],
-  ['7', 9.6, 74.1, 24.4, 6.0], ['8', 37.1, 74.1, 24.4, 6.0], ['9', 64.8, 74.1, 24.4, 6.0],
-  ['*', 9.6, 80.7, 24.4, 5.5], ['0', 37.1, 80.7, 24.4, 5.5], ['#', 64.8, 80.7, 24.4, 5.5],
+  ['1', 20.5, 62.2, 17.0, 6.0], ['2', 41.5, 62.2, 17.0, 6.0], ['3', 62.5, 62.2, 17.0, 6.0],
+  ['4', 20.5, 69.4, 17.0, 6.0], ['5', 41.5, 69.4, 17.0, 6.0], ['6', 62.5, 69.4, 17.0, 6.0],
+  ['7', 20.5, 76.7, 17.0, 6.0], ['8', 41.5, 76.7, 17.0, 6.0], ['9', 62.5, 76.7, 17.0, 6.0],
+  ['*', 20.5, 84.0, 17.0, 6.0], ['0', 41.5, 84.0, 17.0, 6.0], ['#', 62.5, 84.0, 17.0, 6.0],
   // The centre of the navigation cluster, above the keypad — select.
-  ['5', 31.0, 50.5, 38.0, 8.5],
+  ['5', 39.5, 50.9, 21.0, 7.0],
 ]
 
 interface NativeContact {
@@ -90,6 +87,21 @@ interface Contact {
   callable: boolean
   distanceKm: number | null
 }
+
+type PhoneMenuPage = 'main' | 'contacts' | 'calls' | 'messages' | 'camera' | 'gallery' | 'radio' | 'games' | 'settings' | 'about'
+
+const PHONE_MENU_ITEMS: Array<{ id: Exclude<PhoneMenuPage, 'main'> | 'exit'; title: string; detail: string; glyph: string }> = [
+  { id: 'messages', title: 'Messages', detail: 'Poplur Mail inbox', glyph: '01' },
+  { id: 'contacts', title: 'Contacts', detail: 'people in your radius', glyph: '02' },
+  { id: 'calls', title: 'Call log', detail: 'recent and missed calls', glyph: '03' },
+  { id: 'camera', title: 'Camera', detail: 'capture a new pop', glyph: '04' },
+  { id: 'gallery', title: 'Gallery', detail: 'your saved pops', glyph: '05' },
+  { id: 'radio', title: 'Radio', detail: 'live Poplur channels', glyph: '06' },
+  { id: 'games', title: 'Games', detail: 'Snake and extras', glyph: '07' },
+  { id: 'settings', title: 'Settings', detail: 'ringtone and display', glyph: '08' },
+  { id: 'about', title: 'About Poplur', detail: 'phone information', glyph: '09' },
+  { id: 'exit', title: 'Exit', detail: 'close phone', glyph: '00' },
+]
 
 function km(value: number): string {
   return value >= 100 ? `${Math.round(value)}KM` : `${value.toFixed(1)}KM`
@@ -165,9 +177,10 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   const [booting, setBooting] = useState(true)
   const [bootFrame, setBootFrame] = useState(0)
   const [themeRebooting, setThemeRebooting] = useState(false)
+  const [menuPage, setMenuPage] = useState<PhoneMenuPage>('main')
+  const [menuIndex, setMenuIndex] = useState(0)
   const [liveCall, setLiveCall] = useState<CallSnapshot | null>(null)
   const [callNow, setCallNow] = useState(() => Date.now())
-  const [showSettings, setShowSettings] = useState(false)
   const [selectedRingtone, setSelectedRingtone] = useState<RingtoneId>(() => getRingtone())
 
   // The Settings screen sets the same ringtone, so a change made there has to
@@ -178,6 +191,7 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   // wherever it was picked.
   useEffect(() => onRingtoneChange(() => setSelectedRingtone(getRingtone())), [])
   const bootTimer = useRef<number | null>(null)
+  const themeTimer = useRef<number | null>(null)
   const everNativeRef = useRef(false)
 
   useEffect(() => {
@@ -249,8 +263,8 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   }, [reachKm])
 
   // Wake sequence: 16 frames of the colourway's own spritesheet, one every
-  // 112ms — about 1.8s, the same beat the map iPod boots to. Reused for a
-  // theme change too: the handset reboots rather than just repainting.
+  // 112ms — about 1.8s, the same beat the map iPod boots to. Theme changes use
+  // their own shorter blue LCD transition so the new theme is unmistakable.
   const runBoot = useCallback((withEffects = true) => {
     if (bootTimer.current !== null) window.clearInterval(bootTimer.current)
     // The boot buzz, which never fired on device. Native already implements it
@@ -278,10 +292,24 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
         if (bootTimer.current !== null) window.clearInterval(bootTimer.current)
         bootTimer.current = null
         setBooting(false)
+        setMenuPage('main')
+        setMenuIndex(0)
         return
       }
       setBootFrame(frame)
     }, BOOT_FRAME_MS)
+  }, [])
+
+  const showThemeChange = useCallback(() => {
+    if (bootTimer.current !== null) window.clearInterval(bootTimer.current)
+    bootTimer.current = null
+    if (themeTimer.current !== null) window.clearTimeout(themeTimer.current)
+    setBooting(false)
+    setThemeRebooting(true)
+    themeTimer.current = window.setTimeout(() => {
+      themeTimer.current = null
+      setThemeRebooting(false)
+    }, 1280)
   }, [])
 
   useEffect(() => {
@@ -296,20 +324,17 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   useEffect(() => {
     const sync = () => {
       try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
-      // Theme, not cold boot: same haptic sequence natively but no boot sound,
-      // and `false` so the reboot below does not fire a SECOND phoneBootEffects
-      // on top of this one.
+      // Theme, not cold boot: same haptic sequence natively but no boot sound.
       postNativeEvent({ type: 'phoneThemeEffects' })
-      setThemeRebooting(true)
-      runBoot(false)
+      showThemeChange()
     }
     window.addEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
     return () => window.removeEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
-  }, [runBoot])
+  }, [showThemeChange])
 
-  useEffect(() => {
-    if (!booting && themeRebooting) setThemeRebooting(false)
-  }, [booting, themeRebooting])
+  useEffect(() => () => {
+    if (themeTimer.current !== null) window.clearTimeout(themeTimer.current)
+  }, [])
 
   useEffect(() => subscribeCall(snap => {
     setLiveCall(snap.phase === 'idle' ? null : snap)
@@ -363,10 +388,12 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
     try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
     postNativeEvent({ type: 'phoneThemeEffects' })
     setColorIndex(i => (i + delta + COLORWAYS.length) % COLORWAYS.length)
-  }, [])
+    showThemeChange()
+  }, [showThemeChange])
 
   const step = useCallback((delta: 1 | -1) => {
     playPop()
+    if (!contacts.length) return
     setIndex(i => (i + delta + contacts.length) % contacts.length)
   }, [contacts.length])
 
@@ -382,7 +409,6 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
 
   const back = useCallback(() => {
     playPop()
-    if (showSettings) { setShowSettings(false); return }
     if (liveCall && liveCall.phase !== 'idle' && liveCall.phase !== 'ended') {
       hangupCall()
       setCalling(null)
@@ -397,8 +423,25 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
       onDeclineCall?.(incomingCall)
       return
     }
+    if (menuPage !== 'main') {
+      setMenuPage('main')
+      setMenuIndex(0)
+      return
+    }
     onClose?.()
-  }, [calling, incomingCall, liveCall, onClose, onDeclineCall, showSettings])
+  }, [calling, incomingCall, liveCall, menuPage, onClose, onDeclineCall])
+
+  const activateMenuItem = useCallback(() => {
+    const item = PHONE_MENU_ITEMS[menuIndex]
+    if (!item) return
+    playPop()
+    if (item.id === 'exit') {
+      onClose?.()
+      return
+    }
+    setMenuPage(item.id)
+    setMenuIndex(0)
+  }, [menuIndex, onClose])
 
   const press = useCallback((key: string) => {
     if (incomingCall) {
@@ -407,7 +450,7 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
       else playPop()
       return
     }
-    if (showSettings) {
+    if (menuPage === 'settings') {
       if (key === '2') {
         playPop()
         const idx = RINGTONES.findIndex(r => r.id === selectedRingtone)
@@ -423,7 +466,8 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
       } else if (key === '5') {
         playPop()
         setRingtone(selectedRingtone)
-        setShowSettings(false)
+        setMenuPage('main')
+        setMenuIndex(0)
       } else if (key === '*') {
         back()
       } else {
@@ -444,13 +488,32 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
       else playPop()
       return
     }
-    if (key === '2') step(-1)
-    else if (key === '8') step(1)
-    else if (key === '5') select()
-    else if (key === '#') { playPop(); setShowSettings(true) }
-    else if (key === '*') back()
+    if (menuPage === 'main') {
+      if (key === '2') {
+        playPop()
+        setMenuIndex(i => (i - 1 + PHONE_MENU_ITEMS.length) % PHONE_MENU_ITEMS.length)
+      } else if (key === '8') {
+        playPop()
+        setMenuIndex(i => (i + 1) % PHONE_MENU_ITEMS.length)
+      } else if (key === '5' || key === '#') {
+        activateMenuItem()
+      } else if (key === '*') back()
+      else playPop()
+      return
+    }
+    if (menuPage === 'contacts' || menuPage === 'calls') {
+      if (key === '2') step(-1)
+      else if (key === '8') step(1)
+      else if (key === '5') select()
+      else if (key === '#') { playPop(); setMenuPage('main'); setMenuIndex(0) }
+      else if (key === '*') back()
+      else playPop()
+      return
+    }
+    if (key === '*') back()
+    else if (key === '5' || key === '#') playPop()
     else playPop()
-  }, [back, incomingCall, liveCall?.phase, onAcceptCall, onDeclineCall, select, selectedRingtone, showSettings, step])
+  }, [activateMenuItem, back, incomingCall, liveCall?.phase, menuPage, onAcceptCall, onDeclineCall, select, selectedRingtone, step])
 
   // Keyboard twin of the keypad, so the phone is drivable without a finger.
   useEffect(() => {
@@ -471,6 +534,16 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   const start = Math.max(0, Math.min(index, Math.max(0, contacts.length - 2)))
   const visible = contacts.slice(start, start + 2)
   const colorway = COLORWAYS[colorIndex % COLORWAYS.length]
+  const mainStart = Math.max(0, Math.min(menuIndex - 1, Math.max(0, PHONE_MENU_ITEMS.length - 3)))
+  const visibleMain = PHONE_MENU_ITEMS.slice(mainStart, mainStart + 3)
+  const infoPage = menuPage !== 'main' && menuPage !== 'contacts' && menuPage !== 'calls' && menuPage !== 'settings'
+  const pageTitle = menuPage === 'messages' ? 'MESSAGES'
+    : menuPage === 'camera' ? 'CAMERA'
+      : menuPage === 'gallery' ? 'GALLERY'
+        : menuPage === 'radio' ? 'RADIO'
+          : menuPage === 'games' ? 'GAMES'
+            : menuPage === 'about' ? 'ABOUT POPLUR'
+              : ''
 
   return (
     <div className={styles.screen} data-poplur-screen="profile-phone" aria-label="Poplur phone">
@@ -495,8 +568,8 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
 
           {themeRebooting ? (
             <div className={styles.callStatus}>
-              <strong>POPLUR</strong>
-              <span className={styles.incoming}><strong>LOADING...</strong></span>
+              <strong>THEME</strong>
+              <span className={styles.incoming}><strong>CHANGED</strong></span>
             </div>
           ) : incomingCall ? (
             <>
@@ -535,7 +608,7 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
               </div>
               <div className={styles.softkeys}>5 HANG UP&nbsp;&nbsp;* BACK</div>
             </>
-          ) : showSettings ? (
+          ) : menuPage === 'settings' ? (
             <>
               <div className={styles.titleRow}>
                 <strong>RINGTONE</strong>
@@ -562,10 +635,38 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
               </div>
               <div className={styles.softkeys}>2/8 SCROLL  5 SET  * BACK</div>
             </>
-          ) : (
+          ) : menuPage === 'main' ? (
             <>
               <div className={styles.titleRow}>
-                <strong>CALLS {km(reachKm)}</strong>
+                <strong>POPLUR MENU</strong>
+                <em>{menuIndex + 1}/{PHONE_MENU_ITEMS.length}</em>
+              </div>
+              <div className={styles.list}>
+                {visibleMain.map((item, offset) => {
+                  const at = mainStart + offset
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={at === menuIndex ? `${styles.row} ${styles.rowOn}` : styles.row}
+                      onClick={() => { setMenuIndex(at); if (at === menuIndex) activateMenuItem() }}
+                      aria-label={`Open ${item.title}`}
+                    >
+                      <b className={styles.rowGlyph}>{item.glyph}</b>
+                      <span className={styles.rowText}>
+                        <strong className={styles.rowTitle}>{item.title.toUpperCase()}</strong>
+                        <em className={styles.rowDetail}>{item.detail.toUpperCase()}</em>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className={styles.softkeys}>2/8 SCROLL  5 OPEN  * EXIT</div>
+            </>
+          ) : menuPage === 'contacts' || menuPage === 'calls' ? (
+            <>
+              <div className={styles.titleRow}>
+                <strong>{menuPage === 'calls' ? 'CALL LOG' : `CONTACTS ${km(reachKm)}`}</strong>
                 <em>{contacts.length ? index + 1 : 0}/{contacts.length}</em>
               </div>
               <div className={styles.list}>
@@ -591,10 +692,19 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
                 })}
               </div>
               <div className={styles.softkeys}>
-                {current?.callable ? '2/8 SCROLL  5 CALL  # SET  * BACK' : '2/8 SCROLL  # SET  * BACK'}
+                {current?.callable ? '2/8 SCROLL  5 CALL  # MENU  * BACK' : '2/8 SCROLL  # MENU  * BACK'}
               </div>
             </>
-          )}
+          ) : infoPage ? (
+            <>
+              <div className={styles.titleRow}><strong>{pageTitle}</strong><em>1/1</em></div>
+              <div className={styles.callStatus}>
+                <strong>{menuPage === 'games' ? 'SNAKE READY' : 'POPLUR'}</strong>
+                <span>{menuPage === 'messages' ? 'OPEN MAIL FROM PROFILE' : menuPage === 'camera' ? 'USE THE CAMERA TAB TO CAPTURE' : menuPage === 'gallery' ? 'YOUR SAVED POPS LIVE HERE' : menuPage === 'radio' ? 'LIVE CHANNELS ON THE MAP' : menuPage === 'about' ? 'POPLUR PHONE 1.0' : 'COMING SOON'}</span>
+              </div>
+              <div className={styles.softkeys}>5 OK  * BACK</div>
+            </>
+          ) : null}
         </div>
 
         <div className={styles.keys} aria-label="Poplur phone keypad">

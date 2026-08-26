@@ -157,6 +157,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   text-shadow: 0 1px 3px #000;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 .channelTag { bottom: 10px; }
 .sponsorTag {

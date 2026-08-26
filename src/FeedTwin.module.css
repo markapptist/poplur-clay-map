@@ -265,6 +265,23 @@
   text-overflow: ellipsis;
 }
 
+.sponsoredBadge {
+  position: absolute;
+  top: 14.5rem;
+  left: 50%;
+  z-index: 8;
+  transform: translateX(-50%);
+  padding: .28rem .7rem;
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 999px;
+  background: rgba(12, 8, 20, .72);
+  color: #fff;
+  font-size: .65rem;
+  font-weight: 800;
+  letter-spacing: .14em;
+  pointer-events: none;
+}
+
 /* The handle and reach share one stable byline. Each rests long enough to read,
    then trades places with a short vertical fade; overlapping grid cells keep
    the title and the rest of the feed chrome perfectly still. */

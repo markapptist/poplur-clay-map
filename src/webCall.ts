@@ -15,6 +15,13 @@
 // point of doing call media in the page rather than per-native-SDK.
 
 import { postNativeEvent, isNativeShell } from './nativeBridge'
+import {
+  DEFAULT_CALL_CONTEXT,
+  normalizeCallContext,
+  type CallContext,
+} from './callContext'
+
+export type { CallContext } from './callContext'
 
 export type CallPhase =
   | 'idle'        // nothing happening
@@ -32,6 +39,8 @@ export interface CallSnapshot {
   connectedAt: number | null
   /** true while the caller is ringing but not yet answered. */
   outgoing: boolean
+  /** Surface that owns the call controls while that surface is visible. */
+  context: CallContext
 }
 
 /**
@@ -48,6 +57,8 @@ export interface CallMediaSnapshot {
 export interface CallOptions {
   /** Ask the peer connection for camera tracks as well as the call audio. */
   video?: boolean
+  /** Keep media global, but let one screen own its primary call controls. */
+  context?: CallContext
 }
 
 // Public STUN only. A production deployment adds TURN for the ~10% of networks
@@ -95,6 +106,7 @@ let phase: CallPhase = 'idle'
 let muted = false
 let connectedAt: number | null = null
 let videoRequested = false
+let callContext: CallContext = DEFAULT_CALL_CONTEXT
 let outgoingNoAnswerTimer: number | null = null
 // Invalidates async media acquisition when the user ends/back-outs before a
 // getUserMedia permission prompt resolves. Every new attempt gets its own id;
@@ -111,7 +123,7 @@ const listeners = new Set<(s: CallSnapshot) => void>()
 const mediaListeners = new Set<(s: CallMediaSnapshot) => void>()
 
 function snapshot(): CallSnapshot {
-  return { phase, callId, peerName, muted, connectedAt, outgoing }
+  return { phase, callId, peerName, muted, connectedAt, outgoing, context: callContext }
 }
 
 function emit(): void {
@@ -249,6 +261,7 @@ export async function placeCall(peerId: string, name: string, callerName?: strin
   isCaller = true
   outgoing = true
   videoRequested = Boolean(options.video)
+  callContext = normalizeCallContext(options.context)
   emitMedia()
   setPhase('calling')
 
@@ -272,6 +285,7 @@ export async function placeCall(peerId: string, name: string, callerName?: strin
     otherId: peerId,
     callerName,
     video: videoRequested,
+    ...(callContext === DEFAULT_CALL_CONTEXT ? {} : { context: callContext }),
     requestId: String(attempt),
   })
 }
@@ -316,6 +330,7 @@ export async function acceptCall(id: string, name: string, options: CallOptions 
   isCaller = false
   outgoing = false
   videoRequested = Boolean(options.video)
+  callContext = normalizeCallContext(options.context)
   emitMedia()
   setPhase('connecting')
 
@@ -411,7 +426,14 @@ function cleanup(finalPhase: CallPhase): void {
   setPhase(finalPhase)
   // 'ended' is a brief flash so the UI can show "call ended" before it clears;
   // everything else resets immediately.
-  const settle = () => { phase = 'idle'; peerName = ''; muted = false; outgoing = false; emit() }
+  const settle = () => {
+    phase = 'idle'
+    peerName = ''
+    muted = false
+    outgoing = false
+    callContext = DEFAULT_CALL_CONTEXT
+    emit()
+  }
   if (finalPhase === 'ended') window.setTimeout(() => { if (phase === 'ended') settle() }, 500)
   else settle()
 }

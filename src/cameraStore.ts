@@ -123,6 +123,10 @@ export interface PendingMapPost {
   effectTiming?: PendingEffectTiming
   effectAsset?: PendingEffectAsset
   usedAI: boolean
+  /** The location picker is a temporary detour, not a fresh form. Keep the
+   *  user's attestation and AI direction with the same draft on the return. */
+  rightsAttested?: boolean
+  aiPrompt?: string
 }
 
 let pendingMapPost: PendingMapPost | null = null
@@ -159,6 +163,12 @@ export interface PendingAICompose {
   effectId?: string
   effectTiming?: PendingEffectTiming
   effectAsset?: PendingEffectAsset
+  usedAI: boolean
+  rightsAttested?: boolean
+  aiPrompt?: string
+  /** Map-first creation must not forget the ground it started from while the
+   *  dedicated Create surface owns the screen. */
+  target?: { lat: number; lng: number; radiusKm?: number; resume?: boolean }
 }
 
 let pendingAICompose: PendingAICompose | null = null

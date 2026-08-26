@@ -40,8 +40,8 @@ describe('country flag selection', () => {
 
   it('activates only at the configured outermost zoom tolerance', () => {
     expect(worldFlagZoomActive(3, 3)).toBe(true)
-    expect(worldFlagZoomActive(3.2, 3)).toBe(true)
-    expect(worldFlagZoomActive(3.23, 3)).toBe(false)
+    expect(worldFlagZoomActive(3.02, 3)).toBe(true)
+    expect(worldFlagZoomActive(3.03, 3)).toBe(false)
   })
 
   it('finds core and extra models from the cloud-pack file list', () => {

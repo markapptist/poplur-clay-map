@@ -14,6 +14,7 @@ import {
   query, where, serverTimestamp,
 } from 'firebase/firestore'
 import { webDb, currentUid, currentDisplayName } from './webFirebase'
+import { DEFAULT_CALL_CONTEXT, normalizeCallContext, type CallContext } from './callContext'
 
 function emit(message: Record<string, unknown>): void {
   window.postMessage(message, '*')
@@ -23,7 +24,12 @@ let callUnsub: (() => void) | null = null
 let candidateUnsub: (() => void) | null = null
 let incomingUnsub: (() => void) | null = null
 
-async function startCall(otherUID: string, callerName?: string, video = false): Promise<string | null> {
+async function startCall(
+  otherUID: string,
+  callerName?: string,
+  video = false,
+  context: CallContext = DEFAULT_CALL_CONTEXT,
+): Promise<string | null> {
   const uid = currentUid()
   if (!uid || !otherUID || otherUID === uid) return null
   const ref = doc(collection(webDb(), 'calls'))
@@ -38,6 +44,7 @@ async function startCall(otherUID: string, callerName?: string, video = false): 
       // This is an intent flag, not media.  It lets the receiver choose the
       // FaceTime surface before the WebRTC offer is relayed.
       video,
+      ...(context === DEFAULT_CALL_CONTEXT ? {} : { context }),
       createdAt: serverTimestamp(),
       provider: 'webrtc',
     })
@@ -159,6 +166,7 @@ export function observeIncoming(): void {
         callerId: (data.callerId as string) ?? '',
         callerName: (data.callerName as string) ?? 'Unknown',
         video: data.video === true,
+        context: normalizeCallContext(data.context),
       })
     })
   })
@@ -189,6 +197,7 @@ export function handleSignal(message: Record<string, unknown>): void {
         String(m.otherId ?? ''),
         typeof m.callerName === 'string' ? m.callerName : undefined,
         m.video === true,
+        normalizeCallContext(m.context),
       )
         .then(id => emit({ type: 'poplurCallStarted', callId: id ?? '', ok: !!id, requestId }))
       break

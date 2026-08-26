@@ -84,6 +84,15 @@ import { ambientAllowed, currentQuality, onAmbientSleepChange, onQualityChange, 
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange } from './popups'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
+import MapNewsButton from './MapNewsButton'
+import MapNewsCard from './MapNewsCard'
+import {
+  liveNewsCameraFrame,
+  loadLiveNews,
+  tourEligibleLiveNewsEvents,
+  useLiveNews,
+  type LiveNewsEvent,
+} from './liveNews'
 import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
 import { radiusDeltaForChannel, radiusEngagementForChannel } from './radiusLedger'
@@ -166,6 +175,8 @@ interface TourDestination {
   kind: TourKind
   coords: [number, number]
 }
+
+type MapTourMode = 'landmarks' | 'news'
 
 interface RadioStation extends RadioStationCue {
   frequency: string
@@ -301,6 +312,14 @@ const TOUR_DESTINATIONS: TourDestination[] = [
   { id: 'fairmont-royal-york', name: 'Fairmont Royal York', kind: 'hotel', coords: [-79.3811, 43.6459] },
   { id: 'marina-bay-sands', name: 'Marina Bay Sands', kind: 'hotel', coords: [103.8607, 1.2834] },
 ]
+
+const TOUR_AIRPORTS = TOUR_DESTINATIONS
+  .filter(destination => destination.kind === 'airport')
+  .map(destination => ({
+    id: destination.id,
+    name: displayPlaceName(destination.name),
+    coords: destination.coords,
+  }))
 
 const INTRO_LANDMARKS = TOUR_DESTINATIONS.filter(destination => destination.kind === 'landmark')
 const TOUR_LANDMARKS = INTRO_LANDMARKS
@@ -1718,6 +1737,36 @@ export default function App() {
   const tourAutoAdvanceRef = useRef(false)
   const [tourOn, setTourOn] = useState(false)
   const tourOnRef = useRef(false)
+  const [tourMode, setTourMode] = useState<MapTourMode | null>(null)
+  const tourModeRef = useRef<MapTourMode | null>(null)
+  const liveNews = useLiveNews()
+  const newsTourEvents = useMemo(
+    () => liveNews.stale ? [] : tourEligibleLiveNewsEvents(liveNews.events),
+    [liveNews.events, liveNews.stale],
+  )
+  const newsTourIndexRef = useRef(-1)
+  const newsStartSerialRef = useRef(0)
+  const newsTourPendingRef = useRef(false)
+  const [newsTourPending, setNewsTourPending] = useState(false)
+  const [activeNewsStop, setActiveNewsStop] = useState<{
+    event: LiveNewsEvent
+    index: number
+    total: number
+  } | null>(null)
+  const reportNewsEvent = useCallback((event: LiveNewsEvent | null) => {
+    if (window.parent === window) return
+    window.parent.postMessage(event ? {
+      type: 'poplur-map-news-event',
+      active: true,
+      id: event.id,
+      status: event.status,
+    } : {
+      type: 'poplur-map-news-event',
+      active: false,
+      id: null,
+      status: null,
+    }, '*')
+  }, [])
   const cancelTourTimer = useCallback((timer: number) => {
     if (!timer) return
     window.clearTimeout(timer)
@@ -1741,25 +1790,36 @@ export default function App() {
   }, [])
 
   const pauseTourAtCurrentStop = useCallback(() => {
+    newsStartSerialRef.current += 1
+    newsTourPendingRef.current = false
+    setNewsTourPending(false)
     clearTourTimers()
     tourPauseAfterStopRef.current = false
     tourAutoAdvanceRef.current = false
     tourFlightInProgressRef.current = false
     tourStartedRef.current = false
     tourOnRef.current = false
+    tourModeRef.current = null
     setTourOn(false)
+    setTourMode(null)
+    setActiveNewsStop(null)
+    newsTourIndexRef.current = -1
+    reportNewsEvent(null)
     ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = false
     const map = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean; __tripping?: boolean }) | null
     if (map) {
       map.__cinematic = false
       map.__tripping = false
     }
-  }, [clearTourTimers])
+  }, [clearTourTimers, reportNewsEvent])
 
   // Anything that interrupts the tour — a route, walking the pops, stopping it
   // outright — has to say so, or the menu keeps offering STOP for a tour that
   // is no longer running.
   const stopTour = useCallback(() => {
+    newsStartSerialRef.current += 1
+    newsTourPendingRef.current = false
+    setNewsTourPending(false)
     cancelStagedCameraFlight()
     clearTourTimers()
     tourPauseAfterStopRef.current = false
@@ -1767,7 +1827,12 @@ export default function App() {
     tourFlightInProgressRef.current = false
     tourStartedRef.current = false
     tourOnRef.current = false
+    tourModeRef.current = null
     setTourOn(false)
+    setTourMode(null)
+    setActiveNewsStop(null)
+    newsTourIndexRef.current = -1
+    reportNewsEvent(null)
     const debugWindow = window as unknown as {
       __poplurTourOn?: boolean
       __poplurSmartCard?: unknown
@@ -1783,7 +1848,7 @@ export default function App() {
       map.__tripping = false
       map.stop()
     }
-  }, [cancelStagedCameraFlight, clearTourTimers])
+  }, [cancelStagedCameraFlight, clearTourTimers, reportNewsEvent])
   tourStopRef.current = stopTour
   searchInterruptRef.current = stopTour
   useEffect(() => clearTourTimers, [clearTourTimers])
@@ -1930,8 +1995,139 @@ export default function App() {
     }
   }, [])
 
-  const startExplicitTourLoop = useCallback((initialDelayMs = 0, firstDestination?: TourDestination) => {
+  useEffect(() => {
+    reportNewsEvent(activeNewsStop?.event ?? null)
+  }, [activeNewsStop, reportNewsEvent])
+  useEffect(() => () => reportNewsEvent(null), [reportNewsEvent])
+
+  /** One news action owns one finite camera flight. The story card is withheld
+   * until the authored frame has landed, and stepping clears the old story
+   * before the next flight begins so the shell's exclamation cube is truthful. */
+  const activateNewsTourStop = useCallback((
+    event: LiveNewsEvent,
+    index: number,
+    total: number,
+  ) => {
     clearTourTimers()
+    setActiveNewsStop(null)
+    reportNewsEvent(null)
+    newsTourIndexRef.current = index
+    tourFlightInProgressRef.current = true
+    setCurrentPlace(displayPlaceName(event.place))
+    setTourLine(`${event.status.toUpperCase()}: ${event.title}`)
+    const flew = flyToCenter(
+      event.coords,
+      TOUR_FLIGHT_MS,
+      liveNewsCameraFrame(event),
+      true,
+    )
+    if (!flew) {
+      tourFlightInProgressRef.current = false
+      setActiveNewsStop({ event, index, total })
+      return
+    }
+    scheduleTourTimer(() => {
+      tourFlightInProgressRef.current = false
+      if (!tourOnRef.current || tourModeRef.current !== 'news') return
+      if (newsTourIndexRef.current !== index) return
+      if (tourPauseAfterStopRef.current) {
+        pauseTourAtCurrentStop()
+        return
+      }
+      setActiveNewsStop({ event, index, total })
+    }, TOUR_FLIGHT_MS)
+  }, [clearTourTimers, flyToCenter, pauseTourAtCurrentStop, reportNewsEvent, scheduleTourTimer])
+
+  const beginNewsTour = useCallback((events: LiveNewsEvent[], firstEvent?: LiveNewsEvent) => {
+    if (!events.length) return
+    stopTour()
+    const requestedIndex = firstEvent
+      ? events.findIndex(event => event.id === firstEvent.id)
+      : -1
+    const index = requestedIndex >= 0 ? requestedIndex : 0
+    mapIdleDiagnosticsRef.current.explicitTourStarts += 1
+    tourStartedRef.current = true
+    tourOnRef.current = true
+    tourModeRef.current = 'news'
+    // The dedicated News button walks the finite ranked edition when the
+    // device has headroom. A story handed back from the newspaper is a single
+    // focused stop, and the quality ladder can turn the pass manual at any
+    // boundary without discarding the current story.
+    tourAutoAdvanceRef.current = firstEvent == null && currentQuality() > 1
+    tourPauseAfterStopRef.current = false
+    setTourOn(true)
+    setTourMode('news')
+    clearPopups('suggestion')
+    clearPopups('mapContent')
+    ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = true
+    const runStopAt = (requestedIndex: number) => {
+      if (!tourOnRef.current || tourModeRef.current !== 'news') return
+      if (currentQuality() <= 1) tourAutoAdvanceRef.current = false
+      const stopIndex = ((requestedIndex % events.length) + events.length) % events.length
+      activateNewsTourStop(events[stopIndex], stopIndex, events.length)
+      if (!tourAutoAdvanceRef.current) return
+      const afterStop = stopIndex >= events.length - 1
+        ? stopTour
+        : () => runStopAt(stopIndex + 1)
+      tourNextTimerRef.current = scheduleTourTimer(
+        afterStop,
+        TOUR_FLIGHT_MS + TOUR_DWELL_MS,
+      )
+    }
+    runStopAt(index)
+  }, [activateNewsTourStop, scheduleTourTimer, stopTour])
+
+  const startNewsTour = useCallback((firstEvent?: LiveNewsEvent) => {
+    if (newsTourEvents.length) {
+      beginNewsTour(newsTourEvents, firstEvent)
+      return
+    }
+    stopTour()
+    const requestSerial = ++newsStartSerialRef.current
+    newsTourPendingRef.current = true
+    setNewsTourPending(true)
+    setTourLine(liveNews.loading ? 'Loading verified live news…' : 'Checking the live news wire…')
+    void loadLiveNews(true).then(snapshot => {
+      if (newsStartSerialRef.current !== requestSerial) return
+      if (!mapFrontRef.current || document.visibilityState !== 'visible') return
+      const events = snapshot.stale ? [] : tourEligibleLiveNewsEvents(snapshot.events)
+      if (!events.length) {
+        setTourLine('No current verified live-news stops are available right now.')
+        return
+      }
+      beginNewsTour(events, firstEvent)
+    }).finally(() => {
+      if (newsStartSerialRef.current !== requestSerial) return
+      newsTourPendingRef.current = false
+      setNewsTourPending(false)
+    })
+  }, [beginNewsTour, liveNews.loading, newsTourEvents, stopTour])
+
+  // A provider-degraded edition remains readable in News, but it must not
+  // keep moving the map under a LIVE/BREAKING presentation.
+  useEffect(() => {
+    if (!liveNews.stale) return
+    if (newsTourPendingRef.current || tourModeRef.current === 'news') stopTour()
+  }, [liveNews.stale, stopTour])
+
+  const stepNewsTour = useCallback((dir: -1 | 1) => {
+    if (!tourOnRef.current || tourModeRef.current !== 'news') return
+    if (!newsTourEvents.length) return
+    tourAutoAdvanceRef.current = false
+    cancelTourTimer(tourNextTimerRef.current)
+    const base = newsTourIndexRef.current >= 0
+      ? newsTourIndexRef.current
+      : dir > 0 ? -1 : 0
+    const index = ((base + dir) % newsTourEvents.length + newsTourEvents.length) % newsTourEvents.length
+    activateNewsTourStop(newsTourEvents[index], index, newsTourEvents.length)
+  }, [activateNewsTourStop, cancelTourTimer, newsTourEvents])
+
+  const startExplicitTourLoop = useCallback((initialDelayMs = 0, firstDestination?: TourDestination) => {
+    newsStartSerialRef.current += 1
+    clearTourTimers()
+    setActiveNewsStop(null)
+    reportNewsEvent(null)
+    newsTourIndexRef.current = -1
     tourPauseAfterStopRef.current = false
     tourFlightInProgressRef.current = false
     // The Play button may auto-walk the finite catalog while the device has
@@ -1958,7 +2154,9 @@ export default function App() {
     mapIdleDiagnosticsRef.current.explicitTourStarts += 1
     tourStartedRef.current = true
     tourOnRef.current = true
+    tourModeRef.current = 'landmarks'
     setTourOn(true)
+    setTourMode('landmarks')
     // A tour is landmark viewing, not a continuation of the last post.
     clearPopups('suggestion')
     clearPopups('mapContent')
@@ -1989,10 +2187,19 @@ export default function App() {
     } else {
       runStop()
     }
-  }, [activateTourDestination, clearTourTimers, scheduleTourTimer, stopTour])
+  }, [activateTourDestination, clearTourTimers, reportNewsEvent, scheduleTourTimer, stopTour])
 
   useEffect(() => onAmbientSleepChange(sleeping => {
     if (!sleeping || !tourOnRef.current) return
+    // A manually stepped news stop has no autonomous work left to shed: its
+    // camera flight is already bounded and the next move only happens after an
+    // arrow press. Keep that visible, manual state armed even if the ambient
+    // governor reaches its idle edge before the shell's foreground message is
+    // observed. A real tab/surface exit still calls stopTour synchronously via
+    // poplur-map-front, visibilitychange, or pagehide above.
+    if (tourModeRef.current === 'news'
+      && !tourAutoAdvanceRef.current
+      && document.visibilityState === 'visible') return
     // Ordinary 15-second idleness parks decoration during the landmark hold;
     // it must not cancel a tour the user just asked to watch. Backgrounding,
     // leaving Map, or a true protection rung still pauses the bounded pass.
@@ -2039,6 +2246,14 @@ export default function App() {
       // an active button stop on pointerdown and immediately restart on click.
       const target = event.target
       if (target instanceof Element && target.closest('[data-map-tour-toggle]')) {
+        scheduleTourIdle()
+        return
+      }
+      // The news toggle must read its own mode before choosing start/stop, and
+      // the arrived story card must remain scrollable. Its Close/Read handlers
+      // explicitly stop the tour at the point where that intent is known.
+      if (target instanceof Element
+        && target.closest('[data-map-news-button], [data-map-news-card]')) {
         scheduleTourIdle()
         return
       }
@@ -2599,12 +2814,39 @@ export default function App() {
       )
       window.parent.postMessage({
         type: 'poplur-map-tour',
-        on: tourOn,
+        on: tourOn && tourMode === 'landmarks',
         index,
         total: TOUR_LANDMARKS.length,
       }, '*')
     }
-  }, [tourOn])
+  }, [tourMode, tourOn])
+
+  // News reports both its finite tour state and the current verified count.
+  // Unlike the card signal, `on` remains true between stops so Home's arrows
+  // stay assigned to news while the next bounded camera flight is in progress.
+  useEffect(() => {
+    if (window.parent === window) return
+    const on = (tourOn && tourMode === 'news') || newsTourPending
+    window.parent.postMessage({
+      type: 'poplur-map-news-tour',
+      on,
+      count: newsTourEvents.length,
+      index: tourOn && tourMode === 'news' ? newsTourIndexRef.current : -1,
+      total: newsTourEvents.length,
+      eventId: activeNewsStop?.event.id ?? null,
+    }, '*')
+  }, [activeNewsStop?.event.id, newsTourEvents.length, newsTourPending, tourMode, tourOn])
+  useEffect(() => () => {
+    if (window.parent === window) return
+    window.parent.postMessage({
+      type: 'poplur-map-news-tour',
+      on: false,
+      count: 0,
+      index: -1,
+      total: 0,
+      eventId: null,
+    }, '*')
+  }, [])
 
   // Hold-menu actions arrive from the home page as messages: the on-map
   // Directions/Street View/Locate buttons moved there to declutter the map.
@@ -2773,6 +3015,32 @@ export default function App() {
           flyToCenter([longitude, latitude], 4_600)
           break
         }
+        case 'focusNews': {
+          const id = typeof event.data.id === 'string'
+            ? event.data.id.trim().slice(0, 180)
+            : ''
+          const raw = event.data.coords
+          if (!id || !Array.isArray(raw) || raw.length !== 2) break
+          const longitude = Number(raw[0])
+          const latitude = Number(raw[1])
+          if (!Number.isFinite(longitude) || Math.abs(longitude) > 180
+            || !Number.isFinite(latitude) || Math.abs(latitude) > 90) break
+          const exactEvent = newsTourEvents.find(candidate => candidate.id === id)
+          closeSearchImmediately()
+          if (exactEvent) {
+            startNewsTour(exactEvent)
+            break
+          }
+          // A newspaper can retain a valid sourced story after it ages out of
+          // the stricter camera-tour window. Honour its coordinate without
+          // presenting it as an active live-news stop or inventing metadata.
+          stopTour()
+          setCurrentPlace(typeof event.data.title === 'string' && event.data.title.trim()
+            ? event.data.title.trim().slice(0, 220)
+            : 'News location')
+          flyToCenter([longitude, latitude], TOUR_FLIGHT_MS)
+          break
+        }
         case 'weather': toggleWeather(); break
         // The visible map rail belongs to Home when this document is embedded.
         // Persist the user choice here too, so Map audio follows the same gate
@@ -2820,8 +3088,13 @@ export default function App() {
         // than computed inside a state updater: StrictMode double-invokes
         // those, and this one has to fire timers.
         case 'tour': {
-          if (tourOnRef.current) stopTour()
+          if (tourOnRef.current && tourModeRef.current === 'landmarks') stopTour()
           else startExplicitTourLoop(0)
+          break
+        }
+        case 'newsTour': {
+          if (newsTourPendingRef.current || (tourOnRef.current && tourModeRef.current === 'news')) stopTour()
+          else startNewsTour()
           break
         }
         // A post just published to a coordinate (map→camera capture flow).
@@ -2897,6 +3170,10 @@ export default function App() {
           })
           break
         }
+        case 'cycleNews': {
+          stepNewsTour(event.data.dir === -1 ? -1 : 1)
+          break
+        }
         case 'cycleTourLandmark':
         case 'cyclePop': {
           const dir = event.data.dir === -1 ? -1 : 1
@@ -2904,7 +3181,8 @@ export default function App() {
           // action. Treat that intent as fail-closed: even if cross-frame tour
           // state changes between pointerdown and message delivery, it must
           // never fall through into posted-pop traversal.
-          const landmarkIntent = event.data.action === 'cycleTourLandmark' || tourOnRef.current
+          const landmarkIntent = event.data.action === 'cycleTourLandmark'
+            || (tourOnRef.current && tourModeRef.current === 'landmarks')
           if (landmarkIntent && TOUR_LANDMARKS.length) {
             const current = TOUR_LANDMARKS.findIndex(destination =>
               destination.id === lastTourDestinationRef.current,
@@ -2984,7 +3262,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [applyRadiusDelta, handleGoToCurrentLocation, handleToggleStreetView, startExplicitTourLoop, stopTour, flyToCenter, flyToPop, myColor, openSearch, ownAvatar, theme, toggleWeather, traverseToEngagement])
+  }, [applyRadiusDelta, closeSearchImmediately, flyToCenter, flyToPop, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, startExplicitTourLoop, startNewsTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -3047,8 +3325,11 @@ export default function App() {
   const weatherIconMarkup = cloudBadge && (weatherMode === 'cloudy' || weatherMode === 'fog')
     ? `<img src="${cloudBadge}" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain" />`
     : weatherIconForMode(weatherMode)
-  const tourLandmarkPosition = tourOn
+  const tourLandmarkPosition = tourOn && tourMode === 'landmarks'
     ? TOUR_LANDMARKS.findIndex(destination => destination.id === lastTourDestinationRef.current)
+    : -1
+  const newsTourPosition = tourOn && tourMode === 'news'
+    ? newsTourIndexRef.current
     : -1
 
   return (
@@ -3068,6 +3349,7 @@ export default function App() {
       <ClayMap
         token={TOKEN}
         pois={POIS}
+        airportPoints={TOUR_AIRPORTS}
         pins={tourOn ? NO_MAP_PINS : mapPins}
         onPinOpen={openClickedMapPinContent}
         selectedId={selectedId}
@@ -3212,8 +3494,8 @@ export default function App() {
         <span data-map-tour-toggle="" style={{ display: 'contents' }}>
           <ClayCornerButton
             kind="play"
-            label={tourOn ? 'Stop the tour' : 'Start the tour'}
-            active={tourOn}
+            label={tourOn && tourMode === 'landmarks' ? 'Stop the tour' : 'Start the tour'}
+            active={tourOn && tourMode === 'landmarks'}
             size={44}
             still
             activateOnClick
@@ -3221,8 +3503,20 @@ export default function App() {
               playPop(0.25)
               // Read the REF, not the state: same reason the mapAction case does
               // — this fires timers, and StrictMode double-invokes state updaters.
-              if (tourOnRef.current) stopTour()
+              if (tourOnRef.current && tourModeRef.current === 'landmarks') stopTour()
               else startExplicitTourLoop(0)
+            }}
+          />
+        </span>
+        <span data-map-tour-toggle="" style={{ display: 'contents' }}>
+          <MapNewsButton
+            active={newsTourPending || (tourOn && tourMode === 'news')}
+            loading={liveNews.loading}
+            count={newsTourEvents.length}
+            onPress={() => {
+              playPop(0.25)
+              if (newsTourPendingRef.current || (tourOnRef.current && tourModeRef.current === 'news')) stopTour()
+              else startNewsTour()
             }}
           />
         </span>
@@ -3250,6 +3544,32 @@ export default function App() {
       </TabControlRail>}
       {/* The weather overlay itself: rain, snow, hail, lightning over the map. */}
       <WeatherFX mode={weatherMode} />
+
+      {activeNewsStop && (
+        <MapNewsCard
+          event={activeNewsStop.event}
+          stop={activeNewsStop.index + 1}
+          total={activeNewsStop.total}
+          onDismiss={stopTour}
+          onRead={() => {
+            const eventId = activeNewsStop.event.id
+            stopTour()
+            if (window.parent !== window) {
+              window.parent.postMessage({
+                type: 'poplur-map-open-news',
+                eventId,
+              }, '*')
+              return
+            }
+            const newsURL = new URL(window.location.href)
+            newsURL.search = ''
+            newsURL.searchParams.set('view', 'holdmenu')
+            newsURL.searchParams.set('holdScreen', 'feed-news')
+            newsURL.searchParams.set('newsEvent', eventId)
+            window.location.assign(newsURL.toString())
+          }}
+        />
+      )}
 
       {searchOpen && (
         <div className={styles.searchScrim} onClick={closeSearch}>
@@ -3400,10 +3720,10 @@ export default function App() {
           ARE those buttons, not a lookalike, which is why a new orientation was
           added there rather than a second arrow widget invented here.
 
-          They post an explicit landmark action while TOUR is active and the
-          normal cyclePop action otherwise. Keeping those intents distinct
-          means a cross-frame timing change can never turn a tour press into a
-          posted-pop traversal. */}
+          They post an explicit news or landmark action while that finite tour
+          is active, and the normal cyclePop action otherwise. Keeping those
+          intents distinct means a cross-frame timing change can never turn a
+          tour press into a posted-pop traversal. */}
       <div
         className={`${styles.popStepper}${isEmbedded ? ` ${styles.popStepperAboveCube}` : ''}`}
         data-map-tour-step=""
@@ -3411,20 +3731,24 @@ export default function App() {
         <ClayChannelArrows
           orientation="horizontal"
           size={150}
-          number={tourLandmarkPosition >= 0 ? tourLandmarkPosition + 1 : popPosition ? popPosition.n : 0}
-          label={tourLandmarkPosition >= 0
+          number={newsTourPosition >= 0
+            ? newsTourPosition + 1
+            : tourLandmarkPosition >= 0 ? tourLandmarkPosition + 1 : popPosition ? popPosition.n : 0}
+          label={newsTourPosition >= 0
+            ? `${newsTourPosition + 1}/${newsTourEvents.length}`
+            : tourLandmarkPosition >= 0
             ? `${tourLandmarkPosition + 1}/${TOUR_LANDMARKS.length}`
             : popPosition ? `${popPosition.n}/${popPosition.of}` : ''}
-          upLabel={tourOn ? 'Previous landmark' : 'Previous pop'}
-          downLabel={tourOn ? 'Next landmark' : 'Next pop'}
+          upLabel={tourMode === 'news' ? 'Previous news story' : tourOn ? 'Previous landmark' : 'Previous pop'}
+          downLabel={tourMode === 'news' ? 'Next news story' : tourOn ? 'Next landmark' : 'Next pop'}
           onUp={() => window.postMessage({
             type: 'poplur-map-action',
-            action: tourOn ? 'cycleTourLandmark' : 'cyclePop',
+            action: tourMode === 'news' ? 'cycleNews' : tourOn ? 'cycleTourLandmark' : 'cyclePop',
             dir: -1,
           }, '*')}
           onDown={() => window.postMessage({
             type: 'poplur-map-action',
-            action: tourOn ? 'cycleTourLandmark' : 'cyclePop',
+            action: tourMode === 'news' ? 'cycleNews' : tourOn ? 'cycleTourLandmark' : 'cyclePop',
             dir: 1,
           }, '*')}
         />

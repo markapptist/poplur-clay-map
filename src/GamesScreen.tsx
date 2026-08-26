@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ModelViewerElement } from '@google/model-viewer'
 import styles from './GamesScreen.module.css'
 import PoplurgatchiPlayable from './PoplurgatchiPlayable'
 import ArcadeScreen from './ArcadeScreen'
@@ -14,11 +13,23 @@ import {
   radiusKmFor,
 } from './postedContent'
 import { HOME } from './reach'
-
-// The optimized PoplurStation GLBs use EXT_meshopt_compression. model-viewer
-// owns a separate loader from CubeTab3D, so it needs its own local decoder
-// location before the first console/controller element is created.
-ModelViewerElement.meshoptDecoderLocation = `${import.meta.env.BASE_URL}meshopt_decoder.js`
+import StationControllerModel from './StationControllerModel'
+import StationBootModel from './StationBootModel'
+import {
+  loadGameDirector,
+  offlineGameDirector,
+  type GameDirectorSession,
+} from './gameDirector'
+import {
+  POPLUR_GAME_CONTROLLER_INPUT,
+  dispatchGameControllerInput,
+  gameControllerAxisAt,
+  gameControllerDirection,
+  gameControllerRegionAt,
+  isGameControllerInputDetail,
+  type GameControllerInputDetail,
+  type GameControllerRegion,
+} from './gameControllerInput'
 
 interface Game {
   id: 'fps' | 'poplurgatchi' | 'arcade'
@@ -32,87 +43,18 @@ interface Game {
 type FpsState = 'loading' | 'menu' | 'zoom' | 'playing' | 'paused' | 'dead' | 'win' | 'levelclear'
 type FpsControl = 'move' | 'look' | 'fire' | 'interact' | 'pause' | 'weaponNext'
 
-interface AnalogStickProps {
-  className: string
-  label: string
-  onChange: (x: number, y: number) => void
-}
-
-function AnalogStick({ className, label, onChange }: AnalogStickProps) {
-  const pointer = useRef<number | null>(null)
-  const thumb = useRef<HTMLSpanElement>(null)
-
-  const update = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (pointer.current !== event.pointerId) return
-    const rect = event.currentTarget.getBoundingClientRect()
-    const rawX = event.clientX - rect.left - rect.width / 2
-    const rawY = event.clientY - rect.top - rect.height / 2
-    const limit = rect.width * 0.3
-    const magnitude = Math.hypot(rawX, rawY)
-    const scale = magnitude > limit ? limit / magnitude : 1
-    const x = rawX * scale
-    const y = rawY * scale
-    if (thumb.current) thumb.current.style.transform = `translate(${x}px, ${y}px)`
-    const deadZone = 0.1
-    const normalize = (value: number) => {
-      const unit = Math.max(-1, Math.min(1, value / limit))
-      if (Math.abs(unit) < deadZone) return 0
-      return (unit - Math.sign(unit) * deadZone) / (1 - deadZone)
-    }
-    onChange(normalize(x), -normalize(y))
-    event.preventDefault()
-  }
-
-  const release = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (pointer.current !== event.pointerId) return
-    pointer.current = null
-    if (thumb.current) thumb.current.style.transform = ''
-    onChange(0, 0)
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-  }
-
-  return (
-    <div
-      className={`${styles.controllerStick} ${className}`}
-      role="slider"
-      aria-label={label}
-      aria-valuemin={-1}
-      aria-valuemax={1}
-      aria-valuenow={0}
-      tabIndex={0}
-      onPointerDown={event => {
-        pointer.current = event.pointerId
-        event.currentTarget.setPointerCapture(event.pointerId)
-        update(event)
-      }}
-      onPointerMove={update}
-      onPointerUp={release}
-      onPointerCancel={release}
-      onLostPointerCapture={event => {
-        if (pointer.current === event.pointerId) {
-          pointer.current = null
-          if (thumb.current) thumb.current.style.transform = ''
-          onChange(0, 0)
-        }
-      }}
-    >
-      <span ref={thumb} className={styles.controllerStickThumb} aria-hidden="true" />
-    </div>
-  )
-}
-
 const GAMES: Game[] = [
   {
     id: 'poplurgatchi',
     title: 'Poplurgatchi',
-    subtitle: 'Virtual pet — feed, play & grow',
+    subtitle: 'Living virtual pet — care, quests & growth',
     color: '#ff389e',
     preview: 'games/poplurgatchi/assets/device-rainbow.webp',
   },
   {
     id: 'arcade',
     title: 'Poplur Boy',
-    subtitle: 'Retro handheld — ten shells, swap any time',
+    subtitle: 'Cinder Isles — explore, battle & collect',
     color: '#b06cf0',
     // The shell art doubles as the cover: it IS the product, and a separate
     // key-art file would be one more thing to keep in step with the skins.
@@ -121,7 +63,7 @@ const GAMES: Game[] = [
   {
     id: 'fps',
     title: 'FPS Shooter',
-    subtitle: 'Raycasting first-person shooter',
+    subtitle: 'Adaptive three-mission neon shooter',
     color: '#33ccff',
     // approved-arcade, not approved-gameplay: 59eb531 deleted the gameplay
     // still and left this path dangling, which is why the FPS tile rendered as
@@ -146,21 +88,158 @@ function Cover({ game, size }: { game: Game; size: 'hero' | 'tile' }) {
   )
 }
 
-function StationModel({ kind, className, spinning = false }: { kind: 'console' | 'controller'; className: string; spinning?: boolean }) {
-  return React.createElement('model-viewer', {
-    class: className,
-    src: `games/poplurstation/${kind}.glb`,
-    alt: `PoplurStation ${kind}`,
-    'camera-orbit': kind === 'console' ? '30deg 72deg 2.8m' : '0deg 72deg 2.4m',
-    'field-of-view': '28deg',
-    exposure: '1.1',
-    shadowIntensity: '1',
-    shadowSoftness: '0.75',
-    'auto-rotate': spinning || undefined,
-    'rotation-per-second': spinning ? '34deg' : undefined,
-    interactionPrompt: 'none',
-    disableZoom: true,
-  })
+interface ControllerPointer {
+  region: GameControllerRegion
+  x: number
+  y: number
+  repeatTimer: number | null
+  repeatsLeft: number
+}
+
+/** The supplied controller GLB is the control surface.
+ *
+ * It was previously hidden and replaced by visible HTML sticks/buttons, then
+ * later by an invisible gesture layer on the app's navigation cube. The asset
+ * is a flattened mesh with no named button nodes, so this component performs
+ * one normalised hit test on the model itself. Nothing is drawn over it.
+ */
+function StationController3D({ enabled, state }: { enabled: boolean; state: FpsState }) {
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const pointers = useRef(new Map<number, ControllerPointer>())
+  const [pressedCount, setPressedCount] = useState(0)
+
+  const point = useCallback((clientX: number, clientY: number) => {
+    const rect = surfaceRef.current?.getBoundingClientRect()
+    if (!rect?.width || !rect.height) return null
+    return {
+      x: (clientX - rect.left) / rect.width,
+      y: (clientY - rect.top) / rect.height,
+    }
+  }, [])
+
+  const emitAxis = useCallback((pointer: ControllerPointer, repeated = false) => {
+    if (pointer.region.kind !== 'axis') return
+    const axis = gameControllerAxisAt(pointer.region, pointer.x, pointer.y)
+    dispatchGameControllerInput({
+      source: 'poplurstation-3d',
+      control: pointer.region.control,
+      pressed: axis.x !== 0 || axis.y !== 0,
+      x: axis.x,
+      y: axis.y,
+      repeated,
+    })
+  }, [])
+
+  const stopRepeat = useCallback((pointer: ControllerPointer) => {
+    if (pointer.repeatTimer !== null) window.clearTimeout(pointer.repeatTimer)
+    pointer.repeatTimer = null
+  }, [])
+
+  const scheduleRepeat = useCallback((pointerId: number, delay = 280) => {
+    const pointer = pointers.current.get(pointerId)
+    if (!pointer || pointer.region.kind !== 'axis' || pointer.region.control === 'look') return
+    stopRepeat(pointer)
+    pointer.repeatTimer = window.setTimeout(() => {
+      const current = pointers.current.get(pointerId)
+      if (!current || current.repeatsLeft <= 0) return
+      current.repeatsLeft -= 1
+      emitAxis(current, true)
+      scheduleRepeat(pointerId, 110)
+    }, delay)
+  }, [emitAxis, stopRepeat])
+
+  const releasePointer = useCallback((pointerId: number) => {
+    const pointer = pointers.current.get(pointerId)
+    if (!pointer) return
+    pointers.current.delete(pointerId)
+    stopRepeat(pointer)
+    if (pointer.region.kind === 'axis') {
+      dispatchGameControllerInput({
+        source: 'poplurstation-3d', control: pointer.region.control,
+        pressed: false, x: 0, y: 0,
+      })
+    } else {
+      dispatchGameControllerInput({
+        source: 'poplurstation-3d', control: pointer.region.control, pressed: false,
+      })
+    }
+    setPressedCount(pointers.current.size)
+  }, [stopRepeat])
+
+  const releaseAll = useCallback(() => {
+    for (const pointerId of [...pointers.current.keys()]) releasePointer(pointerId)
+  }, [releasePointer])
+
+  useEffect(() => {
+    const onVisibility = () => { if (document.hidden) releaseAll() }
+    window.addEventListener('blur', releaseAll)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('blur', releaseAll)
+      document.removeEventListener('visibilitychange', onVisibility)
+      releaseAll()
+    }
+  }, [releaseAll])
+
+  return (
+    <div
+      ref={surfaceRef}
+      className={styles.stationController}
+      data-controller-ready={enabled ? 'true' : 'false'}
+      data-controller-pressed={pressedCount > 0 ? 'true' : 'false'}
+      data-game-state={state}
+      role="application"
+      aria-label="Interactive PoplurStation 3D controller. Left pad moves, right stick looks, face and shoulder buttons act."
+      onPointerDown={event => {
+        if (!enabled || pointers.current.has(event.pointerId)) return
+        const p = point(event.clientX, event.clientY)
+        const region = p && gameControllerRegionAt(p.x, p.y)
+        if (!p || !region) return
+        event.preventDefault()
+        playPop(0.22)
+        try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* best effort */ }
+        const pointer: ControllerPointer = {
+          region, x: p.x, y: p.y, repeatTimer: null, repeatsLeft: 48,
+        }
+        pointers.current.set(event.pointerId, pointer)
+        setPressedCount(pointers.current.size)
+        if (region.kind === 'axis') {
+          emitAxis(pointer)
+          scheduleRepeat(event.pointerId)
+        } else {
+          dispatchGameControllerInput({
+            source: 'poplurstation-3d', control: region.control, pressed: true,
+          })
+        }
+      }}
+      onPointerMove={event => {
+        const pointer = pointers.current.get(event.pointerId)
+        if (!pointer || pointer.region.kind !== 'axis') return
+        const p = point(event.clientX, event.clientY)
+        if (!p) return
+        pointer.x = p.x
+        pointer.y = p.y
+        emitAxis(pointer)
+        event.preventDefault()
+      }}
+      onPointerUp={event => {
+        releasePointer(event.pointerId)
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+      }}
+      onPointerCancel={event => releasePointer(event.pointerId)}
+      onLostPointerCapture={event => releasePointer(event.pointerId)}
+      onContextMenu={event => event.preventDefault()}
+    >
+      <img
+        className={styles.controllerPoster}
+        src="games/poplurstation/controller-poster-v2.png"
+        alt=""
+        draggable={false}
+        aria-hidden="true"
+      />
+      <StationControllerModel className={styles.controllerModel} />
+    </div>
+  )
 }
 
 export default function GamesScreen({ onClose }: { onClose: () => void }) {
@@ -175,13 +254,21 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   // fires `load` still starts rather than hanging on the boot screen forever.
   const [bootElapsed, setBootElapsed] = useState(false)
   const [frameReady, setFrameReady] = useState(false)
+  const [bootLeaving, setBootLeaving] = useState(false)
   const [fpsState, setFpsState] = useState<FpsState>('loading')
   const [controllerReady, setControllerReady] = useState(false)
   const [fpsFrameRequested, setFpsFrameRequested] = useState(false)
   const [fpsFrameLive, setFpsFrameLive] = useState(false)
+  const [directors, setDirectors] = useState<Partial<Record<Game['id'], GameDirectorSession>>>({})
   const bootTimer = useRef<number | null>(null)
   const bootCeiling = useRef<number | null>(null)
+  const bootDismiss = useRef<number | null>(null)
+  const directorRequest = useRef<AbortController | null>(null)
   const gameFrameRef = useRef<HTMLIFrameElement>(null)
+  const controllerDirection = useRef<ReturnType<typeof gameControllerDirection>>(null)
+  const fpsMoveAxis = useRef({ x: 0, y: 0 })
+  const fpsDpadAxis = useRef({ x: 0, y: 0 })
+  const autoLaunchHandled = useRef(false)
   const game = GAMES[selected]
 
   // Games run full-bleed (GamesScreen.module.css .stage), but HomeTwin's
@@ -213,7 +300,23 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
 
   const launch = (g: Game) => {
     playPop()
+    directorRequest.current?.abort()
+    const request = new AbortController()
+    directorRequest.current = request
+    // Gameplay never waits on the network. A reviewed preset is available on
+    // the first render, then a signed-in AI session replaces it if the bounded
+    // server request succeeds.
+    const reviewedPreset = offlineGameDirector(g.id)
+    setDirectors(current => ({
+      ...current,
+      [g.id]: current[g.id]?.day === reviewedPreset.day ? current[g.id] : reviewedPreset,
+    }))
+    void loadGameDirector(g.id, { signal: request.signal }).then(session => {
+      if (request.signal.aborted) return
+      setDirectors(current => ({ ...current, [g.id]: session }))
+    })
     setBootElapsed(false)
+    setBootLeaving(false)
     setFpsState('loading')
     setControllerReady(false)
     const allowFpsFrame = g.id === 'fps'
@@ -233,6 +336,10 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     setBooting(g.id === 'arcade' ? null : g)
     if (bootTimer.current) window.clearTimeout(bootTimer.current)
     if (bootCeiling.current) window.clearTimeout(bootCeiling.current)
+    if (bootDismiss.current) {
+      window.clearTimeout(bootDismiss.current)
+      bootDismiss.current = null
+    }
     // The game mounts NOW, behind the boot screen, so the boot animation is
     // the load rather than a delay in front of one.
     setRunning(g)
@@ -247,17 +354,48 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     }, 12_000)
   }
 
+  // `/games/fps/index.html` is the raw raycasting engine. A direct visit hands
+  // off here so the actual PoplurStation controller remains the sole visible
+  // input surface; the iframe below then reloads the engine in raw/embed mode.
+  useEffect(() => {
+    if (autoLaunchHandled.current) return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('launch') !== 'fps') return
+    autoLaunchHandled.current = true
+    const fps = GAMES.find(candidate => candidate.id === 'fps')
+    if (fps) {
+      launch(fps)
+      // Direct-entry already spent a navigation on the handoff; do not make
+      // it wait for a second ornamental minimum once the iframe says ready.
+      setBootElapsed(true)
+    }
+    params.delete('launch')
+    const query = params.toString()
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+  }, [])
+
   // Lift the boot card once the animation has played AND the game is up.
   useEffect(() => {
     if (!booting) return
-    if (bootElapsed && frameReady) setBooting(null)
-  }, [booting, bootElapsed, frameReady])
+    if (!bootElapsed || !frameReady || bootLeaving) return
+    // Keep the game mounted under a very short release wipe instead of
+    // snapping from firmware UI to gameplay on the readiness frame.
+    setBootLeaving(true)
+    bootDismiss.current = window.setTimeout(() => {
+      setBooting(null)
+      setBootLeaving(false)
+      bootDismiss.current = null
+    }, 260)
+  }, [booting, bootElapsed, frameReady, bootLeaving])
 
   const quit = () => {
     playPop()
+    directorRequest.current?.abort()
+    directorRequest.current = null
     setRunning(null)
     setBooting(null)
     setBootElapsed(false)
+    setBootLeaving(false)
     setFrameReady(false)
     setFpsState('loading')
     setControllerReady(false)
@@ -265,44 +403,14 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     setFpsFrameLive(false)
     if (bootTimer.current) { window.clearTimeout(bootTimer.current); bootTimer.current = null }
     if (bootCeiling.current) { window.clearTimeout(bootCeiling.current); bootCeiling.current = null }
+    if (bootDismiss.current) { window.clearTimeout(bootDismiss.current); bootDismiss.current = null }
   }
-
-  const sendGameKey = useCallback((code: string, pressed: boolean) => {
-    const target = gameFrameRef.current?.contentWindow
-    if (!target) return
-    const key = code === 'Space' ? ' ' : code.replace(/^Key/, '').toLowerCase()
-    target.dispatchEvent(new KeyboardEvent(pressed ? 'keydown' : 'keyup', {
-      code,
-      key,
-      bubbles: true,
-      cancelable: true,
-    }))
-  }, [])
 
   const sendFpsControl = useCallback((control: FpsControl, values: Record<string, number | boolean> = {}) => {
     const target = gameFrameRef.current?.contentWindow
     if (!target) return
     target.postMessage({ type: 'poplur-fps-control', control, ...values }, '*')
   }, [])
-
-  const holdControlProps = (control: 'fire' | 'interact') => ({
-    onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
-      event.preventDefault()
-      event.currentTarget.setPointerCapture(event.pointerId)
-      sendFpsControl(control, { pressed: true })
-    },
-    onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => {
-      sendFpsControl(control, { pressed: false })
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-    },
-    onPointerCancel: () => sendFpsControl(control, { pressed: false }),
-    onLostPointerCapture: () => sendFpsControl(control, { pressed: false }),
-  })
-
-  const pulseFpsControl = (control: 'pause' | 'weaponNext') => {
-    sendFpsControl(control, { pressed: true })
-    window.setTimeout(() => sendFpsControl(control, { pressed: false }), 100)
-  }
 
   useEffect(() => {
     if (running?.id !== 'fps') return
@@ -319,41 +427,116 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('message', onMessage)
   }, [running?.id])
 
-  // Tell the cube to become the FPS controller
+  // The iframe owns the FPS runtime, but the signed server call stays in the
+  // authenticated parent. Send only the validated session contract after the
+  // engine reports ready; the game queues it for the next run rather than
+  // changing combat underneath an active player.
   useEffect(() => {
-    const on = running?.id === 'fps' && controllerReady
-    window.dispatchEvent(new CustomEvent('poplur-fps-cube-controller', { detail: { on } }))
+    const director = directors.fps
+    if (running?.id !== 'fps' || !controllerReady || !director) return
+    gameFrameRef.current?.contentWindow?.postMessage({
+      type: 'poplur-fps-director',
+      session: director,
+    }, '*')
+  }, [controllerReady, directors.fps, running?.id])
+
+  // The supplied 3D controller owns game input. Its single validated contract
+  // is translated here at the game boundary: the FPS receives analog messages,
+  // Cinder Isles receives its existing retro-button pulses, and Poplurgatchi
+  // receives the same left/right/confirm keyboard contract it already exposes.
+  useEffect(() => {
+    if (!running) return
+    const fireButtons = new Set<string>()
+    const clamp = (value: number) => Math.max(-1, Math.min(1, value))
+    const sendCombinedMove = () => {
+      sendFpsControl('move', {
+        x: clamp(fpsMoveAxis.current.x + fpsDpadAxis.current.x),
+        y: clamp(fpsMoveAxis.current.y + fpsDpadAxis.current.y),
+      })
+    }
+    const retroButton = (button: string, repeated = false) => {
+      window.dispatchEvent(new CustomEvent('poplur-retro-button', { detail: { button, repeated } }))
+    }
+    const petKey = (key: 'ArrowLeft' | 'ArrowRight' | 'Enter') => {
+      const code = key === 'Enter' ? 'Enter' : key
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, code, bubbles: true, cancelable: true }))
+      window.dispatchEvent(new KeyboardEvent('keyup', { key, code, bubbles: true, cancelable: true }))
+    }
+    const localDirection = (detail: GameControllerInputDetail) => {
+      const next = detail.pressed
+        ? gameControllerDirection(detail.x ?? 0, detail.y ?? 0)
+        : null
+      const shouldPulse = next !== null && (next !== controllerDirection.current || detail.repeated === true)
+      controllerDirection.current = next
+      if (!shouldPulse) return
+      if (running.id === 'arcade') retroButton(next, detail.repeated)
+      else if (running.id === 'poplurgatchi') {
+        petKey(next === 'left' || next === 'up' ? 'ArrowLeft' : 'ArrowRight')
+      }
+    }
+    const onControllerInput = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail
+      if (!isGameControllerInputDetail(detail)) return
+
+      if (detail.control === 'move' || detail.control === 'dpad') {
+        if (running.id === 'fps') {
+          const target = detail.control === 'move' ? fpsMoveAxis : fpsDpadAxis
+          target.current = { x: detail.x ?? 0, y: detail.y ?? 0 }
+          sendCombinedMove()
+        } else {
+          localDirection(detail)
+        }
+        return
+      }
+      if (detail.control === 'look') {
+        if (running.id === 'fps') sendFpsControl('look', { x: detail.x ?? 0 })
+        return
+      }
+
+      if (running.id === 'fps') {
+        if (detail.control === 'a' || detail.control === 'rightTrigger') {
+          if (detail.pressed) fireButtons.add(detail.control)
+          else fireButtons.delete(detail.control)
+          sendFpsControl('fire', { pressed: fireButtons.size > 0 })
+        } else if ((detail.control === 'b' || detail.control === 'x' || detail.control === 'leftTrigger') && detail.pressed) {
+          sendFpsControl('interact', { pressed: true })
+        } else if ((detail.control === 'y' || detail.control === 'select') && detail.pressed) {
+          sendFpsControl('weaponNext', { pressed: true })
+        } else if (detail.control === 'start' && detail.pressed) {
+          sendFpsControl(
+            fpsState === 'playing' || fpsState === 'paused' ? 'pause' : 'interact',
+            { pressed: true },
+          )
+        }
+        return
+      }
+
+      if (!detail.pressed) return
+      if (running.id === 'arcade') {
+        const mapped = {
+          a: 'a', b: 'b', x: 'b', y: 'select',
+          leftTrigger: 'l', rightTrigger: 'r', start: 'start', select: 'select',
+        }[detail.control]
+        if (mapped) retroButton(mapped)
+      } else if (running.id === 'poplurgatchi') {
+        if (detail.control === 'a' || detail.control === 'rightTrigger' || detail.control === 'start' || detail.control === 'y') petKey('Enter')
+        else if (detail.control === 'b' || detail.control === 'leftTrigger' || detail.control === 'select') petKey('ArrowLeft')
+        else if (detail.control === 'x') petKey('ArrowRight')
+      }
+    }
+    window.addEventListener(POPLUR_GAME_CONTROLLER_INPUT, onControllerInput)
     return () => {
-      window.dispatchEvent(new CustomEvent('poplur-fps-cube-controller', { detail: { on: false } }))
+      window.removeEventListener(POPLUR_GAME_CONTROLLER_INPUT, onControllerInput)
+      controllerDirection.current = null
+      fpsMoveAxis.current = { x: 0, y: 0 }
+      fpsDpadAxis.current = { x: 0, y: 0 }
+      if (running.id === 'fps') {
+        sendFpsControl('move', { x: 0, y: 0 })
+        sendFpsControl('look', { x: 0 })
+        sendFpsControl('fire', { pressed: false })
+      }
     }
-  }, [running?.id, controllerReady])
-
-  // Listen for controls dispatched from the cube overlay
-  useEffect(() => {
-    if (running?.id !== 'fps') return
-    const onCubeInput = (e: Event) => {
-      const detail = (e as CustomEvent).detail
-      if (!detail?.control) return
-      const { control, ...values } = detail
-      sendFpsControl(control, values)
-    }
-    window.addEventListener('poplur-fps-cube-input', onCubeInput)
-    return () => window.removeEventListener('poplur-fps-cube-input', onCubeInput)
-  }, [running?.id, sendFpsControl])
-
-  // Device tilt → look
-  useEffect(() => {
-    if (running?.id !== 'fps' || !controllerReady) return
-    const onOrientation = (e: DeviceOrientationEvent) => {
-      if (e.gamma == null) return
-      const deadZone = 3
-      const gamma = Math.abs(e.gamma) < deadZone ? 0 : e.gamma
-      const lookX = Math.max(-1, Math.min(1, gamma / 35))
-      sendFpsControl('look', { x: lookX })
-    }
-    window.addEventListener('deviceorientation', onOrientation, { passive: true })
-    return () => window.removeEventListener('deviceorientation', onOrientation)
-  }, [running?.id, controllerReady, sendFpsControl])
+  }, [fpsState, running, sendFpsControl])
 
   // The bundled FPS owns an unconditional rAF plus a deliberate 10fps hidden
   // interval. Its code runs inside the iframe, so pausing the parent visually
@@ -386,8 +569,10 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   }, [fpsFrameRequested, running?.id])
 
   useEffect(() => () => {
+    directorRequest.current?.abort()
     if (bootTimer.current) window.clearTimeout(bootTimer.current)
     if (bootCeiling.current) window.clearTimeout(bootCeiling.current)
+    if (bootDismiss.current) window.clearTimeout(bootDismiss.current)
   }, [])
 
   useEffect(() => {
@@ -409,39 +594,38 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   // render took the `running` early-return and the boot card was unreachable.
   // The game mounted bare and you saw exactly the blank first frame the boot
   // screen exists to cover: the fix that added it never actually ran.
+  const bootComplete = bootElapsed && frameReady
   const bootCard = booting && (
     <div
       className={styles.boot}
-      role="status"
-      aria-live="polite"
-      style={{
-        ['--accent' as string]: booting.color,
-        ['--boot-art' as string]: `url("${import.meta.env.BASE_URL}${booting.preview}")`,
-      }}
+      data-ready={bootComplete || undefined}
+      data-leaving={bootLeaving || undefined}
+      style={{ ['--accent' as string]: booting.color }}
     >
-      <div className={styles.bootBackdrop} aria-hidden="true" />
-      <div className={styles.bootIdentity}>
-        <div className={styles.bootLogo} aria-label="Poplur Station">
-          <img className={styles.bootMark} src={`${import.meta.env.BASE_URL}logo_icon.png`} alt="" />
+      <span className={styles.bootSrOnly} role="status" aria-live="polite" aria-atomic="true">
+        {bootComplete
+          ? `${booting.title} ready`
+          : `Starting ${booting.title} on Poplur Station`}
+      </span>
+      <div className={styles.bootCenter} aria-hidden="true">
+        <div className={styles.bootStage}>
+          <StationBootModel className={styles.bootModel} />
+          <span className={styles.bootShadow} />
         </div>
-        <span className={styles.bootWord}>Poplur <b>Station</b></span>
-      </div>
-      <div className={styles.bootStatus}>
-        <strong>{booting.title}</strong>
-        <span>Loading game</span>
-        <span className={styles.bootProgress} aria-hidden="true"><span /></span>
+        <div className={styles.bootWordmark}>POPLURSTATION</div>
       </div>
     </div>
   )
 
   // ── running a game ────────────────────────────────────────────────────────
   if (running) {
+    const director = directors[running.id] ?? offlineGameDirector(running.id)
     return (
       <div className={`${styles.stage} ${running.id === 'fps' ? styles.fpsStage : ''}`} style={{ ['--accent' as string]: running.color }}>
         {running.id === 'poplurgatchi' ? (
-          <PoplurgatchiPlayable />
+          <PoplurgatchiPlayable director={director} />
         ) : running.id === 'arcade' ? (
-          <ArcadeScreen />
+          <ArcadeScreen director={director} />
         ) : running.web && fpsFrameLive ? (
           <iframe
             ref={gameFrameRef}
@@ -458,13 +642,8 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
             }}
           />
         ) : null}
-        {running.id === 'fps' && controllerReady && (
-          <button
-            type="button"
-            className={styles.fpsExit}
-            aria-label="Exit game"
-            onClick={quit}
-          >✕</button>
+        {running.id === 'fps' && (
+          <StationController3D enabled={controllerReady} state={fpsState} />
         )}
         {bootCard}
         {/* The app cube remains above this stage and is the one back control. */}

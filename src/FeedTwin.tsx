@@ -240,6 +240,8 @@ export interface ChannelPost {
   video: string
   poster?: string
   real?: boolean
+  /** Bundled advertiser creative, distinct from a user's uploaded post. */
+  sponsored?: boolean
   mediaType?: 'photo' | 'video'
   /** Named venue behind this post, used to ground its live ad lookup. */
   place?: string
@@ -332,6 +334,7 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       user: '@poplur.live',
       video,
       mediaType: 'video',
+      sponsored: true,
       caption: 'Live around your radius',
       reachKm: reachKmFor(`${channel.id}:fallback:${video}`),
       createdAtMillis: Date.UTC(2026, 7, 25, 12),
@@ -354,6 +357,7 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
   // the pool rotates through every supplied ad, offset per channel so
   // neighbouring channels do not mirror each other.
   const promotions: ChannelPost[] = users.map((user, i) => {
+    const isSponsored = own[i] == null
     const video = own[i] ?? AD_POOL[(channel.number * 3 + i) % AD_POOL.length]
     const places = CHANNEL_PLACES[channel.id] ?? []
     const id = `${channel.id}:${user}:${video}`
@@ -363,6 +367,7 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       user,
       video,
       mediaType: 'video',
+      sponsored: isSponsored,
       place: places[i % places.length],
       reachKm: reachKmFor(id),
       createdAtMillis: Date.UTC(2026, 7, 25, 18) - (seed % (10 * 86_400_000)),
@@ -1937,7 +1942,7 @@ export default function FeedTwin({
         />
       )}
 
-      {(adSrc || post?.mediaType === 'photo') && !post?.stream && posterSrc && posterKey && (!mediaUnlocked || !adReady) && (
+      {post?.mediaType === 'photo' && !post?.stream && posterSrc && posterKey && (
         <img
           key={`${posterKey}:poster`}
           data-feed-media="true"
@@ -1948,6 +1953,10 @@ export default function FeedTwin({
           tabIndex={-1}
           onLoad={() => setReadyPosterKey(posterKey)}
         />
+      )}
+
+      {post?.sponsored && !post?.stream && (
+        <div className={styles.sponsoredBadge} role="status">SPONSORED</div>
       )}
 
       {adSrc && !post?.stream && mediaUnlocked && decoderGranted && !playbackUnavailable && completedAdSrc !== adSrc && (

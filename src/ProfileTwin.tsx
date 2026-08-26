@@ -54,7 +54,7 @@ import {
   type ProfileTheme,
 } from './profileThemes'
 import { takeProfileMode } from './profileMode'
-import { refreshedProfilePhotoSource, usableProfilePhoto } from './profilePhoto'
+import { nextProfilePhotoReloadRevision, refreshedProfilePhotoSource, usableProfilePhoto } from './profilePhoto'
 import {
   accountSnapshot,
   onAccountChange,
@@ -136,6 +136,8 @@ const LIKED: LikedPost[] = [
 const PHOTO_KEY = 'poplur.profile.photo'
 const SELFIE_VIDEO_KEY = 'poplur.profile.selfieVideo'
 const SELFIE_DURATION_SECONDS = 10
+const PROFILE_POSTER_EDGE = 320
+const PROFILE_POSTER_JPEG_QUALITY = 0.84
 const PROFILE_NAME_FALLBACK = 'MARK'
 
 function usableUsername(value: string | null | undefined): string | null {
@@ -717,35 +719,40 @@ export default function ProfileTwin({
   // Keep the last image that actually loaded on screen while a cache-busted
   // retry is probed off-screen. A failed refresh therefore cannot replace a
   // working cached portrait with a broken-image frame.
-  const [displayedPhoto, setDisplayedPhoto] = useState<{ photo: string; source: string } | null>(() => {
-    const stored = readStoredPhoto()
-    return stored ? { photo: stored, source: stored } : null
-  })
+  const [displayedPhoto, setDisplayedPhoto] = useState<{ photo: string; source: string } | null>(null)
   const [photoReloadRevision, setPhotoReloadRevision] = useState(0)
   const photoRetryCountRef = useRef(0)
   const retryProfilePhoto = useCallback(() => {
     if (photoRetryCountRef.current >= 2) return
     photoRetryCountRef.current += 1
-    setPhotoReloadRevision(current => current + 1)
+    setPhotoReloadRevision(current => nextProfilePhotoReloadRevision(current))
   }, [])
   const forceProfilePhotoReload = useCallback(() => {
     photoRetryCountRef.current = 0
-    setPhotoReloadRevision(current => current + 1)
+    // A component-local 1, 2, 3 sequence repeats after every remount, so
+    // WebKit can answer a new pull with yesterday's cached failure. A wall-
+    // clock nonce remains unique across tab visits and app sessions.
+    setPhotoReloadRevision(current => nextProfilePhotoReloadRevision(current))
   }, [])
   useEffect(() => {
     photoRetryCountRef.current = 0
-    setDisplayedPhoto(current => {
-      if (!photo) return null
-      return current?.photo === photo ? current : { photo, source: photo }
-    })
+    if (!photo) setDisplayedPhoto(null)
   }, [photo])
   useEffect(() => {
-    if (!photo || photoReloadRevision === 0 || photo.startsWith('data:image/')) return
+    if (!photo) return
     let live = true
-    const candidate = refreshedProfilePhotoSource(photo, photoReloadRevision)
+    const candidate = photoReloadRevision > 0
+      ? refreshedProfilePhotoSource(photo, photoReloadRevision)
+      : photo
     const probe = new Image()
     probe.onload = () => {
-      if (live) setDisplayedPhoto({ photo, source: candidate })
+      if (!live) return
+      // Only a decoded image becomes the visible/account-cached portrait.
+      // Native can answer with a stale or expired cloud URL; persisting that
+      // before this point poisoned both profile caches across remounts.
+      setDisplayedPhoto({ photo, source: candidate })
+      setAccountProfile({ photoURL: photo }, 'native')
+      writeStoredPhoto(photo)
     }
     probe.onerror = () => {
       if (live) retryProfilePhoto()
@@ -753,9 +760,7 @@ export default function ProfileTwin({
     probe.src = candidate
     return () => { live = false; probe.onload = null; probe.onerror = null }
   }, [photo, photoReloadRevision, retryProfilePhoto])
-  const renderedPhotoSource = photo
-    ? displayedPhoto?.photo === photo ? displayedPhoto.source : photo
-    : null
+  const renderedPhotoSource = displayedPhoto?.source ?? null
   const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
@@ -947,12 +952,10 @@ export default function ProfileTwin({
       }
       const nativePhoto = usableProfilePhoto(prof?.photo ?? prof?.profilePictureURL)
       if (nativePhoto) {
-        setAccountProfile({ photoURL: nativePhoto }, 'native')
         setPhoto(nativePhoto)
         // A native response may repeat the same durable URL after WebKit has
         // cached an earlier failure. State equality alone would not retry it.
         forceProfilePhotoReload()
-        writeStoredPhoto(nativePhoto)
         window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: nativePhoto } }))
       } else {
         // The ACCOUNT has no picture and this device does — lift ours up, the
@@ -1626,7 +1629,7 @@ export default function ProfileTwin({
 
   const captureSelfiePoster = (video: HTMLVideoElement): string | null => {
     if (!video.videoWidth || !video.videoHeight) return null
-    const edge = Math.min(1024, Math.min(video.videoWidth, video.videoHeight))
+    const edge = Math.min(PROFILE_POSTER_EDGE, Math.min(video.videoWidth, video.videoHeight))
     const sourceEdge = Math.min(video.videoWidth, video.videoHeight)
     const canvas = document.createElement('canvas')
     canvas.width = edge
@@ -1647,7 +1650,7 @@ export default function ProfileTwin({
     // live camera's facingMode is unrelated to that file's orientation, so the
     // old branch could flip a back-camera clip's poster too.
     context.drawImage(video, sx, sy, sourceEdge, sourceEdge, 0, 0, edge, edge)
-    return canvas.toDataURL('image/jpeg', 0.92)
+    return canvas.toDataURL('image/jpeg', PROFILE_POSTER_JPEG_QUALITY)
   }
 
   const previewVideo = (src: string): Promise<string> => new Promise((resolve, reject) => {
@@ -2171,17 +2174,18 @@ export default function ProfileTwin({
                 onStalled={resumeSelfie}
                 aria-label="Profile selfie video"
               />
-            ) : photo ? (
+            ) : renderedPhotoSource ? (
               <img
-                key={renderedPhotoSource ?? photo}
+                key={renderedPhotoSource}
                 className={styles.photo}
-                src={renderedPhotoSource ?? photo}
+                src={renderedPhotoSource}
                 alt=""
                 draggable="false"
                 onError={() => {
-                  if (photo.startsWith('data:')) {
+                  setDisplayedPhoto(current => current?.source === renderedPhotoSource ? null : current)
+                  if (photo?.startsWith('data:')) {
                     console.warn('[ProfileTwin] photo data URI failed to load — this should not happen')
-                  } else {
+                  } else if (photo) {
                     retryProfilePhoto()
                   }
                 }}

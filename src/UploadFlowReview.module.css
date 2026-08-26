@@ -3,7 +3,7 @@
   inset: 0;
   z-index: 10000;
   display: grid;
-  grid-template-columns: 304px minmax(0, 1fr);
+  grid-template-columns: 276px minmax(0, 1fr);
   overflow: hidden;
   background: #101114;
   color: #f7f7f8;
@@ -12,11 +12,16 @@
 
 .sidebar {
   min-width: 0;
-  overflow: auto;
-  padding: 22px 16px;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  padding: 18px 14px 14px;
   border-right: 1px solid #2c2e34;
   background: #16171b;
 }
+
+.sidebarTop { min-width: 0; }
 
 .heading span,
 .previewHeader span {
@@ -31,12 +36,13 @@
 }
 
 .heading h1 { font-size: 24px; }
+.heading p { margin: 7px 0 0; color: #858995; font-size: 11px; font-weight: 650; }
 
 .flowTabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 2px;
-  margin: 22px 0 14px;
+  margin: 18px 0 12px;
   padding: 3px;
   border: 1px solid #34363c;
   border-radius: 7px;
@@ -44,7 +50,7 @@
 }
 
 .flowTabs button {
-  min-height: 36px;
+  min-height: 44px;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -60,22 +66,27 @@
 
 .screenList {
   display: grid;
-  gap: 3px;
+  align-content: start;
+  gap: 5px;
   margin: 0;
-  padding: 0;
+  padding: 2px 2px 8px;
   list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #3e4149 transparent;
 }
 
 .screenList button {
   width: 100%;
-  min-height: 53px;
+  min-height: 52px;
   display: grid;
-  grid-template-columns: 29px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   padding: 7px 9px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 9px;
   background: transparent;
   color: #d8dae0;
   text-align: left;
@@ -83,6 +94,7 @@
 }
 
 .screenList button:hover { background: #1d1f24; }
+.screenList button:focus-visible { outline: 2px solid #8de9ff; outline-offset: 1px; }
 
 .screenList .screenActive {
   border-color: #4a4d56;
@@ -91,21 +103,50 @@
 }
 
 .screenList b {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
   color: #777b86;
+  background: #111216;
   font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .screenList span { min-width: 0; display: grid; gap: 4px; }
 .screenList strong { font-size: 13px; letter-spacing: 0; }
 .screenList small { overflow: hidden; color: #8f939e; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.screenList em { padding: 3px 5px; border-radius: 4px; background: #7b341d; color: #ffd5c5; font: 800 9px/1 ui-monospace, monospace; font-style: normal; }
+.screenList .screenActive b { color: #17060f; background: #f5489e; }
+
+.sidebarFooter {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #2c2e34;
+}
+
+.sidebarFooter button {
+  width: 44px;
+  height: 44px;
+  border: 1px solid #3d4048;
+  border-radius: 9px;
+  color: #fff;
+  background: #22242a;
+  font-size: 19px;
+  cursor: pointer;
+}
+.sidebarFooter button:disabled { opacity: .28; cursor: default; }
+.sidebarFooter span { color: #858995; font: 800 11px/1 ui-monospace, monospace; text-align: center; }
+.sidebarFooter span b { color: #f5489e; font-size: 14px; }
 
 .previewArea {
   min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  padding: 20px 24px 24px;
+  padding: 16px 20px 20px;
   overflow: hidden;
 }
 
@@ -116,21 +157,22 @@
   gap: 20px;
   max-width: 740px;
   width: 100%;
-  margin: 0 auto 14px;
+  margin: 0 auto 10px;
 }
 
 .previewHeader h2 { font-size: 22px; }
-.previewHeader p { margin: 0; color: #9296a0; font-size: 12px; text-align: right; }
+.previewHeader p { max-width: 260px; margin: 0; color: #9296a0; font-size: 11px; line-height: 1.25; text-align: right; }
 
 .previewTools {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 7px;
 }
 
 .previewTools button {
-  min-height: 34px;
+  min-height: 40px;
   padding: 0 11px;
   border: 1px solid #4a4d56;
   border-radius: 6px;
@@ -139,6 +181,18 @@
   font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   cursor: pointer;
 }
+
+.mediaTabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid #3e4149;
+  border-radius: 7px;
+  background: #111216;
+}
+.mediaTabs button { min-height: 44px; border: 0; background: transparent; }
+.mediaTabs .mediaActive { background: #f5489e; color: #17060f; }
 
 .previewTools button:hover { border-color: #747985; color: #fff; }
 
@@ -157,9 +211,9 @@
   box-sizing: border-box;
   align-self: center;
   justify-self: center;
-  padding: 9px;
+  padding: 7px;
   border: 1px solid #41444d;
-  border-radius: 32px;
+  border-radius: 30px;
   background: #050506;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.46);
 }
@@ -169,7 +223,7 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  border-radius: 24px;
+  border-radius: 23px;
   background: #050506;
   --poplur-app-height: 100%;
   /* Make this frame a containing block for `position: fixed` descendants, which
@@ -186,6 +240,38 @@
      force a compositing layer over the live camera and 3D canvases here. */
   contain: layout paint;
 }
+
+.composerLayer { position: absolute; inset: 0; }
+.composerLayerHidden { display: none; }
+
+.captureFrame { position: absolute; inset: 0; overflow: hidden; background: #050506; }
+.captureFrame > iframe { width: 100%; height: 100%; border: 0; }
+.retainedSpot {
+  position: absolute;
+  z-index: 20;
+  top: max(16px, env(safe-area-inset-top));
+  left: 50%;
+  width: min(250px, calc(100% - 28px));
+  min-height: 52px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255,142,198,.72);
+  border-radius: 11px;
+  color: #fff;
+  background: rgba(29,8,21,.9);
+  box-shadow: 0 8px 26px rgba(0,0,0,.4);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+.retainedSpot img { width: 36px; height: 36px; object-fit: contain; }
+.retainedSpot span { min-width: 0; display: grid; gap: 3px; }
+.retainedSpot b { color: #ff8ec6; font: 900 8px/1 ui-monospace, monospace; letter-spacing: .8px; }
+.retainedSpot small { color: #fff; font: 750 10px/1.15 system-ui, sans-serif; }
 
 .deviceViewport > iframe {
   width: 100%;
@@ -220,10 +306,7 @@
 .captureScroll,
 .statusScroll,
 .postedOverlay {
-  --home-clearance: var(
-    --composer-home-clearance,
-    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom))
-  );
+  --home-clearance: var(--composer-home-clearance, calc(18px + env(safe-area-inset-bottom)));
 }
 
 /* Uploading was the only screen in either flow with NO scroller: its wordmark
@@ -480,7 +563,7 @@
 }
 
 .uploadDotMap { position: absolute; inset: 0; z-index: 0; opacity: .48; background: radial-gradient(circle,#d9e7ff 0 2px,transparent 2.5px) 9px 11px/18px 18px; mask-image: radial-gradient(ellipse 44% 26% at 25% 30%,#000 0 72%,transparent 74%),radial-gradient(ellipse 52% 30% at 74% 38%,#000 0 72%,transparent 74%),radial-gradient(ellipse 28% 34% at 55% 67%,#000 0 72%,transparent 74%); }
-.uploadGlobeModel { position: absolute; z-index: 3; left: 50%; top: 42%; width: 246px; height: 300px; transform: translate(-50%,-50%); --poster-color: transparent; filter: drop-shadow(0 18px 24px rgba(10,18,92,.46)); }
+.uploadGlobeModel { position: absolute; z-index: 3; left: 50%; top: 42%; width: 246px; height: 246px; object-fit: contain; transform: translate(-50%,-50%); filter: drop-shadow(0 18px 24px rgba(10,18,92,.46)); }
 
 /* In .statusScroll's flow column now, not pinned. Absolute positioning kept it
    out of the scroller entirely, which is why the column could never grow. */
@@ -547,15 +630,70 @@
    territory are recoloured. There is deliberately no parent-level circle. */
 .locationRadius { position: absolute; inset: 0; overflow: hidden; background: #d7d6dc; }
 .locationRadius > iframe { width: 100%; height: 100%; border: 0; background: #d7d6dc; }
-.radiusPicker { position: absolute; z-index: 29; left: 50%; right: auto; top: auto; bottom: clamp(126px,20vh,170px); width: min(188px,48vw); transform: translateX(-50%); display: grid; gap: 4px; padding: 0; border: 0; color: #fff; background: transparent; filter: drop-shadow(0 4px 7px rgba(20,4,15,.72)); }
+.locationIntro {
+  position: absolute;
+  z-index: 29;
+  top: max(16px, env(safe-area-inset-top));
+  left: 16px;
+  right: 16px;
+  display: grid;
+  gap: 5px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255,190,223,.72);
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(145deg,rgba(72,17,54,.94),rgba(20,14,27,.93));
+  box-shadow: 0 9px 26px rgba(16,6,15,.35), inset 0 1px 0 rgba(255,255,255,.18);
+  backdrop-filter: blur(12px);
+}
+.locationIntro span { color: #ff91c8; font: 950 8px/1 ui-monospace,monospace; letter-spacing: 1.2px; }
+.locationIntro strong { font: 950 18px/1.05 system-ui,sans-serif; }
+.locationIntro small { color: #d9ccd3; font: 700 10px/1.3 system-ui,sans-serif; }
+.locationIntro em { color: #8de9ff; font: 900 8px/1 ui-monospace,monospace; font-style: normal; letter-spacing: .55px; }
+
+.locationControls {
+  position: absolute;
+  z-index: 29;
+  left: 16px;
+  right: 16px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid rgba(255,190,223,.76);
+  border-radius: 13px;
+  color: #fff;
+  background: linear-gradient(155deg,rgba(75,16,54,.96),rgba(18,13,25,.96));
+  box-shadow: 0 9px 0 rgba(49,8,33,.96),0 24px 44px rgba(14,5,12,.48),inset 0 1px 0 rgba(255,255,255,.2);
+  backdrop-filter: blur(14px);
+}
+.radiusPicker { display: grid; gap: 5px; padding: 0; border: 0; color: #fff; background: transparent; filter: drop-shadow(0 4px 7px rgba(20,4,15,.72)); }
 .radiusPicker > span { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.radiusPicker b { color: var(--radius-fill-b,#ff90c7); font: 950 8px/1 ui-monospace,monospace; letter-spacing: .75px; text-shadow: 0 2px 2px #260316,0 0 7px var(--radius-face,#f63b9a); -webkit-text-stroke: .4px rgba(35,7,30,.88); paint-order: stroke fill; }
-.radiusPicker strong { color: var(--radius-fill-a,#ffe1f1); font: 950 16px/1 system-ui,sans-serif; text-shadow: 0 2px 2px #151119,0 0 9px var(--radius-face,#f63b9a); -webkit-text-stroke: .65px rgba(12,8,14,.92); paint-order: stroke fill; }
-.radiusControl { position: relative; height: 30px; margin: 0 -2px; touch-action: none; cursor: ew-resize; outline: none; -webkit-tap-highlight-color: transparent; }
+.radiusPicker b { color: var(--radius-fill-b,#ff90c7); font: 950 9px/1 ui-monospace,monospace; letter-spacing: .8px; text-shadow: 0 2px 2px #260316,0 0 7px var(--radius-face,#f63b9a); -webkit-text-stroke: .4px rgba(35,7,30,.88); paint-order: stroke fill; }
+.radiusPicker strong { color: var(--radius-fill-a,#ffe1f1); font: 950 18px/1 system-ui,sans-serif; text-shadow: 0 2px 2px #151119,0 0 9px var(--radius-face,#f63b9a); -webkit-text-stroke: .65px rgba(12,8,14,.92); paint-order: stroke fill; }
+.radiusControl { position: relative; height: 44px; margin: 0 -2px; touch-action: none; cursor: ew-resize; outline: none; -webkit-tap-highlight-color: transparent; }
 .radiusControl:focus-visible .radiusRail { box-shadow: inset 0 2px 2px rgba(255,255,255,.58),inset 0 -2px 4px rgba(140,18,74,.5),inset 0 2px 5px rgba(0,0,0,.82),0 0 0 2px rgba(255,255,255,.92),0 0 18px rgba(244,59,153,.68); }
 .radiusRail { position: absolute; left: 11px; right: 11px; top: 50%; height: 12px; margin-top: -6px; overflow: hidden; border-radius: 8px; background-image: linear-gradient(90deg,transparent 0 var(--radius-progress,0%),#17131a var(--radius-progress,0%) 100%),repeating-linear-gradient(45deg,var(--radius-fill-a,#ffe1f1) 0 12px,var(--radius-fill-b,#ff86c4) 12px 23px,var(--radius-fill-c,#f53c99) 23px 34px); background-size: 100% 100%,48px 48px; background-repeat: no-repeat,repeat; box-shadow: inset 0 2px 2px rgba(255,255,255,.55),inset 0 -2px 3px rgba(45,24,40,.5),inset 0 2px 4px rgba(0,0,0,.85),0 0 0 1px var(--radius-face,#f63b9a),0 0 12px var(--radius-face,#f63b9a); animation: radiusBarber .7s linear 3; pointer-events: none; }
-.radiusOrb { position: absolute; top: 50%; width: 22px; height: 22px; box-sizing: border-box; transform: translate(-50%,-50%); border: 2px solid #fff; border-radius: 50%; background: radial-gradient(circle at 35% 27%,#fff 0 18%,#fafafa 20% 48%,#e3e3e3 68%,#a9a9ad 100%); box-shadow: inset 0 2px 3px rgba(255,255,255,.98),inset -2px -3px 4px rgba(91,91,101,.32),0 2px 0 rgba(60,8,38,.75),0 5px 9px rgba(0,0,0,.48),0 0 10px rgba(255,255,255,.64); pointer-events: none; will-change: left; }
+.radiusOrb { position: absolute; top: 50%; width: 28px; height: 28px; box-sizing: border-box; transform: translate(-50%,-50%); border: 2px solid #fff; border-radius: 50%; background: radial-gradient(circle at 35% 27%,#fff 0 18%,#fafafa 20% 48%,#e3e3e3 68%,#a9a9ad 100%); box-shadow: inset 0 2px 3px rgba(255,255,255,.98),inset -2px -3px 4px rgba(91,91,101,.32),0 2px 0 rgba(60,8,38,.75),0 5px 9px rgba(0,0,0,.48),0 0 10px rgba(255,255,255,.64); pointer-events: none; will-change: left; }
 .radiusControl:active .radiusOrb { transform: translate(-50%,-50%) scale(.92); }
+
+.locationContinue {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px 0 15px;
+  border: 1px solid rgba(255,221,238,.5);
+  border-radius: 10px;
+  color: #fff;
+  background: linear-gradient(155deg,#fb4da0,#d40d6a 62%,#8c0b4c);
+  box-shadow: 0 6px 0 #650637,0 12px 22px rgba(82,6,46,.38),inset 0 2px 1px rgba(255,255,255,.24);
+  font: 950 13px/1 system-ui,sans-serif;
+  cursor: pointer;
+}
+.locationContinue b { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: rgba(80,4,42,.42); font-size: 18px; }
+.locationContinue:active { transform: translateY(4px); box-shadow: 0 2px 0 #650637,inset 0 2px 6px rgba(48,3,28,.4); }
 
 @keyframes uploadCopyIn { from { opacity: 0; transform: translateY(6px); } }
 @keyframes clayBarber { to { background-position: -56px 0; } }
@@ -564,14 +702,37 @@
 @keyframes postedLinePop { from { opacity: 0; transform: translateY(12px) scale(.86); } }
 @keyframes celebrateFall { to { transform: translate3d(28px,920px,0) rotate(620deg); } }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) and (min-width: 521px) {
+  .workspace { grid-template-columns: 184px minmax(0, 1fr); }
+  .sidebar { padding: 12px 9px 9px; }
+  .heading h1 { font-size: 18px; }
+  .heading p { display: none; }
+  .flowTabs { margin: 10px 0 8px; }
+  .flowTabs button { min-height: 44px; padding-inline: 4px; font-size: 10px; }
+  .screenList { gap: 3px; }
+  .screenList button { min-height: 48px; grid-template-columns: 27px minmax(0,1fr); gap: 6px; padding: 5px 6px; }
+  .screenList b { width: 25px; height: 25px; font-size: 9px; }
+  .screenList strong { font-size: 11px; }
+  .screenList small { display: none; }
+  .sidebarFooter { grid-template-columns: 44px 1fr 44px; gap: 5px; padding-top: 7px; }
+  .sidebarFooter button { width: 44px; height: 44px; }
+  .previewArea { padding: 11px 10px 12px; }
+  .previewHeader { margin-bottom: 7px; }
+  .previewHeader h2 { font-size: 18px; }
+  .previewHeader p { display: none; }
+  .previewTools { gap: 5px; }
+}
+
+@media (max-width: 520px) {
   .workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
-  .sidebar { overflow: hidden; padding: 10px 12px; border-right: 0; border-bottom: 1px solid #2c2e34; }
+  .sidebar { display: block; overflow: hidden; padding: 8px 9px; border-right: 0; border-bottom: 1px solid #2c2e34; }
   .heading { display: none; }
-  .flowTabs { margin: 0 0 7px; }
+  .flowTabs { margin: 0 0 6px; }
+  .flowTabs button { min-height: 44px; }
   .screenList { grid-auto-flow: column; grid-auto-columns: minmax(112px, 0.75fr); overflow-x: auto; }
   .screenList button { min-height: 44px; grid-template-columns: 22px minmax(0, 1fr) auto; padding: 5px 7px; }
   .screenList small { display: none; }
+  .sidebarFooter { display: none; }
   .previewArea { padding: 9px 8px 12px; }
   .previewHeader { margin-bottom: 7px; }
   .previewHeader p { display: none; }

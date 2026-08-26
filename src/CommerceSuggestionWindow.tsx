@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import type { SmartCard } from './tourSmarts'
 import BoundedPopupVideo from './BoundedPopupVideo'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { normalizeInAppBrowserURL, openInPoplurBrowser } from './inAppBrowser'
 import { playPop } from './pop'
 import { productImage } from './productImage'
 import { placeCreative, type PlaceCreative } from './placeCreative'
@@ -21,36 +21,15 @@ export interface CommerceSuggestionWindowProps {
   onInteract?: () => void
 }
 
-function validatedHTTPS(raw: string | undefined): string | null {
-  if (!raw || raw.length > 2_048) return null
-  try {
-    const url = new URL(raw)
-    return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password
-      ? url.toString()
-      : null
-  } catch {
-    return null
-  }
-}
-
-function shortAddress(raw: string): string {
-  try {
-    const url = new URL(raw)
-    return `${url.hostname}${url.pathname === '/' ? '' : url.pathname}`
-  } catch {
-    return raw
-  }
-}
-
 /**
  * One commerce surface for Map, Feed and Camera.
  *
  * The ad is deliberately a window, not a floating glass card: macOS traffic
  * lights make its behaviour legible, while the lower-third, channel bug and
  * starburst give it the loud shopping-TV sale energy requested for Poplur.
- * Browser mode is the SAME window changing state. Native shells then present
- * an isolated in-app browser so an untrusted shop never receives Poplur's JS
- * bridge; the plain browser preview keeps the destination inside this window.
+ * A deliberate link takes the person to Feed → Browser. Native shells then
+ * present an isolated in-app browser, so an untrusted shop never receives
+ * Poplur's signed-in WebView bridge.
  */
 export default function CommerceSuggestionWindow({
   card,
@@ -86,25 +65,18 @@ export default function CommerceSuggestionWindow({
     return () => { live = false }
   }, [card.placeCreativeQuery, productURL])
 
-  const [browserURL, setBrowserURL] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState(false)
-  const [minimized, setMinimized] = useState(false)
-  const [nativeOpening, setNativeOpening] = useState(false)
-  const safeLink = validatedHTTPS(card.link?.url)
-  const browserMode = browserURL !== null
+  const safeLink = normalizeInAppBrowserURL(card.link?.url)
 
-  const openBrowser = () => {
-    if (!safeLink) return
+  const openBrowser = (candidate = safeLink) => {
+    const destination = normalizeInAppBrowserURL(candidate)
+    if (!destination) return
     playPop()
     onInteract?.()
-    setBrowserURL(safeLink)
-    if (!isNativeShell()) return
-    setNativeOpening(true)
-    // Let the alert visibly become a browser before the native sheet lands.
-    window.setTimeout(() => {
-      postNativeEvent({ type: 'openInAppBrowser', url: safeLink })
-      setNativeOpening(false)
-    }, 180)
+    // First go to the dedicated Feed Browser screen. It owns the native
+    // isolated controller, so this card never creates a tab or hands control
+    // to the device browser.
+    openInPoplurBrowser(destination)
+    onClose()
   }
 
   const windowStyle = {
@@ -122,12 +94,8 @@ export default function CommerceSuggestionWindow({
     // Actions now opt IN by carrying data-ad-action, so a control added later
     // dismisses by default rather than becoming another way to be stuck.
     //
-    // Browser mode is the exception, and stays one: reaching it takes a
-    // deliberate press on SEE DEAL, and a destination that closed itself on
-    // the first tap inside it would be unusable.
     event.stopPropagation()
     const target = event.target
-    if (browserMode && target instanceof Element && target.closest('button, a, iframe')) return
     if (target instanceof Element && target.closest('[data-ad-action]')) return
     playPop()
     onClose()
@@ -136,16 +104,10 @@ export default function CommerceSuggestionWindow({
   return (
     <section
       data-poplur-native-hit-region
-      className={[
-        styles.window,
-        variant === 'camera' ? styles.camera : styles.popup,
-        browserMode ? styles.browserMode : '',
-        expanded ? styles.expanded : '',
-        minimized ? styles.minimized : '',
-      ].filter(Boolean).join(' ')}
+      className={[styles.window, variant === 'camera' ? styles.camera : styles.popup].join(' ')}
       style={windowStyle}
       role="dialog"
-      aria-label={browserMode ? `In-app browser for ${card.title}` : card.headline}
+      aria-label={card.headline}
       onPointerDown={event => event.stopPropagation()}
       onPointerUp={event => event.stopPropagation()}
       onClick={closeFromSurface}
@@ -153,70 +115,24 @@ export default function CommerceSuggestionWindow({
       <header className={styles.titleBar}>
         <div className={styles.traffic} aria-label="Window controls">
           <button type="button" className={`${styles.light} ${styles.close}`} aria-label="Close ad" onClick={() => { playPop(); onClose() }} />
-          {/* Outside browser mode these two are no longer window controls —
-              they are close targets, like everything else that is not the CTA.
-              Minimize/expand on a card that lives four seconds was ceremony;
-              being able to get rid of it with whatever your thumb lands on is
-              the point. They keep their real jobs inside the browser, which is
-              the one place the window genuinely persists. */}
           <button
             type="button"
             className={`${styles.light} ${styles.minimize}`}
-            aria-label={browserMode ? 'Back to ad' : 'Close ad'}
-            {...(browserMode ? { 'data-ad-action': '' } : {})}
-            onClick={() => {
-              playPop()
-              if (!browserMode) { onClose(); return }
-              onInteract?.()
-              setBrowserURL(null)
-            }}
+            aria-label="Close ad"
+            onClick={() => { playPop(); onClose() }}
           />
           <button
             type="button"
             className={`${styles.light} ${styles.zoom}`}
-            aria-label={browserMode ? (expanded ? 'Restore window size' : 'Expand window') : 'Close ad'}
-            {...(browserMode ? { 'data-ad-action': '' } : {})}
-            onClick={() => {
-              playPop()
-              if (!browserMode) { onClose(); return }
-              onInteract?.()
-              setMinimized(false)
-              setExpanded(value => !value)
-            }}
+            aria-label="Close ad"
+            onClick={() => { playPop(); onClose() }}
           />
         </div>
-        <span className={styles.windowTitle}>
-          {browserMode ? `Safari · ${shortAddress(browserURL)}` : (card.sponsor ?? 'Poplur Shopping Network')}
-        </span>
-        <span className={styles.secure}>{browserMode ? '🔒' : 'AD'}</span>
+        <span className={styles.windowTitle}>{card.sponsor ?? 'Poplur Shopping Network'}</span>
+        <span className={styles.secure}>AD</span>
       </header>
 
-      {minimized ? null : browserMode ? (
-        <div className={styles.browser}>
-          <div className={styles.addressBar}>
-            <button type="button" onClick={() => { playPop(); setBrowserURL(null) }} aria-label="Back to ad">‹</button>
-            <span>🔒 {shortAddress(browserURL)}</span>
-            <button type="button" onClick={() => { playPop(); setExpanded(value => !value) }} aria-label="Resize browser">↗</button>
-          </div>
-          {isNativeShell() ? (
-            <div className={styles.nativeBrowserState} role="status">
-              <span className={styles.browserCompass} aria-hidden="true">◉</span>
-              <strong>{nativeOpening ? 'OPENING IN POPLUR…' : 'IN-APP BROWSER OPEN'}</strong>
-              <small>The secure page stays inside the app.</small>
-              <button type="button" onClick={openBrowser}>OPEN AGAIN</button>
-            </div>
-          ) : (
-            <iframe
-              className={styles.browserFrame}
-              src={browserURL}
-              title={`${card.title} shopping page`}
-              sandbox="allow-forms allow-scripts allow-same-origin"
-              referrerPolicy="strict-origin-when-cross-origin"
-            />
-          )}
-        </div>
-      ) : (
-        <>
+      <>
           <div className={styles.media}>
             {shot ? (
               /* Real product artwork wins over the bundled clip. A STILL, not a
@@ -244,15 +160,13 @@ export default function CommerceSuggestionWindow({
             {/* Attribution for the place creative — kept live under the
                 close-on-any-press rule because it is the source credit the
                 data is used under, not ad furniture. */}
-            {livePlace && (
-              <a
+            {livePlace && normalizeInAppBrowserURL(livePlace.sourceUrl) && (
+              <button
+                type="button"
                 className={styles.liveSource}
-                href={livePlace.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
                 data-ad-action=""
-                onClick={event => event.stopPropagation()}
-              >{livePlace.sourceLabel}</a>
+                onClick={event => { event.stopPropagation(); openBrowser(livePlace.sourceUrl) }}
+              >{livePlace.sourceLabel}</button>
             )}
           </div>
 
@@ -289,14 +203,13 @@ export default function CommerceSuggestionWindow({
                 </button>
               )}
               {safeLink && (
-                <button type="button" className={styles.shop} data-ad-action="" onClick={openBrowser}>
+                <button type="button" className={styles.shop} data-ad-action="" onClick={() => openBrowser()}>
                   {card.link?.label ?? 'SEE DEAL'}
                 </button>
               )}
             </footer>
           )}
-        </>
-      )}
+      </>
     </section>
   )
 }

@@ -27,14 +27,6 @@
     0 0 60px rgba(0,0,0,0.9);
 }
 
-/* Conquer Board is the active map layer while it is visible. Leaving the
-   regular thumb rail underneath produced two competing control columns; it
-   returns immediately after the board is dismissed. */
-.shell:has(:global(#poplur-domination-live)) :global([data-poplur-control-rail]) {
-  opacity: 0;
-  pointer-events: none;
-}
-
 @media (min-height: 933px) {
   .shell { border-radius: 40px; margin: auto; }
 }

@@ -1767,3 +1767,43 @@
   .ftPulseAvatar > i { animation: none; }
   .ftVideo { transition: none; }
 }
+
+/* Outgoing calls use the three original Poplur call identities again. The
+   overlay is portalled to the document body, so this layer now truly owns the
+   phone while calling: Home's navigator, radius card, and side controls cannot
+   sit over the call buttons. */
+.ftOverlay[data-call-state='connecting'] .ftHeader {
+  z-index: 50;
+}
+
+.ftOverlay[data-call-state='connecting'] .ftRinging {
+  z-index: 4;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255, 58, 160, .18), transparent 31%),
+    linear-gradient(165deg, #351126, #110714 54%, #050408);
+}
+
+.ftOverlay[data-call-state='connecting'] .ftRingingHalo {
+  top: 43%;
+  left: 50%;
+  translate: -50% -50%;
+}
+
+.ftOverlay[data-call-state='connecting'] .ftOrbitRail {
+  top: 43%;
+  left: 50%;
+  translate: -50% -50%;
+}
+
+.ftOverlay[data-call-state='connecting'] .ftRinging > strong,
+.ftOverlay[data-call-state='connecting'] .ftRinging > span,
+.ftOverlay[data-call-state='connecting'] .ftRinging > b,
+.ftOverlay[data-call-state='connecting'] .ftRinging > small {
+  position: relative;
+  z-index: 3;
+}
+
+.ftOverlay[data-call-state='connecting'] .ftLocalPane,
+.ftOverlay[data-call-state='connecting'] .ftControls {
+  z-index: 60;
+}

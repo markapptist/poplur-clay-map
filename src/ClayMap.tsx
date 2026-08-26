@@ -21,12 +21,11 @@ import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer } from './mapClaims'
 import {
-  DOMINANCE_OVERVIEW_MAX_ZOOM,
   dominanceFameScore,
   dominanceLeaders,
   type DominanceEngagement,
-  type DominanceLeader,
 } from './mapDominance'
+import { createMapConquerSnapshot } from './mapConquer'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
 import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
 import {
@@ -50,10 +49,18 @@ import {
   worldFlagZoomActive,
   type CountryMapFeature,
 } from './countryFlags'
+import {
+  airportCubeHit,
+  reconcileAirportCrossing,
+  type AirportMapFeature,
+  type AirportPoint,
+} from './mapAirportCube'
 
 export interface ClayMapProps {
   token: string
   pois: POI[]
+  /** Curated tour airports backstop labels that Mapbox may declutter. */
+  airportPoints?: readonly AirportPoint[]
   selectedId: string | null
   onSelectPoi: (id: string) => void
   mapRef: React.MutableRefObject<mapboxgl.Map | null>
@@ -1370,7 +1377,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -1385,12 +1392,13 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   const requestedPickLngRaw = launchParams.get('pickLng')
   const requestedPickLat = requestedPickLatRaw?.trim() ? Number(requestedPickLatRaw) : Number.NaN
   const requestedPickLng = requestedPickLngRaw?.trim() ? Number(requestedPickLngRaw) : Number.NaN
-  const requestedPickCenter: [number, number] | null = radiusPreviewLaunch
-    ? HOME_CENTER
-    : focusedPostLaunch
-      && Number.isFinite(requestedPickLat) && Math.abs(requestedPickLat) <= 90
-      && Number.isFinite(requestedPickLng) && Math.abs(requestedPickLng) <= 180
-      ? [requestedPickLng, requestedPickLat]
+  const hasRequestedPickCenter = focusedPostLaunch
+    && Number.isFinite(requestedPickLat) && Math.abs(requestedPickLat) <= 90
+    && Number.isFinite(requestedPickLng) && Math.abs(requestedPickLng) <= 180
+  const requestedPickCenter: [number, number] | null = hasRequestedPickCenter
+    ? [requestedPickLng, requestedPickLat]
+    : radiusPreviewLaunch
+      ? HOME_CENTER
       : null
   const containerRef = useRef<HTMLDivElement>(null)
   const weatherCloseRef = useRef<HTMLButtonElement>(null)
@@ -1539,93 +1547,38 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
   const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
   const zoomProgress = `${((zoomRatio * (zoomRailMetrics.length - zoomRailMetrics.thumb) + zoomRailMetrics.thumb / 2) / zoomRailMetrics.length) * 100}%`
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
-  const [dominanceBoardOpen, setDominanceBoardOpen] = useState(true)
-  const dominanceBoardOpenRef = useRef(true)
-  dominanceBoardOpenRef.current = dominanceBoardOpen
-  const dominanceOverview = zoomValue <= DOMINANCE_OVERVIEW_MAX_ZOOM
-  const [dominanceViewportPins, setDominanceViewportPins] = useState<readonly PopPin[]>(() => pins ?? [])
-  const [dominanceViewRevision, setDominanceViewRevision] = useState(0)
-  const [dominanceAnnouncement, setDominanceAnnouncement] = useState('')
-  const dominanceSignatureRef = useRef('')
   const dominancePinsKey = (pins ?? []).map(pin => {
     const e = pin.engagement
-    return `${pin.id}:${pin.ownerId ?? ''}:${pin.radiusKm}:${pin.color}:${pin.avatar ?? ''}:${e?.views ?? 0}:${e?.repeatViews ?? 0}:${e?.upvotes ?? 0}:${e?.downvotes ?? 0}:${e?.comments ?? 0}`
+    return `${pin.id}:${pin.ownerId ?? ''}:${pin.radiusKm}:${pin.color}:${pin.avatar ?? ''}:${e?.views ?? 0}:${e?.repeatViews ?? 0}:${e?.upvotes ?? 0}:${e?.downvotes ?? 0}:${e?.comments ?? 0}:${e?.profileVisits ?? 0}`
   }).join('|')
-  const dominanceRows = useMemo(
-    () => dominanceLeaders(dominanceViewportPins, takeoverTint(PALETTE.pinkHot)),
-    [dominanceViewportPins, takeoverFace],
-  )
-  const dominanceBoardVisible = dominanceBoardOpen && dominanceRows.length > 0 && !controlsObscured
-  const dominanceTotalKm = dominanceRows.reduce((sum, row) => sum + row.radiusKm, 0)
-  const dominanceMaxFame = dominanceRows[0]?.fame ?? 1
   useEffect(() => {
     const map = mapRef.current
     const allPins = pins ?? []
-    if (!map || mapEpoch === 0) {
-      setDominanceViewportPins(allPins)
-      return
-    }
-    let sampleTimer = 0
-    const publish = (settled: boolean) => {
-      sampleTimer = 0
+    if (!map || mapEpoch === 0) return
+    // Conquer is now a true Map-tab screen. Publish only a bounded snapshot on
+    // camera settle; the screen can then replace/unmount this map and render
+    // the ranking without a hidden Mapbox surface or camera-move React work.
+    const publish = () => {
       const nextPins = viewportDominancePins(map, allPins)
       const rankedPins = [...nextPins].sort((a, b) =>
         dominanceFameScore(b.radiusKm, b.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
         || b.radiusKm - a.radiusKm)
-      const nextRows = dominanceLeaders(nextPins, takeoverTint(PALETTE.pinkHot)).slice(0, 10)
-      const signature = nextRows
-        .map(row => `${row.owner}:${row.fame}:${Math.round(row.radiusKm * 10)}`)
-        .join('|')
-      if (signature !== dominanceSignatureRef.current) {
-        dominanceSignatureRef.current = signature
-        setDominanceViewportPins(nextPins)
-        setDominanceViewRevision(revision => revision + 1)
+      const nextRows = dominanceLeaders(nextPins, takeoverTint(PALETTE.pinkHot))
+      if (window.parent !== window) {
+        window.parent.postMessage({
+          type: 'poplur-map-conquer',
+          snapshot: createMapConquerSnapshot(nextRows, map.getZoom()),
+          // The compact board belongs to the actual end-stop, not the much
+          // broader overview band used to simplify domination geometry.
+          atFarthestZoom: worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM),
+        }, '*')
       }
-      if (!settled) return
-      const leader = nextRows[0]
-      setDominanceAnnouncement(leader
-        ? `${leader.label} leads this area with ${leader.fame.toLocaleString()} fame.`
-        : 'No conquered areas are in view.')
       pulseDominanceLayer(map, rankedPins.slice(0, 4).map(pin => pin.id))
-      const roots = [...(containerRef.current?.querySelectorAll<HTMLElement>(`.${styles.popPinMarker}`) ?? [])]
-      if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-        roots.forEach(root => {
-          const pinImage = root.querySelector<HTMLElement>(`.${styles.popPin} > img`)
-          const ownerLabel = root.querySelector<HTMLElement>(`.${styles.dominationTerritoryLabel}`)
-          const selfie = root.querySelector<HTMLElement>(`.${styles.popPinSelfie}`)
-          pinImage?.animate([
-            { opacity: 0.22, transform: 'scale(.72)' },
-            { opacity: 1, transform: 'scale(1.12)', offset: 0.64 },
-            { opacity: 1, transform: 'scale(1)' },
-          ], { duration: 480, easing: 'cubic-bezier(.16, .82, .24, 1)' })
-          ownerLabel?.animate([
-            { opacity: 0.22, transform: 'translateX(-50%) scale(.72)' },
-            { opacity: 1, transform: 'translateX(-50%) scale(1.12)', offset: 0.64 },
-            { opacity: 1, transform: 'translateX(-50%) scale(1)' },
-          ], { duration: 480, easing: 'cubic-bezier(.16, .82, .24, 1)' })
-          selfie?.animate([
-            { opacity: 0.2, transform: 'translateX(-50%) scale(.72)' },
-            { opacity: 1, transform: 'translateX(-50%) scale(1.12)', offset: 0.64 },
-            { opacity: 1, transform: 'translateX(-50%) scale(1)' },
-          ], { duration: 480, easing: 'cubic-bezier(.16, .82, .24, 1)' })
-        })
-      }
     }
-    const onMove = () => {
-      if (!dominanceBoardOpenRef.current || sampleTimer) return
-      sampleTimer = window.setTimeout(() => publish(false), 120)
-    }
-    const onMoveEnd = () => {
-      if (sampleTimer) window.clearTimeout(sampleTimer)
-      publish(true)
-    }
-    publish(true)
-    map.on('move', onMove)
-    map.on('moveend', onMoveEnd)
+    publish()
+    map.on('moveend', publish)
     return () => {
-      if (sampleTimer) window.clearTimeout(sampleTimer)
-      map.off('move', onMove)
-      map.off('moveend', onMoveEnd)
+      map.off('moveend', publish)
     }
   }, [dominancePinsKey, mapEpoch, mapRef, takeoverFace])
 
@@ -1650,8 +1603,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     return () => document.removeEventListener('keydown', onKey)
   }, [colorPaletteOpen, closeColorPalette])
   useEffect(() => {
-    if (controlsObscured || dominanceBoardVisible) setColorPaletteOpen(false)
-  }, [controlsObscured, dominanceBoardVisible])
+    if (controlsObscured) setColorPaletteOpen(false)
+  }, [controlsObscured])
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const composeAtRef = useRef(composeAt)
@@ -2353,6 +2306,54 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     map.on('moveend', publishWorldFlag)
     map.on('zoomend', publishWorldFlag)
     map.on('idle', retryFirstWorldFlagOnIdle)
+
+    // ── Visible airport → navigator airplane ─────────────────────────────────
+    // The airport moment follows the camera, not the render loop. Query only
+    // airport/POI symbol layers after the camera settles, then publish one
+    // enter/change/leave edge. Home keeps the one existing cube renderer and
+    // swaps its tiny root-bundle model for a bounded pop.
+    let airportLayerIds: string[] | null = null
+    let activeAirportId: string | null = null
+    const visibleAirportFeatures = (): AirportMapFeature[] => {
+      if (airportLayerIds === null) {
+        airportLayerIds = (map.getStyle()?.layers ?? [])
+          .filter(layer => layer.type === 'symbol' && /airport|aerodrome|poi/i.test(layer.id))
+          .map(layer => layer.id)
+      }
+      if (!airportLayerIds.length) return []
+      try {
+        return map.queryRenderedFeatures(undefined as never, {
+          layers: airportLayerIds,
+        }) as AirportMapFeature[]
+      } catch {
+        // The style can still be settling on the first camera arrival. The
+        // curated fallback below is independent of rendered label readiness.
+        return []
+      }
+    }
+    const publishAirport = () => {
+      if (disposed) return
+      const center = map.getCenter()
+      const next = airportCubeHit(
+        visibleAirportFeatures(),
+        airportPoints,
+        [center.lng, center.lat],
+        map.getZoom(),
+      )
+      const crossing = reconcileAirportCrossing(activeAirportId, next)
+      if (!crossing.changed) return
+      activeAirportId = crossing.activeId
+      if (window.parent !== window) {
+        window.parent.postMessage({
+          type: 'poplur-map-airport',
+          airportId: next?.id ?? null,
+          name: next?.name ?? null,
+        }, '*')
+      }
+    }
+    map.on('moveend', publishAirport)
+    map.on('zoomend', publishAirport)
+    map.once('idle', publishAirport)
 
     // ── Zoom-dependent marker visibility ─────────────────────────────────────
     // Globe zoom shows the flyers; street zoom shows the POI pins.
@@ -5413,77 +5414,6 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           BACKGROUND behind the focal subject blurs (bokeh), not the screen
           edges — that effect is on the work order for capable devices. */}
 
-      {dominanceBoardVisible && (
-        <>
-          <button
-            type="button"
-            className={styles.dominanceDismiss}
-            aria-label="Close Conquer Board"
-            onClick={() => {
-              playPop()
-              setDominanceBoardOpen(false)
-            }}
-          />
-          <div className={styles.dominanceDock}>
-            <section
-              id="poplur-domination-live"
-              className={styles.dominanceBoard}
-              aria-labelledby="poplur-domination-title"
-              onClick={() => {
-                playPop()
-                setDominanceBoardOpen(false)
-              }}
-            >
-              <header className={styles.dominanceBoardTop}>
-                <div>
-                  <span>{dominanceOverview ? 'WORLD' : 'LOCAL'} · DOMINATION LIVE</span>
-                  <h2 id="poplur-domination-title">Conquer Board</h2>
-                </div>
-                <strong
-                  key={`leader-${dominanceRows[0]?.owner}-${dominanceViewRevision}`}
-                  className={styles.dominanceLeaderNow}
-                  style={{ '--dominationColor': dominanceRows[0]?.color } as React.CSSProperties}
-                >
-                  {dominanceRows[0]?.label}
-                </strong>
-              </header>
-              <div className={styles.dominanceBoardStats}>
-                <span><strong>{dominanceRows.length}</strong> in view</span>
-                <span><strong>{Math.round(dominanceTotalKm).toLocaleString()}</strong> km held</span>
-                <span><strong>{dominanceRows[0]?.fame.toLocaleString() ?? '—'}</strong> top fame</span>
-              </div>
-              <div className={styles.dominanceList}>
-                {dominanceRows.slice(0, 10).map((row: DominanceLeader, index) => (
-                  <article
-                    className={styles.dominanceRow}
-                    key={`${row.owner}-${dominanceViewRevision}`}
-                    style={{ '--dominationColor': row.color } as React.CSSProperties}
-                  >
-                    <span className={styles.dominanceRank}>{index + 1}</span>
-                    <span className={styles.dominanceAvatar}>
-                      {row.avatar
-                        ? <img src={row.avatar} alt="" draggable={false} />
-                        : <b aria-hidden="true">{row.label.replace('@', '').slice(0, 1).toUpperCase()}</b>}
-                    </span>
-                    <span className={styles.dominanceName}>
-                      <strong>{row.label}</strong>
-                      <em>{row.topPlace} · {row.territories} {row.territories === 1 ? 'area' : 'areas'}</em>
-                    </span>
-                    <span className={styles.dominanceFame}>
-                      {row.fame.toLocaleString()}<small>FAME</small>
-                    </span>
-                    <span className={styles.dominanceBar} aria-hidden="true">
-                      <i style={{ width: `${Math.max(8, (row.fame / dominanceMaxFame) * 100)}%` }} />
-                    </span>
-                  </article>
-                ))}
-              </div>
-              <span className={styles.srOnly} aria-live="polite">{dominanceAnnouncement}</span>
-            </section>
-          </div>
-        </>
-      )}
-
       {cloudBand > 0.01 && cloudSprite && (
         <div className={styles.cloudLayer} aria-hidden="true">
           <img className={styles.cloudSprite} src={cloudSprite} alt=""
@@ -5837,7 +5767,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       )}
 
       <div
-        className={controlsObscured || dominanceBoardVisible ? `${styles.zoomWrap} ${styles.mapControlsObscured}` : styles.zoomWrap}
+        className={controlsObscured ? `${styles.zoomWrap} ${styles.mapControlsObscured}` : styles.zoomWrap}
         style={{
           // The knob is a pre-rendered view of the real 3D object at this
           // zoom band. Unlike decoding a GLB just to decorate a control, this
@@ -5856,8 +5786,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         aria-valuemin={ZOOM_MIN}
         aria-valuemax={ZOOM_MAX}
         aria-valuenow={Number(zoomValue.toFixed(2))}
-        aria-hidden={controlsObscured || dominanceBoardVisible ? true : undefined}
-        tabIndex={controlsObscured || dominanceBoardVisible ? -1 : 0}
+        aria-hidden={controlsObscured ? true : undefined}
+        tabIndex={controlsObscured ? -1 : 0}
         onPointerDown={handleZoomDown}
         onPointerMove={handleZoomMove}
         onPointerUp={handleZoomUp}
@@ -5922,15 +5852,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         ref={colorCircleRef}
         type="button"
         key={`takeover-${takeoverFace}`}
-        className={controlsObscured || dominanceBoardVisible ? `${styles.colorCircle} ${styles.mapControlsObscured}` : styles.colorCircle}
+        className={controlsObscured ? `${styles.colorCircle} ${styles.mapControlsObscured}` : styles.colorCircle}
         style={{ '--takeoverFace': takeoverFace } as React.CSSProperties}
         aria-label="Change your takeover colour. Hold to choose a colour"
         aria-haspopup="dialog"
         aria-expanded={colorPaletteOpen}
-        aria-hidden={controlsObscured || dominanceBoardVisible ? true : undefined}
+        aria-hidden={controlsObscured ? true : undefined}
         title="Takeover colour"
-        disabled={controlsObscured || dominanceBoardVisible}
-        tabIndex={controlsObscured || dominanceBoardVisible ? -1 : 0}
+        disabled={controlsObscured}
+        tabIndex={controlsObscured ? -1 : 0}
         onPointerDown={event => {
           window.clearTimeout(colorHoldTimerRef.current)
           event.currentTarget.setPointerCapture?.(event.pointerId)
