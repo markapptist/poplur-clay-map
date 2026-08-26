@@ -1268,35 +1268,3 @@
   background: #4dff69;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
 }
-.storyModeBadge {
-  position: absolute;
-  z-index: 18;
-  top: calc(env(safe-area-inset-top) + 118px);
-  left: 50%;
-  translate: -50% 0;
-  display: grid;
-  grid-template-columns: 34px auto;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 10px 5px 5px;
-  border: 1px solid rgba(255, 151, 205, .72);
-  border-radius: 9px;
-  color: #fff;
-  background: rgba(28, 7, 20, .78);
-  box-shadow: 0 6px 16px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.2);
-  pointer-events: none;
-}
-.storyModeBadge b {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 28px;
-  border-radius: 6px;
-  color: #fff;
-  background: linear-gradient(145deg, #ff63ad, #bd0c65);
-  font: 950 10px/1 ui-monospace, monospace;
-}
-.storyModeBadge span {
-  font: 950 9px/1 ui-monospace, monospace;
-  letter-spacing: 1px;
-}

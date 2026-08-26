@@ -44,6 +44,12 @@ import { setCarProximity, stopCarAudio } from './carAudio'
 import type { WeatherMode } from './WeatherFX'
 import styles from './ClayMap.module.css'
 import { dropNewsMessage, MESSAGE_MAX } from './newsMessages'
+import {
+  countryFlagModelUrl,
+  nearestCountryCode,
+  worldFlagZoomActive,
+  type CountryMapFeature,
+} from './countryFlags'
 
 export interface ClayMapProps {
   token: string
@@ -2014,6 +2020,12 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         // Unlike the old globe, Mercator has a real north/south edge. Clamp
         // gestures and programmatic cameras to the same safe regional floor.
         minZoom: MAP_MIN_ZOOM,
+        // The world-scale view is meant to be explored laterally. Make the
+        // interaction contract explicit rather than inheriting projection/
+        // style defaults: repeated worlds let a drag cross the antimeridian,
+        // and dragPan remains available at the exact minimum zoom.
+        renderWorldCopies: true,
+        dragPan: true,
         pitch: MAP_2D || SHARED_ADAPTIVE_MAP ? 0 : 62,
         bearing: MAP_2D || SHARED_ADAPTIVE_MAP ? 0 : -18,
         // MSAA is a browser-only luxury: on phone GPUs it multiplies the
@@ -2270,6 +2282,78 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     map.on('zoom', () => syncZoom(false))
     map.on('zoomend', () => syncZoom(true))
 
+    // ── World-centre country → navigator flag ───────────────────────────────
+    // Use country-coded place-label points from the vector tiles Mapbox has
+    // already loaded. This works without a reverse-geocoding request and, over
+    // water, naturally answers with the nearest visible country. It runs only
+    // after a pan settles: querying labels and decoding GLBs while a finger is
+    // moving would make the exact world-view gesture we are fixing sluggish.
+    let activeWorldFlagCode: string | null = null
+    let worldFlagRequest = 0
+    const worldCountryFeatures = (): CountryMapFeature[] => {
+      const features: CountryMapFeature[] = []
+      const countryLayer = map.getLayer('country-label') as unknown as {
+        source?: unknown
+        'source-layer'?: unknown
+      } | undefined
+      const source = countryLayer?.source
+      const sourceLayer = countryLayer?.['source-layer']
+      if (typeof source === 'string' && typeof sourceLayer === 'string') {
+        try {
+          features.push(...map.querySourceFeatures(source, { sourceLayer }) as CountryMapFeature[])
+        } catch { /* source/style is still settling; rendered labels retry below */ }
+      }
+      try {
+        features.push(...map.queryRenderedFeatures(undefined as never, {
+          layers: ['country-label'],
+        }) as CountryMapFeature[])
+      } catch { /* country layer is not ready yet; idle retries once it is */ }
+      return features
+    }
+    const publishWorldFlag = () => {
+      if (!worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) {
+        worldFlagRequest += 1
+        if (activeWorldFlagCode !== null) {
+          activeWorldFlagCode = null
+          if (window.parent !== window) {
+            window.parent.postMessage({ type: 'poplur-map-country-flag', code: null, modelUrl: null }, '*')
+          }
+        }
+        return
+      }
+      const center = map.getCenter()
+      const code = nearestCountryCode(worldCountryFeatures(), [center.lng, center.lat])
+      if (!code || code === activeWorldFlagCode) return
+      activeWorldFlagCode = code
+      const request = ++worldFlagRequest
+      void countryFlagModelUrl(code).then(modelUrl => {
+        if (disposed || request !== worldFlagRequest || activeWorldFlagCode !== code) return
+        if (!modelUrl) {
+          // Leave the state retryable. The asset resolver clears failed cache
+          // entries, so a later settled pan can recover without reloading map.
+          activeWorldFlagCode = null
+          return
+        }
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: 'poplur-map-country-flag', code, modelUrl }, '*')
+        }
+      })
+    }
+    // Crossing inward restores the ordinary map object on the first zoom
+    // frame; entering/changing countries waits for the settled camera.
+    const clearWorldFlagPastOuterZoom = () => {
+      if (!worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) publishWorldFlag()
+    }
+    const retryFirstWorldFlagOnIdle = () => {
+      if (activeWorldFlagCode === null && worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) {
+        publishWorldFlag()
+      }
+    }
+    map.on('zoom', clearWorldFlagPastOuterZoom)
+    map.on('moveend', publishWorldFlag)
+    map.on('zoomend', publishWorldFlag)
+    map.on('idle', retryFirstWorldFlagOnIdle)
+
     // ── Zoom-dependent marker visibility ─────────────────────────────────────
     // Globe zoom shows the flyers; street zoom shows the POI pins.
     // (Without this, city pins hover in outer space at globe zoom.)
@@ -2470,6 +2554,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     const boostOnTouch = () => {
       initialCameraInteractionRef.current = true
       ;(map as unknown as { __cinematic?: boolean }).__cinematic = false
+      // A parked native WebView needs a bounded renderer lease as well as the
+      // JS governor boost. At the minimum zoom there may be no zoom delta to
+      // wake it "by accident", so without this the HUD could respond while
+      // Mapbox's pan frame remained retained and looked frozen.
+      wakeManagedRendering(3_200)
+      if (worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM) && !map.dragPan.isEnabled()) {
+        map.dragPan.enable()
+      }
+      map.triggerRepaint()
       boostFrames(600)
     }
     // pointermove only counts while a finger/button is actually DOWN. Bare

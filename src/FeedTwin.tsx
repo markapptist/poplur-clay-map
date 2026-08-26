@@ -23,6 +23,11 @@ import {
   setFeedDiscoveryMode,
   type FeedDiscoverySnapshot,
 } from './feedDiscovery'
+import {
+  mixPublishedMediaWithPromotions,
+  nextFeedPostIndex,
+  shouldResumeFeedAfterFocus,
+} from './feedMediaSequence'
 
 // Owners the feed never steals the floor from. The AI voice is temporary and
 // hands back on its own; background Radio or iPod is a standing choice the
@@ -284,7 +289,7 @@ const CHANNEL_PLACES: Record<string, string[]> = {
 
 // Ordered by the post's radius intercepting your location, widest first.
 function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPost[] {
-  const realPosts = published
+  const realPosts: ChannelPost[] = published
     .filter(post => post.channelId === channel.id)
     .map(post => ({
       id: post.id,
@@ -304,12 +309,11 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       originLatitude: post.originLatitude,
       originLongitude: post.originLongitude,
     }))
-  if (realPosts.length) return realPosts
   // LIVE: whoever is streaming into your radius, your own broadcast first.
   // An empty channel still gets a playable Poplur clip: static is a transition,
   // never a permanent startup state.
   if (channel.id === 'live') {
-    const broadcasts = interceptingLive().map(b => ({
+    const broadcasts: ChannelPost[] = interceptingLive().map(b => ({
       id: `${channel.id}:${b.user}:${b.video ?? 'camera'}`,
       user: b.user,
       video: b.video ?? '',
@@ -322,19 +326,23 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       viewCount: b.viewers,
       locationVisibility: 'hidden' as const,
     }))
-    if (broadcasts.length) return broadcasts
     const video = STOCK_CLIPS[channel.number % STOCK_CLIPS.length]
-    return [{
+    const fallback: ChannelPost = {
       id: `${channel.id}:fallback:${video}`,
       user: '@poplur.live',
       video,
+      mediaType: 'video',
       caption: 'Live around your radius',
       reachKm: reachKmFor(`${channel.id}:fallback:${video}`),
       createdAtMillis: Date.UTC(2026, 7, 25, 12),
       viewCount: 18,
       locationVisibility: 'approximate' as const,
       distanceMeters: 1_400,
-    }]
+    }
+    const liveMedia = [...realPosts, ...broadcasts]
+    return liveMedia.length
+      ? mixPublishedMediaWithPromotions(liveMedia, [fallback])
+      : [fallback]
   }
   const users = CHANNEL_USERS[channel.id] ?? [channel.user]
   const own = channel.videos ?? []
@@ -345,7 +353,7 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
   // feed": an advertiser's creative intercepts your radius on ANY channel, so
   // the pool rotates through every supplied ad, offset per channel so
   // neighbouring channels do not mirror each other.
-  return users.map((user, i) => {
+  const promotions: ChannelPost[] = users.map((user, i) => {
     const video = own[i] ?? AD_POOL[(channel.number * 3 + i) % AD_POOL.length]
     const places = CHANNEL_PLACES[channel.id] ?? []
     const id = `${channel.id}:${user}:${video}`
@@ -354,6 +362,7 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       id,
       user,
       video,
+      mediaType: 'video',
       place: places[i % places.length],
       reachKm: reachKmFor(id),
       createdAtMillis: Date.UTC(2026, 7, 25, 18) - (seed % (10 * 86_400_000)),
@@ -365,6 +374,7 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       distanceMeters: 250 + (seed % 24_000),
     }
   })
+  return mixPublishedMediaWithPromotions(realPosts, promotions)
 }
 
 function currentViewerCoords(): [number, number] | null {
@@ -437,11 +447,6 @@ const COMMENT_ROLL = [
   { who: '@localwire', body: 'covering this Friday, see you there', pic: feedUrl('posters/ad-sports.jpg') },
   { who: '@hauls', body: 'my whole feed is this place today', pic: feedUrl('posters/ad-cartoon.jpg') },
 ]
-
-// Clips of unattended autoplay before the feed rests on a tap-to-resume
-// cover. ~6 clips is a couple of minutes — long enough not to interrupt real
-// watching, short enough to stop decoding for a phone left on the feed.
-const AUTOPLAY_REST_AFTER = 6
 
 export default function FeedTwin({
   index: controlledIndex,
@@ -524,16 +529,6 @@ export default function FeedTwin({
   const playerModeRef = useRef(false)
   const [playerPaused, setPlayerPaused] = useState(false)
   const playerPausedByUserRef = useRef(false)
-  // "Are you still watching?" — a feed left on screen autoplays clip after clip
-  // through advanceCompletedContent forever, decoding video the whole time even
-  // when nobody is looking. That is real sustained heat the frame governor
-  // cannot touch (a <video> decoder runs independently of the shared clock).
-  // After a run of auto-advances with no interaction the feed rests on a
-  // tap-to-resume cover instead. The decoder is already released at onEnded, so
-  // resting spends nothing; any touch (noteFeedActivity) brings it back.
-  const [autoplayRested, setAutoplayRested] = useState(false)
-  const autoplayRestedRef = useRef(false)
-  const unattendedAdvancesRef = useRef(0)
   const [playerTime, setPlayerTime] = useState(0)
   const [playerDuration, setPlayerDuration] = useState(0)
   const [playerBuffered, setPlayerBuffered] = useState(0)
@@ -794,35 +789,7 @@ export default function FeedTwin({
   }, [])
 
 
-  // Any real interaction clears the unattended run and, if the feed had rested,
-  // brings autoplay back by re-mounting the current clip.
-  const noteFeedActivity = useCallback(() => {
-    unattendedAdvancesRef.current = 0
-    if (autoplayRestedRef.current) {
-      autoplayRestedRef.current = false
-      setAutoplayRested(false)
-    }
-  }, [])
-
-  // The rest cover's own resume: bring autoplay back by advancing to a fresh
-  // clip (a new <video> mounts and plays; re-rendering the same source would
-  // not restart the retired decoder).
-  const wakeFeed = useCallback(() => {
-    unattendedAdvancesRef.current = 0
-    autoplayRestedRef.current = false
-    setAutoplayRested(false)
-    const count = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot()).length
-    if (count >= 2) {
-      const cur = contentIdxRef.current[ch.id] ?? 0
-      const nxt = (cur + 1) % count
-      contentIdxRef.current[ch.id] = nxt
-      onContentAdvance?.(ch.id, nxt)
-    }
-    forceContentRender(n => n + 1)
-  }, [ch, onContentAdvance])
-
   const change = useCallback((dir: 1 | -1) => {
-    noteFeedActivity()
     const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
     if (next === index) return
     const currentPosts = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
@@ -837,7 +804,7 @@ export default function FeedTwin({
     playPop()
     if (onIndexChange) onIndexChange(next)
     else setOwnIndex(next)
-  }, [ch, index, noteFeedActivity, onIndexChange])
+  }, [ch, index, onIndexChange])
 
   const toggleMute = () => {
     const next = !muted
@@ -851,7 +818,6 @@ export default function FeedTwin({
   // a channel always starts on the widest-reaching post and swiping left
   // narrows in.
   const changeContent = useCallback((dir: 1 | -1) => {
-    noteFeedActivity()
     const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
     const count = ranked.length
     if (count < 2) return
@@ -880,16 +846,7 @@ export default function FeedTwin({
     const watched = ranked[current % count]
     if (watched) recordFeedDiscoverySignal({ id: watched.id, channelId: ch.id }, 'watch')
     if (count < 2) return
-    // Autoplaying to an empty room is pure heat. After AUTOPLAY_REST_AFTER
-    // clips with no touch, rest on a cover rather than decode another; the
-    // decoder was released at onEnded, so this is free until a tap resumes it.
-    if (unattendedAdvancesRef.current >= AUTOPLAY_REST_AFTER) {
-      autoplayRestedRef.current = true
-      setAutoplayRested(true)
-      return
-    }
-    unattendedAdvancesRef.current += 1
-    const next = (current + 1) % count
+    const next = nextFeedPostIndex(current, count)
     contentIdxRef.current[ch.id] = next
     onContentAdvance?.(ch.id, next)
     forceContentRender(n => n + 1)
@@ -967,10 +924,12 @@ export default function FeedTwin({
     : (post?.video || STOCK_CLIPS[ch.number % STOCK_CLIPS.length])
   const sourceCandidates = desiredAdSrc
     ? post?.real
-      ? [desiredAdSrc]
+      // One remount of the original user clip handles transient WebKit decoder
+      // loss without replacing somebody's upload with unrelated stock media.
+      ? [desiredAdSrc, desiredAdSrc]
       : [desiredAdSrc, ...STOCK_CLIPS.filter(source => source !== desiredAdSrc)]
     : []
-  const sourceKey = `${ch.id}:${post?.user ?? 'no-user'}:${desiredAdSrc ?? 'stream'}`
+  const sourceKey = `${ch.id}:${post?.id ?? post?.user ?? 'no-post'}:${desiredAdSrc ?? 'stream'}`
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
   const recoveryAttemptRef = useRef(0)
   const [playbackUnavailable, setPlaybackUnavailable] = useState(false)
@@ -995,7 +954,7 @@ export default function FeedTwin({
   }, [sourceKey])
   useEffect(() => {
     recoveringAdSrcRef.current = null
-  }, [adSrc])
+  }, [adSrc, recoveryAttempt])
   const advanceAdSource = useCallback((expectedSource?: string) => {
     const video = adVideoRef.current
     if (
@@ -1003,8 +962,9 @@ export default function FeedTwin({
       && (!video || video.getAttribute('src') !== expectedSource)
     ) return
     const failedSource = expectedSource ?? video?.getAttribute('src') ?? null
-    if (failedSource && recoveringAdSrcRef.current === failedSource) return
-    recoveringAdSrcRef.current = failedSource
+    const recoveryToken = failedSource ? `${recoveryAttemptRef.current}:${failedSource}` : null
+    if (recoveryToken && recoveringAdSrcRef.current === recoveryToken) return
+    recoveringAdSrcRef.current = recoveryToken
     setReadyPlaybackKey(null)
     settledAdRef.current = null
     const nextAttempt = recoveryAttemptRef.current + 1
@@ -1105,7 +1065,7 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('static') === '1'
   const forceTransition = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('transition') === '1'
-  const playbackKey = adSrc ? `${sourceKey}:${adSrc}` : null
+  const playbackKey = adSrc ? `${sourceKey}:${adSrc}:${recoveryAttempt}` : null
   const adReady = Boolean(playbackKey) && readyPlaybackKey === playbackKey
   // This is the creative identity, not the Food channel. Food can contain a
   // normal post, a fallback, or its static handoff; only the actual ad film
@@ -1264,7 +1224,7 @@ export default function FeedTwin({
   // settle and it finishing; a new source has a different key, so switching
   // clips still re-arms exactly once.
   const markAdReady = useCallback((source: string) => {
-    const key = `${sourceKey}:${source}`
+    const key = `${sourceKey}:${source}:${recoveryAttempt}`
     if (settledAdRef.current === key) return
     const video = adVideoRef.current
     if (!video || video.getAttribute('src') !== source || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
@@ -1278,7 +1238,7 @@ export default function FeedTwin({
         setRecoveringPlayback(false)
       }
     })
-  }, [sourceKey])
+  }, [sourceKey, recoveryAttempt])
 
   const settledStaticRef = useRef<string | null>(null)
   const markStaticReady = useCallback((key: string) => {
@@ -1499,6 +1459,18 @@ export default function FeedTwin({
       video.muted = !audioUnlockedRef.current
         || isGateMuted()
         || currentAudioOwner() !== 'feed'
+      // Focus callbacks used to restore only the mute bit. WKWebView can pause
+      // the element when Voice/system audio takes the floor, so returning focus
+      // could leave a perfectly healthy visible feed frozen until another tab
+      // change. Resume only the foreground decoder and honor an explicit pause.
+      if (shouldResumeFeedAfterFocus({
+        hasSource: Boolean(adSrc),
+        paused: video.paused,
+        documentVisible: document.visibilityState !== 'hidden',
+        displayActive: window.__poplurDisplayActive?.() ?? true,
+        userPaused: playerPausedByUserRef.current,
+        completed: completedAdRef.current === adSrc,
+      }) && adSrc) retryAdPlayback(adSrc, video)
     })
     // The feed is a voice like any other: while it is the one sounding, the
     // radio and the map stop rather than layer over it.
@@ -1513,7 +1485,7 @@ export default function FeedTwin({
       setMusicPlayback('feed', false)
       releaseAudioFocus('feed')
     }
-  }, [adSrc, sourceKey, audioUnlocked, frontMost])
+  }, [adSrc, sourceKey, audioUnlocked, frontMost, retryAdPlayback])
 
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
@@ -1531,7 +1503,6 @@ export default function FeedTwin({
   }
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return
-    noteFeedActivity()
     const target = e.target
     const mediaSurface = target instanceof Element
       ? target.closest('[data-feed-media="true"]')
@@ -1917,26 +1888,6 @@ export default function FeedTwin({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
-      {/* The "are you still watching?" rest. Shown when autoplay has run
-          unattended long enough that the feed stopped decoding; a tap anywhere
-          on it resumes with the next clip. Covers the surface on purpose — the
-          point is to stop, not to keep a control live under a dimmed video. */}
-      {autoplayRested && (
-        <button
-          type="button"
-          onPointerDown={e => e.stopPropagation()}
-          onClick={wakeFeed}
-          aria-label="Resume feed"
-          className={styles.stillWatching}
-        >
-          <span className={styles.stillWatchingCard}>
-            <span className={styles.stillWatchingPlay} aria-hidden="true">▶</span>
-            <span className={styles.stillWatchingCopy}>Still watching?
-              <span>Tap to keep going</span>
-            </span>
-          </span>
-        </button>
-      )}
       {/* Tap the left or right edge to step through the other users posting on
           this channel — the tap twin of the horizontal swipe. Radius reactions
           intentionally live only on the visible thumbs controls in the rail. */}
@@ -2004,7 +1955,7 @@ export default function FeedTwin({
           // The same creative can appear in two adjacent posts. The post key
           // forces a fresh decoder in that case; otherwise a completed video
           // node is reused by React and remains paused at its final frame.
-          key={`${sourceKey}:playing`}
+          key={`${sourceKey}:${recoveryAttempt}:playing`}
           data-feed-media="true"
           data-poplur-music={ch.id === 'music' ? 'feed' : undefined}
           ref={bindAdVideo}

@@ -12,6 +12,31 @@ describe('native feed post boundary', () => {
     expect(rows[1].username).toBe('@one')
   })
 
+  it('preserves uploaded photos alongside uploaded videos', () => {
+    const rows = normalizeNativeFeedPosts({ posts: [
+      {
+        id: 'my-photo',
+        mediaURL: 'https://cdn.example/my-upload.jpg',
+        username: 'me',
+        channelId: 'food',
+        createdAtMillis: 2,
+      },
+      {
+        id: 'my-video',
+        mediaURL: 'https://cdn.example/my-upload.mp4',
+        mediaType: 'video',
+        username: 'me',
+        channelId: 'food',
+        createdAtMillis: 1,
+      },
+    ] })
+
+    expect(rows.map(row => [row.id, row.mediaType])).toEqual([
+      ['my-photo', 'photo'],
+      ['my-video', 'video'],
+    ])
+  })
+
   it('drops malformed or unsafe media URLs at the native boundary', () => {
     expect(normalizeNativeFeedPosts({ posts: [
       { id: 'script', mediaURL: 'javascript:alert(1)' },

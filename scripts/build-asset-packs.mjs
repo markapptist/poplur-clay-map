@@ -33,6 +33,11 @@ const PACKS = [
   // publish rather than an app release. Small today (~450KB), and the whole
   // reason it is a pack is that it grows every time a filter is added.
   { id: 'ar-filters',     from: 'ar-filters',        version: 1 },
+  // Country flags are chosen one at a time from the settled world-map centre.
+  // Keep the full 200-model library behind the pack manifest: shipping every
+  // flag in the phone bundle would charge every install ~9MB for a feature
+  // that only appears at the map's outermost zoom.
+  { id: 'country-flags',  from: 'country-flags',     version: 1 },
   // The clay-models pack is a FILE LIST, not a directory: the models it moves
   // out of the bundle are scattered top-level GLBs, not one folder. Keep this
   // list identical to CLAY_MODELS_PACK in src/modelUrl.ts — the app's resolver
@@ -100,7 +105,14 @@ for (const pack of PACKS) {
 // nothing user-generated, so a dedicated public bucket is safe and keeps the
 // two blast radii apart.
 const BUCKET = 'https://storage.googleapis.com/poplur2025-assets/asset-packs'
-const LOCAL = { 'arcade-art': 'games/arcade/art', subscreens: 'subscreens', 'profile-themes': 'profile-themes', feed: 'feed', channels: 'channels' }
+const LOCAL = {
+  'arcade-art': 'games/arcade/art',
+  subscreens: 'subscreens',
+  'profile-themes': 'profile-themes',
+  feed: 'feed',
+  channels: 'channels',
+  'country-flags': 'country-flags',
+}
 const useBucket = process.env.POPLUR_PACK_BASE === 'bucket'
 
 // Packs that are BUILT but not yet uploaded. Without this, registering a pack

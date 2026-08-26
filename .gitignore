@@ -5,6 +5,10 @@ dist/
 *.local
 dist-packs/
 
+# Country flag models are cloud-hosted and streamed at runtime. Keep only the
+# manifest, README, and license metadata in Git.
+public/country-flags/**/*.glb
+
 # Meshy landmark generation: task state (signed URLs that expire) and the raw
 # 16MB exports. The shipped product is public/landmarks/*.glb, decimated.
 scripts/.meshy-landmarks.json

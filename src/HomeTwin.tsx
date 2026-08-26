@@ -959,6 +959,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
   const [mapNight, setMapNight] = useState(clockMapNight)
   const [mapMoon, setMapMoon] = useState<'full' | 'crescent'>(() => moonPhase(new Date()).model)
+  // At the exact world zoom the map iframe resolves the country nearest its
+  // settled centre and sends one cloud-pack GLB URL. Null means the ordinary
+  // phase-aware map object (globe/sun/moon) owns the navigator again.
+  const [mapCountryFlagModel, setMapCountryFlagModel] = useState<string | null>(null)
   const [mapMorning, setMapMorning] = useState(clockMapMorning)
   // The embedded map reports the same state below. Refresh once when a tab
   // change reaches Map; only the native renderer, which has no iframe report,
@@ -1560,13 +1564,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // sitting on top of the Continue button. Raising the composer cannot work
   // from inside a clamped stacking context, so the chrome stands down instead.
   const [composerOpen, setComposerOpen] = useState(false)
-  const [storyCaptureMode, setStoryCaptureMode] = useState(false)
-  const composerWasOpenRef = useRef(false)
-  const handleComposingChange = useCallback((open: boolean) => {
-    setComposerOpen(open)
-    if (!open && composerWasOpenRef.current) setStoryCaptureMode(false)
-    composerWasOpenRef.current = open
-  }, [])
   // No timer any more: the state is now driven purely by whether the PHONE
   // screen is open, so it clears when you leave rather than after 1.55s.
 
@@ -2504,6 +2501,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapPainted(false)
         setMapOverlayOpen(false)
         setMapWeatherSignal(null)
+        setMapCountryFlagModel(null)
+      }
+      if (event.data.type === 'poplur-map-country-flag') {
+        setMapCountryFlagModel(
+          typeof event.data.modelUrl === 'string' && event.data.modelUrl.trim()
+            ? event.data.modelUrl
+            : null,
+        )
       }
       if (event.data.type === 'poplur-map-weather') {
         const kind = weatherCubeKind(event.data.mode)
@@ -2523,6 +2528,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         if (open) setHoldOpen(false)
       }
       if (event.data.type === 'poplur-map-failed') {
+        setMapCountryFlagModel(null)
         scheduleMapRetry()
       }
       if (event.data.type === 'poplur-map-night') {
@@ -4181,6 +4187,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // kept above a still-mounted Podcast room, where cubeScreen remains Studio.
     : ipodCubeModel
     ? ipodCubeModel
+    // The country under the settled world-map centre becomes the navigator.
+    // It outranks ambient weather/music only on the unobscured Map root and
+    // drops out immediately when the iframe reports that the camera zoomed in.
+    : activeTab === 'map' && cubeScreen == null && mapCountryFlagModel
+    ? mapCountryFlagModel
     : eventCubeModel
     ? eventCubeModel
     : activeTab === 'feed' && committedTab === 'feed' && foodCubeActive
@@ -4691,14 +4702,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         )}
         {mainSurfaceVisible && committedTab === 'post' && (
           <Camera
-            storyMode={storyCaptureMode}
             captureMode={cameraCaptureMode}
             // Hold scrolling is UI over the lens, but it must not keep camera,
             // ML and AR work live while the wheel and its previews animate.
             // Camera preserves its last painted frame as the backdrop and
             // resumes only after the menu closes.
             surfaceVisible={!switchingScreens && !holdOpen}
-            onComposingChange={handleComposingChange}
+            onComposingChange={setComposerOpen}
             onPhotoCapture={() => {
               setPopping(false)
               setPhotoPopping(true)
@@ -4725,8 +4735,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onPostTargetUsed={() => setPostTarget(null)}
             onPosted={post => {
               showPostVerifiedCube()
-              setStoryCaptureMode(false)
-              if (post.destination === 'story') return
               const itemId = typeof crypto.randomUUID === 'function'
                 ? crypto.randomUUID()
                 : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`
@@ -5273,11 +5281,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           onMapTourTopicsChange={handleMapTourTopicsChange}
           currentFeedChannelId={CHANNELS[chanIndex]?.id}
           onTuneFeedChannel={tuneFeedChannel}
-          onCreateStory={() => {
-            setStoryCaptureMode(true)
-            setHoldOpen(false)
-            setActiveTab('post')
-          }}
           onSubscreenChange={handleSubscreenChange}
           onWheelFocusChange={handleWheelFocusChange}
           bindArrows={bindSubscreenArrows}

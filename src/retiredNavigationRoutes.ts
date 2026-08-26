@@ -5,6 +5,7 @@
  */
 const RETIRED_NAVIGATION_SCREENS: ReadonlySet<string> = new Set([
   'feed-discovery',
+  'feed-stories',
   'camera-music',
 ])
 

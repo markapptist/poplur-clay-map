@@ -74,7 +74,16 @@ export function normalizeNativeFeedPosts(detail: NativeFeedDetail): NativeFeedPo
       && Math.abs(originLatitude) <= 90
       && Number.isFinite(originLongitude)
       && Math.abs(originLongitude) <= 180
-    const mediaType: NativeFeedPost['mediaType'] = row.mediaType === 'photo' ? 'photo' : 'video'
+    const declaredMediaType = boundedText(row.mediaType, 16)?.toLowerCase()
+    const imageURL = /\.(?:avif|gif|heic|heif|jpe?g|png|webp)(?:[?#]|$)/i.test(mediaURL)
+    // Older uploads predate the explicit mediaType field. Their storage URL is
+    // still enough to identify a photo; treating every missing field as video
+    // mounted a decoder on a JPEG and left Feed TV on a black recovery frame.
+    const mediaType: NativeFeedPost['mediaType'] = declaredMediaType === 'photo'
+      || declaredMediaType === 'image'
+      || (!declaredMediaType && imageURL)
+      ? 'photo'
+      : 'video'
     const post: NativeFeedPost = {
       id,
       mediaURL,

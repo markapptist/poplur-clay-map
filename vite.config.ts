@@ -54,7 +54,15 @@ const CLAY_MODEL_FILES: string[] = JSON.parse(
 // Sharing src/clay-models-pack.json with the resolver and the pack builder is
 // what keeps "what the app fetches from the bucket" and "what the build drops"
 // from ever disagreeing — a mismatch would 404 a model or ship dead weight.
-const PUBLISHED_PACK_DIRS = ['subscreens', 'profile-themes', 'games/arcade/art', ...CLAY_MODEL_FILES]
+const PUBLISHED_PACK_DIRS = [
+  'subscreens',
+  'profile-themes',
+  'games/arcade/art',
+  // Selected lazily from the world map. The pack's source stays in public/
+  // for publishing, while a bucket-mode phone build carries only its manifest.
+  'country-flags',
+  ...CLAY_MODEL_FILES,
+]
 
 // Source-quality meshes retained for authoring/prerender regeneration. The
 // running app uses the checked-in sprites or decimated `*_lite.glb` variants;

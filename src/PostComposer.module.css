@@ -175,56 +175,6 @@
   text-align: center;
 }
 
-.storyOptions {
-  display: grid;
-  gap: 9px;
-  padding: 11px;
-  border: 1px solid rgba(255, 111, 178, .28);
-  border-radius: 9px;
-  background: linear-gradient(150deg, rgba(72, 19, 50, .72), rgba(13, 10, 14, .82));
-  box-shadow: inset 0 2px 1px rgba(255,255,255,.08);
-}
-.storyOptions > small { margin-top: -3px; color: rgba(224,247,255,.63); font: 750 9px/1.35 system-ui, sans-serif; }
-.storyAudience { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.storyAudience button,
-.storyStickers button,
-.storyPollToggle {
-  min-height: 36px;
-  border: 1px solid rgba(255, 210, 233, .2);
-  border-radius: 7px;
-  color: rgba(255,246,251,.7);
-  background: rgba(255,255,255,.07);
-  font: 900 9px/1 ui-monospace, monospace;
-  letter-spacing: .4px;
-}
-.storyAudience button[data-selected='true'],
-.storyStickers button[data-selected='true'] {
-  color: #fff;
-  border-color: #ff6fb2;
-  background: linear-gradient(150deg, #b91769, #561039);
-  box-shadow: 0 3px 0 #320721, 0 0 12px rgba(246,59,154,.24);
-}
-.storyReplyToggle { display: flex; align-items: center; gap: 9px; padding: 9px; border-radius: 7px; background: rgba(255,255,255,.06); color: #fff; font: 850 11px/1 system-ui, sans-serif; }
-.storyReplyToggle input { accent-color: #f63b9a; }
-.storyStickers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.storyMusicFields,
-.storyPollFields { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.storyPollFields { grid-template-columns: 1fr; }
-.storyMusicFields input,
-.storyPollFields input {
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 10px;
-  border: 1px solid rgba(255, 209, 233, .2);
-  border-radius: 7px;
-  color: #fff;
-  background: rgba(6,5,7,.7);
-  font: 800 11px/1 system-ui, sans-serif;
-}
-.storyMusicFields input:focus,
-.storyPollFields input:focus { outline: 1px solid #83eaff; }
-.storyPollToggle { justify-self: start; padding: 0 12px; color: #8eeeff; border-color: rgba(122,233,255,.35); }
-
 /* ── clay upload progress ────────────────────────────────────────────────── */
 /* The host currently has two kinds of truth: named preparation/upload phases,
    and (when supplied) real Storage byte progress. The same clay meter renders
