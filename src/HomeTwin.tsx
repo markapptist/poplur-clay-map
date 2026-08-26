@@ -78,6 +78,7 @@ import { POIS, type PopLevel } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
 import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
+import { packBase } from './assetPacks'
 import { getMusicPlaybackSnapshot, subscribeMusicPlayback } from './musicPlayback'
 import {
   emptyDiscoCubeSession,
@@ -101,6 +102,12 @@ import {
 import { poplurResourcePool } from './resourcePool'
 import { ownsMainSurface, ownsMapSurface } from './screenOwnership'
 import { applyNativeAccountPrivacy } from './accountPrivacy'
+import {
+  IPOD_SECTION_CHANGE_EVENT,
+  ipodNavigatorOverride,
+  sectionFromIpodEvent,
+  type IpodSection,
+} from './ipodNavigation'
 
 
 /**
@@ -190,6 +197,11 @@ const WALLET_CASHOUT_MODEL = 'poplur_cube_cash_stack.glb'
 // newspaper's 385KB, which is the heaviest thing already in the set.
 const SETTINGS_APPEARANCE_MODEL = 'poplur_cube_paint_bucket.glb'
 const SETTINGS_VERIFY_MODEL = 'poplur_cube_verification.glb'
+// A finished post gets a brief, unambiguous acknowledgement. This is the
+// supplied checkmark cube, reused here as a completion state rather than a
+// settings-only verification affordance.
+const POST_VERIFIED_CUBE_MODEL = SETTINGS_VERIFY_MODEL
+const POST_VERIFIED_CUBE_DISPLAY_MS = 2_600
 // The studio's RECORD stage: the cube IS the 3D microphone while a take is
 // being sung, and every other stage keeps the mixing desk in
 // SUBSCREEN_CUBE_MODEL below. Announced by StudioScreen over
@@ -410,9 +422,6 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // and keeps every knob — see .codex/prerender-holdmenu-cubes.mjs for the
   // proofing harness that verified it survived.
   'camera-studio': 'poplur_mixer_lite.glb',
-  // MUSIC is the one-minute capture entrance to Studio. It starts with the
-  // same desk as Studio, then swaps to the mic while recording below.
-  'camera-music': 'poplur_mixer_lite.glb',
   // SHOW ME is the map's find-it-for-me surface, so it takes a magnifying
   // model of its own now. Replaced poplur_cube_search.glb (the old bare-cube
   // stand-in), which now has no references.
@@ -502,14 +511,16 @@ const ANDROID_STORE_PRODUCT_BY_CARD_ID: Record<string, string> = {
 }
 
 // The Store preview and the persistent navigator use the same four authored
-// card models. These live in the bundled subscreen pack, so keep their paths
-// relative to the app root rather than copying 10MB of card meshes into the
-// navigator's default model folder.
+// card models. The subscreen pack is cloud-hosted in release builds (and
+// rooted at `subscreens/` in local development), so resolve these through the
+// same pack seam as the Store iframe. A root-relative `subscreens/...` URL
+// works in dev but 404s in the phone bundle after that directory is dropped.
+const STORE_PACK_BASE = packBase('subscreens', 'subscreens')
 const STORE_CARD_CUBE_MODEL: Record<string, string> = {
-  inverted: 'subscreens/store-models/poplur_card_inverted.glb',
-  lens: 'subscreens/store-models/poplur_card_lens.glb',
-  splitDiamond: 'subscreens/store-models/poplur_card_split_diamond.glb',
-  swoosh: 'subscreens/store-models/poplur_card_swoosh.glb',
+  inverted: `${STORE_PACK_BASE}/store-models/poplur_card_inverted.glb`,
+  lens: `${STORE_PACK_BASE}/store-models/poplur_card_lens.glb`,
+  splitDiamond: `${STORE_PACK_BASE}/store-models/poplur_card_split_diamond.glb`,
+  swoosh: `${STORE_PACK_BASE}/store-models/poplur_card_swoosh.glb`,
 }
 
 // The studio's mixing desk is wired now — see 'camera-studio' above. The
@@ -989,6 +1000,28 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [foodCubeActive, setFoodCubeActive] = useState(false)
   const foodCubeSessionRef = useRef<FoodCubeSession>(emptyFoodCubeSession())
   const foodDeadlineTimerRef = useRef<number | null>(null)
+  const [postVerifiedCubeActive, setPostVerifiedCubeActive] = useState(false)
+  const postVerifiedCubeTimerRef = useRef<number | null>(null)
+
+  // `onPosted` is reached only after the composer has completed its upload.
+  // Restart the acknowledgement for a second successful post instead of
+  // letting an earlier timeout remove it midway through the new one.
+  const showPostVerifiedCube = useCallback(() => {
+    if (postVerifiedCubeTimerRef.current !== null) {
+      window.clearTimeout(postVerifiedCubeTimerRef.current)
+    }
+    setPostVerifiedCubeActive(true)
+    postVerifiedCubeTimerRef.current = window.setTimeout(() => {
+      postVerifiedCubeTimerRef.current = null
+      setPostVerifiedCubeActive(false)
+    }, POST_VERIFIED_CUBE_DISPLAY_MS)
+  }, [])
+
+  useEffect(() => () => {
+    if (postVerifiedCubeTimerRef.current !== null) {
+      window.clearTimeout(postVerifiedCubeTimerRef.current)
+    }
+  }, [])
 
   const activeStoreCheckoutRequestRef = useRef<string | null>(null)
   // Preserve the best location across a map iframe remount. An already-active
@@ -1549,6 +1582,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
   const [storeCardCube, setStoreCardCube] = useState<string | null>(null)
+  // MapIpod reports only its current semantic section. The Podcast room can
+  // keep Studio mounted beneath its library overlay, so this state cannot be
+  // inferred from cubeScreen alone: both surfaces still belong to
+  // `camera-studio`. Only the Podcasts frame borrows the folder object.
+  const [ipodSection, setIpodSection] = useState<IpodSection | null>(null)
+  useEffect(() => {
+    const onSection = (event: Event) => setIpodSection(sectionFromIpodEvent(event))
+    window.addEventListener(IPOD_SECTION_CHANGE_EVENT, onSection)
+    return () => window.removeEventListener(IPOD_SECTION_CHANGE_EVENT, onSection)
+  }, [])
   const [incomingCall, setIncomingCall] = useState<{
     callId: string
     callerId: string
@@ -1864,29 +1907,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     postWebMapAction(action, detail)
   }, [beginNativeMapWebFallback, postWebMapAction, queueMapAction])
 
-  // Unified Discovery owns the result list; Map owns rendering a selected
-  // place. The event carries a named public landmark, never a post's private
-  // origin. Unsupported native-map actions deliberately take the established
-  // feature-complete web fallback before the flight is queued.
-  useEffect(() => {
-    const openPlace = (event: Event) => {
-      const detail = (event as CustomEvent<{ name?: unknown; coords?: unknown }>).detail
-      const coords = detail?.coords
-      if (!Array.isArray(coords) || coords.length !== 2) return
-      const longitude = Number(coords[0])
-      const latitude = Number(coords[1])
-      if (!Number.isFinite(longitude) || Math.abs(longitude) > 180
-        || !Number.isFinite(latitude) || Math.abs(latitude) > 90) return
-      setActiveTab('map')
-      setHoldOpen(false)
-      sendMapAction('focusPlace', {
-        name: typeof detail?.name === 'string' ? detail.name.slice(0, 160) : 'Discovery result',
-        coords: [longitude, latitude],
-      })
-    }
-    window.addEventListener('poplur-discovery-open-place', openPlace)
-    return () => window.removeEventListener('poplur-discovery-open-place', openPlace)
-  }, [sendMapAction])
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)
@@ -3543,14 +3563,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // it (opening reuses setResume + setHoldOpen, the same handoff every other
   // tab's page-list branch performs).
   //
-  // This function owns the WHOLE ring, the four subscreen stops included.
+  // This function owns the WHOLE ring, the three subscreen stops included.
   // The first version handed arrow presses to the wheel's own walker once a
   // subscreen was open, but that walker only knows the three page tiles plus
-  // its door — so after visiting CREATE the ring collapsed to
-  // create→games→studio→music and VIDEO, PHOTO and ROLL became
-  // unreachable going forward. Now an open ring subscreen is simply the
-  // ring's current stop: stepping off it closes the menu and lands on the
-  // neighbouring mode, so every stop cycles in both directions, always.
+  // its door — so after visiting CREATE the ring collapsed to its page-only
+  // walk and VIDEO, PHOTO and ROLL became unreachable going forward. Now an
+  // open ring subscreen is simply the ring's current stop: stepping off it
+  // closes the menu and lands on the neighbouring mode, so every stop cycles
+  // in both directions, always.
   //
   // photo -> video -> the camera's subscreens -> repeat. ROLL stays outside
   // the ring because it is the camera's own second page (the cube walks up to
@@ -3566,7 +3586,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
-    if (next === 'create' || next === 'games' || next === 'studio' || next === 'music') {
+    if (next === 'create' || next === 'games' || next === 'studio') {
       if (onRoll) setCameraStep(step => step + 1)
       setResume(current => ({ screen: CAMERA_CYCLE_SCREEN[next], n: current.n + 1 }))
       setHoldOpen(true)
@@ -4106,11 +4126,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     && discoCubeVisible
     && musicSessionRef.current.contextKey === discoNavigationContext
   const eventCubeModel = weatherCubeModel ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
-  const cubeEventSignal = weatherCubeModel
-    ? mapWeatherSignal?.kind ?? 'none'
-    : discoCubeActiveHere
-      ? 'music'
-      : 'none'
+  const cubeEventSignal = postVerifiedCubeActive
+    ? 'posted'
+    : weatherCubeModel
+      ? mapWeatherSignal?.kind ?? 'none'
+      : discoCubeActiveHere
+        ? 'music'
+        : 'none'
   const wheelPreviewModel = holdCubePreviewMode === '3d'
     && wheelFocus
     ? holdFocusNavigatorModel(
@@ -4124,6 +4146,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     : undefined
   const showWheel2DPreview = holdCubePreviewMode === '2d'
     && wheelFocus != null
+  const ipodCubeModel = ipodNavigatorOverride(ipodSection)
   const requestedCubeModel = incomingCall
     // A ringing call outranks anything else the cube is wearing or doing —
     // recording, editing, zooming, a visited profile. Nothing below this
@@ -4132,6 +4155,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // FaceTime is also an active call, not a profile-preview state.
     : faceTimeActive
     ? FACETIME_CONTACT_MODEL
+    // Successful uploads take the cube briefly before any editor, map, or
+    // ambient event state. Calls stay above this acknowledgement.
+    : postVerifiedCubeActive
+    ? POST_VERIFIED_CUBE_MODEL
     : composerOpen && composerEditing
     ? DIRECTOR_BOARD_MODEL
     // In the default Hold Menu mode, the centred tile becomes the navigator's
@@ -4149,6 +4176,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     : activeTab === 'post' && cubeScreen == null
     && (cameraCaptureMode === 'video' || recordMs != null)
     ? CAMCORDER_MODEL
+    // Podcasts is a deliberate library destination, so its folder outranks
+    // ambient weather/music faces. The signal also covers the iPod overlay
+    // kept above a still-mounted Podcast room, where cubeScreen remains Studio.
+    : ipodCubeModel
+    ? ipodCubeModel
     : eventCubeModel
     ? eventCubeModel
     : activeTab === 'feed' && committedTab === 'feed' && foodCubeActive
@@ -4171,10 +4203,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         ? STORE_CARD_CUBE_MODEL[storeCardCube] : undefined)
       // Music wears the microphone while recording. A podcast is a microphone
       // from the moment its room opens through its record step — it is not a
-      // mixer screen — so those two stages use the same supplied 3D mic.
-      ?? (((cubeScreen === 'camera-studio'
+      // mixer screen — so those Studio stages use the same supplied 3D mic.
+      ?? ((cubeScreen === 'camera-studio'
           && (studioStage === 'room' || studioStage === 'podcast-record' || studioStage === 'mic'))
-        || (cubeScreen === 'camera-music' && studioStage === 'mic'))
         ? STUDIO_MIC_MODEL : undefined)
       ?? subscreenNavigatorModel(cubeScreen)
       ?? wornNavigatorModel(activeTab, cubeScreen, wornCube)
@@ -4693,6 +4724,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             postTarget={postTarget}
             onPostTargetUsed={() => setPostTarget(null)}
             onPosted={post => {
+              showPostVerifiedCube()
               setStoryCaptureMode(false)
               if (post.destination === 'story') return
               const itemId = typeof crypto.randomUUID === 'function'

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './HoldMenuTwin.module.css'
 import { playPop, primePopAudio } from './pop'
 import type { CubeTab } from './CubeTab3D'
@@ -23,12 +23,13 @@ import StatsScreen from './StatsScreen'
 import TrophyRoomScreen from './TrophyRoomScreen'
 import WalletScreen from './WalletScreen'
 import AppsScreen from './AppsScreen'
-import DiscoveryScreen from './DiscoveryScreen'
 import StoriesScreen from './StoriesScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
 import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
 import { CAMERA_HOLD_MENU_ITEMS } from './cameraNavigation'
+import { isRetiredNavigationScreen } from './retiredNavigationRoutes'
+import { announceIpodSection } from './ipodNavigation'
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -103,7 +104,6 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // The supplied clay TV render — the tab's own object, not the remote that
     // TV GUIDE wears below it. Two different props for two different things.
     { icon: 'TVGuide', title: 'TV', screen: 'feed-home', home: true },
-    { icon: 'Search', title: 'DISCOVER', screen: 'feed-discovery', native: true },
     // Daily, low-pressure posts. Audience is Everyone or the account's Poplur
     // Phone favourites—never followers—and the Story screen owns the 24-hour
     // lifecycle, archive and highlights without leaving a decoder behind Feed.
@@ -232,6 +232,7 @@ const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), lim
  *  `feed-home` into storage, and a phone that saved one would otherwise keep
  *  trying to resume a door on every visit to that tab. */
 export function isResumablePage(tab: CubeTab, screen: string): boolean {
+  if (isRetiredNavigationScreen(screen)) return false
   return (TAB_MENUS[tab] ?? []).some(item =>
     item.screen === screen && !item.home && !item.action && !item.mapAction && !item.event)
 }
@@ -245,7 +246,8 @@ export function isResumablePage(tab: CubeTab, screen: string): boolean {
  *  not mounted at all. */
 export function tabPageScreens(tab: CubeTab): string[] {
   return (TAB_MENUS[tab] ?? [])
-    .filter(item => !item.home && !item.action && !item.mapAction && !item.event)
+    .filter(item => !isRetiredNavigationScreen(item.screen)
+      && !item.home && !item.action && !item.mapAction && !item.event)
     .map(item => item.screen)
 }
 
@@ -338,7 +340,8 @@ export default function HoldMenuTwin({
   onDeclineCall?: (call: import('./PhoneScreen').IncomingCall) => void
 }) {
   // The item set is fixed to the tab the menu was opened from.
-  const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).map(item => {
+  const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).filter(item =>
+    !isRetiredNavigationScreen(item.screen)).map(item => {
     // TOUR reads its label off the map's own state, so it says STOP TOUR for
     // as long as the tour is actually running — including a tour that started
     // itself at launch, which a local toggle would have got backwards.
@@ -355,6 +358,22 @@ export default function HoldMenuTwin({
   // screens are several wheel turns deep, and driving that wheel from a script
   // is far more brittle than naming the screen you want.
   const [autoCall, setAutoCall] = useState<{ id: string; name: string } | null>(null)
+  // The Podcast room's folder opens an iPod library over the room rather than
+  // replacing it. Keeping StudioScreen mounted preserves its show name,
+  // invites, recording and chosen area; the persistent folder cube closes
+  // this one overlay and reveals the exact room state underneath.
+  const [podcastIpodOpen, setPodcastIpodOpen] = useState(false)
+  const podcastIpodOpenRef = useRef(false)
+  const openPodcastIpod = useCallback(() => {
+    podcastIpodOpenRef.current = true
+    announceIpodSection('podcasts')
+    setPodcastIpodOpen(true)
+  }, [])
+  const closePodcastIpod = useCallback(() => {
+    podcastIpodOpenRef.current = false
+    announceIpodSection(null)
+    setPodcastIpodOpen(false)
+  }, [])
   const [activeScreen, setActiveScreen] = useState<Item | null>(() => {
     if (typeof window === 'undefined') return null
     // The resume prop and the URL parameter share one lookup: a screen id in,
@@ -369,7 +388,8 @@ export default function HoldMenuTwin({
     // and renders as a bare embed. The flat search stays as the fallback for
     // the ?holdScreen harness link, which names a screen without a tab.
     const mine = (TAB_MENUS[tab] ?? []) as Item[]
-    const openable = (item: Item) => item.screen === want && !item.home
+    const openable = (item: Item) => item.screen === want
+      && !isRetiredNavigationScreen(item.screen) && !item.home
       && !item.action && !item.mapAction && !item.event
     return mine.find(openable)
       ?? (Object.values(TAB_MENUS).flat() as Item[]).find(openable)
@@ -381,6 +401,12 @@ export default function HoldMenuTwin({
   // subscreen and appearing to ignore the second cube change.
   const activeScreenRef = useRef(activeScreen)
   activeScreenRef.current = activeScreen
+  useEffect(() => {
+    // Arrow/tab navigation can replace Studio while its library is covering
+    // it. Do not let that local overlay resurrect the next time Studio opens.
+    if (activeScreen?.screen === 'camera-studio' || !podcastIpodOpenRef.current) return
+    closePodcastIpod()
+  }, [activeScreen?.screen, closePodcastIpod])
   const wardrobeCubeActionRef = useRef<(() => boolean) | null>(null)
   // Read through refs for the same reason `items` is: the arrows effect must
   // not unbind and rebind whenever a caller passes a fresh inline closure.
@@ -465,6 +491,10 @@ export default function HoldMenuTwin({
       // The wheel laid over a page: the tap takes the wheel away and leaves you
       // on the page, which is exactly where the long-press found you.
       if (wheelOverPage) { setWheelOverPage(false); return true }
+      if (podcastIpodOpenRef.current) {
+        closePodcastIpod()
+        return true
+      }
       // The page has its own nesting open (a store product, a mail thread, a
       // stat card). Those screens carry no ‹ any more, so the cube pops them —
       // one level per tap, innermost first.
@@ -485,7 +515,7 @@ export default function HoldMenuTwin({
       // inside Music or Podcast. At that chooser there is no deeper Studio
       // state left, so this next tap leaves Studio for Camera rather than ever
       // falling through to a shutter/action behind the overlay.
-      if (activeScreen?.screen === 'camera-studio' || activeScreen?.screen === 'camera-music') {
+      if (activeScreen?.screen === 'camera-studio') {
         activeScreenRef.current = null
         setActiveScreen(null)
         onClearPageRef.current?.()
@@ -497,7 +527,7 @@ export default function HoldMenuTwin({
       return true
     })
     return () => bindGoBack?.(null)
-  }, [activeScreen, wheelOverPage, bindGoBack, onClose])
+  }, [activeScreen, closePodcastIpod, wheelOverPage, bindGoBack, onClose])
 
   // The channel arrows belong to whatever is IN FRONT. With TV Guide or Mail
   // covering the app they were still driving the feed or flying the map
@@ -959,7 +989,11 @@ export default function HoldMenuTwin({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (wheelOverPage && e.key === 'Escape') {
+      if (podcastIpodOpen && e.key === 'Escape') {
+        closePodcastIpod()
+        e.preventDefault()
+      }
+      else if (wheelOverPage && e.key === 'Escape') {
         setWheelOverPage(false)
         e.preventDefault()
       }
@@ -1073,16 +1107,6 @@ export default function HoldMenuTwin({
         </div>
       )
     }
-    if (activeScreen.native && activeScreen.screen === 'feed-discovery') {
-      return (
-        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Discovery">
-          <DiscoveryScreen
-            onTune={onTuneFeedChannel}
-            onClose={() => { playPop(); onClose() }}
-          />
-        </div>
-      )
-    }
     if (activeScreen.native && activeScreen.screen === 'feed-stories') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Stories">
@@ -1128,26 +1152,25 @@ export default function HoldMenuTwin({
           <StudioScreen
             onClose={() => { playPop(); onClose() }}
             bindBack={bindNativeBack}
-            onOpenLibrary={() => {
+            onOpenLibrary={(section) => {
               playPop()
+              if (section === 'podcasts') {
+                // The folder belongs to Podcast, so it lands on that iPod
+                // frame directly. Studio stays mounted beneath it: closing
+                // with the folder cube restores the exact room draft.
+                openPodcastIpod()
+                return
+              }
+              // Music keeps the existing general iPod hand-off; the new
+              // Podcast shortcut must not reroute its older folder controls.
               setActiveScreen({ icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true })
             }}
           />
-        </div>
-      )
-    }
-    if (activeScreen.native && activeScreen.screen === 'camera-music') {
-      return (
-        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Music">
-          <StudioScreen
-            entry="music-capture"
-            onClose={() => { playPop(); onClose() }}
-            bindBack={bindNativeBack}
-            onOpenLibrary={() => {
-              playPop()
-              setActiveScreen({ icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true })
-            }}
-          />
+          {podcastIpodOpen && (
+            <div className={styles.subscreenStage} role="dialog" aria-label="Podcast library">
+              <MapIpod initialSection="podcasts" onClose={closePodcastIpod} />
+            </div>
+          )}
         </div>
       )
     }
@@ -1364,7 +1387,7 @@ export default function HoldMenuTwin({
   // looking at the live camera.
   if (activeScreen) {
     // Screen identity is a teardown boundary even when two routes use the same
-    // component type (Camera Studio and Music both use StudioScreen).
+    // component type.
     const page = (
       <React.Fragment key={`${activeScreen.screen}:${activeScreen.title}`}>
         {renderSubscreen()}

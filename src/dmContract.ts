@@ -1,6 +1,19 @@
 export type DMDeliveryStatus = 'sending' | 'sent' | 'read' | 'failed'
 export type DMAttachmentKind = 'image' | 'video' | 'audio'
 
+/**
+ * An established conversation belongs to the participant inbox, not to the
+ * live discovery radius. Radius is intentionally not an input here: moving
+ * away may prevent a brand-new discovery, but it must never remove history.
+ * The only local exclusion is an explicit user hide/delete action.
+ */
+export function persistentDMThreads<T extends { id: string }>(
+  threads: readonly T[],
+  hiddenThreadIds: ReadonlySet<string>,
+): T[] {
+  return threads.filter(thread => !hiddenThreadIds.has(thread.id))
+}
+
 const MESSAGE_ID = /^msg-[a-zA-Z0-9-]{16,96}$/
 
 export function createClientMessageId(randomUUID?: () => string): string {

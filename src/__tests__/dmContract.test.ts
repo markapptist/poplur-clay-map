@@ -4,6 +4,7 @@ import {
   attachmentLabel,
   createClientMessageId,
   isClientMessageId,
+  persistentDMThreads,
   sentMessageStatus,
   validAttachmentMime,
 } from '../dmContract'
@@ -33,5 +34,19 @@ describe('direct-message contract', () => {
     expect(attachmentLabel('audio')).toBe('Voice message')
     expect(validAttachmentMime('image', 'image/jpeg')).toBe(true)
     expect(validAttachmentMime('audio', 'video/mp4')).toBe(false)
+  })
+
+  it('keeps a started conversation after the other participant leaves the radius', () => {
+    const threads = [
+      { id: 'nearby-now', currentlyInRadius: true },
+      { id: 'moved-away', currentlyInRadius: false },
+    ]
+
+    expect(persistentDMThreads(threads, new Set()).map(thread => thread.id)).toEqual([
+      'nearby-now',
+      'moved-away',
+    ])
+    expect(persistentDMThreads(threads, new Set(['nearby-now'])).map(thread => thread.id))
+      .toEqual(['moved-away'])
   })
 })

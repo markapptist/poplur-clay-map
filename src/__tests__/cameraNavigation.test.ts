@@ -11,4 +11,11 @@ describe('Camera navigation inventory', () => {
         || candidate.action === 'live'
     })).toBe(false)
   })
+
+  it('keeps direct Music capture out of Camera while leaving Studio reachable', () => {
+    expect(CAMERA_CYCLE).not.toContain('music')
+    expect(CAMERA_HOLD_MENU_ITEMS.some(item => String(item.screen) === 'camera-music')).toBe(false)
+    expect(CAMERA_CYCLE).toContain('studio')
+    expect(CAMERA_HOLD_MENU_ITEMS.some(item => item.screen === 'camera-studio')).toBe(true)
+  })
 })

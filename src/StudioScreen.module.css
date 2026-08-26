@@ -1348,7 +1348,11 @@
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center;
   overflow-y: auto; overscroll-behavior: contain;
-  padding: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 24px) 14px calc(var(--cube-size, 176px) + 42px + env(safe-area-inset-bottom)) 68px;
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 24px)
+    max(14px, env(safe-area-inset-right))
+    calc(var(--cube-size, 176px) + 42px + env(safe-area-inset-bottom))
+    max(14px, env(safe-area-inset-left));
   background:
     radial-gradient(72% 34% at 54% 8%, rgba(255, 57, 152, .32), transparent 72%),
     radial-gradient(84% 52% at 58% 94%, rgba(75, 58, 184, .22), transparent 70%),
@@ -1380,7 +1384,7 @@
   background-size: 26px 26px;
   mask-image: linear-gradient(180deg, transparent, #000 20%, #000 82%, transparent);
 }
-.roomStage > :not(.librarySideButton) { position: relative; z-index: 1; flex: 0 0 auto; width: min(100%, 340px); box-sizing: border-box; }
+.roomStage > * { position: relative; z-index: 1; flex: 0 0 auto; width: min(100%, 340px); box-sizing: border-box; }
 .roomHeader {
   display: grid;
   gap: 10px;
@@ -1412,6 +1416,41 @@
 .roomEnhance strong { font: 900 9px/1 system-ui, sans-serif; letter-spacing: 1.4px; }
 .roomEnhance small { color: rgba(255,255,255,.52); font: 700 9px/1 system-ui, sans-serif; }
 .roomEnhance .toggle { flex: none; }
+.podcastLibrarySection {
+  width: min(100%, 340px);
+  min-width: 0;
+  box-sizing: border-box;
+}
+.podcastLibraryButton {
+  width: 100%; min-width: 0; min-height: 72px;
+  display: grid; grid-template-columns: 54px minmax(0, 1fr) auto;
+  align-items: center; gap: 11px;
+  padding: 8px 11px 8px 8px;
+  border: 1px solid rgba(255, 138, 198, .3); border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 62, 157, .18), rgba(63, 36, 111, .2));
+  box-shadow: inset 0 1px rgba(255,255,255,.1), 0 10px 24px rgba(0,0,0,.2);
+  color: #fff; cursor: pointer; text-align: left;
+}
+.podcastLibraryButton:active { transform: scale(.985); }
+.podcastLibraryButton:focus-visible { outline: 2px solid #ff75ba; outline-offset: 3px; }
+.podcastLibraryArt {
+  display: grid; width: 54px; height: 54px; place-items: center;
+  border-radius: 15px;
+  background: radial-gradient(circle at 34% 24%, rgba(255,255,255,.18), transparent 44%), rgba(255, 45, 145, .08);
+}
+.podcastLibraryArt img {
+  display: block; width: 52px; height: 52px; object-fit: contain;
+  filter: drop-shadow(0 6px 7px rgba(0, 0, 0, .5));
+  pointer-events: none;
+}
+.podcastLibraryCopy { display: grid; min-width: 0; gap: 5px; }
+.podcastLibraryCopy strong { color: #ff9fd0; font: 900 9px/1 system-ui, sans-serif; letter-spacing: 1.55px; }
+.podcastLibraryCopy small { color: rgba(255,255,255,.67); font: 750 10px/1.25 system-ui, sans-serif; }
+.podcastLibraryAction {
+  padding: 7px 9px;
+  border: 1px solid rgba(255,255,255,.34); border-radius: 999px;
+  color: rgba(255,255,255,.86); font: 900 8px/1 system-ui, sans-serif; letter-spacing: 1px;
+}
 .roomActions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 9px; width: min(100%, 340px); margin-top: 0; padding: 4px 0 1px; }
 .roomActions > :only-child { grid-column: 1 / -1; }
 .roomLive, .roomRecorded {

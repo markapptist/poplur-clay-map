@@ -2067,10 +2067,19 @@
 }
 
 /* ── Live map domination dock ───────────────────────────────────────────────
-   Non-modal by design: the map keeps panning beneath it, and only the glass
-   panel/button take pointer events. A solid translucent material is used
-   instead of backdrop-filter so the default-open window does not keep a blur
-   compositor pass alive above Mapbox on phones. */
+   A lightweight tap catcher makes the board dismissible without adding a
+   backdrop-filter compositor pass above Mapbox. The normal map rails are
+   hidden while this one window is present, so only one layer owns taps. */
+.dominanceDismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 4199;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
 .dominanceDock {
   position: fixed;
   left: max(14px, env(safe-area-inset-left, 0px) + 14px);
@@ -2078,49 +2087,10 @@
   z-index: 4200;
   display: flex;
   align-items: flex-start;
+  justify-content: center;
   right: max(14px, env(safe-area-inset-right, 0px) + 14px);
   max-width: none;
   pointer-events: none;
-}
-
-.dominanceDockClosed { max-width: 46px; }
-
-.dominanceSideButton {
-  position: relative;
-  z-index: 2;
-  width: 44px;
-  min-width: 44px;
-  height: 92px;
-  margin-top: 18px;
-  padding: 5px 3px;
-  border: 1px solid rgba(255, 138, 198, .68);
-  border-right: 0;
-  border-radius: 13px 0 0 13px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 5px;
-  background: rgba(21, 10, 19, .94);
-  color: #ff8ac6;
-  box-shadow: -5px 8px 18px rgba(0, 0, 0, .32), inset 0 1px 0 rgba(255, 255, 255, .14);
-  cursor: pointer;
-  pointer-events: auto;
-}
-
-.dominanceDockClosed .dominanceSideButton {
-  border-right: 1px solid rgba(255, 138, 198, .68);
-  border-radius: 13px;
-}
-
-.dominanceSideButton span {
-  font: 950 25px/.7 system-ui, sans-serif;
-}
-
-.dominanceSideButton b {
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  font: 950 9px/1 system-ui, sans-serif;
-  letter-spacing: .12em;
 }
 
 .dominanceDock .dominanceBoard {

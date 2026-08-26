@@ -1549,6 +1549,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     () => dominanceLeaders(dominanceViewportPins, takeoverTint(PALETTE.pinkHot)),
     [dominanceViewportPins, takeoverFace],
   )
+  const dominanceBoardVisible = dominanceBoardOpen && dominanceRows.length > 0 && !controlsObscured
   const dominanceTotalKm = dominanceRows.reduce((sum, row) => sum + row.radiusKm, 0)
   const dominanceMaxFame = dominanceRows[0]?.fame ?? 1
   useEffect(() => {
@@ -1643,8 +1644,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
     return () => document.removeEventListener('keydown', onKey)
   }, [colorPaletteOpen, closeColorPalette])
   useEffect(() => {
-    if (controlsObscured) setColorPaletteOpen(false)
-  }, [controlsObscured])
+    if (controlsObscured || dominanceBoardVisible) setColorPaletteOpen(false)
+  }, [controlsObscured, dominanceBoardVisible])
   // Tap-to-post: where the user tapped empty ground, and the compose radius.
   const [composeAt, setComposeAt] = useState<{ lng: number; lat: number; x: number; y: number } | null>(null)
   const composeAtRef = useRef(composeAt)
@@ -5319,27 +5320,26 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
           BACKGROUND behind the focal subject blurs (bokeh), not the screen
           edges — that effect is on the work order for capable devices. */}
 
-      {dominanceRows.length > 0 && !controlsObscured && (
-        <div className={dominanceBoardOpen ? styles.dominanceDock : `${styles.dominanceDock} ${styles.dominanceDockClosed}`}>
+      {dominanceBoardVisible && (
+        <>
           <button
             type="button"
-            className={styles.dominanceSideButton}
-            aria-label={dominanceBoardOpen ? 'Close domination live' : 'Open domination live'}
-            aria-expanded={dominanceBoardOpen}
-            aria-controls="poplur-domination-live"
+            className={styles.dominanceDismiss}
+            aria-label="Close Conquer Board"
             onClick={() => {
               playPop()
-              setDominanceBoardOpen(open => !open)
+              setDominanceBoardOpen(false)
             }}
-          >
-            <span aria-hidden="true">{dominanceBoardOpen ? '‹' : '›'}</span>
-            <b>FAME</b>
-          </button>
-          {dominanceBoardOpen && (
+          />
+          <div className={styles.dominanceDock}>
             <section
               id="poplur-domination-live"
               className={styles.dominanceBoard}
               aria-labelledby="poplur-domination-title"
+              onClick={() => {
+                playPop()
+                setDominanceBoardOpen(false)
+              }}
             >
               <header className={styles.dominanceBoardTop}>
                 <div>
@@ -5387,8 +5387,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
               </div>
               <span className={styles.srOnly} aria-live="polite">{dominanceAnnouncement}</span>
             </section>
-          )}
-        </div>
+          </div>
+        </>
       )}
 
       {cloudBand > 0.01 && cloudSprite && (
@@ -5744,7 +5744,7 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
       )}
 
       <div
-        className={controlsObscured ? `${styles.zoomWrap} ${styles.mapControlsObscured}` : styles.zoomWrap}
+        className={controlsObscured || dominanceBoardVisible ? `${styles.zoomWrap} ${styles.mapControlsObscured}` : styles.zoomWrap}
         style={{
           // The knob is a pre-rendered view of the real 3D object at this
           // zoom band. Unlike decoding a GLB just to decorate a control, this
@@ -5763,8 +5763,8 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         aria-valuemin={ZOOM_MIN}
         aria-valuemax={ZOOM_MAX}
         aria-valuenow={Number(zoomValue.toFixed(2))}
-        aria-hidden={controlsObscured ? true : undefined}
-        tabIndex={controlsObscured ? -1 : 0}
+        aria-hidden={controlsObscured || dominanceBoardVisible ? true : undefined}
+        tabIndex={controlsObscured || dominanceBoardVisible ? -1 : 0}
         onPointerDown={handleZoomDown}
         onPointerMove={handleZoomMove}
         onPointerUp={handleZoomUp}
@@ -5829,15 +5829,15 @@ function MapboxClayMap({ token, pois, selectedId, onSelectPoi, mapRef, theme, sk
         ref={colorCircleRef}
         type="button"
         key={`takeover-${takeoverFace}`}
-        className={controlsObscured ? `${styles.colorCircle} ${styles.mapControlsObscured}` : styles.colorCircle}
+        className={controlsObscured || dominanceBoardVisible ? `${styles.colorCircle} ${styles.mapControlsObscured}` : styles.colorCircle}
         style={{ '--takeoverFace': takeoverFace } as React.CSSProperties}
         aria-label="Change your takeover colour. Hold to choose a colour"
         aria-haspopup="dialog"
         aria-expanded={colorPaletteOpen}
-        aria-hidden={controlsObscured ? true : undefined}
+        aria-hidden={controlsObscured || dominanceBoardVisible ? true : undefined}
         title="Takeover colour"
-        disabled={controlsObscured}
-        tabIndex={controlsObscured ? -1 : 0}
+        disabled={controlsObscured || dominanceBoardVisible}
+        tabIndex={controlsObscured || dominanceBoardVisible ? -1 : 0}
         onPointerDown={event => {
           window.clearTimeout(colorHoldTimerRef.current)
           event.currentTarget.setPointerCapture?.(event.pointerId)

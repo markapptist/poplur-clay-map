@@ -14,6 +14,7 @@ import {
   activeTyping,
   attachmentLabel,
   createClientMessageId,
+  persistentDMThreads,
   sentMessageStatus,
   validAttachmentMime,
   type DMAttachmentKind,
@@ -29,14 +30,6 @@ import {
   type CallMediaSnapshot,
   type CallSnapshot,
 } from './webCall'
-
-type CallVisualTheme = 'orbit' | 'ring' | 'duo'
-
-const CALL_VISUAL_THEMES: readonly CallVisualTheme[] = ['orbit', 'ring', 'duo']
-
-function chooseCallVisualTheme(): CallVisualTheme {
-  return CALL_VISUAL_THEMES[Math.floor(Math.random() * CALL_VISUAL_THEMES.length)]
-}
 
 // Calls already have a real video stream, so the filter rail deliberately uses
 // a stable, lightweight face anchor. This keeps costume placement responsive
@@ -610,17 +603,13 @@ export function FaceTimeOverlay({
     remoteStream: null,
     video: true,
   })
-  const [cameraOn, setCameraOn] = useState(true)
+  const [frontCamera, setFrontCamera] = useState(true)
   const [localVideoReady, setLocalVideoReady] = useState(false)
   const [remoteVideoReady, setRemoteVideoReady] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
   const callBegan = useRef(false)
-  // A theme is chosen once for the call, rather than each render. This lets an
-  // incoming or outgoing call keep one visual identity through ringing,
-  // connection setup and the live video hand-off.
-  const callTheme = useRef<CallVisualTheme>(chooseCallVisualTheme()).current
   const connected = callSnap?.phase === 'connected'
   const initial = who.trim().charAt(0).toUpperCase() || '?'
   const arFilterCss = arFilterCatalog().filters.find(filter => filter.id === arFilter)?.css ?? 'none'
@@ -644,7 +633,7 @@ export function FaceTimeOverlay({
   useEffect(() => {
     const video = localVideoRef.current
     setLocalVideoReady(false)
-    if (!video || !connected || !cameraOn || !media.localStream) return
+    if (!video || !media.localStream) return
     video.srcObject = media.localStream
     void video.play().catch(() => { /* the labelled camera fallback stays visible */ })
     return () => {
@@ -653,7 +642,7 @@ export function FaceTimeOverlay({
         video.srcObject = null
       }
     }
-  }, [cameraOn, connected, media.localStream])
+  }, [media.localStream])
 
   useEffect(() => {
     const video = remoteVideoRef.current
@@ -680,10 +669,19 @@ export function FaceTimeOverlay({
     toggleCallMute()
     playPop()
   }
-  const toggleCamera = () => {
-    const next = !cameraOn
-    media.localStream?.getVideoTracks().forEach(t => { t.enabled = next })
-    setCameraOn(next)
+  const flipCamera = async () => {
+    const track = media.localStream?.getVideoTracks()[0]
+    if (!track) return
+    const nextIsFront = !frontCamera
+    try {
+      await track.applyConstraints({
+        facingMode: { ideal: nextIsFront ? 'user' : 'environment' },
+      })
+      setFrontCamera(nextIsFront)
+    } catch {
+      // A few WebKit versions cannot switch the active capture source without
+      // replacing its sender. Keep the call intact instead of dropping video.
+    }
     playPop()
   }
 
@@ -698,43 +696,29 @@ export function FaceTimeOverlay({
   const elapsed = Math.max(0, Math.floor((now - (callSnap?.connectedAt ?? now)) / 1000))
   const localHasCamera = Boolean(media.localStream?.getVideoTracks().length)
   const remoteHasCamera = Boolean(media.remoteStream?.getVideoTracks().length)
-  const phaseLabel = callSnap?.phase === 'calling'
-    ? 'RINGING…'
-    : callSnap?.phase === 'connecting'
-      ? 'CONNECTING…'
-      : 'CALLING…'
-  const isRinging = callSnap?.phase === 'calling'
-  const statusLabel = connected
-    ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
-    : phaseLabel
-  const callHeading = connected
-    ? 'CONNECTED'
-    : isRinging
-      ? direction === 'incoming' ? 'INCOMING VIDEO CALL' : 'CALLING FROM DM'
-      : 'CONNECTING VIDEO'
-  const callDetail = connected
-    ? 'Secure Poplur video'
-    : isRinging
-      ? direction === 'incoming' ? `${who} is calling you` : `Waiting for ${who} to answer`
-      : 'Setting up the call securely'
+  const statusLabel = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
+  const connectionLabel = callSnap?.phase === 'calling'
+    ? direction === 'incoming' ? 'Incoming video call…' : 'Calling…'
+    : 'Connecting…'
 
   return (
-    <section className={styles.ftOverlay} data-call-theme={callTheme} role="dialog" aria-modal="true" aria-label={`Video call with ${who}`}>
-      <header className={styles.ftHeader}>
-        <span className={styles.ftBrandMark} aria-hidden="true">P</span>
-        <span>
-          <b>POPLUR CALL</b>
-          <small>PT&amp;T WIRELESS · VIDEO</small>
-        </span>
-        <span className={styles.ftLiveLamp}><i aria-hidden="true" />LIVE</span>
-      </header>
-      {connected ? (
-        <div className={styles.ftSplit}>
-          <div className={styles.ftRemotePane}>
+    <section
+      className={styles.ftOverlay}
+      data-call-state={connected ? 'connected' : 'connecting'}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Video call with ${who}`}
+    >
+      <div className={styles.ftRemotePane}>
+        {connected ? (
+          <>
             <div className={styles.ftVideoFallback} aria-hidden="true">
-              <span className={styles.ftFallbackAvatar}>{initial}</span>
+              <div className={styles.ftRemoteCard}>
+                <span className={styles.ftFallbackAvatar}>{initial}</span>
+                <i /><i />
+              </div>
               <strong>{who}</strong>
-              <span>{remoteHasCamera ? 'Waiting for video…' : 'Connected by audio'}</span>
+              <span className={styles.ftLiveVideo}><i />{remoteHasCamera ? 'Waiting for video…' : 'Connected by audio'}</span>
             </div>
             <video
               ref={remoteVideoRef}
@@ -746,69 +730,73 @@ export function FaceTimeOverlay({
               className={remoteVideoReady ? `${styles.ftVideo} ${styles.ftVideoReady}` : styles.ftVideo}
             />
             <div className={styles.ftRemoteLabel}>{who}</div>
-          </div>
-          <div className={styles.ftLocalPane}>
-            <div className={styles.ftVideoFallback} aria-hidden="true">
-              <span className={styles.ftFallbackAvatar}>YOU</span>
-              <strong>You</strong>
-              <span>{cameraOn ? (localHasCamera ? 'Starting camera…' : 'Camera unavailable') : 'Camera off'}</span>
+          </>
+        ) : (
+          <div className={styles.ftRinging}>
+            <div className={styles.ftPulseAvatar} aria-hidden="true">
+              <i /><i /><i />
+              <span>{initial}</span>
             </div>
-            <video
-              ref={localVideoRef}
-              autoPlay
-              muted
-              playsInline
-              onLoadedData={markLocalVideoReady}
-              onPlaying={markLocalVideoReady}
-              onEmptied={() => setLocalVideoReady(false)}
-              className={localVideoReady && cameraOn ? `${styles.ftVideo} ${styles.ftVideoReady}` : styles.ftVideo}
-              style={arFilterCss === 'none' ? undefined : { filter: arFilterCss }}
-            />
-            {cameraOn && arFilter !== 'none' && (
-              <FaceAROverlay detections={[CALL_LOCAL_FACE]} filter={arFilter} mirrored allow3D={false} />
-            )}
-            <div className={styles.ftLocalLabel}>You</div>
+            <strong>{who}</strong>
+            <span>{connectionLabel}</span>
           </div>
+        )}
+      </div>
+
+      <div className={styles.ftLocalPane}>
+        <div className={styles.ftVideoFallback} aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
+          <span>{localHasCamera ? 'Starting camera…' : 'Camera unavailable'}</span>
         </div>
-      ) : (
-        <div className={styles.ftRinging}>
-          <div className={styles.ftRingingHalo} aria-hidden="true" />
-          <div className={styles.ftOrbitRail} aria-hidden="true"><i /><i /><i /></div>
-          <div className={styles.ftDuoStage} aria-hidden="true">
-            <i /><b>@</b><i />
-          </div>
-          <div className={styles.ftContactCube} aria-hidden="true">
-            <span className={styles.ftCubeTop} />
-            <span className={styles.ftCubeSide} />
-            <span className={styles.ftCubeFace}>{initial}</span>
-          </div>
-          <strong>{who}</strong>
-          <span className={styles.ftCallKind}>Poplur video call</span>
-          <b>{callHeading}</b>
-          <small>{callDetail}</small>
+        <video
+          ref={localVideoRef}
+          autoPlay
+          muted
+          playsInline
+          onLoadedData={markLocalVideoReady}
+          onPlaying={markLocalVideoReady}
+          onEmptied={() => setLocalVideoReady(false)}
+          className={[
+            styles.ftVideo,
+            localVideoReady ? styles.ftVideoReady : '',
+            frontCamera ? styles.ftLocalVideoMirrored : '',
+          ].filter(Boolean).join(' ')}
+          style={arFilterCss === 'none' ? undefined : { filter: arFilterCss }}
+        />
+        {arFilter !== 'none' && (
+          <FaceAROverlay detections={[CALL_LOCAL_FACE]} filter={arFilter} mirrored={frontCamera} allow3D={false} />
+        )}
+        <div className={styles.ftLocalLabel}>{arFilter === 'none' ? 'You' : arFilter}</div>
+      </div>
+
+      {connected && (
+        <div className={styles.ftStatus} aria-label={`Call duration ${statusLabel}`}>
+          {statusLabel}
         </div>
       )}
-      <div className={styles.ftStatus}>
-        {statusLabel}
-      </div>
-      <div className={styles.ftSideRail}>
-        <CameraARButton active={arOpen} size={42} onToggle={() => setArOpen(open => !open)} />
-      </div>
-      {arOpen && (
+      {connected && (
+        <div className={styles.ftSideRail}>
+          <CameraARButton active={arOpen} size={42} onToggle={() => setArOpen(open => !open)} />
+        </div>
+      )}
+      {connected && arOpen && (
         <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
       )}
       <div className={styles.ftControls}>
         <button type="button" aria-label={callSnap?.muted ? 'Unmute' : 'Mute'} aria-pressed={callSnap?.muted} onClick={toggleMute}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
-          <span>{callSnap?.muted ? 'UNMUTE' : 'MUTE'}</span>
-        </button>
-        <button type="button" aria-label={cameraOn ? 'Camera off' : 'Camera on'} aria-pressed={!cameraOn} onClick={toggleCamera}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
-          <span>{cameraOn ? 'CAMERA' : 'CAMERA OFF'}</span>
+          <span>{callSnap?.muted ? 'Unmute' : 'Mute'}</span>
         </button>
         <button type="button" className={styles.ftEnd} aria-label="End call" onClick={() => { playPop(); hangupCall(); onEnd() }}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14c5-4 11-4 16 0l-3 4-4-2H11l-4 2z" /></svg>
-          <span>END</span>
+          <span>End</span>
+        </button>
+        <button type="button" aria-label="Flip camera" disabled={!localHasCamera} onClick={() => { void flipCamera() }}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h3l2-2h6l2 2h3v11H4zM8 12a4 4 0 108 0 4 4 0 00-8 0z" />
+            <path d="M4 4h5M4 4l2-2M4 4l2 2M20 20h-5M20 20l-2-2M20 20l-2 2" fill="none" />
+          </svg>
+          <span>Flip</span>
         </button>
       </div>
     </section>
@@ -859,7 +847,9 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
   const voiceLimitRef = useRef<number | null>(null)
   const voiceDiscardRef = useRef(false)
   const pendingInitialThreadIdRef = useRef(initialThreadId)
-  const threads = (liveThreads ?? THREADS).filter(t => !deletedIds.has(t.id))
+  // Discovery is radius-based; an established DM is participant history.
+  // Never filter this list by current reach or either person's location.
+  const threads = persistentDMThreads(liveThreads ?? THREADS, deletedIds)
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
   const visibleThreads = normalizedSearch
     ? threads.filter(thread => `${thread.title}\n${thread.preview}`.toLocaleLowerCase().includes(normalizedSearch))
@@ -1446,7 +1436,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
           <div className={styles.avatar}>{activeThread.initials}</div>
           <div className={styles.toolbarInfo}>
             <h1>{activeThread.title}</h1>
-            <span>{activeThread.typing ? 'typing…' : 'Active in your Poplur radius'}</span>
+            <span>{activeThread.typing ? 'typing…' : 'Saved conversation'}</span>
           </div>
           <button type="button" className={styles.dmCallButton} aria-label={`Call ${activeThread.title}`} disabled={!canCall} onClick={() => startPhoneCall(activeThread)}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3l3 5-2 2c1.5 3 3 4.5 6 6l2-2 5 3-1 4c-8 1-16-7-17-15z" /></svg>
@@ -1796,7 +1786,9 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
         <div className={styles.chatHeaderText}>
           <h1>Chats</h1>
           <span className={styles.chatHeaderSub}>
-            {threads.length === 0 ? 'No conversations' : `${threads.length} in your radius`}
+            {threads.length === 0
+              ? 'No conversations'
+              : `${threads.length} saved conversation${threads.length === 1 ? '' : 's'}`}
           </span>
         </div>
       </div>
@@ -1834,7 +1826,9 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
           <div className={styles.emptyState}>
             <span className={styles.emptyMark}>💬</span>
             <strong>{threads.length === 0 ? 'All clear' : 'No matching chats'}</strong>
-            <span>{threads.length === 0 ? 'New chats from your radius land here.' : 'Try another name or message.'}</span>
+            <span>{threads.length === 0
+              ? 'Start with someone in your radius. Once connected, the chat stays here.'
+              : 'Try another name or message.'}</span>
           </div>
         )}
         </div>

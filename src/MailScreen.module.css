@@ -1411,7 +1411,359 @@
 
 .ftControls button:active { transform: translateY(3px); box-shadow: inset 0 2px 4px rgba(255, 255, 255, .2), 0 1px 0 rgba(14, 4, 11, .46); }
 
+/* The web call now mirrors the current native InAppVideoCallView: one
+   full-bleed remote stage, a small local preview, and native-sized controls.
+   Keep permission alerts above it, but cover the persistent Poplur HUD so the
+   old cube/radius chrome cannot leak into an active call. */
+.ftOverlay {
+  z-index: 950;
+  display: block;
+  isolation: isolate;
+  background: #000;
+}
+
+.ftOverlay::before {
+  content: none;
+}
+
+.ftRemotePane {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 26%, rgba(56, 87, 250, 0.25), transparent 34%),
+    radial-gradient(circle at 82% 70%, rgba(245, 97, 148, 0.16), transparent 36%),
+    linear-gradient(145deg, #0d0f14, #1e1728 56%, #08191b);
+}
+
+.ftVideoFallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 80px 24px 180px;
+  color: #fff;
+}
+
+.ftRemoteCard {
+  position: relative;
+  width: 172px;
+  height: 214px;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  padding-top: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 46px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ftRemoteCard .ftFallbackAvatar {
+  width: 96px;
+  height: 96px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: none;
+  font-size: 42px;
+}
+
+.ftRemoteCard i {
+  display: block;
+  width: 112px;
+  height: 26px;
+  margin-top: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.ftRemoteCard i + i {
+  width: 86px;
+  height: 20px;
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ftVideoFallback > strong {
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.ftLiveVideo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.74) !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+}
+
+.ftLiveVideo i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #61ff78;
+  box-shadow: 0 0 10px rgba(97, 255, 120, 0.6);
+}
+
+.ftRinging {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px 24px 172px;
+  overflow: hidden;
+}
+
+.ftRinging > strong {
+  margin: 20px 0 0;
+  color: #fff;
+  font-size: 28px;
+  letter-spacing: -0.03em;
+}
+
+.ftRinging > span {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ftPulseAvatar {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+}
+
+.ftPulseAvatar > span {
+  position: relative;
+  z-index: 2;
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #262633;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 800;
+}
+
+.ftPulseAvatar > i {
+  position: absolute;
+  inset: -18px;
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  animation: ftPulseOut 1.6s ease-out infinite;
+}
+
+.ftPulseAvatar > i:nth-child(2) {
+  inset: -36px;
+  border-color: rgba(255, 255, 255, 0.11);
+  animation-delay: 0.5s;
+}
+
+.ftPulseAvatar > i:nth-child(3) {
+  inset: -54px;
+  border-color: rgba(255, 255, 255, 0.07);
+  animation-delay: 1s;
+}
+
+@keyframes ftPulseOut {
+  from { opacity: 1; transform: scale(0.78); }
+  to { opacity: 0; transform: scale(1.35); }
+}
+
+.ftVideo {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ftRemotePane .ftRemoteLabel {
+  top: max(18px, calc(env(safe-area-inset-top, 0px) + 10px));
+  left: 16px;
+  padding: 6px 12px;
+  border: 0;
+  background: rgba(0, 0, 0, 0.32);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ftLocalPane {
+  position: absolute;
+  inset: auto 16px auto auto;
+  top: max(60px, calc(env(safe-area-inset-top, 0px) + 42px));
+  z-index: 24;
+  width: 110px;
+  height: 146px;
+  display: block;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  background: #1f1f29;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.52);
+}
+
+.ftLocalPane .ftVideoFallback {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  padding: 12px;
+  background: #1f1f29;
+}
+
+.ftLocalPane .ftVideoFallback svg {
+  width: 23px;
+  height: 23px;
+  fill: rgba(255, 255, 255, 0.4);
+}
+
+.ftLocalPane .ftVideoFallback span {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.ftLocalPane .ftVideo {
+  transform: none;
+}
+
+.ftLocalPane .ftLocalVideoMirrored {
+  transform: scaleX(-1);
+}
+
+.ftLocalLabel {
+  top: auto;
+  right: auto;
+  bottom: 8px;
+  left: 8px;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ftStatus {
+  position: absolute;
+  top: max(14px, calc(env(safe-area-inset-top, 0px) + 6px));
+  left: 50%;
+  z-index: 30;
+  min-height: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(30, 30, 34, 0.68);
+  backdrop-filter: blur(18px);
+  color: rgba(255, 255, 255, 0.86);
+  font: 650 15px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0;
+  transform: translateX(-50%);
+}
+
+.ftSideRail {
+  top: max(218px, calc(env(safe-area-inset-top, 0px) + 202px));
+  right: 16px;
+  z-index: 32;
+}
+
+.ftControls {
+  position: absolute;
+  right: 0;
+  bottom: calc(50px + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  z-index: 35;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 32px;
+  margin: 0;
+  padding: 0 20px;
+}
+
+.ftControls button {
+  width: 62px;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: #fff;
+}
+
+.ftControls svg {
+  box-sizing: border-box;
+  width: 58px;
+  height: 58px;
+  padding: 17px;
+  border-radius: 50%;
+  background: #38383f;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.ftControls button span {
+  color: rgba(255, 255, 255, 0.75);
+  font: 500 12px/1.1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  letter-spacing: 0;
+}
+
+.ftControls button[aria-pressed='true'] svg {
+  background: #e23a45;
+}
+
+.ftControls button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.ftControls .ftEnd {
+  width: 76px;
+  background: none !important;
+  box-shadow: none !important;
+}
+
+.ftControls .ftEnd svg {
+  width: 72px;
+  height: 72px;
+  padding: 21px;
+  background: #ff3b30;
+}
+
+.ftControls button:active {
+  transform: scale(0.94);
+  box-shadow: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ftRingingHalo { animation: none; }
+  .ftPulseAvatar > i { animation: none; }
   .ftVideo { transition: none; }
 }

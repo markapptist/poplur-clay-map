@@ -514,8 +514,11 @@
 :global([data-poplur-performance-mode='low_power']) .globe,
 :global([data-poplur-performance-mode='emergency']) .globe {
   animation: none;
-  background-image: url('/sprites/stats_globe_static.png');
-  background-size: 280px 280px;
+  /* The old "static" PNG is a contact-sheet transition frame: it contains
+     the departing half of one globe and the arriving half of the next. Freeze
+     the real spin strip on its complete first frame instead. */
+  background-image: url('/sprites/stats_globe_spin.png');
+  background-size: 11200px 280px;
   background-position: 0 0;
 }
 

@@ -20,6 +20,7 @@ import {
   readPodcastMapPick,
   type PodcastMapPickKind,
 } from './podcastMapDraft'
+import type { IpodSection } from './ipodNavigation'
 
 /** Focus and blur can leave the page scrolled under the keyboard; one deferred
  *  frame puts it back. governor-ok: a single frame per event, no loop, cannot
@@ -84,8 +85,6 @@ const STEPS = 16
 // enough for a verse-and-hook pass — and exactly the span the AI builder
 // consumes. (It was 30 seconds when the take was only a hook seed.)
 const MAX_TAKE_MS = 180_000
-/** MUSIC starts with a concise hook, then hands the artist to Studio. */
-const MAX_MUSIC_CAPTURE_MS = 60_000
 const MAX_PODCAST_MS = 10 * 60_000
 
 const PODCAST_GENRES = ['Talk', 'Interview', 'Story', 'News', 'Culture', 'Comedy', 'Music Talk'] as const
@@ -107,17 +106,13 @@ export default function StudioScreen({
   onClose,
   onOpenLibrary,
   bindBack,
-  entry = 'studio',
 }: {
   onClose: () => void
-  /** Opens the map iPod without leaving the shared web surface. */
-  onOpenLibrary?: () => void
+  /** Opens the matching map-iPod shelf without leaving the shared web surface. */
+  onOpenLibrary?: (section: IpodSection) => void
   /** Lends the persistent navigator cube this flow's one-step-back action. */
   bindBack?: (fn: (() => boolean) | null) => void
-  /** MUSIC records a one-minute hook before it opens the normal Studio flow. */
-  entry?: 'studio' | 'music-capture'
 }) {
-  const isMusicCapture = entry === 'music-capture'
   // The map picker remounts this screen. Read the completed selection first;
   // React StrictMode briefly mounts, unmounts and mounts again in development,
   // so consuming it inside the state initializer made the real room lose its
@@ -155,7 +150,7 @@ export default function StudioScreen({
   // version of this screen.
   const [mode, setMode] = useState<'music' | 'podcast'>(restoredMapPick ? 'podcast' : 'music')
   const [stage, setStage] = useState<'choose' | 'mic' | 'style' | 'room' | 'podcast-record' | 'studio'>(
-    restoredMapPick ? 'room' : isMusicCapture ? 'mic' : 'choose',
+    restoredMapPick ? 'room' : 'choose',
   )
   const [podcastGenre, setPodcastGenre] = useState<string>(restoredMapPick?.genre ?? 'Talk')
   const [aiEnhance, setAiEnhance] = useState(restoredMapPick?.aiEnhanced ?? false)
@@ -723,11 +718,7 @@ export default function StudioScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, genre])
 
-  const maxRecMs = mode === 'podcast'
-    ? MAX_PODCAST_MS
-    : isMusicCapture
-      ? MAX_MUSIC_CAPTURE_MS
-      : MAX_TAKE_MS
+  const maxRecMs = mode === 'podcast' ? MAX_PODCAST_MS : MAX_TAKE_MS
   useEffect(() => {
     if (!recording) return
     const limit = maxRecMs
@@ -1148,9 +1139,7 @@ export default function StudioScreen({
             <span className={styles.micHint}>
               {micDenied
                 ? 'Microphone refused — allow access in settings.'
-                : isMusicCapture
-                  ? (recording ? 'Your sound is driving the landscape sideways.' : 'Record a hook, then take it into Studio.')
-                  : (recording ? 'Your sound is driving the landscape sideways.' : 'Tap record and give it a hook.')}
+                : (recording ? 'Your sound is driving the landscape sideways.' : 'Tap record and give it a hook.')}
             </span>
             <input
               ref={uploadInputRef}
@@ -1175,7 +1164,7 @@ export default function StudioScreen({
             </button>
           </div>
           {onOpenLibrary && (
-            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
+            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary('root') }}>
               <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
             </button>
           )}
@@ -1225,7 +1214,7 @@ export default function StudioScreen({
             </button>
           )}
           {onOpenLibrary && (
-            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
+            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary('root') }}>
               <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
             </button>
           )}
@@ -1260,9 +1249,18 @@ export default function StudioScreen({
             {!recording && <button className={styles.micSkip} type="button" onClick={() => { playPop(); setStage('room') }}>BACK TO ROOM</button>}
           </div>
           {onOpenLibrary && (
-            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
-              <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
-            </button>
+            <section className={styles.podcastLibrarySection} aria-label="Podcast library">
+              <button className={styles.podcastLibraryButton} type="button" aria-label="Open Podcasts in iPod" onClick={() => { playPop(); onOpenLibrary('podcasts') }}>
+                <span className={styles.podcastLibraryArt} aria-hidden="true">
+                  <img src="holdmenu/Apps.png" alt="" draggable={false} />
+                </span>
+                <span className={styles.podcastLibraryCopy}>
+                  <strong>PODCAST LIBRARY</strong>
+                  <small>Open your shows and episodes in iPod</small>
+                </span>
+                <span className={styles.podcastLibraryAction} aria-hidden="true">OPEN</span>
+              </button>
+            </section>
           )}
         </div>
       </div>
@@ -1316,6 +1314,20 @@ export default function StudioScreen({
               <span className={styles.knob} />
             </button>
           </div>
+          {onOpenLibrary && (
+            <section className={styles.podcastLibrarySection} aria-label="Podcast library">
+              <button className={styles.podcastLibraryButton} type="button" aria-label="Open Podcasts in iPod" onClick={() => { playPop(); onOpenLibrary('podcasts') }}>
+                <span className={styles.podcastLibraryArt} aria-hidden="true">
+                  <img src="holdmenu/Apps.png" alt="" draggable={false} />
+                </span>
+                <span className={styles.podcastLibraryCopy}>
+                  <strong>PODCAST LIBRARY</strong>
+                  <small>Open your shows and episodes in iPod</small>
+                </span>
+                <span className={styles.podcastLibraryAction} aria-hidden="true">OPEN</span>
+              </button>
+            </section>
+          )}
           {nearbyPops.length > 0 && (
             <div className={styles.invitePanel}>
               <div className={styles.inviteHead}>
@@ -1366,11 +1378,6 @@ export default function StudioScreen({
                 <small>{takeUrl ? 'Choose an area' : 'Record in this room'}</small>
               </button>
             </div>
-          )}
-          {onOpenLibrary && (
-            <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
-              <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
-            </button>
           )}
         </div>
       </div>
@@ -1795,7 +1802,7 @@ export default function StudioScreen({
         ))}
       </nav>
       {onOpenLibrary && (
-        <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary() }}>
+        <button className={styles.librarySideButton} type="button" aria-label="Open My Tracks in iPod" onClick={() => { playPop(); onOpenLibrary('root') }}>
           <img className={styles.libraryFolder} src="holdmenu/Apps.png" alt="" aria-hidden="true" draggable={false} />
         </button>
       )}

@@ -33,6 +33,12 @@ import {
   stopIpodPlayback,
   subscribeIpodPlayback,
 } from './ipodPlayback'
+import { ownBroadcastShelf, type PoplurBroadcast } from './mapRadio'
+import {
+  announceIpodSection,
+  ipodSectionForFrame,
+  type IpodSection,
+} from './ipodNavigation'
 
 /** The canvas the skin art is exported at. Its ratio drives the device box,
  *  so the normalised geometry lands on the same pixels at any render size. */
@@ -120,12 +126,14 @@ function buildPickups(origin: [number, number]): Pickup[] {
  * reach. Rows are computed per frame rather than stored, so posting a track
  * puts it in every listing it belongs to at once.
  *
- * Videos, Photos, Podcasts, Extras and Settings stay on the root because the
- * object is that object, and they say they hold nothing rather than pretending.
+ * Podcasts has its own shelf beside Music. Videos, Photos, Extras and Settings
+ * stay on the root because the object is that object, and they say they hold
+ * nothing rather than pretending.
  */
 type Frame =
   | { id: 'root' }
   | { id: 'music' }
+  | { id: 'podcasts' }
   | { id: 'poplur' }
   | { id: 'soundcloud' }
   | { id: 'artists' }
@@ -150,11 +158,15 @@ interface Row {
   /** SoundCloud discovery opens the official experience; it never joins the
    *  Poplur playback queue. */
   soundcloud?: NearbySoundCloudTrack
+  /** An episode saved from the Podcast room. It is browsed here; playback and
+   *  broadcasting remain owned by Poplur Radio. */
+  podcast?: PoplurBroadcast
 }
 
 const FRAME_TITLES: Record<Frame['id'], string> = {
   root: 'Poplur',
   music: 'Music',
+  podcasts: 'Podcasts',
   poplur: 'Poplur Studio',
   soundcloud: 'Nearby Artists',
   artists: 'Artists',
@@ -164,12 +176,22 @@ const FRAME_TITLES: Record<Frame['id'], string> = {
   nowplaying: 'Now Playing',
 }
 
-export default function MapIpod({ onClose }: { onClose?: () => void }) {
+export default function MapIpod({
+  onClose,
+  initialSection = 'root',
+}: {
+  onClose?: () => void
+  /** The Podcast room's folder opens straight into its library. Ordinary iPod
+   *  entrances keep the classic root menu. */
+  initialSection?: IpodSection
+}) {
   const location = useNearbyLocation()
   // Where you are, and where the cursor sat in each frame you came through —
   // backing out of Artists must land on the artist you opened, not the top.
-  const [stack, setStack] = useState<Frame[]>([{ id: 'root' }])
-  const [indexes, setIndexes] = useState<number[]>([0])
+  const [stack, setStack] = useState<Frame[]>(() => initialSection === 'podcasts'
+    ? [{ id: 'root' }, { id: 'podcasts' }]
+    : [{ id: 'root' }])
+  const [indexes, setIndexes] = useState<number[]>(() => initialSection === 'podcasts' ? [0, 0] : [0])
   /** the listing you started playing from; Now Playing steps through THIS */
   const [queue, setQueue] = useState<Pickup[]>([])
   const [trackIndex, setTrackIndex] = useState(0)
@@ -188,8 +210,20 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   const [nearbySoundCloud, setNearbySoundCloud] = useState<NearbySoundCloudTrack[]>([])
   const [soundCloudState, setSoundCloudState] = useState<'idle' | 'loading' | 'ready' | 'unconfigured' | 'error'>('idle')
   const [soundCloudError, setSoundCloudError] = useState('')
+  // The room writes its finished/live shows to the first-party broadcast
+  // shelf before opening this folder. Read on mount so the library always
+  // reflects the room the person just left underneath it.
+  const [podcasts] = useState(() => ownBroadcastShelf().filter(item => item.type === 'podcast'))
   const soundCloudQueryRef = useRef('')
   const frame = stack[stack.length - 1]
+  const navigatorSection = ipodSectionForFrame(frame.id)
+
+  // Home owns the one persistent 3D navigator. Report only the semantic iPod
+  // section it needs: Podcasts wears the folder; every other frame falls back
+  // to the iPod. Clearing on unmount restores the page underneath (notably the
+  // still-mounted Podcast room) without losing any of its draft state.
+  useEffect(() => announceIpodSection(navigatorSection), [navigatorSection])
+  useEffect(() => () => announceIpodSection(null), [])
 
   // The shelf is live: post a track (studio, or the console hook) and it lands
   // here without a reload, which is the behaviour a posting app has to have.
@@ -401,12 +435,23 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
           { key: 'music', label: 'Music', go: { id: 'music' } },
           { key: 'videos', label: 'Videos', inert: true },
           { key: 'photos', label: 'Photos', inert: true },
-          { key: 'podcasts', label: 'Podcasts', inert: true },
+          { key: 'podcasts', label: 'Podcasts', meta: String(podcasts.length), go: { id: 'podcasts' } },
           { key: 'extras', label: 'Extras', inert: true },
           { key: 'settings', label: 'Settings', inert: true },
           { key: 'shuffle', label: 'Shuffle Songs', shuffle: true, meta: String(inReach.length) },
           { key: 'nowplaying', label: 'Now Playing', go: { id: 'nowplaying' } },
         ]
+      case 'podcasts':
+        return podcasts.map(podcast => ({
+          key: podcast.id,
+          label: podcast.title,
+          meta: podcast.status === 'live'
+            ? 'LIVE'
+            : podcast.duration > 0
+              ? `${Math.floor(podcast.duration / 60)}:${String(podcast.duration % 60).padStart(2, '0')}`
+              : podcast.genre,
+          podcast,
+        }))
       case 'music':
         return [
           { key: 'poplur', label: 'Poplur Studio', meta: String(inReach.length), go: { id: 'poplur' } },
@@ -457,7 +502,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
       }
       default: return []
     }
-  }, [frame, nearbySoundCloud, nearbyStudioFallback, pickups, reach, soundCloudState])
+  }, [frame, nearbySoundCloud, nearbyStudioFallback, pickups, podcasts, reach, soundCloudState])
 
   // Clamped here rather than on every write: rows change under the cursor when
   // the shelf changes, and a stale index would point at the wrong track.
@@ -575,6 +620,13 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
     if (!row) return
     if (row.inert) { setStatus(`${row.label} is not on this iPod`); return }
 
+    if (row.podcast) {
+      setStatus(row.podcast.status === 'live'
+        ? `${row.podcast.title} is live on Poplur Radio`
+        : `${row.podcast.title} · ${row.podcast.genre}`)
+      return
+    }
+
     if (row.soundcloud) {
       stopPlayback()
       openSoundCloudTrack(row.soundcloud)
@@ -657,6 +709,7 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   const currentStudioFallback = frame.id === 'soundcloud' && !currentSoundCloud
     ? rows[cursor]?.play ?? nearbyStudioFallback[0] ?? null
     : null
+  const currentPodcast = rows[cursor]?.podcast ?? podcasts[0] ?? null
   const nowPlaying = pickups.find(p => p.track.id === playingId) ?? null
 
   const emptyLabel = frame.id === 'soundcloud'
@@ -673,6 +726,8 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
               ? 'Discovery is unavailable — nearby Poplur Studio tracks are ready'
               : 'Discovery unavailable'
             : 'No qualifying tracks'
+    : frame.id === 'podcasts'
+      ? 'No podcasts saved yet'
     : frame.id === 'poplur' || frame.id === 'songs'
       ? 'No Studio tracks yet'
       : 'Nothing here yet'
@@ -739,6 +794,8 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
   }
   const artTitle = frame.id === 'root'
     ? `${pickups.filter(unlocked).length} in reach`
+    : frame.id === 'podcasts'
+      ? currentPodcast?.title ?? 'Your podcast folder'
     : frame.id === 'music'
       ? 'Choose a source'
       : frame.id === 'soundcloud'
@@ -746,6 +803,10 @@ export default function MapIpod({ onClose }: { onClose?: () => void }) {
         : current?.track.title ?? 'No Studio music yet'
   const artSub = frame.id === 'root'
     ? `${reach.toFixed(1)} km radius`
+    : frame.id === 'podcasts'
+      ? currentPodcast
+        ? `${currentPodcast.status === 'live' ? 'LIVE' : 'RECORDED'} · ${currentPodcast.genre}`
+        : 'Episodes from your Podcast room'
     : frame.id === 'music'
       ? 'Poplur Studio or nearby artists'
       : frame.id === 'soundcloud'
