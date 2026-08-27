@@ -316,13 +316,26 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(map).toMatch(/<MapNewsButton[\s\S]*?startNewsTour\(\)/)
     expect(home).toMatch(/<MapNewsButton[\s\S]*?sendMapAction\('newsTour'\)/)
 
-    // A failed/empty wire leaves the navigator on Map. Only a story card's
-    // explicit Read action posts the edition handoff with a real event id.
+    // A failed/empty wire stays on Map and starts the visibly labelled tour
+    // preview instead of becoming a no-op. Only a story card's explicit Read
+    // action posts the edition handoff with a real event id.
     const startNewsTour = map.slice(
       map.indexOf('const startNewsTour'),
       map.indexOf('// A provider-degraded edition'),
     )
     expect(startNewsTour).not.toContain('openPoplurNewsEdition')
+    expect(startNewsTour).toContain('newsTourEventsForSnapshot')
+    expect(map).toContain('newsTourRunEventsRef.current = events')
+    expect(map).toContain("status: event.preview ? 'top' : event.status")
+    const stepNewsTour = map.slice(
+      map.indexOf('const stepNewsTour'),
+      map.indexOf('const startExplicitTourLoop'),
+    )
+    expect(stepNewsTour).toContain('const events = newsTourRunEventsRef.current')
+    expect(stepNewsTour).toContain('events.length')
+    expect(stepNewsTour).not.toContain('newsTourEvents.length')
+    expect(map).toContain("? newsTourRunEvents.length\n    : newsTourEvents.length")
+    expect(map).toContain('`${newsTourPosition + 1}/${newsTourDisplayCount}`')
     expect(map).toMatch(/onRead=\{\(\) => \{[\s\S]*?openPoplurNewsEdition\(eventId\)/)
     expect(readMapNewsOpenRequest(mapNewsOpenMessage(' live-story ')))
       .toEqual({ eventId: 'live-story' })
@@ -361,6 +374,19 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(loading).toContain('STANDINGS LOADING')
     expect(loading).toContain('VIEW FULL BOARD')
     expect(loading).toContain('aria-controls="poplur-conquer-board"')
+  })
+
+  it('paints the compact Conquer popup as the same white board as the full screen', () => {
+    const component = readFileSync(new URL('../ConquerGlance.tsx', import.meta.url), 'utf8')
+    const css = readFileSync(new URL('../ConquerGlance.module.css', import.meta.url), 'utf8')
+    expect(component).toContain('<span className={styles.board}>')
+    expect(component).toContain('<span className={styles.heading}>')
+    expect(component).not.toContain('surfaceStyles.surface')
+    expect(component).not.toContain('surfaceStyles.header')
+    expect(css).toMatch(/\.board\s*\{[\s\S]*?rgba\(255, 247, 252, \.96\)/)
+    expect(css).toMatch(/\.heading strong\s*\{[\s\S]*?color: #180913/)
+    expect(css).toMatch(/\.heading em\s*\{[\s\S]*?color: #087a99/)
+    expect(css).toMatch(/\.row\s*\{[\s\S]*?background: rgba\(255, 255, 255, \.74\)/)
   })
 
   it('renders a live channel value and preserves both navigation handlers', () => {

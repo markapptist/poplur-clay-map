@@ -108,8 +108,8 @@ export default function ConquerGlance({
       onClick={onOpen}
     >
       <span className={styles.terrain} aria-hidden="true" />
-      <span className={`${styles.board} ${surfaceStyles.surface}`}>
-        <span className={`${styles.heading} ${surfaceStyles.header}`}>
+      <span className={styles.board}>
+        <span className={styles.heading}>
           <span>
             <small><i aria-hidden="true" /> {snapshot?.scope ?? 'LOCAL'} · DOMINATION LIVE</small>
             <strong>Conquer Board</strong>

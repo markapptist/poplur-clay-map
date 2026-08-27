@@ -4,6 +4,7 @@ import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
+import { shouldHidePersistentCube } from './persistentCubeVisibility'
 import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
@@ -3269,9 +3270,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   /** The cube's own version of chromeGone, composerOpen excluded: the capture
    *  preview and post composer are a home surface, not a takeover, and
    *  PostComposer/VFXStudio already reserve --composer-home-clearance so the
-   *  cube has room to sit below them unobstructed — the cube going with the
-   *  rest of the chrome left nothing there to reserve room for. */
-  const cubeChromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen
+   *  cube has room to sit below them unobstructed. A full-screen subscreen is
+   *  still a Poplur screen, so the persistent cube remains its way back. */
+  const cubeChromeGone = shouldHidePersistentCube({
+    feedFullscreen: feedChromeGone,
+    nativeFeedAdOpen: feedAdSlotOpen,
+    subscreenFullscreen,
+  })
   // Games run full-bleed under the HUD (GamesScreen.module.css), so the
   // wordmark and the bottom stat row sat on top of the console art the whole
   // time a game was open. Unlike subscreenFullscreen this does NOT take the

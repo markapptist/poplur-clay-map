@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   liveNewsEndpoint,
   liveNewsCameraFrame,
+  newsTourEventsForSnapshot,
   parseLiveNewsCache,
   parseLiveNewsPayload,
   parseLiveNewsResponse,
   previewLiveNewsEvents,
   rankLiveNewsEvents,
+  staleProviderStopsNewsTour,
   tourEligibleLiveNewsEvents,
   type LiveNewsEvent,
 } from '../liveNews'
@@ -148,6 +150,35 @@ describe('shared live news wire', () => {
     expect(preview).toHaveLength(3)
     expect(preview.every(item => item.preview)).toBe(true)
     expect(preview.flatMap(item => item.media).every(item => item.rights === 'preview' && item.src.startsWith('/'))).toBe(true)
+  })
+
+  it('keeps an explicit Map News press interactive during empty or stale provider states', () => {
+    const verified = event()
+    expect(newsTourEventsForSnapshot({ events: [verified], stale: false }, NOW))
+      .toEqual([verified])
+
+    const emptyFallback = newsTourEventsForSnapshot({ events: [], stale: false }, NOW)
+    expect(emptyFallback).toHaveLength(3)
+    expect(emptyFallback.every(item => item.preview)).toBe(true)
+
+    const staleFallback = newsTourEventsForSnapshot({ events: [verified], stale: true }, NOW)
+    expect(staleFallback).toHaveLength(3)
+    expect(staleFallback.every(item => item.preview)).toBe(true)
+  })
+
+  it('stops only a verified active tour when the provider becomes stale', () => {
+    const verified = event()
+    const preview = previewLiveNewsEvents(NOW)
+    expect(staleProviderStopsNewsTour(false, true, [verified])).toBe(false)
+    expect(staleProviderStopsNewsTour(true, false, [verified])).toBe(false)
+    expect(staleProviderStopsNewsTour(true, true, preview)).toBe(false)
+    expect(staleProviderStopsNewsTour(true, true, [verified])).toBe(true)
+  })
+
+  it('labels every deterministic fallback as simulated preview copy', () => {
+    const preview = previewLiveNewsEvents(NOW)
+    expect(preview.every(item => item.preview)).toBe(true)
+    expect(preview.map(item => item.summary).join(' ')).not.toMatch(/a verified multi-source update/i)
   })
 
   it('drops media without an explicit publishable rights class', () => {

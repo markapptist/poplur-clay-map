@@ -337,8 +337,9 @@ export function liveNewsWhen(event: LiveNewsEvent, nowMs = Date.now()): string {
   return `${Math.floor(hours / 24)}d`
 }
 
-/** Browser-only, plainly labelled deterministic data. It makes the complete
- * interaction testable before the scheduled production wire is deployed. */
+/** Plainly labelled deterministic data. It keeps the explicit Map News action
+ * interactive when the production provider is unavailable, without ever
+ * presenting simulated stories as verified LIVE/BREAKING reporting. */
 export function previewLiveNewsEvents(nowMs = Date.now()): LiveNewsEvent[] {
   const at = (minutesAgo: number) => new Date(nowMs - minutesAgo * 60_000).toISOString()
   const source = (publisher: string, slug: string, publishedAt: string): LiveNewsSource => ({
@@ -370,7 +371,7 @@ export function previewLiveNewsEvents(nowMs = Date.now()): LiveNewsEvent[] {
     {
       id: 'preview-tokyo-transit',
       title: 'Transit update changes the evening rush',
-      summary: 'A verified multi-source update is grouped once, placed at provider coordinates and ranked for a finite worldwide tour.',
+      summary: 'A simulated multi-source update is grouped once, placed at preview coordinates and ranked for a finite worldwide tour.',
       status: 'breaking', place: 'Tokyo', country: 'Japan', coords: [139.6917, 35.6895],
       scope: 'regional', category: 'transport', publishedAt: at(42), updatedAt: at(7), confidence: 0.93,
       sources: [source('Poplur News preview', 'tokyo-transit-a', at(42)), source('Transit desk preview', 'tokyo-transit-b', at(11))],
@@ -379,6 +380,29 @@ export function previewLiveNewsEvents(nowMs = Date.now()): LiveNewsEvent[] {
     },
   ]
   return rankLiveNewsEvents(events, nowMs)
+}
+
+/** Resolve one explicit Map News press. Fresh verified stories always win;
+ * stale/empty provider states fall back to the visibly labelled tour preview
+ * instead of turning the side button into a silent no-op or navigating away
+ * from the Map. */
+export function newsTourEventsForSnapshot(
+  snapshot: Pick<LiveNewsSnapshot, 'events' | 'stale'>,
+  nowMs = Date.now(),
+): LiveNewsEvent[] {
+  const verified = snapshot.stale ? [] : tourEligibleLiveNewsEvents(snapshot.events, nowMs)
+  return verified.length ? verified : previewLiveNewsEvents(nowMs)
+}
+
+/** A stale provider must stop a genuine live-news camera pass, but it must not
+ * cancel an in-flight request or the explicitly labelled preview fallback.
+ * Keeping that distinction pure makes the async edge testable without a DOM. */
+export function staleProviderStopsNewsTour(
+  stale: boolean,
+  active: boolean,
+  runEvents: readonly LiveNewsEvent[],
+): boolean {
+  return stale && active && runEvents.some(event => !event.preview)
 }
 
 type CachedWire = {

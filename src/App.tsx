@@ -95,6 +95,8 @@ import { mapNewsOpenMessage } from './mapNewsBridge'
 import {
   liveNewsCameraFrame,
   loadLiveNews,
+  newsTourEventsForSnapshot,
+  staleProviderStopsNewsTour,
   tourEligibleLiveNewsEvents,
   useLiveNews,
   type LiveNewsEvent,
@@ -1795,6 +1797,12 @@ export default function App() {
     () => liveNews.stale ? [] : tourEligibleLiveNewsEvents(liveNews.events),
     [liveNews.events, liveNews.stale],
   )
+  // The provider list and the event set selected for an active pass are not
+  // always the same: an explicit press may run the visibly labelled fallback
+  // tour while the production wire is empty. Persist the actual pass so every
+  // card, arrow, counter and cross-frame status reads one coherent session.
+  const newsTourRunEventsRef = useRef<LiveNewsEvent[]>([])
+  const [newsTourRunEvents, setNewsTourRunEvents] = useState<LiveNewsEvent[]>([])
   const newsTourIndexRef = useRef(-1)
   const newsNavigationFocusRef = useRef<'previous' | 'next' | null>(null)
   const clearNewsNavigationFocus = useCallback(() => {
@@ -1814,7 +1822,9 @@ export default function App() {
       type: 'poplur-map-news-event',
       active: true,
       id: event.id,
-      status: event.status,
+      // Preview stories remain plainly simulated and must never activate the
+      // genuine BREAKING/LIVE exclamation cube in the native Home shell.
+      status: event.preview ? 'top' : event.status,
     } : {
       type: 'poplur-map-news-event',
       active: false,
@@ -1870,6 +1880,8 @@ export default function App() {
     setTourOn(false)
     setTourMode(null)
     setActiveNewsStop(null)
+    newsTourRunEventsRef.current = []
+    setNewsTourRunEvents([])
     newsTourIndexRef.current = -1
     newsNavigationFocusRef.current = null
     reportNewsEvent(null)
@@ -1899,6 +1911,8 @@ export default function App() {
     setTourOn(false)
     setTourMode(null)
     setActiveNewsStop(null)
+    newsTourRunEventsRef.current = []
+    setNewsTourRunEvents([])
     newsTourIndexRef.current = -1
     newsNavigationFocusRef.current = null
     reportNewsEvent(null)
@@ -2083,7 +2097,7 @@ export default function App() {
     newsTourIndexRef.current = index
     tourFlightInProgressRef.current = true
     setCurrentPlace(displayPlaceName(event.place))
-    setTourLine(`${event.status.toUpperCase()}: ${event.title}`)
+    setTourLine(`${event.preview ? 'NEWS PREVIEW' : event.status.toUpperCase()}: ${event.title}`)
     const flew = flyToCenter(
       event.coords,
       TOUR_FLIGHT_MS,
@@ -2110,6 +2124,8 @@ export default function App() {
   const beginNewsTour = useCallback((events: LiveNewsEvent[], firstEvent?: LiveNewsEvent) => {
     if (!events.length) return
     stopTour()
+    newsTourRunEventsRef.current = events
+    setNewsTourRunEvents(events)
     const requestedIndex = firstEvent
       ? events.findIndex(event => event.id === firstEvent.id)
       : -1
@@ -2151,11 +2167,14 @@ export default function App() {
       beginNewsTour(newsTourEvents, firstEvent)
       return
     }
-    // The newspaper side button owns a geographic Map tour. A provider outage
-    // must never turn that Map action into an unexpected Feed navigation.
-    if (liveNews.source === 'empty' && liveNews.error) {
-      stopTour()
-      setTourLine('Live news tour is temporarily unavailable. Staying on the Map.')
+    // The newspaper side button owns a geographic Map tour. A known provider
+    // outage must neither navigate to Feed nor leave the control looking dead;
+    // start the same plainly labelled preview used by browser/RN QA at once.
+    if (!liveNews.loading && liveNews.error) {
+      beginNewsTour(newsTourEventsForSnapshot({
+        events: liveNews.events,
+        stale: liveNews.stale,
+      }), firstEvent)
       return
     }
     stopTour()
@@ -2166,32 +2185,33 @@ export default function App() {
     void loadLiveNews(true).then(snapshot => {
       if (newsStartSerialRef.current !== requestSerial) return
       if (!mapFrontRef.current || document.visibilityState !== 'visible') return
-      const events = snapshot.stale ? [] : tourEligibleLiveNewsEvents(snapshot.events)
-      if (!events.length) {
-        stopTour()
-        setTourLine('No current verified live-news stops. Staying on the Map.')
-        return
-      }
+      const events = newsTourEventsForSnapshot(snapshot)
       beginNewsTour(events, firstEvent)
     }).finally(() => {
       if (newsStartSerialRef.current !== requestSerial) return
       newsTourPendingRef.current = false
       setNewsTourPending(false)
     })
-  }, [beginNewsTour, liveNews.error, liveNews.loading, liveNews.source, newsTourEvents, stopTour])
+  }, [beginNewsTour, liveNews.error, liveNews.events, liveNews.loading, liveNews.stale, newsTourEvents, stopTour])
 
   // A provider-degraded edition remains readable in News, but it must not
-  // keep moving the map under a LIVE/BREAKING presentation.
+  // keep a verified LIVE/BREAKING camera pass moving. Pending requests and
+  // explicitly labelled preview tours survive this edge so the button cannot
+  // cancel its own fallback before it becomes visible.
   useEffect(() => {
-    if (!liveNews.stale) return
-    if (newsTourPendingRef.current || tourModeRef.current === 'news') stopTour()
-  }, [liveNews.stale, stopTour])
+    if (staleProviderStopsNewsTour(
+      liveNews.stale,
+      tourModeRef.current === 'news',
+      newsTourRunEvents,
+    )) stopTour()
+  }, [liveNews.stale, newsTourRunEvents, stopTour])
 
   const stepNewsTour = useCallback((dir: -1 | 1, restoreKeyboardFocus = false) => {
     if (!tourOnRef.current || tourModeRef.current !== 'news') return
+    const events = newsTourRunEventsRef.current
     // A one-story edition has nowhere to step. Re-flying to the same point
     // wastes four seconds of camera/GPU work and makes the control look broken.
-    if (newsTourEvents.length < 2) return
+    if (events.length < 2) return
     newsNavigationFocusRef.current = restoreKeyboardFocus
       ? dir < 0 ? 'previous' : 'next'
       : null
@@ -2205,14 +2225,16 @@ export default function App() {
     const base = newsTourIndexRef.current >= 0
       ? newsTourIndexRef.current
       : dir > 0 ? -1 : 0
-    const index = ((base + dir) % newsTourEvents.length + newsTourEvents.length) % newsTourEvents.length
-    activateNewsTourStop(newsTourEvents[index], index, newsTourEvents.length)
-  }, [activateNewsTourStop, cancelTourTimer, newsTourEvents])
+    const index = ((base + dir) % events.length + events.length) % events.length
+    activateNewsTourStop(events[index], index, events.length)
+  }, [activateNewsTourStop, cancelTourTimer])
 
   const startExplicitTourLoop = useCallback((initialDelayMs = 0, firstDestination?: TourDestination) => {
     newsStartSerialRef.current += 1
     clearTourTimers()
     setActiveNewsStop(null)
+    newsTourRunEventsRef.current = []
+    setNewsTourRunEvents([])
     reportNewsEvent(null)
     newsTourIndexRef.current = -1
     tourPauseAfterStopRef.current = false
@@ -2937,16 +2959,19 @@ export default function App() {
   useEffect(() => {
     if (window.parent === window) return
     const on = (tourOn && tourMode === 'news') || newsTourPending
+    const activeCount = tourOn && tourMode === 'news'
+      ? newsTourRunEvents.length
+      : newsTourEvents.length
     window.parent.postMessage({
       type: 'poplur-map-news-tour',
       on,
       loading: newsTourPending || liveNews.loading,
-      count: newsTourEvents.length,
+      count: activeCount,
       index: tourOn && tourMode === 'news' ? newsTourIndexRef.current : -1,
-      total: newsTourEvents.length,
+      total: activeCount,
       eventId: activeNewsStop?.event.id ?? null,
     }, '*')
-  }, [activeNewsStop?.event.id, liveNews.loading, newsTourEvents.length, newsTourPending, tourMode, tourOn])
+  }, [activeNewsStop?.event.id, liveNews.loading, newsTourEvents.length, newsTourPending, newsTourRunEvents.length, tourMode, tourOn])
   useEffect(() => () => {
     if (window.parent === window) return
     window.parent.postMessage({
@@ -3443,6 +3468,9 @@ export default function App() {
   const newsTourPosition = tourOn && tourMode === 'news'
     ? newsTourIndexRef.current
     : -1
+  const newsTourDisplayCount = tourOn && tourMode === 'news'
+    ? newsTourRunEvents.length
+    : newsTourEvents.length
 
   return (
     <div className={styles.shell}>
@@ -3618,7 +3646,7 @@ export default function App() {
           <MapNewsButton
             active={newsTourPending || (tourOn && tourMode === 'news')}
             loading={liveNews.loading}
-            count={newsTourEvents.length}
+            count={newsTourDisplayCount}
             onPress={() => {
               playPop(0.25)
               if (newsTourPendingRef.current || (tourOnRef.current && tourModeRef.current === 'news')) stopTour()
@@ -3863,7 +3891,7 @@ export default function App() {
             ? newsTourPosition + 1
             : tourLandmarkPosition >= 0 ? tourLandmarkPosition + 1 : popPosition ? popPosition.n : 0}
           label={newsTourPosition >= 0
-            ? `${newsTourPosition + 1}/${newsTourEvents.length}`
+            ? `${newsTourPosition + 1}/${newsTourDisplayCount}`
             : tourLandmarkPosition >= 0
             ? `${tourLandmarkPosition + 1}/${TOUR_LANDMARKS.length}`
             : popPosition ? `${popPosition.n}/${popPosition.of}` : ''}
