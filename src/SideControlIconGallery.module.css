@@ -1,0 +1,132 @@
+:global(html),
+:global(body),
+:global(#root) {
+  min-height: 100%;
+  margin: 0;
+}
+
+.gallery {
+  min-height: 100vh;
+  padding: 28px clamp(16px, 4vw, 52px) 80px;
+  color: #261420;
+  background: #f7f1ed;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+.hero { margin-bottom: 36px; }
+.hero p,
+.hero span {
+  margin: 0;
+  color: #765b6c;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.hero h1 { margin: 7px 0 9px; font: 950 clamp(28px, 5vw, 52px)/1 system-ui, sans-serif; }
+
+.gallery section + section { margin-top: 48px; }
+.gallery h2 { margin: 0 0 18px; font: 900 22px/1 system-ui, sans-serif; }
+
+.grid,
+.weatherGrid,
+.comparisonGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  gap: 14px;
+}
+
+.card,
+.weatherCard,
+.comparison {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(56, 24, 43, .15);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 8px 24px rgba(56, 24, 43, .08);
+}
+
+.card header { min-height: 88px; }
+.card code,
+.weatherCard code,
+.comparison code { color: #bd1e6b; font-size: 12px; font-weight: 900; overflow-wrap: anywhere; }
+.card p,
+.weatherCard p { margin: 8px 0 4px; font: 650 12px/1.35 system-ui, sans-serif; }
+.card small { color: #765b6c; font: 650 10px/1.3 system-ui, sans-serif; }
+
+.backgrounds {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 12px;
+}
+.background {
+  display: grid;
+  min-width: 0;
+  min-height: 78px;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  border-radius: 12px;
+}
+.background span { font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.light { color: #25111e; background: #fff; }
+.dark { color: #fff; background: #130b12; }
+.pattern {
+  color: #fff;
+  background-color: #492135;
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, .12) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(0, 0, 0, .16) 25%, transparent 25%);
+  background-position: 0 0, 8px 8px;
+  background-size: 16px 16px;
+}
+
+.states {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 4px;
+  border-radius: 12px;
+}
+.states > span,
+.comparison span {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+  gap: 4px;
+}
+.states b,
+.comparison b { font-size: 7px; letter-spacing: .03em; text-transform: uppercase; }
+
+.weatherCard { display: grid; align-content: start; }
+.weatherCard .backgrounds { margin-top: auto; }
+
+.note { max-width: 680px; color: #765b6c; font: 650 12px/1.5 system-ui, sans-serif; }
+.reveal {
+  margin: 4px 0 18px;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #261420;
+  color: white;
+  cursor: pointer;
+  font: 850 12px/1 system-ui, sans-serif;
+}
+.reveal:focus-visible { outline: 3px solid #22bbdb; outline-offset: 3px; }
+.comparison > div { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 12px; }
+
+@media (max-width: 430px) {
+  .gallery { padding-inline: 10px; }
+  .card,
+  .weatherCard,
+  .comparison { padding: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery *,
+  .gallery *::before,
+  .gallery *::after { scroll-behavior: auto !important; }
+}

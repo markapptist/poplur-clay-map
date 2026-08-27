@@ -24,6 +24,11 @@ describe('profile House life state', () => {
     expect(moved.z).toBe(-2.35)
   })
 
+  it('keeps an in-bounds furniture target unchanged for intentional pass-through walking', () => {
+    const moved = moveHouseAvatar(defaultHouseLife(2_000), 2.23, -1.89, 2_000)
+    expect({ x: moved.x, z: moved.z }).toEqual({ x: 2.23, z: -1.89 })
+  })
+
   it('reports a readable mood from needs', () => {
     expect(houseMood({ ...defaultHouseLife(), energy: 90, hunger: 90, fun: 90 })).toBe('Thriving')
     expect(houseMood({ ...defaultHouseLife(), energy: 20, hunger: 20, fun: 20 })).toBe('Running low')

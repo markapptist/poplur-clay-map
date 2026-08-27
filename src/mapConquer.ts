@@ -33,9 +33,9 @@ export const MAP_CONQUER_GLANCE_ROW_LIMIT = 3
 
 export function mapConquerGlanceRows(
   snapshot: MapConquerSnapshot | null,
-  atFarthestZoom: boolean,
+  visible: boolean,
 ): MapConquerRow[] {
-  if (!snapshot || !atFarthestZoom) return []
+  if (!snapshot || !visible) return []
   return snapshot.rows.slice(0, MAP_CONQUER_GLANCE_ROW_LIMIT)
 }
 

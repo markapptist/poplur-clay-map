@@ -83,6 +83,10 @@ function addCylinder(parent: THREE.Object3D, radius: number, height: number, pos
 
 const MANSION_SCALE = { x: 1.9, z: 1.7 } as const
 const MANSION_WALK_BOUNDS = { x: 5.42, z: 4 } as const
+// The estate used to be framed at 14.25 world units, which made the resident
+// and furniture read like a distant floor plan on a tall phone. Keep the same
+// isometric angle but move the orthographic framing roughly 15% closer.
+const HOUSE_CAMERA_VIEW_WIDTH = 12.4
 
 function toMansionPosition(x: number, z: number) {
   return { x: x * MANSION_SCALE.x, z: z * MANSION_SCALE.z }
@@ -235,12 +239,23 @@ function buildAvatar(character: PoplurCharacter) {
 }
 
 function buildResidentMarker() {
-  // A Poplur-pink plumbob makes the selected resident legible without
-  // borrowing The Sims' protected green visual identity.
-  const plumbob = new THREE.Mesh(new THREE.OctahedronGeometry(.16, 0), clay('#ff4fa7', .48))
-  plumbob.position.y = 2.02
-  plumbob.rotation.y = Math.PI / 4
-  return plumbob
+  // A bright life-state diamond keeps the resident readable against every
+  // room while remaining a lightweight Poplur-owned marker.
+  const marker = new THREE.Mesh(
+    new THREE.OctahedronGeometry(.23, 0),
+    new THREE.MeshStandardMaterial({
+      color: '#55ff63',
+      emissive: '#13a832',
+      emissiveIntensity: .72,
+      roughness: .38,
+      metalness: .02,
+    }),
+  )
+  marker.position.y = 2.16
+  marker.scale.y = 1.28
+  marker.rotation.y = Math.PI / 4
+  marker.name = 'PoplurResidentLifeMarker'
+  return marker
 }
 
 function buildGuestAvatar(guest: Pick<HouseGuest, 'id' | 'name'>) {
@@ -358,16 +373,6 @@ export default function HouseScreen() {
     setStatus(activity.status)
     runtimeRef.current?.moveTo(target.x, target.z, id)
   }, [commit, life])
-
-  const nudgeResident = useCallback((dx: number, dz: number) => {
-    playPop(.16)
-    const current = lifeRef.current
-    const next = moveHouseAvatar(current, current.x + dx, current.z + dz)
-    const destination = toMansionPosition(next.x, next.z)
-    commit(next)
-    setStatus('Walking through the mansion')
-    runtimeRef.current?.moveTo(destination.x, destination.z)
-  }, [commit])
 
   useEffect(() => onCharacterChange(() => {
     setCharacter(studioInitialCharacter(readCharacter()))
@@ -551,6 +556,9 @@ export default function HouseScreen() {
     avatar.scale.setScalar(1.18)
     const localResident = buildAvatar(characterRef.current)
     localResident.scale.setScalar(.92 * (characterRef.current.heightScale ?? .96))
+    // The primitive resident is a construction-time loading fallback only;
+    // never flash stale hair/clothes while the saved fitted avatar resolves.
+    localResident.visible = false
     avatar.add(localResident, buildResidentMarker())
     const residentStart = toMansionPosition(life.x, life.z)
     avatar.position.set(residentStart.x, .06, residentStart.z)
@@ -563,7 +571,7 @@ export default function HouseScreen() {
     const resize = () => {
       const rect = host.getBoundingClientRect()
       if (!rect.width || !rect.height) return
-      const viewWidth = 14.25
+      const viewWidth = HOUSE_CAMERA_VIEW_WIDTH
       const viewHeight = viewWidth / (rect.width / rect.height)
       camera.left = -viewWidth / 2
       camera.right = viewWidth / 2
@@ -636,7 +644,7 @@ export default function HouseScreen() {
     }
     const useClassicResident = () => {
       removeFittedResident()
-      localResident.visible = true
+      localResident.visible = false
       setResidentSource('classic')
       ensureClassicResident()
       classicResident?.update(characterRef.current, remoteFashionRef.current)
@@ -803,6 +811,8 @@ export default function HouseScreen() {
       const rect = renderer.domElement.getBoundingClientRect()
       pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(pointer, camera)
+      // Furniture is deliberately visual scenery. Pick only the mathematical
+      // floor plane so a resident can walk straight through every room object.
       if (!raycaster.ray.intersectPlane(floorPlane, intersection)) return
       const next = moveHouseAvatar(
         {
@@ -858,7 +868,7 @@ export default function HouseScreen() {
       data-profile-house='isometric-mansion-v1'
       data-resident-source={residentSource}
     >
-      <div ref={hostRef} className={styles.scene} aria-label='Interactive isometric 3D mansion; tap the floor or use the move pad to walk your avatar' />
+      <div ref={hostRef} className={styles.scene} aria-label='Interactive isometric 3D mansion; tap anywhere on the floor to walk your avatar' />
       <header className={styles.titleCard}>
         <span>MY ESTATE · LIVE</span>
         <strong>Mansion</strong>
@@ -914,14 +924,7 @@ export default function HouseScreen() {
         <button type='button' disabled={call.phase !== 'connected'} aria-label={call.muted ? 'Unmute House microphone' : 'Mute House microphone'} aria-pressed={call.muted} onClick={() => { playPop(); toggleMute() }}>{call.muted ? 'Mic off' : 'Mic on'}</button>
         <button type='button' className={styles.leaveButton} onClick={leaveVoice}>Leave</button>
       </section>}
-      <div className={styles.walkHint}>Tap the floor or use MOVE</div>
-      <div className={styles.movePad} role='group' aria-label='Move around the mansion'>
-        <span>MOVE</span>
-        <button type='button' className={styles.moveUp} aria-label='Move up' onClick={() => nudgeResident(0, -0.7)}>▲</button>
-        <button type='button' className={styles.moveLeft} aria-label='Move left' onClick={() => nudgeResident(-0.7, 0)}>◀</button>
-        <button type='button' className={styles.moveRight} aria-label='Move right' onClick={() => nudgeResident(0.7, 0)}>▶</button>
-        <button type='button' className={styles.moveDown} aria-label='Move down' onClick={() => nudgeResident(0, 0.7)}>▼</button>
-      </div>
+      <div className={styles.walkHint}>Tap anywhere to walk</div>
       <nav className={styles.activities} aria-label='House activities'>
         {HOUSE_ACTIVITIES.map(activity => (
           <button key={activity.id} type='button' onClick={() => doActivity(activity.id)} aria-pressed={life.activity === activity.id}>

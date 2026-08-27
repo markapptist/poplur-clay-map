@@ -15,6 +15,35 @@
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
 }
 
+.screen[data-standalone='true'] {
+  padding:
+    calc(env(safe-area-inset-top, 0px) + 76px)
+    clamp(14px, 4vw, 28px)
+    calc(env(safe-area-inset-bottom, 0px) + 20px);
+}
+
+.close {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  right: max(14px, env(safe-area-inset-right, 0px));
+  z-index: 3;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  padding: 0 0 3px;
+  border: 2px solid rgba(255, 255, 255, .88);
+  border-radius: 16px;
+  color: #fff;
+  background: radial-gradient(circle at 34% 22%, #ff9dd1, #f63b9a 56%, #8f174f);
+  box-shadow: 0 5px 0 #72103f, 0 10px 22px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255, 255, 255, .7);
+  cursor: pointer;
+  font: 950 28px/1 system-ui, sans-serif;
+}
+
+.close:active { transform: translateY(2px); box-shadow: 0 3px 0 #72103f, 0 7px 16px rgba(0, 0, 0, .4); }
+.close:focus-visible { outline: 3px solid #7fe3ff; outline-offset: 3px; }
+
 .terrain {
   position: absolute;
   inset: 0;

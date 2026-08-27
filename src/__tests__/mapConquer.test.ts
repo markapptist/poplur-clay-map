@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
 import type { DominanceLeader } from '../mapDominance'
+
+vi.mock('../pop', () => ({ playPop: vi.fn(), primePopAudio: vi.fn() }))
+
+import ConquerGlance from '../ConquerGlance'
+import ConquerScreen from '../ConquerScreen'
 import {
   conquerPreviewFromSearch,
   createMapConquerSnapshot,
@@ -64,15 +71,51 @@ describe('map Conquer screen snapshot', () => {
       .toEqual(createSimulatedMapConquerSnapshot(46))
   })
 
-  it('shows only the ordered top three in the farthest-zoom glance', () => {
-    const snapshot = createMapConquerSnapshot(
+  it('shows only the ordered top three while the glance is open', () => {
+    const worldSnapshot = createMapConquerSnapshot(
       Array.from({ length: 5 }, (_, index) => leader(index)),
       3,
       47,
     )
-    expect(mapConquerGlanceRows(snapshot, true).map(row => row.owner))
+    const localSnapshot = createMapConquerSnapshot(
+      Array.from({ length: 5 }, (_, index) => leader(index)),
+      12,
+      48,
+    )
+    expect(mapConquerGlanceRows(worldSnapshot, true).map(row => row.owner))
       .toEqual(['owner-0', 'owner-1', 'owner-2'])
-    expect(mapConquerGlanceRows(snapshot, false)).toEqual([])
+    expect(mapConquerGlanceRows(localSnapshot, true).map(row => row.owner))
+      .toEqual(['owner-0', 'owner-1', 'owner-2'])
+    expect(mapConquerGlanceRows(worldSnapshot, false)).toEqual([])
     expect(mapConquerGlanceRows(null, true)).toEqual([])
+  })
+
+  it('renders a half-size board preview before the complete Conquer screen', () => {
+    const snapshot = createMapConquerSnapshot(
+      Array.from({ length: 5 }, (_, index) => leader(index)),
+      3,
+      49,
+    )
+    const glance = renderToStaticMarkup(createElement(ConquerGlance, {
+      snapshot,
+      open: true,
+      onOpen: () => {},
+    }))
+    expect(glance).toContain('Conquer Board')
+    expect(glance).toContain('PREVIEW')
+    expect(glance).toContain('TOP 3 OF 5')
+    expect(glance).toContain('YOU')
+    expect(glance).toContain('@owner2')
+    expect(glance).not.toContain('@owner3')
+    expect(glance).toContain('OPEN FULL BOARD')
+
+    const board = renderToStaticMarkup(createElement(ConquerScreen, {
+      snapshot,
+      onClose: () => {},
+    }))
+    expect(board).toContain('id="poplur-conquer-board"')
+    expect(board).toContain('data-poplur-screen="map-conquer"')
+    expect(board).toContain('aria-label="Close Conquer Board"')
+    expect(board).not.toContain('TAP THE CUBE TO RETURN TO MAP')
   })
 })

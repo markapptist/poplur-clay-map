@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
-import ClayCornerButton from './ClayCornerButton'
-import ClayMuteButton from './ClayMuteButton'
 import CameraScanButton from './CameraScanButton'
 import CameraARButton from './CameraARButton'
+import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -493,7 +492,9 @@ export default function Camera({
     if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible || !nativeCameraBudget?.canResume) return
     postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
   }, [effectiveLiveSurfaceVisible, nativeCameraBudget?.canResume])
-  // AR filters need a face reading even when object detection is toggled off.
+  // An applied AR filter needs a face reading even when object detection is
+  // toggled off. Merely opening the filter tray on "None" does not: starting
+  // ML for a menu visit warmed the phone before any effect was selected.
   // The read remains private to the effect unless DETECT is also enabled.
   // A parked native preview deliberately retains one still frame. Do not keep
   // analysing that stale frame—or animating its last recognition result—while
@@ -507,7 +508,7 @@ export default function Camera({
   useEffect(() => PoplurPerformanceManager.subscribe(snapshot => {
     setRecognitionMotionAllowed(snapshot.isForeground && snapshot.decorativeRenderingAllowed)
   }), [])
-  const analysisRequested = (detectOn || arOpen || arFilter !== 'none')
+  const analysisRequested = (detectOn || arFilter !== 'none')
     && effectiveLiveSurfaceVisible
     && !nativePreviewParked
   useEffect(() => {
@@ -1678,22 +1679,28 @@ export default function Camera({
       {bloom && <div className={styles.camBloom} aria-hidden="true" />}
 
       <TabControlRail side={controlSide} label="Camera controls">
-        <ClayCornerButton
-          kind="flash"
-          size={44}
-          active={flash}
-          label={flash ? 'Flash on' : 'Flash off'}
-          onPress={() => setFlashEnabled(!flashRef.current)}
+        <SideControlIconButton
+          icon="camera.flash"
+          aria-pressed={flash}
+          aria-label={flash ? 'Turn flash off' : 'Turn flash on'}
+          activation="pointerdown"
+          onActivate={() => setFlashEnabled(!flashRef.current)}
         />
         {/* Mute for the thing that TALKS. Same clay speaker the feed and the
             map wear, so one mark means one thing everywhere in the app — but
             here it silences the ML announcer, not a soundtrack. */}
-        <ClayMuteButton muted={!aiVoice} onToggle={toggleAiVoice} size={44} />
-        <ClayCornerButton
-          kind="flip"
-          size={44}
-          label="Switch camera"
-          onPress={flipCamera}
+        <SideControlIconButton
+          icon="camera.mute"
+          aria-pressed={!aiVoice}
+          aria-label={aiVoice ? 'Mute camera voice' : 'Turn camera voice on'}
+          activation="pointerdown"
+          onActivate={toggleAiVoice}
+        />
+        <SideControlIconButton
+          icon="camera.flip_camera"
+          aria-label="Switch camera"
+          activation="pointerdown"
+          onActivate={flipCamera}
         />
         <CameraScanButton
           active={detectOn}
@@ -1745,10 +1752,7 @@ export default function Camera({
               aria-hidden="true"
             />
           ) : (
-            <svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
-              <rect x="2" y="2" width="24" height="24" rx="4" fill="rgba(255,255,255,0.18)" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" />
-              <rect x="6" y="6" width="16" height="16" rx="2" fill="rgba(255,255,255,0.28)" />
-            </svg>
+            <SideControlIconImage icon="camera.camera_roll" displaySize={44} />
           )}
         </button>
       </TabControlRail>

@@ -14,7 +14,6 @@
   background: transparent;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  filter: drop-shadow(0 4px 4px rgba(29, 4, 18, 0.72));
   transition: transform 140ms cubic-bezier(.2, 1.25, .4, 1);
 }
 

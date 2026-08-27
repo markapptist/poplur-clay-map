@@ -9,12 +9,13 @@ import womanShortAvatar from './assets/avatars/poplur-avatar-woman-short-v1.png'
 import womanCurlyAvatar from './assets/avatars/poplur-avatar-woman-curly-v1.png'
 import manShortAvatar from './assets/avatars/poplur-avatar-man-short-v1.png'
 import manLongAvatar from './assets/avatars/poplur-avatar-man-long-v1.png'
-import { coerceFashionStyle } from './characterFashion'
+import { coerceFashionStyle, coerceFittedFashionStyle } from './characterFashion'
+import { FITTED_HAIR_STYLES } from './avatarHair'
 import styles from './AvatarStudioCharacter.module.css'
 
 export type StudioCategory = 'body' | 'hair' | 'face' | 'top' | 'bottoms' | 'extras'
 
-const hairStyles: HairStyle[] = ['short', 'long', 'curly', 'buzz']
+const hairStyles: HairStyle[] = [...FITTED_HAIR_STYLES]
 const bodyShapes: BodyShape[] = ['slim', 'athletic', 'curvy']
 const faceStyles: FaceStyle[] = ['smile', 'wink', 'freckles']
 
@@ -43,8 +44,8 @@ export function studioInitialCharacter(saved: PoplurCharacter | null): PoplurCha
     bottomColor: saved?.bottomColor ?? '#185FA5',
     outfit: saved?.outfit ? { ...saved.outfit } : undefined,
     fashionOutfit: {
-      top: coerceFashionStyle('top', storedFashion?.top ?? legacyFashion?.top),
-      bottom: coerceFashionStyle('bottom', storedFashion?.bottom ?? legacyFashion?.bottom),
+      top: coerceFittedFashionStyle('top', storedFashion?.top ?? legacyFashion?.top),
+      bottom: coerceFittedFashionStyle('bottom', storedFashion?.bottom ?? legacyFashion?.bottom),
       accessory: coerceFashionStyle('accessory', storedFashion?.accessory ?? legacyFashion?.accessory),
     },
     updatedAt: saved?.updatedAt ?? 0,

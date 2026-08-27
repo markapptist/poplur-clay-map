@@ -7,12 +7,12 @@ import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
-import ClayChannelArrows from './ClayChannelArrows'
-import ClayCornerButton from './ClayCornerButton'
-import ClayMuteButton from './ClayMuteButton'
+import PoplurChannelRail from './PoplurChannelRail'
+import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
 import MapLevelButton from './MapLevelButton'
 import MapNewsButton from './MapNewsButton'
+import MapConquerButton from './MapConquerButton'
 import { WeatherMark } from './ClayMap'
 import { modeForCode } from './WeatherFX'
 import {
@@ -86,6 +86,10 @@ import {
 } from './nativeFeedPosts'
 import { nextInterceptingChannelIndex } from './feedChannelSelection'
 import {
+  normalizeMapFeedHandoff,
+  type MapFeedHandoffRequest,
+} from './mapFeedHandoff'
+import {
   claimReplaysBeforeQueuedActions,
   enqueueMapFallbackAction,
   nativeMapHandlesAction,
@@ -97,6 +101,12 @@ import {
   AIRPORT_CUBE_DISPLAY_MS,
   AIRPORT_NAVIGATOR_MODEL,
 } from './mapAirportCube'
+import {
+  MAP_WATER_HOVER_MODEL,
+  readMapHoverCubeKind,
+  type MapHoverCubeKind,
+} from './mapHoverCube'
+import { COUNTRY_FLAG_CUBE_DISPLAY_MS } from './countryFlags'
 import type { HarnessView } from './ViewHarness'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
 import {
@@ -120,12 +130,6 @@ import {
   reconcileDiscoCubeSession,
   type DiscoCubeSession,
 } from './discoCubeSession'
-import {
-  emptyFoodCubeSession,
-  expireFoodCubeSession,
-  reconcileFoodCubeSession,
-  type FoodCubeSession,
-} from './foodCubeSession'
 import {
   RADIUS_CHANGE_EVENT,
   nextRadiusInactivityAt,
@@ -163,10 +167,6 @@ const CHROME_IDLE_MS = 30_000
 // press-and-hold to open the hold menu twin. Pills track the front face;
 // clicking the already-front face's pill opens that tab's screen twin.
 
-/** Food context briefly turns the TV navigator into the supplied fork/knife
-    cube. A continuous mention is capped below, so this never becomes a
-    permanent channel-level replacement. */
-const FOOD_AD_CUBE_MODEL = 'poplur_cube_fork_knife.glb'
 // The flash camera the profile wears while you are taking your picture.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
 const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
@@ -235,7 +235,6 @@ const POST_VERIFIED_CUBE_DISPLAY_MS = 2_600
 const STUDIO_MIC_MODEL = 'poplur_mic_lite.glb'
 const DISCO_BALL_CUBE_MODEL = 'poplur_cube_disco_ball.glb'
 const DISCO_CUBE_MAX_MS = 30_000
-const FOOD_CUBE_MAX_MS = 30_000
 // A track has to survive intros, accidental autoplay and quick skips before it
 // earns the ambient disco moment. Navigation restarts this dwell below.
 const DISCO_CUBE_MIN_MUSIC_MS = 20_000
@@ -917,15 +916,30 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
   const [mapNight, setMapNight] = useState(clockMapNight)
   const [mapMoon, setMapMoon] = useState<'full' | 'crescent'>(() => moonPhase(new Date()).model)
-  // At the exact world zoom the map iframe resolves the country nearest its
-  // settled centre and sends one cloud-pack GLB URL. Null means the ordinary
-  // phase-aware map object (globe/sun/moon) owns the navigator again.
-  const [mapCountryFlagModel, setMapCountryFlagModel] = useState<string | null>(null)
+  // At the exact world zoom, every country crossing briefly pops that flag.
+  // The normal phase-aware map object (globe/sun/moon) reclaims the navigator
+  // after the acknowledgement, even if the user keeps panning.
+  const [mapCountryFlagPulse, setMapCountryFlagPulse] = useState<{
+    modelUrl: string
+    changedAt: number
+  } | null>(null)
+  useEffect(() => {
+    if (!mapCountryFlagPulse) return
+    const pulse = mapCountryFlagPulse
+    const timer = window.setTimeout(() => {
+      setMapCountryFlagPulse(current => current?.changedAt === pulse.changedAt ? null : current)
+    }, COUNTRY_FLAG_CUBE_DISPLAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [mapCountryFlagPulse])
   const [mapAirportSignal, setMapAirportSignal] = useState<{
     id: string
     name: string
     changedAt: number
   } | null>(null)
+  const [mapWorldHover, setMapWorldHover] = useState<MapHoverCubeKind | null>(null)
+  useEffect(() => {
+    if (activeTab !== 'map') setMapWorldHover(null)
+  }, [activeTab])
   // One crossing gets one bounded airport moment. Clearing locally after the
   // pop does not re-arm it: the map stays silent until the airport actually
   // leaves view and a later settled camera crosses it again.
@@ -980,9 +994,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [discoCubeActive, setDiscoCubeActive] = useState(false)
   const musicSessionRef = useRef<DiscoCubeSession>(emptyDiscoCubeSession())
   const discoDeadlineTimerRef = useRef<number | null>(null)
-  const [foodCubeActive, setFoodCubeActive] = useState(false)
-  const foodCubeSessionRef = useRef<FoodCubeSession>(emptyFoodCubeSession())
-  const foodDeadlineTimerRef = useRef<number | null>(null)
   const [postVerifiedCubeActive, setPostVerifiedCubeActive] = useState(false)
   const postVerifiedCubeTimerRef = useRef<number | null>(null)
 
@@ -1847,6 +1858,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [profilePostCount, setProfilePostCount] = useState(0)
   // Left slot: channel up/down changer — drives the feed's channel directly.
   const [chanIndex, setChanIndex] = useState(0)
+  const [feedFocusedContent, setFeedFocusedContent] = useState<MapFeedHandoffRequest | null>(null)
+  const feedFocusedContentNonceRef = useRef(0)
   const feedEntryVisitRef = useRef(0)
   const autoTunedFeedChannelRef = useRef<number | null>(null)
   const skipNextFeedAutoTuneRef = useRef(false)
@@ -1881,6 +1894,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       return next
     })
   }, [activeTab])
+  useEffect(() => {
+    if (activeTab !== 'feed') setFeedFocusedContent(null)
+  }, [activeTab])
   // A Feed entry may happen before the native bridge has returned. Retune one
   // time when real interception rows arrive, unless the viewer deliberately
   // selected a channel in the meantime.
@@ -1898,7 +1914,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
   const [mapConquerSnapshot, setMapConquerSnapshot] = useState<MapConquerSnapshot | null>(null)
-  const [mapConquerAtFarthestZoom, setMapConquerAtFarthestZoom] = useState(false)
+  const [mapConquerGlanceOpen, setMapConquerGlanceOpen] = useState(false)
   const mapFrontRef = useRef(initialTab === 'map')
   const [nativeMapWebFallback, setNativeMapWebFallback] = useState(false)
   const nativeMapWebFallbackRef = useRef(false)
@@ -2598,18 +2614,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapPainted(false)
         setMapOverlayOpen(false)
         setMapWeatherSignal(null)
-        setMapCountryFlagModel(null)
+        setMapCountryFlagPulse(null)
         setMapAirportSignal(null)
+        setMapWorldHover(null)
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
-        setMapConquerAtFarthestZoom(false)
       }
       if (event.data.type === 'poplur-map-country-flag') {
-        setMapCountryFlagModel(
-          typeof event.data.modelUrl === 'string' && event.data.modelUrl.trim()
-            ? event.data.modelUrl
-            : null,
-        )
+        const modelUrl = typeof event.data.modelUrl === 'string' && event.data.modelUrl.trim()
+          ? event.data.modelUrl
+          : null
+        setMapCountryFlagPulse(modelUrl ? { modelUrl, changedAt: Date.now() } : null)
       }
       if (event.data.type === 'poplur-map-airport') {
         const id = typeof event.data.airportId === 'string'
@@ -2623,6 +2638,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             : 'Airport'
           setMapAirportSignal({ id, name, changedAt: Date.now() })
         }
+      }
+      if (event.data.type === 'poplur-map-world-hover') {
+        setMapWorldHover(readMapHoverCubeKind(event.data.kind))
       }
       if (event.data.type === 'poplur-map-weather') {
         const presentation = readWeatherPresentation(event.data)
@@ -2645,8 +2663,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         const snapshot = readMapConquerSnapshot(event.data.snapshot)
         if (snapshot) {
           setMapConquerSnapshot(snapshot)
-          setMapConquerAtFarthestZoom(event.data.atFarthestZoom === true)
         }
+      }
+      if (event.data.type === 'poplur-map-conquer-open') {
+        // Older map bundles use this event name. Preserve compatibility while
+        // enforcing the current two-step interaction: trophy → glance → board.
+        setMapConquerGlanceOpen(true)
+        setHoldOpen(false)
       }
       if (event.data.type === 'poplur-map-overlay') {
         const open = Boolean(event.data.open)
@@ -2657,8 +2680,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         if (open) setHoldOpen(false)
       }
       if (event.data.type === 'poplur-map-failed') {
-        setMapCountryFlagModel(null)
+        setMapCountryFlagPulse(null)
         setMapAirportSignal(null)
+        setMapWorldHover(null)
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
         scheduleMapRetry()
@@ -2764,6 +2788,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       }
       if (event.data.type === 'poplur-map-news-tour') {
         setMapNewsTourOn(Boolean(event.data.on))
+        setMapNewsLoading(event.data.loading === true)
         const count = Number(event.data.count)
         setMapNewsCount(Number.isInteger(count) && count > 0 ? Math.min(count, 99) : 0)
       }
@@ -2777,6 +2802,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         if (eventId) {
           setActiveTab('feed')
           setNewsOpenRequest(current => ({ eventId, nonce: (current?.nonce ?? 0) + 1 }))
+        }
+      }
+      if (event.data.type === 'poplur-map-open-feed-content') {
+        const target = normalizeMapFeedHandoff(event.data.content)
+        if (target) {
+          const channelIndex = CHANNELS.findIndex(channel => channel.id === target.channelId)
+          if (channelIndex >= 0) {
+            feedFocusedContentNonceRef.current += 1
+            setFeedFocusedContent({
+              target,
+              nonce: feedFocusedContentNonceRef.current,
+            })
+            skipNextFeedAutoTuneRef.current = true
+            autoTunedFeedChannelRef.current = null
+            setChanIndex(channelIndex)
+            setActiveTab('feed')
+            setHoldOpen(false)
+          }
         }
       }
       // A pop pin was tapped. The pin is a PERSON before it is a place, so this
@@ -3145,11 +3188,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   }, [])
   useEffect(() => { if (!overlayOpen) setSubscreenFullscreen(false) }, [overlayOpen])
   const feedChromeGone = feedFullscreen && committedTab === 'feed'
-  // FeedTwin reports actual food language or a food creative, never merely a
-  // selected Food channel. The session below also caps one continuous signal
-  // at 30 seconds; when the mention/ad clears it resets and can earn a future
-  // appearance.
-  const [foodAdOpen, setFoodAdOpen] = useState(false)
   // A Google feed slot is a NATIVE card the shell lays over the web feed — it
   // cannot be drawn in here. The chrome has to take itself away while it is up,
   // or the cube and HUD would sit on top of an ad, which is exactly the
@@ -3189,6 +3227,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [mapTourOn, setMapTourOn] = useState(false)
   const [mapTourPosition, setMapTourPosition] = useState<{ n: number; of: number } | null>(null)
   const [mapNewsTourOn, setMapNewsTourOn] = useState(false)
+  const [mapNewsLoading, setMapNewsLoading] = useState(false)
   const [mapNewsCount, setMapNewsCount] = useState(0)
   const [mapNewsEvent, setMapNewsEvent] = useState<MapNewsCubeEvent | null>(null)
   const [newsOpenRequest, setNewsOpenRequest] = useState<{ eventId: string; nonce: number } | null>(null)
@@ -3249,7 +3288,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       sequence: feedAdSequenceRef.current,
     })
   }, [])
-  const [nativeMapZoom, setNativeMapZoom] = useState(0.42)
+  const [nativeMapZoom, setNativeMapZoom] = useState(0)
   const nativeZoomFrameRef = useRef<number | null>(null)
   const pendingNativeZoomRef = useRef(nativeMapZoom)
   // MapKit reports every settled camera position back to this WebView.  While
@@ -4186,6 +4225,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     && cubeScreen == null && mapAirportSignal
     ? AIRPORT_NAVIGATOR_MODEL
     : null
+  const worldHoverCubeModel = activeTab === 'map' && committedTab === 'map'
+    && cubeScreen == null && mapWorldHover
+    ? mapWorldHover === 'airport'
+      ? AIRPORT_NAVIGATOR_MODEL
+      : mapWorldHover === 'water'
+        ? MAP_WATER_HOVER_MODEL
+        : MAP_GLOBE_MODEL
+    : null
   const cameraCubeOverridesEvent = activeTab === 'post'
     && cubeScreen == null
     && (cameraZooming || cameraCaptureMode === 'video' || recordMs != null)
@@ -4265,40 +4312,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
   }, [discoCubeActive, discoCubeVisible, discoNavigationContext, musicPlayback.playing])
 
-  // Food uses the same one-shot session discipline as music, but with no dwell
-  // threshold: language/ad context is already the explicit trigger. Holding a
-  // food mention on screen cannot pin the fork/knife indefinitely; the next
-  // false signal is what re-arms it for a genuinely new mention or ad.
-  useEffect(() => {
-    if (foodDeadlineTimerRef.current !== null) {
-      window.clearTimeout(foodDeadlineTimerRef.current)
-      foodDeadlineTimerRef.current = null
-    }
-    const decision = reconcileFoodCubeSession(
-      foodCubeSessionRef.current,
-      foodAdOpen,
-      Date.now(),
-      FOOD_CUBE_MAX_MS,
-    )
-    foodCubeSessionRef.current = decision.session
-    setFoodCubeActive(decision.active)
-    const deadline = decision.session.deadline
-    if (!decision.active || deadline == null || decision.remainingMs == null) return
-    foodDeadlineTimerRef.current = window.setTimeout(() => {
-      const expired = expireFoodCubeSession(foodCubeSessionRef.current, deadline)
-      if (expired === foodCubeSessionRef.current) return
-      foodCubeSessionRef.current = expired
-      foodDeadlineTimerRef.current = null
-      setFoodCubeActive(false)
-    }, decision.remainingMs)
-    return () => {
-      if (foodDeadlineTimerRef.current !== null) {
-        window.clearTimeout(foodDeadlineTimerRef.current)
-        foodDeadlineTimerRef.current = null
-      }
-    }
-  }, [foodAdOpen])
-
   // Focused Map news and weather win while Map is the current surface; music
   // remains global. When those signals clear, this falls through to the model
   // for the page the user is on NOW rather than restoring a stale URL.
@@ -4310,13 +4323,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     ? 'posted'
     : breakingNewsCubeActive
       ? `map-news:${mapNewsEvent?.status ?? 'unknown'}:${mapNewsEvent?.id ?? 'unknown'}`
-      : airportCubeModel
-        ? `airport:${mapAirportSignal?.id ?? 'unknown'}`
-        : weatherCubeModel
-          ? mapWeatherSignal?.kind ?? 'none'
-          : discoCubeActiveHere
-            ? 'music'
-            : 'none'
+      : worldHoverCubeModel
+        ? `map-hover:${mapWorldHover ?? 'globe'}`
+        : airportCubeModel
+          ? `airport:${mapAirportSignal?.id ?? 'unknown'}`
+          : weatherCubeModel
+            ? mapWeatherSignal?.kind ?? 'none'
+            : discoCubeActiveHere
+              ? 'music'
+              : 'none'
   const wheelPreviewModel = holdCubePreviewMode === '3d'
     && wheelFocus
     ? holdFocusNavigatorModel(
@@ -4365,25 +4380,33 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // kept above a still-mounted Podcast room, where cubeScreen remains Studio.
     : ipodCubeModel
     ? ipodCubeModel
+    // Feed's one navigator is the supplied TV. Ambient music, food language,
+    // and Map events may change their own surfaces, but never replace the TV on
+    // the unobscured Feed root.
+    : activeTab === 'feed' && committedTab === 'feed' && cubeScreen == null
+    ? FEED_TV_CUBE_MODEL
     // A visible breaking/live story is the deliberate Map action right now.
     // It must temporarily outrank an airport we happen to be flying over;
     // clearing the story immediately falls through to that airplane again.
     : breakingNewsCubeActive && mapContextModel
     ? mapContextModel
+    // World-scale pointer context is explicit and immediate. It outranks the
+    // timed country/airport/weather moments, then lands on the literal globe
+    // over ordinary ground as requested.
+    : worldHoverCubeModel
+    ? worldHoverCubeModel
     // Passing a visible airport briefly turns the one navigator into the
     // decimated clay airplane. It outranks world flags and ambient effects,
     // but every deliberate interaction above still owns the object first.
     : airportCubeModel
     ? airportCubeModel
-    // The country under the settled world-map centre becomes the navigator.
-    // It outranks ambient weather/music only on the unobscured Map root and
-    // drops out immediately when the iframe reports that the camera zoomed in.
-    : activeTab === 'map' && cubeScreen == null && mapCountryFlagModel
-    ? mapCountryFlagModel
+    // A world-map country crossing briefly becomes the navigator. It outranks
+    // ambient weather/music only on the unobscured Map root, then the timed
+    // pulse falls through to the normal globe/sun/moon object again.
+    : activeTab === 'map' && cubeScreen == null && mapCountryFlagPulse
+    ? mapCountryFlagPulse.modelUrl
     : eventCubeModel
     ? eventCubeModel
-    : activeTab === 'feed' && committedTab === 'feed' && foodCubeActive
-    ? FOOD_AD_CUBE_MODEL
     : (avatarPreview
       ?? (activeTab === 'profile' && profileCapture ? CAMCORDER_MODEL : undefined)
       ?? (cubeScreen === 'profile-messages' && mailThreadOpen ? MAIL_ENVELOPE_OPEN_MODEL : undefined)
@@ -4609,10 +4632,18 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       setIncomingFaceTime(null)
       return
     }
-    // The contact cube remains visible as Home chrome during a video call, but
-    // it must never fall through to the map composer, feed action, camera
-    // shutter, or Mail back route underneath the call surface. Call controls
-    // in FaceTimeOverlay own mute/camera/end explicitly.
+    // An outgoing DM video call leaves its exact Mail thread mounted behind
+    // the premium call mode. If the persistent cube/back route is invoked,
+    // ending the media session lets FaceTimeOverlay close and reveals that
+    // same conversation; it must never fall through to Mail's thread-list
+    // back action or an action on the tab underneath.
+    if (faceTimeOpen) {
+      playPop()
+      hangupCall()
+      return
+    }
+    // Incoming video can arrive over any tab, so it has no originating DM to
+    // restore. Its explicit call controls remain the owner of navigation.
     if (faceTimeActive) { playPop(); return }
     // MAIL thread: the cube is how you leave a conversation, back to the
     // thread list. MailScreen answers the event and closes the thread; the
@@ -4747,13 +4778,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
 
       {activeTab === 'map' && committedTab === 'map'
         && !overlayOpen && !mapOverlayOpen && activePermission === null
-        && !holdOpen && (!NATIVE_ADAPTIVE_MAP || nativeMapWebFallback)
-        && mapConquerAtFarthestZoom && (
+        && !holdOpen
+        && mapConquerGlanceOpen && (
         <ConquerGlance
           snapshot={mapConquerSnapshot}
-          atFarthestZoom={mapConquerAtFarthestZoom}
+          open={mapConquerGlanceOpen}
           onOpen={() => {
             playPop()
+            setMapConquerGlanceOpen(false)
             setResume(current => ({ screen: 'map-conquer', n: current.n + 1 }))
             setHoldOpen(true)
           }}
@@ -4774,10 +4806,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         && !overlayOpen && !mapOverlayOpen && activePermission === null && (
         <div className={`${styles.nativeMapChrome}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}>
           <TabControlRail side="left" label="Map controls">
-            <ClayMuteButton
-              muted={loadingMuted}
-              size={44}
-              onToggle={() => {
+            <SideControlIconButton
+              icon="map.mute"
+              aria-label={loadingMuted ? 'Unmute map audio' : 'Mute map audio'}
+              aria-pressed={loadingMuted}
+              activation="pointerdown"
+              onActivate={() => {
                 const next = !loadingMuted
                 setUserMuted(next)
                 setLoadingMuted(next)
@@ -4785,35 +4819,34 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 if (!next) playPop(0.2)
               }}
             />
-            <ClayCornerButton
-              kind="locate"
-              label="Go to my location"
-              size={44}
-              still
-              activateOnClick
-              onPress={() => { playPop(0.25); sendMapAction('locate') }}
+            <SideControlIconButton
+              icon="map.locate"
+              aria-label="Go to my location"
+              onActivate={() => { playPop(0.25); sendMapAction('locate') }}
             />
-            <ClayCornerButton
-              kind="search"
-              label="Search places"
-              size={44}
-              still
-              activateOnClick
-              onPress={() => { playPop(0.25); sendMapAction('search') }}
+            <SideControlIconButton
+              icon="map.search"
+              aria-label="Search map"
+              onActivate={() => { playPop(0.25); sendMapAction('search') }}
             />
-            <ClayCornerButton
-              kind="play"
-              active={mapTourOn}
-              label={mapTourOn ? 'Stop the tour' : 'Start the tour'}
-              size={44}
-              still
-              activateOnClick
-              onPress={() => { playPop(0.25); sendMapAction('tour') }}
+            <SideControlIconButton
+              icon="map.tour_play"
+              aria-pressed={mapTourOn}
+              aria-label={mapTourOn ? 'Stop map tour' : 'Start map tour'}
+              onActivate={() => { playPop(0.25); sendMapAction('tour') }}
             />
             <MapNewsButton
               active={mapNewsTourOn}
+              loading={mapNewsLoading}
               count={mapNewsCount}
               onPress={() => { playPop(0.25); sendMapAction('newsTour') }}
+            />
+            <MapConquerButton
+              open={mapConquerGlanceOpen}
+              onPress={() => {
+                playPop(0.25)
+                setMapConquerGlanceOpen(open => !open)
+              }}
             />
             <MapLevelButton
               level={mapPopLevel}
@@ -4901,7 +4934,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             onIndexChange={setChanIndex}
             onPostReach={onFeedPostReach}
             onContentAdvance={reportFeedContentAdvance}
-            onFoodAdChange={setFoodAdOpen}
+            focusedContent={feedFocusedContent}
             bindActions={fn => { feedActionsRef.current = fn }}
             bindGoBack={fn => { feedBackRef.current = fn }}
             // The native Google card owns the visible Feed slot while open.
@@ -5039,7 +5072,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
-          <ClayChannelArrows
+          <PoplurChannelRail
             key={`channel-arrows-${uiRecoveryKey}`}
             size={cubeSize}
             number={activeTab === 'map'

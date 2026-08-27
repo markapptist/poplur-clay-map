@@ -269,6 +269,7 @@ const CAMCORDER_MODEL = 'poplur_cube_camcorder.glb'
 const TSHIRT_MODEL = 'poplur_cube_tshirt.glb'
 const DISCO_BALL_MODEL = 'poplur_cube_disco_ball.glb'
 const AIRPORT_AIRPLANE_MODEL = 'poplur_airplane_lite.glb'
+const MAP_BOAT_MODEL = 'boat_clay.glb'
 
 /** The clay GLBs use Draco or Meshopt compression depending on which asset
     pipeline produced them. A bare GLTFLoader downloads either format and then
@@ -351,6 +352,13 @@ const MODEL_ORIENTATION: Record<string, { x?: number; y?: number; z?: number }> 
   // windows and Poplur tail mark are all readable in the navigator.
   [AIRPORT_AIRPLANE_MODEL]: {
     x: THREE.MathUtils.degToRad(10),
+    y: THREE.MathUtils.degToRad(-35),
+    z: 0,
+  },
+  // Match the proven three-quarter sprite pose: the hull, deck and bow all
+  // read immediately when water hover swaps it into the navigator.
+  [MAP_BOAT_MODEL]: {
+    x: THREE.MathUtils.degToRad(6),
     y: THREE.MathUtils.degToRad(-35),
     z: 0,
   },

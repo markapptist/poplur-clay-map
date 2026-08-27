@@ -345,7 +345,9 @@ def build_fitted_shell(body, armature, primary):
     shoulder_x = abs(bone(armature, "upperarm_l").head_local.x)
     neck_z = bone(armature, "neck_01").head_local.z
     hand_x = abs(bone(armature, "hand_l").head_local.x)
-    hem_z = pelvis_z + 0.075
+    # Cover the waistband without extending into disconnected source-body
+    # panels below the hip; those read as pointed tabs in the phone view.
+    hem_z = pelvis_z + 0.020
     cuff_x = hand_x - 0.035
     all_weights = vertex_weight_map(jacket)
     component_tops = component_top_by_vertex(jacket.data)
@@ -450,7 +452,7 @@ def build_tailoring_details(body, armature, hem_z: float, cuff_x: float, materia
         lower_panel.append((
             z,
             panel_x + ease,
-            panel_front + ease,
+            panel_front + ease + 0.020,
             panel_back + ease,
             panel_y,
         ))
@@ -473,6 +475,40 @@ def build_tailoring_details(body, armature, hem_z: float, cuff_x: float, materia
         (collar_bottom, neck_x + 0.007, neck_front + 0.007, neck_back + 0.007, neck_y),
         (collar_top, neck_x + 0.006, neck_front + 0.006, neck_back + 0.006, neck_y),
     ], weights=lambda z: weights_at_z(armature, z), material=0, segments=32)
+
+    # Two broad lapel edges frame the new V opening. They are sampled against
+    # the body surface, share the live torso weights, and stay close enough to
+    # read as cloth rather than floating decorative props.
+    lapel_tip_z = bone(armature, "spine_03").head_local.z + 0.055
+    lapel_top_z = collar_bottom + 0.008
+    for sign in (-1, 1):
+        lapel_points = []
+        for x, z in (
+            (sign * 0.012, lapel_tip_z),
+            (sign * 0.070, lapel_tip_z + (lapel_top_z - lapel_tip_z) * 0.48),
+            (sign * 0.102, lapel_top_z),
+        ):
+            lapel_points.append((x, front_surface_y(body, x, z) - 0.027, z))
+        builder.ribbon(
+            lapel_points,
+            half_width=0.009,
+            weights=lambda point: weights_at_z(armature, point[2]),
+            material=1,
+        )
+
+    # Slim pocket welts and a centre closure make the silhouette legible at
+    # phone size without relying on a texture atlas or another runtime asset.
+    pocket_z = hem_z + 0.205
+    for sign in (-1, 1):
+        pocket_points = []
+        for x in (sign * 0.045, sign * 0.120):
+            pocket_points.append((x, front_surface_y(body, x, pocket_z) - 0.025, pocket_z + sign * x * 0.025))
+        builder.ribbon(
+            pocket_points,
+            half_width=0.0045,
+            weights=lambda point: weights_at_z(armature, point[2]),
+            material=1,
+        )
 
     # Thin, body-measured cuffs stop before the hand joint and keep the hand
     # fully visible. The adjacent sleeve surface already tapers with the arm.

@@ -233,56 +233,6 @@
   backdrop-filter: blur(9px);
 }
 
-.movePad {
-  position: absolute;
-  z-index: 4;
-  right: 14px;
-  top: 48%;
-  width: 112px;
-  height: 112px;
-  display: grid;
-  grid-template: 32px 32px 32px / 32px 32px 32px;
-  place-content: center;
-  gap: 3px;
-  padding: 8px;
-  transform: translateY(-50%);
-  border: 1px solid rgba(255,255,255,.48);
-  border-radius: 31px;
-  background: rgba(42,8,31,.76);
-  box-shadow: 0 12px 28px rgba(25,1,17,.32), inset 0 1px 0 rgba(255,255,255,.22);
-  backdrop-filter: blur(14px);
-}
-.movePad > span {
-  grid-area: 2 / 2;
-  align-self: center;
-  color: rgba(255,255,255,.68);
-  font-size: 7px;
-  font-weight: 950;
-  letter-spacing: .08em;
-  text-align: center;
-  pointer-events: none;
-}
-.movePad button {
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(255,255,255,.48);
-  border-radius: 11px;
-  color: #fff;
-  background: linear-gradient(180deg, #ff67b4, #b70763);
-  box-shadow: 0 3px 0 #6e073e, inset 0 1px 0 rgba(255,255,255,.52);
-  font: 950 13px/1 system-ui, sans-serif;
-  cursor: pointer;
-}
-.movePad button:active { transform: translateY(2px); box-shadow: 0 1px 0 #6e073e; }
-.movePad button:focus-visible { outline: 3px solid #75d8ff; outline-offset: 2px; }
-.moveUp { grid-area: 1 / 2; }
-.moveLeft { grid-area: 2 / 1; }
-.moveRight { grid-area: 2 / 3; }
-.moveDown { grid-area: 3 / 2; }
-
 .activities {
   position: absolute;
   z-index: 3;
@@ -332,7 +282,6 @@
   .partyPanel, .voiceDock { top: 136px; }
   .needs { top: 154px; transform: scale(.9); transform-origin: top left; }
   .walkHint { display: none; }
-  .movePad { top: 50%; transform: translateY(-50%) scale(.86); transform-origin: right center; }
   .activities { padding: 6px; }
   .activities button { min-height: 46px; }
 }

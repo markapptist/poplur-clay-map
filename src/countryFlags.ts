@@ -12,6 +12,14 @@ export const COUNTRY_FLAGS_PACK_ID = 'country-flags'
  * little way into the map immediately restores the normal map navigator. */
 export const WORLD_FLAG_ZOOM_EPSILON = 0.02
 
+/** Sampling camera motion keeps world-map feedback lively without querying
+ * Mapbox's label tiles on every animation frame during a long pan. */
+export const WORLD_FLAG_MOVE_SAMPLE_MS = 180
+
+/** A flag is a quick acknowledgement of entering a country, not a persistent
+ * replacement for the map navigator. */
+export const COUNTRY_FLAG_CUBE_DISPLAY_MS = 850
+
 export type CountryMapFeature = {
   properties?: Record<string, unknown> | null
   geometry?: {

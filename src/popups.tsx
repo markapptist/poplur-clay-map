@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import styles from './popups.module.css'
 import type { SmartCard } from './tourSmarts'
 import CommerceSuggestionWindow, { type SuggestionPrimaryAction } from './CommerceSuggestionWindow'
-import BoundedPopupVideo from './BoundedPopupVideo'
+import NewsPopCard from './NewsPopCard'
 import { playPop, playPopAmbient } from './pop'
 
 // The app's one transient popup layer: engagement and suggestions, centred on
@@ -35,6 +35,7 @@ export interface MapPopContent {
   name: string
   user: string | null
   channel?: string
+  caption?: string
   radiusKm: number
   media: {
     kind: 'image' | 'video'
@@ -303,52 +304,43 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
               <span className={styles.engageText}>{item.text}</span>
             </>
           ) : item.kind === 'mapContent' && item.content ? (
-            <article
-              className={styles.mapContent}
-              data-poplur-native-hit-region
-              role="dialog"
-              aria-modal="true"
-              aria-label={`Post at ${item.content.name}`}
-            >
-              <header className={styles.mapContentTitleBar}>
-                <span className={styles.mapContentLights} aria-hidden="true">
-                  <i /><i /><i />
-                </span>
-                <strong>{item.content.user ?? 'YOUR POP'} · {item.content.channel?.toUpperCase() ?? 'POP'}</strong>
-                <span>POP</span>
-              </header>
-              <div className={styles.mapContentMedia}>
-                {item.content.media.kind === 'video' ? (
-                  <BoundedPopupVideo
-                    key={item.content.media.src}
-                    src={item.content.media.src}
-                    poster={item.content.media.poster}
-                    alt={item.content.media.alt}
-                  />
-                ) : (
-                  <img src={item.content.media.src} alt={item.content.media.alt} draggable="false" />
-                )}
-                <div className={styles.mapContentCaption}>
-                  <strong>{item.content.name}</strong>
-                  <span>{item.content.radiusKm.toFixed(1)} km radius</span>
-                </div>
-              </div>
-              {item.action && (
-                <button
-                  type="button"
-                  className={styles.mapContentAction}
-                  onPointerDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.stopPropagation()
-                    playPop()
-                    item.action?.onActivate()
-                    dismissPopup(item.id)
-                  }}
-                >
-                  {item.action.label}
-                </button>
-              )}
-            </article>
+            <NewsPopCard
+              embedded
+              dataId={item.content.id}
+              status="POPLUR POP"
+              statusKind="pop"
+              place={`${item.content.user ?? 'YOUR POP'} · ${item.content.channel?.toUpperCase() ?? 'POP'}`}
+              title={item.content.name}
+              summary={item.content.caption ?? item.content.media.alt}
+              summaryLabel="FROM THE MAP"
+              meta={`${item.content.radiusKm.toFixed(1)} km radius`}
+              media={{ ...item.content.media, alt: item.content.media.alt }}
+              onClose={() => {
+                playPop()
+                dismissPopup(item.id)
+              }}
+              onMediaActivate={item.onActivate ? () => {
+                playPop()
+                item.onActivate?.()
+                dismissPopup(item.id)
+              } : undefined}
+              primaryAction={item.onActivate ? {
+                label: 'SHOW IN FEED',
+                onActivate: () => {
+                  playPop()
+                  item.onActivate?.()
+                  dismissPopup(item.id)
+                },
+              } : undefined}
+              secondaryAction={item.action ? {
+                label: item.action.label,
+                onActivate: () => {
+                  playPop()
+                  item.action?.onActivate()
+                  dismissPopup(item.id)
+                },
+              } : undefined}
+            />
           ) : item.card ? (
             <CommerceSuggestionWindow
               card={item.card}

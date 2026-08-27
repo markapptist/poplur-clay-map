@@ -34,7 +34,7 @@ export const TOP_FASHION_STYLES = [
       femaleFile: 'Poplur_Atelier_Jacket_Female.glb',
       maleFile: 'Poplur_Atelier_Jacket_Male.glb',
       tintMaterial: 'PoplurAtelierTint',
-      version: '2026-08-26.28',
+      version: '2026-08-27.29',
     },
   },
 ] as const satisfies readonly FashionStyle[]
@@ -53,7 +53,7 @@ export const BOTTOM_FASHION_STYLES = [
       femaleFile: 'Poplur_Atelier_Trousers_Female.glb',
       maleFile: 'Poplur_Atelier_Trousers_Male.glb',
       tintMaterial: 'PoplurAtelierBottomTint',
-      version: '2026-08-26.24',
+      version: '2026-08-27.25',
     },
   },
 ] as const satisfies readonly FashionStyle[]
@@ -103,4 +103,17 @@ export function coerceFashionStyle<Slot extends FashionSlot>(slot: Slot, value: 
     : remoteId && slot !== 'accessory'
       ? value
     : FASHION_DEFAULTS[slot]) as FashionStyleIdBySlot[Slot]
+}
+
+/** The live animated studio exposes only garments backed by a skinned asset.
+    Legacy procedural choices remain readable as a safe runtime fallback, but
+    are promoted to the fitted default instead of being offered as clothing
+    that separates from the body as soon as the resident walks or dances. */
+export function coerceFittedFashionStyle<Slot extends 'top' | 'bottom'>(
+  slot: Slot,
+  value: unknown,
+): FashionStyleIdBySlot[Slot] {
+  const style = coerceFashionStyle(slot, value)
+  const known = (FASHION_STYLES_BY_SLOT[slot] as readonly FashionStyle[]).find(candidate => candidate.id === style)
+  return (!known || known.render.kind === 'gltf' ? style : FASHION_DEFAULTS[slot]) as FashionStyleIdBySlot[Slot]
 }

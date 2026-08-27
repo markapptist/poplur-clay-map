@@ -162,6 +162,18 @@
   background: transparent;
   cursor: pointer;
 }
+
+.newsSource {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #7fe3ff;
+  font: inherit;
+  font-weight: 900;
+  text-decoration: underline;
+  cursor: pointer;
+}
 .channelTag { bottom: 10px; }
 .sponsorTag {
   top: 10px;

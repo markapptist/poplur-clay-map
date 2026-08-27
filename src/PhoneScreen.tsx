@@ -10,6 +10,13 @@ import { postNativeEvent } from './nativeBridge'
 import { placeCall, hangup as hangupCall, subscribeCall, toggleMute, type CallSnapshot } from './webCall'
 import { startRingtone, stopRingtone, previewRingtone, getRingtone, setRingtone, onRingtoneChange, RINGTONES, type RingtoneId } from './phoneRingtones'
 import ClayChannelArrows from './ClayChannelArrows'
+import { cyclePhoneTheme, phoneThemeForId, readSelectedPhoneTheme, saveSelectedPhoneTheme } from './phoneThemes'
+import {
+  INITIAL_DM_PHONE_RETURN_STATE,
+  advanceDMPhoneReturn,
+  resolveDMAutoCallPeer,
+  type DMPhoneReturnState,
+} from './dmCallNavigation'
 
 // The Poplur phone.
 //
@@ -28,20 +35,6 @@ import ClayChannelArrows from './ClayChannelArrows'
 // layout and the keypad hit zones all follow the phone twin
 // (poplur-subscreen-twins), so this is that phone with something real on its
 // screen rather than a second phone that resembles it.
-
-/** Device art, from the subscreens pack — the same files the twin loads. */
-const COLORWAYS = [
-  ['Silver', 'poplur_bling_phone_01_silver_diamond'],
-  ['Gold', 'poplur_bling_phone_02_champagne_gold'],
-  ['Rose', 'poplur_bling_phone_03_rose_gold_pink'],
-  ['Ruby', 'poplur_bling_phone_04_ruby_red'],
-  ['Blue', 'poplur_bling_phone_05_sapphire_blue'],
-  ['Green', 'poplur_bling_phone_06_emerald_green'],
-  ['Purple', 'poplur_bling_phone_07_amethyst_purple'],
-  ['Onyx', 'poplur_bling_phone_08_jet_black_onyx'],
-  ['Aqua', 'poplur_bling_phone_09_icy_aqua_turquoise'],
-  ['Holo', 'poplur_bling_phone_10_holographic_iridescent'],
-] as const
 
 /** `${assets}/<set>.imageset/<file>` — the twin's own `ios()` path shape. */
 function restUrl(set: string): string {
@@ -162,21 +155,35 @@ export interface IncomingCall {
   callerName: string
 }
 
-export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDeclineCall, autoCall }: {
+export default function PhoneScreen({
+  onClose,
+  incomingCall,
+  onAcceptCall,
+  onDeclineCall,
+  autoCall,
+  bindBack,
+  onDMCallReturn,
+}: {
   onClose?: () => void
   incomingCall?: IncomingCall | null
   onAcceptCall?: (call: IncomingCall) => void
   onDeclineCall?: (call: IncomingCall) => void
   autoCall?: { id: string; name: string } | null
+  /** Lets Home's persistent cube operate the Phone's own back key. */
+  bindBack?: (fn: (() => boolean) | null) => void
+  /** Only supplied when this Phone instance was opened from one exact DM. */
+  onDMCallReturn?: () => void
 }) {
   const [reachKm, setReachKm] = useState(() => radiusKm())
   const [contacts, setContacts] = useState<Contact[]>([])
   const [index, setIndex] = useState(0)
-  const [colorIndex, setColorIndex] = useState(0)
+  const [phoneThemeId, setPhoneThemeId] = useState(() => readSelectedPhoneTheme().id)
+  const phoneThemeIdRef = useRef(phoneThemeId)
   const [calling, setCalling] = useState<Contact | null>(null)
   const [booting, setBooting] = useState(true)
   const [bootFrame, setBootFrame] = useState(0)
   const [themeRebooting, setThemeRebooting] = useState(false)
+  const [themeChangeLabel, setThemeChangeLabel] = useState('CHANGED')
   const [menuPage, setMenuPage] = useState<PhoneMenuPage>('main')
   const [menuIndex, setMenuIndex] = useState(0)
   const [liveCall, setLiveCall] = useState<CallSnapshot | null>(null)
@@ -193,6 +200,11 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   const bootTimer = useRef<number | null>(null)
   const themeTimer = useRef<number | null>(null)
   const everNativeRef = useRef(false)
+  const autoCallRef = useRef(autoCall)
+  autoCallRef.current = autoCall
+  const onDMCallReturnRef = useRef(onDMCallReturn)
+  onDMCallReturnRef.current = onDMCallReturn
+  const dmReturnStateRef = useRef<DMPhoneReturnState>(INITIAL_DM_PHONE_RETURN_STATE)
 
   useEffect(() => {
     const sync = () => setReachKm(radiusKm())
@@ -300,11 +312,12 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
     }, BOOT_FRAME_MS)
   }, [])
 
-  const showThemeChange = useCallback(() => {
+  const showThemeChange = useCallback((label = 'CHANGED') => {
     if (bootTimer.current !== null) window.clearInterval(bootTimer.current)
     bootTimer.current = null
     if (themeTimer.current !== null) window.clearTimeout(themeTimer.current)
     setBooting(false)
+    setThemeChangeLabel(label)
     setThemeRebooting(true)
     themeTimer.current = window.setTimeout(() => {
       themeTimer.current = null
@@ -326,7 +339,7 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
       try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
       // Theme, not cold boot: same haptic sequence natively but no boot sound.
       postNativeEvent({ type: 'phoneThemeEffects' })
-      showThemeChange()
+      showThemeChange('CHANGED')
     }
     window.addEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
     return () => window.removeEventListener(PROFILE_THEME_CHANGE_EVENT, sync)
@@ -339,6 +352,15 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   useEffect(() => subscribeCall(snap => {
     setLiveCall(snap.phase === 'idle' ? null : snap)
     if (snap.phase === 'idle' || snap.phase === 'ended') setCalling(null)
+
+    // A Phone opened from Mail is a temporary call mode, not a navigation
+    // away from the conversation. Wait until its call genuinely begins, then
+    // return exactly once when either side ends it. The initial idle snapshot
+    // emitted by subscribeCall must never bounce the person straight back.
+    if (!autoCallRef.current) return
+    const transition = advanceDMPhoneReturn(dmReturnStateRef.current, snap.phase)
+    dmReturnStateRef.current = transition.state
+    if (transition.shouldReturn) onDMCallReturnRef.current?.()
   }), [])
 
   useEffect(() => {
@@ -364,18 +386,18 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
 
   const autoCallDone = useRef(false)
   useEffect(() => {
-    if (!autoCall || autoCallDone.current || booting || !contacts.length) return
+    if (!autoCall || autoCallDone.current || booting) return
     autoCallDone.current = true
-    const target = contacts.find(c => c.id === autoCall.id || c.handle === autoCall.name)
+    const peer = resolveDMAutoCallPeer(autoCall, contacts)
+    const target = peer.contactIndex >= 0 ? contacts[peer.contactIndex] : null
     if (target) {
-      const idx = contacts.indexOf(target)
-      setIndex(idx)
+      setIndex(peer.contactIndex)
       setCalling(target)
-      void placeCall(target.id, target.handle)
+      void placeCall(peer.id, peer.handle)
     } else {
-      const synth: Contact = { id: autoCall.id, handle: autoCall.name, detail: 'POPLUR MAIL', favourite: false, callable: true, distanceKm: null }
+      const synth: Contact = { id: peer.id, handle: peer.handle, detail: 'POPLUR MAIL', favourite: false, callable: true, distanceKm: null }
       setCalling(synth)
-      void placeCall(autoCall.id, autoCall.name)
+      void placeCall(peer.id, peer.handle)
     }
   }, [autoCall, booting, contacts])
 
@@ -387,8 +409,12 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
     playPop()
     try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
     postNativeEvent({ type: 'phoneThemeEffects' })
-    setColorIndex(i => (i + delta + COLORWAYS.length) % COLORWAYS.length)
-    showThemeChange()
+    const next = cyclePhoneTheme(phoneThemeIdRef.current, delta)
+    phoneThemeIdRef.current = next.id
+    saveSelectedPhoneTheme(next.id)
+    postNativeEvent({ type: 'phoneThemeChanged', themeId: next.id })
+    setPhoneThemeId(next.id)
+    showThemeChange(next.name.toUpperCase())
   }, [showThemeChange])
 
   const step = useCallback((delta: 1 | -1) => {
@@ -407,8 +433,8 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
     void placeCall(current.id, current.handle)
   }, [current])
 
-  const back = useCallback(() => {
-    playPop()
+  const back = useCallback((withSound = true) => {
+    if (withSound) playPop()
     if (liveCall && liveCall.phase !== 'idle' && liveCall.phase !== 'ended') {
       hangupCall()
       setCalling(null)
@@ -430,6 +456,14 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
     }
     onClose?.()
   }, [calling, incomingCall, liveCall, menuPage, onClose, onDeclineCall])
+
+  useEffect(() => {
+    if (!bindBack) return
+    // Home plays the cube pop after a native back handler reports success, so
+    // do not play a second copy inside Phone's keypad handler.
+    bindBack(() => { back(false); return true })
+    return () => bindBack(null)
+  }, [back, bindBack])
 
   const activateMenuItem = useCallback(() => {
     const item = PHONE_MENU_ITEMS[menuIndex]
@@ -533,7 +567,7 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
   // Three rows, windowed on the cursor — the twin's own menu behaviour.
   const start = Math.max(0, Math.min(index, Math.max(0, contacts.length - 2)))
   const visible = contacts.slice(start, start + 2)
-  const colorway = COLORWAYS[colorIndex % COLORWAYS.length]
+  const phoneTheme = phoneThemeForId(phoneThemeId)
   const mainStart = Math.max(0, Math.min(menuIndex - 1, Math.max(0, PHONE_MENU_ITEMS.length - 3)))
   const visibleMain = PHONE_MENU_ITEMS.slice(mainStart, mainStart + 3)
   const infoPage = menuPage !== 'main' && menuPage !== 'contacts' && menuPage !== 'calls' && menuPage !== 'settings'
@@ -546,16 +580,21 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
               : ''
 
   return (
-    <div className={styles.screen} data-poplur-screen="profile-phone" aria-label="Poplur phone">
+    <div
+      className={styles.screen}
+      data-poplur-screen="profile-phone"
+      data-phone-theme={phoneTheme.id}
+      aria-label={`Poplur phone, ${phoneTheme.name}`}
+    >
       <div className={booting ? `${styles.device} ${styles.deviceBooting}` : styles.device}>
-        <img className={styles.rest} src={restUrl(colorway[1])} alt={`Poplur phone, ${colorway[0]}`} draggable={false} />
+        <img className={styles.rest} src={restUrl(phoneTheme.assetSet)} alt={`Poplur phone, ${phoneTheme.name}`} draggable={false} />
 
         {booting && (
           <div
             className={styles.boot}
             aria-hidden="true"
             style={{
-              backgroundImage: `url(${bootUrl(colorway[1])})`,
+              backgroundImage: `url(${bootUrl(phoneTheme.assetSet)})`,
               backgroundPosition: `${(bootFrame % 4) / 3 * 100}% ${Math.floor(bootFrame / 4) / 3 * 100}%`,
             }}
           />
@@ -569,7 +608,8 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
           {themeRebooting ? (
             <div className={styles.callStatus}>
               <strong>THEME</strong>
-              <span className={styles.incoming}><strong>CHANGED</strong></span>
+              <span className={styles.incoming}><strong>{themeChangeLabel}</strong></span>
+              <span>APPLIED</span>
             </div>
           ) : incomingCall ? (
             <>
@@ -720,30 +760,31 @@ export default function PhoneScreen({ onClose, incomingCall, onAcceptCall, onDec
           ))}
         </div>
 
-        <div className={`${styles.swipe} ${styles.swipeLeft}`}>
-          <ClayChannelArrows
-            number={0}
-            onUp={() => cycleColorway(-1)}
-            onDown={() => {}}
-            upLabel="Previous phone colorway"
-            downLabel=""
-            size={88}
-            orientation="horizontal"
-            single="up"
-          />
-        </div>
-        <div className={`${styles.swipe} ${styles.swipeRight}`}>
-          <ClayChannelArrows
-            number={0}
-            onUp={() => {}}
-            onDown={() => cycleColorway(1)}
-            upLabel=""
-            downLabel="Next phone colorway"
-            size={88}
-            orientation="horizontal"
-            single="down"
-          />
-        </div>
+      </div>
+
+      <div className={`${styles.swipe} ${styles.swipeLeft}`}>
+        <ClayChannelArrows
+          number={0}
+          onUp={() => cycleColorway(-1)}
+          onDown={() => {}}
+          upLabel="Previous phone colorway"
+          downLabel=""
+          size={88}
+          orientation="horizontal"
+          single="up"
+        />
+      </div>
+      <div className={`${styles.swipe} ${styles.swipeRight}`}>
+        <ClayChannelArrows
+          number={0}
+          onUp={() => {}}
+          onDown={() => cycleColorway(1)}
+          upLabel=""
+          downLabel="Next phone colorway"
+          size={88}
+          orientation="horizontal"
+          single="down"
+        />
       </div>
     </div>
   )

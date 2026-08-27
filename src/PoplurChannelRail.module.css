@@ -1,0 +1,54 @@
+.rail {
+  position: relative;
+  pointer-events: auto;
+}
+
+.button {
+  appearance: none;
+  position: absolute;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 44%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 130ms cubic-bezier(.2, 1.25, .4, 1), filter 130ms ease;
+}
+
+.up { top: 0; }
+.down { bottom: 0; }
+
+.button:active {
+  transform: scale(1.1);
+  filter: brightness(1.12) drop-shadow(0 0 8px rgba(246, 59, 154, .72));
+}
+
+.button:focus-visible {
+  z-index: 2;
+  outline: 3px solid #7fe3ff;
+  outline-offset: -2px;
+  border-radius: 16px;
+}
+
+.number {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: #4dff69;
+  text-align: center;
+  text-shadow: 0 0 8px rgba(77, 255, 105, .5), 0 2px 4px rgba(0, 0, 0, .8);
+  font: 900 15px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+}

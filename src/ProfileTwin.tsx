@@ -43,6 +43,7 @@ import {
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 import TabControlRail from './TabControlRail'
+import { SideControlIconImage } from './SideControlIcon'
 import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
 import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
@@ -2120,7 +2121,7 @@ export default function ProfileTwin({
             aria-label="Notifications"
             aria-expanded={showNotifs && !notifsClosing}
           >
-            <ClaySwayObject url="poplur_bell.glb" pitch={12} size={256} alt="" />
+            <SideControlIconImage icon="profile.alerts" displaySize={44} />
             {unreadNotifs > 0 && <span className={styles.bellDot} />}
           </button>
         )}
@@ -2130,7 +2131,7 @@ export default function ProfileTwin({
             onClick={() => { playPop(); window.dispatchEvent(new CustomEvent('poplur-open-settings')) }}
             aria-label="Settings"
           >
-            <ClaySwayObject url="poplur_cube_gear.glb" pitch={14} size={256} alt="" />
+            <SideControlIconImage icon="profile.settings" displaySize={44} />
           </button>
         )}
         {visiting ? (
@@ -2144,7 +2145,7 @@ export default function ProfileTwin({
           />
         ) : (
           <button ref={camBtnRef} className={styles.camBtn} onClick={openCapture} aria-label="Record profile selfie video">
-            <ClaySwayObject url="poplur_camera_kodak.glb" pitch={14} size={320} sway alt="" />
+            <SideControlIconImage icon="profile.camera" displaySize={44} />
           </button>
         )}
       </TabControlRail>
