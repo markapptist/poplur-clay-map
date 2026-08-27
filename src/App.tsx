@@ -963,14 +963,20 @@ export default function App() {
     // dismisses it also does the thing it just taught. That works everywhere
     // the tap lands on a parent-document element — but here it lands INSIDE
     // the iframe, whose document swallows it, so the parent's window listener
-    // never fired and the card sat there permanently. One message is enough:
-    // the coach only needs to know a gesture happened.
+    // never fired and the card sat there permanently. Forward every gesture:
+    // later touches also dismiss parent-owned map popovers.
+    let stopTouchForwarding = () => {}
     if (window.parent !== window) {
+      // Iframe pointer events never bubble into HomeTwin. Keep forwarding map
+      // gestures so one tap can dismiss parent-owned coaches and popovers
+      // without placing a touch-blocking glass pane over Mapbox.
       const tell = () => window.parent.postMessage({ type: 'poplur-map-touched' }, '*')
-      window.addEventListener('pointerdown', tell, { once: true, capture: true })
+      window.addEventListener('pointerdown', tell, { capture: true, passive: true })
+      stopTouchForwarding = () => window.removeEventListener('pointerdown', tell, { capture: true })
     }
     if (window.parent !== window) window.parent.postMessage({ type: 'poplur-map-loading' }, '*')
     postNativeEvent({ type: 'mapLoading' })
+    return stopTouchForwarding
   }, [harnessView])
 
   // The native shells ask for location while Feed is visible, then broadcast
@@ -3636,6 +3642,7 @@ export default function App() {
         <ConquerGlance
           snapshot={mapConquerSnapshot}
           open={mapConquerGlanceOpen}
+          onDismiss={() => setMapConquerGlanceOpen(false)}
           onOpen={() => {
             playPop()
             stopTour()

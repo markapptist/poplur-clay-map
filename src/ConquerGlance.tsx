@@ -10,10 +10,12 @@ export default function ConquerGlance({
   snapshot,
   open,
   onOpen,
+  onDismiss,
 }: {
   snapshot: MapConquerSnapshot | null
   open: boolean
   onOpen: () => void
+  onDismiss?: () => void
 }) {
   const rows = mapConquerGlanceRows(snapshot, open)
   const allRows = snapshot?.rows ?? []
@@ -28,6 +30,32 @@ export default function ConquerGlance({
   useEffect(() => {
     if (open) glanceRef.current?.focus({ preventScroll: true })
   }, [open])
+
+  // This is a compact popover, not a modal. Let the next map/control gesture
+  // continue normally while closing it. The Conquer toggle is exempt because
+  // its click owns the open/closed transition; dismissing during capture would
+  // make that same click immediately reopen the card.
+  useEffect(() => {
+    if (!open || !onDismiss) return
+    const dismissFromPointer = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && glanceRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-map-conquer-toggle]')) return
+      onDismiss()
+    }
+    const dismissFromNativeMap = () => onDismiss()
+    const dismissFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onDismiss()
+    }
+    document.addEventListener('pointerdown', dismissFromPointer, { capture: true, passive: true })
+    document.addEventListener('keydown', dismissFromKeyboard, { capture: true })
+    window.addEventListener('poplur-native-map-tap', dismissFromNativeMap)
+    return () => {
+      document.removeEventListener('pointerdown', dismissFromPointer, { capture: true })
+      document.removeEventListener('keydown', dismissFromKeyboard, { capture: true })
+      window.removeEventListener('poplur-native-map-tap', dismissFromNativeMap)
+    }
+  }, [onDismiss, open])
 
   // Replays the real board's split-flap motion, but only while this compact
   // preview is actually mounted and visible. Reduced-motion users

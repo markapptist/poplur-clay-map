@@ -2701,13 +2701,19 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapConquerGlanceOpen(true)
         setHoldOpen(false)
       }
+      if (event.data.type === 'poplur-map-touched') {
+        setMapConquerGlanceOpen(false)
+      }
       if (event.data.type === 'poplur-map-overlay') {
         const open = Boolean(event.data.open)
         setMapOverlayOpen(open)
         // The popup lives inside the map iframe; the Hold menu lives in this
         // parent at a higher stacking level. Mutual exclusion is the only way
         // to guarantee the wheel/scrubber cannot cover Search or Weather.
-        if (open) setHoldOpen(false)
+        if (open) {
+          setMapConquerGlanceOpen(false)
+          setHoldOpen(false)
+        }
       }
       if (event.data.type === 'poplur-map-failed') {
         setMapCountryFlagPulse(null)
@@ -4850,6 +4856,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         <ConquerGlance
           snapshot={mapConquerSnapshot}
           open={mapConquerGlanceOpen}
+          onDismiss={() => setMapConquerGlanceOpen(false)}
           onOpen={() => {
             playPop()
             setMapConquerGlanceOpen(false)
