@@ -996,11 +996,11 @@ export default function StudioScreen({
     onClose()
   }
 
-  // The AI music stack. ElevenLabs Music — the same provider whose key slot the
-  // native app already carries for voices — builds an instrumental the length
-  // of the take cap (three minutes) from the style ask. No key or a failed call
-  // degrades HONESTLY: the editor still opens and says the clay band is backing
-  // you, instead of a spinner that lies.
+  // The AI music stack is server-mediated. Provider credentials must never be
+  // read by Vite/browser code because every VITE_* value becomes public inside
+  // the shipped web bundle. The Poplur endpoint owns the provider key and
+  // returns MP3 bytes. No endpoint or a failed call degrades honestly: the
+  // editor still opens and says the clay band is backing you.
   const generateSong = async (style: string) => {
     playPop()
     aiAbortRef.current?.abort()
@@ -1009,8 +1009,8 @@ export default function StudioScreen({
     const generation = ++aiGenerationRef.current
     setAiError(null)
     setBuilding(0.04)
-    const key = import.meta.env.VITE_ELEVENLABS_KEY as string | undefined
-    if (!key) {
+    const endpoint = (import.meta.env.VITE_POPLUR_MUSIC_ENDPOINT as string | undefined)?.trim()
+    if (!endpoint) {
       if (aiAbortRef.current === controller) aiAbortRef.current = null
       setAiError('The built-in Poplur band is backing your take.')
       setBuilding(0)
@@ -1019,13 +1019,14 @@ export default function StudioScreen({
     }
     const timeout = window.setTimeout(() => controller.abort(), 45_000)
     try {
-      const res = await fetch('https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         signal: controller.signal,
-        headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: `${style || genre} instrumental, ${bpm} BPM, 3 minutes, radio-ready, space left for a lead vocal.`,
           music_length_ms: MAX_TAKE_MS,
+          output_format: 'mp3_44100_128',
         }),
       })
       if (!res.ok) throw new Error(`music API ${res.status}`)

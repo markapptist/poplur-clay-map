@@ -72,6 +72,54 @@ function pngHeader(file: URL) {
   }
 }
 
+function pngAlphaAt(file: URL, x: number, y: number) {
+  const bytes = readFileSync(file)
+  const width = bytes.readUInt32BE(16)
+  const height = bytes.readUInt32BE(20)
+  const idat: Buffer[] = []
+  let offset = 8
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset)
+    const type = bytes.subarray(offset + 4, offset + 8).toString('ascii')
+    if (type === 'IDAT') idat.push(bytes.subarray(offset + 8, offset + 8 + length))
+    offset += 12 + length
+    if (type === 'IEND') break
+  }
+
+  const filtered = inflateSync(Buffer.concat(idat))
+  const stride = width * 4
+  const rgba = Buffer.alloc(stride * height)
+  let source = 0
+  const paeth = (left: number, up: number, upperLeft: number) => {
+    const estimate = left + up - upperLeft
+    const leftDistance = Math.abs(estimate - left)
+    const upDistance = Math.abs(estimate - up)
+    const upperLeftDistance = Math.abs(estimate - upperLeft)
+    return leftDistance <= upDistance && leftDistance <= upperLeftDistance
+      ? left
+      : upDistance <= upperLeftDistance ? up : upperLeft
+  }
+
+  for (let row = 0; row < height; row += 1) {
+    const filter = filtered[source++]
+    const destination = row * stride
+    for (let column = 0; column < stride; column += 1) {
+      const left = column >= 4 ? rgba[destination + column - 4] : 0
+      const up = row > 0 ? rgba[destination - stride + column] : 0
+      const upperLeft = row > 0 && column >= 4 ? rgba[destination - stride + column - 4] : 0
+      const predictor = filter === 0 ? 0
+        : filter === 1 ? left
+          : filter === 2 ? up
+            : filter === 3 ? Math.floor((left + up) / 2)
+              : filter === 4 ? paeth(left, up, upperLeft)
+                : (() => { throw new Error(`Unsupported PNG filter ${filter}`) })()
+      rgba[destination + column] = (filtered[source++] + predictor) & 255
+    }
+  }
+
+  return rgba[y * stride + x * 4 + 3]
+}
+
 describe('Poplur side-control asset registry', () => {
   it('contains the exact 28 control IDs and 14 weather IDs from the package', () => {
     expect(SIDE_CONTROL_ICON_IDS).toHaveLength(28)
@@ -119,6 +167,18 @@ describe('Poplur side-control asset registry', () => {
       expect(`${sources.src} ${sources.srcSet}`).not.toContain('/1024/')
       expect(`${sources.src} ${sources.srcSet}`).not.toContain('105')
       expect(`${sources.src} ${sources.srcSet}`).not.toContain('references')
+    }
+  })
+
+  it('keeps the channel chevrons opaque without the stray connector bars', () => {
+    for (const size of SIZES) {
+      const scale = size / 1024
+      const up = assetFile('global.channel_up', size)
+      const down = assetFile('global.channel_down', size)
+      expect(pngAlphaAt(up, Math.round(512 * scale), Math.round(775 * scale))).toBe(0)
+      expect(pngAlphaAt(down, Math.round(512 * scale), Math.round(245 * scale))).toBe(0)
+      expect(pngAlphaAt(up, Math.round(512 * scale), Math.round(400 * scale))).toBeGreaterThan(240)
+      expect(pngAlphaAt(down, Math.round(512 * scale), Math.round(600 * scale))).toBeGreaterThan(240)
     }
   })
 })
@@ -311,8 +371,9 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(controls).toHaveLength(2)
     expect(controls.map(control => control.type)).toEqual([SideControlIconButton, SideControlIconButton])
     expect(controls[0].props.imageStyle).toMatchObject({ transform: 'rotate(-90deg)' })
-    expect(controls[0].props.style).toMatchObject({ width: '32%' })
-    expect(controls[1].props.style).toMatchObject({ width: '32%' })
+    expect(controls[0].props.imageSize).toBe(71)
+    expect(controls[0].props.style).toMatchObject({ width: '44%' })
+    expect(controls[1].props.style).toMatchObject({ width: '44%' })
     ;(controls[0].props.onActivate as () => void)()
     ;(controls[1].props.onActivate as () => void)()
     expect(onUp).toHaveBeenCalledOnce()
@@ -339,16 +400,19 @@ describe('rail layout and permission-sensitive wiring', () => {
   it('leaves location, camera, live-thumbnail, and library handlers in place', () => {
     const home = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'utf8')
     const map = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const feed = readFileSync(new URL('../FeedTwin.tsx', import.meta.url), 'utf8')
     const camera = readFileSync(new URL('../Camera.tsx', import.meta.url), 'utf8')
     const profile = readFileSync(new URL('../ProfileTwin.tsx', import.meta.url), 'utf8')
     const news = readFileSync(new URL('../NewsPaper.tsx', import.meta.url), 'utf8')
 
     expect(home).toMatch(/icon="map\.locate"[\s\S]*?sendMapAction\('locate'\)/)
     expect(map).toMatch(/icon="map\.locate"[\s\S]*?navigator\.geolocation\?\.getCurrentPosition/)
+    expect(feed).not.toContain('Not for me')
+    expect(feed).toContain('onDislike={dislikeCurrentPost}')
     expect(camera).toMatch(/icon="camera\.flash"[\s\S]*?setFlashEnabled/)
     expect(camera).toMatch(/icon="camera\.mute"[\s\S]*?onActivate=\{toggleAiVoice\}/)
     expect(camera).toMatch(/latestCapture[\s\S]*?libraryNewest[\s\S]*?icon="camera\.camera_roll"/)
-    expect(camera).toContain("onClick={() => { playPop(); onOpenRoll?.() }}")
+    expect(camera).toMatch(/aria-label="Open camera roll"[\s\S]*?onPointerDown=\{event => \{[\s\S]*?event\.isPrimary\) openCameraRoll\(\)[\s\S]*?onClick=\{event => \{[\s\S]*?isKeyboardCameraRollClick\(event\.detail\)\) openCameraRoll\(\)/)
     expect(profile).toMatch(/icon="profile\.alerts"[\s\S]*?icon="profile\.settings"[\s\S]*?icon="profile\.camera"/)
     expect(profile).toContain('onClick={openCapture}')
     expect(news).toMatch(/icon="news\.menu"[\s\S]*?onActivate=\{openMenu\}/)

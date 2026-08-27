@@ -39,6 +39,7 @@ import {
   cubeTransition, holdPreviewMode, onTransitionChanged, screenTransition,
   type CubeTransition, type HoldPreviewMode, type ScreenTransition,
 } from './cubeTransitions'
+import { cubeSwapShouldPlaySound, isMapCubeReturnTransition } from './cubeSwapSoundPolicy'
 import { startEngagementChips } from './engagement'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
@@ -102,8 +103,10 @@ import {
   AIRPORT_NAVIGATOR_MODEL,
 } from './mapAirportCube'
 import {
-  MAP_WATER_HOVER_MODEL,
+  MAP_WATER_CUBE_DISPLAY_MS,
+  reconcileMapWaterCube,
   readMapHoverCubeKind,
+  resolveOuterMapNavigatorModel,
   type MapHoverCubeKind,
 } from './mapHoverCube'
 import { COUNTRY_FLAG_CUBE_DISPLAY_MS } from './countryFlags'
@@ -937,9 +940,36 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     changedAt: number
   } | null>(null)
   const [mapWorldHover, setMapWorldHover] = useState<MapHoverCubeKind | null>(null)
+  const [mapBoatCubePulse, setMapBoatCubePulse] = useState(false)
+  const mapBoatNextEligibleAtRef = useRef(0)
+  const mapBoatPulseTimerRef = useRef<number | null>(null)
+  const clearMapBoatCubePulse = useCallback(() => {
+    if (mapBoatPulseTimerRef.current !== null) {
+      window.clearTimeout(mapBoatPulseTimerRef.current)
+      mapBoatPulseTimerRef.current = null
+    }
+    setMapBoatCubePulse(false)
+  }, [])
+  const applyMapWorldHover = useCallback((value: unknown) => {
+    const kind = readMapHoverCubeKind(value)
+    setMapWorldHover(kind)
+    const decision = reconcileMapWaterCube(kind, Date.now(), mapBoatNextEligibleAtRef.current)
+    mapBoatNextEligibleAtRef.current = decision.nextEligibleAt
+    clearMapBoatCubePulse()
+    if (!decision.pulse) return
+    setMapBoatCubePulse(true)
+    mapBoatPulseTimerRef.current = window.setTimeout(() => {
+      mapBoatPulseTimerRef.current = null
+      setMapBoatCubePulse(false)
+    }, MAP_WATER_CUBE_DISPLAY_MS)
+  }, [clearMapBoatCubePulse])
   useEffect(() => {
-    if (activeTab !== 'map') setMapWorldHover(null)
-  }, [activeTab])
+    if (activeTab !== 'map') {
+      setMapWorldHover(null)
+      clearMapBoatCubePulse()
+    }
+  }, [activeTab, clearMapBoatCubePulse])
+  useEffect(() => clearMapBoatCubePulse, [clearMapBoatCubePulse])
   // One crossing gets one bounded airport moment. Clearing locally after the
   // pop does not re-arm it: the map stays silent until the airport actually
   // leaves view and a later settled camera crosses it again.
@@ -2616,7 +2646,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapWeatherSignal(null)
         setMapCountryFlagPulse(null)
         setMapAirportSignal(null)
-        setMapWorldHover(null)
+        applyMapWorldHover(null)
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
       }
@@ -2640,7 +2670,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         }
       }
       if (event.data.type === 'poplur-map-world-hover') {
-        setMapWorldHover(readMapHoverCubeKind(event.data.kind))
+        applyMapWorldHover(event.data.kind)
       }
       if (event.data.type === 'poplur-map-weather') {
         const presentation = readWeatherPresentation(event.data)
@@ -2682,7 +2712,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (event.data.type === 'poplur-map-failed') {
         setMapCountryFlagPulse(null)
         setMapAirportSignal(null)
-        setMapWorldHover(null)
+        applyMapWorldHover(null)
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
         scheduleMapRetry()
@@ -2997,7 +3027,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       window.removeEventListener('poplur-pick-podcast-location', onPickPodcastLocation)
       window.removeEventListener('message', onMapMessage)
     }
-  }, [beginNativeMapWebFallback, postWebMapAction])
+  }, [applyMapWorldHover, beginNativeMapWebFallback, postWebMapAction])
 
   // Engagement reaches the SHELL, but the camera lives in the map.
   //
@@ -4225,13 +4255,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     && cubeScreen == null && mapAirportSignal
     ? AIRPORT_NAVIGATOR_MODEL
     : null
-  const worldHoverCubeModel = activeTab === 'map' && committedTab === 'map'
-    && cubeScreen == null && mapWorldHover
-    ? mapWorldHover === 'airport'
-      ? AIRPORT_NAVIGATOR_MODEL
-      : mapWorldHover === 'water'
-        ? MAP_WATER_HOVER_MODEL
-        : MAP_GLOBE_MODEL
+  const countryFlagCubeModel = activeTab === 'map' && committedTab === 'map'
+    && cubeScreen == null && mapCountryFlagPulse
+    ? mapCountryFlagPulse.modelUrl
+    : null
+  const outerMapNavigatorModel = activeTab === 'map' && committedTab === 'map'
+    && cubeScreen == null
+    ? resolveOuterMapNavigatorModel({
+        hoverKind: mapWorldHover,
+        boatPulse: mapBoatCubePulse,
+        airportSignalModel: airportCubeModel,
+        countryFlagModel: countryFlagCubeModel,
+        airportHoverModel: AIRPORT_NAVIGATOR_MODEL,
+        globeModel: MAP_GLOBE_MODEL,
+      })
     : null
   const cameraCubeOverridesEvent = activeTab === 'post'
     && cubeScreen == null
@@ -4323,15 +4360,36 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     ? 'posted'
     : breakingNewsCubeActive
       ? `map-news:${mapNewsEvent?.status ?? 'unknown'}:${mapNewsEvent?.id ?? 'unknown'}`
-      : worldHoverCubeModel
-        ? `map-hover:${mapWorldHover ?? 'globe'}`
+      : mapWorldHover === 'airport' && outerMapNavigatorModel
+        ? 'map-hover:airport'
         : airportCubeModel
           ? `airport:${mapAirportSignal?.id ?? 'unknown'}`
-          : weatherCubeModel
-            ? mapWeatherSignal?.kind ?? 'none'
-            : discoCubeActiveHere
-              ? 'music'
-              : 'none'
+          : countryFlagCubeModel
+            ? `country:${mapCountryFlagPulse?.changedAt ?? 'unknown'}`
+            : outerMapNavigatorModel
+              ? `map-hover:${mapWorldHover ?? 'globe'}:${mapBoatCubePulse ? 'boat' : 'globe'}`
+              : weatherCubeModel
+                ? mapWeatherSignal?.kind ?? 'none'
+                : discoCubeActiveHere
+                  ? 'music'
+                  : 'none'
+  const previousCubeEventSignalRef = useRef(cubeEventSignal)
+  const cubeReturnSoundLatchRef = useRef(false)
+  const mapCubeReturnTransition = isMapCubeReturnTransition(
+    activeTab,
+    previousCubeEventSignalRef.current,
+    cubeEventSignal,
+  )
+  const cubeSwapWithSound = cubeSwapShouldPlaySound({
+    wheelFocused: wheelFocus !== null,
+    activeTab,
+    previousEventSignal: previousCubeEventSignalRef.current,
+    nextEventSignal: cubeEventSignal,
+  })
+  useEffect(() => {
+    if (mapCubeReturnTransition) cubeReturnSoundLatchRef.current = true
+    previousCubeEventSignalRef.current = cubeEventSignal
+  }, [cubeEventSignal, mapCubeReturnTransition])
   const wheelPreviewModel = holdCubePreviewMode === '3d'
     && wheelFocus
     ? holdFocusNavigatorModel(
@@ -4390,21 +4448,23 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // clearing the story immediately falls through to that airplane again.
     : breakingNewsCubeActive && mapContextModel
     ? mapContextModel
-    // World-scale pointer context is explicit and immediate. It outranks the
-    // timed country/airport/weather moments, then lands on the literal globe
-    // over ordinary ground as requested.
-    : worldHoverCubeModel
-    ? worldHoverCubeModel
+    // A deliberate airport hover stays above every ambient world-scale cue.
+    : mapWorldHover === 'airport' && outerMapNavigatorModel
+    ? outerMapNavigatorModel
     // Passing a visible airport briefly turns the one navigator into the
     // decimated clay airplane. It outranks world flags and ambient effects,
     // but every deliberate interaction above still owns the object first.
     : airportCubeModel
     ? airportCubeModel
     // A world-map country crossing briefly becomes the navigator. It outranks
-    // ambient weather/music only on the unobscured Map root, then the timed
-    // pulse falls through to the normal globe/sun/moon object again.
-    : activeTab === 'map' && cubeScreen == null && mapCountryFlagPulse
-    ? mapCountryFlagPulse.modelUrl
+    // the ambient boat/globe hover as well as weather/music, so crossing water
+    // can never hide the flag acknowledgement.
+    : countryFlagCubeModel
+    ? countryFlagCubeModel
+    // Water is intentionally occasional: one short cooldown-limited boat
+    // pulse, then the literal globe. Ordinary land is the globe immediately.
+    : outerMapNavigatorModel
+    ? outerMapNavigatorModel
     : eventCubeModel
     ? eventCubeModel
     : (avatarPreview
@@ -4514,9 +4574,16 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // first (and suppressed legitimate non-wheel swaps in the reverse race).
     pendingCubeSwap.current = alreadyApplied ? null : {
       model: requestedCubeModel,
-      withSound: wheelFocus === null,
+      // Keep the return sound latched across the exit-phase re-render. Without
+      // this, the event signal's ref has already advanced by that render and a
+      // focused wheel could silently overwrite the pending airplane→ambient
+      // target just before its visible enter pop.
+      withSound: cubeSwapWithSound || cubeReturnSoundLatchRef.current,
     }
-    if (alreadyApplied) return
+    if (alreadyApplied) {
+      cubeReturnSoundLatchRef.current = false
+      return
+    }
     // Reduced motion skips both transforms, but still waits for the prepared
     // model and keeps the requested pop sound when it becomes visible.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -4552,7 +4619,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     }
     if (cubeSwapPhase !== 'idle') return
     setCubeSwapPhase('exit')
-  }, [requestedCubeModel, appliedCubeModel, cubeSwapPhase, beginCubeSwapEnter, wheelFocus])
+  }, [requestedCubeModel, appliedCubeModel, cubeSwapPhase, beginCubeSwapEnter, cubeSwapWithSound])
 
   useEffect(() => {
     if (cubeSwapFallbackTimer.current) window.clearTimeout(cubeSwapFallbackTimer.current)

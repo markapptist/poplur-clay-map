@@ -27,6 +27,13 @@
   display: block;
   border-radius: 42% 42% 20% 20%;
   filter: drop-shadow(0 15px 17px rgba(15, 2, 7, .42));
+  opacity: 1;
+  transition: opacity 160ms ease;
+}
+
+.stage[data-avatar-outfit-state='fitting'] canvas,
+.flatStage[data-avatar-outfit-state='fitting'] canvas {
+  opacity: 0;
 }
 
 .stage > span,

@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './ARFilters.module.css'
 import { playPop } from './pop'
-import { onFrame } from './frameGovernor'
+import {
+  arFilterScrollLeft,
+  clampARFilterIndex,
+  nearestARFilterIndex,
+} from './arFilterRailMath'
 import {
   arFilterCatalog,
   arFilterThumbnailUrl,
@@ -17,10 +21,9 @@ import {
 // landmarks and composites the matching effect into the native frame buffer.
 // `css` remains the post-capture color recipe, not a whole-viewfinder effect.
 //
-// The rail is the hold menu laid flat: the same scrub physics from
-// CubeMenuWheelController (drag with momentum, friction, snap-to-nearest, the
-// centred item enlarged and named) run along a STRAIGHT HORIZONTAL line instead
-// of the vertical arc, floating above the camera.
+// The rail is the hold menu laid flat. Native momentum and scroll-snap keep the
+// centred item enlarged and named along a STRAIGHT HORIZONTAL line, floating
+// above the camera without a JavaScript animation loop.
 
 export interface ARFilterDef {
   id: string
@@ -152,13 +155,10 @@ export function EffectMark({ id }: { id: string }) {
 }
 
 // ── scrub physics (CubeMenuWheelController, laid horizontal) ────────────────
-const SLOT_SPACING = 78      // px between filter slots along the line
-const POINTS_PER_ITEM = 62
-const FRICTION = 0.955
-const MAX_VELOCITY = 16
-const SNAP_VELOCITY = 0.9
-
-const clampMag = (v: number, limit: number) => Math.min(Math.max(v, -limit), limit)
+// Native horizontal rail. Scrolling stays on the browser compositor. The previous rail moved
+// every visible chip through React state on every pointer/animation frame,
+// which competed with the live camera compositor on mobile.
+const SCROLL_SETTLE_MS = 110
 
 export default function ARFilters({
   active,
@@ -170,239 +170,180 @@ export default function ARFilters({
   onClose: () => void
 }) {
   const startIndex = Math.max(0, AR_FILTERS.findIndex(f => f.id === active))
-  const [offset, setOffset] = useState(startIndex)
   const [selected, setSelected] = useState(startIndex)
-
-  const offsetRef = useRef(startIndex)
-  const velocityRef = useRef(0)
-  const lastScrubRef = useRef(0)
-  const lastNotchRef = useRef(startIndex)
-  const committedRef = useRef(startIndex)
-  const draggingRef = useRef(false)
-  const dragXRef = useRef(0)
-  const snapIndexRef = useRef<number | null>(null)
-  const movedRef = useRef(0)
-  const downPtRef = useRef({ x: 0, y: 0 })
+  const [catalogRevision, setCatalogRevision] = useState(0)
+  const lineRef = useRef<HTMLDivElement | null>(null)
+  const selectedRef = useRef(startIndex)
+  const committedIdRef = useRef(active)
+  const scrollFrameRef = useRef(0)
+  const settleTimerRef = useRef<number | null>(null)
 
   // Picking is what the centred filter means — scrubbing the rail applies it
   // live, exactly like the hold menu selecting as it turns.
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
 
-  const applyOffsetDelta = (delta: number) => {
-    const count = AR_FILTERS.length
-    let o = offsetRef.current + delta
-    if (o < 0) o = 0
-    if (o > count - 1) o = count - 1
-    offsetRef.current = o
-    setOffset(o)
-
-    const notch = Math.round(o)
-    if (notch !== lastNotchRef.current) {
-      lastNotchRef.current = notch
-      setSelected(notch)
-      playPop()
-    }
+  const showSelected = (index: number, audible = true) => {
+    const next = clampARFilterIndex(index, AR_FILTERS.length)
+    if (next === selectedRef.current) return next
+    selectedRef.current = next
+    setSelected(next)
+    if (audible) playPop()
+    return next
   }
 
-  // Committing the pick per NOTCH is what made this wheel hang, exactly as the
-  // hold menu's did. On iOS every commit crosses the native bridge to
-  // applyARFilter, which touches the capture session; a flick past a dozen
-  // filters queued a dozen session reconfigurations behind the gesture. The
-  // wheel now moves and pops freely and commits ONCE, when it settles — which
-  // is also the only moment the choice is real. HoldMenuTwin's applyOffsetDelta
-  // has never done more than setSelected + playPop for the same reason.
-  const commitSettled = () => {
-    const notch = Math.round(offsetRef.current)
-    if (notch === committedRef.current) return
-    committedRef.current = notch
-    onPickRef.current(AR_FILTERS[notch].id)
+  // Commit once after native momentum settles. Each commit crosses the native
+  // camera bridge on iOS; applying every passed notch queued session work and
+  // made the final filter appear unreliable.
+  const commitIndex = (index: number) => {
+    const filter = AR_FILTERS[clampARFilterIndex(index, AR_FILTERS.length)]
+    if (!filter || filter.id === committedIdRef.current) return
+    committedIdRef.current = filter.id
+    onPickRef.current(filter.id)
   }
 
-  // A chip is an explicit choice, not a scrub.  The rail's pointer-up handler
-  // deliberately settles through momentum for a drag, but using that same
-  // delayed path for a tap left the selected chip and the live viewfinder out
-  // of sync when the ambient frame clock was paused or throttled.  Commit the
-  // exact chip on click; the parent pointer handler may still start a snap,
-  // but this wins with the element React actually received the click from.
+  // A chip is an explicit choice, not momentum. Apply it immediately and let
+  // the native rail centre the chosen item; drags use the settled path above.
   const pickChip = (index: number) => {
-    if (index < 0 || index >= AR_FILTERS.length) return
-    velocityRef.current = 0
-    snapIndexRef.current = null
-    offsetRef.current = index
-    lastNotchRef.current = index
-    setOffset(index)
-    setSelected(index)
-    if (index === committedRef.current) return
-    committedRef.current = index
+    const filter = AR_FILTERS[index]
+    if (!filter) return
+    const changed = index !== selectedRef.current
+    showSelected(index, false)
     playPop()
-    onPickRef.current(AR_FILTERS[index].id)
+    committedIdRef.current = filter.id
+    onPickRef.current(filter.id)
+    lineRef.current?.scrollTo({
+      left: arFilterScrollLeft(index),
+      behavior: changed ? 'smooth' : 'auto',
+    })
   }
 
-  const scrub = (deltaX: number) => {
-    if (Math.abs(deltaX) < 0.25) return
-    snapIndexRef.current = null
-    const now = performance.now() / 1000
-    const dt = Math.max(now - lastScrubRef.current, 1 / 120)
-    lastScrubRef.current = now
-
-    const slotDelta = deltaX / POINTS_PER_ITEM
-    const instant = clampMag(slotDelta / dt, MAX_VELOCITY)
-    velocityRef.current = clampMag(velocityRef.current * 0.35 + instant * 0.65, MAX_VELOCITY)
-    applyOffsetDelta(slotDelta)
+  const settleFromScroll = () => {
+    scrollFrameRef.current = 0
+    const line = lineRef.current
+    if (!line) return
+    showSelected(nearestARFilterIndex(line.scrollLeft, AR_FILTERS.length))
+    if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current)
+    settleTimerRef.current = window.setTimeout(() => {
+      settleTimerRef.current = null
+      commitIndex(nearestARFilterIndex(line.scrollLeft, AR_FILTERS.length))
+    }, SCROLL_SETTLE_MS)
   }
 
-  // Momentum + snap-to-nearest shares Poplur's lifecycle-aware capped clock.
-  // The old 60 Hz interval woke even while the embedding WebView was hidden.
-  useEffect(() => {
-    const stop = onFrame((elapsedMs, t) => {
-      const dt = Math.min(elapsedMs / 1000, 1 / 30)
-      if (draggingRef.current) return
-
-      if (snapIndexRef.current !== null) {
-        const d = snapIndexRef.current - offsetRef.current
-        if (Math.abs(d) < 0.001) { applyOffsetDelta(d); snapIndexRef.current = null; commitSettled() }
-        else applyOffsetDelta(d * 0.22)
-        return
-      }
-
-      if (t / 1000 - lastScrubRef.current < 0.032) return
-      const v = velocityRef.current
-      if (Math.abs(v) > SNAP_VELOCITY) {
-        applyOffsetDelta(v * dt)
-        velocityRef.current = v * Math.pow(FRICTION, dt * 60)
-      } else {
-        const target = Math.round(offsetRef.current)
-        const remaining = target - offsetRef.current
-        if (v !== 0 || remaining !== 0) {
-          velocityRef.current = 0
-          const settling = Math.abs(remaining) < 0.001
-          applyOffsetDelta(settling ? remaining : remaining * 0.22)
-          if (settling) commitSettled()
-        }
-      }
-    }, 'ambient')
-    return stop
-  }, [])
+  const onScroll = () => {
+    if (scrollFrameRef.current) return
+    // governor-ok: one finite coalesced read; native scroll owns momentum.
+    scrollFrameRef.current = window.requestAnimationFrame(settleFromScroll)
+  }
 
   // Pull the published catalog when the rail is first opened — not at app
   // start: someone who never opens AR filters should never pay for the fetch.
   // The bundled fallback is already on screen, so this only ever ADDS.
-  const [, forceCatalogRender] = useState(0)
   useEffect(() => {
     let live = true
-    const stop = onARFilterCatalogChange(() => { if (live) forceCatalogRender(n => n + 1) })
+    const stop = onARFilterCatalogChange(() => { if (live) setCatalogRevision(n => n + 1) })
     void loadARFilterCatalog()
     return () => { live = false; stop() }
   }, [])
 
-  const onPointerDown = (e: React.PointerEvent) => {
-    e.stopPropagation()
-    draggingRef.current = true
-    dragXRef.current = e.clientX
-    downPtRef.current = { x: e.clientX, y: e.clientY }
-    movedRef.current = 0
-    lastScrubRef.current = performance.now() / 1000
-    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
-  }
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (!draggingRef.current) return
-    const dx = e.clientX - dragXRef.current
-    dragXRef.current = e.clientX
-    movedRef.current += Math.abs(dx)
-    scrub(-dx) // drag left → advance to the next filter
-  }
-  const onPointerUp = () => {
-    draggingRef.current = false
-    // A tap (not a drag) on a chip spins the rail to it.
-    if (movedRef.current < 6) {
-      const el = document.elementFromPoint(downPtRef.current.x, downPtRef.current.y)
-      const chip = (el as Element | null)?.closest('[data-idx]') as HTMLElement | null
-      const idx = Number(chip?.dataset.idx)
-      if (chip && Number.isInteger(idx)) {
-        velocityRef.current = 0
-        snapIndexRef.current = idx
-      }
-    }
-  }
-
+  // Restore an active filter without animating through intermediate choices
+  // or making selection sounds during a camera/catalog remount.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        pickChip(Math.min(AR_FILTERS.length - 1, selected + 1))
-      }
-      else if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        pickChip(Math.max(0, selected - 1))
-      }
-      else if (e.key === 'Escape') { e.preventDefault(); onClose() }
+    const index = Math.max(0, AR_FILTERS.findIndex(filter => filter.id === active))
+    selectedRef.current = index
+    committedIdRef.current = AR_FILTERS[index]?.id ?? active
+    setSelected(index)
+    // governor-ok: one finite post-layout centring write, never re-armed.
+    const frame = window.requestAnimationFrame(() => {
+      if (lineRef.current) lineRef.current.scrollLeft = arFilterScrollLeft(index)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [active, catalogRevision])
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current) window.cancelAnimationFrame(scrollFrameRef.current)
+    if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current)
+  }, [])
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      pickChip(Math.min(AR_FILTERS.length - 1, selectedRef.current + 1))
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      pickChip(Math.max(0, selectedRef.current - 1))
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      pickChip(0)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      pickChip(AR_FILTERS.length - 1)
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      playPop()
+      onClose()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  })
+  }
 
   return (
-    <div className={styles.rail} role="dialog" aria-label="AR filters">
+    <div className={styles.rail} role="dialog" aria-label="AR filters" onKeyDown={onKeyDown}>
       <div className={styles.head}>
         <span className={styles.title}>AR FILTERS</span>
-        <button className={styles.close} type="button" onClick={() => { playPop(); onClose() }} aria-label="Close AR filters">✕</button>
+        <button className={styles.close} type="button" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); playPop(); onClose() }} aria-label="Close AR filters">✕</button>
       </div>
 
       {/* The straight horizontal line the chips ride, with the centre marker
           that names which filter is live — the hold menu's centre slot. */}
-      <div
-        className={styles.line}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={() => { draggingRef.current = false }}
-        onWheel={e => scrub(e.deltaY * 0.6)}
-      >
+      <div className={styles.lineShell}>
         <span className={styles.rule} aria-hidden="true" />
         <span className={styles.centreMark} aria-hidden="true" />
-        {AR_FILTERS.map((f, i) => {
-          const column = i - offset
-          const distance = Math.abs(column)
-          if (distance > 3.2) return null
-          const on = i === selected
-          const scale = Math.max(0.62, 1 - distance * 0.16)
-          const alpha = Math.max(0, Math.min(1, 1.35 - distance * 0.36))
-          return (
-            <button
-              key={f.id}
-              data-idx={i}
-              type="button"
-              aria-pressed={on}
-              aria-label={f.label}
-              onClick={e => { e.stopPropagation(); pickChip(i) }}
-              className={on ? `${styles.chip} ${styles.chipOn}` : styles.chip}
-              style={{
-                transform: `translate(-50%, -50%) translateX(${column * SLOT_SPACING}px) scale(${scale})`,
-                opacity: alpha,
-                zIndex: Math.round(30 - distance * 10),
-              }}
-            >
-              {/* the swatch wears the filter it applies, so the rail previews
-                  itself instead of naming nine effects you cannot see — grade
-                  on the photo, costume over the top, same order as the camera */}
-              <span className={styles.swatchWrap}>
-                <span
-                  className={styles.swatch}
-                  style={{
-                    filter: f.css === 'none' ? undefined : f.css,
-                    backgroundImage: `url(${arFilterThumbnailUrl(f.thumbnail)})`,
-                  }}
-                />
-                {/* No EffectMark here any more. It drew the costume onto a plain
-                    portrait because the old thumbnails showed only the grade; the
-                    sheet's tiles already depict theirs, so drawing on top would
-                    double it up. The function is kept for the native shells that
-                    still reference the shapes. */}
-              </span>
-            </button>
-          )
-        })}
+        <div
+          ref={lineRef}
+          className={styles.line}
+          tabIndex={0}
+          aria-label="Choose an AR filter"
+          onScroll={onScroll}
+          onPointerDown={event => event.stopPropagation()}
+          onPointerMove={event => event.stopPropagation()}
+          onPointerUp={event => event.stopPropagation()}
+          onPointerCancel={event => event.stopPropagation()}
+          onWheel={event => {
+            event.stopPropagation()
+            if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+            event.preventDefault()
+            event.currentTarget.scrollLeft += event.deltaY
+          }}
+        >
+          {AR_FILTERS.map((f, i) => {
+            const on = i === selected
+            return (
+              <button
+                key={f.id}
+                data-idx={i}
+                type="button"
+                aria-pressed={on}
+                aria-label={f.label}
+                onClick={event => { event.stopPropagation(); pickChip(i) }}
+                className={on ? `${styles.chip} ${styles.chipOn}` : styles.chip}
+              >
+                {/* These compact thumbnails already contain the authored
+                    grade and costume. Re-filtering them while they moved
+                    doubled the look and forced GPU effects each scroll frame. */}
+                <span className={styles.swatchWrap}>
+                  <img
+                    className={styles.swatch}
+                    src={arFilterThumbnailUrl(f.thumbnail)}
+                    alt=""
+                    aria-hidden="true"
+                    draggable={false}
+                    loading={Math.abs(i - startIndex) <= 2 ? 'eager' : 'lazy'}
+                    decoding="async"
+                  />
+                </span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <span className={styles.activeLabel}>{AR_FILTERS[selected]?.label}</span>

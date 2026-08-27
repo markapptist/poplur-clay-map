@@ -377,31 +377,6 @@
   pointer-events: none;
 }
 
-/* A small, separate preference action. The retired Radius/Local/Trending
-   selector is deliberately not part of this dock. */
-.feedbackDock {
-  position: absolute;
-  z-index: 48;
-  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 78px);
-  left: 50%;
-  transform: translateX(-50%);
-  display: grid;
-  justify-items: center;
-  pointer-events: auto;
-}
-
-.notInterested {
-  border: 0;
-  padding: 3px 9px;
-  border-radius: 999px;
-  color: rgba(255, 242, 248, 0.78);
-  background: rgba(8, 5, 11, 0.76);
-  font: 800 9px/1.2 system-ui, -apple-system, sans-serif;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.discoveryNote,
 .discoveryEmpty {
   position: absolute;
   z-index: 92;

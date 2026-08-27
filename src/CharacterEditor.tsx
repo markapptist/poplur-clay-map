@@ -169,13 +169,17 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
     })
   }, [])
 
+  const closeStudio = useCallback(() => {
+    const next = studioInitialCharacter({ ...characterRef.current, updatedAt: Date.now() })
+    characterRef.current = next
+    saveCharacter(next)
+    setCharacter(next)
+    setStudioOpen(false)
+  }, [])
+
   const toggleStudioFromCube = useCallback(() => {
     if (studioOpen) {
-      const next = studioInitialCharacter({ ...characterRef.current, updatedAt: Date.now() })
-      characterRef.current = next
-      saveCharacter(next)
-      setCharacter(next)
-      setStudioOpen(false)
+      closeStudio()
       return true
     }
     const saved = studioInitialCharacter(readCharacter())
@@ -183,7 +187,7 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
     setCharacter(saved)
     setStudioOpen(true)
     return true
-  }, [studioOpen])
+  }, [closeStudio, studioOpen])
 
   useEffect(() => {
     bindCubePress?.(toggleStudioFromCube)
@@ -241,6 +245,7 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
           <div className={styles.dockActions}>
             <button type='button' className={styles.shuffleButton} onClick={shuffle}>Shuffle</button>
             <button type='button' className={styles.resetButton} onClick={reset}>Reset</button>
+            <button type='button' className={styles.closeStudioButton} onClick={() => { playPop(); closeStudio() }} aria-label='Close character studio'>×</button>
           </div>
         </div>
 

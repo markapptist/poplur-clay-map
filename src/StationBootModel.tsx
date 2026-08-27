@@ -3,8 +3,11 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { onFrame } from './frameGovernor'
+import { modelUrl } from './modelUrl'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import { releaseWebGL } from './threeCleanup'
+
+const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
 
 function disposeModel(root: THREE.Object3D): void {
   root.traverse(object => {
@@ -118,7 +121,7 @@ export default function StationBootModel({ className }: { className: string }) {
     const loader = new GLTFLoader()
     loader.setMeshoptDecoder(MeshoptDecoder)
     loader.load(
-      'games/poplurstation/console.glb',
+      modelUrl(STATION_CONSOLE_MODEL),
       gltf => {
         if (disposed) {
           disposeModel(gltf.scene)

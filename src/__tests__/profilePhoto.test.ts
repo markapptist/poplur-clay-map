@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  nativeProfilePhotoCandidates,
   nextProfilePhotoReloadRevision,
+  probeProfilePhotoCandidate,
+  probeProfilePhotoCandidates,
   refreshedProfilePhotoSource,
   usableProfilePhoto,
 } from '../profilePhoto'
@@ -24,6 +27,61 @@ describe('profile photo reload sources', () => {
     expect(usableProfilePhoto('poplur-clay://app/captures/profile.jpg')).toBeTruthy()
     expect(usableProfilePhoto('https://example.com/profile.jpg')).toBeTruthy()
     expect(usableProfilePhoto('javascript:alert(1)')).toBeNull()
+  })
+
+  it('retains the last-good portrait and cache when inline bytes are corrupt', () => {
+    let visiblePhoto = 'data:image/jpeg;base64,LAST_GOOD'
+    let cachedPhoto = visiblePhoto
+    let rejected = false
+    const image = { onload: null as (() => void) | null, onerror: null as (() => void) | null, src: '' }
+
+    probeProfilePhotoCandidate('data:image/jpeg;base64,TRUNCATED', {
+      onDecoded: photo => {
+        visiblePhoto = photo
+        cachedPhoto = photo
+      },
+      onRejected: () => { rejected = true },
+    }, () => image)
+    image.onerror?.()
+
+    expect(rejected).toBe(true)
+    expect(visiblePhoto).toBe('data:image/jpeg;base64,LAST_GOOD')
+    expect(cachedPhoto).toBe('data:image/jpeg;base64,LAST_GOOD')
+  })
+
+  it('prefers canonical native aliases and retains legacy photo as a decode fallback', () => {
+    const candidates = nativeProfilePhotoCandidates({
+      photo: 'data:image/jpeg;base64,LEGACY',
+      profilePictureURL: 'https://example.com/canonical.jpg',
+      photoURL: 'https://example.com/alternate.jpg',
+    })
+    expect(candidates).toEqual([
+      'https://example.com/canonical.jpg',
+      'https://example.com/alternate.jpg',
+      'data:image/jpeg;base64,LEGACY',
+    ])
+    const images: Array<{
+      onload: (() => void) | null
+      onerror: (() => void) | null
+      src: string
+    }> = []
+    let accepted: string | null = null
+    probeProfilePhotoCandidates(candidates, {
+      onDecoded: photo => { accepted = photo },
+    }, () => {
+      const image = { onload: null, onerror: null, src: '' }
+      images.push(image)
+      return image
+    })
+    images[0].onerror?.()
+    images[1].onerror?.()
+    images[2].onload?.()
+    expect(accepted).toBe('data:image/jpeg;base64,LEGACY')
+
+    expect(nativeProfilePhotoCandidates({
+      photo: 'javascript:alert(1)',
+      avatarUrl: 'data:image/jpeg;base64,VALID',
+    })).toEqual(['data:image/jpeg;base64,VALID'])
   })
 
   it('uses a cache nonce that stays unique across retries and remounts', () => {

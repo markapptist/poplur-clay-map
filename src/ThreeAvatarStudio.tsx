@@ -14,6 +14,12 @@ import {
   type TopFashionStyleId,
 } from './characterFashion'
 import type { RemoteWardrobeStyles } from './wardrobeGarmentApi'
+import {
+  avatarOutfitSelectionKey,
+  retainedOutfitParts,
+  type AvatarOutfitPart,
+  type AvatarOutfitSelection,
+} from './avatarOutfitReadiness'
 import { resolveAvatarHairAsset } from './avatarHair'
 import { attachObjectPreservingWorld, attachObjectToAvatarBone } from './avatarRigging'
 import {
@@ -640,10 +646,12 @@ export function createPoplurAvatarRuntime(options: PoplurAvatarRuntimeOptions): 
     if (!fashion) {
       const fallbackStyle = slotName === 'top' ? 'tee' : 'jeans'
       syncProceduralOutfitSlot(runtime, slotName, fallbackStyle, color)
+      options.onModelLoaded?.(slotName)
       return
     }
     if (fashion.render.kind === 'procedural') {
       syncProceduralOutfitSlot(runtime, slotName, style, color)
+      options.onModelLoaded?.(slotName)
       return
     }
     const renderSpec = fashion.render
@@ -655,6 +663,7 @@ export function createPoplurAvatarRuntime(options: PoplurAvatarRuntimeOptions): 
     if (!assetUrl) {
       const fallbackStyle = slotName === 'top' ? 'tee' : 'jeans'
       syncProceduralOutfitSlot(runtime, slotName, fallbackStyle, color)
+      options.onModelLoaded?.(slotName)
       return
     }
     const requestKey = `gltf:${assetUrl}:${renderSpec.version}:${runtime.bodyRevision}`
@@ -699,12 +708,15 @@ export function createPoplurAvatarRuntime(options: PoplurAvatarRuntimeOptions): 
     }).catch(() => {
       if (!disposed && revision === slot.revision) {
         slot.requestKey = ''
-        if (!slot.group) {
-          const fallbackStyle = slotName === 'top' ? 'tee' : 'jeans'
-          const fallbackColor = slotName === 'top' ? currentCharacter.topColor : currentCharacter.bottomColor
-          syncProceduralOutfitSlot(runtime, slotName, fallbackStyle, fallbackColor)
-          options.requestRender()
-        }
+        // Never leave the previous (now incorrect) fitted garment visible
+        // after a replacement fails. Settle this slot onto the honest local
+        // fallback, then report it ready so the stage waits for the other slot
+        // instead of revealing a half-loaded outfit.
+        const fallbackStyle = slotName === 'top' ? 'tee' : 'jeans'
+        const fallbackColor = slotName === 'top' ? currentCharacter.topColor : currentCharacter.bottomColor
+        syncProceduralOutfitSlot(runtime, slotName, fallbackStyle, fallbackColor)
+        options.requestRender()
+        options.onModelLoaded?.(slotName)
         options.onStatus?.('Atelier garment could not load')
       }
     })
@@ -760,11 +772,40 @@ export default function ThreeAvatarStudio({
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const runtimeRef = useRef<PoplurAvatarHandle | null>(null)
+  const outfitSelection: AvatarOutfitSelection = {
+    gender: character.gender,
+    top: character.fashionOutfit?.top ?? '',
+    bottom: character.fashionOutfit?.bottom ?? '',
+  }
+  const outfitKey = avatarOutfitSelectionKey(outfitSelection)
+  const outfitKeyRef = useRef(outfitKey)
+  outfitKeyRef.current = outfitKey
+  const previousOutfitSelectionRef = useRef(outfitSelection)
+  const loadedOutfitPartsRef = useRef(new Set<AvatarOutfitPart>())
+  const [presentedOutfitKey, setPresentedOutfitKey] = useState('')
   const remoteFashionRevision = [...remoteFashion.top, ...remoteFashion.bottom]
     .map(style => `${style.id}:${style.render.kind === 'gltf' ? style.render.version : 'local'}`)
     .join('|')
   const [rendererId] = useState(() => `ThreeAvatarStudio:${++avatarRendererSequence}`)
   const [status, setStatus] = useState('Loading 3D avatar…')
+
+  // Never present the body's built-in superhero suit as though it were the
+  // selected look while fitted garments are still arriving. Compact local
+  // GLBs load quickly; the brief fitting state is more honest than flashing a
+  // completely different outfit before the authored top and bottom bind.
+  useEffect(() => {
+    loadedOutfitPartsRef.current = retainedOutfitParts(
+      previousOutfitSelectionRef.current,
+      outfitSelection,
+      loadedOutfitPartsRef.current,
+    )
+    previousOutfitSelectionRef.current = outfitSelection
+    setPresentedOutfitKey(
+      loadedOutfitPartsRef.current.has('top') && loadedOutfitPartsRef.current.has('bottom')
+        ? outfitKey
+        : '',
+    )
+  }, [outfitKey])
 
   useEffect(() => {
     const host = hostRef.current
@@ -884,11 +925,19 @@ export default function ThreeAvatarStudio({
       targetHeight: 2.58,
       floorY: -1.33,
       requestRender: render,
-      onStatus: setStatus,
+      onStatus: nextStatus => {
+        setStatus(nextStatus)
+      },
       onModelLoaded: part => {
         if (part === 'body' || part === 'hair') {
           resize()
           scheduleSettledRenders()
+        }
+        if (part === 'top' || part === 'bottom') {
+          loadedOutfitPartsRef.current.add(part)
+          if (loadedOutfitPartsRef.current.has('top') && loadedOutfitPartsRef.current.has('bottom')) {
+            setPresentedOutfitKey(outfitKeyRef.current)
+          }
         }
       },
     })
@@ -922,7 +971,8 @@ export default function ThreeAvatarStudio({
     runtime.update(character, remoteFashion)
   }, [character.gender, character.hairStyle, character.bodyShape, character.heightScale, character.statureScale, character.skinTone, character.hairColor, character.eyeColor, character.faceStyle, character.topColor, character.bottomColor, character.fashionOutfit?.top, character.fashionOutfit?.bottom, character.fashionOutfit?.accessory, remoteFashionRevision])
 
-  return <div ref={hostRef} className={mode === '3d' ? styles.stage : styles.flatStage} data-avatar-studio='three-avatar-v1'><span>{status}</span></div>
+  const outfitReady = presentedOutfitKey === outfitKey
+  return <div ref={hostRef} className={mode === '3d' ? styles.stage : styles.flatStage} data-avatar-studio='three-avatar-v1' data-avatar-outfit-state={outfitReady ? 'ready' : 'fitting'}><span>{outfitReady ? status : 'Fitting selected outfit…'}</span></div>
 }
 
 function applyCharacterAppearance(runtime: AvatarRuntime, character: PoplurCharacter) {

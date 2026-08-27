@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   mixPublishedMediaWithPromotions,
   nextFeedPostIndex,
+  shouldReacquireFeedDecoder,
   shouldResumeFeedAfterFocus,
 } from '../feedMediaSequence'
 
@@ -46,5 +47,28 @@ describe('Feed TV media sequence', () => {
     expect(shouldResumeFeedAfterFocus({ ...visible, userPaused: false })).toBe(true)
     expect(shouldResumeFeedAfterFocus({ ...visible, userPaused: true })).toBe(false)
     expect(shouldResumeFeedAfterFocus({ ...visible, userPaused: false, documentVisible: false })).toBe(false)
+  })
+
+  it('reacquires a decoder revoked underneath a still-visible feed', () => {
+    expect(shouldReacquireFeedDecoder({
+      frontMost: true,
+      suppressed: false,
+      hasLease: false,
+    })).toBe(true)
+    expect(shouldReacquireFeedDecoder({
+      frontMost: true,
+      suppressed: true,
+      hasLease: false,
+    })).toBe(false)
+    expect(shouldReacquireFeedDecoder({
+      frontMost: false,
+      suppressed: false,
+      hasLease: false,
+    })).toBe(false)
+    expect(shouldReacquireFeedDecoder({
+      frontMost: true,
+      suppressed: false,
+      hasLease: true,
+    })).toBe(false)
   })
 })

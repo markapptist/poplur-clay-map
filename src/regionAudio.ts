@@ -320,7 +320,7 @@ export function stopPoplurTheme() {
 }
 
 // DEV introspection so the running audio graph can be verified from the console.
-if (import.meta.env?.DEV) {
+if (import.meta.env.DEV) {
   ;(window as unknown as { __regionAudioDebug?: () => unknown }).__regionAudioDebug = () => ({
     ctxState: ctx?.state ?? 'none',
     started,

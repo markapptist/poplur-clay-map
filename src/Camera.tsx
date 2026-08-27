@@ -13,6 +13,7 @@ import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
 import ARFilters, { AR_FILTERS } from './ARFilters'
+import { isKeyboardCameraRollClick } from './cameraControlActivation'
 import {
   arFilterCatalog,
   arFilterLiveCss,
@@ -330,6 +331,11 @@ export default function Camera({
   // every launch used to open on an empty square). Delivered by the shell via
   // CameraRoll's window.poplurCameraRoll and shared through the store.
   const libraryNewest = useSyncExternalStore(onCameraStore, getLibraryNewest, getLibraryNewest)
+  const rollPreviewSource = latestCapture
+    ? (latestCapture.kind === 'photo' ? latestCapture.src : latestCapture.poster ?? latestCapture.src)
+    : libraryNewest?.src ?? null
+  const [rollPreviewFailed, setRollPreviewFailed] = useState(false)
+  useEffect(() => { setRollPreviewFailed(false) }, [rollPreviewSource])
   useEffect(() => {
     if (!NATIVE_SHELL || latestCapture || libraryNewest) return
     // Respect the roll's own in-app primer: never surface library media on a
@@ -342,6 +348,12 @@ export default function Camera({
     postNativeEvent({ type: 'requestCameraRoll' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  // Camera side controls react on touch-down. Keeping the generated click only
+  // for keyboards prevents a delayed or double-open in iOS WebViews.
+  const openCameraRoll = useCallback(() => {
+    playPop()
+    onOpenRoll?.()
+  }, [onOpenRoll])
   const [detections, setDetections] = useState<Detection[]>([])
   const detectionsRef = useRef(detections)
   detectionsRef.current = detections
@@ -1568,7 +1580,11 @@ export default function Camera({
       onPointerMove={real ? onCameraPointerMove : undefined}
       onPointerUp={real ? onCameraPointerUp : undefined}
       onPointerCancel={real ? onCameraPointerCancel : undefined}
-      style={{ touchAction: real ? 'none' : undefined }}
+      // The camera normally owns the gesture surface for pinch/tap. While the
+      // AR rail is open its native horizontal scroller must remain eligible
+      // for compositor panning; an ancestor touch-action:none would disable it
+      // even though the rail itself declares pan-x.
+      style={{ touchAction: real ? (arOpen ? 'pan-x' : 'none') : undefined }}
     >
       {!NATIVE_CAMERA_PREVIEW && real && (
         <>
@@ -1719,17 +1735,30 @@ export default function Camera({
         <button
           type="button"
           className={styles.camRollBtn}
-          aria-label="Camera roll"
-          onClick={() => { playPop(); onOpenRoll?.() }}
+          aria-label="Open camera roll"
+          title="Camera roll"
+          onPointerDown={event => {
+            event.stopPropagation()
+            if (event.isPrimary) openCameraRoll()
+          }}
+          onClick={event => {
+            event.stopPropagation()
+            // Pointer activation already happened on touch-down. A click with
+            // detail 0 is keyboard/assistive activation and still must work.
+            if (isKeyboardCameraRollClick(event.detail)) openCameraRoll()
+          }}
         >
-          {latestCapture && (latestCapture.kind === 'photo' || latestCapture.poster) ? (
+          {!rollPreviewFailed && latestCapture && (latestCapture.kind === 'photo' || latestCapture.poster) ? (
             <img
               className={styles.camRollBtnThumb}
               src={latestCapture.kind === 'photo' ? latestCapture.src : latestCapture.poster}
               alt=""
               aria-hidden="true"
+              draggable={false}
+              decoding="async"
+              onError={() => setRollPreviewFailed(true)}
             />
-          ) : latestCapture ? (
+          ) : !rollPreviewFailed && latestCapture ? (
             // A video that arrived without a still (native capture). Same
             // trick as the roll's session tiles: #t=0.1 makes the browser
             // paint a real first frame under preload=metadata.
@@ -1740,8 +1769,9 @@ export default function Camera({
               muted
               playsInline
               aria-hidden="true"
+              onError={() => setRollPreviewFailed(true)}
             />
-          ) : libraryNewest ? (
+          ) : !rollPreviewFailed && libraryNewest ? (
             // Nothing taken this session: the device library's newest item.
             // Its src is already a small JPEG thumbnail for videos too, so
             // this branch never mounts a decoder.
@@ -1750,6 +1780,9 @@ export default function Camera({
               src={libraryNewest.src}
               alt=""
               aria-hidden="true"
+              draggable={false}
+              decoding="async"
+              onError={() => setRollPreviewFailed(true)}
             />
           ) : (
             <SideControlIconImage icon="camera.camera_roll" displaySize={44} />

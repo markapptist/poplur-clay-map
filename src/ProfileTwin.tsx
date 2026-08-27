@@ -55,7 +55,14 @@ import {
   type ProfileTheme,
 } from './profileThemes'
 import { takeProfileMode } from './profileMode'
-import { nextProfilePhotoReloadRevision, refreshedProfilePhotoSource, usableProfilePhoto } from './profilePhoto'
+import {
+  nativeProfilePhotoCandidates,
+  nextProfilePhotoReloadRevision,
+  probeProfilePhotoCandidate,
+  probeProfilePhotoCandidates,
+  refreshedProfilePhotoSource,
+  usableProfilePhoto,
+} from './profilePhoto'
 import {
   accountSnapshot,
   onAccountChange,
@@ -716,13 +723,27 @@ export default function ProfileTwin({
   // you had just taken was gone the moment you left the screen and the card
   // read "no profile image set" forever — the reported bug. Stored as a data
   // URI under one key, rehydrated on mount.
-  const [photo, setPhoto] = useState<string | null>(() => readStoredPhoto())
+  const [photo, setPhoto] = useState<string | null>(
+    // A hydrated durable account portrait outranks this device's legacy
+    // last-good cache. The cache remains the decode fallback below if the
+    // canonical URL is stale or unavailable.
+    () => usableProfilePhoto(accountSnapshot().photoURL) ?? readStoredPhoto(),
+  )
+  const photoRef = useRef(photo)
+  photoRef.current = photo
   // Keep the last image that actually loaded on screen while a cache-busted
   // retry is probed off-screen. A failed refresh therefore cannot replace a
   // working cached portrait with a broken-image frame.
   const [displayedPhoto, setDisplayedPhoto] = useState<{ photo: string; source: string } | null>(null)
   const [photoReloadRevision, setPhotoReloadRevision] = useState(0)
+  const photoReloadRevisionRef = useRef(photoReloadRevision)
+  photoReloadRevisionRef.current = photoReloadRevision
   const photoRetryCountRef = useRef(0)
+  const photoProbeSequenceRef = useRef(0)
+  const committedPhotoProbeSequenceRef = useRef(0)
+  const skipAcceptedPhotoProbeRef = useRef<{ photo: string; reloadRevision: number } | null>(null)
+  const accountPhotoCandidateRef = useRef<string | null>(null)
+  const detachedPhotoProbeCancelsRef = useRef(new Set<() => void>())
   const retryProfilePhoto = useCallback(() => {
     if (photoRetryCountRef.current >= 2) return
     photoRetryCountRef.current += 1
@@ -735,32 +756,122 @@ export default function ProfileTwin({
     // clock nonce remains unique across tab visits and app sessions.
     setPhotoReloadRevision(current => nextProfilePhotoReloadRevision(current))
   }, [])
+  const acceptDecodedProfilePhoto = useCallback((
+    acceptedPhoto: string,
+    source: string,
+    sequence: number,
+    persist = true,
+  ) => {
+    // A slower, older probe must never roll back a newer photo that has already
+    // decoded. Failed newer probes do not advance this marker, so the valid
+    // local capture they followed can still rescue an unavailable cloud URL.
+    if (sequence < committedPhotoProbeSequenceRef.current) return false
+    committedPhotoProbeSequenceRef.current = sequence
+    setDisplayedPhoto(current => (
+      current?.photo === acceptedPhoto && current.source === source
+        ? current
+        : { photo: acceptedPhoto, source }
+    ))
+    if (persist) {
+      if (photoRef.current !== acceptedPhoto) {
+        photoRef.current = acceptedPhoto
+        skipAcceptedPhotoProbeRef.current = {
+          photo: acceptedPhoto,
+          reloadRevision: photoReloadRevisionRef.current,
+        }
+        setPhoto(acceptedPhoto)
+      }
+      accountPhotoCandidateRef.current = acceptedPhoto
+      setAccountProfile({ photoURL: acceptedPhoto }, 'native')
+      writeStoredPhoto(acceptedPhoto)
+    }
+    return true
+  }, [])
+  const probeDetachedProfilePhotos = useCallback((
+    candidates: string[],
+    onDecoded?: (photo: string) => void,
+  ) => {
+    if (!candidates.length) return () => {}
+    const sequence = ++photoProbeSequenceRef.current
+    let cancelCurrentProbe = () => {}
+    let stopped = false
+    const stop = () => {
+      if (stopped) return
+      stopped = true
+      cancelCurrentProbe()
+      detachedPhotoProbeCancelsRef.current.delete(stop)
+    }
+    const sources = candidates.map((candidate, index) => ({
+      candidate,
+      source: refreshedProfilePhotoSource(
+        candidate,
+        nextProfilePhotoReloadRevision(sequence + index + 1),
+      ),
+    }))
+    detachedPhotoProbeCancelsRef.current.add(stop)
+    cancelCurrentProbe = probeProfilePhotoCandidates(sources.map(value => value.source), {
+      onDecoded: decodedSource => {
+        if (stopped) return
+        stopped = true
+        detachedPhotoProbeCancelsRef.current.delete(stop)
+        const accepted = sources.find(value => value.source === decodedSource)
+        if (
+          accepted
+          && acceptDecodedProfilePhoto(accepted.candidate, accepted.source, sequence)
+        ) onDecoded?.(accepted.candidate)
+      },
+      onRejected: stop,
+    })
+    return stop
+  }, [acceptDecodedProfilePhoto])
+  // Keep the on-device last-good candidate alive independently during mount.
+  // Account hydration can replace `photo` in the same effect flush; this probe
+  // must survive that state cleanup so it can rescue a stale cloud URL.
+  useEffect(() => {
+    const storedPhoto = readStoredPhoto()
+    if (!storedPhoto) return
+    const sequence = ++photoProbeSequenceRef.current
+    return probeProfilePhotoCandidate(storedPhoto, {
+      // It is already the cache. Showing decoded bytes is safe, but do not let
+      // this local fallback overwrite a newer canonical account URL merely
+      // because it decoded faster.
+      onDecoded: () => { acceptDecodedProfilePhoto(storedPhoto, storedPhoto, sequence, false) },
+    })
+  }, [acceptDecodedProfilePhoto])
+  useEffect(() => () => {
+    const pending = [...detachedPhotoProbeCancelsRef.current]
+    pending.forEach(cancel => cancel())
+    detachedPhotoProbeCancelsRef.current.clear()
+  }, [])
   useEffect(() => {
     photoRetryCountRef.current = 0
     if (!photo) setDisplayedPhoto(null)
   }, [photo])
   useEffect(() => {
     if (!photo) return
+    const acceptedProbe = skipAcceptedPhotoProbeRef.current
+    if (
+      acceptedProbe?.photo === photo
+      && acceptedProbe.reloadRevision === photoReloadRevision
+    ) {
+      skipAcceptedPhotoProbeRef.current = null
+      return
+    }
     let live = true
     const candidate = photoReloadRevision > 0
       ? refreshedProfilePhotoSource(photo, photoReloadRevision)
       : photo
-    const probe = new Image()
-    probe.onload = () => {
-      if (!live) return
-      // Only a decoded image becomes the visible/account-cached portrait.
-      // Native can answer with a stale or expired cloud URL; persisting that
-      // before this point poisoned both profile caches across remounts.
-      setDisplayedPhoto({ photo, source: candidate })
-      setAccountProfile({ photoURL: photo }, 'native')
-      writeStoredPhoto(photo)
-    }
-    probe.onerror = () => {
-      if (live) retryProfilePhoto()
-    }
-    probe.src = candidate
-    return () => { live = false; probe.onload = null; probe.onerror = null }
-  }, [photo, photoReloadRevision, retryProfilePhoto])
+    const sequence = ++photoProbeSequenceRef.current
+    const cancel = probeProfilePhotoCandidate(candidate, {
+      onDecoded: () => {
+        if (live) acceptDecodedProfilePhoto(photo, candidate, sequence)
+      },
+      onRejected: () => {
+        if (live) retryProfilePhoto()
+      },
+    })
+    return () => { live = false; cancel() }
+  }, [photo, photoReloadRevision, retryProfilePhoto, acceptDecodedProfilePhoto])
   const renderedPhotoSource = displayedPhoto?.source ?? null
   const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
@@ -884,10 +995,24 @@ export default function ProfileTwin({
   useEffect(() => onAccountChange(snapshot => {
     if (viewUser) return
     const next = usableUsername(snapshot.username)
-    if (!next || next === persistedName.current) return
-    persistedName.current = next
-    setUsername(next)
-  }), [viewUser])
+    if (next && next !== persistedName.current) {
+      persistedName.current = next
+      setUsername(next)
+    }
+
+    // Account/profile hydration can complete after this component mounts and
+    // does not always travel through the native custom event (Firebase web and
+    // an already-running Home bridge both update accountStore directly). The
+    // old listener watched only username, so Profile permanently missed that
+    // late photo until a full remount. Keep the last decoded portrait visible
+    // while an independent URL-backed replacement probes. It must not be tied
+    // to `photo`: a valid local fallback can settle while this request is in
+    // flight without cancelling the newer account candidate.
+    const accountPhoto = usableProfilePhoto(snapshot.photoURL)
+    if (!accountPhoto || accountPhoto === accountPhotoCandidateRef.current) return
+    accountPhotoCandidateRef.current = accountPhoto
+    probeDetachedProfilePhotos([accountPhoto])
+  }), [viewUser, probeDetachedProfilePhotos])
 
   const commitUsername = () => {
     setEditingName(false)
@@ -912,6 +1037,8 @@ export default function ProfileTwin({
       business?: boolean
       photo?: string
       profilePictureURL?: string
+      photoURL?: string
+      avatarUrl?: string
       video?: string
       selfieVideoURL?: string
     }
@@ -951,13 +1078,15 @@ export default function ProfileTwin({
         try { local = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
         if (local) postNativeEvent({ type: 'saveProfileUsername', username: local })
       }
-      const nativePhoto = usableProfilePhoto(prof?.photo ?? prof?.profilePictureURL)
-      if (nativePhoto) {
-        setPhoto(nativePhoto)
-        // A native response may repeat the same durable URL after WebKit has
-        // cached an earlier failure. State equality alone would not retry it.
-        forceProfilePhotoReload()
-        window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: nativePhoto } }))
+      const nativePhotos = nativeProfilePhotoCandidates(prof)
+      if (nativePhotos.length) {
+        // This probe is intentionally independent of the `photo` state effect:
+        // native commonly answers first with local bytes and then a cloud URL.
+        // The second response must not cancel the only valid local decode. The
+        // ordered candidate list also falls back when a canonical URL is stale.
+        probeDetachedProfilePhotos(nativePhotos, nativePhoto => {
+          window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: nativePhoto } }))
+        })
       } else {
         // The ACCOUNT has no picture and this device does — lift ours up, the
         // same backfill the username gets above. The photo used to live only
@@ -992,7 +1121,7 @@ export default function ProfileTwin({
     return () => {
       window.removeEventListener('poplur-native-profile', receiveProfile)
     }
-  }, [forceProfilePhotoReload])
+  }, [probeDetachedProfilePhotos])
 
   useEffect(() => {
     if (!capturing || !isNativeShell()) return
@@ -1363,7 +1492,11 @@ export default function ProfileTwin({
     // up immediately as well as asking it for the current Firestore record.
     // This makes a pull useful across the native handoff boundary instead of
     // waiting for a later Profile remount to rehydrate the picture.
-    setPhoto(current => readStoredPhoto() ?? current)
+    setPhoto(current => (
+      usableProfilePhoto(accountSnapshot().photoURL)
+      ?? readStoredPhoto()
+      ?? current
+    ))
     // Explicitly retry the portrait even when storage/native returns the same
     // string. The off-screen probe keeps the currently working image visible
     // until the refreshed response has loaded successfully.
@@ -1606,21 +1739,25 @@ export default function ProfileTwin({
   }
 
   const commitSelfieVideo = (source: string, preview: string, nativePayload?: Record<string, unknown>) => {
-    setPhoto(preview)
-    writeStoredPhoto(preview)
     setSelfieVideo(source)
     writeStoredSelfieVideo(source)
-    setAccountProfile({ photoURL: preview, videoURL: source }, 'local')
+    setAccountProfile({ videoURL: source }, 'local')
     if (nativePayload) postNativeEvent(nativePayload)
-    // The poster is the profile picture, and it must reach the ACCOUNT, not
-    // just this device: the shell uploads it and writes profilePictureURL.
-    // Without this post the video saved durably while the photo lived only in
-    // localStorage, so a reinstall showed "not set" everywhere.
-    if (isNativeShell() && preview.startsWith('data:image/jpeg')) {
-      postNativeEvent({ type: 'saveProfilePhoto', photo: preview })
-    }
-    window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: preview } }))
-    window.dispatchEvent(new CustomEvent('poplur-profile-media', { detail: { photo: preview, video: source } }))
+    // Even a data URI is untrusted until Image decodes it. Keep the previous
+    // portrait/account cache untouched on corrupt or truncated bytes; this
+    // detached probe survives any native cloud response that arrives next.
+    probeDetachedProfilePhotos([preview], decodedPreview => {
+      // The poster is the profile picture, and it must reach the ACCOUNT, not
+      // just this device: the shell uploads it and writes profilePictureURL.
+      if (isNativeShell() && decodedPreview.startsWith('data:image/jpeg')) {
+        postNativeEvent({ type: 'saveProfilePhoto', photo: decodedPreview })
+      }
+      window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: decodedPreview } }))
+      window.dispatchEvent(new CustomEvent('poplur-profile-media', {
+        detail: { photo: decodedPreview, video: source },
+      }))
+    })
+    window.dispatchEvent(new CustomEvent('poplur-profile-media', { detail: { video: source } }))
     try { window.localStorage.setItem('poplur.faceid.reference', '1') } catch { /* embedded */ }
     window.setTimeout(() => {
       setSavingPhoto(false)
@@ -2183,7 +2320,9 @@ export default function ProfileTwin({
                 alt=""
                 draggable="false"
                 onError={() => {
-                  setDisplayedPhoto(current => current?.source === renderedPhotoSource ? null : current)
+                  // This source already passed the off-screen decode probe. A
+                  // transient WebKit render/cache eviction should request a
+                  // fresh source, not erase the last-good portrait meanwhile.
                   if (photo?.startsWith('data:')) {
                     console.warn('[ProfileTwin] photo data URI failed to load — this should not happen')
                   } else if (photo) {

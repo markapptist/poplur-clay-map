@@ -16,6 +16,9 @@ export const MAP_BROWSE_3D_BEARING = 0
 
 /** Low-rise homes stay as inexpensive flat footprints. */
 export const MAP_SUBSTANTIAL_BUILDING_HEIGHT_M = 18
+/** iPhone's ordinary native ceiling maps to REDUCED. Keep that baseline
+ * dimensional, but spend fewer extrusion vertices than desktop FULL. */
+export const MAP_REDUCED_SUBSTANTIAL_BUILDING_HEIGHT_M = 24
 
 /** Intentional landmark models keep their existing close framing. */
 export const MAP_LANDMARK_3D_MIN_ZOOM = 15
@@ -46,7 +49,12 @@ export function mapBrowsePresentation({
   wasThreeDimensional,
   performanceMode,
 }: MapBrowsePresentationInput): MapBrowsePresentation {
-  const performanceAllows3D = performanceMode === 'FULL'
+  // Native iPhone intentionally tops out at REDUCED: its WebView quality
+  // ceiling is 2, not 3. Treating FULL as the only dimensional mode therefore
+  // made the close-up branch unreachable on every real iPhone. REDUCED keeps
+  // the shallow close view, paired with the stricter radius/height budget
+  // below; LOW_POWER and EMERGENCY remain unconditionally flat.
+  const performanceAllows3D = performanceMode === 'FULL' || performanceMode === 'REDUCED'
   const threshold = wasThreeDimensional
     ? MAP_BROWSE_3D_EXIT_ZOOM
     : MAP_BROWSE_3D_ENTER_ZOOM
@@ -80,7 +88,42 @@ export function preserveLandmarkCamera(
   landmarkActive: boolean,
   performanceMode: PoplurPerformanceMode,
 ): boolean {
-  return landmarkActive && performanceMode === 'FULL'
+  // A single static, camera-near GLB is a bounded light renderer. It is safe
+  // at the iPhone's normal REDUCED ceiling and is exactly what keeps a tower
+  // legible instead of reducing it to a top-down footprint. Thermal/power
+  // pressure still removes it in LOW_POWER and EMERGENCY.
+  return landmarkActive && (performanceMode === 'FULL' || performanceMode === 'REDUCED')
+}
+
+/**
+ * Maximum camera-centred radius whose substantial buildings may extrude.
+ *
+ * The layer's zoom gate alone was not a real geometry budget: a pitched camera
+ * can still see several tiles toward the horizon. This discrete radius makes
+ * the close view finite and avoids rebuilding the filter for every fractional
+ * zoom frame. Values include a settle buffer beyond a phone viewport; the
+ * runtime only recentres after the camera has moved 16% of the radius.
+ */
+export function mapBuildingExtrusionRadiusM(
+  zoom: number,
+  performanceMode: PoplurPerformanceMode,
+): number | null {
+  if (performanceMode === 'LOW_POWER' || performanceMode === 'EMERGENCY') return null
+  const reduced = performanceMode === 'REDUCED'
+  if (zoom >= 18.3) return reduced ? 220 : 340
+  if (zoom >= 17.4) return reduced ? 360 : 540
+  return reduced ? 520 : 760
+}
+
+/** Height floor paired with the radius above. REDUCED keeps only mid-rise and
+ * taller geometry; every low-rise footprint remains visible in the flat clay
+ * layer underneath. */
+export function mapBuildingExtrusionMinHeightM(
+  performanceMode: PoplurPerformanceMode,
+): number {
+  return performanceMode === 'REDUCED'
+    ? MAP_REDUCED_SUBSTANTIAL_BUILDING_HEIGHT_M
+    : MAP_SUBSTANTIAL_BUILDING_HEIGHT_M
 }
 
 /** Wake a single bounded landmark before its camera arrives. Wide landmarks

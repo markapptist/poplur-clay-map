@@ -5,7 +5,11 @@ import {
   MAP_BROWSE_3D_EXIT_ZOOM,
   MAP_BROWSE_3D_MAX_PITCH,
   MAP_BROWSE_3D_PITCH,
+  MAP_REDUCED_SUBSTANTIAL_BUILDING_HEIGHT_M,
+  MAP_SUBSTANTIAL_BUILDING_HEIGHT_M,
   landmarkRevealZoomForFrame,
+  mapBuildingExtrusionMinHeightM,
+  mapBuildingExtrusionRadiusM,
   mapBrowsePresentation,
   preserveLandmarkCamera,
   subtleLandmarkPitch,
@@ -27,20 +31,22 @@ describe('subtle Map presentation policy', () => {
   })
 
   it('uses shallow, north-up depth only at close street scale', () => {
-    const presentation = mapBrowsePresentation({
-      zoom: MAP_BROWSE_3D_ENTER_ZOOM,
-      wasThreeDimensional: false,
-      performanceMode: 'FULL',
-    })
-    expect(presentation).toMatchObject({
-      threeDimensional: true,
-      pitch: MAP_BROWSE_3D_PITCH,
-      bearing: MAP_BROWSE_3D_BEARING,
-      minPitch: 0,
-      maxPitch: MAP_BROWSE_3D_MAX_PITCH,
-    })
-    expect(presentation.pitch).toBeLessThanOrEqual(35)
-    expect(presentation.maxPitch).toBeLessThanOrEqual(45)
+    for (const performanceMode of ['FULL', 'REDUCED'] as const) {
+      const presentation = mapBrowsePresentation({
+        zoom: MAP_BROWSE_3D_ENTER_ZOOM,
+        wasThreeDimensional: false,
+        performanceMode,
+      })
+      expect(presentation).toMatchObject({
+        threeDimensional: true,
+        pitch: MAP_BROWSE_3D_PITCH,
+        bearing: MAP_BROWSE_3D_BEARING,
+        minPitch: 0,
+        maxPitch: MAP_BROWSE_3D_MAX_PITCH,
+      })
+      expect(presentation.pitch).toBeLessThanOrEqual(35)
+      expect(presentation.maxPitch).toBeLessThanOrEqual(45)
+    }
   })
 
   it('uses hysteresis instead of flapping around the 3D boundary', () => {
@@ -57,8 +63,41 @@ describe('subtle Map presentation policy', () => {
     }).threeDimensional).toBe(true)
   })
 
-  it('flattens Map before reducing Camera quality under pressure', () => {
-    for (const performanceMode of ['REDUCED', 'LOW_POWER', 'EMERGENCY'] as const) {
+  it('transitions wide 2D to close 3D and back without boundary flapping', () => {
+    let wasThreeDimensional = false
+    const wide = mapBrowsePresentation({
+      zoom: MAP_BROWSE_3D_EXIT_ZOOM - 0.1,
+      wasThreeDimensional,
+      performanceMode: 'REDUCED',
+    })
+    expect(wide.threeDimensional).toBe(false)
+    wasThreeDimensional = wide.threeDimensional
+
+    const close = mapBrowsePresentation({
+      zoom: MAP_BROWSE_3D_ENTER_ZOOM + 0.1,
+      wasThreeDimensional,
+      performanceMode: 'REDUCED',
+    })
+    expect(close.threeDimensional).toBe(true)
+    wasThreeDimensional = close.threeDimensional
+
+    const boundary = mapBrowsePresentation({
+      zoom: (MAP_BROWSE_3D_ENTER_ZOOM + MAP_BROWSE_3D_EXIT_ZOOM) / 2,
+      wasThreeDimensional,
+      performanceMode: 'REDUCED',
+    })
+    expect(boundary.threeDimensional).toBe(true)
+
+    const pulledBack = mapBrowsePresentation({
+      zoom: MAP_BROWSE_3D_EXIT_ZOOM - 0.1,
+      wasThreeDimensional: boundary.threeDimensional,
+      performanceMode: 'REDUCED',
+    })
+    expect(pulledBack).toMatchObject({ threeDimensional: false, pitch: 0, bearing: 0 })
+  })
+
+  it('keeps thermal and power downgrade modes flat', () => {
+    for (const performanceMode of ['LOW_POWER', 'EMERGENCY'] as const) {
       expect(mapBrowsePresentation({
         zoom: 19,
         wasThreeDimensional: true,
@@ -67,16 +106,33 @@ describe('subtle Map presentation policy', () => {
     }
   })
 
+  it('bounds close extrusion geography and spends less geometry in reduced mode', () => {
+    const reducedWideClose = mapBuildingExtrusionRadiusM(16.8, 'REDUCED')
+    const reducedStreet = mapBuildingExtrusionRadiusM(17.5, 'REDUCED')
+    const reducedDoorstep = mapBuildingExtrusionRadiusM(18.5, 'REDUCED')
+    expect(reducedWideClose).toBe(520)
+    expect(reducedStreet).toBe(360)
+    expect(reducedDoorstep).toBe(220)
+    expect(mapBuildingExtrusionRadiusM(17.5, 'FULL')).toBeGreaterThan(reducedStreet!)
+    expect(mapBuildingExtrusionMinHeightM('REDUCED')).toBe(MAP_REDUCED_SUBSTANTIAL_BUILDING_HEIGHT_M)
+    expect(mapBuildingExtrusionMinHeightM('FULL')).toBe(MAP_SUBSTANTIAL_BUILDING_HEIGHT_M)
+    expect(MAP_REDUCED_SUBSTANTIAL_BUILDING_HEIGHT_M).toBeGreaterThan(MAP_SUBSTANTIAL_BUILDING_HEIGHT_M)
+    expect(mapBuildingExtrusionRadiusM(19, 'LOW_POWER')).toBeNull()
+    expect(mapBuildingExtrusionRadiusM(19, 'EMERGENCY')).toBeNull()
+  })
+
   it('caps authored landmark angles without flattening intentional landmarks', () => {
     expect(subtleLandmarkPitch(58)).toBe(42)
     expect(subtleLandmarkPitch(38)).toBe(38)
     expect(subtleLandmarkPitch(20)).toBe(32)
   })
 
-  it('retains a landmark hero angle only at full performance', () => {
+  it('retains a single bounded landmark hero angle at normal iPhone quality', () => {
     expect(preserveLandmarkCamera(true, 'FULL')).toBe(true)
+    expect(preserveLandmarkCamera(true, 'REDUCED')).toBe(true)
     expect(preserveLandmarkCamera(false, 'FULL')).toBe(false)
-    for (const mode of ['REDUCED', 'LOW_POWER', 'EMERGENCY'] as const) {
+    expect(preserveLandmarkCamera(false, 'REDUCED')).toBe(false)
+    for (const mode of ['LOW_POWER', 'EMERGENCY'] as const) {
       expect(preserveLandmarkCamera(true, mode)).toBe(false)
     }
   })

@@ -89,7 +89,7 @@ export function modelSprite(url: string, view: SpriteView = {}): Promise<string>
 
   let promise = inflightSprites.get(key)
   if (!promise) {
-    if (import.meta.env?.DEV) {
+    if (import.meta.env.DEV) {
       console.warn(
         `[modelSprite] no pre-rendered sprite for "${key}" — falling back to a ` +
         `runtime GLB decode. Re-run .codex/prerender-sprites.mjs to add it.`,

@@ -53,14 +53,38 @@
 }
 
 /* ── the straight line the chips ride ─────────────────────────────────────── */
-.line {
+.lineShell {
   position: relative;
   height: 86px;
   overflow: hidden;
-  touch-action: none;            /* the drag is ours, not the page's */
-  cursor: grab;
 }
+
+/* Native momentum/scroll-snap keeps this on the browser compositor. React is
+   notified only when the nearest slot changes, rather than repainting every
+   chip at camera frame rate. 62px chip + 16px gap = the 78px JS contract. */
+.line {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 12px calc(50% - 31px);
+  scroll-padding-inline: calc(50% - 31px);
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x;
+  cursor: grab;
+  mask-image: linear-gradient(90deg, transparent, #000 9%, #000 91%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 9%, #000 91%, transparent);
+}
+.line::-webkit-scrollbar { display: none; }
 .line:active { cursor: grabbing; }
+.line:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.56); outline-offset: -3px; }
 
 /* the rule the swatches sit on — this is the "straight horizontal line" */
 .rule {
@@ -72,6 +96,7 @@
   transform: translateY(-50%);
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22) 18%, rgba(255, 255, 255, 0.22) 82%, transparent);
   pointer-events: none;
+  z-index: 0;
 }
 
 /* centre marker — the slot whose filter is live (the hold menu's centre) */
@@ -85,18 +110,32 @@
   border-radius: 18px;
   box-shadow: 0 0 0 2px rgba(246, 59, 154, 0.9), 0 0 18px rgba(246, 59, 154, 0.45);
   pointer-events: none;
+  z-index: 3;
 }
 
 .chip {
-  position: absolute;
-  left: 50%;
-  top: 50%;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 62px;
+  width: 62px;
+  height: 62px;
   border: 0;
   background: transparent;
   cursor: pointer;
   padding: 0;
   line-height: 0;
-  transition: opacity 0.12s linear;
+  display: grid;
+  place-items: center;
+  scroll-snap-align: center;
+  opacity: 0.68;
+  transform: scale(0.84);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.chipOn {
+  z-index: 2;
+  opacity: 1;
+  transform: scale(1.06);
 }
 
 /* The swatch is a slice of clay wearing the filter — the preview IS the effect. */
@@ -127,10 +166,11 @@
   height: 52px;
   border-radius: 14px;
   background-color: #161116;
-  background-size: cover;
-  background-position: center;
+  object-fit: cover;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), inset 0 0 0 2px rgba(255, 255, 255, 0.12);
   transition: box-shadow 0.16s ease;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .chipOn .swatch {

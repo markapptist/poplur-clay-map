@@ -11,13 +11,22 @@ import {
   MAP_BROWSE_3D_MAX_PITCH,
   MAP_BROWSE_3D_PITCH,
   MAP_LANDMARK_3D_MAX_PITCH,
-  MAP_LANDMARK_3D_MIN_ZOOM,
-  MAP_SUBSTANTIAL_BUILDING_HEIGHT_M,
-  landmarkRevealZoomForFrame,
+  mapBuildingExtrusionMinHeightM,
+  mapBuildingExtrusionRadiusM,
   mapBrowsePresentation,
   preserveLandmarkCamera,
-  subtleLandmarkPitch,
 } from './mapPresentationPolicy'
+import {
+  WORLD_LANDMARK_PRESENTATIONS,
+  landmarkCameraFrame as resolveLandmarkCameraFrame,
+  landmarkNearZoom,
+  type WorldLandmarkPresentation,
+} from './mapLandmarkCatalog'
+export {
+  landmarkCameraFrame,
+  landmarkTourCameraFrame,
+  type LandmarkCameraFrame,
+} from './mapLandmarkCatalog'
 import { installMapIdleSnapshot, type MapIdleSnapshotController } from './mapIdleSnapshot'
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
@@ -734,6 +743,56 @@ function notALandmarkBuilding() {
   ]]
 }
 
+/** Overture and Streets expose the same idea through slightly different
+ * attributes. Keeping the expression in one factory lets the close-view cull
+ * update its radius without drifting from the layer's authored height. */
+function mappedBuildingHeightExpression() {
+  return ['case',
+    ['has', 'height'], ['to-number', ['get', 'height']],
+    ['has', 'num_floors'], ['*', ['to-number', ['get', 'num_floors']], 3.2],
+    0]
+}
+
+/** The extrusion layer is finite in geography as well as zoom. A pitched
+ * camera can see several vector tiles toward the horizon, so a zoom-only gate
+ * still loaded city-wide geometry. The flat footprint layer remains outside
+ * this circle and preserves the full map. */
+function boundedBuildingExtrusionFilter(
+  center: [number, number],
+  radiusM: number,
+  minHeightM: number,
+) {
+  return ['all',
+    ['>=', mappedBuildingHeightExpression(), minHeightM],
+    ['<=', ['distance', { type: 'Point', coordinates: center }], radiusM],
+    // Keep the expensive global landmark-footprint exclusions last so the
+    // cheap height and local-radius checks reject almost every building first.
+    notALandmarkBuilding(),
+  ]
+}
+
+/** A pitched phone camera sees farther toward the top of the screen than
+ * behind its centre. Move the finite circle slightly forward instead of
+ * increasing its radius (and GPU geometry) in every direction. At the normal
+ * 32 degree close pitch, 28% covers the far ground edge of a 390×844 viewport
+ * at each discrete radius tier without exposing another ring of city tiles. */
+function forwardBuildingCullCenter(
+  center: { lng: number; lat: number },
+  bearingDeg: number,
+  radiusM: number,
+): [number, number] {
+  const offsetM = radiusM * 0.28
+  const bearing = bearingDeg * Math.PI / 180
+  const metresPerDegree = 111_320
+  const latitude = Math.max(-85, Math.min(85, center.lat))
+  const latitudeRadians = latitude * Math.PI / 180
+  const lat = latitude + (Math.cos(bearing) * offsetM) / metresPerDegree
+  const lngDelta = (Math.sin(bearing) * offsetM)
+    / (metresPerDegree * Math.max(0.05, Math.cos(latitudeRadians)))
+  const lng = ((center.lng + lngDelta + 540) % 360) - 180
+  return [lng, Math.max(-85, Math.min(85, lat))]
+}
+
 const LANDMARK_ART_DIRECTIONS: Record<string, LandmarkArtDirection> = {
   // Static colour scripts give each place an immediate identity while keeping
   // Mapbox completely idle after the existing 360ms arrival pop has settled.
@@ -752,56 +811,14 @@ const LANDMARK_ART_DIRECTIONS: Record<string, LandmarkArtDirection> = {
   'christ-redeemer': { keyColor: 0xffe7d4, fillColor: 0xa9d5ef, skyColor: 0xc8e6f7, groundColor: 0x3c5754, contactColor: 0x304642, mistColor: 0xb8dce8, mistDensity: 0.0025, exposure: 1.03 },
 }
 
-const WORLD_LANDMARKS: {
-  id: string
-  coords: [number, number]
-  heightM: number
-  frameSpanM: number
-  color: number
-  yaw?: number
-  clearDepth?: boolean
-  nearKm?: number
-  frameCenter?: [number, number]
-  framePitch?: number
-  frameZoom?: number
-  revealZoom?: number
-  frameBearing?: number
-  artDirection?: LandmarkArtDirection
+const WORLD_LANDMARKS: Array<WorldLandmarkPresentation & {
+  artDirection: LandmarkArtDirection
   materialIdentity: LandmarkMaterialIdentity
-}[] = [
-  { id: 'burj-khalifa', coords: [55.2744, 25.1972], heightM: 828, frameSpanM: 828, color: 0xdce4e6, artDirection: LANDMARK_ART_DIRECTIONS['burj-khalifa'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['burj-khalifa'] },
-  {
-    id: 'cn-tower', coords: [-79.3871, 43.6426], heightM: 553,
-    frameSpanM: 553, color: 0xc9c6c2, nearKm: 0.9,
-    frameCenter: [-79.38677, 43.64418],
-    // Keep the real 553 m proportions but present the pod and three Y-shaped
-    // supports at a phone-legible size. The slight rotation also moves the
-    // Ritz-Carlton label off the observation deck without losing SkyDome.
-    framePitch: 42, frameZoom: 15.6, revealZoom: 15.0, frameBearing: 22, artDirection: LANDMARK_ART_DIRECTIONS['cn-tower'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['cn-tower'],
-  },
-  // The Toronto models share a close activation area. Their update pass below
-  // selects the one nearest the authored camera frame so an emergency phone's
-  // one-light-renderer budget cannot let registration order hide CN Tower.
-  {
-    id: 'rogers-centre', coords: [-79.38918212, 43.64161058], heightM: 60,
-    frameSpanM: 553, color: 0xe4e6e8, yaw: 15.9, clearDepth: false, nearKm: 0.5,
-    frameCenter: [-79.38834927, 43.64200635],
-    framePitch: 54, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0, artDirection: LANDMARK_ART_DIRECTIONS['rogers-centre'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['rogers-centre'],
-  },
-  { id: 'eiffel', coords: [2.2945, 48.8584], heightM: 330, frameSpanM: 330, color: 0x76543a, artDirection: LANDMARK_ART_DIRECTIONS.eiffel, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.eiffel },
-  { id: 'space-needle', coords: [-122.3493, 47.6205], heightM: 184, frameSpanM: 184, color: 0xe2e1dc, artDirection: LANDMARK_ART_DIRECTIONS['space-needle'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['space-needle'] },
-  // Both wide models are authored along local X. Rotate that axis onto each
-  // site's real north/south footprint instead of laying them east/west across
-  // unrelated roads and water.
-  { id: 'golden-gate', coords: [-122.4783, 37.8199], heightM: 227, frameSpanM: 556, color: 0xdd5b38, yaw: 102, artDirection: LANDMARK_ART_DIRECTIONS['golden-gate'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['golden-gate'] },
-  { id: 'statue-liberty', coords: [-74.0445, 40.6892], heightM: 93, frameSpanM: 93, color: 0x72aa91, artDirection: LANDMARK_ART_DIRECTIONS['statue-liberty'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['statue-liberty'] },
-  { id: 'big-ben', coords: [-0.1246, 51.5007], heightM: 96, frameSpanM: 96, color: 0xb49a68, artDirection: LANDMARK_ART_DIRECTIONS['big-ben'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['big-ben'] },
-  { id: 'giza', coords: [31.1342, 29.9792], heightM: 139, frameSpanM: 300, color: 0xd5b879, artDirection: LANDMARK_ART_DIRECTIONS.giza, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.giza },
-  { id: 'taj-mahal', coords: [78.0421, 27.1751], heightM: 73, frameSpanM: 85, color: 0xf3e7d8, artDirection: LANDMARK_ART_DIRECTIONS['taj-mahal'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['taj-mahal'] },
-  { id: 'colosseum', coords: [12.4922, 41.8902], heightM: 48, frameSpanM: 95, color: 0xc8a27a, artDirection: LANDMARK_ART_DIRECTIONS.colosseum, materialIdentity: LANDMARK_MATERIAL_IDENTITIES.colosseum },
-  { id: 'sydney-opera', coords: [151.2153, -33.8568], heightM: 65, frameSpanM: 150, color: 0xf2eee4, yaw: 90, artDirection: LANDMARK_ART_DIRECTIONS['sydney-opera'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['sydney-opera'] },
-  { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0xe1d8ca, artDirection: LANDMARK_ART_DIRECTIONS['christ-redeemer'], materialIdentity: LANDMARK_MATERIAL_IDENTITIES['christ-redeemer'] },
-]
+}> = WORLD_LANDMARK_PRESENTATIONS.map(landmark => ({
+  ...landmark,
+  artDirection: LANDMARK_ART_DIRECTIONS[landmark.id],
+  materialIdentity: LANDMARK_MATERIAL_IDENTITIES[landmark.id],
+}))
 
 const TORONTO_LANDMARK_RENDERER_IDS = new Set(['cn-tower', 'rogers-centre'])
 const TORONTO_LANDMARK_RENDERERS = WORLD_LANDMARKS.filter(landmark =>
@@ -834,90 +851,6 @@ const LANDMARK_THUMB_SPRITES: Record<string, string> = {
 // the camera is genuinely at its site; the former 1.25 km radius exposed a
 // cropped tower at the edge of nearby venues, which read as floating.
 const LANDMARK_3D_REVEAL_KM = 0.3
-const LANDMARK_REFERENCE_HEIGHT_M = 330 // Eiffel Tower: the reference frame.
-const LANDMARK_MIN_FRAME_ZOOM = 13.5
-const LANDMARK_MAX_FRAME_ZOOM = 16.0
-const LANDMARK_TOUR_MIN_FRAME_ZOOM = 14.1
-const LANDMARK_TOUR_MAX_FRAME_ZOOM = 17.6
-// Arriving at an exact camera zoom can end a fraction below its requested
-// value. Start loading just before the frame target so the grounded model is
-// already visible when the flight settles, rather than requiring a manual
-// extra pinch.
-const LANDMARK_REVEAL_ZOOM_BUFFER = 0.3
-
-/**
- * A fixed zoom crops large or wide landmarks while leaving a short tower too
- * distant. Scale the street-level frame logarithmically with the largest real
- * mesh span: a structure twice as large lands one zoom level farther out.
- * This makes every landmark legible while retaining its complete, grounded
- * silhouette inside the view.
- */
-function landmarkCameraZoom(
-  frameSpanM: number,
-  minZoom = LANDMARK_MIN_FRAME_ZOOM,
-  maxZoom = LANDMARK_MAX_FRAME_ZOOM,
-): number {
-  const scaled = 15.3 - Math.log2(Math.max(1, frameSpanM) / LANDMARK_REFERENCE_HEIGHT_M)
-  return Math.max(minZoom, Math.min(maxZoom, scaled))
-}
-
-export interface LandmarkCameraFrame {
-  zoom: number
-  pitch: number
-  center?: [number, number]
-  bearing?: number
-}
-
-/** Shared by the tour and the 3D reveal gate, so the camera never lands at a
- * zoom that hides the model or crops it out of view. */
-export function landmarkCameraFrame(id: string): LandmarkCameraFrame | null {
-  const landmark = WORLD_LANDMARKS.find(candidate => candidate.id === id)
-  if (!landmark) return null
-  return {
-    zoom: landmark.frameZoom ?? landmarkCameraZoom(landmark.frameSpanM),
-    center: landmark.frameCenter,
-    bearing: landmark.frameBearing,
-    // Landmarks retain a readable ground-revealing angle without inheriting
-    // the former 54-58 degree flyover that drove phone fill-rate so hard.
-    pitch: subtleLandmarkPitch(
-      landmark.framePitch
-        ?? (landmark.heightM >= 500 ? 54 : landmark.heightM >= 300 ? 56 : 58),
-    ),
-  }
-}
-
-/** The tour needs more breathing room than the former universal z18.18 shot,
- * but compact monuments still disappear at the search frame's conservative
- * z16 ceiling. Keep the same real-size calculation, authored center, pitch and
- * bearing, with a tour-specific 14.1–17.6 window. */
-export function landmarkTourCameraFrame(id: string): LandmarkCameraFrame | null {
-  const landmark = WORLD_LANDMARKS.find(candidate => candidate.id === id)
-  const frame = landmarkCameraFrame(id)
-  if (!landmark || !frame) return null
-  return {
-    ...frame,
-    zoom: landmark.frameZoom ?? landmarkCameraZoom(
-      landmark.frameSpanM,
-      LANDMARK_TOUR_MIN_FRAME_ZOOM,
-      LANDMARK_TOUR_MAX_FRAME_ZOOM,
-    ),
-  }
-}
-
-/** The close-distance renderer must wake before the authored camera arrives.
- * Wide landmarks intentionally frame below the normal z15 district threshold;
- * because only one static GLB is eligible within 300m, revealing it slightly
- * earlier does not re-enable the expensive city-wide 3D presentation. */
-export function landmarkRevealZoom(id: string): number | null {
-  const landmark = WORLD_LANDMARKS.find(candidate => candidate.id === id)
-  if (!landmark) return null
-  return landmarkRevealZoomForFrame(
-    landmarkCameraZoom(landmark.frameSpanM),
-    landmark.revealZoom,
-    LANDMARK_REVEAL_ZOOM_BUFFER,
-  )
-}
-
 const CITY_TREES: { coords: [number, number]; width: number; palm?: boolean }[] = [
   { coords: [-79.4139, 43.6465], width: 34 },  // Trinity Bellwoods
   { coords: [-79.4105, 43.6502], width: 28 },
@@ -2932,8 +2865,60 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     let adaptiveCameraFrame: number | null = null
     let adaptiveThreeDimensional = false
     let lastThreeDLayerVisibility: boolean | null = null
+    let lastBuildingCull: {
+      lng: number
+      lat: number
+      bearing: number
+      radiusM: number
+      minHeightM: number
+    } | null = null
+    const updateBuildingExtrusionCull = (force = false) => {
+      if (!map.isStyleLoaded() || !map.getLayer('clay-buildings-3d')) return
+      const performanceMode = PoplurPerformanceManager.policy.mode
+      const radiusM = mapBuildingExtrusionRadiusM(map.getZoom(), performanceMode)
+      if (radiusM == null) return
+      const minHeightM = mapBuildingExtrusionMinHeightM(performanceMode)
+      const center = map.getCenter()
+      const budgetChanged = !lastBuildingCull
+        || lastBuildingCull.radiusM !== radiusM
+        || lastBuildingCull.minHeightM !== minHeightM
+        || Math.abs(lastBuildingCull.bearing - map.getBearing()) > 1
+      // setFilter dirties the whole style even when Mapbox later discovers
+      // that an expression is deeply equal. Re-centre only after a meaningful
+      // pan (16% of the finite radius), and only on existing settle/policy
+      // beats — never on animation frames.
+      const movedM = lastBuildingCull
+        ? center.distanceTo(new mapboxgl.LngLat(lastBuildingCull.lng, lastBuildingCull.lat))
+        : Number.POSITIVE_INFINITY
+      if (!force && !budgetChanged && movedM < radiusM * 0.16) return
+      const point = forwardBuildingCullCenter(center, map.getBearing(), radiusM)
+      try {
+        map.setFilter(
+          'clay-buildings-3d',
+          boundedBuildingExtrusionFilter(point, radiusM, minHeightM) as never,
+        )
+        if (map.getLayer('clay-building-caps')) {
+          map.setFilter('clay-building-caps', ['all',
+            ['>=', mappedBuildingHeightExpression(), Math.max(45, minHeightM)],
+            ['<=', ['distance', { type: 'Point', coordinates: point }], radiusM],
+            notALandmarkBuilding(),
+          ] as never)
+        }
+        lastBuildingCull = {
+          lng: center.lng,
+          lat: center.lat,
+          bearing: map.getBearing(),
+          radiusM,
+          minHeightM,
+        }
+      } catch { /* style is transitioning */ }
+    }
     const setThreeDLayerVisibility = (enabled: boolean) => {
       if (!map.isStyleLoaded()) return
+      // Install the bounded filter before exposing the layer. This prevents a
+      // one-frame flash of every eligible building in all visible horizon
+      // tiles when crossing from the wide flat map into close 3D.
+      if (enabled) updateBuildingExtrusionCull(lastThreeDLayerVisibility !== true)
       let applied = false
       for (const layer of ['clay-buildings-3d', 'clay-building-caps']) {
         if (!map.getLayer(layer)) continue
@@ -2969,7 +2954,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         return
       }
       const performanceMode = PoplurPerformanceManager.policy.mode
-      if ((map as unknown as { __cinematic?: boolean }).__cinematic && performanceMode === 'FULL') return
+      if ((map as unknown as { __cinematic?: boolean }).__cinematic
+        && (performanceMode === 'FULL' || performanceMode === 'REDUCED')) return
       if ((map as unknown as { __streetView?: boolean }).__streetView) {
         adaptiveThreeDimensional = true
         setThreeDLayerVisibility(true)
@@ -2977,8 +2963,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         if (map.getMinPitch() !== 72) { map.setMaxPitch(85); map.setMinPitch(72) }
         return
       }
-      const landmarkActive = [...landmarks3dRef.current.values()].some(handle => handle.isActive())
-      if (preserveLandmarkCamera(landmarkActive, performanceMode)) {
+      const activeLandmark = [...landmarks3dRef.current.entries()]
+        .find(([, handle]) => handle.isActive())
+      if (preserveLandmarkCamera(Boolean(activeLandmark), performanceMode)) {
         // Keep only the one intentional landmark pitched. The district-wide
         // extrusion layers stay off, preserving the lightweight Snap-like map
         // everywhere around it and avoiding a Camera thermal penalty.
@@ -2986,6 +2973,16 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         setThreeDLayerVisibility(false)
         if (map.getMaxPitch() !== MAP_LANDMARK_3D_MAX_PITCH) map.setMaxPitch(MAP_LANDMARK_3D_MAX_PITCH)
         if (map.getMinPitch() !== 0) map.setMinPitch(0)
+        // Normal iPhone quality is REDUCED. Restoring the authored shallow
+        // hero frame here is what makes a tower read upright and grounded
+        // after a top-down wide-map visit instead of showing only its roof.
+        const frame = activeLandmark ? resolveLandmarkCameraFrame(activeLandmark[0]) : null
+        if (SHARED_ADAPTIVE_MAP && frame && (
+          Math.abs(map.getPitch() - frame.pitch) > 0.5
+          || Math.abs(map.getBearing() - (frame.bearing ?? 0)) > 0.5
+        )) {
+          settleAdaptiveCamera(frame.pitch, frame.bearing ?? 0)
+        }
         return
       }
       const presentation = mapBrowsePresentation({
@@ -3003,7 +3000,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         if (map.getMinPitch() !== presentation.minPitch) map.setMinPitch(presentation.minPitch)
         if (SHARED_ADAPTIVE_MAP && (
           enteredThreeDimensions
-          || map.getPitch() > presentation.maxPitch + 0.5
+          // A landmark flight, style reload or native restore can flatten an
+          // already-close camera without crossing the zoom threshold again.
+          // Re-assert the shallow dimensional frame instead of leaving the
+          // extrusion layer visible from an unreadable roof-only view.
+          || Math.abs(map.getPitch() - presentation.pitch) > 0.5
           || Math.abs(map.getBearing() - presentation.bearing) > 0.5
         )) {
           settleAdaptiveCamera(presentation.pitch, presentation.bearing)
@@ -3032,6 +3033,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const flattenWideDuringGesture = () => {
       const camera = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
       if (MAP_2D || camera.__cinematic || camera.__tripping || map.getZoom() >= HYBRID_ZOOM) return
+      const landmarkActive = [...landmarks3dRef.current.values()].some(handle => handle.isActive())
+      if (preserveLandmarkCamera(landmarkActive, PoplurPerformanceManager.policy.mode)) return
       if (map.getMinPitch() !== 0) map.setMinPitch(0)
       if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
       if (map.getPitch() !== 0) map.setPitch(0)
@@ -3712,20 +3715,23 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // the inexpensive flat layer below instead of tessellating an entire
         // neighbourhood into 3D. Overture carries height, num_floors×3.2m, or
         // nothing, in that order of preference.
-        const mappedBuildingHeight = ['case',
-          ['has', 'height'], ['to-number', ['get', 'height']],
-          ['has', 'num_floors'], ['*', ['to-number', ['get', 'num_floors']], 3.2],
-          0] as never
+        const mappedBuildingHeight = mappedBuildingHeightExpression() as never
         const clayHeight = ['max',
           ['case',
             ['has', 'height'], ['to-number', ['get', 'height']],
             ['has', 'num_floors'], ['*', ['to-number', ['get', 'num_floors']], 3.2],
             9],
           6] as never
-        const fullBuildingFilter = ['all',
-          notALandmarkBuilding(),
-          ['>=', mappedBuildingHeight, MAP_SUBSTANTIAL_BUILDING_HEIGHT_M],
-        ] as never
+        // A finite camera-centred filter is installed by the presentation
+        // policy before this parked layer becomes visible. This initial
+        // zero-radius expression is deliberately empty: style load can never
+        // flash a city-wide batch of extrusion geometry while the camera and
+        // performance budget are still being resolved.
+        const initialBuildingFilter = boundedBuildingExtrusionFilter(
+          [map.getCenter().lng, map.getCenter().lat],
+          0,
+          mapBuildingExtrusionMinHeightM(PoplurPerformanceManager.policy.mode),
+        ) as never
         // Per-building pop scale driven by feature-state (see pop system below)
         const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
         const poppedHeight = ['*', clayHeight, popScale] as never
@@ -3760,7 +3766,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // exactly ("the landmark should actually replace the building, not
           // just hover on it"). Matched by OSM way id — see
           // LANDMARK_BUILDING_IDS for why a geometric test cannot do this.
-          filter: fullBuildingFilter as never,
+          filter: initialBuildingFilter,
           // Geometry culling: no extrusions until the camera is close enough
           // to be looking at a neighbourhood, not a whole city. The clay
           // settlement placeholders own everything wider than this.
@@ -4119,9 +4125,15 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // Intentional landmark models may reveal before routine building
           // extrusion. They are bounded one-at-a-time hero objects, so they
           // preserve place identity without turning the whole district 3D.
-          nearZoom: landmarkRevealZoom(mark.id) ?? MAP_LANDMARK_3D_MIN_ZOOM,
+          nearZoom: landmarkNearZoom(mark.id),
         }, {
           onModelRendered: () => {
+            // A resumed/direct-close visit can finish decoding after the
+            // camera's last moveend. Re-run the one-shot policy now so normal
+            // iPhone REDUCED mode restores this landmark's readable pitch
+            // instead of leaving the newly visible mesh in a stale top-down
+            // frame until the user touches the map again.
+            enforceHybridPitch()
             if (!LANDMARK_THUMB_SPRITES[mark.id]) return
             pendingLandmarkThumbId = mark.id
             settleLandmarkThumb()

@@ -54,3 +54,15 @@ export function shouldResumeFeedAfterFocus(value: {
     && !value.userPaused
     && !value.completed
 }
+
+/** A decoder revocation can happen while Feed remains mounted (for example,
+ * when a native ad or transient screen layer takes over). Feed must reacquire
+ * once that layer is gone; relying only on a `frontMost` prop change strands
+ * the existing tree on its poster because that prop may never change. */
+export function shouldReacquireFeedDecoder(value: {
+  frontMost: boolean
+  suppressed: boolean
+  hasLease: boolean
+}): boolean {
+  return value.frontMost && !value.suppressed && !value.hasLease
+}

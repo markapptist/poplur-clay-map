@@ -8,6 +8,7 @@ import {
   applyLandmarkMaterialIdentity,
   type LandmarkMaterialIdentity,
 } from './landmarkMaterials'
+import { landmarkGroundOffsetY } from './landmarkGrounding'
 
 // ── World landmarks as TRUE 3D map models ────────────────────────────────────
 //
@@ -391,7 +392,7 @@ export function installNearLandmark3D(
           built.scale.setScalar(scale)
           // Scaling around the origin would lift the base off the ground.
           // Recompute its offset from the model's local floor every frame.
-          built.position.y = -groundY * scale
+          built.position.y = landmarkGroundOffsetY(groundY, scale)
           map.triggerRepaint()
           // governor-ok: bounded 360ms arrival animation; it never rearms once t reaches 1
           if (t < 1) popFrame = window.requestAnimationFrame(frame)

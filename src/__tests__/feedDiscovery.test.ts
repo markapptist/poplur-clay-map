@@ -59,7 +59,7 @@ describe('follower-free feed discovery', () => {
       .toBeLessThan(ranked.indexOf(ranked.find(row => row.id === 'tie-b')!))
   })
 
-  it('learns from explicit actions, hides Not for me, and can reset', () => {
+  it('learns from explicit actions, hides rejected posts, and can reset', () => {
     const liked = post({ id: 'liked', channelId: 'sports' })
     const neutral = post({ id: 'neutral', channelId: 'music' })
     recordFeedDiscoverySignal(liked, 'like')

@@ -532,15 +532,10 @@ export function hasWardrobeAssetArt(def: WardrobeAssetDefinition): boolean {
 
 export function assetSource(def: WardrobeAssetDefinition): string {
   if (!hasWardrobeAssetArt(def)) return ''
-  // import.meta.env is Vite-injected; plain node (vitest node env without the
-  // Vite transform) may lack it, so fall back to serving from root.
-  let base = '/'
-  try {
-    const env = (import.meta as { env?: { BASE_URL?: unknown } }).env
-    if (env && typeof env.BASE_URL === 'string') base = env.BASE_URL
-  } catch {
-    base = '/'
-  }
+  // Access the one built-in value directly. Reading the whole import.meta.env
+  // object makes Vite serialize every VITE_* setting into this public chunk.
+  const configuredBase = import.meta.env.BASE_URL
+  const base = typeof configuredBase === 'string' ? configuredBase : '/'
   return base.endsWith('/') ? `${base}${def.source}` : `${base}/${def.source}`
 }
 

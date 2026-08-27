@@ -26,6 +26,7 @@ import type { MapFeedHandoff, MapFeedHandoffRequest } from './mapFeedHandoff'
 import {
   mixPublishedMediaWithPromotions,
   nextFeedPostIndex,
+  shouldReacquireFeedDecoder,
   shouldResumeFeedAfterFocus,
 } from './feedMediaSequence'
 
@@ -571,8 +572,6 @@ export default function FeedTwin({
   const [commentClosing, setCommentClosing] = useState(false)
   const [shareNote, setShareNote] = useState<string | null>(null)
   const shareNoteTimerRef = useRef<number | null>(null)
-  const [discoveryNote, setDiscoveryNote] = useState<string | null>(null)
-  const discoveryNoteTimerRef = useRef<number | null>(null)
   const [radiusReaction, setRadiusReaction] = useState<{ direction: 'up' | 'down'; amount: number } | null>(null)
   const radiusReactionTimerRef = useRef<number | null>(null)
   // End-of-clip comments: the roll runs when the video finishes, then leaves.
@@ -672,6 +671,7 @@ export default function FeedTwin({
   }, [])
   const decoderLeaseRef = useRef<PoplurResourceLease | null>(null)
   const [decoderGranted, setDecoderGranted] = useState(false)
+  const [decoderLeaseEpoch, setDecoderLeaseEpoch] = useState(0)
   const settledAdRef = useRef<string | null>(null)
   const completedAdRef = useRef<string | null>(null)
   const [completedAdSrc, setCompletedAdSrc] = useState<string | null>(null)
@@ -749,15 +749,20 @@ export default function FeedTwin({
   // the next heavyweight screen mounts, so WebKit never has to choose between
   // an old Feed pipeline and a new camera/map workload.
   useEffect(() => {
-    if (!frontMost) {
+    if (!frontMost || suppressed) {
       decoderLeaseRef.current?.release()
       decoderLeaseRef.current = null
       setDecoderGranted(false)
       return
     }
-    const lease = poplurResourcePool.acquire('media-decoder', 'feed', {
+    let lease: PoplurResourceLease | null = null
+    lease = poplurResourcePool.acquire('media-decoder', 'feed', {
       priority: 100,
       onRevoke: () => {
+        // `releaseAll()` can revoke Feed without changing `frontMost` (a native
+        // takeover is one example). Clear the stale handle so the pool-change
+        // listener below can request a fresh lease after the transition.
+        if (decoderLeaseRef.current === lease) decoderLeaseRef.current = null
         const video = adVideoRef.current
         if (video) retireFeedVideo(video)
         setReadyPlaybackKey(null)
@@ -773,7 +778,32 @@ export default function FeedTwin({
       lease?.release()
       if (decoderLeaseRef.current === lease) decoderLeaseRef.current = null
     }
-  }, [frontMost])
+  }, [frontMost, suppressed, decoderLeaseEpoch])
+
+  // Resource revocation is deliberately synchronous, while reacquisition is
+  // deferred one task. That lets Home finish committing the covering screen;
+  // if Feed is still genuinely visible afterwards it remounts one fresh video
+  // decoder instead of remaining permanently on a poster/black frame.
+  useEffect(() => {
+    let retryTimer = 0
+    const onPoolChange = () => {
+      if (retryTimer) return
+      retryTimer = window.setTimeout(() => {
+        retryTimer = 0
+        if (!shouldReacquireFeedDecoder({
+          frontMost: frontMostRef.current,
+          suppressed: suppressedRef.current,
+          hasLease: Boolean(decoderLeaseRef.current),
+        })) return
+        setDecoderLeaseEpoch(value => value + 1)
+      }, 0)
+    }
+    window.addEventListener('poplur-resource-pool-change', onPoolChange)
+    return () => {
+      window.removeEventListener('poplur-resource-pool-change', onPoolChange)
+      if (retryTimer) window.clearTimeout(retryTimer)
+    }
+  }, [])
 
   // A manually opened suggestion belongs to the post that was on screen when
   // the TV cube was tapped. Changing post/channel or covering the feed clears
@@ -1694,27 +1724,6 @@ export default function FeedTwin({
     })
   }, [commentOpen])
 
-  const showDiscoveryNote = useCallback((message: string) => {
-    setDiscoveryNote(message)
-    if (discoveryNoteTimerRef.current != null) window.clearTimeout(discoveryNoteTimerRef.current)
-    discoveryNoteTimerRef.current = window.setTimeout(() => {
-      setDiscoveryNote(null)
-      discoveryNoteTimerRef.current = null
-    }, 2_200)
-  }, [])
-
-  const hideCurrentPost = useCallback(() => {
-    const current = postRef.current
-    if (!current) return
-    playPop()
-    const video = adVideoRef.current
-    if (video) retireFeedVideo(video)
-    recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'notInterested')
-    contentIdxRef.current[ch.id] = 0
-    forceContentRender(value => value + 1)
-    showDiscoveryNote('Hidden · recommendations adjusted')
-  }, [ch.id, showDiscoveryNote])
-
   const reactToCurrentPost = useCallback((direction: 'up' | 'down') => {
     const current = postRef.current
     const id = radiusPostId(ch.id, current)
@@ -1817,7 +1826,6 @@ export default function FeedTwin({
 
   useEffect(() => () => {
     if (shareNoteTimerRef.current != null) window.clearTimeout(shareNoteTimerRef.current)
-    if (discoveryNoteTimerRef.current != null) window.clearTimeout(discoveryNoteTimerRef.current)
   }, [])
 
   useEffect(() => {
@@ -2126,17 +2134,6 @@ export default function FeedTwin({
         <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
           <img className={styles.chIcon} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
         </div>
-        <div
-          className={styles.feedbackDock}
-          onPointerDown={event => event.stopPropagation()}
-          onPointerUp={event => event.stopPropagation()}
-        >
-          {post && (
-            <button type="button" className={styles.notInterested} onClick={hideCurrentPost}>
-              Not for me
-            </button>
-          )}
-        </div>
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
             <div className={styles.feedHeaderCopy}>
@@ -2161,7 +2158,6 @@ export default function FeedTwin({
             </div>
           </div>
         </div>
-        {discoveryNote && <div className={styles.discoveryNote} role="status">{discoveryNote}</div>}
         {!post && (
           <div className={styles.discoveryEmpty} role="status">
             No posts in this channel

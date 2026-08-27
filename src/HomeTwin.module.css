@@ -777,7 +777,10 @@
    moves visually — it just belongs to the home chrome now. */
 .mapTitle {
   position: absolute;
-  top: calc(max(calc(env(safe-area-inset-top, 0px) + 8px), clamp(34px, 5vh, 44px)) + 56px);
+  /* Share the exact wordmark metrics instead of re-deriving them with a fixed
+     +56px. On compact iPhones the title variables shrink, while the old copy
+     did not, leaving a conspicuous empty band under Poplur. */
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 4px);
   left: 24px;
   right: 24px;
   display: grid;
