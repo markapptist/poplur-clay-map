@@ -3,6 +3,7 @@ import { POP_LEVELS, type PopLevel } from './data'
 import { playPop } from './pop'
 import { SideControlIconImage } from './SideControlIcon'
 import styles from './MapLevelButton.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 
 // ── Whose pops the map is showing ───────────────────────────────────────────
 // Three stacked map sheets, because that is literally what the control does:
@@ -69,7 +70,7 @@ export default function MapLevelButton({
     <div className={styles.root} ref={rootRef}>
       {menuOpen && (
         <div
-          className={menuSide === 'right' ? `${styles.menu} ${styles.menuRight}` : styles.menu}
+          className={`${styles.menu} ${surfaceStyles.surface}${menuSide === 'right' ? ` ${styles.menuRight}` : ''}`}
           role="menu"
           aria-label="Which pops to show"
         >
@@ -79,7 +80,7 @@ export default function MapLevelButton({
               type="button"
               role="menuitemradio"
               aria-checked={option.id === level}
-              className={option.id === level ? `${styles.item} ${styles.itemOn}` : styles.item}
+              className={`${styles.item} ${option.id === level ? surfaceStyles.primary : surfaceStyles.secondary}`}
               onClick={() => {
                 playPop()
                 onPick(option.id)

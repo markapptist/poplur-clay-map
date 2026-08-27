@@ -12,6 +12,7 @@ import ClayChannelArrows from '../ClayChannelArrows'
 import ConquerGlance from '../ConquerGlance'
 import MapConquerButton from '../MapConquerButton'
 import MapNewsButton from '../MapNewsButton'
+import { mapNewsOpenMessage, readMapNewsOpenRequest } from '../mapNewsBridge'
 import PoplurChannelRail from '../PoplurChannelRail'
 import PostActionRail from '../PostActionRail'
 import SideControlIconButton from '../SideControlIcon'
@@ -307,6 +308,23 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(playPop).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the Map News button actionable through the standalone and Home bridge paths', () => {
+    const home = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'utf8')
+    const map = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+
+    // Verified geolocated stories still start the finite camera tour.
+    expect(map).toMatch(/<MapNewsButton[\s\S]*?startNewsTour\(\)/)
+    expect(home).toMatch(/<MapNewsButton[\s\S]*?sendMapAction\('newsTour'\)/)
+
+    // A failed/empty wire opens the readable edition instead of leaving the
+    // visible button with no resulting surface.
+    expect(map).toMatch(/if \(!events\.length\)[\s\S]*?openPoplurNewsEdition\(\)/)
+    expect(readMapNewsOpenRequest(mapNewsOpenMessage())).toEqual({ eventId: null })
+    expect(readMapNewsOpenRequest(mapNewsOpenMessage(' live-story ')))
+      .toEqual({ eventId: 'live-story' })
+    expect(readMapNewsOpenRequest({ type: 'unrelated' })).toBeNull()
+  })
+
   it('announces Conquer as one required popup disclosure', () => {
     const closed = MapConquerButton({ open: false, onPress: vi.fn() }) as LooseElement
     expect(closed.props['aria-label']).toBe('Show Conquer standings')
@@ -333,8 +351,9 @@ describe('replacement controls preserve state and activation contracts', () => {
       onOpen: vi.fn(),
     }))
     expect(loading).toContain('data-poplur-conquer-glance')
+    expect(loading).toContain('data-conquer-preview-version="2"')
     expect(loading).toContain('STANDINGS LOADING')
-    expect(loading).toContain('OPEN FULL BOARD')
+    expect(loading).toContain('VIEW FULL BOARD')
     expect(loading).toContain('aria-controls="poplur-conquer-board"')
   })
 
@@ -372,8 +391,8 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(controls.map(control => control.type)).toEqual([SideControlIconButton, SideControlIconButton])
     expect(controls[0].props.imageStyle).toMatchObject({ transform: 'rotate(-90deg)' })
     expect(controls[0].props.imageSize).toBe(71)
-    expect(controls[0].props.style).toMatchObject({ width: '44%' })
-    expect(controls[1].props.style).toMatchObject({ width: '44%' })
+    expect(controls[0].props.style).toMatchObject({ width: '50%' })
+    expect(controls[1].props.style).toMatchObject({ width: '50%' })
     ;(controls[0].props.onActivate as () => void)()
     ;(controls[1].props.onActivate as () => void)()
     expect(onUp).toHaveBeenCalledOnce()

@@ -30,6 +30,7 @@ import { loadWardrobeCatalog, type RemoteWardrobeStyles } from './wardrobeGarmen
 import { callState, hangup, placeCall, subscribeCall, toggleMute, type CallSnapshot } from './webCall'
 import { playPop } from './pop'
 import styles from './HouseScreen.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 
 let houseRendererSequence = 0
 let houseGuestRequestSequence = 0
@@ -888,15 +889,15 @@ export default function HouseScreen() {
         <Need label='Hunger' value={life.hunger} color='#ffcf5d' />
         <Need label='Fun' value={life.fun} color='#ff65b2' />
       </section>
-      {partyOpen && <section id='house-party-panel' className={styles.partyPanel} aria-label='Invite people in your radius'>
+      {partyOpen && <section id='house-party-panel' className={`${styles.partyPanel} ${surfaceStyles.surface}`} aria-label='Invite people in your radius'>
         <header>
           <div><span>HOUSE GUESTS</span><strong>People in your radius</strong></div>
-          <button type='button' aria-label='Close House invitations' onClick={() => setPartyOpen(false)}>×</button>
+          <button type='button' className={surfaceStyles.close} aria-label='Close House invitations' onClick={() => setPartyOpen(false)}>×</button>
         </header>
         <p>Invite one person at a time to join your House over mic. Your coordinates are never shown.</p>
         <div className={styles.partyActions}>
           <span>{reach.toFixed(reach >= 100 ? 0 : 1)} km radius</span>
-          <button type='button' onClick={() => { playPop(); setGuestRefresh(value => value + 1) }}>Refresh</button>
+          <button type='button' className={surfaceStyles.secondary} onClick={() => { playPop(); setGuestRefresh(value => value + 1) }}>Refresh</button>
         </div>
         <div className={styles.guestList} aria-live='polite'>
           {guestsLoading && <div className={styles.emptyGuests}>Looking inside your radius…</div>}
@@ -910,7 +911,7 @@ export default function HouseScreen() {
             return <article key={`${guest.preview ? 'preview' : 'live'}:${guest.id}`} className={styles.guestRow}>
               <span className={styles.guestAvatar} style={{ '--guest-color': guestPalette(guest.id) } as CSSProperties}>{guest.name.replace(/^@/, '').slice(0, 1).toUpperCase()}</span>
               <div><strong>{guest.name}</strong><small>{guest.detail}</small></div>
-              <button type='button' disabled={busy && invitedGuest?.id !== guest.id} onClick={() => inviteGuest(guest)}>
+              <button type='button' className={surfaceStyles.primary} disabled={busy && invitedGuest?.id !== guest.id} onClick={() => inviteGuest(guest)}>
                 {guest.preview ? 'Sign in' : invitedGuest?.id === guest.id && busy ? 'Invited' : 'Invite'}
               </button>
             </article>

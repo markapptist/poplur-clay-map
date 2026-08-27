@@ -5,6 +5,7 @@ import {
   type MapConquerSnapshot,
 } from './mapConquer'
 import styles from './ConquerGlance.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 
 export default function ConquerGlance({
   snapshot,
@@ -21,6 +22,7 @@ export default function ConquerGlance({
   const allRows = snapshot?.rows ?? []
   const totalKm = allRows.reduce((sum, row) => sum + row.radiusKm, 0)
   const topFame = allRows[0]?.fame ?? 0
+  const maxFame = Math.max(1, topFame)
   const [flipRevision, setFlipRevision] = useState(0)
   const glanceRef = useRef<HTMLButtonElement>(null)
 
@@ -100,18 +102,19 @@ export default function ConquerGlance({
       aria-controls="poplur-conquer-board"
       aria-haspopup="dialog"
       data-poplur-conquer-glance
+      data-conquer-preview-version="2"
       data-conquer-scope={snapshot?.scope.toLowerCase()}
       data-poplur-native-hit-region
       onClick={onOpen}
     >
       <span className={styles.terrain} aria-hidden="true" />
-      <span className={styles.board}>
-        <span className={styles.heading}>
+      <span className={`${styles.board} ${surfaceStyles.surface}`}>
+        <span className={`${styles.heading} ${surfaceStyles.header}`}>
           <span>
             <small><i aria-hidden="true" /> {snapshot?.scope ?? 'LOCAL'} · DOMINATION LIVE</small>
             <strong>Conquer Board</strong>
           </span>
-          <em>PREVIEW</em>
+          <em>TOP 3 LIVE</em>
         </span>
         <span className={styles.stats}>
           <span><strong>{allRows.length || '—'}</strong><small>IN VIEW</small></span>
@@ -119,27 +122,40 @@ export default function ConquerGlance({
           <span><strong>{topFame ? topFame.toLocaleString() : '—'}</strong><small>TOP FAME</small></span>
         </span>
         {rows.length ? (
-          <span className={styles.list} key={`conquer-glance-${flipRevision}`}>
-            {rows.map((row, index) => (
-              <span
-                className={styles.row}
-                key={`${row.owner}-${flipRevision}`}
-                style={{
-                  '--conquer-color': row.color,
-                  '--flip-delay': `${index * 54}ms`,
-                } as React.CSSProperties}
-              >
-                <b className={styles.rank}>{index + 1}</b>
-                <span className={styles.avatar}>
-                  {row.avatar
-                    ? <img src={row.avatar} alt="" draggable={false} />
-                    : <b aria-hidden="true">{row.label.replace('@', '').slice(0, 1).toUpperCase()}</b>}
+          <>
+            <span className={styles.ticker} aria-hidden="true">
+              <span><i /> LIVE ROTATION</span>
+              <strong>RANK 1–3</strong>
+            </span>
+            <span className={styles.list} key={`conquer-glance-${flipRevision}`}>
+              {rows.map((row, index) => (
+                <span
+                  className={`${styles.row}${row.mine ? ` ${styles.mine}` : ''}`}
+                  key={`${row.owner}-${flipRevision}`}
+                  data-conquer-rank={index + 1}
+                  style={{
+                    '--conquer-color': row.color,
+                    '--flip-delay': `${index * 54}ms`,
+                  } as React.CSSProperties}
+                >
+                  <b className={styles.rank}>{index + 1}</b>
+                  <span className={styles.avatar}>
+                    {row.avatar
+                      ? <img src={row.avatar} alt="" draggable={false} />
+                      : <b aria-hidden="true">{row.label.replace('@', '').slice(0, 1).toUpperCase()}</b>}
+                  </span>
+                  <span className={styles.identity}>
+                    <strong className={styles.name}>{row.mine ? 'YOU' : row.label}</strong>
+                    <small>{row.topPlace} · {row.territories} {row.territories === 1 ? 'area' : 'areas'}</small>
+                  </span>
+                  <strong className={styles.fame}>{row.fame.toLocaleString()}<small>FAME</small></strong>
+                  <span className={styles.bar} aria-hidden="true">
+                    <i style={{ width: `${Math.max(8, (row.fame / maxFame) * 100)}%` }} />
+                  </span>
                 </span>
-                <span className={styles.name}>{row.mine ? 'YOU' : row.label}</span>
-                <strong className={styles.fame}>{row.fame.toLocaleString()}</strong>
-              </span>
-            ))}
-          </span>
+              ))}
+            </span>
+          </>
         ) : (
           <span className={styles.empty} role="status">
             <strong>{snapshot ? 'NO CONQUERED AREAS' : 'STANDINGS LOADING'}</strong>
@@ -147,8 +163,8 @@ export default function ConquerGlance({
           </span>
         )}
         <span className={styles.footer}>
-          <span>TOP 3 OF {allRows.length || '—'}</span>
-          <b>OPEN FULL BOARD ↗</b>
+          <span>SHOWING TOP 3 OF {allRows.length || '—'}</span>
+          <b className={surfaceStyles.primary}>VIEW FULL BOARD ↗</b>
         </span>
       </span>
     </button>

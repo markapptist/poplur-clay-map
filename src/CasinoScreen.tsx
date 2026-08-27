@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './CasinoScreen.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import { playPop } from './pop'
 import {
   beginCasinoAudio,
@@ -681,7 +682,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
       </section>
 
       {paysOpen && (
-        <div className={styles.paysCard} role="dialog" aria-label="Pay table">
+        <div className={`${styles.paysCard} ${surfaceStyles.surface}`} role="dialog" aria-label="Pay table">
           <span className={styles.paysTitle}>PAY TABLE</span>
           <ul className={styles.paysList}>
             {SYMBOLS.map(s => (
@@ -702,7 +703,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
           </p>
           <button
             type="button"
-            className={styles.paysClose}
+            className={`${styles.paysClose} ${surfaceStyles.primary}`}
             onClick={() => { playPop(); setPaysOpen(false) }}
           >
             CLOSE
@@ -712,7 +713,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
 
       {promoOpen && !paysOpen && (
         <div
-          className={styles.promoScrim}
+          className={`${styles.promoScrim} ${surfaceStyles.scrim}`}
           role="presentation"
           onPointerDown={event => {
             // A Poplur pop-up is an interruption, not another screen. Touching
@@ -724,7 +725,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
           }}
         >
           <section
-            className={styles.promoCard}
+            className={`${styles.promoCard} ${surfaceStyles.surface}`}
             role="dialog"
             aria-modal="true"
             aria-label="Sponsored casino advertisement"

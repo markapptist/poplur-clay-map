@@ -107,6 +107,22 @@ WARDROBE_ASSETS=(
   wardrobe-models/Poplur_Atelier_Trousers_Female.glb
   wardrobe-models/Poplur_Atelier_Trousers_Male.glb
 )
+FEED_SIDE_ICON_ASSETS=(
+  poplur-side-buttons/assets/256/feed/mute.png
+  poplur-side-buttons/assets/256/feed/share.png
+  poplur-side-buttons/assets/256/feed/captions.png
+  poplur-side-buttons/assets/256/feed/comments_collapse.png
+  poplur-side-buttons/assets/256/feed/comment.png
+  poplur-side-buttons/assets/256/feed/like.png
+  poplur-side-buttons/assets/256/feed/dislike.png
+  poplur-side-buttons/assets/512/feed/mute.png
+  poplur-side-buttons/assets/512/feed/share.png
+  poplur-side-buttons/assets/512/feed/captions.png
+  poplur-side-buttons/assets/512/feed/comments_collapse.png
+  poplur-side-buttons/assets/512/feed/comment.png
+  poplur-side-buttons/assets/512/feed/like.png
+  poplur-side-buttons/assets/512/feed/dislike.png
+)
 verify_wardrobe_assets() {
   local root="$1"
   local asset
@@ -138,6 +154,17 @@ for (const path of process.argv.slice(2)) {
 NODE
 }
 verify_wardrobe_assets "$BUILD_DIR"
+verify_feed_side_icons() {
+  local root="$1"
+  local asset
+  for asset in "${FEED_SIDE_ICON_ASSETS[@]}"; do
+    if [[ ! -s "$root/$asset" ]]; then
+      echo "Mobile release verification failed: missing Feed side icon $asset in $root." >&2
+      exit 1
+    fi
+  done
+}
+verify_feed_side_icons "$BUILD_DIR"
 # ripgrep is not installed on every machine that runs this script; fall back
 # to plain grep for the same fixed-string check rather than failing the
 # release with a misleading "token was not embedded" error.
@@ -242,13 +269,17 @@ sync_to() {
   # rsync protects excluded paths from --delete, so clear any copies left by
   # an older sync both before and after publishing the new snapshot.
   rm -rf "$dest/models" "$dest/feed" "$dest/channels"
+  # These are root-level downloadable content packs. Anchor the exclusions:
+  # an unanchored `feed/` also strips poplur-side-buttons/.../feed, leaving
+  # the Feed rail's controls present but their seven images broken.
   rsync -a --delete \
-    --exclude 'models/' \
-    --exclude 'feed/' \
-    --exclude 'channels/' \
+    --exclude '/models/' \
+    --exclude '/feed/' \
+    --exclude '/channels/' \
     "$BUILD_DIR/" "$dest/"
   rm -rf "$dest/models" "$dest/feed" "$dest/channels"
   verify_wardrobe_assets "$dest"
+  verify_feed_side_icons "$dest"
   shasum -a 256 public/logo_icon.png "$dest/logo_icon.png" | awk 'NR == 1 { expected = $1 } NR == 2 && $1 != expected { exit 1 }'
 }
 
@@ -267,8 +298,9 @@ rm -f "$RN_TMP"
     -x 'channels/*'
 )
 unzip -tq "$RN_TMP" >/dev/null
-unzip -qq "$RN_TMP" "${WARDROBE_ASSETS[@]}" -d "$RN_VERIFY_DIR"
+unzip -qq "$RN_TMP" "${WARDROBE_ASSETS[@]}" "${FEED_SIDE_ICON_ASSETS[@]}" -d "$RN_VERIFY_DIR"
 verify_wardrobe_assets "$RN_VERIFY_DIR"
+verify_feed_side_icons "$RN_VERIFY_DIR"
 mv -f "$RN_TMP" "$RN_DEST"
 
 # The RN repo no longer TRACKS that zip (it is ~105MB rewritten on every web

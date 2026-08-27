@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './TrophyRoomScreen.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import { playPop } from './pop'
 import { RADIUS_CHANGE_EVENT } from './radiusLedger'
 import {
@@ -142,14 +143,14 @@ export default function TrophyRoomScreen({ bindBack }: {
 
       {open && (
         <div
-          className={styles.overlay}
+          className={`${styles.overlay} ${surfaceStyles.scrim}`}
           role="dialog"
           aria-modal="true"
           aria-label={`${open.name} trophy`}
           onClick={() => { playPop(); setOpen(null) }}
         >
           <div
-            className={styles.card}
+            className={`${styles.card} ${surfaceStyles.surface}`}
             style={{ '--rarity': RARITY_COLOR[open.rarity] } as React.CSSProperties}
             data-earned={open.earnedAt != null ? 'true' : 'false'}
             onClick={e => e.stopPropagation()}

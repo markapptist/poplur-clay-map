@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './popups.module.css'
 import type { SmartCard } from './tourSmarts'
 import CommerceSuggestionWindow, { type SuggestionPrimaryAction } from './CommerceSuggestionWindow'
@@ -275,7 +276,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
           key={item.id}
           data-poplur-native-hit-region={item.kind === 'engagement' ? '' : undefined}
           className={item.kind === 'engagement'
-            ? styles.engage
+            ? `${styles.engage} ${surfaceStyles.surface}`
             : item.kind === 'mapContent'
               ? styles.mapContentWrap
               : styles.suggestWrap}

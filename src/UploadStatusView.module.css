@@ -35,10 +35,9 @@
 .radius { display: flex; align-items: baseline; gap: 6px; }
 .radius b { color: #ff8ec6; font-size: 39px; font-weight: 950; line-height: 1; }
 .radius small { color: #fff; font-size: 12px; font-weight: 900; }
-.postedPopup button { width: 100%; min-width: 0; min-height: 62px; display: grid; grid-template-columns: 46px minmax(0,1fr); align-items: center; gap: 8px; margin-top: 6px; padding: 7px 12px; border: 1px solid rgba(255,255,255,.38); border-radius: 19px; color: #fff; background: linear-gradient(180deg,#ff5bab,#bd0865); box-shadow: 0 6px 0 #6e073e; font: 950 11px/1 system-ui,sans-serif; letter-spacing: .06em; }
+.postedPopup button { width: 100%; min-width: 0; min-height: 62px; display: grid; grid-template-columns: 46px minmax(0,1fr); align-items: center; gap: 8px; margin-top: 6px; padding: 7px 12px; border-radius: 19px; font: 950 11px/1 system-ui,sans-serif; letter-spacing: .06em; }
 .postedPopup button span { min-width: 0; overflow-wrap: anywhere; }
 .postedPopup button img { width: 44px; height: 44px; object-fit: contain; }
-.postedPopup button:active { transform: translateY(4px); box-shadow: 0 2px 0 #6e073e; }
 .confetti { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .confetti i { position: absolute; top: -10%; width: 7px; height: 15px; border-radius: 2px; animation: confetti 3s linear infinite; }
 @keyframes travel { from { transform: translateX(-12%); } to { transform: translateX(150%); } }

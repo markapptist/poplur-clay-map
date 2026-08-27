@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import styles from './UploadStatusView.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 
 const UPLOAD_LINES = [
   'Teaching the globe where your pop lives…',
@@ -63,7 +64,7 @@ export default function UploadStatusView({
           <small>{percent === null ? 'Keeping your capture safe while Poplur sends it.' : 'Your capture is uploading securely.'}</small>
         </div>
       </div>}
-      {complete && <div className={styles.postedOverlay} role='dialog' aria-label={note ? 'Capture saved but not uploaded' : 'Congratulations, your pop is posted'}>
+      {complete && <div className={`${styles.postedOverlay} ${surfaceStyles.scrim}`} role='dialog' aria-label={note ? 'Capture saved but not uploaded' : 'Congratulations, your pop is posted'}>
         <div className={styles.confetti} aria-hidden='true'>
           {Array.from({ length: 30 }, (_, index) => <i key={index} style={{
             '--piece': index,
@@ -72,13 +73,13 @@ export default function UploadStatusView({
             animationDelay: `${(index % 8) * -.22}s`,
           } as CSSProperties} />)}
         </div>
-        <div className={styles.postedPopup}>
+        <div className={`${styles.postedPopup} ${surfaceStyles.surface}`}>
           <img src='/logo_icon.png' alt='' />
           <span>{note ? 'CAPTURE SAVED' : 'POP IS LIVE'}</span>
           <h2>{note ? 'Not uploaded' : 'Congratulations!'}</h2>
           <div className={styles.radius}><b>{radius.toFixed(1)}</b><small>km radius</small></div>
           <p>{note ?? (flow === 'map' ? 'Pinned to your confirmed location' : 'Added to your profile and map')}</p>
-          {onReset && <button type='button' onClick={onReset}>
+          {onReset && <button type='button' className={surfaceStyles.primary} onClick={onReset}>
             <img src={flow === 'map' ? '/sprites/zoom_globe_y20_p12_s256.png' : '/sprites/poplur_camera_kodak_y0_p14_s320.png'} alt='' />
             <span>{flow === 'map' ? 'BACK TO MAP' : 'BACK TO CAMERA'}</span>
           </button>}

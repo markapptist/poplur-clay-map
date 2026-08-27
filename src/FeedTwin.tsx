@@ -44,6 +44,7 @@ import { playPop, playPopAmbient } from './pop'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
 import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 import styles from './FeedTwin.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import { interceptingLive, isLive, onLiveStore } from './liveStore'
 import {
   RADIUS_CHANGE_EVENT,
@@ -2218,9 +2219,16 @@ export default function FeedTwin({
 
       {/* Comment box drops from the top, in the app's clay/glass language. */}
       {commentOpen && (
-        <div className={styles.commentScrim} onClick={closeComments}>
+        <div className={`${styles.commentScrim} ${surfaceStyles.scrim}`} onClick={closeComments}>
           <div
-            className={commentClosing ? `${styles.commentWindow} ${styles.commentWindowOut}` : styles.commentWindow}
+            className={[
+              styles.commentWindow,
+              surfaceStyles.surface,
+              commentClosing ? styles.commentWindowOut : '',
+            ].filter(Boolean).join(' ')}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Comment on ${post?.user ?? ch.user}`}
             onClick={e => e.stopPropagation()}
           >
             {/* the roll drifts upward like end credits */}
@@ -2249,9 +2257,9 @@ export default function FeedTwin({
               </div>
             </div>
 
-            <div className={styles.commentHeading}>
+            <div className={`${styles.commentHeading} ${surfaceStyles.header}`}>
               <div className={styles.commentTitle}>Comment on {post?.user ?? ch.user}</div>
-              <button type="button" className={styles.commentClose} onClick={closeComments} aria-label="Close comments">×</button>
+              <button type="button" className={`${styles.commentClose} ${surfaceStyles.close}`} onClick={closeComments} aria-label="Close comments">×</button>
             </div>
             <div className={styles.commentRow}>
               <input
@@ -2268,8 +2276,8 @@ export default function FeedTwin({
         </div>
       )}
 
-      {commentSent && <div className={styles.commentToast}>Comment posted</div>}
-      {shareNote && <div className={styles.commentToast} role="status">{shareNote}</div>}
+      {commentSent && <div className={`${styles.commentToast} ${surfaceStyles.surface}`} role="status" aria-live="polite">Comment posted</div>}
+      {shareNote && <div className={`${styles.commentToast} ${surfaceStyles.surface}`} role="status" aria-live="polite">{shareNote}</div>}
 
       {/* ── Fullscreen player chrome ──
           The ONLY thing on screen besides the clip: a thin white timeline you

@@ -32,6 +32,19 @@ function fallbackLocation(): NearbyLocation {
 }
 
 /**
+ * The React Native web preview owns permission presentation just like the
+ * native shells. Its nested clay document must therefore never ask Chromium
+ * for a second, generic location permission. Plain standalone browser builds
+ * retain their normal geolocation behaviour.
+ */
+export function shouldUseBrowserGeolocation(
+  search: string,
+  nativeShell: boolean,
+): boolean {
+  return !nativeShell && new URLSearchParams(search).get('managedLocation') !== '1'
+}
+
+/**
  * One native-first location flow for media discovery.
  *
  * The native shell already owns the OS location permission, so these screens
@@ -73,7 +86,8 @@ export function useNearbyLocation(): NearbyLocation | null {
 
     const timer = window.setTimeout(() => {
       if (settled || disposed) return
-      if (!isNativeShell() && navigator.geolocation) {
+      if (shouldUseBrowserGeolocation(window.location.search, isNativeShell())
+        && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           position => accept({
             latitude: position.coords.latitude,

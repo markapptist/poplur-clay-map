@@ -14,11 +14,21 @@ export const MAP_BROWSE_3D_PITCH = 32
 export const MAP_BROWSE_3D_MAX_PITCH = 42
 export const MAP_BROWSE_3D_BEARING = 0
 
-/** Low-rise homes stay as inexpensive flat footprints. */
-export const MAP_SUBSTANTIAL_BUILDING_HEIGHT_M = 18
-/** iPhone's ordinary native ceiling maps to REDUCED. Keep that baseline
- * dimensional, but spend fewer extrusion vertices than desktop FULL. */
-export const MAP_REDUCED_SUBSTANTIAL_BUILDING_HEIGHT_M = 24
+/**
+ * Close-up depth is count-bounded, so a nearby house no longer needs to be
+ * flattened merely because it is short. Unknown-height footprints are drawn
+ * as the same conservative two-storey clay form used by the layer itself.
+ */
+export const MAP_BUILDING_DETAIL_MIN_HEIGHT_M = 6
+
+/** At most this many camera-near footprints become real extrusion geometry. */
+export const MAP_BUILDING_DETAIL_BUDGET_FULL = 30
+/** Normal iPhone quality is REDUCED; retain the close-up read with less work. */
+export const MAP_BUILDING_DETAIL_BUDGET_REDUCED = 18
+/** Keep one stable footprint out of every three before applying the hard cap.
+ * This is the user's requested close-map density, not an adaptive frame-rate
+ * heuristic, so a building never flickers between flat and 3D while panning. */
+export const MAP_BUILDING_DETAIL_SAMPLE_DIVISOR = 3
 
 /** Intentional landmark models keep their existing close framing. */
 export const MAP_LANDMARK_3D_MIN_ZOOM = 15
@@ -36,6 +46,21 @@ export interface MapBrowsePresentation {
   bearing: number
   minPitch: number
   maxPitch: number
+}
+
+export type MapBuildingDetailIntent = 'browse' | 'authored' | 'street'
+
+export interface MapBuildingDetailPlanInput {
+  intent: MapBuildingDetailIntent
+  zoom: number
+  pitch: number
+  wasThreeDimensional: boolean
+  performanceMode: PoplurPerformanceMode
+}
+
+export interface MapBuildingDetailPlan {
+  threeDimensional: boolean
+  maxDetailedBuildings: number
 }
 
 /**
@@ -115,15 +140,128 @@ export function mapBuildingExtrusionRadiusM(
   return reduced ? 520 : 760
 }
 
-/** Height floor paired with the radius above. REDUCED keeps only mid-rise and
- * taller geometry; every low-rise footprint remains visible in the flat clay
- * layer underneath. */
+/** Height floor paired with the radius above. Count-bounding now carries the
+ * thermal load, so nearby homes can stay dimensional while every unselected
+ * footprint remains visible in the flat clay layer underneath. */
 export function mapBuildingExtrusionMinHeightM(
+  _performanceMode: PoplurPerformanceMode,
+): number {
+  return MAP_BUILDING_DETAIL_MIN_HEIGHT_M
+}
+
+export function mapBuildingDetailBudget(
   performanceMode: PoplurPerformanceMode,
 ): number {
+  if (performanceMode === 'LOW_POWER' || performanceMode === 'EMERGENCY') return 0
   return performanceMode === 'REDUCED'
-    ? MAP_REDUCED_SUBSTANTIAL_BUILDING_HEIGHT_M
-    : MAP_SUBSTANTIAL_BUILDING_HEIGHT_M
+    ? MAP_BUILDING_DETAIL_BUDGET_REDUCED
+    : MAP_BUILDING_DETAIL_BUDGET_FULL
+}
+
+/**
+ * One pure gate for the bounded building-detail batch, regardless of which
+ * camera path is active. The thermal budget is checked first so an authored
+ * flight or Street View transition can never resurrect geometry after Map has
+ * been downgraded to LOW_POWER or EMERGENCY.
+ */
+export function mapBuildingDetailPlan({
+  intent,
+  zoom,
+  pitch,
+  wasThreeDimensional,
+  performanceMode,
+}: MapBuildingDetailPlanInput): MapBuildingDetailPlan {
+  const maxDetailedBuildings = mapBuildingDetailBudget(performanceMode)
+  if (maxDetailedBuildings <= 0) {
+    return { threeDimensional: false, maxDetailedBuildings: 0 }
+  }
+
+  let threeDimensional = false
+  if (intent === 'browse') {
+    threeDimensional = mapBrowsePresentation({
+      zoom,
+      wasThreeDimensional,
+      performanceMode,
+    }).threeDimensional
+  } else if (intent === 'authored') {
+    // Authored movement may retain its camera angle, but district geometry is
+    // still reserved for the same close scale as ordinary browsing.
+    threeDimensional = zoom >= MAP_BROWSE_3D_ENTER_ZOOM && pitch > 0
+  } else {
+    // Street intent is already an explicit, close-up user choice. The shared
+    // budget above remains its hard device/thermal guard.
+    threeDimensional = performanceMode === 'FULL' || performanceMode === 'REDUCED'
+  }
+
+  return {
+    threeDimensional,
+    maxDetailedBuildings: threeDimensional ? maxDetailedBuildings : 0,
+  }
+}
+
+export interface MapBuildingDetailCandidate {
+  id: string | number | null | undefined
+  distanceM: number
+  heightM: number
+}
+
+/** Feature-id sampling spreads the retained third across the view. Selecting
+ * the nearest N without sampling produced a solid 3D island at camera centre;
+ * a stable hash keeps the sparse skyline visually continuous and does not
+ * change when vector-tile fragments arrive in a different order. */
+function mapBuildingDetailSampled(id: string | number): boolean {
+  const text = `${typeof id}:${String(id)}`
+  let hash = 0x811c9dc5
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0) % MAP_BUILDING_DETAIL_SAMPLE_DIVISOR === 0
+}
+
+/**
+ * Select the closest stable feature ids for the one detailed 3D batch.
+ * Duplicated vector-tile fragments collapse to one id; the stable one-in-three
+ * sample is spatially distributed across a typical tile, then nearest-camera
+ * ordering and the device cap provide a second, absolute thermal bound.
+ */
+export function nearestMapBuildingDetailIds(
+  candidates: readonly MapBuildingDetailCandidate[],
+  performanceMode: PoplurPerformanceMode,
+  minHeightM = mapBuildingExtrusionMinHeightM(performanceMode),
+  maxDistanceM = Number.POSITIVE_INFINITY,
+): Array<string | number> {
+  const budget = mapBuildingDetailBudget(performanceMode)
+  if (budget <= 0) return []
+
+  const nearestById = new Map<string, MapBuildingDetailCandidate & { id: string | number }>()
+  for (const candidate of candidates) {
+    if ((typeof candidate.id !== 'string' && typeof candidate.id !== 'number')
+      || !Number.isFinite(candidate.distanceM)
+      || candidate.distanceM < 0
+      || candidate.distanceM > maxDistanceM
+      || !Number.isFinite(candidate.heightM)
+      || candidate.heightM < minHeightM) continue
+    const key = `${typeof candidate.id}:${String(candidate.id)}`
+    const previous = nearestById.get(key)
+    if (!previous || candidate.distanceM < previous.distanceM) {
+      nearestById.set(key, candidate as MapBuildingDetailCandidate & { id: string | number })
+    }
+  }
+
+  const ordered = [...nearestById.values()]
+    .sort((a, b) => a.distanceM - b.distanceM
+      || `${typeof a.id}:${String(a.id)}`.localeCompare(`${typeof b.id}:${String(b.id)}`))
+
+  const sampled = ordered.filter(candidate => mapBuildingDetailSampled(candidate.id))
+  // A single close building should still reveal depth even when its hash falls
+  // outside the retained bucket. This affects only tiny candidate sets and is
+  // still bounded to one extrusion.
+  if (!sampled.length && ordered.length) sampled.push(ordered[0])
+
+  return sampled
+    .slice(0, budget)
+    .map(candidate => candidate.id)
 }
 
 /** Wake a single bounded landmark before its camera arrives. Wide landmarks

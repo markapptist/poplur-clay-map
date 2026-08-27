@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SmartCard } from './tourSmarts'
-import BoundedPopupVideo from './BoundedPopupVideo'
 import { normalizeInAppBrowserURL, openInPoplurBrowser } from './inAppBrowser'
 import NewsPopCard from './NewsPopCard'
 import { playPop } from './pop'
@@ -80,185 +79,56 @@ export default function CommerceSuggestionWindow({
     onClose()
   }
 
-  if (variant === 'popup') {
-    const media = shot
-      ? { kind: 'image' as const, src: shot, alt: card.media?.alt ?? card.headline }
+  const media = shot
+    ? { kind: 'image' as const, src: shot, alt: card.media?.alt ?? card.headline }
+    // Camera already owns a live preview and ML pass. Keep its ad on the News
+    // surface without starting a second decoder; the approved poster remains
+    // the bounded visual fallback.
+    : variant === 'camera' && card.media?.kind === 'video'
+      ? card.media.poster
+        ? { kind: 'image' as const, src: card.media.poster, alt: card.media.alt }
+        : undefined
       : card.media
-    const runAppAction = action ? () => {
-      playPop()
-      onInteract?.()
-      action.onActivate()
-      onClose()
-    } : undefined
-    const browserAction = safeLink ? () => openBrowser() : undefined
-    const rows = card.rows?.slice(0, 3).map(row => `${row.label}: ${row.value}`).join(' · ')
-
-    return (
-      <NewsPopCard
-        embedded
-        status="POPLUR AD"
-        statusKind="ad"
-        place={card.sponsor ?? card.title}
-        title={card.headline}
-        summary={livePlace?.summary ?? card.line}
-        summaryLabel="POPLUR PICK"
-        meta={(
-          <>
-            {rows}
-            {rows && livePlace && ' · '}
-            {livePlace && normalizeInAppBrowserURL(livePlace.sourceUrl) && (
-              <button
-                type="button"
-                className={styles.newsSource}
-                onClick={() => openBrowser(livePlace.sourceUrl)}
-              >{livePlace.sourceLabel}</button>
-            )}
-          </>
-        )}
-        media={media}
-        onMediaActivate={browserAction}
-        onClose={() => { playPop(); onClose() }}
-        primaryAction={runAppAction ? { label: action?.label ?? 'OPEN', onActivate: runAppAction }
-          : browserAction ? { label: card.link?.label ?? 'SEE DEAL', onActivate: browserAction }
-            : undefined}
-        secondaryAction={runAppAction && browserAction
-          ? { label: card.link?.label ?? 'SEE DEAL', onActivate: browserAction }
-          : undefined}
-      />
-    )
-  }
-
-  const windowStyle = {
-    '--ad-accent': card.accent ?? '#ff2d91',
-    '--ad-accent-2': card.accent2 ?? '#67dcff',
-  } as React.CSSProperties
-
-  const closeFromSurface = (event: React.MouseEvent<HTMLElement>) => {
-    // House rule for every ad: the ONLY press that does not dismiss is the
-    // ad's own call to action. Everything else — the artwork, the headline,
-    // the window chrome, the minimize and zoom lights — is a close target.
-    //
-    // This used to exempt `button, a, iframe` wholesale, which meant the
-    // window controls quietly ate taps that were meant to get rid of the ad.
-    // Actions now opt IN by carrying data-ad-action, so a control added later
-    // dismisses by default rather than becoming another way to be stuck.
-    //
-    event.stopPropagation()
-    const target = event.target
-    if (target instanceof Element && target.closest('[data-ad-action]')) return
+  const runAppAction = action ? () => {
     playPop()
+    onInteract?.()
+    action.onActivate()
     onClose()
-  }
+  } : undefined
+  const browserAction = safeLink ? () => openBrowser() : undefined
+  const rows = card.rows?.slice(0, 3).map(row => `${row.label}: ${row.value}`).join(' · ')
 
   return (
-    <section
-      data-poplur-native-hit-region
-      className={[styles.window, styles.camera].join(' ')}
-      style={windowStyle}
-      role="dialog"
-      aria-label={card.headline}
-      onPointerDown={event => event.stopPropagation()}
-      onPointerUp={event => event.stopPropagation()}
-      onClick={closeFromSurface}
-    >
-      <header className={styles.titleBar}>
-        <div className={styles.traffic} aria-label="Window controls">
-          <button type="button" className={`${styles.light} ${styles.close}`} aria-label="Close ad" onClick={() => { playPop(); onClose() }} />
-          <button
-            type="button"
-            className={`${styles.light} ${styles.minimize}`}
-            aria-label="Close ad"
-            onClick={() => { playPop(); onClose() }}
-          />
-          <button
-            type="button"
-            className={`${styles.light} ${styles.zoom}`}
-            aria-label="Close ad"
-            onClick={() => { playPop(); onClose() }}
-          />
-        </div>
-        <span className={styles.windowTitle}>{card.sponsor ?? 'Poplur Shopping Network'}</span>
-        <span className={styles.secure}>AD</span>
-      </header>
-
-      <>
-          <div className={styles.media}>
-            {shot ? (
-              /* Real product artwork wins over the bundled clip. A STILL, not a
-                 video: this card sits over a live camera preview on a surface
-                 already running ML, and a second decoder there is the exact
-                 shape of regression the thermal gate exists to catch. */
-              <img src={shot} alt={card.media?.alt ?? 'Product'} draggable={false} />
-            ) : card.media?.kind === 'video' ? (
-              <BoundedPopupVideo
-                key={card.media.src}
-                src={card.media.src}
-                poster={card.media.poster}
-                alt={card.media.alt}
-                disablePictureInPicture
-              />
-            ) : card.media ? (
-              <img src={card.media.src} alt={card.media.alt} draggable={false} />
-            ) : (
-              <div className={styles.noMedia} aria-hidden="true"><span>POPLUR</span><b>SHOP TV</b></div>
-            )}
-            <span className={styles.mediaShade} aria-hidden="true" />
-            <span className={styles.channelTag}>{card.channelTag ?? 'POPLUR SHOP TV · LIVE'}</span>
-            <span className={styles.sponsorTag}>{card.sponsor ?? card.title}</span>
-            <span className={styles.burst} aria-label={card.badge ?? 'Hot deal'}>{card.badge ?? 'KAPOW!'}</span>
-            {/* Attribution for the place creative — kept live under the
-                close-on-any-press rule because it is the source credit the
-                data is used under, not ad furniture. */}
-            {livePlace && normalizeInAppBrowserURL(livePlace.sourceUrl) && (
-              <button
-                type="button"
-                className={styles.liveSource}
-                data-ad-action=""
-                onClick={event => { event.stopPropagation(); openBrowser(livePlace.sourceUrl) }}
-              >{livePlace.sourceLabel}</button>
-            )}
-          </div>
-
-          <div className={styles.lowerThird}>
-            <span className={styles.kicker}>POPLUR AI PICKS · {card.title}</span>
-            <strong className={styles.headline}>{card.headline}</strong>
-            {livePlace?.summary && <span className={styles.liveSummary}>{livePlace.summary}</span>}
-            {card.rows && card.rows.length > 0 && (
-              <span className={styles.rows}>
-                {card.rows.slice(0, 3).map(row => (
-                  <span className={styles.row} key={`${row.label}:${row.value}`}>
-                    <span>{row.label}</span><b>{row.value}</b>
-                  </span>
-                ))}
-              </span>
-            )}
-          </div>
-
-          {(action || safeLink) && (
-            <footer className={styles.actions}>
-              {action && (
-                <button
-                  type="button"
-                  className={styles.primary}
-                  data-ad-action=""
-                  onClick={() => {
-                    playPop()
-                    onInteract?.()
-                    action.onActivate()
-                    onClose()
-                  }}
-                >
-                  {action.label}
-                </button>
-              )}
-              {safeLink && (
-                <button type="button" className={styles.shop} data-ad-action="" onClick={() => openBrowser()}>
-                  {card.link?.label ?? 'SEE DEAL'}
-                </button>
-              )}
-            </footer>
+    <NewsPopCard
+      embedded
+      status="POPLUR AD"
+      statusKind="ad"
+      place={card.sponsor ?? card.title}
+      title={card.headline}
+      summary={livePlace?.summary ?? card.line}
+      summaryLabel="POPLUR PICK"
+      meta={(
+        <>
+          {rows}
+          {rows && livePlace && ' · '}
+          {livePlace && normalizeInAppBrowserURL(livePlace.sourceUrl) && (
+            <button
+              type="button"
+              className={styles.newsSource}
+              onClick={() => openBrowser(livePlace.sourceUrl)}
+            >{livePlace.sourceLabel}</button>
           )}
-      </>
-    </section>
+        </>
+      )}
+      media={media}
+      onMediaActivate={browserAction}
+      onClose={() => { playPop(); onClose() }}
+      primaryAction={runAppAction ? { label: action?.label ?? 'OPEN', onActivate: runAppAction }
+        : browserAction ? { label: card.link?.label ?? 'SEE DEAL', onActivate: browserAction }
+          : undefined}
+      secondaryAction={runAppAction && browserAction
+        ? { label: card.link?.label ?? 'SEE DEAL', onActivate: browserAction }
+        : undefined}
+    />
   )
 }

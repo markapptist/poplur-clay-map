@@ -1,4 +1,5 @@
 import React from 'react'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './PermissionAlert.module.css'
 
 // The app's permission alert.
@@ -46,8 +47,8 @@ export default function PermissionAlert({
             : styles.iconPhotos
 
   return (
-    <div className={styles.scrim}>
-      <div className={styles.alert} role="dialog" aria-label={label}>
+    <div className={`${styles.scrim} ${surfaceStyles.scrim}`}>
+      <div className={`${styles.alert} ${surfaceStyles.surface}`} role="dialog" aria-label={label}>
         <div className={styles.content}>
           <div className={`${styles.icon} ${iconClass}`} aria-hidden="true" />
           <h2 className={`${styles.title} ${styles.shader}`}>{title}</h2>
@@ -57,7 +58,7 @@ export default function PermissionAlert({
           {choices.map(choice => (
             <button
               key={choice.label}
-              className={styles.action}
+              className={`${styles.action} ${choice.grants ? surfaceStyles.primary : surfaceStyles.secondary}`}
               type="button"
               onClick={choice.onPick}
             >

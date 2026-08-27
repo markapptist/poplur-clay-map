@@ -1,3 +1,4 @@
+import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './IncomingCallPopup.module.css'
 
 /** The universal phone-handset glyph already approved for this exact feature
@@ -26,8 +27,8 @@ export default function IncomingCallPopup({
   const initial = call.callerName.trim().charAt(0).toUpperCase() || '?'
   return (
     <div className={styles.band} role="alertdialog" aria-label={`Incoming call from ${call.callerName}`}>
-      <div className={styles.scrim} aria-hidden="true" />
-      <div className={styles.card}>
+      <div className={`${styles.scrim} ${surfaceStyles.scrim}`} aria-hidden="true" />
+      <div className={`${styles.card} ${surfaceStyles.surface}`}>
         <div className={styles.eyebrow}>
           <svg className={styles.eyebrowIcon} viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
             <path d={HANDSET_PATH} />
@@ -39,12 +40,12 @@ export default function IncomingCallPopup({
         <div className={styles.sub}>{call.video ? 'FaceTime video' : 'Poplur Call'}</div>
         <div className={styles.hint}>Tap the cube to accept &middot; double-tap to decline</div>
         <div className={styles.actions}>
-          <button type="button" className={styles.decline} onClick={onDecline} aria-label="Decline call">
+          <button type="button" className={`${styles.decline} ${surfaceStyles.secondary}`} onClick={onDecline} aria-label="Decline call">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
               <g transform="rotate(135 12 12)"><path d={HANDSET_PATH} /></g>
             </svg>
           </button>
-          <button type="button" className={styles.accept} onClick={onAccept} aria-label="Accept call">
+          <button type="button" className={`${styles.accept} ${surfaceStyles.primary}`} onClick={onAccept} aria-label="Accept call">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
               <path d={HANDSET_PATH} />
             </svg>

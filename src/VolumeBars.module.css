@@ -18,10 +18,6 @@
   gap: 6.4px;
   touch-action: none;
   border-radius: 16px;
-  background: rgba(12, 12, 14, 0.38);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 0 0 1px rgba(246, 59, 154, 0.22), 0 8px 24px rgba(5, 4, 7, 0.5);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s ease-in;

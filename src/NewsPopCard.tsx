@@ -1,6 +1,7 @@
 import type { KeyboardEvent, ReactNode } from 'react'
 import BoundedPopupVideo from './BoundedPopupVideo'
 import styles from './MapNewsCard.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 
 export interface NewsPopMedia {
   kind: 'image' | 'video'
@@ -65,15 +66,15 @@ export default function NewsPopCard({
       onClick={event => event.stopPropagation()}
     >
       <article
-        className={styles.card}
+        className={`${styles.card} ${surfaceStyles.surface}`}
         role="dialog"
         aria-modal="true"
         aria-label={`${status}: ${title}`}
       >
-        <header data-has-controls={headerControls ? 'true' : 'false'}>
+        <header className={surfaceStyles.header} data-has-controls={headerControls ? 'true' : 'false'}>
           <span className={styles.status} data-status={statusKind}>{status}</span>
           {headerControls}
-          <button type="button" className={styles.close} aria-label={`Close ${status.toLowerCase()}`} onClick={onClose}>×</button>
+          <button type="button" className={`${styles.close} ${surfaceStyles.close}`} aria-label={`Close ${status.toLowerCase()}`} onClick={onClose}>×</button>
         </header>
         {media && (
           <figure
@@ -112,12 +113,12 @@ export default function NewsPopCard({
           {(primaryAction || secondaryAction) && (
             <div className={styles.actions}>
               {primaryAction && (
-                <button type="button" className={styles.read} onClick={primaryAction.onActivate}>
+                <button type="button" className={`${styles.read} ${surfaceStyles.primary}`} onClick={primaryAction.onActivate}>
                   {primaryAction.label} <span aria-hidden="true">›</span>
                 </button>
               )}
               {secondaryAction && (
-                <button type="button" className={styles.secondary} onClick={secondaryAction.onActivate}>
+                <button type="button" className={`${styles.secondary} ${surfaceStyles.secondary}`} onClick={secondaryAction.onActivate}>
                   {secondaryAction.label}
                 </button>
               )}

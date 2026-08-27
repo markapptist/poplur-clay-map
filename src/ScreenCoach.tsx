@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './ScreenCoach.module.css'
 
 // The first-open coaching card, the way a camera app teaches its gestures.
@@ -103,7 +104,7 @@ export default function ScreenCoach({ id, title, lines, split, pinArrows }: Coac
         </div>
       )}
 
-      <div className={styles.card}>
+      <div className={`${styles.card} ${surfaceStyles.surface}`}>
         <p className={styles.title}>{title}</p>
         <ul className={styles.lines}>
           {lines.map(line => <li key={line}>{line}</li>)}

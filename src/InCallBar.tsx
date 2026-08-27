@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './InCallBar.module.css'
 import {
   subscribeCall,
@@ -62,7 +63,7 @@ export default function InCallBar({
   const live = call.phase === 'connected'
 
   return (
-    <div className={styles.bar} role="dialog" aria-label={`Call with ${call.peerName || 'contact'}`}>
+    <div className={`${styles.bar} ${surfaceStyles.surface}`} role="dialog" aria-label={`Call with ${call.peerName || 'contact'}`}>
       <div className={styles.who}>
         <span className={live ? `${styles.dot} ${styles.dotLive}` : styles.dot} aria-hidden="true" />
         <strong className={styles.name}>{(call.peerName || 'CONTACT').replace(/^@/, '').toUpperCase()}</strong>

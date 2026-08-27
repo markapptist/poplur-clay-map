@@ -91,6 +91,7 @@ import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import MapNewsButton from './MapNewsButton'
 import MapNewsCard from './MapNewsCard'
+import { mapNewsOpenMessage } from './mapNewsBridge'
 import {
   liveNewsCameraFrame,
   loadLiveNews,
@@ -148,6 +149,7 @@ import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
 import styles from './App.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
@@ -1820,6 +1822,18 @@ export default function App() {
       status: null,
     }, '*')
   }, [])
+  const openPoplurNewsEdition = useCallback((eventId?: string | null) => {
+    if (window.parent !== window) {
+      window.parent.postMessage(mapNewsOpenMessage(eventId), '*')
+      return
+    }
+    const newsURL = new URL(window.location.href)
+    newsURL.search = ''
+    newsURL.searchParams.set('view', 'holdmenu')
+    newsURL.searchParams.set('holdScreen', 'feed-news')
+    if (eventId) newsURL.searchParams.set('newsEvent', eventId)
+    window.location.assign(newsURL.toString())
+  }, [])
   const cancelTourTimer = useCallback((timer: number) => {
     if (!timer) return
     window.clearTimeout(timer)
@@ -2137,6 +2151,15 @@ export default function App() {
       beginNewsTour(newsTourEvents, firstEvent)
       return
     }
+    // The edition remains useful when its geolocated live wire is unavailable.
+    // Do not make a visible newspaper button re-run a known failed request and
+    // then appear inert; open Poplur News immediately after the first failure.
+    if (liveNews.source === 'empty' && liveNews.error) {
+      stopTour()
+      setTourLine('Live news tour unavailable — opening the latest Poplur News edition.')
+      openPoplurNewsEdition()
+      return
+    }
     stopTour()
     const requestSerial = ++newsStartSerialRef.current
     newsTourPendingRef.current = true
@@ -2147,7 +2170,8 @@ export default function App() {
       if (!mapFrontRef.current || document.visibilityState !== 'visible') return
       const events = snapshot.stale ? [] : tourEligibleLiveNewsEvents(snapshot.events)
       if (!events.length) {
-        setTourLine('No current verified live-news stops are available right now.')
+        setTourLine('No current verified live-news stops — opening the latest Poplur News edition.')
+        openPoplurNewsEdition()
         return
       }
       beginNewsTour(events, firstEvent)
@@ -2156,7 +2180,7 @@ export default function App() {
       newsTourPendingRef.current = false
       setNewsTourPending(false)
     })
-  }, [beginNewsTour, liveNews.loading, newsTourEvents, stopTour])
+  }, [beginNewsTour, liveNews.error, liveNews.loading, liveNews.source, newsTourEvents, openPoplurNewsEdition, stopTour])
 
   // A provider-degraded edition remains readable in News, but it must not
   // keep moving the map under a LIVE/BREAKING presentation.
@@ -3686,28 +3710,16 @@ export default function App() {
           onRead={() => {
             const eventId = activeNewsStop.event.id
             stopTour()
-            if (window.parent !== window) {
-              window.parent.postMessage({
-                type: 'poplur-map-open-news',
-                eventId,
-              }, '*')
-              return
-            }
-            const newsURL = new URL(window.location.href)
-            newsURL.search = ''
-            newsURL.searchParams.set('view', 'holdmenu')
-            newsURL.searchParams.set('holdScreen', 'feed-news')
-            newsURL.searchParams.set('newsEvent', eventId)
-            window.location.assign(newsURL.toString())
+            openPoplurNewsEdition(eventId)
           }}
         />
       )}
 
       {searchOpen && (
-        <div className={styles.searchScrim} onClick={closeSearch}>
+        <div className={`${styles.searchScrim} ${surfaceStyles.scrim}`} onClick={closeSearch}>
         <div
           ref={searchPanelRef}
-          className={searchClosing ? `${styles.searchPanel} ${styles.searchPanelOut}` : styles.searchPanel}
+          className={`${styles.searchPanel} ${surfaceStyles.surface}${searchClosing ? ` ${styles.searchPanelOut}` : ''}`}
           style={{ maxHeight: '64dvh' }}
           onClick={e => e.stopPropagation()}
           onKeyDown={handleSearchDialogKeyDown}
@@ -3745,22 +3757,7 @@ export default function App() {
             type="button"
             aria-label="Close place search"
             onClick={() => { playPop(0.2); closeSearch() }}
-            style={{
-              position: 'absolute',
-              zIndex: 2,
-              top: 9,
-              right: 9,
-              width: 44,
-              height: 44,
-              padding: '0 0 3px',
-              border: '1px solid rgba(255, 135, 205, 0.82)',
-              borderRadius: '50%',
-              color: '#fff3fb',
-              background: 'linear-gradient(180deg, #f650aa, #a71567)',
-              boxShadow: '0 0 10px rgba(255, 63, 169, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.42)',
-              font: '900 26px/1 system-ui, sans-serif',
-              cursor: 'pointer',
-            }}
+            className={`${styles.searchClose} ${surfaceStyles.close}`}
           >
             ×
           </button>
@@ -3772,7 +3769,7 @@ export default function App() {
                   <button
                     key={destination.id}
                     type="button"
-                    className={styles.searchShortcut}
+                    className={`${styles.searchShortcut} ${surfaceStyles.secondary}`}
                     onClick={() => flyToPlace(destination.coords, destination.name)}
                   >
                     <span>{displayPlaceName(destination.name)}</span>
@@ -3787,7 +3784,7 @@ export default function App() {
             <button
               key={hit.name}
               type="button"
-              className={styles.searchHit}
+              className={`${styles.searchHit} ${surfaceStyles.secondary}`}
               onPointerDown={event => event.stopPropagation()}
               onClick={event => {
                 event.stopPropagation()

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { askForMotion } from './motionPermission'
 import { createPortal } from 'react-dom'
 import styles from './ProfileTwin.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { OTHER_POPS } from './data'
@@ -2643,9 +2644,9 @@ export default function ProfileTwin({
           <p className={styles.viewerHint}>▲ ▼ browse your posts</p>
 
           {viewerCommentOpen && (
-            <div className={styles.viewerDialogScrim} onClick={() => setViewerCommentOpen(false)}>
+            <div className={`${styles.viewerDialogScrim} ${surfaceStyles.scrim}`} onClick={() => setViewerCommentOpen(false)}>
               <div
-                className={styles.viewerDialog}
+                className={`${styles.viewerDialog} ${surfaceStyles.surface}`}
                 role="dialog"
                 aria-modal="true"
                 aria-label="Comment on this post"
@@ -2668,17 +2669,17 @@ export default function ProfileTwin({
                     onChange={event => setViewerCommentText(event.target.value)}
                     onKeyDown={event => { if (event.key === 'Enter') sendViewerComment() }}
                   />
-                  <button type="button" onClick={sendViewerComment} disabled={!viewerCommentText.trim()}>Post</button>
+                  <button type="button" className={surfaceStyles.primary} onClick={sendViewerComment} disabled={!viewerCommentText.trim()}>Post</button>
                 </div>
-                <button type="button" className={styles.viewerDialogCancel} onClick={() => setViewerCommentOpen(false)}>Cancel</button>
+                <button type="button" className={`${styles.viewerDialogCancel} ${surfaceStyles.secondary}`} onClick={() => setViewerCommentOpen(false)}>Cancel</button>
               </div>
             </div>
           )}
 
           {deletePromptPost && !deletePending && (
-            <div className={styles.viewerDialogScrim} onClick={() => setDeletePromptPost(null)}>
+            <div className={`${styles.viewerDialogScrim} ${surfaceStyles.scrim}`} onClick={() => setDeletePromptPost(null)}>
               <div
-                className={`${styles.viewerDialog} ${styles.viewerDeleteDialog}`}
+                className={`${styles.viewerDialog} ${styles.viewerDeleteDialog} ${surfaceStyles.surface}`}
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby="profile-delete-title"
@@ -2688,16 +2689,16 @@ export default function ProfileTwin({
                 <h2 id="profile-delete-title">Delete this post?</h2>
                 <p id="profile-delete-copy">It will be removed from your profile. This cannot be undone.</p>
                 <div className={styles.viewerDialogActions}>
-                  <button type="button" onClick={() => setDeletePromptPost(null)}>Keep it</button>
-                  <button type="button" className={styles.viewerDialogDanger} onClick={confirmViewerDelete}>Delete</button>
+                  <button type="button" className={surfaceStyles.secondary} onClick={() => setDeletePromptPost(null)}>Keep it</button>
+                  <button type="button" className={`${styles.viewerDialogDanger} ${surfaceStyles.primary}`} onClick={confirmViewerDelete}>Delete</button>
                 </div>
               </div>
             </div>
           )}
 
           {deletePending && (
-            <div className={styles.viewerDialogScrim}>
-              <div className={`${styles.viewerDialog} ${styles.viewerDeleteDialog}`} role="status" aria-live="polite">
+            <div className={`${styles.viewerDialogScrim} ${surfaceStyles.scrim}`}>
+              <div className={`${styles.viewerDialog} ${styles.viewerDeleteDialog} ${surfaceStyles.surface}`} role="status" aria-live="polite">
                 <h2>Deleting post…</h2>
                 <p>Removing it from your profile.</p>
               </div>
@@ -2706,8 +2707,8 @@ export default function ProfileTwin({
 
           {/* ── Poplur share alert: DM inside, or hand it to the OS ── */}
           {shareOpen && (
-            <div className={styles.shareScrim} onClick={() => setShareOpen(false)}>
-              <div className={styles.shareAlert} onClick={e => e.stopPropagation()}>
+            <div className={`${styles.shareScrim} ${surfaceStyles.scrim}`} onClick={() => setShareOpen(false)}>
+              <div className={`${styles.shareAlert} ${surfaceStyles.surface}`} role="dialog" aria-modal="true" aria-label="Send this pop" onClick={e => e.stopPropagation()}>
                 <div className={styles.shareContent}>
                   <div className={styles.shareIcon} aria-hidden="true" />
                   <h2 className={`${styles.shareTitle} ${styles.shareShader}`}>Send this pop</h2>
@@ -2752,12 +2753,12 @@ export default function ProfileTwin({
             </div>
           )}
 
-          {shareNote && <div className={styles.shareNote}>{shareNote}</div>}
+          {shareNote && <div className={`${styles.shareNote} ${surfaceStyles.surface}`} role="status" aria-live="polite">{shareNote}</div>}
 
       {/* Direct message to the person whose profile you are on. */}
       {mailingUser && (
-        <div className={styles.shareScrim} onClick={() => setMailingUser(false)}>
-          <div className={styles.shareAlert} onClick={e => e.stopPropagation()}>
+        <div className={`${styles.shareScrim} ${surfaceStyles.scrim}`} onClick={() => setMailingUser(false)}>
+          <div className={`${styles.shareAlert} ${surfaceStyles.surface}`} role="dialog" aria-modal="true" aria-label={`Message ${shownName}`} onClick={e => e.stopPropagation()}>
             <div className={styles.shareContent}>
               <div className={styles.shareIcon} aria-hidden="true" />
               <h2 className={`${styles.shareTitle} ${styles.shareShader}`}>Message {shownName}</h2>

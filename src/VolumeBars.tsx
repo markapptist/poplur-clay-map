@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { getVoiceMasterVolume, setVoiceMasterVolume } from './voiceAudio'
 import { setWeatherMasterVolume } from './weatherAudio'
 import { playPop } from './pop'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './VolumeBars.module.css'
 
 // Web twin of the app's PoplurVolumeBars (VolumeOverlaySystem.swift), matched
@@ -83,7 +84,7 @@ export default function VolumeBars() {
     <>
       <div
         ref={railRef}
-        className={awake ? styles.railAwake : styles.rail}
+        className={`${awake ? styles.railAwake : styles.rail} ${surfaceStyles.surface}`}
         role="slider"
         aria-label="Volume"
         aria-valuemin={0}

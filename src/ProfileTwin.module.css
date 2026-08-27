@@ -1151,8 +1151,6 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(10, 2, 8, .62);
-  backdrop-filter: blur(7px);
 }
 
 .viewerDialog {
@@ -1161,27 +1159,19 @@
   overflow: auto;
   box-sizing: border-box;
   padding: 20px;
-  border: 1px solid rgba(255, 255, 255, .5);
-  border-radius: 22px;
-  color: #28131f;
-  background:
-    radial-gradient(circle at 25% 0, rgba(255, 255, 255, .9), transparent 38%),
-    linear-gradient(155deg, rgba(255, 247, 251, .98), rgba(255, 220, 238, .96));
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 20px 52px rgba(57, 0, 30, .48);
   text-align: center;
 }
 
 .viewerDialog h2 {
   margin: 0 0 8px;
-  color: #68123d;
+  color: #fff8fb;
   font: 950 19px/1.1 "Arial Rounded MT Bold", ui-rounded, system-ui, sans-serif;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, .68);
 }
 
 .viewerDialog > p {
   margin: 0;
-  color: rgba(40, 19, 31, .74);
+  color: rgba(255, 231, 244, .78);
   font: 750 12px/1.45 system-ui, sans-serif;
 }
 
@@ -1198,15 +1188,16 @@
   margin: 0;
   padding: 9px 10px;
   border-radius: 12px;
-  color: #42152d;
-  background: rgba(255, 255, 255, .62);
+  color: #fff8fb;
+  background: rgba(255, 255, 255, .09);
+  box-shadow: inset 0 0 0 1px rgba(255, 190, 222, .14);
   font: 700 12px/1.35 system-ui, sans-serif;
 }
 
-.viewerCommentList strong { color: #d41973; }
+.viewerCommentList strong { color: #ff7ebb; }
 
 .viewerCommentList .viewerDialogEmpty {
-  color: rgba(66, 21, 45, .58);
+  color: rgba(255, 231, 244, .66);
   text-align: center;
 }
 
@@ -1235,11 +1226,6 @@
 .viewerCommentComposer button,
 .viewerDialogCancel,
 .viewerDialogActions button {
-  border: 0;
-  border-radius: 12px;
-  color: #fff;
-  background: linear-gradient(145deg, #ff65ad, #cf176b);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), 0 4px 9px rgba(107, 5, 54, .24);
   font: 900 12px/1 system-ui, sans-serif;
   cursor: pointer;
 }
@@ -1250,9 +1236,6 @@
 .viewerDialogCancel {
   margin-top: 10px;
   padding: 9px 16px;
-  color: #701841;
-  background: rgba(255, 255, 255, .64);
-  box-shadow: none;
 }
 
 .viewerDeleteDialog { max-width: 270px; }
@@ -1266,9 +1249,6 @@
 
 .viewerDialogActions button {
   padding: 11px 10px;
-  color: #701841;
-  background: rgba(255, 255, 255, .78);
-  box-shadow: inset 0 0 0 1px rgba(112, 24, 65, .12);
 }
 
 .viewerDialogActions .viewerDialogDanger {
@@ -1563,17 +1543,11 @@
   z-index: 47;
   display: grid;
   place-items: center;
-  background: rgba(10, 2, 8, 0.5);
 }
 
 .shareAlert {
   width: 236px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.44);
-  border-radius: 9px;
-  background: rgba(255, 247, 251, 0.94);
-  box-shadow: 0 18px 42px rgba(57, 0, 30, 0.38), inset 0 1px 0 #fff;
-  color: #23131e;
   text-align: center;
   animation: shareIn 0.5s cubic-bezier(0.2, 1.35, 0.4, 1) both;
 }
@@ -1680,7 +1654,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font: 800 9px/1.1 system-ui, -apple-system, sans-serif;
-  color: rgba(35, 19, 30, 0.72);
+  color: rgba(255, 237, 246, 0.78);
 }
 
 /* Moulded clay buttons — same material language as the channel arrows: a thick
@@ -1692,7 +1666,7 @@
   gap: 14px;
   margin-top: 16px;
   padding-top: 14px;
-  border-top: 1px solid rgba(95, 54, 77, 0.18);
+  border-top: 1px solid rgba(255, 205, 229, 0.18);
 }
 
 .shareTool {
@@ -1704,7 +1678,7 @@
 
 .shareToolName {
   font: 900 9px/1.1 system-ui, -apple-system, sans-serif;
-  color: rgba(35, 19, 30, 0.72);
+  color: rgba(255, 237, 246, 0.78);
   white-space: nowrap;
 }
 
@@ -1721,12 +1695,12 @@
 }
 
 .shareShader {
-  background-image: linear-gradient(105deg, #25131f 0%, #8b214f 22%, #ff6cad 42%, #173f58 62%, #35c8ef 78%, #25131f 100%);
-  text-shadow: 0 0 7px rgba(255, 84, 166, 0.12), 0 0 10px rgba(53, 200, 239, 0.08);
+  background-image: linear-gradient(105deg, #fff8fb 0%, #ffb7da 24%, #ff6cad 43%, #7fe3ff 68%, #fff8fb 100%);
+  text-shadow: 0 0 8px rgba(255, 84, 166, 0.24), 0 0 12px rgba(53, 200, 239, 0.15);
 }
 
 .shareShaderSoft {
-  background-image: linear-gradient(105deg, #69515f 0%, #b43b76 28%, #ff7eba 45%, #38758a 68%, #69515f 100%);
+  background-image: linear-gradient(105deg, #ffe8f4 0%, #ffb4d8 28%, #ff7eba 45%, #8fdef5 68%, #ffe8f4 100%);
 }
 
 .shareShaderBtn {
@@ -1742,12 +1716,36 @@
   z-index: 47;
   transform: translateX(-50%);
   padding: 9px 17px;
-  border-radius: 999px;
-  background: rgba(255, 247, 251, 0.95);
-  color: #23131e;
   font: 900 12px/1 system-ui, -apple-system, sans-serif;
-  box-shadow: 0 10px 26px rgba(57, 0, 30, 0.4), inset 0 1px 0 #fff;
   animation: shareIn 0.4s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+}
+
+/* The direct-message alert shares the same compact width as the share card.
+   Its input stays light for familiar text-entry contrast against the dark
+   News surface. */
+.askRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.askInput {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 190, 222, .34);
+  border-radius: 13px;
+  outline: 0;
+  color: #28131f;
+  background: rgba(255, 250, 253, .96);
+  font: 700 12px/1 system-ui, sans-serif;
+}
+
+.askInput:focus {
+  border-color: #f14294;
+  box-shadow: 0 0 0 3px rgba(241, 66, 148, .18);
 }
 
 @keyframes shareIn {

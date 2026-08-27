@@ -5,6 +5,7 @@ import type mapboxgl from 'mapbox-gl'
 import { modelSprite } from './modelSprite'
 import type { MapTheme } from './data'
 import styles from './ClayNav.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 
 // Clay GPS navigation. Enter a destination → real Mapbox Directions route,
 // drawn as a clay artery. Hit Go and the camera drops into the clay "street
@@ -404,7 +405,7 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
           search via openSignal (declutter the map). */}
 
       {mode === 'searching' && (
-        <form className={styles.searchCard} aria-busy={isRouting} onSubmit={e => { e.preventDefault(); void search() }}>
+        <form className={`${styles.searchCard} ${surfaceStyles.surface}`} aria-busy={isRouting} onSubmit={e => { e.preventDefault(); void search() }}>
           <div className={styles.searchHeader}>
             <span className={styles.searchBadge} aria-hidden="true">
               <svg viewBox="0 0 24 24" focusable="false">
@@ -437,15 +438,15 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
             <strong>Your location</strong>
           </div>
           <div className={styles.searchRow}>
-            <button type="button" className={styles.ghostBtn} disabled={isRouting} onClick={() => { setMode('idle'); setError(null) }}>Cancel</button>
-            <button type="submit" className={styles.goBtn} disabled={isRouting}>{isRouting ? 'Routing…' : 'Search route'}</button>
+            <button type="button" className={`${styles.ghostBtn} ${surfaceStyles.secondary}`} disabled={isRouting} onClick={() => { setMode('idle'); setError(null) }}>Cancel</button>
+            <button type="submit" className={`${styles.goBtn} ${surfaceStyles.primary}`} disabled={isRouting}>{isRouting ? 'Routing…' : 'Search route'}</button>
           </div>
           {error && <div className={styles.err} role="alert" aria-live="polite">{error}</div>}
         </form>
       )}
 
       {mode === 'preview' && route && (
-        <div className={styles.previewCard}>
+        <div className={`${styles.previewCard} ${surfaceStyles.surface}`}>
           <div className={styles.previewHead}>
             <img src="clay_pin.png" alt="" />
             <div>
@@ -454,14 +455,14 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
             </div>
           </div>
           <div className={styles.searchRow}>
-            <button type="button" className={styles.ghostBtn} onClick={end}>Cancel</button>
-            <button type="button" className={styles.goBtn} onClick={start}>Go ▸</button>
+            <button type="button" className={`${styles.ghostBtn} ${surfaceStyles.secondary}`} onClick={end}>Cancel</button>
+            <button type="button" className={`${styles.goBtn} ${surfaceStyles.primary}`} onClick={start}>Go ▸</button>
           </div>
         </div>
       )}
 
       {mode === 'navigating' && banner && (
-        <div className={styles.turnBanner}>
+        <div className={`${styles.turnBanner} ${surfaceStyles.surface}`}>
           <svg viewBox="0 0 24 24" width="34" height="34"><path d={maneuverPath(banner.type)} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
           <div>
             <strong>{fmtDist(banner.dist)}</strong>
@@ -471,7 +472,7 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
       )}
 
       {(mode === 'navigating' || mode === 'arrived') && (
-        <div className={styles.navBar}>
+        <div className={`${styles.navBar} ${surfaceStyles.surface}`}>
           {mode === 'arrived'
             ? <div className={styles.arrived}>Arrived at {destName}</div>
             : remain && <div className={styles.navStats}><strong>{fmtEta(remain.eta)}</strong><span>{fmtDist(remain.dist)} left</span></div>}

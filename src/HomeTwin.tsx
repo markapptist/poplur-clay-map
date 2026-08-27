@@ -2,6 +2,7 @@ import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore }
 import { createPortal } from 'react-dom'
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import ScreenCoach from './ScreenCoach'
@@ -12,6 +13,7 @@ import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
 import MapLevelButton from './MapLevelButton'
 import MapNewsButton from './MapNewsButton'
+import { readMapNewsOpenRequest } from './mapNewsBridge'
 import MapConquerButton from './MapConquerButton'
 import { WeatherMark } from './ClayMap'
 import { modeForCode } from './WeatherFX'
@@ -839,12 +841,14 @@ const CLAY_MAP_SRC = (() => {
   const weatherCycle = parentParams.get('weather-cycle')
   const weatherTest = parentParams.get('weather-test')
   const newsTest = parentParams.get('news-test')
+  const managedLocation = parentParams.get('managedLocation') === '1'
   const rawTourSpeed = Number(parentParams.get('tour-speed'))
   // The hidden map mounts while Home's custom location primer is visible.
   // Carry that gate into the iframe so its own startup geolocation cannot race
   // ahead and surface a raw browser/OS prompt behind the Poplur consent card.
   const deferLocation = parentParams.get('askLocation') === '1'
     || parentParams.get('permissions') === '1'
+    || managedLocation
   const liteQuery = lite === '1' ? '&mapLite=1' : ''
   const nightQuery = mapNight === '1' || mapNight === '0' ? `&map-night=${mapNight}` : ''
   const weatherQuery = weatherCycle === '1' || weatherCycle === '0'
@@ -855,9 +859,10 @@ const CLAY_MAP_SRC = (() => {
     ? `&tour-speed=${encodeURIComponent(rawTourSpeed)}`
     : ''
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
+  const managedLocationQuery = managedLocation ? '&managedLocation=1' : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${tourSpeedQuery}${locationQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${tourSpeedQuery}${locationQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}`
 })()
 
 function clockMapNight(): boolean {
@@ -1992,6 +1997,24 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // rejects it while parked; gate it here too so native cannot retain an
     // off-map CameraCommand and jump on the user's next Map visit.
     if (action === 'engagement' && !mapFrontRef.current) return
+    if (action === 'locate'
+      && new URLSearchParams(window.location.search).get('managedLocation') === '1') {
+      const cached = (window as typeof window & {
+        __poplurNativeLocation?: { latitude?: unknown; longitude?: unknown }
+      }).__poplurNativeLocation
+      const latitude = Number(cached?.latitude)
+      const longitude = Number(cached?.longitude)
+      const hasManagedFix = Number.isFinite(latitude) && Math.abs(latitude) <= 90
+        && Number.isFinite(longitude) && Math.abs(longitude) <= 180
+      if (!hasManagedFix) {
+        // Expo Web owns this nested document. Raise Poplur's clay primer here;
+        // never let the child iframe fall through to Chromium's permission UI.
+        setPermissionQueue(queue => (
+          queue.includes('location') ? queue : [...queue, 'location']
+        ))
+        return
+      }
+    }
     if (NATIVE_ADAPTIVE_MAP) {
       if (!nativeMapWebFallbackRef.current && nativeMapHandlesAction(action)) {
         postNativeEvent({ type: 'poplur-map-action', action, ...detail })
@@ -2831,14 +2854,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       if (event.data.type === 'poplur-map-news-event') {
         setMapNewsEvent(readMapNewsCubeEvent(event.data))
       }
-      if (event.data.type === 'poplur-map-open-news') {
-        const eventId = typeof event.data.eventId === 'string'
-          ? event.data.eventId.trim().slice(0, 180)
-          : ''
-        if (eventId) {
-          setActiveTab('feed')
-          setNewsOpenRequest(current => ({ eventId, nonce: (current?.nonce ?? 0) + 1 }))
-        }
+      const newsRequest = readMapNewsOpenRequest(event.data)
+      if (newsRequest) {
+        setActiveTab('feed')
+        setNewsOpenRequest(current => ({
+          eventId: newsRequest.eventId,
+          nonce: (current?.nonce ?? 0) + 1,
+        }))
       }
       if (event.data.type === 'poplur-map-open-feed-content') {
         const target = normalizeMapFeedHandoff(event.data.content)
@@ -3266,7 +3288,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [mapNewsLoading, setMapNewsLoading] = useState(false)
   const [mapNewsCount, setMapNewsCount] = useState(0)
   const [mapNewsEvent, setMapNewsEvent] = useState<MapNewsCubeEvent | null>(null)
-  const [newsOpenRequest, setNewsOpenRequest] = useState<{ eventId: string; nonce: number } | null>(null)
+  const [newsOpenRequest, setNewsOpenRequest] = useState<{ eventId: string | null; nonce: number } | null>(null)
   useEffect(() => {
     if (!newsOpenRequest || activeTab !== 'feed') return
     setResume(current => ({ screen: 'feed-news', n: current.n + 1 }))
@@ -5122,11 +5144,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           already running hot. The cube's own physics carries the motion. */}
 
       {mapFailedVisible && activeTab === 'map' && committedTab === 'map' && (
-        <div className={styles.mapFailure} role="alertdialog" aria-modal="true" aria-labelledby="map-failure-title">
-          <div className={styles.mapFailureCard}>
+        <div className={`${styles.mapFailure} ${surfaceStyles.scrim}`} role="alertdialog" aria-modal="true" aria-labelledby="map-failure-title">
+          <div className={`${styles.mapFailureCard} ${surfaceStyles.surface}`}>
             <h2 id="map-failure-title">MAP COULDN'T LOAD</h2>
             <p>Check your connection, then try the map again.</p>
-            <button type="button" autoFocus onClick={retryMapNow}>TRY AGAIN</button>
+            <button type="button" className={surfaceStyles.primary} autoFocus onClick={retryMapNow}>TRY AGAIN</button>
           </div>
         </div>
       )}
@@ -5572,7 +5594,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           initialScreen={resume.screen ?? undefined}
           initialDMThreadId={resume.screen === 'profile-messages' ? dmOpenRequest?.threadId : undefined}
           initialBrowserURL={resume.screen === 'feed-browser' ? feedBrowserURL ?? undefined : undefined}
-          initialNewsEventId={resume.screen === 'feed-news' ? newsOpenRequest?.eventId : undefined}
+          initialNewsEventId={resume.screen === 'feed-news' ? newsOpenRequest?.eventId ?? undefined : undefined}
           wheelOverNonce={wheelOverNonce}
           onClose={reason => {
             // Waving the wheel away leaves you exactly where it found you.

@@ -90,7 +90,7 @@ describe('map Conquer screen snapshot', () => {
     expect(mapConquerGlanceRows(null, true)).toEqual([])
   })
 
-  it('renders a half-size board preview before the complete Conquer screen', () => {
+  it('renders the current live top-three board preview before the complete Conquer screen', () => {
     const snapshot = createMapConquerSnapshot(
       Array.from({ length: 5 }, (_, index) => leader(index)),
       3,
@@ -102,12 +102,17 @@ describe('map Conquer screen snapshot', () => {
       onOpen: () => {},
     }))
     expect(glance).toContain('Conquer Board')
-    expect(glance).toContain('PREVIEW')
-    expect(glance).toContain('TOP 3 OF 5')
+    expect(glance).toContain('data-conquer-preview-version="2"')
+    expect(glance).toContain('TOP 3 LIVE')
+    expect(glance).toContain('LIVE ROTATION')
+    expect(glance).toContain('SHOWING TOP 3 OF 5')
     expect(glance).toContain('YOU')
     expect(glance).toContain('@owner2')
     expect(glance).not.toContain('@owner3')
-    expect(glance).toContain('OPEN FULL BOARD')
+    expect(glance).toContain('Area 0 · 1 area')
+    expect(glance).toContain('Area 1 · 2 areas')
+    expect(glance).toContain('FAME')
+    expect(glance).toContain('VIEW FULL BOARD')
 
     const board = renderToStaticMarkup(createElement(ConquerScreen, {
       snapshot,

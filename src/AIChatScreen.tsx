@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './AIChatScreen.module.css'
+import surfaceStyles from './TransientPopupSurface.module.css'
 import { playPop } from './pop'
 import { takePendingAICompose } from './cameraStore'
 import { generateWithPoplurAI, prepareAIImageSource } from './aiGeneration'
@@ -367,7 +368,7 @@ export default function AIChatScreen({
       </header>
 
       {settingsOpen && (
-        <div className={styles.settingsPanel} role="dialog" aria-label="AI chat settings">
+        <div className={`${styles.settingsPanel} ${surfaceStyles.surface}`} role="dialog" aria-label="AI chat settings">
           <label><span>Smart mode</span><input type="checkbox" checked={smartMode} onChange={event => setSmartMode(event.currentTarget.checked)} /></label>
           <label><span>Search mode</span><input type="checkbox" checked={searchMode} onChange={event => setSearchMode(event.currentTarget.checked)} /></label>
         </div>

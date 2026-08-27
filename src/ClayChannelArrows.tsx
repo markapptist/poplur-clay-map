@@ -29,10 +29,9 @@ export default function ClayChannelArrows({
   const horizontal = orientation === 'horizontal'
   const boxW = single ? Math.round(size / 2) : horizontal ? size : Math.round(size / 2)
   const boxH = single ? Math.round(size / 2) : horizontal ? Math.round(size / 2) : size
-  // A horizontal pair is the visible up/down rail rotated onto its side: the
-  // artwork occupies the same 42% × .96 of the long axis and each target owns
-  // the same 44% end cap. Matching both values keeps left/right centres at
-  // 22% and 78%, exactly like up/down, instead of pushing them to 16%/84%.
+  // A horizontal pair is the visible up/down rail rotated onto its side. Each
+  // target owns exactly half of the long axis, so left/right centres land at
+  // 25% and 75% — the same geometry as the vertical up/down pair.
   const imageSize = horizontal && !single
     ? Math.round(size * .42 * .96)
     : Math.round(Math.min(boxW, boxH) * (single ? 1.34 : 1.08))
@@ -45,7 +44,7 @@ export default function ClayChannelArrows({
     bottom: !single && !horizontal && direction === 'down' ? 0 : undefined,
     left: single || !horizontal || direction === 'up' ? 0 : undefined,
     right: !single && horizontal && direction === 'down' ? 0 : undefined,
-    width: single ? '100%' : horizontal ? '44%' : '100%',
+    width: single ? '100%' : horizontal ? '50%' : '100%',
     height: single ? '100%' : horizontal ? '100%' : '50%',
     margin: 0,
     padding: 0,
