@@ -1,33 +1,36 @@
+import SideControlIconButton from './SideControlIcon'
 import styles from './MapNewsButton.module.css'
 
 export default function MapNewsButton({
   active,
   loading = false,
   count = 0,
+  destination = 'tour',
   onPress,
 }: {
   active: boolean
   loading?: boolean
   count?: number
+  destination?: 'tour' | 'edition'
   onPress: () => void
 }) {
-  const label = active ? 'Stop the worldwide news tour' : 'Tour live news around the world'
+  const label = destination === 'edition'
+    ? 'Open Poplur News edition'
+    : active
+      ? 'Stop the worldwide news tour'
+      : 'Tour live news around the world'
   return (
-    <button
-      type="button"
+    <SideControlIconButton
+      icon="map.news"
       className={styles.button}
       aria-label={label}
       aria-pressed={active}
-      aria-busy={loading}
+      loading={loading}
       data-map-news-button=""
-      onClick={onPress}
-    >
-      <img src="/holdmenu/News.png" alt="" draggable={false} />
-      {loading ? (
-        <span className={styles.pulse} aria-hidden="true" />
-      ) : count > 0 ? (
+      onActivate={onPress}
+      overlay={!loading && count > 0 ? (
         <span className={styles.count} aria-hidden="true">{Math.min(count, 99)}</span>
       ) : null}
-    </button>
+    />
   )
 }

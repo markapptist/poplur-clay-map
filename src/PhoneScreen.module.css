@@ -120,12 +120,13 @@
   pointer-events: auto;
 }
 
-/* Flush to the stage edges, overlaying the handset's side bezel. The phone art
-   fills the width, so there is no outboard margin to sit in (an earlier -48px
-   put them off-screen on a phone-width stage); riding the edges keeps both
-   clay chevrons visible and tappable at any width. */
-.swipeLeft { left: 2px; }
-.swipeRight { right: 2px; }
+/* The 2:3 handset is wider than a tall phone viewport when its height fills the
+   shell. These used to be children of that wider, centre-cropped artwork, so
+   both controls could be correctly positioned at the handset edges and still
+   be completely off-screen. They now belong to `.screen` and hug the actual
+   visible safe edges, independent of the artwork crop. */
+.swipeLeft { left: max(4px, env(safe-area-inset-left)); }
+.swipeRight { right: max(4px, env(safe-area-inset-right)); }
 
 /* ── the LCD ──────────────────────────────────────────────────────────────
    Geometry, colours and font are the twin's: a yellow-green panel inset in

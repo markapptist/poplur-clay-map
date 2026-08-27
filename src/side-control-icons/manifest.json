@@ -1,0 +1,572 @@
+{
+  "package": "Poplur Side Button Icon Pack",
+  "version": "1.0.0",
+  "format": "Transparent PNG",
+  "canvasSizes": [
+    1024,
+    512,
+    256
+  ],
+  "style": "Glossy rounded 3D clay/plastic icons using Poplur hot pink, black, white, and selective weather accents.",
+  "buttonCount": 28,
+  "weatherConditionCount": 14,
+  "buttons": [
+    {
+      "id": "global.channel_up",
+      "asset": "global_navigation/channel_up",
+      "screen": "Global navigation",
+      "purpose": "Move one position upward through the global channel rail while preserving the current channel-switching logic.",
+      "accessibilityLabel": "Previous channel",
+      "implementationNote": "Render the current channel number as live UI text; do not rely on the baked 105 sample in the reference composite.",
+      "files": {
+        "1024": "assets/1024/global_navigation/channel_up.png",
+        "512": "assets/512/global_navigation/channel_up.png",
+        "256": "assets/256/global_navigation/channel_up.png"
+      }
+    },
+    {
+      "id": "global.channel_down",
+      "asset": "global_navigation/channel_down",
+      "screen": "Global navigation",
+      "purpose": "Move one position downward through the global channel rail while preserving the current channel-switching logic.",
+      "accessibilityLabel": "Next channel",
+      "implementationNote": "Render the current channel number as live UI text; do not rely on the baked 105 sample in the reference composite.",
+      "files": {
+        "1024": "assets/1024/global_navigation/channel_down.png",
+        "512": "assets/512/global_navigation/channel_down.png",
+        "256": "assets/256/global_navigation/channel_down.png"
+      }
+    },
+    {
+      "id": "map.mute",
+      "asset": "map/utility/mute",
+      "screen": "Map",
+      "purpose": "Toggle audio from map media and ambient map content.",
+      "accessibilityLabel": "Mute map audio",
+      "files": {
+        "1024": "assets/1024/map/utility/mute.png",
+        "512": "assets/512/map/utility/mute.png",
+        "256": "assets/256/map/utility/mute.png"
+      }
+    },
+    {
+      "id": "map.locate",
+      "asset": "map/utility/locate",
+      "screen": "Map",
+      "purpose": "Recenter the map on the user’s current permitted location.",
+      "accessibilityLabel": "Go to my location",
+      "files": {
+        "1024": "assets/1024/map/utility/locate.png",
+        "512": "assets/512/map/utility/locate.png",
+        "256": "assets/256/map/utility/locate.png"
+      }
+    },
+    {
+      "id": "map.search",
+      "asset": "map/utility/search",
+      "screen": "Map",
+      "purpose": "Open map search for places, locations, posts, or the existing search targets already supported by Poplur.",
+      "accessibilityLabel": "Search map",
+      "files": {
+        "1024": "assets/1024/map/utility/search.png",
+        "512": "assets/512/map/utility/search.png",
+        "256": "assets/256/map/utility/search.png"
+      }
+    },
+    {
+      "id": "map.tour_play",
+      "asset": "map/discovery/tour_play",
+      "screen": "Map",
+      "purpose": "Start or resume the existing Poplur map tour/tutorial/play experience.",
+      "accessibilityLabel": "Start map tour",
+      "files": {
+        "1024": "assets/1024/map/discovery/tour_play.png",
+        "512": "assets/512/map/discovery/tour_play.png",
+        "256": "assets/256/map/discovery/tour_play.png"
+      }
+    },
+    {
+      "id": "map.news",
+      "asset": "map/discovery/news",
+      "screen": "Map",
+      "purpose": "Open the News experience from the map discovery rail.",
+      "accessibilityLabel": "Open news",
+      "files": {
+        "1024": "assets/1024/map/discovery/news.png",
+        "512": "assets/512/map/discovery/news.png",
+        "256": "assets/256/map/discovery/news.png"
+      }
+    },
+    {
+      "id": "map.conquer",
+      "asset": "map/discovery/conquer",
+      "screen": "Map",
+      "purpose": "Open the existing Conquer feature or geographic challenge experience.",
+      "accessibilityLabel": "Open Conquer",
+      "files": {
+        "1024": "assets/1024/map/discovery/conquer.png",
+        "512": "assets/512/map/discovery/conquer.png",
+        "256": "assets/256/map/discovery/conquer.png"
+      }
+    },
+    {
+      "id": "map.layers",
+      "asset": "map/discovery/layers",
+      "screen": "Map",
+      "purpose": "Open map layer controls and switch among the layers already supported by the app.",
+      "accessibilityLabel": "Map layers",
+      "files": {
+        "1024": "assets/1024/map/discovery/layers.png",
+        "512": "assets/512/map/discovery/layers.png",
+        "256": "assets/256/map/discovery/layers.png"
+      }
+    },
+    {
+      "id": "map.weather",
+      "asset": "map/discovery/weather",
+      "screen": "Map",
+      "purpose": "Open the weather layer or weather forecast for the active map location.",
+      "accessibilityLabel": "Weather",
+      "files": {
+        "1024": "assets/1024/map/discovery/weather.png",
+        "512": "assets/512/map/discovery/weather.png",
+        "256": "assets/256/map/discovery/weather.png"
+      }
+    },
+    {
+      "id": "feed.mute",
+      "asset": "feed/mute",
+      "screen": "Feed",
+      "purpose": "Toggle audio for the currently visible feed media.",
+      "accessibilityLabel": "Mute feed video",
+      "files": {
+        "1024": "assets/1024/feed/mute.png",
+        "512": "assets/512/feed/mute.png",
+        "256": "assets/256/feed/mute.png"
+      }
+    },
+    {
+      "id": "feed.share",
+      "asset": "feed/share",
+      "screen": "Feed",
+      "purpose": "Open the existing share flow for the current post.",
+      "accessibilityLabel": "Share post",
+      "files": {
+        "1024": "assets/1024/feed/share.png",
+        "512": "assets/512/feed/share.png",
+        "256": "assets/256/feed/share.png"
+      }
+    },
+    {
+      "id": "feed.captions",
+      "asset": "feed/captions",
+      "screen": "Feed",
+      "purpose": "Turn captions or subtitles on or off for supported media.",
+      "accessibilityLabel": "Toggle captions",
+      "files": {
+        "1024": "assets/1024/feed/captions.png",
+        "512": "assets/512/feed/captions.png",
+        "256": "assets/256/feed/captions.png"
+      }
+    },
+    {
+      "id": "feed.comments_collapse",
+      "asset": "feed/comments_collapse",
+      "screen": "Feed",
+      "purpose": "Collapse or dismiss the expanded comments panel.",
+      "accessibilityLabel": "Collapse comments",
+      "files": {
+        "1024": "assets/1024/feed/comments_collapse.png",
+        "512": "assets/512/feed/comments_collapse.png",
+        "256": "assets/256/feed/comments_collapse.png"
+      }
+    },
+    {
+      "id": "feed.comment",
+      "asset": "feed/comment",
+      "screen": "Feed",
+      "purpose": "Open comments or place focus in the comment composer for the current post.",
+      "accessibilityLabel": "Comment on post",
+      "files": {
+        "1024": "assets/1024/feed/comment.png",
+        "512": "assets/512/feed/comment.png",
+        "256": "assets/256/feed/comment.png"
+      }
+    },
+    {
+      "id": "feed.like",
+      "asset": "feed/like",
+      "screen": "Feed",
+      "purpose": "Like the current post using the existing engagement service.",
+      "accessibilityLabel": "Like post",
+      "files": {
+        "1024": "assets/1024/feed/like.png",
+        "512": "assets/512/feed/like.png",
+        "256": "assets/256/feed/like.png"
+      }
+    },
+    {
+      "id": "feed.dislike",
+      "asset": "feed/dislike",
+      "screen": "Feed",
+      "purpose": "Register the existing dislike/not-interested action without changing its product semantics.",
+      "accessibilityLabel": "Dislike post",
+      "files": {
+        "1024": "assets/1024/feed/dislike.png",
+        "512": "assets/512/feed/dislike.png",
+        "256": "assets/256/feed/dislike.png"
+      }
+    },
+    {
+      "id": "camera.flash",
+      "asset": "camera/flash",
+      "screen": "Camera",
+      "purpose": "Cycle or toggle the camera flash/torch mode supported by the current camera implementation.",
+      "accessibilityLabel": "Camera flash",
+      "files": {
+        "1024": "assets/1024/camera/flash.png",
+        "512": "assets/512/camera/flash.png",
+        "256": "assets/256/camera/flash.png"
+      }
+    },
+    {
+      "id": "camera.mute",
+      "asset": "camera/mute",
+      "screen": "Camera",
+      "purpose": "Toggle microphone/audio capture for supported camera, selfie, or FaceTime modes.",
+      "accessibilityLabel": "Mute microphone",
+      "files": {
+        "1024": "assets/1024/camera/mute.png",
+        "512": "assets/512/camera/mute.png",
+        "256": "assets/256/camera/mute.png"
+      }
+    },
+    {
+      "id": "camera.flip_camera",
+      "asset": "camera/flip_camera",
+      "screen": "Camera",
+      "purpose": "Switch between front and rear cameras.",
+      "accessibilityLabel": "Flip camera",
+      "files": {
+        "1024": "assets/1024/camera/flip_camera.png",
+        "512": "assets/512/camera/flip_camera.png",
+        "256": "assets/256/camera/flip_camera.png"
+      }
+    },
+    {
+      "id": "camera.scan",
+      "asset": "camera/scan",
+      "screen": "Camera",
+      "purpose": "Open the existing scanner mode, such as QR, object, or content scanning already implemented by Poplur.",
+      "accessibilityLabel": "Scan",
+      "files": {
+        "1024": "assets/1024/camera/scan.png",
+        "512": "assets/512/camera/scan.png",
+        "256": "assets/256/camera/scan.png"
+      }
+    },
+    {
+      "id": "camera.ar_filters",
+      "asset": "camera/ar_filters",
+      "screen": "Camera / Selfie / FaceTime",
+      "purpose": "Open the AR filter and lens selector.",
+      "accessibilityLabel": "AR filters",
+      "files": {
+        "1024": "assets/1024/camera/ar_filters.png",
+        "512": "assets/512/camera/ar_filters.png",
+        "256": "assets/256/camera/ar_filters.png"
+      }
+    },
+    {
+      "id": "camera.camera_roll",
+      "asset": "camera/camera_roll",
+      "screen": "Camera",
+      "purpose": "Open the device photo library or Poplur media picker.",
+      "accessibilityLabel": "Open camera roll",
+      "files": {
+        "1024": "assets/1024/camera/camera_roll.png",
+        "512": "assets/512/camera/camera_roll.png",
+        "256": "assets/256/camera/camera_roll.png"
+      }
+    },
+    {
+      "id": "profile.alerts",
+      "asset": "profile/alerts",
+      "screen": "Profile",
+      "purpose": "Open notifications, alerts, or activity associated with the profile.",
+      "accessibilityLabel": "Profile alerts",
+      "files": {
+        "1024": "assets/1024/profile/alerts.png",
+        "512": "assets/512/profile/alerts.png",
+        "256": "assets/256/profile/alerts.png"
+      }
+    },
+    {
+      "id": "profile.settings",
+      "asset": "profile/settings",
+      "screen": "Profile",
+      "purpose": "Open Profile or application settings.",
+      "accessibilityLabel": "Settings",
+      "files": {
+        "1024": "assets/1024/profile/settings.png",
+        "512": "assets/512/profile/settings.png",
+        "256": "assets/256/profile/settings.png"
+      }
+    },
+    {
+      "id": "profile.camera",
+      "asset": "profile/camera",
+      "screen": "Profile",
+      "purpose": "Open the camera from Profile using the app’s existing creation flow.",
+      "accessibilityLabel": "Open profile camera",
+      "files": {
+        "1024": "assets/1024/profile/camera.png",
+        "512": "assets/512/profile/camera.png",
+        "256": "assets/256/profile/camera.png"
+      }
+    },
+    {
+      "id": "news.menu",
+      "asset": "news/menu",
+      "screen": "News",
+      "purpose": "Open the News menu, categories, or navigation drawer already used by the News screen.",
+      "accessibilityLabel": "News menu",
+      "files": {
+        "1024": "assets/1024/news/menu.png",
+        "512": "assets/512/news/menu.png",
+        "256": "assets/256/news/menu.png"
+      }
+    },
+    {
+      "id": "news.top_latest",
+      "asset": "news/top_latest",
+      "screen": "News",
+      "purpose": "Toggle or switch between Top and Latest news ordering using the existing sort state.",
+      "accessibilityLabel": "Switch Top and Latest news",
+      "files": {
+        "1024": "assets/1024/news/top_latest.png",
+        "512": "assets/512/news/top_latest.png",
+        "256": "assets/256/news/top_latest.png"
+      }
+    }
+  ],
+  "weatherConditions": [
+    {
+      "id": "weather.clear_day",
+      "asset": "weather/clear_day",
+      "purpose": "Clear or sunny daytime weather.",
+      "aliases": [
+        "clear",
+        "sunny",
+        "mostly_clear",
+        "fair"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/clear_day.png",
+        "512": "assets/512/weather/clear_day.png",
+        "256": "assets/256/weather/clear_day.png"
+      }
+    },
+    {
+      "id": "weather.partly_cloudy",
+      "asset": "weather/partly_cloudy",
+      "purpose": "Partly cloudy or mostly sunny conditions.",
+      "aliases": [
+        "partly_cloudy",
+        "mostly_sunny",
+        "scattered_clouds"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/partly_cloudy.png",
+        "512": "assets/512/weather/partly_cloudy.png",
+        "256": "assets/256/weather/partly_cloudy.png"
+      }
+    },
+    {
+      "id": "weather.cloudy",
+      "asset": "weather/cloudy",
+      "purpose": "Cloudy conditions with a lighter cloud treatment.",
+      "aliases": [
+        "cloudy",
+        "broken_clouds"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/cloudy.png",
+        "512": "assets/512/weather/cloudy.png",
+        "256": "assets/256/weather/cloudy.png"
+      }
+    },
+    {
+      "id": "weather.overcast",
+      "asset": "weather/overcast",
+      "purpose": "Overcast or dark-cloud conditions.",
+      "aliases": [
+        "overcast",
+        "dark_clouds"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/overcast.png",
+        "512": "assets/512/weather/overcast.png",
+        "256": "assets/256/weather/overcast.png"
+      }
+    },
+    {
+      "id": "weather.heavy_rain",
+      "asset": "weather/heavy_rain",
+      "purpose": "Steady or heavy rain.",
+      "aliases": [
+        "rain",
+        "heavy_rain",
+        "downpour"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/heavy_rain.png",
+        "512": "assets/512/weather/heavy_rain.png",
+        "256": "assets/256/weather/heavy_rain.png"
+      }
+    },
+    {
+      "id": "weather.rain_showers",
+      "asset": "weather/rain_showers",
+      "purpose": "Light rain, drizzle, or intermittent showers.",
+      "aliases": [
+        "showers",
+        "light_rain",
+        "drizzle"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/rain_showers.png",
+        "512": "assets/512/weather/rain_showers.png",
+        "256": "assets/256/weather/rain_showers.png"
+      }
+    },
+    {
+      "id": "weather.thunderstorm",
+      "asset": "weather/thunderstorm",
+      "purpose": "Thunderstorm with rain and lightning.",
+      "aliases": [
+        "thunderstorm",
+        "lightning",
+        "storm"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/thunderstorm.png",
+        "512": "assets/512/weather/thunderstorm.png",
+        "256": "assets/256/weather/thunderstorm.png"
+      }
+    },
+    {
+      "id": "weather.snow",
+      "asset": "weather/snow",
+      "purpose": "Snow or snow showers.",
+      "aliases": [
+        "snow",
+        "snow_showers",
+        "heavy_snow",
+        "blizzard"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/snow.png",
+        "512": "assets/512/weather/snow.png",
+        "256": "assets/256/weather/snow.png"
+      }
+    },
+    {
+      "id": "weather.wintry_mix",
+      "asset": "weather/wintry_mix",
+      "purpose": "Mixed precipitation, sleet, or freezing rain.",
+      "aliases": [
+        "sleet",
+        "freezing_rain",
+        "wintry_mix",
+        "rain_and_snow"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/wintry_mix.png",
+        "512": "assets/512/weather/wintry_mix.png",
+        "256": "assets/256/weather/wintry_mix.png"
+      }
+    },
+    {
+      "id": "weather.hail",
+      "asset": "weather/hail",
+      "purpose": "Hail, ice pellets, or graupel.",
+      "aliases": [
+        "hail",
+        "ice_pellets",
+        "graupel"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/hail.png",
+        "512": "assets/512/weather/hail.png",
+        "256": "assets/256/weather/hail.png"
+      }
+    },
+    {
+      "id": "weather.wind",
+      "asset": "weather/wind",
+      "purpose": "Windy or gusty conditions.",
+      "aliases": [
+        "wind",
+        "windy",
+        "gusts"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/wind.png",
+        "512": "assets/512/weather/wind.png",
+        "256": "assets/256/weather/wind.png"
+      }
+    },
+    {
+      "id": "weather.fog",
+      "asset": "weather/fog",
+      "purpose": "Fog, mist, haze, smoke, or reduced visibility.",
+      "aliases": [
+        "fog",
+        "mist",
+        "haze",
+        "smoke"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/fog.png",
+        "512": "assets/512/weather/fog.png",
+        "256": "assets/256/weather/fog.png"
+      }
+    },
+    {
+      "id": "weather.tornado",
+      "asset": "weather/tornado",
+      "purpose": "Tornado or severe rotating storm warning.",
+      "aliases": [
+        "tornado",
+        "funnel_cloud",
+        "severe_storm"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/tornado.png",
+        "512": "assets/512/weather/tornado.png",
+        "256": "assets/256/weather/tornado.png"
+      }
+    },
+    {
+      "id": "weather.extreme_heat",
+      "asset": "weather/extreme_heat",
+      "purpose": "Very hot temperatures or heat warning.",
+      "aliases": [
+        "hot",
+        "extreme_heat",
+        "heat_warning"
+      ],
+      "files": {
+        "1024": "assets/1024/weather/extreme_heat.png",
+        "512": "assets/512/weather/extreme_heat.png",
+        "256": "assets/256/weather/extreme_heat.png"
+      }
+    }
+  ],
+  "notes": [
+    "Replace artwork only; preserve each control’s documented behavior and existing handlers.",
+    "The active channel arrow files omit the baked sample channel display so the application can render a live channel number.",
+    "The map Weather button defaults to the clear-day icon; it may switch dynamically using weather_condition_map.json."
+  ]
+}

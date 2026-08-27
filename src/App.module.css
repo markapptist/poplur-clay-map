@@ -27,6 +27,15 @@
     0 0 60px rgba(0,0,0,0.9);
 }
 
+.conquerBoardOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 400;
+  overflow: hidden;
+  background: #15152b;
+  isolation: isolate;
+}
+
 @media (min-height: 933px) {
   .shell { border-radius: 40px; margin: auto; }
 }

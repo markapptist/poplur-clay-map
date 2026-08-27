@@ -6,6 +6,16 @@
  */
 export const POPLUR_OPEN_FEED_BROWSER_EVENT = 'poplur-open-feed-browser'
 
+/**
+ * Native browsing is an action, not just a selected URL. React deliberately
+ * ignores a state write whose value is unchanged, so a monotonically
+ * increasing request id lets OPEN AGAIN relaunch the same HTTPS address after
+ * the private browser was dismissed.
+ */
+export function nextInAppBrowserOpenRequest(current: number): number {
+  return current + 1
+}
+
 export function normalizeInAppBrowserURL(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   const value = raw.trim()

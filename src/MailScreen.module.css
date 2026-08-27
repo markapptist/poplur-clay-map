@@ -3,7 +3,12 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  background: #fef0f5;
+  /* Messages follow the profile background selected in Settings. The shared
+     document theme is updated immediately on selection, so both the inbox and
+     an already-open conversation change together without an extra sync path. */
+  background: var(--poplur-ground, #fef0f5);
+  background-position: center;
+  background-size: cover;
   overflow: hidden;
   /* Mail is a Home subscreen like Store and Stats: preserve the wordmark at
      the top and the arrows/cube/radius dock at the bottom. The content owns the
@@ -287,13 +292,16 @@
   margin: 0;
   font-size: 17px;
   font-weight: 900;
-  color: #24141d;
+  color: var(--poplur-ink, #24141d);
+  text-shadow: 0 1px 12px rgba(255,255,255,.22);
 }
 
 .toolbarInfo span {
   font-size: 11px;
   font-weight: 800;
-  color: rgba(46, 31, 39, 0.55);
+  color: var(--poplur-ink, #24141d);
+  opacity: .66;
+  text-shadow: 0 1px 10px rgba(255,255,255,.18);
 }
 
 .dmCallButton {
@@ -802,12 +810,16 @@
 .workEmpty span { display: block; margin-top: 4px; font: 700 10px/1.3 ui-rounded, system-ui, sans-serif; }
 
 .compose {
+  position: relative;
   flex: none;
   display: grid;
-  grid-template-columns: auto auto minmax(54px, 1fr) auto auto;
+  grid-template-columns: repeat(3, 42px) minmax(0, 1fr);
+  grid-template-areas:
+    'message message message message'
+    'attach sticker voice .';
   gap: 7px;
-  padding: 12px 16px 8px;
-  background: rgba(254, 240, 245, 0.94);
+  padding: 12px 16px 10px;
+  background: rgba(254, 240, 245, 0.88);
   backdrop-filter: blur(15px);
 }
 
@@ -824,6 +836,10 @@
   box-shadow: inset 0 2px 3px rgba(255,255,255,.72), 0 3px 0 rgba(99,42,71,.16);
   cursor: pointer;
 }
+
+.attachButton { grid-area: attach; }
+.stickerButton { grid-area: sticker; }
+.voiceButton { grid-area: voice; }
 
 .attachButton svg,
 .voiceButton svg {
@@ -921,9 +937,10 @@
 .stickerPick:active { transform: translateY(2px) scale(.96); }
 
 .compose input {
+  grid-area: message;
   min-width: 0;
-  min-height: 44px;
-  padding: 0 15px;
+  min-height: 56px;
+  padding: 0 96px 0 17px;
   border: 1px solid rgba(77, 46, 60, 0.12);
   border-radius: 15px;
   background: white;
@@ -939,8 +956,12 @@
 }
 
 .sendBtn {
+  position: absolute;
+  top: 18px;
+  right: 22px;
   min-height: 44px;
-  padding: 0 12px;
+  min-width: 74px;
+  padding: 0 13px;
   border: 0;
   border-radius: 15px;
   background: linear-gradient(145deg, #ff69b0, #f72686 65%, #bd155f);
@@ -1155,8 +1176,24 @@
   width: clamp(112px, 31vw, 148px);
   aspect-ratio: 1;
   margin-bottom: 9px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
   transform: rotateX(7deg) rotateY(-13deg);
   filter: drop-shadow(0 18px 24px rgba(255, 31, 147, 0.32));
+}
+
+.ftContactCube:active {
+  transform: rotateX(7deg) rotateY(-13deg) scale(0.94);
+}
+
+.ftContactCube:focus-visible {
+  outline: 3px solid #ffb6da;
+  outline-offset: 8px;
+  border-radius: 24%;
 }
 
 .ftCubeFace,

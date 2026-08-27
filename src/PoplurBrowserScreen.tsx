@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
-import { normalizeInAppBrowserURL } from './inAppBrowser'
+import { nextInAppBrowserOpenRequest, normalizeInAppBrowserURL } from './inAppBrowser'
 import { playPop } from './pop'
 import styles from './PoplurBrowserScreen.module.css'
 
@@ -16,9 +16,20 @@ export default function PoplurBrowserScreen({
   const initial = normalizeInAppBrowserURL(initialURL) ?? null
   const [address, setAddress] = useState(initial ?? '')
   const [destination, setDestination] = useState<string | null>(initial)
+  const [nativeOpenRequest, setNativeOpenRequest] = useState(0)
   const [error, setError] = useState('')
   const destinationRef = useRef(destination)
   destinationRef.current = destination
+
+  // Home keeps this screen mounted while another Feed ad/source link can be
+  // selected. Treat every new safe route as real browser navigation instead
+  // of leaving the first destination frozen in useState's initial value.
+  useEffect(() => {
+    if (!initial) return
+    setAddress(initial)
+    setDestination(initial)
+    setError('')
+  }, [initial])
 
   const visit = useCallback((raw: string) => {
     const safe = normalizeInAppBrowserURL(raw)
@@ -29,6 +40,10 @@ export default function PoplurBrowserScreen({
     playPop()
     setAddress(safe)
     setDestination(safe)
+    // React ignores a state write when the same address is submitted twice.
+    // Keep an explicit request counter so GO and OPEN AGAIN still reopen the
+    // isolated native browser after it has been dismissed.
+    setNativeOpenRequest(nextInAppBrowserOpenRequest)
     setError('')
   }, [])
 
@@ -39,7 +54,7 @@ export default function PoplurBrowserScreen({
   useEffect(() => {
     if (!destination || !isNativeShell()) return
     postNativeEvent({ type: 'openInAppBrowser', url: destination })
-  }, [destination])
+  }, [destination, nativeOpenRequest])
 
   useEffect(() => {
     if (!bindBack) return
@@ -61,7 +76,7 @@ export default function PoplurBrowserScreen({
         <header className={styles.header}>
           <span className={styles.eyebrow}>FEED / BROWSER</span>
           <h1>Poplur Browser</h1>
-          <p>Open secure links without leaving Poplur.</p>
+          <p>Open HTTPS links without leaving Poplur.</p>
         </header>
 
         <form
@@ -86,7 +101,10 @@ export default function PoplurBrowserScreen({
         {destination ? (
           <div className={styles.page}>
             <div className={styles.pageChrome}>
-              <span>🔒 {host}</span>
+              {/* A cross-origin iframe cannot report its final URL after a
+                  redirect or an in-page link. Do not show a lock or hostname
+                  that could become stale and masquerade as browser chrome. */}
+              <span>EXTERNAL PAGE · IN POPLUR</span>
               <button type="button" onClick={() => { playPop(); setDestination(null) }}>CLEAR</button>
             </div>
             {isNativeShell() ? (
@@ -100,7 +118,7 @@ export default function PoplurBrowserScreen({
               <iframe
                 className={styles.frame}
                 src={destination}
-                title={`Poplur Browser — ${host}`}
+                title="Poplur Browser external page"
                 sandbox="allow-forms allow-scripts allow-same-origin"
                 referrerPolicy="strict-origin-when-cross-origin"
               />

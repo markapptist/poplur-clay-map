@@ -31,6 +31,7 @@ import {
   type CallMediaSnapshot,
   type CallSnapshot,
 } from './webCall'
+import { resolvePendingDMThreadId } from './dmCallNavigation'
 
 // Calls already have a real video stream, so the filter rail deliberately uses
 // a stable, lightweight face anchor. This keeps costume placement responsive
@@ -610,7 +611,10 @@ export function FaceTimeOverlay({
   const [now, setNow] = useState(() => Date.now())
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
-  const callTheme = useRef(['orbit', 'ring', 'duo'][Math.floor(Math.random() * 3)] as 'orbit' | 'ring' | 'duo').current
+  // The premium ring-and-contact-cube composition is the approved DM call
+  // screen. Do not randomly fall back to the older orbit/duo identities: that
+  // made the same outgoing action appear to open different generations of UI.
+  const callTheme = 'ring' as const
   const callBegan = useRef(false)
   const connected = callSnap?.phase === 'connected'
   const initial = who.trim().charAt(0).toUpperCase() || '?'
@@ -677,6 +681,11 @@ export function FaceTimeOverlay({
     setCameraOn(next)
     playPop()
   }
+  const endAndReturnToChat = useCallback(() => {
+    playPop()
+    hangupCall()
+    onEnd()
+  }, [onEnd])
 
   const markLocalVideoReady = (event: React.SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget
@@ -735,11 +744,16 @@ export function FaceTimeOverlay({
           <div className={styles.ftRinging}>
             <div className={styles.ftRingingHalo} aria-hidden="true" />
             <div className={styles.ftOrbitRail} aria-hidden="true"><i /><i /><i /></div>
-            <div className={styles.ftContactCube} aria-hidden="true">
+            <button
+              type="button"
+              className={styles.ftContactCube}
+              aria-label={`End call with ${who} and return to chat`}
+              onClick={endAndReturnToChat}
+            >
               <span className={styles.ftCubeTop} />
               <span className={styles.ftCubeSide} />
-              <span className={styles.ftCubeFace}>{initial}</span>
-            </div>
+              <span className={styles.ftCubeFace}>@</span>
+            </button>
             <div className={styles.ftDuoStage} aria-hidden="true"><i /><b>+</b><i /></div>
             <strong>{who}</strong>
             <span className={styles.ftCallKind}>FaceTime video via Poplur DM</span>
@@ -793,7 +807,7 @@ export function FaceTimeOverlay({
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5a4 4 0 018 0v7a4 4 0 01-8 0zM5 11v1a7 7 0 0014 0v-1M12 19v3" /></svg>
           <span>{callSnap?.muted ? 'Unmute' : 'Mute'}</span>
         </button>
-        <button type="button" className={styles.ftEnd} aria-label="End call" onClick={() => { playPop(); hangupCall(); onEnd() }}>
+        <button type="button" className={styles.ftEnd} aria-label="End call and return to chat" onClick={endAndReturnToChat}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14c5-4 11-4 16 0l-3 4-4-2H11l-4 2z" /></svg>
           <span>End</span>
         </button>
@@ -823,7 +837,7 @@ function blobDataURL(blob: Blob): Promise<string> {
 
 export default function MailScreen({ onCallViaPhone, initialThreadId }: {
   onClose?: () => void
-  onCallViaPhone?: (id: string, name: string) => void
+  onCallViaPhone?: (id: string, name: string, threadId: string) => void
   initialThreadId?: string
 }) {
   const [activeThread, setActiveThread] = useState<Thread | null>(null)
@@ -907,6 +921,28 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
     window.dispatchEvent(new CustomEvent('poplur-dm-requested', { detail: { type: 'requestDMThreads' } }))
     setDeletedIds(readDeletedThreads())
   }, [])
+
+  // Returning from the temporary DM Phone mode remounts Mail with the exact
+  // originating thread id. Native must still wait for its participant-
+  // validated snapshot; the browser preview has no native snapshot and can
+  // consume the same one-shot request from its seeded threads immediately.
+  useEffect(() => {
+    const requestedThreadId = resolvePendingDMThreadId(
+      pendingInitialThreadIdRef.current,
+      threads.map(thread => thread.id),
+      !isNativeShell() || liveThreads !== null,
+    )
+    if (!requestedThreadId) return
+    const requestedThread = threads.find(thread => thread.id === requestedThreadId)
+    if (!requestedThread) return
+    pendingInitialThreadIdRef.current = undefined
+    setComposerText('')
+    setComposerTab('chat')
+    setActiveThread(requestedThread)
+    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+      detail: { type: 'openDMThread', threadId: requestedThread.id },
+    }))
+  }, [liveThreads, threads])
 
   // The rendered DM card is not enough information to place a call: its
   // participant id must be the real Poplur uid. Native supplies that with the
@@ -1102,7 +1138,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
   const startPhoneCall = useCallback((thread: Thread) => {
     if (!thread.otherId) return
     playPop()
-    onCallViaPhone?.(thread.otherId, thread.title)
+    onCallViaPhone?.(thread.otherId, thread.title, thread.id)
   }, [onCallViaPhone])
 
   const startFaceTime = useCallback((thread: Thread) => {

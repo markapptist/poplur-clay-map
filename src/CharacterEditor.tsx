@@ -35,6 +35,9 @@ const CATEGORY_HINTS: Record<StudioCategory, string> = {
   extras: 'Accessories and runway finishing touches',
 }
 
+const FITTED_LOCAL_TOPS = TOP_FASHION_STYLES.filter(style => style.render.kind === 'gltf')
+const FITTED_LOCAL_BOTTOMS = BOTTOM_FASHION_STYLES.filter(style => style.render.kind === 'gltf')
+
 type CubePressBinder = (handler: (() => boolean) | null) => void
 
 /** Full-screen, original local character creator. Every choice is rendered
@@ -155,8 +158,8 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
         faceStyle: pick(STUDIO_OPTIONS.faceStyles), eyeColor: pick(STUDIO_OPTIONS.EYE_COLORS),
         topColor: pick(STUDIO_OPTIONS.TOP_COLORS), bottomColor: pick(STUDIO_OPTIONS.BOTTOM_COLORS),
         fashionOutfit: {
-          ...current.fashionOutfit, top: pick(TOP_FASHION_STYLES).id,
-          bottom: pick(BOTTOM_FASHION_STYLES).id, accessory: pick(ACCESSORY_FASHION_STYLES).id,
+          ...current.fashionOutfit, top: pick(FITTED_LOCAL_TOPS).id,
+          bottom: pick(FITTED_LOCAL_BOTTOMS).id, accessory: pick(ACCESSORY_FASHION_STYLES).id,
         },
         updatedAt: Date.now(),
       })
@@ -198,8 +201,8 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
     return () => controller.abort()
   }, [])
 
-  const topFashionStyles: readonly FashionStyle[] = [...TOP_FASHION_STYLES, ...remoteFashion.top]
-  const bottomFashionStyles: readonly FashionStyle[] = [...BOTTOM_FASHION_STYLES, ...remoteFashion.bottom]
+  const topFashionStyles: readonly FashionStyle[] = [...FITTED_LOCAL_TOPS, ...remoteFashion.top]
+  const bottomFashionStyles: readonly FashionStyle[] = [...FITTED_LOCAL_BOTTOMS, ...remoteFashion.bottom]
 
   return (
     <main ref={wardrobeRef} className={styles.wardrobe} data-wardrobe-surface='poplur-fullscreen'>

@@ -14,7 +14,6 @@ import {
   type NativeFeedPost,
 } from './nativeFeedPosts'
 import {
-  FEED_DISCOVERY_MODES,
   distanceMetersBetween,
   feedDiscoverySnapshot,
   onFeedDiscoveryChange,
@@ -23,6 +22,7 @@ import {
   setFeedDiscoveryMode,
   type FeedDiscoverySnapshot,
 } from './feedDiscovery'
+import type { MapFeedHandoff, MapFeedHandoffRequest } from './mapFeedHandoff'
 import {
   mixPublishedMediaWithPromotions,
   nextFeedPostIndex,
@@ -169,10 +169,6 @@ const STOCK_CLIPS = [
   feedUrl('ad-spanish-1.mp4'), feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4'),
 ]
 
-// The navigator should react to content, not to a channel label. Keep this
-// narrow enough that words such as "bar" in a comedy caption do not turn the
-// TV into cutlery, while covering the food language users actually see.
-const FOOD_MENTION = /\b(?:food|poutine|burger|fries?|tacos?|pizza|ramen|noodles?|sushi|restaurant|diner|cafe|café|gravy|curds?|meal|eat(?:ing)?|lunch|dinner|breakfast)\b/i
 const MAX_PLAYBACK_RECOVERY_SOURCES = 2
 
 function posterForFeedClip(source: string): string {
@@ -379,7 +375,36 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       distanceMeters: 250 + (seed % 24_000),
     }
   })
-  return mixPublishedMediaWithPromotions(realPosts, promotions)
+  // Native shells supply the person's real photos. Browser/GCL previews do
+  // not have that bridge, so exercise the exact same still-image path with one
+  // bundled channel photo whenever no real photo intercepted this channel.
+  // This is ordinary Feed content, not another promotion, and therefore never
+  // carries the removed custom Sponsored pill.
+  const photoSource = posterForFeedClip(
+    promotions[0]?.video ?? STOCK_CLIPS[channel.number % STOCK_CLIPS.length],
+  )
+  const fallbackPhotoId = `${channel.id}:photo:${photoSource}`
+  const fallbackPhoto: ChannelPost = {
+    id: fallbackPhotoId,
+    user: channel.user,
+    video: photoSource,
+    poster: photoSource,
+    mediaType: 'photo',
+    caption: `${channel.name} photo from your radius`,
+    place: CHANNEL_PLACES[channel.id]?.[0],
+    reachKm: 40 + (channel.number % 9) / 10,
+    createdAtMillis: Date.UTC(2026, 7, 26, 18),
+    viewCount: 42 + channel.number,
+    likeCount: 8 + channel.number % 17,
+    commentCount: channel.number % 9,
+    shareCount: channel.number % 5,
+    locationVisibility: 'approximate',
+    distanceMeters: 300 + (channel.number % 12) * 170,
+  }
+  const publishedMedia = realPosts.some(post => post.mediaType === 'photo')
+    ? realPosts
+    : [fallbackPhoto, ...realPosts]
+  return mixPublishedMediaWithPromotions(publishedMedia, promotions)
 }
 
 function currentViewerCoords(): [number, number] | null {
@@ -403,6 +428,7 @@ function rankedPostsFor(
   channel: Channel,
   published: NativeFeedPost[],
   discovery: FeedDiscoverySnapshot,
+  focusedContent?: MapFeedHandoff,
 ): ChannelPost[] {
   const viewer = currentViewerCoords()
   const candidates = postsFor(channel, published).map(post => {
@@ -416,11 +442,46 @@ function rankedPostsFor(
       ),
     }
   })
-  return rankFeedPosts(candidates.map(post => ({
+  const ranked = rankFeedPosts(candidates.map(post => ({
     ...post,
     channelId: channel.id,
     radiusMeters: (post.reachKm ?? 0) * 1_000,
   })), discovery)
+  if (!focusedContent || focusedContent.channelId !== channel.id) return ranked
+
+  const focusedPost: ChannelPost = {
+    id: focusedContent.id,
+    user: focusedContent.username,
+    video: focusedContent.mediaURL,
+    poster: focusedContent.mediaType === 'photo'
+      ? focusedContent.mediaURL
+      : focusedContent.posterURL,
+    real: true,
+    mediaType: focusedContent.mediaType,
+    caption: focusedContent.caption,
+    reachKm: focusedContent.radiusMeters == null ? undefined : focusedContent.radiusMeters / 1_000,
+    createdAtMillis: focusedContent.createdAtMillis,
+    locationVisibility: focusedContent.locationVisibility,
+    originLatitude: focusedContent.originLatitude,
+    originLongitude: focusedContent.originLongitude,
+  }
+  if (focusedContent.locationVisibility === 'approximate' && viewer
+    && focusedContent.originLatitude != null && focusedContent.originLongitude != null) {
+    focusedPost.distanceMeters = distanceMetersBetween(
+      viewer,
+      [focusedContent.originLongitude, focusedContent.originLatitude],
+    )
+  }
+  // Direct navigation outranks recommendation filters for this visit. A Map
+  // tap must not silently fail because the item was hidden earlier or because
+  // an old Local preference filtered out its private/coarse origin.
+  return [focusedPost, ...ranked.filter(post => post.id !== focusedPost.id)]
+}
+
+function radiusDiscoverySnapshot(
+  state: FeedDiscoverySnapshot = feedDiscoverySnapshot(),
+): FeedDiscoverySnapshot {
+  return state.mode === 'radius' ? state : { ...state, mode: 'radius' }
 }
 
 // Every bundled ad creative — the pool channels without their own clips draw
@@ -461,11 +522,11 @@ export default function FeedTwin({
   suppressed = false,
   onPostReach,
   onContentAdvance,
-  onFoodAdChange,
   onPlayerModeChange,
   bindGoBack,
   autoPlayOnMount = false,
   frontMost = true,
+  focusedContent = null,
 }: {
   index?: number
   onIndexChange?: (index: number) => void
@@ -486,10 +547,6 @@ export default function FeedTwin({
   /** A real feed progression (swipe or completed clip), reported to the
       native shell so its ad cadence follows posts rather than channel buttons. */
   onContentAdvance?: (channelId: string, contentIndex: number) => void
-  /** The navigator becomes the food cube only while an actual food creative is
-      visible. This is deliberately about the creative, not the Food channel's
-      static/loading state, so it returns to the TV exactly when the ad leaves. */
-  onFoodAdChange?: (open: boolean) => void
   /** Long-press fullscreen: the shell hides its own chrome (cube, HUD, stat
       cards) while the feed is in player mode, and brings it back on exit. */
   onPlayerModeChange?: (on: boolean) => void
@@ -499,6 +556,8 @@ export default function FeedTwin({
   /** Feed may remain mounted during the cube handoff, but it must never keep
       its media audible after another tab has been selected. */
   frontMost?: boolean
+  /** Exact Map popup content to put first for this Feed visit. */
+  focusedContent?: MapFeedHandoffRequest | null
 } = {}) {
   const controlSide = useControlSide()
   const [ownIndex, setOwnIndex] = useState(0)
@@ -631,11 +690,18 @@ export default function FeedTwin({
   // decoder before it has painted its own first frame.
   const [readyPlaybackKey, setReadyPlaybackKey] = useState<string | null>(null)
   const ch = CHANNELS[index]
-  const discovery = useSyncExternalStore(
+  const storedDiscovery = useSyncExternalStore(
     onFeedDiscoveryChange,
     feedDiscoverySnapshot,
     feedDiscoverySnapshot,
   )
+  const discovery = radiusDiscoverySnapshot(storedDiscovery)
+  // The removed selector used to persist Trending/Local in localStorage. Reset
+  // it as part of retiring that unapproved UI so an invisible old choice cannot
+  // keep changing Feed order.
+  useEffect(() => {
+    if (storedDiscovery.mode !== 'radius') setFeedDiscoveryMode('radius')
+  }, [storedDiscovery.mode])
   const [, setLocationRevision] = useState(0)
   const contentIdxRef = useRef<Record<string, number>>({})
   const [contentRevision, forceContentRender] = useState(0)
@@ -645,13 +711,16 @@ export default function FeedTwin({
   // that channel at the focused result even if the viewer previously left the
   // channel on a later item.
   useEffect(() => {
-    const focusedPostId = discovery.focusedPostId
+    const directTarget = focusedContent?.target.channelId === ch.id
+      ? focusedContent.target
+      : undefined
+    const focusedPostId = directTarget?.id ?? discovery.focusedPostId
     if (!focusedPostId) return
-    const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), discovery)
+    const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), discovery, directTarget)
     if (!ranked.some(post => post.id === focusedPostId)) return
     contentIdxRef.current[ch.id] = 0
     forceContentRender(value => value + 1)
-  }, [ch.id, discovery.focusedPostId])
+  }, [ch.id, discovery.focusedPostId, focusedContent?.nonce])
 
   useEffect(() => {
     const refresh = () => setLocationRevision(value => value + 1)
@@ -797,7 +866,12 @@ export default function FeedTwin({
   const change = useCallback((dir: 1 | -1) => {
     const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
     if (next === index) return
-    const currentPosts = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
+    const currentPosts = rankedPostsFor(
+      ch,
+      nativeFeedPostsSnapshot(),
+      radiusDiscoverySnapshot(),
+      focusedContent?.target,
+    )
     const current = currentPosts[(contentIdxRef.current[ch.id] ?? 0) % Math.max(1, currentPosts.length)]
     if (current) recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'skip')
     const currentVideo = adVideoRef.current
@@ -809,7 +883,7 @@ export default function FeedTwin({
     playPop()
     if (onIndexChange) onIndexChange(next)
     else setOwnIndex(next)
-  }, [ch, index, onIndexChange])
+  }, [ch, focusedContent, index, onIndexChange])
 
   const toggleMute = () => {
     const next = !muted
@@ -823,7 +897,12 @@ export default function FeedTwin({
   // a channel always starts on the widest-reaching post and swiping left
   // narrows in.
   const changeContent = useCallback((dir: 1 | -1) => {
-    const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
+    const ranked = rankedPostsFor(
+      ch,
+      nativeFeedPostsSnapshot(),
+      radiusDiscoverySnapshot(),
+      focusedContent?.target,
+    )
     const count = ranked.length
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
@@ -837,14 +916,19 @@ export default function FeedTwin({
     playPop()
     onContentAdvance?.(ch.id, next)
     forceContentRender(n => n + 1)
-  }, [ch, onContentAdvance])
+  }, [ch, focusedContent, onContentAdvance])
 
   // Feed playback is a continuous channel stream. A completed clip advances
   // to the next post instead of holding on its last frame or replaying itself.
   // Keep this separate from the arrow handler: a passive completion should
   // not make the physical navigator say "pop".
   const advanceCompletedContent = useCallback(() => {
-    const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), feedDiscoverySnapshot())
+    const ranked = rankedPostsFor(
+      ch,
+      nativeFeedPostsSnapshot(),
+      radiusDiscoverySnapshot(),
+      focusedContent?.target,
+    )
     const count = ranked.length
     if (count === 0) return
     const current = contentIdxRef.current[ch.id] ?? 0
@@ -855,7 +939,7 @@ export default function FeedTwin({
     contentIdxRef.current[ch.id] = next
     onContentAdvance?.(ch.id, next)
     forceContentRender(n => n + 1)
-  }, [ch, onContentAdvance])
+  }, [ch, focusedContent, onContentAdvance])
 
   const handleEdgeTap = useCallback((side: 'left' | 'right') => {
     changeContent(side === 'left' ? -1 : 1)
@@ -902,7 +986,7 @@ export default function FeedTwin({
     nativeFeedPostsSnapshot,
   )
   useEffect(() => { requestNativeFeedPosts() }, [])
-  const posts = rankedPostsFor(ch, publishedPosts, discovery)
+  const posts = rankedPostsFor(ch, publishedPosts, discovery, focusedContent?.target)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   const postId = radiusPostId(ch.id, post)
   // Every video change re-reports its reach — channel swipe, content swipe,
@@ -1072,28 +1156,6 @@ export default function FeedTwin({
     && new URLSearchParams(window.location.search).get('transition') === '1'
   const playbackKey = adSrc ? `${sourceKey}:${adSrc}:${recoveryAttempt}` : null
   const adReady = Boolean(playbackKey) && readyPlaybackKey === playbackKey
-  // This is the creative identity, not the Food channel. Food can contain a
-  // normal post, a fallback, or its static handoff; only the actual ad film
-  // deserves to change the physical navigator on its own.
-  const foodCreativeVisible = !suppressed
-    && frontMost
-    && !playerMode
-    && adReady
-    && completedAdSrc !== adSrc
-    && /(?:^|\/)ad-food\.mp4(?:[?#].*)?$/i.test(adSrc ?? '')
-  // The written post context can be food even when its actual clip is a
-  // non-food ad from the shared pool. That is an equally valid, but bounded,
-  // reason for the fork/knife cube to appear.
-  const foodMentionVisible = !suppressed
-    && frontMost
-    && !playerMode
-    && completedAdSrc !== adSrc
-    && [post?.caption, ch.caption].some(text => FOOD_MENTION.test(text ?? ''))
-  const foodContextVisible = foodCreativeVisible || foodMentionVisible
-  useEffect(() => {
-    onFoodAdChange?.(foodContextVisible)
-  }, [foodContextVisible, onFoodAdChange])
-  useEffect(() => () => { onFoodAdChange?.(false) }, [onFoodAdChange])
   useEffect(() => {
     if (adReady || posterReady || post?.stream) recordPostView(postId)
   }, [adReady, posterReady, post?.stream, postId])
@@ -1641,15 +1703,6 @@ export default function FeedTwin({
     }, 2_200)
   }, [])
 
-  const chooseDiscoveryMode = useCallback((mode: FeedDiscoverySnapshot['mode']) => {
-    playPop()
-    contentIdxRef.current = {}
-    setFeedDiscoveryMode(mode)
-    if (mode === 'local') postNativeEvent({ type: 'requestLocation' })
-    const detail = FEED_DISCOVERY_MODES.find(option => option.id === mode)?.detail ?? mode
-    showDiscoveryNote(detail)
-  }, [showDiscoveryNote])
-
   const hideCurrentPost = useCallback(() => {
     const current = postRef.current
     if (!current) return
@@ -1955,10 +2008,6 @@ export default function FeedTwin({
         />
       )}
 
-      {post?.sponsored && !post?.stream && (
-        <div className={styles.sponsoredBadge} role="status">SPONSORED</div>
-      )}
-
       {adSrc && !post?.stream && mediaUnlocked && decoderGranted && !playbackUnavailable && completedAdSrc !== adSrc && (
         <video
           // The same creative can appear in two adjacent posts. The post key
@@ -1999,11 +2048,7 @@ export default function FeedTwin({
             retireFeedVideo(event.currentTarget)
             setReadyPlaybackKey(null)
             settledAdRef.current = null
-            // The fork/knife cube is strictly the live food creative. Mark it
-            // complete before asking the channel to advance so Home restores
-            // the TV during the handoff, not after the next post has loaded.
             setCompletedAdSrc(adSrc)
-            onFoodAdChange?.(false)
             releaseAudioFocus('feed')
             advanceCompletedContent()
           }}
@@ -2082,24 +2127,10 @@ export default function FeedTwin({
           <img className={styles.chIcon} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
         </div>
         <div
-          className={styles.discoveryDock}
+          className={styles.feedbackDock}
           onPointerDown={event => event.stopPropagation()}
           onPointerUp={event => event.stopPropagation()}
         >
-          <div className={styles.discoveryModes} role="tablist" aria-label="Feed discovery mode">
-            {FEED_DISCOVERY_MODES.map(option => (
-              <button
-                key={option.id}
-                type="button"
-                role="tab"
-                aria-selected={discovery.mode === option.id}
-                className={discovery.mode === option.id ? styles.discoveryModeOn : styles.discoveryMode}
-                onClick={() => chooseDiscoveryMode(option.id)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
           {post && (
             <button type="button" className={styles.notInterested} onClick={hideCurrentPost}>
               Not for me
@@ -2133,8 +2164,8 @@ export default function FeedTwin({
         {discoveryNote && <div className={styles.discoveryNote} role="status">{discoveryNote}</div>}
         {!post && (
           <div className={styles.discoveryEmpty} role="status">
-            No {discovery.mode} posts in this channel
-            <span>Try another channel or reset Discovery.</span>
+            No posts in this channel
+            <span>Try another channel.</span>
           </div>
         )}
       </>

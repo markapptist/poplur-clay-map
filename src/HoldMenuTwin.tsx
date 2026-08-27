@@ -31,6 +31,12 @@ import { isRetiredNavigationScreen } from './retiredNavigationRoutes'
 import { announceIpodSection } from './ipodNavigation'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
+import { HOLD_MENU_ICON_ASSETS } from './holdMenuIconAssignments'
+import {
+  createDMPhoneCallRoute,
+  dmPhoneReturnThreadId,
+  type DMPhoneCallRoute,
+} from './dmCallNavigation'
 
 // Games pulls in the FPS bridge, model-viewer controller, and both local game
 // runtimes. Load it only after the GAMES tile is opened so every ordinary map,
@@ -125,7 +131,7 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     { icon: 'Casino', title: 'CASINO', screen: 'feed-casino', native: true },
     // Links from feed ads land on this app-owned Browser page rather than
     // sending people to Safari or a fresh tab.
-    { icon: 'Search', title: 'BROWSER', screen: 'feed-browser', native: true },
+    { icon: HOLD_MENU_ICON_ASSETS.browser, title: 'BROWSER', screen: 'feed-browser', native: true },
     // The mini-app folder: everything this account has made with the AI
     // builder, seeded with Poplur Flashlight. See miniApps.ts for the schema.
     { icon: 'Apps', title: 'APPS', screen: 'feed-apps', native: true },
@@ -138,11 +144,11 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
   ],
   profile: [
     { icon: 'Home', title: 'PROFILE', screen: 'profile-home', home: true },
-    { icon: 'Home', title: 'HOUSE', screen: 'profile-house', native: true },
+    { icon: HOLD_MENU_ICON_ASSETS.house, title: 'HOUSE', screen: 'profile-house', native: true },
     // Wears the supplied mailbox render — the same object the screen's own
     // navigator cube wears at rest (poplur_cube_mailbox.glb).
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', native: true },
-    { icon: 'Store', title: 'STORE', screen: 'profile-store' },
+    { icon: HOLD_MENU_ICON_ASSETS.store, title: 'STORE', screen: 'profile-store' },
     // The account's money face: credit balance, the Store's cards, send and
     // cash-out. A window onto the poplurCredits ledger, never a second one.
     // Its own icon now — the supplied clay wallet, matching the screen's own
@@ -372,7 +378,8 @@ export default function HoldMenuTwin({
   // sprite bake and for screenshotting a single screen: several hold-menu
   // screens are several wheel turns deep, and driving that wheel from a script
   // is far more brittle than naming the screen you want.
-  const [autoCall, setAutoCall] = useState<{ id: string; name: string } | null>(null)
+  const [autoCall, setAutoCall] = useState<DMPhoneCallRoute | null>(null)
+  const [dmReturnThreadId, setDMReturnThreadId] = useState<string | null>(null)
   // The Podcast room's folder opens an iPod library over the room rather than
   // replacing it. Keeping StudioScreen mounted preserves its show name,
   // invites, recording and chosen area; the persistent folder cube closes
@@ -416,6 +423,27 @@ export default function HoldMenuTwin({
   // subscreen and appearing to ignore the second cube change.
   const activeScreenRef = useRef(activeScreen)
   activeScreenRef.current = activeScreen
+  const returnPhoneCallToDM = useCallback(() => {
+    const threadId = dmPhoneReturnThreadId(autoCall)
+    if (!threadId) return
+    const mailTile = (TAB_MENUS.profile ?? []).find(item =>
+      item.screen === 'profile-messages' && item.native)
+    if (!mailTile) return
+    setDMReturnThreadId(threadId)
+    setAutoCall(null)
+    activeScreenRef.current = mailTile
+    setActiveScreen(mailTile)
+  }, [autoCall])
+
+  // Mail captures its initial thread in a ref on mount. Clear this handoff in
+  // the following commit so leaving and reopening Mail later does not
+  // resurrect an old conversation, while the just-mounted page still returns
+  // to the exact DM that launched Phone.
+  useEffect(() => {
+    if (activeScreen?.screen !== 'profile-messages' || !dmReturnThreadId) return
+    const timer = window.setTimeout(() => setDMReturnThreadId(null), 0)
+    return () => window.clearTimeout(timer)
+  }, [activeScreen?.screen, dmReturnThreadId])
   useEffect(() => {
     // Arrow/tab navigation can replace Studio while its library is covering
     // it. Do not let that local overlay resurrect the next time Studio opens.
@@ -1087,7 +1115,19 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'profile-phone') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur phone">
-          <PhoneScreen onClose={() => { setAutoCall(null); playPop(); onClose() }} autoCall={autoCall} incomingCall={incomingCall} onAcceptCall={onAcceptCall} onDeclineCall={onDeclineCall} />
+          <PhoneScreen
+            onClose={() => {
+              playPop()
+              if (autoCall?.threadId) returnPhoneCallToDM()
+              else { setAutoCall(null); onClose() }
+            }}
+            autoCall={autoCall}
+            bindBack={bindNativeBack}
+            onDMCallReturn={returnPhoneCallToDM}
+            incomingCall={incomingCall}
+            onAcceptCall={onAcceptCall}
+            onDeclineCall={onDeclineCall}
+          />
         </div>
       )
     }
@@ -1096,11 +1136,12 @@ export default function HoldMenuTwin({
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Mail">
           <MailScreen
             onClose={() => { playPop(); onClose() }}
-            initialThreadId={initialDMThreadId}
-            onCallViaPhone={(id, name) => {
+            initialThreadId={dmReturnThreadId ?? initialDMThreadId}
+            onCallViaPhone={(id, name, threadId) => {
               const phoneTile = items.find(it => it.screen === 'profile-phone')
               if (phoneTile) {
-                setAutoCall({ id, name })
+                setAutoCall(createDMPhoneCallRoute(id, name, threadId))
+                activeScreenRef.current = phoneTile
                 setActiveScreen(phoneTile)
               }
             }}

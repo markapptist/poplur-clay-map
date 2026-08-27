@@ -52,9 +52,14 @@ import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
 import { userUnitsToKm } from './units'
 import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, WeatherMark, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
+import {
+  MAP_BROWSE_3D_BEARING,
+  MAP_BROWSE_3D_MAX_PITCH,
+  MAP_BROWSE_3D_PITCH,
+  subtleLandmarkPitch,
+} from './mapPresentationPolicy'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
-import ClayCornerButton from './ClayCornerButton'
 import ClayChannelArrows from './ClayChannelArrows'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import { modelSprite } from './modelSprite'
@@ -136,8 +141,12 @@ import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGat
 import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
-import ClayMuteButton from './ClayMuteButton'
+import SideControlIconButton from './SideControlIcon'
 import MapLevelButton from './MapLevelButton'
+import MapConquerButton from './MapConquerButton'
+import ConquerGlance from './ConquerGlance'
+import ConquerScreen from './ConquerScreen'
+import type { MapConquerSnapshot } from './mapConquer'
 import styles from './App.module.css'
 
 
@@ -655,6 +664,9 @@ export default function App() {
   const [searchText, setSearchText] = useState('')
   const [searchHits, setSearchHits] = useState<Array<{ name: string; center: [number, number] }>>([])
   const [searching, setSearching] = useState(false)
+  const [mapConquerSnapshot, setMapConquerSnapshot] = useState<MapConquerSnapshot | null>(null)
+  const [mapConquerGlanceOpen, setMapConquerGlanceOpen] = useState(false)
+  const [mapConquerBoardOpen, setMapConquerBoardOpen] = useState(false)
   const searchCloseTimerRef = useRef<number | null>(null)
   const searchPanelRef = useRef<HTMLDivElement | null>(null)
   // Use the phone clock on the first paint. The weather service improves this
@@ -682,6 +694,16 @@ export default function App() {
   // Inside the home's map iframe the shell draws the status title; standalone
   // the map draws its own.
   const isEmbedded = typeof window !== 'undefined' && window.parent !== window
+  useEffect(() => {
+    if (isEmbedded || !mapConquerBoardOpen) return
+    // A full-screen board is an exclusive lightweight surface. Park Mapbox and
+    // its audio while it is covered, then restore the exact map on dismissal.
+    window.postMessage({ type: 'poplur-map-front', front: false }, '*')
+    window.postMessage({ type: 'poplur-audio-stop', gcAudio: 'off' }, '*')
+    return () => {
+      window.postMessage({ type: 'poplur-map-front', front: true }, '*')
+    }
+  }, [isEmbedded, mapConquerBoardOpen])
   const nightMode = sky.lightPreset === 'night'
   const dayTime = !nightMode
   // Search and weather live inside this iframe, while the visible map tool
@@ -1129,6 +1151,9 @@ export default function App() {
     const map = mapRef.current as unknown as {
       stop?: () => void
       easeTo?: (o: Record<string, unknown>) => void
+      setMinPitch?: (pitch: number) => void
+      setMaxPitch?: (pitch: number) => void
+      __cinematic?: boolean
       __stopOrbit?: () => void
       __claimCamera?: () => void
       __poplurCameraClaimed?: boolean
@@ -1173,14 +1198,22 @@ export default function App() {
     const landmarkFrame = framedDestination
       ? landmarkCameraFrame(framedDestination.id)
       : null
+    if (landmarkFrame) {
+      // Wide browsing deliberately locks maxPitch to zero. Release that lock
+      // before this one authored landmark flight or Mapbox clamps the requested
+      // hero angle to a top-down view before the animation even begins.
+      map.setMinPitch?.(0)
+      map.setMaxPitch?.(MAP_BROWSE_3D_MAX_PITCH)
+      map.__cinematic = true
+    }
     wakeManagedRendering(3400 + (landmarkFrame
       ? LANDMARK_RENDER_SETTLE_MS
       : MANAGED_CAMERA_SETTLE_MS))
     map.easeTo({
       center: landmarkFrame?.center ?? center,
-      ...(landmarkFrame?.bearing == null ? {} : { bearing: landmarkFrame.bearing }),
+      bearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
       zoom: landmarkFrame?.zoom ?? 15.4,
-      pitch: landmarkFrame?.pitch ?? 52,
+      pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
       duration: 3400,
       easing: (t: number) => t * t * (3 - 2 * t),
       essential: true,
@@ -1511,7 +1544,15 @@ export default function App() {
         ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
         const duration = 4600
         wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-        map.flyTo({ center: [lng, lat], zoom, pitch: streetView ? 82 : 64, duration, curve: 1.7, essential: true })
+        map.flyTo({
+          center: [lng, lat],
+          zoom,
+          pitch: streetView ? 82 : MAP_BROWSE_3D_PITCH,
+          bearing: streetView ? map.getBearing() : MAP_BROWSE_3D_BEARING,
+          duration,
+          curve: 1.7,
+          essential: true,
+        })
       },
       setSky: (day: boolean) => setSky(forcedSkyShade(day)),
       setWeather: (m: WeatherMode | null) => setWeatherOverride(m),
@@ -1545,8 +1586,10 @@ export default function App() {
     const ownsFlight = () => stagedCameraFlightRef.current.serial === flightSerial
     const targetCenter = landmarkFrame?.center ?? center
     const targetZoom = landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM)
-    const targetPitch = landmarkFrame?.pitch ?? (streetView ? 82 : 64)
-    const targetBearing = landmarkFrame?.bearing ?? map.getBearing() + 36
+    const targetPitch = streetView
+      ? 82
+      : subtleLandmarkPitch(landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH)
+    const targetBearing = landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING
     // The authored tour crosses flat and stops just below the 3D threshold.
     // Only the destination reveal requests close tiles/extrusions/GLB work;
     // doing that work during the tail of the world crossing rendered the same
@@ -1596,7 +1639,7 @@ export default function App() {
             if (!ownsFlight()) return
             mapCamera.__cinematic = true
             mapCamera.__tripping = true
-            map.setMaxPitch(Math.max(targetPitch, streetView ? 85 : 60))
+            map.setMaxPitch(streetView ? 85 : MAP_BROWSE_3D_MAX_PITCH)
             map.setMinPitch(0)
 
             // Beat 3: only restore the landmark's hero angle after the camera
@@ -1680,7 +1723,7 @@ export default function App() {
     wakeManagedRendering(CLIMB_MS + MANAGED_CAMERA_SETTLE_MS)
     map.easeTo({
       zoom: Math.min(map.getZoom(), TRAVEL_ZOOM),
-      pitch: 26,
+      pitch: 16,
       duration: CLIMB_MS,
       essential: true,
     })
@@ -1700,8 +1743,8 @@ export default function App() {
       live.flyTo({
         center,
         zoom: BUILDING_REVEAL_ZOOM,
-        pitch: 62,
-        bearing: live.getBearing() + 28,
+        pitch: MAP_BROWSE_3D_PITCH,
+        bearing: MAP_BROWSE_3D_BEARING,
         duration: CROSS_MS,
         curve: 1.1,
         essential: true,
@@ -1863,7 +1906,7 @@ export default function App() {
     const next = !streetView
     clearTourTimers()
     setStreetView(next)
-    setTourLine(next ? 'Street View enabled - labels are culled near the road.' : 'Hybrid flyover restored.')
+    setTourLine(next ? 'Street View enabled - labels are culled near the road.' : 'Subtle map depth restored.')
   }, [clearTourTimers, streetView])
 
   const handleGoToCurrentLocation = useCallback(() => {
@@ -2647,8 +2690,28 @@ export default function App() {
         name: pin.name,
         user: pin.user,
         channel: pin.channel,
+        caption: pin.media.alt,
         radiusKm: pin.radiusKm,
         media: pin.media,
+      },
+      onActivate: () => {
+        window.parent?.postMessage({
+          type: 'poplur-map-open-feed-content',
+          content: {
+            id: pin.id,
+            channelId: pin.channel ?? 'live',
+            username: pin.user ?? '@you',
+            caption: pin.media?.alt || pin.name,
+            mediaURL: pin.media?.src,
+            mediaType: pin.media?.kind === 'image' ? 'photo' : 'video',
+            posterURL: pin.media?.poster,
+            radiusMeters: Math.max(0, pin.radiusKm * 1_000),
+            createdAtMillis: 0,
+            locationVisibility: 'approximate',
+            originLatitude: Math.round(pin.coords[1] * 1_000) / 1_000,
+            originLongitude: Math.round(pin.coords[0] * 1_000) / 1_000,
+          },
+        }, '*')
       },
       action: {
         label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
@@ -2849,17 +2912,19 @@ export default function App() {
     window.parent.postMessage({
       type: 'poplur-map-news-tour',
       on,
+      loading: newsTourPending || liveNews.loading,
       count: newsTourEvents.length,
       index: tourOn && tourMode === 'news' ? newsTourIndexRef.current : -1,
       total: newsTourEvents.length,
       eventId: activeNewsStop?.event.id ?? null,
     }, '*')
-  }, [activeNewsStop?.event.id, newsTourEvents.length, newsTourPending, tourMode, tourOn])
+  }, [activeNewsStop?.event.id, liveNews.loading, newsTourEvents.length, newsTourPending, tourMode, tourOn])
   useEffect(() => () => {
     if (window.parent === window) return
     window.parent.postMessage({
       type: 'poplur-map-news-tour',
       on: false,
+      loading: false,
       count: 0,
       index: -1,
       total: 0,
@@ -3370,6 +3435,7 @@ export default function App() {
         pois={POIS}
         airportPoints={TOUR_AIRPORTS}
         pins={tourOn ? NO_MAP_PINS : mapPins}
+        onConquerSnapshot={isEmbedded ? undefined : setMapConquerSnapshot}
         onPinOpen={openClickedMapPinContent}
         selectedId={selectedId}
         onSelectPoi={handleSelectPoi}
@@ -3477,18 +3543,17 @@ export default function App() {
       {/* Reachable thumb rail. Settings can mirror the whole group for a
           right-handed layout without scattering controls around the title. */}
       {!isEmbedded && <TabControlRail side={controlSide} label="Map controls">
-        <ClayMuteButton
-          muted={muted}
-          size={44}
-          onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
+        <SideControlIconButton
+          icon="map.mute"
+          aria-label={muted ? 'Unmute map audio' : 'Mute map audio'}
+          aria-pressed={muted}
+          activation="pointerdown"
+          onActivate={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
         />
-        <ClayCornerButton
-          kind="locate"
-          label="Go to my location"
-          size={44}
-          still
-          activateOnClick
-          onPress={() => {
+        <SideControlIconButton
+          icon="map.locate"
+          aria-label="Go to my location"
+          onActivate={() => {
             playPop(0.25)
             const map = mapRef.current as unknown as { __locateMe?: () => void } | null
             if (map?.__locateMe) { map.__locateMe(); return }
@@ -3499,26 +3564,20 @@ export default function App() {
             )
           }}
         />
-        <ClayCornerButton
-          kind="search"
-          active={searchOpen}
-          label={searchOpen ? 'Close search' : 'Search places'}
-          size={44}
-          still
-          activateOnClick
-          onPress={() => { playPop(0.25); if (searchOpen) closeSearch(); else openSearch() }}
+        <SideControlIconButton
+          icon="map.search"
+          aria-pressed={searchOpen}
+          aria-label={searchOpen ? 'Close map search' : 'Search map'}
+          onActivate={() => { playPop(0.25); if (searchOpen) closeSearch(); else openSearch() }}
         />
         {/* START / STOP TOUR. One press visits the complete landmark catalog in
             fixed order, then releases the camera after the final hold. */}
         <span data-map-tour-toggle="" style={{ display: 'contents' }}>
-          <ClayCornerButton
-            kind="play"
-            label={tourOn && tourMode === 'landmarks' ? 'Stop the tour' : 'Start the tour'}
-            active={tourOn && tourMode === 'landmarks'}
-            size={44}
-            still
-            activateOnClick
-            onPress={() => {
+          <SideControlIconButton
+            icon="map.tour_play"
+            aria-label={tourOn && tourMode === 'landmarks' ? 'Stop map tour' : 'Start map tour'}
+            aria-pressed={tourOn && tourMode === 'landmarks'}
+            onActivate={() => {
               playPop(0.25)
               // Read the REF, not the state: same reason the mapAction case does
               // — this fires timers, and StrictMode double-invokes state updaters.
@@ -3539,6 +3598,18 @@ export default function App() {
             }}
           />
         </span>
+        <MapConquerButton
+          open={mapConquerGlanceOpen}
+          onPress={() => {
+            playPop(0.25)
+            if (!mapConquerGlanceOpen) {
+              closeSearchImmediately()
+              setWeatherOpen(false)
+            }
+            setMapConquerBoardOpen(false)
+            setMapConquerGlanceOpen(open => !open)
+          }}
+        />
         <MapLevelButton
           level={popLevel}
           menuSide={controlSide}
@@ -3561,6 +3632,37 @@ export default function App() {
           )}
         </button>
       </TabControlRail>}
+      {!isEmbedded && !mapConquerBoardOpen && !searchOpen && !weatherOpen && (
+        <ConquerGlance
+          snapshot={mapConquerSnapshot}
+          open={mapConquerGlanceOpen}
+          onOpen={() => {
+            playPop()
+            stopTour()
+            setMapConquerGlanceOpen(false)
+            setMapConquerBoardOpen(true)
+          }}
+        />
+      )}
+      {!isEmbedded && mapConquerBoardOpen && (
+        <section
+          className={styles.conquerBoardOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="poplur-conquer-title"
+        >
+          <ConquerScreen
+            snapshot={mapConquerSnapshot}
+            onClose={() => {
+              playPop(0.25)
+              setMapConquerBoardOpen(false)
+              queueMicrotask(() => {
+                document.querySelector<HTMLElement>('[data-map-conquer-toggle]')?.focus()
+              })
+            }}
+          />
+        </section>
+      )}
       {/* The weather overlay itself: rain, snow, hail, lightning over the map. */}
       <WeatherFX mode={weatherMode} />
 

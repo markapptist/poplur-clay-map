@@ -1,6 +1,5 @@
-import { useId } from 'react'
 import ClayCornerButton from './ClayCornerButton'
-import ClayMuteButton from './ClayMuteButton'
+import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
 import type { ControlSide } from './controlPlacement'
 import styles from './PostActionRail.module.css'
@@ -43,71 +42,51 @@ export default function PostActionRail({
   onDelete?: () => void
   deletePending?: boolean
 }) {
-  const prefix = useId().replace(/:/g, '')
-  const gradient = (name: string) => `${prefix}-${name}`
-
   return (
     <TabControlRail side={side} label={label}>
-      <ClayMuteButton muted={muted} onToggle={onToggleMute} size={44} />
-      <ClayCornerButton kind="share" label="Share this post" size={44} still onPress={onShare} />
-      <button
-        type="button"
-        className={styles.ccGlyphButton}
+      <SideControlIconButton
+        icon="feed.mute"
+        aria-label={muted ? 'Unmute feed video' : 'Mute feed video'}
+        aria-pressed={muted}
+        activation="pointerdown"
+        onActivate={onToggleMute}
+      />
+      <SideControlIconButton
+        icon="feed.share"
+        aria-label="Share post"
+        activation="pointerdown"
+        onActivate={onShare}
+      />
+      <SideControlIconButton
+        icon="feed.captions"
         aria-label={captionsOn ? 'Turn closed captions off' : 'Turn closed captions on'}
         aria-pressed={captionsOn}
-        onClick={onToggleCaptions}
-      >
-        <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden="true" className={styles.ccGlyph}>
-          <defs>
-            <linearGradient id={gradient('face')} x1="0" y1="0" x2="1" y2="1">
-              <stop stopColor="#ffb3d7" /><stop offset=".46" stopColor="#f24c9c" /><stop offset="1" stopColor="#8d124d" />
-            </linearGradient>
-            <linearGradient id={gradient('edge')} x1="0" y1="0" x2="0" y2="1">
-              <stop stopColor="#a81558" /><stop offset="1" stopColor="#510725" />
-            </linearGradient>
-            <radialGradient id={gradient('glow')} cx="35%" cy="20%" r="78%">
-              <stop stopColor="#d9fbff" /><stop offset=".45" stopColor="#6ee7fa" /><stop offset="1" stopColor="#228bbd" />
-            </radialGradient>
-          </defs>
-          <path d="M9 35 24 43 39 35 24 28Z" fill="rgba(0,0,0,.42)" />
-          <path d="M8 16v19l16 9V25Z" fill={`url(#${gradient('edge')})`} />
-          <path d="M40 16v19l-16 9V25Z" fill={`url(#${gradient('edge')})`} />
-          <path d="M24 5 40 14 24 25 8 14Z" fill={`url(#${gradient('face')})`} />
-          <text
-            x="24"
-            y="18.5"
-            textAnchor="middle"
-            className={styles.ccText}
-            fill={captionsOn ? `url(#${gradient('glow')})` : '#fff2f8'}
-          >CC</text>
-          <path d="M24 5 40 14 24 25 8 14Z" fill="none" stroke="rgba(20,4,12,.55)" strokeWidth="1" />
-          <path d="M8 14v21l16 9 16-9V14M24 25v19" fill="none" stroke="rgba(20,4,12,.4)" strokeWidth="1" />
-        </svg>
-      </button>
-      <ClayCornerButton
-        kind="comments"
-        active={commentsAtEnd}
-        label={commentsAtEnd ? 'Hide end-of-video comments' : 'Show end-of-video comments'}
-        size={44}
-        still
-        onPress={onToggleCommentsAtEnd}
+        onActivate={onToggleCaptions}
       />
-      <ClayCornerButton kind="comment" label="Comment on this post" size={44} still onPress={onComment} />
-      <ClayCornerButton
-        kind="thumbUp"
-        label="Increase this post's radius by one"
-        size={44}
-        still
-        prism
-        onPress={onLike}
+      <SideControlIconButton
+        icon="feed.comments_collapse"
+        aria-pressed={commentsAtEnd}
+        aria-label={commentsAtEnd ? 'Hide end-of-video comments' : 'Show end-of-video comments'}
+        activation="pointerdown"
+        onActivate={onToggleCommentsAtEnd}
       />
-      <ClayCornerButton
-        kind="thumbDown"
-        label="Reduce this post's radius by one"
-        size={44}
-        still
-        prism
-        onPress={onDislike}
+      <SideControlIconButton
+        icon="feed.comment"
+        aria-label="Comment on this post"
+        activation="pointerdown"
+        onActivate={onComment}
+      />
+      <SideControlIconButton
+        icon="feed.like"
+        aria-label="Increase this post's radius by one"
+        activation="pointerdown"
+        onActivate={onLike}
+      />
+      <SideControlIconButton
+        icon="feed.dislike"
+        aria-label="Reduce this post's radius by one"
+        activation="pointerdown"
+        onActivate={onDislike}
       />
       {onDelete && (
         <span className={deletePending ? styles.deletePending : undefined} aria-busy={deletePending || undefined}>

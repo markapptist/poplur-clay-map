@@ -10,6 +10,7 @@
 /* No background, no border, no box — the glyph IS the button. Only enough
    padding to keep the tap target honest on a phone. */
 .button {
+  position: relative;
   display: block;
   padding: 7px;
   margin: -7px;
@@ -20,6 +21,25 @@
   transition: transform 0.12s ease;
 }
 .button:active { transform: translateY(1px) scale(0.94); }
+
+.currentLevel {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  display: grid;
+  place-items: center;
+  min-width: 17px;
+  height: 12px;
+  padding: 0 3px;
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-radius: 999px;
+  background: rgba(20, 4, 14, .84);
+  color: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, .48);
+  font: 900 6.5px/1 system-ui, sans-serif;
+  letter-spacing: .04em;
+  pointer-events: none;
+}
 
 .glyph {
   display: block;

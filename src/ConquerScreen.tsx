@@ -11,7 +11,13 @@ import styles from './ConquerScreen.module.css'
 
 const BOARD_PAGE_SIZE = 6
 
-export default function ConquerScreen({ snapshot }: { snapshot: MapConquerSnapshot | null }) {
+export default function ConquerScreen({
+  snapshot,
+  onClose,
+}: {
+  snapshot: MapConquerSnapshot | null
+  onClose?: () => void
+}) {
   const previewSnapshot = useMemo(
     () => typeof window === 'undefined' ? null : conquerPreviewFromSearch(window.location.search),
     [],
@@ -31,6 +37,17 @@ export default function ConquerScreen({ snapshot }: { snapshot: MapConquerSnapsh
     setBoardPage(0)
     setFlipRevision(revision => revision + 1)
   }, [sourceSnapshot])
+
+  useEffect(() => {
+    if (!onClose) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onClose()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
 
   const rows = displaySnapshot?.rows ?? []
   const pageCount = Math.max(1, Math.ceil(rows.length / BOARD_PAGE_SIZE))
@@ -90,11 +107,24 @@ export default function ConquerScreen({ snapshot }: { snapshot: MapConquerSnapsh
 
   return (
     <main
+      id="poplur-conquer-board"
       className={styles.screen}
       data-poplur-screen="map-conquer"
       data-conquer-preview={simulatedPreview ? 'filled' : undefined}
+      data-standalone={onClose ? 'true' : undefined}
     >
       <div className={styles.terrain} aria-hidden="true" />
+      {onClose && (
+        <button
+          type="button"
+          className={styles.close}
+          aria-label="Close Conquer Board"
+          autoFocus
+          onClick={onClose}
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      )}
       <section ref={boardRef} className={styles.board} aria-labelledby="poplur-conquer-title">
         <div className={pullStyles.panel} ref={pullPanelRef} data-pull-panel aria-hidden="true">
           <div className={pullStyles.head} ref={pullHeadRef}>
@@ -174,13 +204,15 @@ export default function ConquerScreen({ snapshot }: { snapshot: MapConquerSnapsh
             </>
           ) : (
             <div className={styles.empty} role="status">
-              <strong>No conquered areas in view</strong>
-              <span>Return to the map and move to an area with active takeovers.</span>
+              <strong>{displaySnapshot ? 'No conquered areas in view' : 'Conquer standings loading'}</strong>
+              <span>{displaySnapshot
+                ? 'Return to the map and move to an area with active takeovers.'
+                : 'The complete board is ready; live rankings will appear as soon as this map reports them.'}</span>
             </div>
           )}
         </div>
       </section>
-      <p className={styles.cubeHint}>TAP THE CUBE TO RETURN TO MAP</p>
+      {!onClose && <p className={styles.cubeHint}>TAP THE CUBE TO RETURN TO MAP</p>}
     </main>
   )
 }

@@ -14,6 +14,8 @@ import {
   type TopFashionStyleId,
 } from './characterFashion'
 import type { RemoteWardrobeStyles } from './wardrobeGarmentApi'
+import { resolveAvatarHairAsset } from './avatarHair'
+import { attachObjectPreservingWorld, attachObjectToAvatarBone } from './avatarRigging'
 import {
   POPLUR_AVATAR_MOTION_JOINTS,
   poplurAvatarMotionFrame,
@@ -403,11 +405,6 @@ function bodyFile(character: PoplurCharacter) {
   return character.gender === 'female' ? 'Poplur_Female_Morph.glb' : 'Poplur_Male_Morph.glb'
 }
 
-function hairFile(character: PoplurCharacter) {
-  if (character.hairStyle === 'long' || character.hairStyle === 'curly') return 'Hair_Long.glb'
-  return character.gender === 'female' ? 'Hair_BuzzedFemale.glb' : 'Hair_SimpleParted.glb'
-}
-
 function prepareLoadedModel(root: THREE.Object3D, mode: '2d' | '3d', poseBody = false) {
   root.traverse(item => {
     if (poseBody && item instanceof THREE.Bone && item.name === 'upperarm_l') item.rotateZ(-1.23)
@@ -553,6 +550,9 @@ export function createPoplurAvatarRuntime(options: PoplurAvatarRuntimeOptions): 
       // Garments are bound to the current body's bones. Detach them before
       // disposing a replaced body so no slot can retain a dead skeleton.
       for (const slotName of ['top', 'bottom', 'accessory'] as const) clearOutfitSlot(runtime, slotName)
+      // Hair is socketed below the live Head bone. Preserve its current fit
+      // outside the retiring rig so body/gender replacement cannot dispose it.
+      if (runtime.hair && runtime.hair.parent !== avatar) attachObjectPreservingWorld(avatar, runtime.hair)
       const replacedSkeleton = runtime.body ? findBodySkeleton(runtime.body) : null
       if (runtime.body) {
         runtime.motionRig.clear()
@@ -581,6 +581,7 @@ export function createPoplurAvatarRuntime(options: PoplurAvatarRuntimeOptions): 
       runtime.centerX = center.x
       runtime.centerZ = center.z
       applyCharacterAppearance(runtime, currentCharacter)
+      if (runtime.hair) attachObjectToAvatarBone(runtime.hair, runtime.bodySkeleton, 'Head')
       applyAvatarMotion(runtime)
       options.onStatus?.(mode === '3d' ? 'Drag to rotate' : '2D character preview')
       options.onModelLoaded?.('body')
@@ -594,23 +595,33 @@ export function createPoplurAvatarRuntime(options: PoplurAvatarRuntimeOptions): 
   }
 
   runtime.loadHair = nextCharacter => {
-    const asset = hairFile(nextCharacter)
+    const hairAsset = resolveAvatarHairAsset(nextCharacter.gender, nextCharacter.hairStyle)
+    const files = hairAsset.overlayFile ? [hairAsset.file, hairAsset.overlayFile] : [hairAsset.file]
+    const asset = files.join('+')
     if (runtime.hairAsset === asset) return
     runtime.hairAsset = asset
     const revision = ++runtime.hairRevision
-    void loader.loadAsync(`${MODEL_ROOT}${asset}`).then(hair => {
+    void Promise.all(files.map(file => loader.loadAsync(`${MODEL_ROOT}${file}`))).then(parts => {
       if (disposed || revision !== runtime.hairRevision) {
-        disposeAvatarObject(hair.scene)
+        parts.forEach(part => disposeAvatarObject(part.scene))
         return
       }
-      prepareLoadedModel(hair.scene, mode)
+      const hair = new THREE.Group()
+      parts.forEach(part => {
+        prepareLoadedModel(part.scene, mode)
+        hair.add(part.scene)
+      })
+      hair.rotation.x += hairAsset.rotationX
+      hair.position.y += hairAsset.offsetY
+      hair.position.z += hairAsset.offsetZ
       if (runtime.hair) {
-        avatar.remove(runtime.hair)
+        runtime.hair.removeFromParent()
         disposeAvatarObject(runtime.hair)
       }
-      runtime.hair = hair.scene
-      avatar.add(hair.scene)
+      runtime.hair = hair
+      avatar.add(hair)
       applyCharacterAppearance(runtime, currentCharacter)
+      attachObjectToAvatarBone(hair, runtime.bodySkeleton, 'Head')
       options.onModelLoaded?.('hair')
     }).catch(() => {
       if (!disposed && revision === runtime.hairRevision) {

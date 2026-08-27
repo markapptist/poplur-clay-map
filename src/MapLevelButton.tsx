@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { POP_LEVELS, type PopLevel } from './data'
 import { playPop } from './pop'
+import { SideControlIconImage } from './SideControlIcon'
 import styles from './MapLevelButton.module.css'
 
 // ── Whose pops the map is showing ───────────────────────────────────────────
@@ -123,7 +124,10 @@ export default function MapLevelButton({
           cycle()
         }}
       >
-        <LayerGlyph level={level} size={size} />
+        <SideControlIconImage icon="map.layers" displaySize={size} />
+        <span className={styles.currentLevel} aria-hidden="true">
+          {level === 'mine' ? 'ME' : level === 'others' ? 'THEM' : 'ALL'}
+        </span>
       </button>
     </div>
   )

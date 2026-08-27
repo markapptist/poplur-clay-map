@@ -115,8 +115,19 @@ if (params.get('profile') === '1') {
 // full resolution. Set once, globally, before any <model-viewer> can mount.
 ModelViewerElement.minimumRenderScale = 1
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+const root = createRoot(document.getElementById('root')!)
+if (import.meta.env.DEV && params.get('side-icon-gallery') === '1') {
+  void import('./SideControlIconGallery').then(({ default: SideControlIconGallery }) => {
+    root.render(
+      <StrictMode>
+        <SideControlIconGallery />
+      </StrictMode>,
+    )
+  })
+} else {
+  root.render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+}

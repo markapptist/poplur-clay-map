@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import type { SmartCard } from './tourSmarts'
 import BoundedPopupVideo from './BoundedPopupVideo'
 import { normalizeInAppBrowserURL, openInPoplurBrowser } from './inAppBrowser'
+import NewsPopCard from './NewsPopCard'
 import { playPop } from './pop'
 import { productImage } from './productImage'
 import { placeCreative, type PlaceCreative } from './placeCreative'
@@ -79,6 +80,54 @@ export default function CommerceSuggestionWindow({
     onClose()
   }
 
+  if (variant === 'popup') {
+    const media = shot
+      ? { kind: 'image' as const, src: shot, alt: card.media?.alt ?? card.headline }
+      : card.media
+    const runAppAction = action ? () => {
+      playPop()
+      onInteract?.()
+      action.onActivate()
+      onClose()
+    } : undefined
+    const browserAction = safeLink ? () => openBrowser() : undefined
+    const rows = card.rows?.slice(0, 3).map(row => `${row.label}: ${row.value}`).join(' · ')
+
+    return (
+      <NewsPopCard
+        embedded
+        status="POPLUR AD"
+        statusKind="ad"
+        place={card.sponsor ?? card.title}
+        title={card.headline}
+        summary={livePlace?.summary ?? card.line}
+        summaryLabel="POPLUR PICK"
+        meta={(
+          <>
+            {rows}
+            {rows && livePlace && ' · '}
+            {livePlace && normalizeInAppBrowserURL(livePlace.sourceUrl) && (
+              <button
+                type="button"
+                className={styles.newsSource}
+                onClick={() => openBrowser(livePlace.sourceUrl)}
+              >{livePlace.sourceLabel}</button>
+            )}
+          </>
+        )}
+        media={media}
+        onMediaActivate={browserAction}
+        onClose={() => { playPop(); onClose() }}
+        primaryAction={runAppAction ? { label: action?.label ?? 'OPEN', onActivate: runAppAction }
+          : browserAction ? { label: card.link?.label ?? 'SEE DEAL', onActivate: browserAction }
+            : undefined}
+        secondaryAction={runAppAction && browserAction
+          ? { label: card.link?.label ?? 'SEE DEAL', onActivate: browserAction }
+          : undefined}
+      />
+    )
+  }
+
   const windowStyle = {
     '--ad-accent': card.accent ?? '#ff2d91',
     '--ad-accent-2': card.accent2 ?? '#67dcff',
@@ -104,7 +153,7 @@ export default function CommerceSuggestionWindow({
   return (
     <section
       data-poplur-native-hit-region
-      className={[styles.window, variant === 'camera' ? styles.camera : styles.popup].join(' ')}
+      className={[styles.window, styles.camera].join(' ')}
       style={windowStyle}
       role="dialog"
       aria-label={card.headline}

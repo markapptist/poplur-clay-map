@@ -7,6 +7,7 @@ import {
   FASHION_STYLES_BY_SLOT,
   TOP_FASHION_STYLES,
   coerceFashionStyle,
+  coerceFittedFashionStyle,
 } from '../../characterFashion'
 import { studioInitialCharacter } from '../../AvatarStudioCharacter'
 import { defaultCharacter, type PoplurCharacter } from '../../characterStore'
@@ -474,6 +475,12 @@ describe('Poplur Atelier fashion inventory', () => {
     expect(coerceFashionStyle('accessory', 'statement-shades')).toBe('none')
   })
 
+  it('promotes rigid casual pieces to skinned fitted garments for the animated studio', () => {
+    expect(coerceFittedFashionStyle('top', 'hoodie')).toBe('tailored-blazer')
+    expect(coerceFittedFashionStyle('bottom', 'skirt')).toBe('tailored-trousers')
+    expect(coerceFittedFashionStyle('top', 'clo-runway-coat')).toBe('clo-runway-coat')
+  })
+
   it('keeps layered-art parts intact while normalising the separate 3D outfit', () => {
     const saved = {
       ...defaultCharacter(),
@@ -496,12 +503,12 @@ describe('Poplur Atelier fashion inventory', () => {
     })
   })
 
-  it('migrates recognised classic choices without accepting foreign part ids', () => {
+  it('migrates recognised classic choices to fitted animated garments', () => {
     const normalised = studioInitialCharacter({
       ...defaultCharacter(),
       outfit: { top: 'hoodie', bottom: 'skirt', accessory: 'cap' },
     })
 
-    expect(normalised.fashionOutfit).toEqual({ top: 'hoodie', bottom: 'skirt', accessory: 'cap' })
+    expect(normalised.fashionOutfit).toEqual({ top: 'tailored-blazer', bottom: 'tailored-trousers', accessory: 'cap' })
   })
 })

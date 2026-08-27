@@ -374,7 +374,7 @@
 
 @keyframes boatBob {
   0%, 100% { transform: translateY(0) rotate(-2deg); }
-  50% { transform: translateY(-4px) rotate(2.5deg); }
+  50% { transform: translateY(-1px) rotate(2.5deg); }
 }
 
 /* Toy cars glued flat to the roads */
@@ -759,10 +759,7 @@
 
 
 
-@media (prefers-reduced-motion: reduce) {
-}
-
-/* ── Tap-to-post composer: clay bubble anchored to the tapped ground ── */
+/* ── Drop console: one molded control dock over the selected map point ── */
 .composeDismissLayer {
   position: absolute;
   inset: 0;
@@ -771,212 +768,432 @@
   height: 100%;
   padding: 0;
   border: 0;
-  background: rgba(7, 4, 9, 0.28);
+  background:
+    radial-gradient(circle at 50% 48%, rgba(246, 59, 154, 0.06), rgba(9, 3, 9, 0.5) 72%),
+    rgba(7, 4, 9, 0.2);
+  cursor: default;
 }
 
 .composeBubble {
   position: absolute;
   left: 50%;
-  top: 46%;
+  top: 48%;
   z-index: 40;
-  /* Keep the posting decision centered in the safe lane between the left
-     action rail and right zoom control. On an iPhone this is deliberately
-     much narrower than the previous 320px ground-anchored sheet. */
-  width: clamp(232px, calc(100vw - 130px), 276px);
-  max-height: min(58vh, 440px);
-  max-height: min(58dvh, 440px);
+  width: min(420px, calc(100vw - 132px));
+  min-width: 252px;
+  max-height: min(76vh, 640px);
+  max-height: min(76dvh, 640px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #f63b9a rgba(22, 5, 16, 0.42);
   transform: translate(-50%, -50%);
   box-sizing: border-box;
-  padding: 14px 15px 15px;
-  border: 1px solid rgba(255, 132, 199, 0.52);
-  border-radius: 22px;
-  /* A nearly opaque clay surface is both clearer over the dense city and
-     cheaper than continuously blurring the moving WebGL map underneath. */
+  padding: 0;
+  border: 3px solid #ff82c4;
+  border-radius: 28px;
   background:
-    radial-gradient(circle at 18% 0%, rgba(255, 102, 180, 0.2), transparent 38%),
-    linear-gradient(165deg, rgba(49, 34, 52, 0.97), rgba(15, 10, 19, 0.97));
+    radial-gradient(circle at 22% -4%, rgba(255, 121, 193, 0.42), transparent 36%),
+    linear-gradient(145deg, #49142f 0%, #220817 48%, #10080f 100%);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 18px 42px rgba(5, 4, 7, 0.62),
-    0 0 22px rgba(246, 59, 154, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  color: #FFF2F8;
+    0 7px 0 #7d124c,
+    0 11px 0 rgba(27, 4, 18, 0.86),
+    0 24px 52px rgba(5, 2, 6, 0.64),
+    0 0 24px rgba(246, 59, 154, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.66),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.34);
+  color: #fff7fb;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  animation: composePop 0.28s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+  animation: composePop 0.22s cubic-bezier(0.2, 1.45, 0.4, 1) both;
+  isolation: isolate;
 }
 
-/* Upload location is a focused choice over a still-usable map. Keep the card
-   inside the two side-control lanes and make both decisions proper iOS targets. */
 .composeBubble[data-focused-picker='true'] {
-  width: clamp(220px, calc(100vw - 138px), 252px);
+  width: min(360px, calc(100vw - 132px));
   min-width: 0;
-  padding: 14px 16px;
 }
 
-.composeBubble[data-focused-picker='true'] .composeCancel,
-.composeBubble[data-focused-picker='true'] .composeDrop {
-  height: 44px;
+.composeBubble:focus {
+  outline: none;
 }
 
-@media (max-width: 370px) {
-  .composeBubble[data-focused-picker='true'] .composeActions {
-    flex-direction: column;
-  }
-}
-
-/* A small highlight reads as the top edge of a physical Poplur card. The old
-   pointer was removed because a centered dialog no longer pretends to sit on
-   one screen pixel; the claim disc itself shows the selected ground. */
 .composeBubble::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: 24px;
-  right: 24px;
-  height: 3px;
-  border-radius: 0 0 999px 999px;
-  background: linear-gradient(90deg, transparent, #ff55ae 24%, #7fe3ff 76%, transparent);
-  box-shadow: 0 0 12px rgba(255, 85, 174, 0.72);
+  z-index: 3;
+  top: 4px;
+  left: 26px;
+  right: 26px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.9) 34%, #7fe3ff 65%, transparent);
+  box-shadow: 0 0 10px rgba(127, 227, 255, 0.5);
+  pointer-events: none;
 }
 
 @keyframes composePop {
-  0%   { opacity: 0; transform: translate(-50%, -47%) scale(0.82); }
+  0%   { opacity: 0; transform: translate(-50%, -47%) scale(0.88); }
   100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 
 .composeHeader {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 44px;
   align-items: center;
-  gap: 10px;
-  margin: 2px 0 11px;
+  gap: 8px;
+  min-height: 86px;
+  margin: 0;
+  padding: 12px 11px 11px 8px;
+  box-sizing: border-box;
+  background:
+    linear-gradient(115deg, rgba(246, 59, 154, 0.28), transparent 44%),
+    linear-gradient(180deg, rgba(255,255,255,.08), transparent 42%);
+  border-bottom: 2px solid rgba(255, 126, 193, 0.56);
 }
 
-.composePostMark {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
+.composeHeroIcon {
+  width: 64px;
+  height: 64px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 226, 241, 0.62);
-  border-radius: 11px;
-  color: #fff;
-  background: radial-gradient(circle at 35% 25%, #ff92ca, #f12e8d 56%, #8d1355);
-  box-shadow: 0 5px 12px rgba(8, 2, 10, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  font: 950 18px/1 Georgia, serif;
+  filter: drop-shadow(0 5px 4px rgba(11, 2, 8, 0.72));
+}
+
+.composeHeadingCopy {
+  min-width: 0;
+}
+
+.composeEyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: #7fe3ff;
+  font-size: 9px;
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
 }
 
 .composeTitle {
-  font-size: 14px;
-  font-weight: 900;
-  line-height: 1.08;
-  color: #fff4f9;
+  color: #fff;
+  font-size: clamp(17px, 4.4vw, 21px);
+  font-weight: 1000;
+  line-height: 1;
+  letter-spacing: -0.025em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 0 #8e174f, 0 4px 8px rgba(0,0,0,.52);
 }
 
 .composeSubtitle {
-  margin-top: 3px;
-  color: #ff8fc8;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #ffc5e2;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.composeRadiusPanel {
-  margin-bottom: 9px;
-  padding: 9px 10px 7px;
-  border: 1px solid rgba(255, 122, 191, 0.25);
-  border-radius: 14px;
-  background: rgba(5, 3, 8, 0.28);
+.composeClose {
+  appearance: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 2px solid rgba(255,255,255,.72);
+  border-radius: 15px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 36% 25%, #ff9acf, #f63b9a 58%, #95144f 100%);
+  box-shadow:
+    0 4px 0 #72103f,
+    0 7px 10px rgba(0,0,0,.42),
+    inset 0 1px 0 rgba(255,255,255,.65);
+  cursor: pointer;
+  font: 950 25px/1 system-ui, sans-serif;
+  transition: transform 130ms cubic-bezier(.2,1.25,.4,1), filter 130ms ease;
 }
 
-.composeRadiusRow {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 11px;
-  font-weight: 700;
-  color: #FFD9EC;
-  margin-bottom: 4px;
+.composeBody {
+  padding: 12px;
+  color: #24101c;
+  background:
+    radial-gradient(circle at 88% 6%, rgba(127, 227, 255, 0.2), transparent 34%),
+    linear-gradient(160deg, #fff8fc 0%, #f6d9e8 100%);
 }
 
-.composeRadiusRow strong { font-size: 13px; color: #FFF2F8; }
+.composeRadiusPanel,
+.composeMessagePanel {
+  position: relative;
+  box-sizing: border-box;
+  margin: 0 0 11px;
+  padding: 9px 10px 10px;
+  border: 2px solid #f25aab;
+  border-radius: 19px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255,255,255,.98), transparent 45%),
+    linear-gradient(160deg, #fffafd, #f7d6e7);
+  box-shadow:
+    0 4px 0 #a9276a,
+    0 7px 13px rgba(76, 15, 50, 0.18),
+    inset 0 1px 0 #fff;
+}
+
+.composeSectionHeader {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 46px;
+}
+
+.composeSectionIcon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+}
+
+.composeSectionCopy {
+  min-width: 0;
+}
+
+.composeSectionLabel {
+  display: block;
+  color: #230c19;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 1000;
+  line-height: 1.05;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.composeSectionLabel em {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: #7b2453;
+  background: rgba(246,59,154,.12);
+  font-size: 8px;
+  font-style: normal;
+  letter-spacing: .08em;
+  vertical-align: 1px;
+}
 
 .composeCoverage {
-  margin: 0 0 4px;
-  color: #FF9CCE;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.01em;
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #8e3c69;
+  font-size: 9px;
+  font-weight: 850;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composeRadiusValue {
+  min-width: 58px;
+  padding: 6px 7px 5px;
+  box-sizing: border-box;
+  border: 2px solid #2d0c20;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(145deg, #48112f, #160812);
+  box-shadow: 0 3px 0 #f63b9a, inset 0 1px 0 rgba(255,255,255,.16);
+  text-align: center;
+}
+
+.composeRadiusValue strong,
+.composeRadiusValue span {
+  display: block;
+}
+
+.composeRadiusValue strong {
+  font-size: 17px;
+  font-weight: 1000;
+  line-height: .95;
+}
+
+.composeRadiusValue span {
+  margin-top: 3px;
+  color: #7fe3ff;
+  font-size: 7px;
+  font-weight: 950;
+  letter-spacing: .16em;
 }
 
 .composeSlider {
+  appearance: none;
   width: 100%;
-  accent-color: #F63B9A;
-  margin: 1px 0 0;
+  height: 30px;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
-/* The words on the pop. Sits between the radius and the actions because that
-   is the order of the decision: where it reaches, what it says, send it. */
+.composeSlider::-webkit-slider-runnable-track {
+  height: 10px;
+  border: 2px solid #2d0c20;
+  border-radius: 999px;
+  background:
+    repeating-linear-gradient(135deg, #f63b9a 0 8px, #ff98cf 8px 16px);
+  box-shadow: 0 3px 0 rgba(121,17,71,.7), inset 0 1px 2px rgba(0,0,0,.24);
+}
+
+.composeSlider::-webkit-slider-thumb {
+  appearance: none;
+  width: 27px;
+  height: 27px;
+  margin-top: -10px;
+  border: 3px solid #fff;
+  border-radius: 10px;
+  background: radial-gradient(circle at 35% 25%, #ffb9df, #f63b9a 57%, #8e124c);
+  box-shadow: 0 4px 0 #6d0b3a, 0 5px 8px rgba(47,4,27,.4), inset 0 1px 0 #fff;
+}
+
+.composeSlider::-moz-range-track {
+  height: 8px;
+  border: 2px solid #2d0c20;
+  border-radius: 999px;
+  background: repeating-linear-gradient(135deg, #f63b9a 0 8px, #ff98cf 8px 16px);
+  box-shadow: 0 3px 0 rgba(121,17,71,.7), inset 0 1px 2px rgba(0,0,0,.24);
+}
+
+.composeSlider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #fff;
+  border-radius: 10px;
+  background: radial-gradient(circle at 35% 25%, #ffb9df, #f63b9a 57%, #8e124c);
+  box-shadow: 0 4px 0 #6d0b3a, 0 5px 8px rgba(47,4,27,.4), inset 0 1px 0 #fff;
+}
+
+.composeSlider:focus-visible {
+  outline: 3px solid #38cfff;
+  outline-offset: 3px;
+}
+
+.composeRadiusScale {
+  display: flex;
+  justify-content: space-between;
+  margin: -1px 2px 0;
+  color: #8e3c69;
+  font-size: 7px;
+  font-weight: 950;
+  letter-spacing: .1em;
+}
+
 .composeMessage {
   display: block;
   width: 100%;
-  margin: 0 0 8px;
-  padding: 8px 10px;
+  min-height: 68px;
+  margin: 7px 0 0;
+  padding: 10px 11px;
   box-sizing: border-box;
-  border: 0;
-  border-radius: 12px;
+  border: 2px solid #4e1536;
+  border-radius: 15px;
   resize: none;
-  color: #FFF2F8;
-  background: rgba(10, 8, 14, 0.42);
-  box-shadow: inset 0 0 0 1px rgba(246, 59, 154, 0.42);
-  font: 600 12px/1.35 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  color: #2d0d20;
+  background: rgba(255,255,255,.88);
+  box-shadow: inset 0 2px 4px rgba(79,11,48,.12), 0 2px 0 rgba(255,255,255,.8);
+  font: 750 12px/1.35 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 }
 
-.composeMessage::placeholder { color: rgba(255, 217, 236, 0.5); font-weight: 700; }
+.composeMessage::placeholder { color: #a66b8b; font-weight: 750; }
 
 .composeMessage:focus {
   outline: none;
-  box-shadow: inset 0 0 0 1.5px #F63B9A, 0 0 12px rgba(246, 59, 154, 0.35);
+  border-color: #f63b9a;
+  box-shadow: inset 0 0 0 1px #f63b9a, 0 0 0 3px rgba(56,207,255,.52);
 }
 
 .composeMessageHint {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin: -4px 0 8px;
-  color: #FF9CCE;
-  font-size: 10px;
-  font-weight: 800;
+  gap: 8px;
+  min-height: 13px;
+  margin: 6px 2px 0;
+  color: #8e3c69;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1.1;
 }
 
-.composeCount { color: rgba(255, 217, 236, 0.6); font-variant-numeric: tabular-nums; }
+.composeCount {
+  flex: 0 0 auto;
+  color: #63143f;
+  font-variant-numeric: tabular-nums;
+}
 
 .composeActions {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(104px, .72fr) minmax(0, 1.5fr);
   gap: 8px;
+  align-items: stretch;
 }
 
 .composeCancel,
 .composeDrop {
-  flex: 1;
+  appearance: none;
   min-width: 0;
-  height: 42px;
-  border: 0;
-  border-radius: 999px;
+  min-height: 54px;
+  border-radius: 17px;
   cursor: pointer;
-  font: 800 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  transition: transform 130ms cubic-bezier(.2,1.25,.4,1), filter 130ms ease;
 }
 
 .composeCancel {
-  color: #FFD9EC;
-  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 2px solid #4e1536;
+  color: #4b1534;
+  background: linear-gradient(160deg, #fff, #efc9dc);
+  box-shadow: 0 4px 0 #9e396e, inset 0 1px 0 #fff;
+  font: 950 10px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.composeCancelMark {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 2px solid #4e1536;
+  border-radius: 9px;
+  color: #fff;
+  background: linear-gradient(145deg, #f878ba, #bd1f70);
+  box-shadow: 0 2px 0 #6d0b3a;
+  font-size: 17px;
 }
 
 .composeDrop {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 64px;
+  padding: 5px 9px 5px 4px;
+  border: 2px solid #fff;
   color: #2a0716;
-  background: radial-gradient(circle at 40% 28%, #FF8AC6, #F63B9A 60%);
-  box-shadow: 0 0 14px rgba(246, 59, 154, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  background:
+    radial-gradient(circle at 34% 10%, rgba(255,255,255,.66), transparent 25%),
+    linear-gradient(150deg, #ff9bd0, #f63b9a 58%, #bd1d70);
+  box-shadow:
+    0 5px 0 #8c104e,
+    0 8px 13px rgba(87,9,50,.3),
+    inset 0 1px 0 rgba(255,255,255,.82);
 }
 
 .composeDrop:disabled {
@@ -985,24 +1202,169 @@
   filter: saturate(0.55);
 }
 
-.composeCancel:active,
-.composeDrop:active { transform: scale(0.94); }
-
-/* "Directions here" — full-width row under the post actions in the composer. */
-.composeDirections {
-  width: 100%;
-  height: 38px;
-  margin-top: 8px;
-  border: 0;
-  border-radius: 999px;
-  cursor: pointer;
-  color: #FFF2F8;
-  background: rgba(246, 59, 154, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(246, 59, 154, 0.5);
-  font: 800 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+.composeDropCopy {
+  min-width: 0;
+  display: block;
+  text-align: left;
 }
-.composeDirections:active { transform: scale(0.96); }
+
+.composeDropCopy strong,
+.composeDropCopy small {
+  display: block;
+}
+
+.composeDropCopy strong {
+  font-size: 12px;
+  font-weight: 1000;
+  line-height: 1;
+  letter-spacing: -.01em;
+  text-transform: uppercase;
+}
+
+.composeDropCopy small {
+  margin-top: 5px;
+  overflow: hidden;
+  color: #6a1746;
+  font-size: 8px;
+  font-weight: 850;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composeClose:active,
+.composeCancel:active,
+.composeDrop:active,
+.composeDirections:active {
+  transform: translateY(2px) scale(.94);
+}
+
+.composeClose:focus-visible,
+.composeCancel:focus-visible,
+.composeDrop:focus-visible,
+.composeDirections:focus-visible {
+  outline: 3px solid #38cfff;
+  outline-offset: 3px;
+}
+
+.composeDirections {
+  appearance: none;
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 5px 12px 5px 7px;
+  border: 2px solid #f76bb5;
+  border-radius: 17px;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(150deg, #44112e, #170811);
+  box-shadow: 0 4px 0 #8c104e, inset 0 1px 0 rgba(255,255,255,.22);
+  transition: transform 130ms cubic-bezier(.2,1.25,.4,1), filter 130ms ease;
+  text-align: left;
+}
+
+.composeDirections strong,
+.composeDirections small {
+  display: block;
+}
+
+.composeDirections strong {
+  font-size: 11px;
+  font-weight: 1000;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.composeDirections small {
+  margin-top: 4px;
+  color: #ffbddd;
+  font-size: 8px;
+  font-weight: 800;
+}
+
 .composeDirections:disabled { opacity: 0.6; cursor: default; }
+
+.composeBubble[data-focused-picker='true'] .composeActions {
+  grid-template-columns: 1fr 1.35fr;
+}
+
+@media (max-width: 430px), (max-height: 690px) {
+  .composeBubble {
+    top: 49%;
+    width: calc(100vw - 112px);
+    min-width: 0;
+    max-height: min(82vh, 570px);
+    max-height: min(82dvh, 570px);
+    border-radius: 24px;
+  }
+
+  .composeBubble[data-focused-picker='true'] {
+    width: calc(100vw - 112px);
+  }
+
+  .composeHeader {
+    grid-template-columns: 56px minmax(0, 1fr) 44px;
+    min-height: 76px;
+    padding: 9px 8px 8px 5px;
+    gap: 5px;
+  }
+
+  .composeHeroIcon {
+    width: 56px;
+    height: 56px;
+    transform: scale(.9);
+  }
+
+  .composeTitle { font-size: 16px; }
+  .composeSubtitle { font-size: 9px; }
+  .composeBody { padding: 9px; }
+
+  .composeRadiusPanel,
+  .composeMessagePanel {
+    padding: 7px 8px 8px;
+    margin-bottom: 9px;
+    border-radius: 16px;
+  }
+
+  .composeSectionHeader {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    gap: 5px;
+    min-height: 40px;
+  }
+
+  .composeSectionIcon {
+    width: 40px;
+    height: 40px;
+    transform: scale(.88);
+  }
+
+  .composeSectionLabel { font-size: 10px; }
+  .composeCoverage { font-size: 8px; }
+  .composeRadiusValue { min-width: 50px; padding-inline: 5px; }
+  .composeRadiusValue strong { font-size: 15px; }
+  .composeMessage { min-height: 58px; padding: 8px 9px; }
+
+  .composeActions,
+  .composeBubble[data-focused-picker='true'] .composeActions {
+    grid-template-columns: 1fr;
+  }
+
+  .composeDrop { order: -1; }
+  .composeCancel { min-height: 46px; }
+  .composeDirections { margin-top: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composeBubble { animation: none; }
+  .composeClose,
+  .composeCancel,
+  .composeDrop,
+  .composeDirections { transition: none; }
+}
 
 /* ── Directions: turn banner, route summary card, end button ─────────────── */
 
@@ -1341,19 +1703,14 @@
 .weatherRange { color: #94dcff; font: 800 12px/1.15 system-ui, sans-serif; }
 
 .weatherSticker {
-  display: block;
+  display: grid;
+  place-items: center;
   width: 100%;
-  aspect-ratio: 3 / 2;
-  background-color: transparent;
-  background-image: url('/weather/poplur-weather-glyphs.png');
-  background-repeat: no-repeat;
-  background-size: 200% 200%;
+  aspect-ratio: 1;
   filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.42));
 }
-.weatherStickerSun { background-position: 0 0; }
-.weatherStickerCloud { background-position: 100% 0; }
-.weatherStickerStorm { background-position: 0 100%; }
-.weatherStickerSnow { background-position: 100% 100%; }
+.weatherStickerImage { width: 100% !important; height: 100% !important; }
+.weatherStaticImage { filter: none; }
 .weatherHeroSticker { width: 120px; justify-self: end; }
 
 .weatherHeroStatus {
