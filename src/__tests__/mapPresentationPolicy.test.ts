@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   MAP_BROWSE_3D_BEARING,
@@ -6,7 +7,10 @@ import {
   MAP_BROWSE_3D_MAX_PITCH,
   MAP_BROWSE_3D_PITCH,
   MAP_BUILDING_DETAIL_BUDGET_FULL,
+  MAP_BUILDING_DETAIL_BUDGET_EMERGENCY,
+  MAP_BUILDING_DETAIL_BUDGET_LOW_POWER,
   MAP_BUILDING_DETAIL_BUDGET_REDUCED,
+  MAP_BUILDING_DETAIL_MAX,
   MAP_BUILDING_DETAIL_MIN_HEIGHT_M,
   MAP_BUILDING_DETAIL_SAMPLE_DIVISOR,
   landmarkRevealZoomForFrame,
@@ -37,7 +41,7 @@ describe('subtle Map presentation policy', () => {
   })
 
   it('uses shallow, north-up depth only at close street scale', () => {
-    for (const performanceMode of ['FULL', 'REDUCED'] as const) {
+    for (const performanceMode of ['FULL', 'REDUCED', 'LOW_POWER', 'EMERGENCY'] as const) {
       const presentation = mapBrowsePresentation({
         zoom: MAP_BROWSE_3D_ENTER_ZOOM,
         wasThreeDimensional: false,
@@ -53,6 +57,23 @@ describe('subtle Map presentation policy', () => {
       expect(presentation.pitch).toBeLessThanOrEqual(35)
       expect(presentation.maxPitch).toBeLessThanOrEqual(45)
     }
+  })
+
+  it('requires an explicit bounded building-id set, including at layer startup', () => {
+    const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const filterFactory = source.slice(
+      source.indexOf('function boundedBuildingExtrusionFilter'),
+      source.indexOf('function renderedBuildingDetailId'),
+    )
+    const initialFilter = source.slice(
+      source.indexOf('const initialBuildingFilter'),
+      source.indexOf('// Per-building pop scale'),
+    )
+
+    expect(filterFactory).toContain('detailIds: readonly (string | number)[]')
+    expect(filterFactory).not.toContain('| null')
+    expect(filterFactory).toContain('detailIds.slice(0, MAP_BUILDING_DETAIL_MAX)')
+    expect(initialFilter).toMatch(/mapBuildingExtrusionMinHeightM\([\s\S]*?\),\s*\[\],\s*\)/)
   })
 
   it('uses hysteresis instead of flapping around the 3D boundary', () => {
@@ -102,13 +123,17 @@ describe('subtle Map presentation policy', () => {
     expect(pulledBack).toMatchObject({ threeDimensional: false, pitch: 0, bearing: 0 })
   })
 
-  it('keeps thermal and power downgrade modes flat', () => {
+  it('keeps the close camera dimensional while thermal modes reduce geometry', () => {
     for (const performanceMode of ['LOW_POWER', 'EMERGENCY'] as const) {
       expect(mapBrowsePresentation({
         zoom: 19,
         wasThreeDimensional: true,
         performanceMode,
-      }).threeDimensional).toBe(false)
+      })).toMatchObject({
+        threeDimensional: true,
+        pitch: MAP_BROWSE_3D_PITCH,
+        bearing: MAP_BROWSE_3D_BEARING,
+      })
     }
   })
 
@@ -152,8 +177,8 @@ describe('subtle Map presentation policy', () => {
     })
   })
 
-  it('allows explicit street detail only at FULL or REDUCED performance', () => {
-    for (const performanceMode of ['FULL', 'REDUCED'] as const) {
+  it('allows explicit street detail with a bounded budget in every mode', () => {
+    for (const performanceMode of ['FULL', 'REDUCED', 'LOW_POWER', 'EMERGENCY'] as const) {
       expect(mapBuildingDetailPlan({
         intent: 'street',
         zoom: 0,
@@ -167,21 +192,24 @@ describe('subtle Map presentation policy', () => {
     }
   })
 
-  it('lets a zero thermal budget win for every camera intent', () => {
+  it('reduces but never unbounds close detail under thermal pressure', () => {
     for (const performanceMode of ['LOW_POWER', 'EMERGENCY'] as const) {
       for (const intent of ['browse', 'authored', 'street'] as const) {
-        expect(mapBuildingDetailPlan({
+        const plan = mapBuildingDetailPlan({
           intent,
           zoom: 20,
           pitch: 42,
           wasThreeDimensional: true,
           performanceMode,
-        })).toEqual({ threeDimensional: false, maxDetailedBuildings: 0 })
+        })
+        expect(plan.threeDimensional).toBe(true)
+        expect(plan.maxDetailedBuildings).toBeGreaterThan(0)
+        expect(plan.maxDetailedBuildings).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
       }
     }
   })
 
-  it('bounds close extrusion geography and keeps thermal downgrade modes flat', () => {
+  it('bounds close extrusion geography in every performance mode', () => {
     const reducedWideClose = mapBuildingExtrusionRadiusM(16.8, 'REDUCED')
     const reducedStreet = mapBuildingExtrusionRadiusM(17.5, 'REDUCED')
     const reducedDoorstep = mapBuildingExtrusionRadiusM(18.5, 'REDUCED')
@@ -191,21 +219,22 @@ describe('subtle Map presentation policy', () => {
     expect(mapBuildingExtrusionRadiusM(17.5, 'FULL')).toBeGreaterThan(reducedStreet!)
     expect(mapBuildingExtrusionMinHeightM('REDUCED')).toBe(MAP_BUILDING_DETAIL_MIN_HEIGHT_M)
     expect(mapBuildingExtrusionMinHeightM('FULL')).toBe(MAP_BUILDING_DETAIL_MIN_HEIGHT_M)
-    expect(mapBuildingExtrusionRadiusM(19, 'LOW_POWER')).toBeNull()
-    expect(mapBuildingExtrusionRadiusM(19, 'EMERGENCY')).toBeNull()
+    expect(mapBuildingExtrusionRadiusM(19, 'LOW_POWER')).toBe(160)
+    expect(mapBuildingExtrusionRadiusM(19, 'EMERGENCY')).toBe(100)
   })
 
-  it('samples roughly one-third of close buildings, then applies the hard cap', () => {
+  it('keeps a stable distributed skyline under the absolute 20-building cap', () => {
     const nearby = Array.from({ length: 60 }, (_, index) => ({
       id: `near-${index}`,
       distanceM: index,
       heightM: 9,
     }))
-    const sparse = nearestMapBuildingDetailIds(nearby, 'FULL')
+    const selected = nearestMapBuildingDetailIds(nearby, 'FULL')
+    expect(MAP_BUILDING_DETAIL_MAX).toBe(20)
     expect(MAP_BUILDING_DETAIL_SAMPLE_DIVISOR).toBe(3)
-    expect(sparse.length).toBeGreaterThanOrEqual(15)
-    expect(sparse.length).toBeLessThanOrEqual(25)
-    expect(sparse.length).toBeLessThan(MAP_BUILDING_DETAIL_BUDGET_FULL)
+    expect(selected.length).toBeGreaterThan(0)
+    expect(selected.length).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
+    expect(selected.every(id => nearby.some(candidate => candidate.id === id))).toBe(true)
 
     const candidates = Array.from({ length: 250 }, (_, index) => ({
       id: index + 1,
@@ -216,10 +245,10 @@ describe('subtle Map presentation policy', () => {
     expect(ids).toHaveLength(MAP_BUILDING_DETAIL_BUDGET_FULL)
     const selectedDistances = ids.map(id => candidates.find(candidate => candidate.id === id)!.distanceM)
     expect(selectedDistances).toEqual([...selectedDistances].sort((a, b) => a - b))
-    expect(ids).not.toContain(1)
+    expect(ids).toHaveLength(MAP_BUILDING_DETAIL_MAX)
   })
 
-  it('uses a smaller iPhone batch, deduplicates tile fragments, and sheds all 3D under heat', () => {
+  it('deduplicates tile fragments and reduces the batch under heat', () => {
     const candidates: MapBuildingDetailCandidate[] = Array.from({ length: 40 }, (_, index) => ({
       id: `building-${index}`,
       distanceM: index * 10,
@@ -231,14 +260,44 @@ describe('subtle Map presentation policy', () => {
 
     const reduced = nearestMapBuildingDetailIds(candidates, 'REDUCED')
     expect(mapBuildingDetailBudget('REDUCED')).toBe(MAP_BUILDING_DETAIL_BUDGET_REDUCED)
-    expect(reduced.length).toBeGreaterThanOrEqual(8)
-    expect(reduced.length).toBeLessThanOrEqual(16)
+    expect(reduced.length).toBeGreaterThan(0)
+    expect(reduced.length).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_BUDGET_REDUCED)
     expect(new Set(reduced).size).toBe(reduced.length)
-    expect(nearestMapBuildingDetailIds(candidates, 'LOW_POWER')).toEqual([])
-    expect(nearestMapBuildingDetailIds(candidates, 'EMERGENCY')).toEqual([])
+    expect(nearestMapBuildingDetailIds(candidates, 'LOW_POWER'))
+      .toHaveLength(MAP_BUILDING_DETAIL_BUDGET_LOW_POWER)
+    expect(nearestMapBuildingDetailIds(candidates, 'EMERGENCY'))
+      .toHaveLength(MAP_BUILDING_DETAIL_BUDGET_EMERGENCY)
+    expect(MAP_BUILDING_DETAIL_BUDGET_FULL).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
+    expect(MAP_BUILDING_DETAIL_BUDGET_REDUCED).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
   })
 
-  it('samples only buildings inside the finite camera-centred radius', () => {
+  it('never raises candidate-rich REDUCED load above the previous sampled renderer', () => {
+    const legacySampled = (id: string | number) => {
+      const text = `${typeof id}:${String(id)}`
+      let hash = 0x811c9dc5
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index)
+        hash = Math.imul(hash, 0x01000193)
+      }
+      return (hash >>> 0) % 3 === 0
+    }
+    for (const count of [20, 40, 80, 160]) {
+      const candidates = Array.from({ length: count }, (_, index) => ({
+        id: `dense-${index}`,
+        distanceM: index,
+        heightM: 12,
+      }))
+      const previousCount = Math.min(
+        candidates.filter(candidate => legacySampled(candidate.id)).length || 1,
+        18,
+      )
+      const currentCount = nearestMapBuildingDetailIds(candidates, 'REDUCED').length
+      expect(currentCount).toBeLessThanOrEqual(previousCount)
+      expect(currentCount).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_BUDGET_REDUCED)
+    }
+  })
+
+  it('selects only buildings inside the finite camera-centred radius', () => {
     const candidates: MapBuildingDetailCandidate[] = [
       ...Array.from({ length: 45 }, (_, index) => ({
         id: `inside-${index}`,
@@ -252,8 +311,8 @@ describe('subtle Map presentation policy', () => {
       })),
     ]
     const ids = nearestMapBuildingDetailIds(candidates, 'FULL', 6, 200)
-    expect(ids.length).toBeGreaterThanOrEqual(10)
-    expect(ids.length).toBeLessThanOrEqual(20)
+    expect(ids.length).toBeGreaterThan(0)
+    expect(ids.length).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
     expect(ids.every(id => String(id).startsWith('inside-'))).toBe(true)
   })
 

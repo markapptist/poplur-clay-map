@@ -308,7 +308,7 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(playPop).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps the Map News button actionable through the standalone and Home bridge paths', () => {
+  it('keeps the Map News button on Map and opens News only for an explicit story', () => {
     const home = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'utf8')
     const map = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 
@@ -316,12 +316,18 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(map).toMatch(/<MapNewsButton[\s\S]*?startNewsTour\(\)/)
     expect(home).toMatch(/<MapNewsButton[\s\S]*?sendMapAction\('newsTour'\)/)
 
-    // A failed/empty wire opens the readable edition instead of leaving the
-    // visible button with no resulting surface.
-    expect(map).toMatch(/if \(!events\.length\)[\s\S]*?openPoplurNewsEdition\(\)/)
-    expect(readMapNewsOpenRequest(mapNewsOpenMessage())).toEqual({ eventId: null })
+    // A failed/empty wire leaves the navigator on Map. Only a story card's
+    // explicit Read action posts the edition handoff with a real event id.
+    const startNewsTour = map.slice(
+      map.indexOf('const startNewsTour'),
+      map.indexOf('// A provider-degraded edition'),
+    )
+    expect(startNewsTour).not.toContain('openPoplurNewsEdition')
+    expect(map).toMatch(/onRead=\{\(\) => \{[\s\S]*?openPoplurNewsEdition\(eventId\)/)
     expect(readMapNewsOpenRequest(mapNewsOpenMessage(' live-story ')))
       .toEqual({ eventId: 'live-story' })
+    expect(readMapNewsOpenRequest({ type: 'poplur-map-open-news', eventId: '' })).toBeNull()
+    expect(readMapNewsOpenRequest({ type: 'poplur-map-open-news' })).toBeNull()
     expect(readMapNewsOpenRequest({ type: 'unrelated' })).toBeNull()
   })
 

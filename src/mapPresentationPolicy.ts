@@ -21,13 +21,16 @@ export const MAP_BROWSE_3D_BEARING = 0
  */
 export const MAP_BUILDING_DETAIL_MIN_HEIGHT_M = 6
 
-/** At most this many camera-near footprints become real extrusion geometry. */
-export const MAP_BUILDING_DETAIL_BUDGET_FULL = 30
-/** Normal iPhone quality is REDUCED; retain the close-up read with less work. */
-export const MAP_BUILDING_DETAIL_BUDGET_REDUCED = 18
-/** Keep one stable footprint out of every three before applying the hard cap.
- * This is the user's requested close-map density, not an adaptive frame-rate
- * heuristic, so a building never flickers between flat and 3D while panning. */
+/** Absolute geometry invariant for ordinary close-map building extrusions. */
+export const MAP_BUILDING_DETAIL_MAX = 20
+/** Desktop may use the full ceiling; real iPhone REDUCED stays below its
+ * previous sampled load while retaining a readable distributed skyline. */
+export const MAP_BUILDING_DETAIL_BUDGET_FULL = MAP_BUILDING_DETAIL_MAX
+export const MAP_BUILDING_DETAIL_BUDGET_REDUCED = 12
+/** Real thermal pressure reduces geometry without flattening the close camera. */
+export const MAP_BUILDING_DETAIL_BUDGET_LOW_POWER = 8
+export const MAP_BUILDING_DETAIL_BUDGET_EMERGENCY = 4
+/** Stable spatial thinning retained from the previous thermal-safe renderer. */
 export const MAP_BUILDING_DETAIL_SAMPLE_DIVISOR = 3
 
 /** Intentional landmark models keep their existing close framing. */
@@ -66,24 +69,18 @@ export interface MapBuildingDetailPlan {
 /**
  * Pure presentation contract shared by runtime code and regression tests.
  * Hysteresis prevents a pinch resting on the boundary from repeatedly
- * rebuilding extrusion geometry. Any thermal/power downgrade flattens Map
- * first so Camera never has to surrender its attended preview quality for it.
+ * rebuilding extrusion geometry. Thermal/power pressure reduces the finite
+ * building batch instead of flattening the close camera.
  */
 export function mapBrowsePresentation({
   zoom,
   wasThreeDimensional,
   performanceMode,
 }: MapBrowsePresentationInput): MapBrowsePresentation {
-  // Native iPhone intentionally tops out at REDUCED: its WebView quality
-  // ceiling is 2, not 3. Treating FULL as the only dimensional mode therefore
-  // made the close-up branch unreachable on every real iPhone. REDUCED keeps
-  // the shallow close view, paired with the stricter radius/height budget
-  // below; LOW_POWER and EMERGENCY remain unconditionally flat.
-  const performanceAllows3D = performanceMode === 'FULL' || performanceMode === 'REDUCED'
   const threshold = wasThreeDimensional
     ? MAP_BROWSE_3D_EXIT_ZOOM
     : MAP_BROWSE_3D_ENTER_ZOOM
-  const threeDimensional = performanceAllows3D && zoom >= threshold
+  const threeDimensional = zoom >= threshold
 
   if (!threeDimensional) {
     return { threeDimensional: false, pitch: 0, bearing: 0, minPitch: 0, maxPitch: 0 }
@@ -93,8 +90,8 @@ export function mapBrowsePresentation({
     threeDimensional: true,
     pitch: MAP_BROWSE_3D_PITCH,
     bearing: MAP_BROWSE_3D_BEARING,
-    // Normal browsing may be flattened again, but can never be tilted into
-    // the former 55-70 degree high-overdraw diorama band.
+    // The close camera remains readable while every mode stays below the
+    // former 55-70 degree high-overdraw diorama band.
     minPitch: 0,
     maxPitch: MAP_BROWSE_3D_MAX_PITCH,
   }
@@ -107,7 +104,8 @@ export function subtleLandmarkPitch(authoredPitch: number): number {
 /**
  * An intentional, one-at-a-time landmark frame may retain its authored pitch
  * after the flight settles. This does not enable district-wide 3D buildings;
- * thermal and power downgrades still flatten the map immediately.
+ * landmark hero framing remains independently governed from the finite
+ * ordinary-building batch.
  */
 export function preserveLandmarkCamera(
   landmarkActive: boolean,
@@ -133,11 +131,16 @@ export function mapBuildingExtrusionRadiusM(
   zoom: number,
   performanceMode: PoplurPerformanceMode,
 ): number | null {
-  if (performanceMode === 'LOW_POWER' || performanceMode === 'EMERGENCY') return null
-  const reduced = performanceMode === 'REDUCED'
-  if (zoom >= 18.3) return reduced ? 220 : 340
-  if (zoom >= 17.4) return reduced ? 360 : 540
-  return reduced ? 520 : 760
+  const radii = performanceMode === 'FULL'
+    ? [340, 540, 760]
+    : performanceMode === 'REDUCED'
+      ? [220, 360, 520]
+      : performanceMode === 'LOW_POWER'
+        ? [160, 260, 360]
+        : [100, 160, 240]
+  if (zoom >= 18.3) return radii[0]
+  if (zoom >= 17.4) return radii[1]
+  return radii[2]
 }
 
 /** Height floor paired with the radius above. Count-bounding now carries the
@@ -152,17 +155,16 @@ export function mapBuildingExtrusionMinHeightM(
 export function mapBuildingDetailBudget(
   performanceMode: PoplurPerformanceMode,
 ): number {
-  if (performanceMode === 'LOW_POWER' || performanceMode === 'EMERGENCY') return 0
-  return performanceMode === 'REDUCED'
-    ? MAP_BUILDING_DETAIL_BUDGET_REDUCED
-    : MAP_BUILDING_DETAIL_BUDGET_FULL
+  if (performanceMode === 'EMERGENCY') return MAP_BUILDING_DETAIL_BUDGET_EMERGENCY
+  if (performanceMode === 'LOW_POWER') return MAP_BUILDING_DETAIL_BUDGET_LOW_POWER
+  if (performanceMode === 'REDUCED') return MAP_BUILDING_DETAIL_BUDGET_REDUCED
+  return MAP_BUILDING_DETAIL_BUDGET_FULL
 }
 
 /**
  * One pure gate for the bounded building-detail batch, regardless of which
- * camera path is active. The thermal budget is checked first so an authored
- * flight or Street View transition can never resurrect geometry after Map has
- * been downgraded to LOW_POWER or EMERGENCY.
+ * camera path is active. LOW_POWER and EMERGENCY retain pitched close depth
+ * with deliberately smaller 8- and 4-building ceilings.
  */
 export function mapBuildingDetailPlan({
   intent,
@@ -189,8 +191,8 @@ export function mapBuildingDetailPlan({
     threeDimensional = zoom >= MAP_BROWSE_3D_ENTER_ZOOM && pitch > 0
   } else {
     // Street intent is already an explicit, close-up user choice. The shared
-    // budget above remains its hard device/thermal guard.
-    threeDimensional = performanceMode === 'FULL' || performanceMode === 'REDUCED'
+    // positive budget above remains its hard device/thermal guard.
+    threeDimensional = maxDetailedBuildings > 0
   }
 
   return {
@@ -205,10 +207,10 @@ export interface MapBuildingDetailCandidate {
   heightM: number
 }
 
-/** Feature-id sampling spreads the retained third across the view. Selecting
- * the nearest N without sampling produced a solid 3D island at camera centre;
- * a stable hash keeps the sparse skyline visually continuous and does not
- * change when vector-tile fragments arrive in a different order. */
+/** Stable sampling distributes the retained buildings instead of creating a
+ * dense 3D island at the exact camera centre. It also guarantees the new
+ * absolute ceiling never raises candidate-rich iPhone load above the previous
+ * one-in-three renderer. */
 function mapBuildingDetailSampled(id: string | number): boolean {
   const text = `${typeof id}:${String(id)}`
   let hash = 0x811c9dc5
@@ -221,9 +223,8 @@ function mapBuildingDetailSampled(id: string | number): boolean {
 
 /**
  * Select the closest stable feature ids for the one detailed 3D batch.
- * Duplicated vector-tile fragments collapse to one id; the stable one-in-three
- * sample is spatially distributed across a typical tile, then nearest-camera
- * ordering and the device cap provide a second, absolute thermal bound.
+ * Duplicated vector-tile fragments collapse to one id; nearest-camera ordering
+ * makes the finite cluster follow the place the pitched camera is looking at.
  */
 export function nearestMapBuildingDetailIds(
   candidates: readonly MapBuildingDetailCandidate[],
@@ -254,13 +255,12 @@ export function nearestMapBuildingDetailIds(
       || `${typeof a.id}:${String(a.id)}`.localeCompare(`${typeof b.id}:${String(b.id)}`))
 
   const sampled = ordered.filter(candidate => mapBuildingDetailSampled(candidate.id))
-  // A single close building should still reveal depth even when its hash falls
-  // outside the retained bucket. This affects only tiny candidate sets and is
-  // still bounded to one extrusion.
+  // A lone camera-near building should still show depth even when its stable
+  // hash is outside the retained bucket.
   if (!sampled.length && ordered.length) sampled.push(ordered[0])
 
   return sampled
-    .slice(0, budget)
+    .slice(0, Math.min(budget, MAP_BUILDING_DETAIL_MAX))
     .map(candidate => candidate.id)
 }
 

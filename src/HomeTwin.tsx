@@ -16,7 +16,8 @@ import MapNewsButton from './MapNewsButton'
 import { readMapNewsOpenRequest } from './mapNewsBridge'
 import MapConquerButton from './MapConquerButton'
 import { WeatherMark } from './ClayMap'
-import { modeForCode } from './WeatherFX'
+import WeatherFX, { modeForCode } from './WeatherFX'
+import { nativeMapWeatherVisible } from './nativeMapWeather'
 import {
   formatWeatherTemperature,
   readWeatherPresentation,
@@ -2244,6 +2245,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // tiles, producing the blank/blue loading flash seen on device.
   const [mapPainted, setMapPainted] = useState(NATIVE_ADAPTIVE_MAP)
   const [loadingMuted, setLoadingMuted] = useState(isUserMuted)
+  useEffect(() => onGateChange(() => setLoadingMuted(isUserMuted())), [])
   useEffect(() => {
     // iOS fires `resize` when the software keyboard changes only the visual
     // viewport. Recomputing from that temporary height shrank and moved the
@@ -4815,6 +4817,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const mapWeatherAccessibleTemperature = mapWeatherDisplay.temperature == null
     ? ''
     : `, ${mapWeatherDisplay.temperature} degrees ${mapWeatherDisplay.unit === 'F' ? 'Fahrenheit' : 'Celsius'}`
+  const showNativeMapWeather = nativeMapWeatherVisible({
+    nativeAdaptiveMap: NATIVE_ADAPTIVE_MAP,
+    webFallback: nativeMapWebFallback,
+    activeTab,
+    committedTab,
+    surfaceVisible,
+    subscreenRequested,
+    permissionOpen: activePermission !== null,
+  })
 
   return (
     <section
@@ -4871,6 +4882,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         </>
       )}
 
+      {/* App.tsx owns weather over Mapbox. Native MapKit deliberately omits
+          that heavy map tree, so the already-live condition in Home hosts the
+          same WeatherFX layer here. It is pointer-transparent and unmounts with
+          the visible native map, keeping one weather engine at a time. */}
+      {showNativeMapWeather && <WeatherFX mode={mapWeatherDisplay.mode} />}
+
       {activeTab === 'map' && committedTab === 'map'
         && !overlayOpen && !mapOverlayOpen && activePermission === null
         && !holdOpen
@@ -4908,7 +4925,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               aria-pressed={loadingMuted}
               activation="pointerdown"
               onActivate={() => {
-                const next = !loadingMuted
+                const next = !isUserMuted()
                 setUserMuted(next)
                 setLoadingMuted(next)
                 if (!NATIVE_ADAPTIVE_MAP) sendMapAction('mute', { muted: next })

@@ -1,21 +1,18 @@
 export const MAP_NEWS_OPEN_MESSAGE = 'poplur-map-open-news' as const
 
 export interface MapNewsOpenRequest {
-  eventId: string | null
+  eventId: string
 }
 
 /**
- * The Map can open either one canonical live story or the latest News edition.
- * Keeping the event id optional is important: an unavailable live wire must
- * still leave the visible newspaper button with a useful, immediate action.
+ * Only an explicit story card Read action may leave Map for Poplur News.
+ * The News side button itself starts/stays in the geographic Map tour.
  */
-export function mapNewsOpenMessage(eventId?: string | null) {
-  const normalized = typeof eventId === 'string'
-    ? eventId.trim().slice(0, 180)
-    : ''
+export function mapNewsOpenMessage(eventId: string) {
+  const normalized = eventId.trim().slice(0, 180)
   return {
     type: MAP_NEWS_OPEN_MESSAGE,
-    eventId: normalized || null,
+    eventId: normalized,
   }
 }
 
@@ -26,5 +23,5 @@ export function readMapNewsOpenRequest(value: unknown): MapNewsOpenRequest | nul
   const eventId = typeof record.eventId === 'string'
     ? record.eventId.trim().slice(0, 180)
     : ''
-  return { eventId: eventId || null }
+  return eventId ? { eventId } : null
 }

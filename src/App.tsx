@@ -1822,7 +1822,7 @@ export default function App() {
       status: null,
     }, '*')
   }, [])
-  const openPoplurNewsEdition = useCallback((eventId?: string | null) => {
+  const openPoplurNewsEdition = useCallback((eventId: string) => {
     if (window.parent !== window) {
       window.parent.postMessage(mapNewsOpenMessage(eventId), '*')
       return
@@ -1831,7 +1831,7 @@ export default function App() {
     newsURL.search = ''
     newsURL.searchParams.set('view', 'holdmenu')
     newsURL.searchParams.set('holdScreen', 'feed-news')
-    if (eventId) newsURL.searchParams.set('newsEvent', eventId)
+    newsURL.searchParams.set('newsEvent', eventId)
     window.location.assign(newsURL.toString())
   }, [])
   const cancelTourTimer = useCallback((timer: number) => {
@@ -2151,13 +2151,11 @@ export default function App() {
       beginNewsTour(newsTourEvents, firstEvent)
       return
     }
-    // The edition remains useful when its geolocated live wire is unavailable.
-    // Do not make a visible newspaper button re-run a known failed request and
-    // then appear inert; open Poplur News immediately after the first failure.
+    // The newspaper side button owns a geographic Map tour. A provider outage
+    // must never turn that Map action into an unexpected Feed navigation.
     if (liveNews.source === 'empty' && liveNews.error) {
       stopTour()
-      setTourLine('Live news tour unavailable — opening the latest Poplur News edition.')
-      openPoplurNewsEdition()
+      setTourLine('Live news tour is temporarily unavailable. Staying on the Map.')
       return
     }
     stopTour()
@@ -2170,8 +2168,8 @@ export default function App() {
       if (!mapFrontRef.current || document.visibilityState !== 'visible') return
       const events = snapshot.stale ? [] : tourEligibleLiveNewsEvents(snapshot.events)
       if (!events.length) {
-        setTourLine('No current verified live-news stops — opening the latest Poplur News edition.')
-        openPoplurNewsEdition()
+        stopTour()
+        setTourLine('No current verified live-news stops. Staying on the Map.')
         return
       }
       beginNewsTour(events, firstEvent)
@@ -2180,7 +2178,7 @@ export default function App() {
       newsTourPendingRef.current = false
       setNewsTourPending(false)
     })
-  }, [beginNewsTour, liveNews.error, liveNews.loading, liveNews.source, newsTourEvents, openPoplurNewsEdition, stopTour])
+  }, [beginNewsTour, liveNews.error, liveNews.loading, liveNews.source, newsTourEvents, stopTour])
 
   // A provider-degraded edition remains readable in News, but it must not
   // keep moving the map under a LIVE/BREAKING presentation.

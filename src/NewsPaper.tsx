@@ -914,13 +914,20 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
           onActivate={openMenu}
         />
         <button
+          type="button"
           className={showTop ? styles.toTop : `${styles.toTop} ${styles.toTopHidden}`}
           onClick={backToTop}
           aria-label="Back to the top of the paper"
           aria-hidden={showTop ? undefined : 'true'}
           tabIndex={showTop ? 0 : -1}
         >
-          ⌃<span className={styles.toTopText}>TOP</span>
+          <img
+            className={styles.toTopArt}
+            src={`${import.meta.env.BASE_URL}news-scroll-top.png`}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+          />
         </button>
       </TabControlRail>
 

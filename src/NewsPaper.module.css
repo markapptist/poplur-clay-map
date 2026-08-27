@@ -458,30 +458,45 @@
 }
 
 /* ── Back-to-top side control ────────────────────────────────────────────────
-   A clay pill on the right edge, above the cube reserve. It fades in once the
+   The supplied glossy TOP artwork is presentation only; the button retains
+   the existing 44px target and smooth-scroll behaviour. It fades in once the
    masthead is 600px gone and out again at the top — opacity/transform only,
    so showing it never costs layout. */
 .toTop {
+  appearance: none;
   display: grid;
-  justify-items: center;
-  align-content: center;
-  gap: 1px;
-  padding: 4px 6px;
+  place-items: center;
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
   border: 0;
-  border-radius: 14px;
-  background: linear-gradient(180deg, #ff5fae, #f4459c 46%, #b81566);
-  box-shadow: 0 5px 14px rgba(244, 69, 156, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.35);
-  color: #fff;
-  font: 950 15px/0.9 system-ui, -apple-system, sans-serif;
+  border-radius: 15px;
+  background: transparent;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
 .toTop:active { transform: scale(0.94); }
 
-.toTopText {
-  font-size: 8.5px;
-  letter-spacing: 0.14em;
+.toTop:focus-visible {
+  outline: 3px solid #7fe3ff;
+  outline-offset: 3px;
+}
+
+.toTopArt {
+  display: block;
+  width: 52px;
+  height: 52px;
+  max-width: none;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 4px 4px rgba(29, 4, 18, 0.62));
 }
 
 .toTopHidden {

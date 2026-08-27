@@ -10,6 +10,7 @@ import {
   MAP_BROWSE_3D_EXIT_ZOOM,
   MAP_BROWSE_3D_MAX_PITCH,
   MAP_BROWSE_3D_PITCH,
+  MAP_BUILDING_DETAIL_MAX,
   MAP_LANDMARK_3D_MAX_PITCH,
   mapBuildingDetailBudget,
   mapBuildingDetailPlan,
@@ -20,6 +21,7 @@ import {
   preserveLandmarkCamera,
   type MapBuildingDetailCandidate,
 } from './mapPresentationPolicy'
+import { createMapBuildingCullScheduler } from './mapBuildingCullScheduler'
 import {
   WORLD_LANDMARK_PRESENTATIONS,
   landmarkCameraFrame as resolveLandmarkCameraFrame,
@@ -283,6 +285,9 @@ export const OVERTURE_BUILDINGS_FILL = true
 const OVERTURE_BUILDINGS_PMTILES =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-07-22.0/buildings.pmtiles'
 const BUILDING_DETAIL_USES_PROPERTY_ID = !import.meta.env.DEV && OVERTURE_BUILDINGS_FILL
+const BUILDING_DETAIL_SOURCE_ID = BUILDING_DETAIL_USES_PROPERTY_ID
+  ? 'overture-buildings'
+  : 'clay-streets'
 
 // Shader-like label material that stays inside Mapbox's batched SDF glyph
 // renderer. The soft plum edge gives the type molded depth while a restrained
@@ -771,17 +776,16 @@ function boundedBuildingExtrusionFilter(
   center: [number, number],
   radiusM: number,
   minHeightM: number,
-  detailIds: readonly (string | number)[] | null = null,
+  detailIds: readonly (string | number)[],
 ) {
+  const boundedDetailIds = detailIds.slice(0, MAP_BUILDING_DETAIL_MAX)
   return ['all',
-    ...(detailIds == null
-      ? []
-      : [['in',
-          BUILDING_DETAIL_USES_PROPERTY_ID
-            ? ['to-string', ['get', 'id']]
-            : ['id'],
-          ['literal', [...detailIds]],
-        ]]),
+    ['in',
+      BUILDING_DETAIL_USES_PROPERTY_ID
+        ? ['to-string', ['get', 'id']]
+        : ['id'],
+      ['literal', [...boundedDetailIds]],
+    ],
     ['>=', mappedBuildingHeightExpression(), minHeightM],
     ['<=', ['distance', { type: 'Point', coordinates: center }], radiusM],
     // Keep the expensive global landmark-footprint exclusions last so the
@@ -2926,8 +2930,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     // ── Camera policy: flat by default, shallow depth only very close ────────
     // The social map stays calm and north-up like Snap Map. At close street
     // scale it may add a restrained amount of depth, but never the former
-    // 55-70 degree diorama. Thermal/power pressure hides extrusion geometry
-    // and flattens this surface before Camera has to surrender preview quality.
+    // 55-70 degree diorama. Thermal/power pressure reduces the finite building
+    // batch while retaining the close camera's readable pitched framing.
     const HYBRID_ZOOM = MAP_BROWSE_3D_EXIT_ZOOM
     let adaptiveCameraFrame: number | null = null
     let adaptiveThreeDimensional = false
@@ -2941,7 +2945,6 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       detailBudget: number
       selectionKey: string
     } | null = null
-    let refreshBuildingCullOnIdle = true
     const updateBuildingExtrusionCull = (
       forceApply = false,
       refreshSelection = false,
@@ -3026,12 +3029,17 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         }
       } catch { /* style is transitioning */ }
     }
+    const buildingCullScheduler = createMapBuildingCullScheduler(refreshSelection => {
+      updateBuildingExtrusionCull(false, refreshSelection)
+    })
     const setThreeDLayerVisibility = (enabled: boolean) => {
       if (!map.isStyleLoaded()) return
-      // Install the bounded filter before exposing the layer. This prevents a
-      // one-frame flash of every eligible building in all visible horizon
-      // tiles when crossing from the wide flat map into close 3D.
-      if (enabled) updateBuildingExtrusionCull(lastThreeDLayerVisibility !== true)
+      // The layer boots with an empty filter. Queue one settled selection
+      // before/after close-3D entry instead of querying during zoomend and
+      // again on idle.
+      if (enabled && lastThreeDLayerVisibility !== true) {
+        buildingCullScheduler.markPolicyChanged()
+      }
       let applied = false
       for (const layer of ['clay-buildings-3d', 'clay-building-caps']) {
         if (!map.getLayer(layer)) continue
@@ -3074,13 +3082,6 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         wasThreeDimensional: adaptiveThreeDimensional,
         performanceMode,
       })
-      const flattenForThermalPressure = () => {
-        if (map.getMinPitch() !== 0) map.setMinPitch(0)
-        if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
-        if (map.getPitch() > 0.5 || Math.abs(map.getBearing()) > 0.5) {
-          settleAdaptiveCamera(0, 0)
-        }
-      }
       if ((map as unknown as { __cinematic?: boolean }).__cinematic) {
         // Tour travel stays flat while it is wide, then reveals only the
         // bounded nearby batch as the authored camera arrives close and
@@ -3088,10 +3089,6 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         const plan = authoredDetail()
         adaptiveThreeDimensional = plan.threeDimensional
         setThreeDLayerVisibility(plan.threeDimensional)
-        if (plan.maxDetailedBuildings === 0
-          && (performanceMode === 'LOW_POWER' || performanceMode === 'EMERGENCY')) {
-          flattenForThermalPressure()
-        }
         return
       }
       if ((map as unknown as { __streetView?: boolean }).__streetView) {
@@ -3104,10 +3101,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         })
         adaptiveThreeDimensional = plan.threeDimensional
         setThreeDLayerVisibility(plan.threeDimensional)
-        if (!plan.threeDimensional) {
-          flattenForThermalPressure()
-          return
-        }
+        if (!plan.threeDimensional) return
         if (map.getMaxZoom() !== STREET_VIEW_MAX_ZOOM) map.setMaxZoom(STREET_VIEW_MAX_ZOOM)
         if (map.getMinPitch() !== 72) { map.setMaxPitch(85); map.setMinPitch(72) }
         return
@@ -3174,18 +3168,28 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     }
     map.on('zoomend', enforceHybridPitch)
     map.on('moveend', enforceHybridPitch)
-    const queueBuildingCullRefresh = () => { refreshBuildingCullOnIdle = true }
+    const queueBuildingCullRefresh = () => { buildingCullScheduler.markCameraGesture() }
+    const markBuildingSourceTilesChanged = (event: mapboxgl.MapDataEvent) => {
+      if (event.dataType !== 'source' || event.sourceId !== BUILDING_DETAIL_SOURCE_ID) return
+      buildingCullScheduler.markSourceTilesChanged()
+    }
     const refreshBuildingCullAfterTiles = () => {
-      if (!refreshBuildingCullOnIdle || !adaptiveThreeDimensional) return
-      // Clear before changing the filter: that style write schedules another
-      // idle edge, which must not become an update loop.
-      refreshBuildingCullOnIdle = false
-      updateBuildingExtrusionCull(false, true)
+      // `settleAdaptiveCamera` uses jumpTo, and Mapbox emits movestart for that
+      // internal pitch/bearing handoff. Do not let the user gesture's earlier
+      // idle query once before the next-frame jump and again afterward. Pending
+      // work stays coalesced until the one-shot camera frame has completed.
+      buildingCullScheduler.onIdle(
+        adaptiveThreeDimensional && adaptiveCameraFrame == null,
+      )
     }
     map.on('movestart', queueBuildingCullRefresh)
     map.on('zoomstart', queueBuildingCullRefresh)
+    map.on('sourcedata', markBuildingSourceTilesChanged)
     map.on('idle', refreshBuildingCullAfterTiles)
-    stopAdaptivePresentationPolicy = PoplurPerformanceManager.subscribe(() => enforceHybridPitch())
+    stopAdaptivePresentationPolicy = PoplurPerformanceManager.subscribe(() => {
+      buildingCullScheduler.markPolicyChanged()
+      enforceHybridPitch()
+    })
 
     // A native pinch can cross the 3D threshold long before zoomend. Flatten
     // at the crossing itself so a still-pitched camera never looks past the
@@ -3892,6 +3896,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           [map.getCenter().lng, map.getCenter().lat],
           0,
           mapBuildingExtrusionMinHeightM(PoplurPerformanceManager.policy.mode),
+          [],
         ) as never
         // Per-building pop scale driven by feature-state (see pop system below)
         const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
@@ -3934,7 +3939,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           minzoom: BUILDING_3D_MIN_ZOOM,
           layout: {
             // Start parked; the presentation policy reveals it only for a
-            // close, full-performance view after the style is settled.
+            // close, count-bounded view after the style is settled.
             visibility: SHARED_ADAPTIVE_MAP ? 'none' : 'visible',
             // A small radius keeps the clay identity without the exaggerated
             // toy-block silhouette of the former near-one-metre rounding.
@@ -5152,6 +5157,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       stopClaimRoadPaint = null
       map.off('movestart', clearLandmarkThumb)
       map.off('moveend', settleLandmarkThumb)
+      map.off('movestart', queueBuildingCullRefresh)
+      map.off('zoomstart', queueBuildingCullRefresh)
+      map.off('sourcedata', markBuildingSourceTilesChanged)
+      map.off('idle', refreshBuildingCullAfterTiles)
       idleSnapshot.dispose()
       if (idleSnapshotRef.current === idleSnapshot) idleSnapshotRef.current = null
       stopCarAudio()

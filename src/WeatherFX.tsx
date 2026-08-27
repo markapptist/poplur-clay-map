@@ -4,6 +4,7 @@ import { modelSprite } from './modelSprite'
 import { startWeatherAudio, stopWeatherAudio, playThunder } from './weatherAudio'
 import { isGateMuted, onGateChange } from './audioGate'
 import { ambientAllowed, onAmbientSleepChange } from './frameGovernor'
+import { createWeatherLightningScheduler } from './weatherLightning'
 
 export type WeatherMode =
   | 'clear' | 'cloudy' | 'rain' | 'thunder' | 'storm' | 'snow' | 'hail' | 'fog'
@@ -66,41 +67,30 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
 
   // The visible weather must remain weather: rain continues falling and a
   // storm can still flash while the user is watching the map. Ambient idling
-  // only parks its audio. The lightning timer is sparse (roughly one wake per
-  // 5-10 seconds), and it is stopped completely when the document is hidden.
+  // parks both its audio and sparse lightning timer; waking re-arms it.
   const [flashTick, setFlashTick] = useState(0)
   useEffect(() => {
     let sleeping = !ambientAllowed()
     let muted = isGateMuted()
     let hidden = document.visibilityState !== 'visible'
     let audioActive = false
-    let visualActive = !hidden
-    let timer = 0
-    const strike = () => {
-      timer = 0
-      if (!visualActive) return
+    let visualActive = !hidden && !sleeping
+    const lightning = createWeatherLightningScheduler({
+      mode,
+      onStrike: () => {
       setFlashTick(t => t + 1)
       if (audioActive) playThunder(0.55)
-      timer = window.setTimeout(strike, 4500 + Math.random() * 5500)
-    }
-    const scheduleLightning = () => {
-      if (!visualActive || timer || (mode !== 'thunder' && mode !== 'storm')) return
-      timer = window.setTimeout(strike, 1800 + Math.random() * 1500)
-    }
+      },
+    })
     const sync = () => {
-      visualActive = !hidden
-      const nextAudioActive = visualActive && !sleeping && !muted
+      visualActive = !hidden && !sleeping
+      const nextAudioActive = visualActive && !muted
       if (nextAudioActive !== audioActive) {
         audioActive = nextAudioActive
         if (audioActive) startWeatherAudio(mode)
         else stopWeatherAudio()
       }
-      if (!visualActive) {
-        window.clearTimeout(timer)
-        timer = 0
-        return
-      }
-      scheduleLightning()
+      lightning.sync(visualActive)
     }
     const stopAmbient = onAmbientSleepChange(next => { sleeping = next; sync() })
     const stopGate = onGateChange(next => { muted = next; sync() })
@@ -110,7 +100,7 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
     return () => {
       visualActive = false
       audioActive = false
-      window.clearTimeout(timer)
+      lightning.dispose()
       stopWeatherAudio()
       stopAmbient()
       stopGate()
