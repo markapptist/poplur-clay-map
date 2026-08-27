@@ -18,4 +18,16 @@ describe('camera-roll side control', () => {
     expect(source).toContain('onError={() => setRollPreviewFailed(true)}')
     expect(source).toContain("(arOpen ? 'pan-x' : 'none')")
   })
+
+  it('keeps the camera-roll wrapper neutral instead of drawing shaded chrome', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src', 'ViewHarness.module.css'), 'utf8')
+    const rule = css.match(/\.camRollBtn \{([\s\S]*?)\n\}/)?.[1] ?? ''
+
+    expect(rule).toContain('border: 0;')
+    expect(rule).toContain('background: transparent;')
+    expect(rule).toContain('backdrop-filter: none;')
+    expect(rule).toContain('box-shadow: none;')
+    expect(css).not.toContain('camRollShaderSweep')
+    expect(css).not.toContain('.camRollBtn::after')
+  })
 })

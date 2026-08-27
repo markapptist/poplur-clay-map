@@ -21,7 +21,16 @@ import {
   preserveLandmarkCamera,
   type MapBuildingDetailCandidate,
 } from './mapPresentationPolicy'
-import { createMapBuildingCullScheduler } from './mapBuildingCullScheduler'
+import {
+  createMapBuildingCullScheduler,
+  createSettledMapLayerVisibilityRetry,
+  reconcileMapLayerVisibility,
+} from './mapBuildingCullScheduler'
+import {
+  buildingFootprintBoundingRadiusMetres,
+  buildingFootprintWithinPointDistance,
+  geographicPointDistanceMetres,
+} from './mapBuildingFootprint'
 import {
   WORLD_LANDMARK_PRESENTATIONS,
   landmarkCameraFrame as resolveLandmarkCameraFrame,
@@ -773,24 +782,22 @@ function mappedBuildingHeightExpression() {
  * still loaded city-wide geometry. The flat footprint layer remains outside
  * this circle and preserves the full map. */
 function boundedBuildingExtrusionFilter(
-  center: [number, number],
-  radiusM: number,
-  minHeightM: number,
+  _center: [number, number],
+  _radiusM: number,
+  _minHeightM: number,
   detailIds: readonly (string | number)[],
 ) {
   const boundedDetailIds = detailIds.slice(0, MAP_BUILDING_DETAIL_MAX)
-  return ['all',
-    ['in',
-      BUILDING_DETAIL_USES_PROPERTY_ID
-        ? ['to-string', ['get', 'id']]
-        : ['id'],
-      ['literal', [...boundedDetailIds]],
-    ],
-    ['>=', mappedBuildingHeightExpression(), minHeightM],
-    ['<=', ['distance', { type: 'Point', coordinates: center }], radiusM],
-    // Keep the expensive global landmark-footprint exclusions last so the
-    // cheap height and local-radius checks reject almost every building first.
-    notALandmarkBuilding(),
+  // Height, camera radius and landmark replacement are resolved before an id
+  // enters this finite set. Keeping the runtime filter id-only matters on
+  // iPhone: Mapbox can evaluate geometry-distance expressions differently
+  // across overzoomed tile fragments, which previously turned a valid
+  // 12-building selection back into an empty layer.
+  return ['in',
+    BUILDING_DETAIL_USES_PROPERTY_ID
+      ? ['to-string', ['get', 'id']]
+      : ['id'],
+    ['literal', [...boundedDetailIds]],
   ]
 }
 
@@ -810,6 +817,22 @@ function renderedBuildingHeight(feature: mapboxgl.MapboxGeoJSONFeature): number 
   const floors = Number(feature.properties?.num_floors)
   if (Number.isFinite(floors) && floors > 0) return floors * 3.2
   return 9
+}
+
+function renderedBuildingReplacedByLandmark(
+  feature: mapboxgl.MapboxGeoJSONFeature,
+  center: [number, number],
+  heightM: number,
+): boolean {
+  if (!BUILDING_DETAIL_USES_PROPERTY_ID
+    && typeof feature.id === 'number'
+    && LANDMARK_BUILDING_IDS.includes(feature.id)) return true
+  const footprintRadiusM = buildingFootprintBoundingRadiusMetres(feature.geometry, center)
+  return LANDMARK_FOOTPRINT_CUTS.some(cut => heightM >= cut.cutMinH
+    // Cheap centre/extent rejection means almost every candidate avoids the
+    // exact segment walk; large or clipped footprints still get exact cover.
+    && geographicPointDistanceMetres(center, cut.at) <= cut.cutM + footprintRadiusM
+    && buildingFootprintWithinPointDistance(feature.geometry, cut.at, cut.cutM))
 }
 
 /** Bounding-box centre is inexpensive and stable for both Polygon variants;
@@ -2936,6 +2959,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     let adaptiveCameraFrame: number | null = null
     let adaptiveThreeDimensional = false
     let lastThreeDLayerVisibility: boolean | null = null
+    const threeDLayerIds = ['clay-buildings-3d', 'clay-building-caps'] as const
     let lastBuildingCull: {
       lng: number
       lat: number
@@ -2948,11 +2972,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const updateBuildingExtrusionCull = (
       forceApply = false,
       refreshSelection = false,
-    ) => {
-      if (!map.isStyleLoaded() || !map.getLayer('clay-buildings-3d')) return
+    ): boolean => {
+      if (!map.isStyleLoaded() || !map.getLayer('clay-buildings-3d')) return false
       const performanceMode = PoplurPerformanceManager.policy.mode
       const radiusM = mapBuildingExtrusionRadiusM(map.getZoom(), performanceMode)
-      if (radiusM == null) return
+      if (radiusM == null) return false
       const minHeightM = mapBuildingExtrusionMinHeightM(performanceMode)
       const detailBudget = mapBuildingDetailBudget(performanceMode)
       const center = map.getCenter()
@@ -2968,56 +2992,65 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const movedM = lastBuildingCull
         ? center.distanceTo(new mapboxgl.LngLat(lastBuildingCull.lng, lastBuildingCull.lat))
         : Number.POSITIVE_INFINITY
-      if (!forceApply && !refreshSelection && !budgetChanged && movedM < radiusM * 0.16) return
+      if (!forceApply && !refreshSelection && !budgetChanged && movedM < radiusM * 0.16) return true
       const point = forwardBuildingCullCenter(center, map.getBearing(), radiusM)
       let rendered: mapboxgl.MapboxGeoJSONFeature[]
       try {
-        if (!map.getLayer('clay-buildings-2d')) return
+        if (!map.getLayer('clay-buildings-2d')
+          || !map.getSource(BUILDING_DETAIL_SOURCE_ID)
+          || !map.isSourceLoaded(BUILDING_DETAIL_SOURCE_ID)) {
+          return false
+        }
         rendered = map.queryRenderedFeatures(undefined as never, {
           layers: ['clay-buildings-2d'],
         })
       } catch {
-        return
+        return false
       }
       const focus = new mapboxgl.LngLat(point[0], point[1])
       const candidates: MapBuildingDetailCandidate[] = []
+      const landmarkExcludedIds = new Set<string>()
       for (const feature of rendered) {
         const at = renderedBuildingCenter(feature)
         if (!at) continue
+        const heightM = renderedBuildingHeight(feature)
+        const id = renderedBuildingDetailId(feature)
+        if (id == null || heightM < minHeightM) continue
+        const distanceM = focus.distanceTo(new mapboxgl.LngLat(at[0], at[1]))
+        // Reject the horizon and short footprints before the more exact
+        // landmark-footprint check. This keeps one settled selection pass
+        // cheap even when queryRenderedFeatures returns several whole tiles.
+        if (distanceM > radiusM) continue
+        const idKey = `${typeof id}:${String(id)}`
+        if (renderedBuildingReplacedByLandmark(feature, at, heightM)) {
+          landmarkExcludedIds.add(idKey)
+          continue
+        }
         candidates.push({
           // Overture's intrinsic MVT ids are uint64 and exceed JavaScript's
           // safe integer range. Its string `id` property is the stable shipped
           // identity; DEV Streets keeps using the native OSM feature id.
-          id: renderedBuildingDetailId(feature),
-          distanceM: focus.distanceTo(new mapboxgl.LngLat(at[0], at[1])),
-          heightM: renderedBuildingHeight(feature),
+          id,
+          distanceM,
+          heightM,
         })
       }
       const detailIds = nearestMapBuildingDetailIds(
-        candidates,
+        candidates.filter(candidate => !landmarkExcludedIds.has(
+          `${typeof candidate.id}:${String(candidate.id)}`,
+        )),
         performanceMode,
         minHeightM,
         radiusM,
       )
       const selectionKey = detailIds.map(id => `${typeof id}:${String(id)}`).join('|')
       if (!forceApply && !budgetChanged && movedM < radiusM * 0.16
-        && lastBuildingCull?.selectionKey === selectionKey) return
+        && lastBuildingCull?.selectionKey === selectionKey) return true
       try {
         map.setFilter(
           'clay-buildings-3d',
           boundedBuildingExtrusionFilter(point, radiusM, minHeightM, detailIds) as never,
         )
-        if (map.getLayer('clay-building-caps')) {
-          map.setFilter(
-            'clay-building-caps',
-            boundedBuildingExtrusionFilter(
-              point,
-              radiusM,
-              Math.max(45, minHeightM),
-              detailIds,
-            ) as never,
-          )
-        }
         lastBuildingCull = {
           lng: center.lng,
           lat: center.lat,
@@ -3027,28 +3060,62 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           detailBudget,
           selectionKey,
         }
-      } catch { /* style is transitioning */ }
+      } catch {
+        // Style/source transitions are deferred, not accepted as a settled
+        // empty result. The scheduler retains this epoch and retries once the
+        // building source produces another settled edge.
+        return false
+      }
+      // The optional desktop roof-cap flourish must not strand the successful
+      // main extrusion filter if its duplicate layer is transitioning.
+      if (map.getLayer('clay-building-caps')) {
+        try {
+          map.setFilter(
+            'clay-building-caps',
+            boundedBuildingExtrusionFilter(
+              point,
+              radiusM,
+              Math.max(45, minHeightM),
+              detailIds,
+            ) as never,
+          )
+        } catch { /* main finite extrusion batch is already settled */ }
+      }
+      return true
     }
     const buildingCullScheduler = createMapBuildingCullScheduler(refreshSelection => {
-      updateBuildingExtrusionCull(false, refreshSelection)
+      return updateBuildingExtrusionCull(false, refreshSelection)
+    })
+    const threeDVisibilityRetry = createSettledMapLayerVisibilityRetry(enabled => {
+      if (!map.isStyleLoaded()) {
+        lastThreeDLayerVisibility = null
+        return false
+      }
+      const settled = reconcileMapLayerVisibility(map, threeDLayerIds, enabled)
+      lastThreeDLayerVisibility = settled ? enabled : null
+      return settled
     })
     const setThreeDLayerVisibility = (enabled: boolean) => {
-      if (!map.isStyleLoaded()) return
+      const desired = enabled ? 'visible' : 'none'
+      let needsReconcile = !map.isStyleLoaded()
+      if (!needsReconcile) {
+        try {
+          needsReconcile = threeDLayerIds.some(layer => map.getLayer(layer)
+            && (map.getLayoutProperty(layer, 'visibility') === 'none' ? 'none' : 'visible') !== desired)
+        } catch {
+          needsReconcile = true
+        }
+      }
       // The layer boots with an empty filter. Queue one settled selection
       // before/after close-3D entry instead of querying during zoomend and
       // again on idle.
-      if (enabled && lastThreeDLayerVisibility !== true) {
+      if (enabled && (lastThreeDLayerVisibility !== true || needsReconcile)) {
         buildingCullScheduler.markPolicyChanged()
       }
-      let applied = false
-      for (const layer of ['clay-buildings-3d', 'clay-building-caps']) {
-        if (!map.getLayer(layer)) continue
-        applied = true
-        if (lastThreeDLayerVisibility !== enabled) {
-          try { map.setLayoutProperty(layer, 'visibility', enabled ? 'visible' : 'none') } catch { /* style is transitioning */ }
-        }
-      }
-      if (applied) lastThreeDLayerVisibility = enabled
+      // Never cache a rejected style-transition write. The next settled idle
+      // edge retries once, even if the camera was restored directly at its
+      // target pitch and therefore emits no second move/zoom event.
+      threeDVisibilityRetry.request(enabled)
     }
     const settleAdaptiveCamera = (pitch: number, bearing: number) => {
       if (adaptiveCameraFrame != null) {
@@ -3178,6 +3245,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // internal pitch/bearing handoff. Do not let the user gesture's earlier
       // idle query once before the next-frame jump and again afterward. Pending
       // work stays coalesced until the one-shot camera frame has completed.
+      threeDVisibilityRetry.retryOnSettled()
       buildingCullScheduler.onIdle(
         adaptiveThreeDimensional && adaptiveCameraFrame == null,
       )
@@ -4095,6 +4163,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         if (flatSource === 'overture-buildings' && !map.getSource('overture-buildings')) {
           map.addSource('overture-buildings', { type: 'vector', url: OVERTURE_BUILDINGS_PMTILES })
         }
+        const adaptiveThreeDLayerOrder = SHARED_ADAPTIVE_MAP && map.getLayer('clay-buildings-3d')
+          ? 'clay-buildings-3d'
+          : undefined
         map.addLayer({
           id: 'clay-buildings-2d-shadow',
           slot: 'top',
@@ -4108,7 +4179,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             'fill-translate': [0, 2],
             'fill-translate-anchor': 'viewport',
           },
-        })
+        }, adaptiveThreeDLayerOrder)
         map.addLayer({
           id: 'clay-buildings-2d',
           slot: 'top',
@@ -4121,7 +4192,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             'fill-opacity': 0.96,
             'fill-outline-color': '#7b5a43',
           },
-        })
+        }, adaptiveThreeDLayerOrder)
         // The adaptive close-up already has labels elevated with the 3D
         // geometry. Adding this flat label pass as well makes names look
         // doubled and soft; retain it only for the dedicated flat fallback.

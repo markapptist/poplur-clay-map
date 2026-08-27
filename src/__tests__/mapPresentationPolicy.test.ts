@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { buildingFootprintWithinPointDistance } from '../mapBuildingFootprint'
 import {
   MAP_BROWSE_3D_BEARING,
   MAP_BROWSE_3D_ENTER_ZOOM,
@@ -26,6 +27,33 @@ import {
 } from '../mapPresentationPolicy'
 
 describe('subtle Map presentation policy', () => {
+  it('excludes a landmark whose point is inside or near the real building footprint', () => {
+    const eiffel: [number, number] = [2.2945, 48.8584]
+    const polygon = {
+      type: 'Polygon',
+      coordinates: [[
+        [2.2939, 48.8581],
+        [2.2951, 48.8581],
+        [2.2951, 48.8587],
+        [2.2939, 48.8587],
+        [2.2939, 48.8581],
+      ]],
+    }
+    const clippedNearEdge = {
+      type: 'Polygon',
+      coordinates: [[
+        [2.2950, 48.8583],
+        [2.2953, 48.8583],
+        [2.2953, 48.8586],
+        [2.2950, 48.8586],
+        [2.2950, 48.8583],
+      ]],
+    }
+
+    expect(buildingFootprintWithinPointDistance(polygon, eiffel, 0)).toBe(true)
+    expect(buildingFootprintWithinPointDistance(clippedNearEdge, eiffel, 60)).toBe(true)
+    expect(buildingFootprintWithinPointDistance(clippedNearEdge, eiffel, 10)).toBe(false)
+  })
   it('keeps ordinary wide and city browsing flat and north-up', () => {
     expect(mapBrowsePresentation({
       zoom: MAP_BROWSE_3D_ENTER_ZOOM - 0.01,

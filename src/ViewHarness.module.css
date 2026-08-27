@@ -398,74 +398,37 @@
 }
 .camZoomPreset:active { transform: scale(0.92); }
 
-/* Now a TabControlRail child — the rail's own `.rail > *` rule already forces
-   the 44×44 box and the column position, so this only carries the button's
-   own look, not placement.
-   Shaped like a tube TV — bulged corners on a rounded screen, not a flat
-   square thumbnail — with the same animated shader-gradient ring the LIVE
-   text and zoom presets already wear, so this reads as a Poplur object
-   (a little screen showing you what you just shot) rather than a generic
-   icon button. The two-background trick paints the button's own fill inside
-   the border and lets the gradient show only in the border itself: a
-   transparent border with `background-clip: padding-box, border-box` on two
-   layered images. */
+/* The rail already supplies the 44×44 hit target and positioning. Keep this
+   wrapper visually neutral so the gallery artwork/latest-capture thumbnail is
+   the control; it must not get a second shaded tile, animated ring, or blur. */
 .camRollBtn {
-  border: 2.5px solid transparent;
-  border-radius: 42% / 34%;
-  background:
-    linear-gradient(rgba(22, 6, 15, 0.72), rgba(22, 6, 15, 0.72)) padding-box,
-    linear-gradient(105deg, #ff80be 0%, #ffffff 27%, #7fe3ff 52%, #ffffff 72%, #ff80be 100%) border-box;
-  background-size: 100% 100%, 260% 100%;
-  animation: camRollShaderSweep 5.6s linear 3;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 2px 6px rgba(0, 0, 0, 0.5);
+  appearance: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
   display: grid;
   place-items: center;
   overflow: hidden;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 120ms ease, box-shadow 160ms ease;
+  transition: transform 120ms ease;
 }
 .camRollBtn:active { transform: scale(0.88); }
 .camRollBtn:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 3px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 0 0 4px rgba(246, 59, 154, 0.46),
-    0 4px 10px rgba(0, 0, 0, 0.58);
-}
-/* A tiny stacked-photo corner makes the latest thumbnail read as a library
-   button instead of an unexplained mini preview. It is pure CSS and static. */
-.camRollBtn::after {
-  content: '';
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  z-index: 2;
-  width: 8px;
-  height: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.94);
-  border-radius: 2px;
-  background: rgba(22, 6, 15, 0.7);
-  box-shadow: -2px -2px 0 -1px rgba(255, 255, 255, 0.86), 0 1px 3px rgba(0, 0, 0, 0.7);
-  pointer-events: none;
-}
-@keyframes camRollShaderSweep {
-  to { background-position: 0 0, -260% 0; }
+  box-shadow: none;
 }
 .camRollBtnThumb {
   width: 100%;
   height: 100%;
   object-fit: cover;
   border-radius: 40% / 32%;
-}
-@media (prefers-reduced-motion: reduce) {
-  .camRollBtn { animation-duration: .001ms; }
 }
 
 @media (prefers-reduced-motion: reduce) {

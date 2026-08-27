@@ -18,6 +18,7 @@ import MapConquerButton from './MapConquerButton'
 import { WeatherMark } from './ClayMap'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import { nativeMapWeatherVisible } from './nativeMapWeather'
+import { createNativeMapConquerSnapshot } from './nativeMapConquerSnapshot'
 import {
   formatWeatherTemperature,
   readWeatherPresentation,
@@ -4958,6 +4959,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               open={mapConquerGlanceOpen}
               onPress={() => {
                 playPop(0.25)
+                // The Mapbox iframe publishes this snapshot on every settled
+                // camera move. Native MapKit intentionally has no hidden
+                // WebGL map, so compose the same bounded board from the shared
+                // claim seed at the explicit user gesture before opening.
+                if (NATIVE_ADAPTIVE_MAP && !nativeMapWebFallback) {
+                  setMapConquerSnapshot(createNativeMapConquerSnapshot({
+                    level: mapPopLevel,
+                    zoom: nativeMapZoom,
+                    ownAvatar: ownPhoto,
+                  }))
+                }
                 setMapConquerGlanceOpen(open => !open)
               }}
             />
