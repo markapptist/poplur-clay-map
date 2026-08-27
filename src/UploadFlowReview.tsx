@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PostComposer, { type ComposerTarget, type PostComposerStep } from './PostComposer'
+import UploadStatusView from './UploadStatusView'
 import { playPop } from './pop'
 import {
   resolveUploadReviewRoute,
@@ -23,22 +24,6 @@ function writeRoute(flow: UploadFlowId, screen: UploadReviewScreenId, media: Upl
   window.history.replaceState(null, '', url)
 }
 
-const UPLOAD_LINES = [
-  'Teaching the globe where your pop lives…',
-  'Polishing the pixels. Very important work.',
-  'Negotiating with one dramatic cloud…',
-  'Giving your radius a tiny pep talk…',
-]
-
-function UploadGlobeModel() {
-  // Uploading is network-bound; a continuously-rendering WebGL model made the
-  // progress screen needlessly hot and could fail as a blank rectangle when a
-  // review browser had no GPU context. The same clay globe is rendered as the
-  // lightweight authored sprite here, while the barber-pole progress still
-  // supplies motion and status.
-  return <img className={styles.uploadGlobeModel} src="/sprites/zoom_globe_y20_p12_s256.png" alt="Poplur clay globe" />
-}
-
 function UploadingScreen({
   complete = false,
   flow,
@@ -50,71 +35,7 @@ function UploadingScreen({
   radius: number
   onReset?: () => void
 }) {
-  const [line, setLine] = useState(0)
-
-  useEffect(() => {
-    if (complete) return
-    const timer = window.setInterval(() => setLine(current => (current + 1) % UPLOAD_LINES.length), 1800)
-    return () => window.clearInterval(timer)
-  }, [complete])
-
-  return (
-    <section className={`${styles.statusScreen} ${styles.globeUpload}`} aria-label={complete ? 'Posted confirmation review' : 'Upload progress review'}>
-      <div className={styles.uploadDotMap} aria-hidden="true" />
-      <UploadGlobeModel />
-      {/* The wordmark and the progress block ride one scrolling column rather
-          than being pinned to opposite edges. Uploading was the only screen in
-          either flow with no scroller at all, so on a short viewport its chrome
-          closed on the globe — and on each other at a larger text size — with
-          nothing to scroll. The globe stays behind, unscrolled. */}
-      <div className={styles.statusScroll}>
-        <div className={styles.uploadWordmark}>
-          <img src="/logo_text.png" alt="Poplur" />
-          <span>{complete ? 'UPLOAD COMPLETE' : 'UPLOAD PREVIEW'}</span>
-        </div>
-        {!complete && (
-          <div className={styles.globeProgress}>
-            <p key={line}>{UPLOAD_LINES[line]}</p>
-            <div className={styles.progressHeading}>
-              <span>CH 101 · FOOD</span>
-              <strong>64%</strong>
-            </div>
-            <div className={styles.clayProgressTrack}><i /></div>
-          </div>
-        )}
-      </div>
-      {complete && (
-        <div className={styles.postedOverlay} role="dialog" aria-label="Congratulations, your pop is posted">
-          <div className={styles.celebrationConfetti} aria-hidden="true">
-            {Array.from({ length: 38 }, (_, index) => (
-              <i
-                key={index}
-                style={{
-                  '--piece': index,
-                  left: `${(index * 37) % 101}%`,
-                  background: `hsl(${(index * 47) % 360} 88% 62%)`,
-                  animationDelay: `${(index % 8) * -.22}s`,
-                  animationDuration: `${2.5 + (index % 6) * .24}s`,
-                } as React.CSSProperties}
-              />
-            ))}
-          </div>
-          <div className={styles.postedPopup}>
-            <img src="/logo_icon.png" alt="" />
-            <span className={styles.postedLine}>POP IS LIVE</span>
-            <h2 className={styles.postedLine}>Congratulations!</h2>
-            <p className={styles.postedLine}>CH 101 · FOOD</p>
-            <div className={`${styles.postedRadius} ${styles.postedLine}`}><b>{radius.toFixed(1)}</b><span>km radius</span></div>
-            <small className={styles.postedLine}>{flow === 'map' ? 'Pinned to your confirmed location' : 'Added to your profile'}</small>
-            <button type="button" className={styles.resetCube} onClick={onReset} aria-label={flow === 'map' ? 'Return to map' : 'Return to camera'}>
-              <img src={flow === 'map' ? '/sprites/zoom_globe_y20_p12_s256.png' : '/sprites/poplur_camera_kodak_y0_p14_s320.png'} alt="" />
-              <span>{flow === 'map' ? 'BACK TO MAP' : 'BACK TO CAMERA'}</span>
-            </button>
-          </div>
-        </div>
-      )}
-    </section>
-  )
+  return <UploadStatusView complete={complete} flow={flow} radius={radius} progress={complete ? null : .64} onReset={onReset} />
 }
 
 function LocationRadiusPreview({

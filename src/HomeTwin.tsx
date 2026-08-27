@@ -25,6 +25,7 @@ import {
 import {
   BREAKING_NEWS_CUBE_MODEL,
   BROWSER_CUBE_MODEL,
+  FEED_TV_CUBE_MODEL,
   HOME_CUBE_MODEL,
   isBreakingNewsCubeEvent,
   mapContextCubeModel,
@@ -292,10 +293,10 @@ function tabNavigatorModel(
     if (mapNight) return mapMoon === 'full' ? MAP_FULL_MOON_MODEL : MAP_NIGHT_MODEL
     return mapMorning ? MAP_MORNING_MODEL : MAP_GLOBE_MODEL
   }
-  // The public Home view boots onto Feed, so Feed's root is the one concrete
-  // Home destination in this four-tab shell. Its home tile resolves through
-  // this same function and therefore previews the same supplied house.
-  if (tab === 'feed') return HOME_CUBE_MODEL
+  // Feed is the Poplur TV surface. Keep the supplied lightweight TV in the
+  // navigator for the whole channel session; contextual food/music states may
+  // temporarily override it, then restore this exact model.
+  if (tab === 'feed') return FEED_TV_CUBE_MODEL
   if (tab === 'post') return PROFILE_CAMERA_MODEL
   return profileHeadModel()
 }
@@ -428,7 +429,7 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // you are here.
   'profile-notifications': 'poplur_bell.glb',
   'profile-stats': 'poplur_cube_bargraph.glb',
-  'profile-house': 'poplur_building_navigator.glb',
+  'profile-house': HOME_CUBE_MODEL,
   'profile-store': 'poplur_cube_shopping_bag.glb',
   // A dial/gear face rather than the old plain cube. Named _gear, not
   // _settings2, to keep it unmistakably apart from the orphaned

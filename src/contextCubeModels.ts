@@ -4,6 +4,7 @@
  * document and Home shell share an explicit contract without loading React.
  */
 export const HOME_CUBE_MODEL = 'poplur_cube_home.glb'
+export const FEED_TV_CUBE_MODEL = 'clay_tv.glb'
 export const BROWSER_CUBE_MODEL = 'poplur_cube_at_sign.glb'
 export const BREAKING_NEWS_CUBE_MODEL = 'poplur_cube_breaking_news.glb'
 export const RAIN_CUBE_MODEL = 'poplur_cube_rain_cloud.glb'

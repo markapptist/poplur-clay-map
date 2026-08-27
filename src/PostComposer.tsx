@@ -17,6 +17,7 @@ import VFXStudio, {
   type VFXEffectId,
 } from './VFXStudio'
 import ComposerAIChat from './ComposerAIChat'
+import UploadStatusView from './UploadStatusView'
 import BoundedPopupVideo from './BoundedPopupVideo'
 import {
   createClientPostId,
@@ -626,14 +627,14 @@ export default function PostComposer({
         }
         onPosted?.(post)
         setPosted(true)
-        window.setTimeout(onClose, 1800)
+        window.setTimeout(onClose, 4200)
       } else {
         setUploadNote('Posting needs your Poplur account, so it uploads from the app — nothing was sent from this browser preview.')
         // This is a local confirmation only. `onPosted` drives the verified
         // cube, owned-post registration and map claims, so firing it without a
         // completed native upload made the preview look like a real post.
         setPosted(true)
-        window.setTimeout(onClose, 2600)
+        window.setTimeout(onClose, 5200)
       }
     } catch (error) {
       setPublishError({
@@ -652,7 +653,6 @@ export default function PostComposer({
     : uploadPhaseState === 'saving'
       ? 'Finishing your pop'
       : 'Uploading your pop'
-  const uploadPercent = uploadProgress === null ? null : Math.round(uploadProgress * 100)
   const composerStepLabel = step === 'edit'
     ? 'FILTER'
     : step === 'effects'
@@ -720,18 +720,13 @@ export default function PostComposer({
   if (posted) {
     return (
       <div className={`${styles.stage}${reviewMode ? ` ${styles.reviewStage}` : ''}`} role="dialog" aria-label="Posted">
-        <div className={styles.doneWrap}>
-          <div className={styles.doneEmblem}>
-            <img src="logo_icon.png" alt="" />
-            <span className={styles.doneTick}>{uploadNote ? '↑' : '✓'}</span>
-          </div>
-          <span className={styles.doneEyebrow}>{uploadNote ? 'CAPTURE SAVED' : 'POP IS LIVE'}</span>
-          <h2 className={styles.doneTitle}>{uploadNote ? 'Not uploaded' : 'Posted'}</h2>
-          <p className={styles.doneMeta}>
-            {CHANNELS.find(c => c.id === channelId)?.name} · CH {CHANNELS.find(c => c.id === channelId)?.number}{target ? ` · ${radiusKm.toFixed(1)} km radius` : ''}
-          </p>
-          {uploadNote && <p className={styles.doneNote}>{uploadNote}</p>}
-        </div>
+        <UploadStatusView
+          complete
+          flow={target?.resume ? 'camera' : target ? 'map' : 'camera'}
+          radius={radiusKm}
+          note={uploadNote}
+          onReset={onClose}
+        />
       </div>
     )
   }
@@ -750,27 +745,12 @@ export default function PostComposer({
       )}
 
       {publishing && (
-        <section className={styles.uploadProgressCard} aria-label="Post upload progress">
-          <div className={styles.uploadProgressHead}>
-            <span aria-live="polite">{uploadPhaseLabel}</span>
-            <b aria-hidden="true">{uploadPercent === null ? 'IN PROGRESS' : `${uploadPercent}%`}</b>
-          </div>
-          <div
-            className={`${styles.uploadProgressTrack} ${uploadPercent === null ? styles.uploadProgressTrackIndeterminate : ''}`}
-            role="progressbar"
-            aria-label={uploadPhaseLabel}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={uploadPercent ?? undefined}
-            aria-valuetext={uploadPercent === null ? `${uploadPhaseLabel}, in progress` : `${uploadPercent}%`}
-          >
-            <span
-              className={styles.uploadProgressFill}
-              style={uploadProgress === null ? undefined : { width: `${uploadProgress * 100}%` }}
-            />
-          </div>
-          <p>{uploadPercent === null ? 'Keeping your capture safe while Poplur sends it.' : 'Your capture is uploading securely.'}</p>
-        </section>
+        <UploadStatusView
+          flow={target?.resume ? 'camera' : target ? 'map' : 'camera'}
+          radius={radiusKm}
+          phaseLabel={uploadPhaseLabel}
+          progress={uploadProgress}
+        />
       )}
 
       {/* ── 1. edit: full-bleed capture, Snapchat-style. The clay channel

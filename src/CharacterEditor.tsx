@@ -6,6 +6,7 @@ import {
 import { STUDIO_OPTIONS, studioInitialCharacter, type StudioCategory } from './AvatarStudioCharacter'
 import ThreeAvatarStudio from './ThreeAvatarStudio'
 import FittedAvatarWardrobe from './FittedAvatarWardrobe'
+import { readSavedAvaturnAvatar } from './avaturnAvatarStore'
 import { WARDROBE_SCENE_SRC } from './characterParts'
 import {
   ACCESSORY_FASHION_STYLES,
@@ -58,8 +59,11 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
   const [wardrobeProvider, setWardrobeProvider] = useState<'avaturn' | 'poplur'>(() => {
     try {
       const saved = localStorage.getItem('poplur.wardrobe.provider.v1')
-      return saved === 'poplur' ? 'poplur' : 'avaturn'
-    } catch { return 'avaturn' }
+      // Avaturn is an optional fitted-avatar provider, not the Wardrobe's sign-
+      // in wall. Preserve it only after the person has actually saved an export;
+      // everyone else opens directly into the local Poplur wardrobe.
+      return saved === 'avaturn' && readSavedAvaturnAvatar() ? 'avaturn' : 'poplur'
+    } catch { return 'poplur' }
   })
   // Wardrobe opens ready to dress the character. The cube still toggles the
   // studio and saves on close, but users no longer arrive at an inert model.

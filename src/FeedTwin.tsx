@@ -1942,13 +1942,13 @@ export default function FeedTwin({
         />
       )}
 
-      {post?.mediaType === 'photo' && !post?.stream && posterSrc && posterKey && (
+      {!post?.stream && posterSrc && posterKey && (
         <img
           key={`${posterKey}:poster`}
           data-feed-media="true"
           className={`${styles.adVideo} ${styles.adVideoReady}`}
           src={posterSrc}
-          alt=""
+          alt={post?.mediaType === 'photo' ? '' : 'Feed video preview'}
           draggable={false}
           tabIndex={-1}
           onLoad={() => setReadyPosterKey(posterKey)}

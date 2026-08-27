@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BREAKING_NEWS_CUBE_MODEL,
   BROWSER_CUBE_MODEL,
+  FEED_TV_CUBE_MODEL,
   HAIL_CUBE_MODEL,
   HOME_CUBE_MODEL,
   SNOW_CUBE_MODEL,
@@ -15,6 +16,7 @@ import {
 describe('context cube models', () => {
   it('maps the supplied home and browser models to stable bundle-root URLs', () => {
     expect(HOME_CUBE_MODEL).toBe('poplur_cube_home.glb')
+    expect(FEED_TV_CUBE_MODEL).toBe('clay_tv.glb')
     expect(BROWSER_CUBE_MODEL).toBe('poplur_cube_at_sign.glb')
   })
 

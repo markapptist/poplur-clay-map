@@ -321,7 +321,6 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
     setControllerReady(false)
     const allowFpsFrame = g.id === 'fps'
       && PoplurPerformanceManager.snapshot.isForeground
-      && PoplurPerformanceManager.snapshot.expensiveVideoBackedTexturesAllowed
     setFpsFrameRequested(g.id === 'fps')
     setFpsFrameLive(allowFpsFrame)
     // Embedded games report readiness from iframe.onLoad. Poplurgatchi is a
@@ -542,14 +541,16 @@ export default function GamesScreen({ onClose }: { onClose: () => void }) {
   // interval. Its code runs inside the iframe, so pausing the parent visually
   // cannot stop it; the only reliable ownership boundary is retiring the
   // iframe. Recreate it only while the user is still on this running game and
-  // the shared performance policy says video-backed work may run.
+  // the app is foregrounded. This is a user-launched game, not an ambient
+  // video-backed texture: applying the ambient low-power flag here removed the
+  // entire game on iPhone and left only the controller over a black screen.
   useEffect(() => {
     if (running?.id !== 'fps' || !fpsFrameRequested) {
       setFpsFrameLive(false)
       return
     }
     const sync = (snapshot: PoplurPerformanceSnapshot) => {
-      const live = snapshot.isForeground && snapshot.expensiveVideoBackedTexturesAllowed
+      const live = snapshot.isForeground
       setFpsFrameLive(live)
       if (!live) {
         setControllerReady(false)

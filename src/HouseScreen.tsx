@@ -47,8 +47,12 @@ function houseHostName() {
 }
 
 function readWardrobeProvider(): 'avaturn' | 'poplur' {
-  try { return localStorage.getItem('poplur.wardrobe.provider.v1') === 'poplur' ? 'poplur' : 'avaturn' }
-  catch { return 'avaturn' }
+  try {
+    return localStorage.getItem('poplur.wardrobe.provider.v1') === 'avaturn'
+      && readSavedAvaturnAvatar()
+      ? 'avaturn'
+      : 'poplur'
+  } catch { return 'poplur' }
 }
 
 function guestPalette(id: string) {
@@ -355,6 +359,16 @@ export default function HouseScreen() {
     runtimeRef.current?.moveTo(target.x, target.z, id)
   }, [commit, life])
 
+  const nudgeResident = useCallback((dx: number, dz: number) => {
+    playPop(.16)
+    const current = lifeRef.current
+    const next = moveHouseAvatar(current, current.x + dx, current.z + dz)
+    const destination = toMansionPosition(next.x, next.z)
+    commit(next)
+    setStatus('Walking through the mansion')
+    runtimeRef.current?.moveTo(destination.x, destination.z)
+  }, [commit])
+
   useEffect(() => onCharacterChange(() => {
     setCharacter(studioInitialCharacter(readCharacter()))
   }), [])
@@ -516,12 +530,12 @@ export default function HouseScreen() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'low-power' }) // governor-ok: registered immediately below; shared-clock motion only.
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.08
+    renderer.toneMappingExposure = .76
     renderer.shadowMap.enabled = false
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5, PoplurPerformanceManager.policy.maximumPixelRatio))
     host.appendChild(renderer.domElement)
-    scene.add(new THREE.HemisphereLight(0xffeef7, 0x47233d, 2.8))
-    const key = new THREE.DirectionalLight(0xffd4e8, 2.4)
+    scene.add(new THREE.HemisphereLight(0xffeef7, 0x47233d, 1.65))
+    const key = new THREE.DirectionalLight(0xffd4e8, 1.45)
     key.position.set(4, 9, 6)
     scene.add(key)
     // A neutral one-time IBL pass gives saved Avaturn materials their intended
@@ -534,6 +548,7 @@ export default function HouseScreen() {
     environmentGenerator.dispose()
     const room = buildRoom(scene)
     const avatar = new THREE.Group()
+    avatar.scale.setScalar(1.18)
     const localResident = buildAvatar(characterRef.current)
     localResident.scale.setScalar(.92 * (characterRef.current.heightScale ?? .96))
     avatar.add(localResident, buildResidentMarker())
@@ -843,7 +858,7 @@ export default function HouseScreen() {
       data-profile-house='isometric-mansion-v1'
       data-resident-source={residentSource}
     >
-      <div ref={hostRef} className={styles.scene} aria-label='Interactive isometric 3D mansion; tap the open floor to move your avatar' />
+      <div ref={hostRef} className={styles.scene} aria-label='Interactive isometric 3D mansion; tap the floor or use the move pad to walk your avatar' />
       <header className={styles.titleCard}>
         <span>MY ESTATE · LIVE</span>
         <strong>Mansion</strong>
@@ -899,7 +914,14 @@ export default function HouseScreen() {
         <button type='button' disabled={call.phase !== 'connected'} aria-label={call.muted ? 'Unmute House microphone' : 'Mute House microphone'} aria-pressed={call.muted} onClick={() => { playPop(); toggleMute() }}>{call.muted ? 'Mic off' : 'Mic on'}</button>
         <button type='button' className={styles.leaveButton} onClick={leaveVoice}>Leave</button>
       </section>}
-      <div className={styles.walkHint}>Tap any open floor tile to walk</div>
+      <div className={styles.walkHint}>Tap the floor or use MOVE</div>
+      <div className={styles.movePad} role='group' aria-label='Move around the mansion'>
+        <span>MOVE</span>
+        <button type='button' className={styles.moveUp} aria-label='Move up' onClick={() => nudgeResident(0, -0.7)}>▲</button>
+        <button type='button' className={styles.moveLeft} aria-label='Move left' onClick={() => nudgeResident(-0.7, 0)}>◀</button>
+        <button type='button' className={styles.moveRight} aria-label='Move right' onClick={() => nudgeResident(0.7, 0)}>▶</button>
+        <button type='button' className={styles.moveDown} aria-label='Move down' onClick={() => nudgeResident(0, 0.7)}>▼</button>
+      </div>
       <nav className={styles.activities} aria-label='House activities'>
         {HOUSE_ACTIVITIES.map(activity => (
           <button key={activity.id} type='button' onClick={() => doActivity(activity.id)} aria-pressed={life.activity === activity.id}>
