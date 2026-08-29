@@ -33,17 +33,12 @@ const PACKS = [
   // publish rather than an app release. Small today (~450KB), and the whole
   // reason it is a pack is that it grows every time a filter is added.
   { id: 'ar-filters',     from: 'ar-filters',        version: 1 },
-  // Country flags are chosen one at a time from the settled world-map centre.
-  // Keep the full 200-model library behind the pack manifest: shipping every
-  // flag in the phone bundle would charge every install ~9MB for a feature
-  // that only appears at the map's outermost zoom.
-  { id: 'country-flags',  from: 'country-flags',     version: 1 },
   // The clay-models pack is a FILE LIST, not a directory: the models it moves
   // out of the bundle are scattered top-level GLBs, not one folder. Keep this
   // list identical to CLAY_MODELS_PACK in src/modelUrl.ts — the app's resolver
   // and this builder must agree on exactly which models the pack owns, or a
   // model gets dropped from the bundle that the app still loads bundle-relative.
-  { id: 'clay-models', version: 1, files: CLAY_MODEL_FILES },
+  { id: 'clay-models', version: 2, files: CLAY_MODEL_FILES },
 ]
 
 const walk = (dir, base = dir) =>
@@ -111,7 +106,6 @@ const LOCAL = {
   'profile-themes': 'profile-themes',
   feed: 'feed',
   channels: 'channels',
-  'country-flags': 'country-flags',
 }
 const useBucket = process.env.POPLUR_PACK_BASE === 'bucket'
 
@@ -121,7 +115,14 @@ const useBucket = process.env.POPLUR_PACK_BASE === 'bucket'
 // names a baseUrl. Pinning the pack to its bundled path keeps it working
 // until someone deliberately runs the publish, which is also the step that
 // should remove it from this list and add it to vite's PUBLISHED_PACK_DIRS.
-const UNPUBLISHED = { 'ar-filters': 'ar-filters' }
+const UNPUBLISHED = {
+  // The refreshed Arcade pack contains new creature art that is not yet on the
+  // public bucket. Keep this small pack bundled until a deliberate pack
+  // publication verifies every manifest entry, otherwise device builds would
+  // route those new files to 404s.
+  'arcade-art': 'games/arcade/art',
+  'ar-filters': 'ar-filters',
+}
 
 const manifest = {
   baseUrl: useBucket ? BUCKET : '',

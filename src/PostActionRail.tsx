@@ -1,4 +1,3 @@
-import ClayCornerButton from './ClayCornerButton'
 import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
 import type { ControlSide } from './controlPlacement'
@@ -90,13 +89,12 @@ export default function PostActionRail({
       />
       {onDelete && (
         <span className={deletePending ? styles.deletePending : undefined} aria-busy={deletePending || undefined}>
-          <ClayCornerButton
-            kind="delete"
-            label={deletePending ? 'Deleting this post' : 'Delete this post'}
-            size={44}
-            still
-            activateOnClick
-            onPress={() => { if (!deletePending) onDelete() }}
+          <SideControlIconButton
+            icon="profile.delete"
+            aria-label={deletePending ? 'Deleting this post' : 'Delete this post'}
+            disabled={deletePending}
+            loading={deletePending}
+            onActivate={() => { if (!deletePending) onDelete() }}
           />
         </span>
       )}

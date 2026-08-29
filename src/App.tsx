@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react'
+import React, { useRef, useState, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { POIS, MAP_THEMES, OTHER_POPS, PALETTE, type PopLevel } from './data'
 import { feedUrl } from './assetPacks'
@@ -58,9 +58,14 @@ import {
   MAP_BROWSE_3D_PITCH,
   subtleLandmarkPitch,
 } from './mapPresentationPolicy'
+import {
+  programmaticCameraBlurAllowed,
+  programmaticCameraPlan,
+} from './programmaticCameraMotion'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import ClayChannelArrows from './ClayChannelArrows'
+import { responsiveChannelControlSize } from './channelControlSizing'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
@@ -106,6 +111,7 @@ import { moonPhase } from './celestial'
 import { radiusDeltaForChannel, radiusEngagementForChannel } from './radiusLedger'
 import { contentPostId, listPostings, onPostedContentChange, radiusKmFor, POSTINGS_KEY } from './postedContent'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
+import { worldCountryZoomActive, type WorldCountryUpdate } from './mapCountrySignal'
 
 /** The shipped games by id, so a dropped game's claim can wear its title on
  *  the pin. A tiny local map rather than an import of GamesScreen: this
@@ -137,7 +143,8 @@ import {
   startPoplurTheme, stopPoplurTheme, setVoiceDucked,
 } from './regionAudio'
 import {
-  announceMapTour, isMapRadioActive, isRadioBackgroundEnabled, nowPlayingStation, tuneLiveRadio,
+  announceMapTour, getRadioPlaybackState, isMapRadioActive, isRadioBackgroundEnabled,
+  nowPlayingStation, startRadioForMap, stopMapRadio, subscribeRadioPlayback, tuneLiveRadio,
 } from './mapRadio'
 import { isNativeShell, postNativeEvent, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
@@ -147,6 +154,9 @@ import VolumeBars from './VolumeBars'
 import SideControlIconButton from './SideControlIcon'
 import MapLevelButton from './MapLevelButton'
 import MapConquerButton from './MapConquerButton'
+import MapRadioButton from './MapRadioButton'
+import MapRadioStatusLabel from './MapRadioStatusLabel'
+import { mapTourControlState } from './mapTourControl'
 import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
@@ -588,12 +598,62 @@ export default function App() {
   const harnessView = isMapEmbed ? null : (harnessViewFromLocation() ?? 'home')
   const weatherUnit = weatherTemperatureUnit()
   const mapRef = useRef<mapboxgl.Map | null>(null)
+  const [programmaticCameraMoving, setProgrammaticCameraMoving] = useState(false)
+  const programmaticCameraMotionRef = useRef<{
+    serial: number
+    timer: number
+    map: mapboxgl.Map | null
+    moveEnd: (() => void) | null
+    removeReducedMotion: (() => void) | null
+  }>({ serial: 0, timer: 0, map: null, moveEnd: null, removeReducedMotion: null })
+  const clearProgrammaticCameraMotion = useCallback(() => {
+    const active = programmaticCameraMotionRef.current
+    active.serial += 1
+    window.clearTimeout(active.timer)
+    active.timer = 0
+    if (active.map && active.moveEnd) active.map.off('moveend', active.moveEnd)
+    active.removeReducedMotion?.()
+    active.map = null
+    active.moveEnd = null
+    active.removeReducedMotion = null
+    setProgrammaticCameraMoving(false)
+  }, [])
+  const beginProgrammaticCameraMotion = useCallback((map: mapboxgl.Map, duration: number) => {
+    clearProgrammaticCameraMotion()
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    if (!programmaticCameraBlurAllowed(Boolean(reducedMotion?.matches))) return () => {}
+
+    const motion = programmaticCameraMotionRef.current
+    const serial = ++motion.serial
+    const finish = () => {
+      if (programmaticCameraMotionRef.current.serial !== serial) return
+      clearProgrammaticCameraMotion()
+    }
+    motion.map = map
+    motion.moveEnd = finish
+    map.once('moveend', finish)
+    const onReducedMotion = (event: MediaQueryListEvent) => {
+      if (event.matches) finish()
+    }
+    if (reducedMotion?.addEventListener) {
+      reducedMotion.addEventListener('change', onReducedMotion)
+      motion.removeReducedMotion = () => reducedMotion.removeEventListener('change', onReducedMotion)
+    } else if (reducedMotion?.addListener) {
+      reducedMotion.addListener(onReducedMotion)
+      motion.removeReducedMotion = () => reducedMotion.removeListener(onReducedMotion)
+    }
+    // A finite backstop covers a style reload that retires Mapbox's moveend.
+    motion.timer = window.setTimeout(finish, Math.max(0, duration) + MANAGED_CAMERA_SETTLE_MS)
+    setProgrammaticCameraMoving(true)
+    return finish
+  }, [clearProgrammaticCameraMotion])
   // Generation guard for the flat-map camera's three stages. Any new flight,
   // touch, stop, or background transition invalidates the outstanding stage
   // listener before it can pull the camera away again.
   const stagedCameraFlightRef = useRef({ serial: 0 })
   const cancelStagedCameraFlight = useCallback(() => {
     stagedCameraFlightRef.current.serial += 1
+    clearProgrammaticCameraMotion()
     const map = mapRef.current as (mapboxgl.Map & {
       __cinematic?: boolean
       __tripping?: boolean
@@ -602,7 +662,7 @@ export default function App() {
       map.__cinematic = false
       map.__tripping = false
     }
-  }, [])
+  }, [clearProgrammaticCameraMotion])
   useEffect(() => onFoodSuggestionVisibilityChange(visible => {
     if (window.parent === window) return
     window.parent.postMessage({ type: 'poplur-food-ad-visibility', visible }, '*')
@@ -746,6 +806,10 @@ export default function App() {
   // the flight has settled at street scale (see arrivedAtPlace below); after
   // that this behaves exactly as before.
   const [arrivedAtPlace, setArrivedAtPlace] = useState(false)
+  const handleWorldCountryChange = useCallback(({ name }: WorldCountryUpdate) => {
+    setCurrentPlace(name)
+    setArrivedAtPlace(true)
+  }, [])
   useEffect(() => {
     if (!isEmbedded || !arrivedAtPlace) return
     window.parent.postMessage({ type: 'poplur-map-status', place: currentPlace }, '*')
@@ -766,6 +830,22 @@ export default function App() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [currentPlace])
+  const [channelControlSize, setChannelControlSize] = useState(responsiveChannelControlSize)
+  useEffect(() => {
+    let layoutWidth = window.innerWidth
+    const update = () => {
+      const nextWidth = window.innerWidth
+      if (Math.abs(nextWidth - layoutWidth) < 2) return
+      layoutWidth = nextWidth
+      setChannelControlSize(responsiveChannelControlSize(nextWidth))
+    }
+    window.addEventListener('resize', update)
+    window.addEventListener('orientationchange', update)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('orientationchange', update)
+    }
+  }, [])
   const [tourTopics, setTourTopics] = useState<MapTourTopic[]>(readMapTourTopics)
   const tourTopicsRef = useRef(tourTopics)
   tourTopicsRef.current = tourTopics
@@ -779,6 +859,11 @@ export default function App() {
   // Mirror for callbacks that outlive renders (the engagement chips' anchor).
   const navigationOriginRef = useRef<[number, number]>(DEFAULT_NAV_ORIGIN)
   useEffect(() => { navigationOriginRef.current = navigationOrigin }, [navigationOrigin])
+  const mapRadioState = useSyncExternalStore(
+    subscribeRadioPlayback,
+    getRadioPlaybackState,
+    getRadioPlaybackState,
+  )
 
   /**
    * A comment landed on one of your pops — grow it by COMMENT_RADIUS_STEP.
@@ -1208,6 +1293,11 @@ export default function App() {
     const landmarkFrame = framedDestination
       ? landmarkCameraFrame(framedDestination.id)
       : null
+    const destinationZoom = landmarkFrame?.zoom ?? 15.4
+    const cameraPlan = programmaticCameraPlan(
+      (map as unknown as mapboxgl.Map).getZoom(),
+      destinationZoom,
+    )
     if (landmarkFrame) {
       // Wide browsing deliberately locks maxPitch to zero. Release that lock
       // before this one authored landmark flight or Mapbox clamps the requested
@@ -1219,16 +1309,27 @@ export default function App() {
     wakeManagedRendering(3400 + (landmarkFrame
       ? LANDMARK_RENDER_SETTLE_MS
       : MANAGED_CAMERA_SETTLE_MS))
-    map.easeTo({
-      center: landmarkFrame?.center ?? center,
-      bearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
-      zoom: landmarkFrame?.zoom ?? 15.4,
-      pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
-      duration: 3400,
-      easing: (t: number) => t * t * (3 - 2 * t),
-      essential: true,
-    })
-  }, [closeSearch, mapRef])
+    if (cameraPlan.kind === 'translate') {
+      beginProgrammaticCameraMotion(map as unknown as mapboxgl.Map, 3400)
+      map.easeTo({
+        center: landmarkFrame?.center ?? center,
+        zoom: cameraPlan.zoom,
+        duration: 3400,
+        easing: (t: number) => t * t * (3 - 2 * t),
+        essential: true,
+      })
+    } else {
+      map.easeTo({
+        center: landmarkFrame?.center ?? center,
+        bearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
+        zoom: destinationZoom,
+        pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
+        duration: 3400,
+        easing: (t: number) => t * t * (3 - 2 * t),
+        essential: true,
+      })
+    }
+  }, [beginProgrammaticCameraMotion, closeSearch, mapRef])
 
   // Keep the place half of the status truthful after a manual pan as well as
   // after a tour/search action. Curated destinations win near their own
@@ -1239,6 +1340,15 @@ export default function App() {
     const updatePlace = () => {
       const map = attachedMap
       if (!map) return
+      // The world view has its own tile-local country signal. Do not let a
+      // slower reverse-geocode response replace "France" with the nearest
+      // city/POI a beat after the camera crosses France. Advancing the
+      // generation also invalidates a close-range request that began while
+      // the camera was still zooming out.
+      if (worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM)) {
+        lookupGeneration += 1
+        return
+      }
       const at = map.getCenter()
       const center: [number, number] = [at.lng, at.lat]
       const nearest = TOUR_DESTINATIONS.reduce((best, destination) =>
@@ -1258,6 +1368,7 @@ export default function App() {
         .then(response => response.ok ? response.json() : Promise.reject())
         .then((data: { features?: Array<{ text?: string }> }) => {
           if (generation !== lookupGeneration) return
+          if (worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM)) return
           const label = data.features?.[0]?.text?.trim()
           if (label) setCurrentPlace(label)
         })
@@ -1545,18 +1656,32 @@ export default function App() {
         const map = mapRef.current
         if (!map) return
         const duration = 800
+        const cameraPlan = programmaticCameraPlan(map.getZoom(), zoom ?? map.getZoom())
         wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-        map.easeTo({ center: [lng, lat], zoom: zoom ?? map.getZoom(), duration })
+        if (cameraPlan.kind === 'translate') beginProgrammaticCameraMotion(map, duration)
+        map.easeTo({ center: [lng, lat], zoom: cameraPlan.zoom, duration })
       },
       flyTo: (lng: number, lat: number, zoom: number) => {
         const map = mapRef.current
         if (!map) return
         ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
         const duration = 4600
+        const cameraPlan = programmaticCameraPlan(map.getZoom(), zoom)
         wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
+        if (cameraPlan.kind === 'translate') {
+          beginProgrammaticCameraMotion(map, duration)
+          map.easeTo({
+            center: [lng, lat],
+            zoom: cameraPlan.zoom,
+            duration,
+            easing: (t: number) => t * t * (3 - 2 * t),
+            essential: true,
+          })
+          return
+        }
         map.flyTo({
           center: [lng, lat],
-          zoom,
+          zoom: cameraPlan.zoom,
           pitch: streetView ? 82 : MAP_BROWSE_3D_PITCH,
           bearing: streetView ? map.getBearing() : MAP_BROWSE_3D_BEARING,
           duration,
@@ -1571,7 +1696,7 @@ export default function App() {
       setSound: (on: boolean) => applySoundState(on),
     }
     return () => { delete w.__poplurNative }
-  }, [applySoundState, streetView])
+  }, [applySoundState, beginProgrammaticCameraMotion, streetView])
 
   const flyToCenter = useCallback((
     center: [number, number],
@@ -1600,6 +1725,7 @@ export default function App() {
       ? 82
       : subtleLandmarkPitch(landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH)
     const targetBearing = landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING
+    const cameraPlan = programmaticCameraPlan(map.getZoom(), targetZoom)
     // The authored tour crosses flat and stops just below the 3D threshold.
     // Only the destination reveal requests close tiles/extrusions/GLB work;
     // doing that work during the tail of the world crossing rendered the same
@@ -1627,6 +1753,28 @@ export default function App() {
       sustainManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
     } else {
       wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
+    }
+
+    if (cameraPlan.kind === 'translate') {
+      // Already-close cameras travel across the board at their current scale.
+      // Centering the authored frame is enough to keep the destination in
+      // view; there is no flatten/pull-back/reveal cycle to make the map pulse.
+      map.setMinPitch(0)
+      map.setMaxPitch(streetView ? 85 : MAP_BROWSE_3D_MAX_PITCH)
+      beginProgrammaticCameraMotion(map, duration)
+      map.once('moveend', () => {
+        if (!ownsFlight()) return
+        mapCamera.__tripping = false
+        mapCamera.__cinematic = false
+      })
+      map.easeTo({
+        center: targetCenter,
+        zoom: cameraPlan.zoom,
+        duration,
+        easing: (t: number) => t * t * (3 - 2 * t),
+        essential: true,
+      })
+      return true
     }
 
     // Beat 1: flatten while still close to the ground. No world edge can enter
@@ -1683,7 +1831,7 @@ export default function App() {
     })
     map.easeTo({ pitch: 0, bearing: 0, duration: flattenMs, essential: true })
     return true
-  }, [cancelStagedCameraFlight, streetView])
+  }, [beginProgrammaticCameraMotion, cancelStagedCameraFlight, streetView])
 
   /**
    * Travelling between pops, as distinct from the ambient tour.
@@ -1709,6 +1857,7 @@ export default function App() {
     const map = mapRef.current
     if (!map) return false
     const api = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
+    cancelStagedCameraFlight()
     // __cinematic keeps the orbit's per-frame hands off the camera, but it is
     // cleared by ClayMap's moveend — and Mapbox fires a synchronous moveend
     // when the crossing interrupts the climb, which restarted the orbit in the
@@ -1720,6 +1869,29 @@ export default function App() {
     api.__cinematic = true
     api.__tripping = true
     window.clearTimeout(tripTimer.current)
+
+    const cameraPlan = programmaticCameraPlan(map.getZoom(), BUILDING_REVEAL_ZOOM)
+    if (cameraPlan.kind === 'translate') {
+      const duration = TRIP_CROSS_MS
+      beginProgrammaticCameraMotion(map, duration)
+      wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
+      map.once('moveend', () => {
+        const arrived = map.getCenter()
+        const reachedTarget = distanceMeters([arrived.lng, arrived.lat], center) <= 650
+        api.__tripping = false
+        api.__cinematic = false
+        if (reachedTarget) onArrive?.()
+        ;(map as unknown as { __startOrbit?: () => void }).__startOrbit?.()
+      })
+      map.easeTo({
+        center,
+        zoom: cameraPlan.zoom,
+        duration,
+        easing: (t: number) => t * t * (3 - 2 * t),
+        essential: true,
+      })
+      return true
+    }
 
     // High enough that you see the city you are leaving and the one you are
     // arriving at in the same shot; low enough that the clay terrain never
@@ -1777,7 +1949,7 @@ export default function App() {
     }, CLIMB_MS - 60)
 
     return true
-  }, [])
+  }, [beginProgrammaticCameraMotion, cancelStagedCameraFlight])
 
   // Only live timer IDs are retained. The former append-only array kept every
   // expired stop/arrival ID for an hours-long tour.
@@ -1792,6 +1964,10 @@ export default function App() {
   const tourOnRef = useRef(false)
   const [tourMode, setTourMode] = useState<MapTourMode | null>(null)
   const tourModeRef = useRef<MapTourMode | null>(null)
+  const [tourPaused, setTourPaused] = useState(false)
+  const tourPausedRef = useRef(false)
+  const landmarkTourPauseNowRef = useRef<(() => void) | null>(null)
+  const landmarkTourResumeRef = useRef<(() => void) | null>(null)
   const liveNews = useLiveNews()
   const newsTourEvents = useMemo(
     () => liveNews.stale ? [] : tourEligibleLiveNewsEvents(liveNews.events),
@@ -1877,8 +2053,12 @@ export default function App() {
     tourStartedRef.current = false
     tourOnRef.current = false
     tourModeRef.current = null
+    tourPausedRef.current = false
+    landmarkTourPauseNowRef.current = null
+    landmarkTourResumeRef.current = null
     setTourOn(false)
     setTourMode(null)
+    setTourPaused(false)
     setActiveNewsStop(null)
     newsTourRunEventsRef.current = []
     setNewsTourRunEvents([])
@@ -1908,8 +2088,12 @@ export default function App() {
     tourStartedRef.current = false
     tourOnRef.current = false
     tourModeRef.current = null
+    tourPausedRef.current = false
+    landmarkTourPauseNowRef.current = null
+    landmarkTourResumeRef.current = null
     setTourOn(false)
     setTourMode(null)
+    setTourPaused(false)
     setActiveNewsStop(null)
     newsTourRunEventsRef.current = []
     setNewsTourRunEvents([])
@@ -1932,6 +2116,24 @@ export default function App() {
       map.stop()
     }
   }, [cancelStagedCameraFlight, clearTourTimers, reportNewsEvent])
+  const pauseLandmarkTour = useCallback(() => {
+    if (!tourOnRef.current
+      || tourModeRef.current !== 'landmarks'
+      || tourPausedRef.current) return
+    tourPausedRef.current = true
+    setTourPaused(true)
+    landmarkTourPauseNowRef.current?.()
+  }, [])
+  const resumeLandmarkTour = useCallback(() => {
+    if (!tourOnRef.current
+      || tourModeRef.current !== 'landmarks'
+      || !tourPausedRef.current) return
+    tourPausedRef.current = false
+    setTourPaused(false)
+    const resume = landmarkTourResumeRef.current
+    landmarkTourResumeRef.current = null
+    resume?.()
+  }, [])
   tourStopRef.current = stopTour
   searchInterruptRef.current = stopTour
   useEffect(() => clearTourTimers, [clearTourTimers])
@@ -1981,6 +2183,7 @@ export default function App() {
       window.parent.postMessage({
         type: 'poplur-map-tour',
         on: true,
+        paused: tourPausedRef.current,
         index: TOUR_LANDMARKS.findIndex(candidate => candidate.id === destination.id),
         total: TOUR_LANDMARKS.length,
       }, '*')
@@ -2239,6 +2442,10 @@ export default function App() {
     newsTourIndexRef.current = -1
     tourPauseAfterStopRef.current = false
     tourFlightInProgressRef.current = false
+    tourPausedRef.current = false
+    landmarkTourPauseNowRef.current = null
+    landmarkTourResumeRef.current = null
+    setTourPaused(false)
     // The Play button may auto-walk the finite catalog while the device has
     // headroom. On a protected quality rung it still WORKS, but becomes one
     // finite arrival at a time; the persistent arrows continue the tour. An
@@ -2274,23 +2481,53 @@ export default function App() {
     let currentStopIndex = -1
     const runStopAt = (requestedIndex: number) => {
       if (!tourOnRef.current) return
+      if (tourPausedRef.current) {
+        landmarkTourResumeRef.current = () => runStopAt(requestedIndex)
+        return
+      }
       // Re-check before each flight. Thermal pressure converts the remaining
       // pass into one manually stepped stop instead of turning Play into a
       // silent no-op or starting another autonomous camera move.
       if (currentQuality() <= 1) tourAutoAdvanceRef.current = false
       const stopIndex = ((requestedIndex % tourOrder.length) + tourOrder.length) % tourOrder.length
       currentStopIndex = stopIndex
+      // Pausing an in-flight stop restarts that same bounded flight on resume;
+      // pausing during its hold continues to the next stop. This keeps the
+      // user's place without trying to resume a half-finished Mapbox easing.
+      const afterStop = stopIndex >= tourOrder.length - 1
+        ? stopTour
+        : () => runStopAt(stopIndex + 1)
+      landmarkTourPauseNowRef.current = () => {
+        const wasInFlight = tourFlightInProgressRef.current
+        clearTourTimers()
+        tourFlightInProgressRef.current = false
+        const map = mapRef.current as (mapboxgl.Map & {
+          __cinematic?: boolean
+          __tripping?: boolean
+        }) | null
+        map?.stop()
+        landmarkTourResumeRef.current = wasInFlight || !tourAutoAdvanceRef.current
+          ? () => runStopAt(stopIndex)
+          : afterStop
+      }
       tourFlightInProgressRef.current = true
       activateTourDestination(tourOrder[stopIndex])
       if (!tourAutoAdvanceRef.current) return
       // The sequence is deliberately finite: after the final landmark's hold,
       // release the camera and reset the button instead of looping forever.
-      const afterStop = stopIndex >= tourOrder.length - 1
-        ? stopTour
-        : () => runStopAt(stopIndex + 1)
-      tourNextTimerRef.current = scheduleTourTimer(afterStop, TOUR_FLIGHT_MS + TOUR_DWELL_MS)
+      tourNextTimerRef.current = scheduleTourTimer(() => {
+        if (tourPausedRef.current) {
+          landmarkTourResumeRef.current = afterStop
+          return
+        }
+        afterStop()
+      }, TOUR_FLIGHT_MS + TOUR_DWELL_MS)
     }
     const runStop = () => runStopAt(currentStopIndex + 1)
+    landmarkTourPauseNowRef.current = () => {
+      clearTourTimers()
+      landmarkTourResumeRef.current = runStop
+    }
     if (initialDelayMs > 0) {
       tourNextTimerRef.current = scheduleTourTimer(runStop, initialDelayMs)
     } else {
@@ -2947,11 +3184,12 @@ export default function App() {
       window.parent.postMessage({
         type: 'poplur-map-tour',
         on: tourOn && tourMode === 'landmarks',
+        paused: tourOn && tourMode === 'landmarks' && tourPaused,
         index,
         total: TOUR_LANDMARKS.length,
       }, '*')
     }
-  }, [tourMode, tourOn])
+  }, [tourMode, tourOn, tourPaused])
 
   // News reports both its finite tour state and the current verified count.
   // Unlike the card signal, `on` remains true between stops so Home's arrows
@@ -3225,8 +3463,16 @@ export default function App() {
         // than computed inside a state updater: StrictMode double-invokes
         // those, and this one has to fire timers.
         case 'tour': {
-          if (tourOnRef.current && tourModeRef.current === 'landmarks') stopTour()
+          if (tourOnRef.current && tourModeRef.current === 'landmarks') pauseLandmarkTour()
           else startExplicitTourLoop(0)
+          break
+        }
+        case 'pauseTour': {
+          pauseLandmarkTour()
+          break
+        }
+        case 'resumeTour': {
+          resumeLandmarkTour()
           break
         }
         case 'newsTour': {
@@ -3399,7 +3645,7 @@ export default function App() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [applyRadiusDelta, closeSearchImmediately, flyToCenter, flyToPop, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, startExplicitTourLoop, startNewsTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
+  }, [applyRadiusDelta, closeSearchImmediately, flyToCenter, flyToPop, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, pauseLandmarkTour, resumeLandmarkTour, startExplicitTourLoop, startNewsTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -3471,9 +3717,16 @@ export default function App() {
   const newsTourDisplayCount = tourOn && tourMode === 'news'
     ? newsTourRunEvents.length
     : newsTourEvents.length
+  const landmarkTourControl = mapTourControlState(
+    tourOn && tourMode === 'landmarks',
+    tourPaused,
+  )
 
   return (
-    <div className={styles.shell}>
+    <div
+      className={styles.shell}
+      data-programmatic-camera-motion={programmaticCameraMoving ? 'true' : undefined}
+    >
       <VolumeBars />
       {/* Engagement + suggestions, centred and transient. Mounted here so the
           map gets them; the harness render below mounts it too, which is what
@@ -3492,6 +3745,7 @@ export default function App() {
         airportPoints={TOUR_AIRPORTS}
         pins={tourOn ? NO_MAP_PINS : mapPins}
         onConquerSnapshot={isEmbedded ? undefined : setMapConquerSnapshot}
+        onWorldCountryChange={handleWorldCountryChange}
         onPinOpen={openClickedMapPinContent}
         selectedId={selectedId}
         onSelectPoi={handleSelectPoi}
@@ -3606,6 +3860,14 @@ export default function App() {
           activation="pointerdown"
           onActivate={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
         />
+        <MapRadioButton
+          active={mapRadioState !== 'off'}
+          onPress={() => {
+            playPop(0.25)
+            if (isMapRadioActive()) stopMapRadio()
+            else startRadioForMap(navigationOrigin[1], navigationOrigin[0])
+          }}
+        />
         <SideControlIconButton
           icon="map.locate"
           aria-label="Go to my location"
@@ -3626,19 +3888,20 @@ export default function App() {
           aria-label={searchOpen ? 'Close map search' : 'Search map'}
           onActivate={() => { playPop(0.25); if (searchOpen) closeSearch(); else openSearch() }}
         />
-        {/* START / STOP TOUR. One press visits the complete landmark catalog in
-            fixed order, then releases the camera after the final hold. */}
+        {/* PLAY / PAUSE TOUR. One press visits the complete landmark catalog in
+            fixed order; pause preserves the current stop and resumes in place. */}
         <span data-map-tour-toggle="" style={{ display: 'contents' }}>
           <SideControlIconButton
-            icon="map.tour_play"
-            aria-label={tourOn && tourMode === 'landmarks' ? 'Stop map tour' : 'Start map tour'}
-            aria-pressed={tourOn && tourMode === 'landmarks'}
+            icon={landmarkTourControl.icon}
+            aria-label={landmarkTourControl.label}
+            aria-pressed={landmarkTourControl.pressed}
             onActivate={() => {
               playPop(0.25)
               // Read the REF, not the state: same reason the mapAction case does
               // — this fires timers, and StrictMode double-invokes state updaters.
-              if (tourOnRef.current && tourModeRef.current === 'landmarks') stopTour()
-              else startExplicitTourLoop(0)
+              if (!tourOnRef.current || tourModeRef.current !== 'landmarks') startExplicitTourLoop(0)
+              else if (tourPausedRef.current) resumeLandmarkTour()
+              else pauseLandmarkTour()
             }}
           />
         </span>
@@ -3848,6 +4111,7 @@ export default function App() {
               {currentPlace}
             </span>
           </div>
+          <MapRadioStatusLabel className={styles.mapRadioLabel} />
           {/* Your pops standing in this area, in the same outlined-blue voice
               as the place line above it. Standalone has no profile to open, so
               the line is informational here; the embedded shell owns the
@@ -3886,7 +4150,7 @@ export default function App() {
       >
         <ClayChannelArrows
           orientation="horizontal"
-          size={150}
+          size={channelControlSize}
           number={newsTourPosition >= 0
             ? newsTourPosition + 1
             : tourLandmarkPosition >= 0 ? tourLandmarkPosition + 1 : popPosition ? popPosition.n : 0}

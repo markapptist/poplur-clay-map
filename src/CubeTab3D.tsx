@@ -11,6 +11,18 @@ import { askForMotion } from './motionPermission'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import { mapGlobeSpinIsActive } from './mapThermalPolicy'
+import {
+  RADIUS_REWARD_DICE_REDUCED_TUMBLE_MS,
+  RADIUS_REWARD_DICE_TUMBLE_MS,
+  radiusRewardDiceFaceOrientation,
+  radiusRewardDiceMotionBlurPx,
+  radiusRewardDiceTumbleSample,
+  type RadiusRewardDiceRotation,
+} from './radiusRewardDiceMotion'
+import {
+  RADIUS_REWARD_DICE_MODEL,
+  type RadiusRewardDiceFace,
+} from './radiusRewardNavigator'
 
 declare global {
   interface Window {
@@ -253,6 +265,10 @@ export interface CubeTab3DProps {
   cameraFlashPulse?: number
   /** Video capture puts a steady red recording LED on the camcorder model. */
   camcorderRecording?: boolean
+  /** Monotonic pulse selecting one finite, visible roll of the reward die. */
+  diceRollPulse?: number
+  /** Reward face the finite roll must land on. */
+  diceRollFace?: RadiusRewardDiceFace
   /** Semantic page identity. A page can change without changing the GLB URL;
       reapplying the retained handset pose prevents that unchanged object from
       looking frozen after the page transition. */
@@ -575,7 +591,7 @@ function disposeModel(node: THREE.Object3D) {
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, onTap, onHold, onDoubleTap, doubleTapWindowMs = 0, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false, motionContextKey }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, onTap, onHold, onDoubleTap, doubleTapWindowMs = 0, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false, diceRollPulse, diceRollFace, motionContextKey }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -642,6 +658,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
   const updateCamcorderRecordingRef = useRef<() => void>(() => {})
   const reconcileMotionRef = useRef<() => void>(() => {})
   const armGlobeSpinRef = useRef<(durationMs: number) => void>(() => {})
+  const triggerDiceRollRef = useRef<(pulse: number, face: RadiusRewardDiceFace) => void>(() => {})
 
   const showFoodFaceOnCubeRef = useRef<(visible: boolean) => void>(() => {})
   useEffect(() => {
@@ -822,6 +839,17 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let yaw = 0
     let discoYaw = 0
     let discoGlistenTime = 0
+    let diceRotation: RadiusRewardDiceRotation = { x: 0, y: 0, z: 0 }
+    let diceTumble: {
+      pulse: number
+      face: RadiusRewardDiceFace
+      startedAt: number
+      durationMs: number
+      start: RadiusRewardDiceRotation
+      reducedMotion: boolean
+    } | null = null
+    let consumedDiceRollPulse = 0
+    let navigatorPerformanceMode = initialNavigatorPolicy.mode
     let motionYaw = 0
     let motionTargetYaw = 0
     let motionPitch = 0
@@ -869,6 +897,31 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     // The wardrobe tee's cloth spring (see the tick in the render loop).
     let clothSwingVelX = 0
     let clothSwingVelY = 0
+    const syncDiceMotionBlur = (blurPx: number) => {
+      const bounded = Math.max(0, Math.min(4, Number.isFinite(blurPx) ? blurPx : 0))
+      const filter = bounded > 0 ? `blur(${bounded.toFixed(2)}px)` : ''
+      if (canvas.style.filter === filter) return
+      if (filter) {
+        // A stronger composited CSS blur on the existing 200px canvas makes
+        // the fast tumble legible without adding an afterimage render pass.
+        // It updates only while the finite roll loop is already awake and is
+        // removed before landing.
+        canvas.style.filter = filter
+        canvas.style.willChange = 'filter'
+        canvas.dataset.diceMotionBlur = 'true'
+      } else {
+        canvas.style.removeProperty('filter')
+        canvas.style.removeProperty('will-change')
+        canvas.dataset.diceMotionBlur = 'false'
+      }
+    }
+    const finishDiceTumble = () => {
+      if (diceTumble) diceRotation = radiusRewardDiceFaceOrientation(diceTumble.face)
+      diceTumble = null
+      canvas.dataset.diceRolling = 'false'
+      syncDiceMotionBlur(0)
+      needsRender = true
+    }
     const requestDisplayFrame = window.requestAnimationFrame.bind(window)
     const cancelDisplayFrame = window.cancelAnimationFrame.bind(window)
     // A map subscreen keeps `targetTab` on map while replacing the globe with
@@ -1294,7 +1347,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       setGlFailed(true)
     }
     const onVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return
+      if (document.visibilityState !== 'visible') {
+        finishDiceTumble()
+        return
+      }
       // WebKit may discard a pending native rAF while the app is inactive but
       // leave our numeric callback id untouched. Force a fresh callback at the
       // real foreground edge; otherwise every later motion sample sees `raf`
@@ -1309,7 +1365,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     }
     const onNativeLifecycle = (event: Event) => {
       const active = (event as CustomEvent<{ active?: boolean }>).detail?.active
-      if (active !== true) return
+      if (active !== true) {
+        finishDiceTumble()
+        return
+      }
       if (raf) cancelDisplayFrame(raf)
       if (frameTimer) window.clearTimeout(frameTimer)
       raf = 0
@@ -1594,6 +1653,43 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         needsRender = true
       }
 
+      // The reward die tumbles inside this same finite, demand-driven loop.
+      // No second canvas or rAF owner is created: after one exact face landing
+      // `diceAnimating` becomes false and the ordinary navigator parks again.
+      const rewardDieVisible = loadedUrlRef.current === RADIUS_REWARD_DICE_MODEL
+      let diceAnimating = false
+      if (!rewardDieVisible) {
+        if (diceTumble) finishDiceTumble()
+        if (diceRotation.x !== 0 || diceRotation.y !== 0 || diceRotation.z !== 0) {
+          diceRotation = { x: 0, y: 0, z: 0 }
+          needsRender = true
+        }
+      } else if (diceTumble) {
+        const displayActive = document.visibilityState === 'visible'
+          && (window.__poplurDisplayActive?.() ?? true)
+        if (!displayActive) {
+          finishDiceTumble()
+        } else {
+          const sample = radiusRewardDiceTumbleSample(
+            now - diceTumble.startedAt,
+            diceTumble.durationMs,
+            diceTumble.face,
+            diceTumble.start,
+          )
+          diceRotation = sample.rotation
+          diceAnimating = sample.active
+          syncDiceMotionBlur(radiusRewardDiceMotionBlurPx(
+            sample.progress,
+            navigatorPerformanceMode,
+            diceTumble.reducedMotion,
+          ))
+          needsRender = true
+          if (!sample.active) {
+            finishDiceTumble()
+          }
+        }
+      }
+
       // The wardrobe tee's cloth response. Its spring chases the tilt the
       // motion spring above already resolved — inverted, because fabric lags
       // the body — with a velocity kick so a fast flick swings the hem
@@ -1652,8 +1748,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         // one rotation. Every other object stays front-facing and moves only
         // from device tilt; a tab change never carries the globe's yaw into it.
         group.rotation.y = (isMapGlobe() ? yaw : discoAnimating ? discoYaw : 0)
-          + motionYaw + (tracksHeading() ? headingYaw : 0)
-        pitchGroup.rotation.x = pitch + motionPitch
+          + diceRotation.y + motionYaw + (tracksHeading() ? headingYaw : 0)
+        group.rotation.z = diceRotation.z
+        pitchGroup.rotation.x = pitch + diceRotation.x + motionPitch
         renderer.render(scene, camera)
         needsRender = false
       }
@@ -1675,7 +1772,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // scheduled and pick the next one up on the very next frame instead of
       // parking between samples and stuttering.
       const motionLive = now < motionActiveUntil
-      if (active || globeAnimating || discoAnimating || motionLive || clothSettling) {
+      if (active || globeAnimating || discoAnimating || diceAnimating || motionLive || clothSettling) {
         // Ambient navigator work gets 20Hz; a direct gesture and camera aim
         // keep the full policy rate.
         //
@@ -1690,8 +1787,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         // read cleanly at 20Hz. Only an actual pointer gesture or the camcorder
         // is presentation-critical; keeping the globe at 60 merely because it
         // is authored motion recreated a permanent display-rate WebGL loop.
-        const ambientOnly = pitchTarget === null && !dragging && !isAiming()
-        const loopFPS = ambientOnly
+        const ambientOnly = pitchTarget === null && !dragging && !isAiming() && !diceAnimating
+        const loopFPS = diceAnimating
+          ? Math.min(navigatorFPS, 30)
+          : ambientOnly
           ? Math.min(navigatorFPS, NAVIGATOR_PARALLAX_FPS)
           : navigatorFPS
         // Arm shortly before the desired presentation edge, then let rAF align
@@ -1722,7 +1821,31 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       needsRender = true
       wake()
     }
+    triggerDiceRollRef.current = (pulse, face) => {
+      if (loadedUrlRef.current !== RADIUS_REWARD_DICE_MODEL) return
+      if (!Number.isSafeInteger(pulse) || pulse <= consumedDiceRollPulse) return
+      consumedDiceRollPulse = pulse
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      diceTumble = {
+        pulse,
+        face,
+        startedAt: performance.now(),
+        durationMs: reducedMotion
+          ? RADIUS_REWARD_DICE_REDUCED_TUMBLE_MS
+          : RADIUS_REWARD_DICE_TUMBLE_MS,
+        start: { ...diceRotation },
+        reducedMotion,
+      }
+      canvas.dataset.diceRolling = 'true'
+      canvas.dataset.diceFace = String(face)
+      needsRender = true
+      wake()
+    }
     const stopPerformancePolicy = PoplurPerformanceManager.subscribe(snapshot => {
+      navigatorPerformanceMode = snapshot.mode
+      if (snapshot.mode === 'LOW_POWER' || snapshot.mode === 'EMERGENCY') {
+        syncDiceMotionBlur(0)
+      }
       navigatorFPS = fpsForMode(snapshot.mode)
       navigatorFrameMs = 1000 / navigatorFPS
       renderer.setPixelRatio(Math.min(
@@ -1768,9 +1891,22 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       updateCamcorderRecordingRef.current = () => {}
       reconcileMotionRef.current = () => {}
       armGlobeSpinRef.current = () => {}
+      triggerDiceRollRef.current = () => {}
+      syncDiceMotionBlur(0)
+      delete canvas.dataset.diceRolling
+      delete canvas.dataset.diceFace
+      delete canvas.dataset.diceMotionBlur
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
+
+  useEffect(() => {
+    if (!diceRollPulse || !diceRollFace) return
+    // Including loadedModel closes the legitimate late-load race without a
+    // poll: a roll signal received during decode is replayed once when the die
+    // is actually installed, then its monotonic pulse is consumed.
+    triggerDiceRollRef.current(diceRollPulse, diceRollFace)
+  }, [diceRollFace, diceRollPulse, loadedModel])
 
   // Decode at most one destination ahead of the visual trough. This avoids a
   // cold 2MB globe appearing after the old object has already settled back,

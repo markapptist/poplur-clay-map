@@ -93,21 +93,47 @@ describe('settled Map building cull scheduler', () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 
-  it('coalesces a user gesture with the internal close-pitch camera settle', () => {
+  it('applies a stationary performance-budget change once without a source-reload query loop', () => {
+    let scheduler: ReturnType<typeof createMapBuildingCullScheduler>
+    const run = vi.fn(() => {
+      // Mapbox's setFilter can synchronously invalidate the source cache.
+      scheduler.markSourceTilesChanged()
+      return true
+    })
+    scheduler = createMapBuildingCullScheduler(run)
+
+    scheduler.onIdle(true)
+    expect(run).toHaveBeenCalledTimes(1)
+
+    scheduler.markPolicyChanged()
+    scheduler.onIdle(true)
+    scheduler.markSourceTilesChanged()
+    scheduler.onIdle(true)
+
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run).toHaveBeenLastCalledWith(false)
+  })
+
+  it('coalesces direct close-detail entry and its isometric ease into one settled query', () => {
     const run = vi.fn()
     const scheduler = createMapBuildingCullScheduler(run)
 
     scheduler.markCameraGesture()
-    // The first idle can precede the next-rAF jumpTo. Runtime reports the 3D
-    // camera as unsettled here, so selection remains pending.
+    scheduler.markPolicyChanged()
+    // The detail layer may already be requested/visible, but the runtime keeps
+    // the scheduler's 3D gate false while its one adaptive rAF is pending.
     scheduler.onIdle(false)
-    scheduler.markCameraGesture() // Mapbox movestart emitted by internal jumpTo
+    expect(run).not.toHaveBeenCalled()
+
+    // easeTo emits movestart synchronously and cannot emit idle while moving.
+    // Its completion therefore consumes the coalesced epoch exactly once.
+    scheduler.markCameraGesture()
     scheduler.onIdle(true)
     scheduler.onIdle(true)
     expect(run).toHaveBeenCalledTimes(1)
 
     const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
-    expect(source).toMatch(/buildingCullScheduler\.onIdle\(\s*adaptiveThreeDimensional\s*&&\s*adaptiveCameraFrame\s*==\s*null,?\s*\)/)
+    expect(source).toMatch(/buildingCullScheduler\.onIdle\(\s*lastThreeDLayerVisibility\s*===\s*true\s*&&\s*adaptiveCameraFrame\s*==\s*null,?\s*\)/)
     expect(source).toMatch(/createMapBuildingCullScheduler\(refreshSelection\s*=>\s*\{\s*return updateBuildingExtrusionCull\(false, refreshSelection\)/)
   })
 })

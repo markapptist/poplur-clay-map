@@ -50,6 +50,7 @@
   "landmarks/taj-mahal.glb|18|10|320": "sprites/taj-mahal_y18_p10_s320.png",
   "poplur_cube_folder.glb|-18|14|256": "sprites/poplur_cube_folder_y-18_p14_s256.png",
   "poplur_cube_gear.glb|0|14|256": "sprites/poplur_cube_gear_y0_p14_s256.png",
+  "poplur_dice_lite.glb|28|28|320": "sprites/poplur_dice_lite_y28_p28_s320.png",
   "poplur_moon_full_lite.glb|0|0|256": "sprites/poplur_moon_full_lite_y0_p0_s256.png",
   "poplur_sun_lite.glb|0|0|256": "sprites/poplur_sun_lite_y0_p0_s256.png"
 }

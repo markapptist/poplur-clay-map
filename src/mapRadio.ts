@@ -4,6 +4,15 @@ import { setMusicPlayback } from './musicPlayback'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { musicShelf } from './musicPosts'
 import { HOME } from './reach'
+import {
+  createNearbyRadioController,
+  createRadioPlaybackStore,
+  shouldUseRichRadioBed,
+  type RadioPlaybackState,
+  type RadioStationSelectionSource,
+} from './mapRadioControl'
+
+export type { RadioPlaybackState } from './mapRadioControl'
 
 /** Where we last looked for a station, so a dead stream can be replaced. */
 let lastTuneCoords: { lat: number; lng: number } | null = null
@@ -46,7 +55,8 @@ let soundWanted = false
 // a station that is still in front of the listener.
 let radioScreenVisible = false
 let targetRadioLevel = RADIO_IDLE_LEVEL
-let lastPublishedRadioState: 'off' | 'muted' | 'fallback' | 'live' = 'off'
+let lastPublishedRadioState: RadioPlaybackState = 'off'
+const radioPlaybackStore = createRadioPlaybackStore()
 /** Increments whenever a person (or a newer boot-location fix) changes the
  * station. An in-flight cold-start directory lookup must never tune over a
  * deliberate station pick that happened while it was loading. */
@@ -55,14 +65,25 @@ let listenerSelectedStation = false
 let bootTuneGeneration = 0
 let bootTuneLocationKey = ''
 
-function publishRadioState(state: 'off' | 'muted' | 'fallback' | 'live') {
-  if (typeof document === 'undefined') return
+function publishRadioState(state: RadioPlaybackState) {
   lastPublishedRadioState = state
+  radioPlaybackStore.publish(state)
+  if (typeof document === 'undefined') return
   document.documentElement.dataset.poplurRadio = state
   document.documentElement.dataset.poplurRadioContext = audioContext?.state ?? 'none'
   if (isNativeShell()) {
     postNativeEvent({ type: 'radioPlayback', state, scope: readRadioScope() })
   }
+}
+
+/** Snapshot used by the Map radio button and the full Radio deck. */
+export function getRadioPlaybackState(): RadioPlaybackState {
+  return radioPlaybackStore.getSnapshot()
+}
+
+/** Subscribe to real playback edges without polling or adding a render loop. */
+export function subscribeRadioPlayback(listener: () => void): () => void {
+  return radioPlaybackStore.subscribe(listener)
 }
 
 // ── Master volume: user-controlled, scales every radio path (live stream,
@@ -208,6 +229,20 @@ export function startRadioOnBoot(_lat = HOME[1], _lng = HOME[0]): void {
 /** Start Radio when its physical deck is on screen, regardless of scope. */
 export function startRadioForVisibleScreen(lat = HOME[1], lng = HOME[0]): void {
   startAutomaticRadioSession(lat, lng)
+}
+
+/**
+ * Start Radio from the Map's explicit side control without navigating away.
+ * The packaged bed starts immediately inside the gesture, then the existing
+ * local-station lookup may replace it when a suitable stream is available.
+ */
+export function startRadioForMap(lat = HOME[1], lng = HOME[0]): void {
+  const safeLat = validRadioCoordinates(lat, lng) ? lat : HOME[1]
+  const safeLng = validRadioCoordinates(lat, lng) ? lng : HOME[0]
+  // Fence any passive boot selection as soon as the person presses Radio.
+  stationSelectionGeneration += 1
+  startMapRadio({ mediaOnly: true })
+  void mapNearbyRadioController.start(safeLat, safeLng)
 }
 
 /** Called by RadioScreen so scope changes can stop a hidden session at once. */
@@ -1163,6 +1198,7 @@ export function startMapRadio({ mediaOnly = false }: { mediaOnly?: boolean } = {
 
 export function stopMapRadio() {
   soundWanted = false
+  mapNearbyRadioController.stop()
   setMusicPlayback('radio', false)
   // Do not let a slow launch directory response resurrect a station after the
   // listener has explicitly stopped the radio.
@@ -1282,6 +1318,15 @@ if (typeof window !== 'undefined') {
     // Muted or switched off, the context has nothing left to render.
     if (muted || !soundWanted) suspendRadioContextSoon()
     else cancelRadioSuspend()
+    publishRadioState(
+      soundWanted
+        ? muted
+          ? 'muted'
+          : isLiveRadioPlaying()
+            ? 'live'
+            : 'fallback'
+        : 'off',
+    )
     syncRadioMusicPlayback()
   }
   onGateChange(applyGate)
@@ -1471,28 +1516,31 @@ export const listLocalStations = listLocalRadioStations
 /** Tune a specific station picked from the dial. */
 export function playStation(
   station: { name: string; url: string; directoryClickUrl?: string },
-  source: 'listener' | 'boot' = 'listener',
+  source: RadioStationSelectionSource = 'listener',
 ): void {
+  if (source !== 'boot') {
+    stationSelectionGeneration += 1
+    if (source === 'listener') {
+      listenerSelectedStation = true
+      mapNearbyRadioController.stop()
+    }
+  }
   const audio = getLiveAudio()
   if (!audio) return
-  if (source === 'listener') {
-    listenerSelectedStation = true
-    stationSelectionGeneration += 1
-  }
   soundWanted = true
   cancelRadioSuspend()
   requestAudioFocus('radio')
   installUnlock()
   // Cold-start directory selection is passive boot work. Keep it on media
   // playback unless the listener has explicitly opened/tuned the radio.
-  const ctx = source === 'boot' ? audioContext : getAudioContext()
+  const ctx = shouldUseRichRadioBed(source) ? getAudioContext() : null
   if (ctx && ctx.state !== 'closed' && !radioBed) radioBed = createRadioBed(ctx)
   liveStation = { name: station.name, url: station.url }
   publishLiveStation()
   // Radio Browser's click endpoint is an explicit listener-tune metric, not
   // telemetry for Poplur selecting a safe cold-start station. Count it only
   // after the person has chosen the station themselves.
-  if (source === 'listener' && station.directoryClickUrl) {
+  if (source !== 'boot' && station.directoryClickUrl) {
     void fetch(station.directoryClickUrl, { cache: 'no-store' }).catch(() => {})
   }
   audio.src = station.url
@@ -1510,6 +1558,13 @@ export function playStation(
   }
   syncRadioMusicPlayback()
 }
+
+const mapNearbyRadioController = createNearbyRadioController<LocalStation>({
+  lookup: (lat, lng, signal) => listLocalRadioStations(lat, lng, 120_000, signal),
+  isActive: () => soundWanted,
+  readSelectionGeneration: () => stationSelectionGeneration,
+  play: station => playStation(station, 'map'),
+})
 
 export function nowPlayingStation(): { name: string; url: string } | null { return liveStation }
 

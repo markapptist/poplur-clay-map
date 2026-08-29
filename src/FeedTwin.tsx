@@ -37,6 +37,8 @@ import {
 const deferToOwner = (owner: AudioOwner | null): boolean =>
   owner === 'voice' || owner === 'radio' || owner === 'ipod'
 import ClayCornerButton from './ClayCornerButton'
+import SideControlIconButton from './SideControlIcon'
+import PoplurStatusToast from './PoplurStatusToast'
 import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -2276,8 +2278,14 @@ export default function FeedTwin({
         </div>
       )}
 
-      {commentSent && <div className={`${styles.commentToast} ${surfaceStyles.surface}`} role="status" aria-live="polite">Comment posted</div>}
-      {shareNote && <div className={`${styles.commentToast} ${surfaceStyles.surface}`} role="status" aria-live="polite">{shareNote}</div>}
+      {commentSent && <PoplurStatusToast title="Comment posted" detail="Your reply is live" />}
+      {shareNote && (
+        <PoplurStatusToast
+          title={/unavailable/i.test(shareNote) ? 'Could not share' : 'Post ready'}
+          detail={shareNote}
+          tone={/unavailable/i.test(shareNote) ? 'error' : 'success'}
+        />
+      )}
 
       {/* ── Fullscreen player chrome ──
           The ONLY thing on screen besides the clip: a thin white timeline you
@@ -2297,21 +2305,25 @@ export default function FeedTwin({
                 <path d="M11.5 5 4.5 12l7 7v-5.2l6 5.2V5l-6 5.2V5Z" fill="currentColor" />
               </svg>
             </button>
-            <button
-              className={`${styles.playerBtn} ${styles.playerBtnMain}`}
-              onClick={togglePlayback}
-              aria-label={playerPaused ? 'Play' : 'Pause'}
-            >
-              {playerPaused ? (
+            {playerPaused ? (
+              <button
+                className={`${styles.playerBtn} ${styles.playerBtnMain}`}
+                onClick={togglePlayback}
+                aria-label="Play"
+              >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M8 4.5v15L20 12 8 4.5Z" fill="currentColor" />
                 </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M6.5 4.5h4v15h-4v-15Zm7 0h4v15h-4v-15Z" fill="currentColor" />
-                </svg>
-              )}
-            </button>
+              </button>
+            ) : (
+              <SideControlIconButton
+                icon="media.pause"
+                className={`${styles.playerBtn} ${styles.playerBtnMain} ${styles.playerArtButton}`}
+                imageSize={70}
+                aria-label="Pause"
+                onActivate={togglePlayback}
+              />
+            )}
             <button
               className={styles.playerBtn}
               onClick={() => seekBy(10)}

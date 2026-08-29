@@ -1,6 +1,7 @@
 import SideControlIconButton from './SideControlIcon'
 import { SIDE_CONTROL_ICONS } from './sideControlIcons'
 import { playPop } from './pop'
+import { channelControlImageSize } from './channelControlSizing'
 
 /** Shared channel controls using the approved side-button artwork directly. */
 export default function ClayChannelArrows({
@@ -29,11 +30,11 @@ export default function ClayChannelArrows({
   const horizontal = orientation === 'horizontal'
   const boxW = single ? Math.round(size / 2) : horizontal ? size : Math.round(size / 2)
   const boxH = single ? Math.round(size / 2) : horizontal ? Math.round(size / 2) : size
-  // A horizontal pair is the visible up/down rail rotated onto its side. Each
-  // target owns exactly half of the long axis, so left/right centres land at
-  // 25% and 75% — the same geometry as the vertical up/down pair.
+  // A horizontal pair is the visible up/down rail rotated onto its side. The
+  // shared rail leaves 12% of its long axis clear between two 44% targets, so
+  // the horizontal pair uses that exact geometry too.
   const imageSize = horizontal && !single
-    ? Math.round(size * .42 * .96)
+    ? channelControlImageSize(size)
     : Math.round(Math.min(boxW, boxH) * (single ? 1.34 : 1.08))
   const activate = (handler: () => void) => { playPop(); handler() }
   const buttonStyle = (direction: 'up' | 'down') => ({
@@ -44,7 +45,7 @@ export default function ClayChannelArrows({
     bottom: !single && !horizontal && direction === 'down' ? 0 : undefined,
     left: single || !horizontal || direction === 'up' ? 0 : undefined,
     right: !single && horizontal && direction === 'down' ? 0 : undefined,
-    width: single ? '100%' : horizontal ? '50%' : '100%',
+    width: single ? '100%' : horizontal ? '44%' : '100%',
     height: single ? '100%' : horizontal ? '100%' : '50%',
     margin: 0,
     padding: 0,

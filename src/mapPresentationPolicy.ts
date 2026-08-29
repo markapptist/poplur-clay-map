@@ -3,16 +3,25 @@ import type { PoplurPerformanceMode } from './poplurPerformanceManager'
 /**
  * The everyday Map is a social surface, not a permanent 3D flyover.
  *
- * Keep the wide/city map flat and north-up. A shallow amount of building depth
- * arrives only at close street scale, where the viewport contains a bounded
- * number of footprints. Explicit Street View and authored tours may opt into
- * stronger camera angles elsewhere; normal browsing never inherits them.
+ * Keep the wide/world map flat and north-up. At local scale the camera settles
+ * into a restrained 2.5D board angle before landmark models reveal. The land
+ * and roads remain flat, while a bounded sample of ordinary buildings and the
+ * intentional landmark models provide the dimensional "pop-up". Explicit
+ * Street View retains its stronger close camera and the same bounded massing.
+ *
+ * These historic export names are retained because the native wrappers share
+ * them, but `threeDimensional` still describes the isometric camera separately
+ * from the finite generic-building detail plan below.
  */
-export const MAP_BROWSE_3D_ENTER_ZOOM = 16.7
-export const MAP_BROWSE_3D_EXIT_ZOOM = 16.35
-export const MAP_BROWSE_3D_PITCH = 32
-export const MAP_BROWSE_3D_MAX_PITCH = 42
+export const MAP_BROWSE_3D_ENTER_ZOOM = 13.2
+export const MAP_BROWSE_3D_EXIT_ZOOM = 12.4
+export const MAP_BROWSE_3D_PITCH = 28
+export const MAP_BROWSE_3D_MAX_PITCH = 36
 export const MAP_BROWSE_3D_BEARING = 0
+
+/** Keep generic massing dormant until the close-detail band so the broader
+ * isometric board does not make building tiles an earlier load. */
+export const MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM = 16.35
 
 /**
  * Close-up depth is count-bounded, so a nearby house no longer needs to be
@@ -21,17 +30,31 @@ export const MAP_BROWSE_3D_BEARING = 0
  */
 export const MAP_BUILDING_DETAIL_MIN_HEIGHT_M = 6
 
-/** Absolute geometry invariant for ordinary close-map building extrusions. */
+/** Absolute geometry invariant, including the temporary density lab. Normal
+ * production never consumes this ceiling; it exists so an explicitly opened
+ * thermal test cannot request an unbounded extrusion batch. */
 export const MAP_BUILDING_DETAIL_MAX = 20
-/** Desktop may use the full ceiling; real iPhone REDUCED stays below its
- * previous sampled load while retaining a readable distributed skyline. */
-export const MAP_BUILDING_DETAIL_BUDGET_FULL = MAP_BUILDING_DETAIL_MAX
-export const MAP_BUILDING_DETAIL_BUDGET_REDUCED = 12
+/** Normal production uses five or fewer sparse pieces on every device. This
+ * keeps the close board comparable between the browser and a real iPhone. */
+export const MAP_BUILDING_DETAIL_BUDGET_FULL = 5
+export const MAP_BUILDING_DETAIL_BUDGET_REDUCED = 5
 /** Real thermal pressure reduces geometry without flattening the close camera. */
-export const MAP_BUILDING_DETAIL_BUDGET_LOW_POWER = 8
-export const MAP_BUILDING_DETAIL_BUDGET_EMERGENCY = 4
-/** Stable spatial thinning retained from the previous thermal-safe renderer. */
-export const MAP_BUILDING_DETAIL_SAMPLE_DIVISOR = 3
+export const MAP_BUILDING_DETAIL_BUDGET_LOW_POWER = 3
+export const MAP_BUILDING_DETAIL_BUDGET_EMERGENCY = 1
+/** One stable hash bucket out of ten retains a distributed 10% sample. */
+export const MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR = 1
+export const MAP_BUILDING_DETAIL_SAMPLE_DIVISOR = 10
+
+/**
+ * Radius Preview exposes a temporary density lab so a tester can compare the
+ * same close camera with more or fewer sparse 3D pieces. This ceiling is not a
+ * production default: closing the lab restores the thermal policy above.
+ */
+export const MAP_BUILDING_DENSITY_LAB_EVENT = 'poplur-map-building-density-lab'
+export const MAP_BUILDING_DENSITY_LAB_STATE_MESSAGE = 'poplur-map-building-density-lab-state'
+export const MAP_BUILDING_DENSITY_LAB_MIN = 0
+export const MAP_BUILDING_DENSITY_LAB_MAX = MAP_BUILDING_DETAIL_MAX
+export const MAP_BUILDING_DENSITY_LAB_DEFAULT = MAP_BUILDING_DETAIL_BUDGET_REDUCED
 
 /** Intentional landmark models keep their existing close framing. */
 export const MAP_LANDMARK_3D_MIN_ZOOM = 15
@@ -68,9 +91,10 @@ export interface MapBuildingDetailPlan {
 
 /**
  * Pure presentation contract shared by runtime code and regression tests.
- * Hysteresis prevents a pinch resting on the boundary from repeatedly
- * rebuilding extrusion geometry. Thermal/power pressure reduces the finite
- * building batch instead of flattening the close camera.
+ * The intentionally broad hysteresis band prevents a pinch resting near the
+ * handoff from flipping the camera between top-down and isometric. Thermal or
+ * power pressure never changes that framing; it only governs independently
+ * bounded renderers such as landmarks and explicit Street View detail.
  */
 export function mapBrowsePresentation({
   zoom,
@@ -90,8 +114,7 @@ export function mapBrowsePresentation({
     threeDimensional: true,
     pitch: MAP_BROWSE_3D_PITCH,
     bearing: MAP_BROWSE_3D_BEARING,
-    // The close camera remains readable while every mode stays below the
-    // former 55-70 degree high-overdraw diorama band.
+    // The local camera reads as a board rather than a high-overdraw diorama.
     minPitch: 0,
     maxPitch: MAP_BROWSE_3D_MAX_PITCH,
   }
@@ -143,9 +166,8 @@ export function mapBuildingExtrusionRadiusM(
   return radii[2]
 }
 
-/** Height floor paired with the radius above. Count-bounding now carries the
- * thermal load, so nearby homes can stay dimensional while every unselected
- * footprint remains visible in the flat clay layer underneath. */
+/** Height floor paired with the radius above. Sampling plus count-bounding
+ * carries the thermal load for both ordinary close browsing and Street View. */
 export function mapBuildingExtrusionMinHeightM(
   _performanceMode: PoplurPerformanceMode,
 ): number {
@@ -161,15 +183,43 @@ export function mapBuildingDetailBudget(
   return MAP_BUILDING_DETAIL_BUDGET_FULL
 }
 
+/** Normalize untrusted slider/event values before they can become geometry. */
+export function normalizeMapBuildingDensityLabBudget(value: unknown): number {
+  const numeric = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(numeric)) return MAP_BUILDING_DENSITY_LAB_DEFAULT
+  return Math.max(
+    MAP_BUILDING_DENSITY_LAB_MIN,
+    Math.min(MAP_BUILDING_DENSITY_LAB_MAX, Math.round(numeric)),
+  )
+}
+
 /**
- * One pure gate for the bounded building-detail batch, regardless of which
- * camera path is active. LOW_POWER and EMERGENCY retain pitched close depth
- * with deliberately smaller 8- and 4-building ceilings.
+ * FULL/REDUCED may use the explicit test budget. Real thermal or power
+ * pressure always retains authority, so the lab cannot hold a hot device at a
+ * stress-test count after LOW_POWER/EMERGENCY engages.
+ */
+export function mapBuildingDensityLabBudget(
+  requestedMax: number | null,
+  performanceMode: PoplurPerformanceMode,
+): number {
+  const productionBudget = mapBuildingDetailBudget(performanceMode)
+  if (requestedMax == null) return productionBudget
+  const requestedBudget = normalizeMapBuildingDensityLabBudget(requestedMax)
+  if (performanceMode === 'LOW_POWER' || performanceMode === 'EMERGENCY') {
+    return Math.min(requestedBudget, productionBudget)
+  }
+  return requestedBudget
+}
+
+/**
+ * One pure gate for the bounded generic-building batch. Ordinary browsing may
+ * reveal the sampled batch only inside the close-detail band; authored
+ * landmark framing remains independent, and explicit Street View retains its
+ * existing always-on bounded detail behavior.
  */
 export function mapBuildingDetailPlan({
   intent,
   zoom,
-  pitch,
   wasThreeDimensional,
   performanceMode,
 }: MapBuildingDetailPlanInput): MapBuildingDetailPlan {
@@ -178,22 +228,14 @@ export function mapBuildingDetailPlan({
     return { threeDimensional: false, maxDetailedBuildings: 0 }
   }
 
-  let threeDimensional = false
-  if (intent === 'browse') {
-    threeDimensional = mapBrowsePresentation({
-      zoom,
-      wasThreeDimensional,
-      performanceMode,
-    }).threeDimensional
-  } else if (intent === 'authored') {
-    // Authored movement may retain its camera angle, but district geometry is
-    // still reserved for the same close scale as ordinary browsing.
-    threeDimensional = zoom >= MAP_BROWSE_3D_ENTER_ZOOM && pitch > 0
-  } else {
-    // Street intent is already an explicit, close-up user choice. The shared
-    // positive budget above remains its hard device/thermal guard.
-    threeDimensional = maxDetailedBuildings > 0
-  }
+  const threeDimensional = intent === 'street'
+    || (intent === 'browse'
+      && zoom >= MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM
+      && mapBrowsePresentation({
+        zoom,
+        wasThreeDimensional,
+        performanceMode,
+      }).threeDimensional)
 
   return {
     threeDimensional,
@@ -207,10 +249,9 @@ export interface MapBuildingDetailCandidate {
   heightM: number
 }
 
-/** Stable sampling distributes the retained buildings instead of creating a
- * dense 3D island at the exact camera centre. It also guarantees the new
- * absolute ceiling never raises candidate-rich iPhone load above the previous
- * one-in-three renderer. */
+/** Stable per-id sampling distributes the retained 10% instead of creating a
+ * dense 3D island at the exact camera centre. Selection does not depend on
+ * vector-tile arrival order, so the same footprint keeps the same treatment. */
 function mapBuildingDetailSampled(id: string | number): boolean {
   const text = `${typeof id}:${String(id)}`
   let hash = 0x811c9dc5
@@ -218,7 +259,8 @@ function mapBuildingDetailSampled(id: string | number): boolean {
     hash ^= text.charCodeAt(index)
     hash = Math.imul(hash, 0x01000193)
   }
-  return (hash >>> 0) % MAP_BUILDING_DETAIL_SAMPLE_DIVISOR === 0
+  return (hash >>> 0) % MAP_BUILDING_DETAIL_SAMPLE_DIVISOR
+    < MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR
 }
 
 /**
@@ -231,8 +273,9 @@ export function nearestMapBuildingDetailIds(
   performanceMode: PoplurPerformanceMode,
   minHeightM = mapBuildingExtrusionMinHeightM(performanceMode),
   maxDistanceM = Number.POSITIVE_INFINITY,
+  densityLabRequestedMax: number | null = null,
 ): Array<string | number> {
-  const budget = mapBuildingDetailBudget(performanceMode)
+  const budget = mapBuildingDensityLabBudget(densityLabRequestedMax, performanceMode)
   if (budget <= 0) return []
 
   const nearestById = new Map<string, MapBuildingDetailCandidate & { id: string | number }>()
@@ -260,7 +303,7 @@ export function nearestMapBuildingDetailIds(
   if (!sampled.length && ordered.length) sampled.push(ordered[0])
 
   return sampled
-    .slice(0, Math.min(budget, MAP_BUILDING_DETAIL_MAX))
+    .slice(0, Math.min(budget, MAP_BUILDING_DENSITY_LAB_MAX))
     .map(candidate => candidate.id)
 }
 

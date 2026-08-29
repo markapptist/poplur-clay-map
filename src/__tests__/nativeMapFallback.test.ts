@@ -13,7 +13,7 @@ describe('native map fallback routing', () => {
     expect(nativeMapHandlesAction('engagement')).toBe(true)
 
     for (const action of [
-      'search', 'tour', 'setPopLevel', 'weather', 'directions',
+      'search', 'tour', 'pauseTour', 'resumeTour', 'setPopLevel', 'weather', 'directions',
       'cycleTourLandmark', 'newsTour', 'cycleNews', 'focusNews',
       'openComposer', 'dropClaim', 'futureAction',
     ]) {

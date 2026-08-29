@@ -1708,18 +1708,6 @@
   background-image: linear-gradient(105deg, #7d345b, #e20c75 34%, #ff70b4 50%, #2c90b0 72%, #7d345b);
 }
 
-/* confirmation toast after a send / copy */
-.shareNote {
-  position: absolute;
-  left: 50%;
-  bottom: 168px;
-  z-index: 47;
-  transform: translateX(-50%);
-  padding: 9px 17px;
-  font: 900 12px/1 system-ui, -apple-system, sans-serif;
-  animation: shareIn 0.4s cubic-bezier(0.2, 1.35, 0.4, 1) both;
-}
-
 /* The direct-message alert shares the same compact width as the share card.
    Its input stays light for familiar text-entry contrast against the dark
    News surface. */

@@ -116,7 +116,15 @@ if (params.get('profile') === '1') {
 ModelViewerElement.minimumRenderScale = 1
 
 const root = createRoot(document.getElementById('root')!)
-if (import.meta.env.DEV && params.get('side-icon-gallery') === '1') {
+if (params.get('radiusPreview') === '1') {
+  void import('./RadiusPreviewExperience').then(({ default: RadiusPreviewExperience }) => {
+    root.render(
+      <StrictMode>
+        <RadiusPreviewExperience />
+      </StrictMode>,
+    )
+  })
+} else if (import.meta.env.DEV && params.get('side-icon-gallery') === '1') {
   void import('./SideControlIconGallery').then(({ default: SideControlIconGallery }) => {
     root.render(
       <StrictMode>

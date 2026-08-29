@@ -13,6 +13,7 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
 import ClayNotifIcon from './ClayNotifIcon'
+import PoplurStatusToast from './PoplurStatusToast'
 import { markEngagementSeen } from './engagementLog'
 // The notification list is shared with the NOTIFICATIONS subscreen — one list,
 // one set of cleared rows. See notifications.ts.
@@ -2753,7 +2754,13 @@ export default function ProfileTwin({
             </div>
           )}
 
-          {shareNote && <div className={`${styles.shareNote} ${surfaceStyles.surface}`} role="status" aria-live="polite">{shareNote}</div>}
+          {shareNote && (
+            <PoplurStatusToast
+              title={/(cancelled|could not)/i.test(shareNote) ? 'Not completed' : 'Updated'}
+              detail={shareNote}
+              tone={/(cancelled|could not)/i.test(shareNote) ? 'error' : 'success'}
+            />
+          )}
 
       {/* Direct message to the person whose profile you are on. */}
       {mailingUser && (

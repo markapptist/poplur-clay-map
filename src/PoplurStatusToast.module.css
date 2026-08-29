@@ -1,0 +1,89 @@
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 168px;
+  z-index: 47;
+  width: min(344px, calc(100% - 28px));
+  min-height: 64px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 12px 8px 9px;
+  border: 3px solid #f53893;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 88% 20%, rgba(246, 59, 154, .22), transparent 34%),
+    linear-gradient(180deg, rgba(37, 34, 39, .98), rgba(13, 12, 16, .99));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .24),
+    inset 0 -3px 0 rgba(83, 0, 40, .72),
+    0 12px 28px rgba(0, 0, 0, .56),
+    0 0 18px rgba(246, 59, 154, .28);
+  animation: statusToastIn 320ms cubic-bezier(.2, 1.35, .4, 1) both;
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
+  border-radius: 15px;
+  background: linear-gradient(180deg, #ff67b4, #cb0a69);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 4px 0 #6f0638;
+}
+
+.mark img { width: 38px; height: 38px; object-fit: contain; }
+
+.copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.copy strong {
+  overflow: hidden;
+  color: #fff;
+  font: 950 15px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copy > span {
+  overflow: hidden;
+  color: rgba(255, 238, 247, .72);
+  font: 750 12px/1.12 system-ui, -apple-system, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirm {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid #d9ffe1;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(180deg, #45dc72, #0ca843);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 3px 0 #075c26;
+  font: 950 16px/1 system-ui, sans-serif;
+}
+
+.confirmError {
+  border-color: #ffe2ec;
+  background: linear-gradient(180deg, #ff5b8d, #c30b45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 3px 0 #680421;
+}
+
+@keyframes statusToastIn {
+  from { opacity: 0; transform: translate(-50%, 18px) scale(.94); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}

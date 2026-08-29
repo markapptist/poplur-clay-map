@@ -50,7 +50,11 @@
 }
 
 .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.brandIcon { width: 26px; height: 26px; object-fit: contain; }
+.brandIcon {
+  width: 46px !important;
+  height: 46px !important;
+  object-fit: contain;
+}
 
 .brandName {
   font: 900 18px/1 system-ui, -apple-system, sans-serif;
@@ -59,6 +63,28 @@
 }
 
 .headTools { display: flex; align-items: center; gap: 10px; }
+
+.mediaVolumeButton {
+  width: 48px;
+  height: 48px;
+  border-radius: 17px;
+}
+
+.mediaMutedBadge {
+  position: absolute;
+  right: -2px;
+  bottom: -1px;
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  background: #171118;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.65);
+  font: 950 15px/1 system-ui, sans-serif;
+}
 
 .scroll {
   flex: 1;

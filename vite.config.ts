@@ -58,9 +58,6 @@ const PUBLISHED_PACK_DIRS = [
   'subscreens',
   'profile-themes',
   'games/arcade/art',
-  // Selected lazily from the world map. The pack's source stays in public/
-  // for publishing, while a bucket-mode phone build carries only its manifest.
-  'country-flags',
   ...CLAY_MODEL_FILES,
 ]
 

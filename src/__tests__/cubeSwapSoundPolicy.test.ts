@@ -16,6 +16,8 @@ describe('cube swap sound policy', () => {
     ['airport:pearson', 'map-hover:land:globe'],
     ['country:1720000000000', 'map-hover:water:globe'],
     ['map-news:active:parade', 'none'],
+    ['map-reward:dice:1720000000000', 'map-hover:land:globe'],
+    ['map-reward:dice:1720000000000', 'none'],
     ['snow', 'none'],
     ['map-hover:water:boat', 'map-hover:water:globe'],
   ])('pops a Map return from %s to %s even while the wheel is focused', (previous, next) => {

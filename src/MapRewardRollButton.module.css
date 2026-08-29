@@ -1,0 +1,48 @@
+.button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.button::before,
+.button::after {
+  content: none;
+}
+
+.button img {
+  width: 50px;
+  height: 50px;
+  max-width: none;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 5px 5px rgba(29, 0, 19, 0.58));
+  transition: filter 140ms ease, transform 140ms ease;
+}
+
+.button[data-active='true'] img {
+  filter:
+    drop-shadow(0 5px 5px rgba(29, 0, 19, 0.58))
+    drop-shadow(0 0 7px rgba(255, 35, 148, 0.96));
+  transform: scale(1.08);
+}
+
+.button:active img {
+  transform: scale(0.92);
+}
+
+.button:focus-visible {
+  border-radius: 12px;
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button img { transition: none; }
+}

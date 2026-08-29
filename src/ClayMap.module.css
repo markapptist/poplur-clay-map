@@ -444,74 +444,50 @@
 
 /* ── Clay zoom slider ─────────────────────────────────── */
 
-/* The takeover colour circle, riding under the zoom slider's rail. Same
-   right-edge anchor as the rail (8px bezel + half the thumb overhang) so the
-   circle sits centred beneath the track, not beneath the invisible catchment.
-   Clay language: hard rim, inner sheen, drop shadow — a button-sized disc of
-   whatever colour your takeover currently wears (painted via --takeoverFace).
-   The key remount on colour change replays the one-shot pop-in. */
+/* The takeover colour is a real side button: it continues the left rail on
+   the same 44px target / 12px cadence. The opposite zoom rail includes this
+   final button in its measured span, so both columns share exact top/bottom
+   guides. */
 .colorCircle {
+  appearance: none;
   position: absolute;
-  /* Share the Search icon's centre line. The map header owns that icon, so
-     --map-search-center mirrors its right inset and rendered size below. */
+  left: max(12px, env(safe-area-inset-left, 0px));
   right: auto;
-  left: var(--map-search-center);
-  /* Level with the level icon: its centre line is --home-cube + 52px off the
-     bottom (see .zoomWeather above), and this disc is 28px, so its bottom edge
-     sits 14px under that centre. It keeps its own column under the zoom rail —
-     "aligned level with" is about height, not about moving it across. */
-  top: auto;
-  bottom: calc(var(--home-cube) + 38px);
+  top: calc(max(154px, calc(env(safe-area-inset-top, 0px) + 112px)) + var(--mapBaseControlSpan, 492px) + var(--mapColorControlGap, 24px));
+  bottom: auto;
   z-index: 26;
-  /* 40px read as a third control stacked under the slider. This is a colour
-     PICKER, not a button — smaller states that, and the wheel below is legible
-     at 28 because hue is carried by the ring, not by detail inside it. */
-  width: 28px;
-  height: 28px;
+  /* A full side-control target: same 44px square and 12px cadence as the left
+     rail. The supplied full-colour clay wheel is the entire visible control. */
+  width: 44px;
+  height: 44px;
   padding: 0;
-  border: none;
-  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  border: 0;
+  border-radius: 15px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   touch-action: manipulation;
   user-select: none;
-  /* An RGB wheel in clay: the full hue circle as a conic ring, the CURRENT
-     takeover colour filling the hub, and the same sheen/rim/shadow every other
-     clay control wears. Layer order is top-down — sheen, hub, ring — so the
-     hub reads as pressed into the wheel rather than floating over it. The
-     conic starts at 90deg so red sits at the top, the orientation a colour
-     wheel is normally drawn in. */
-  background:
-    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 44%),
-    radial-gradient(circle at 50% 50%,
-      var(--takeoverFace, #F63B9A) 0 33%,
-      rgba(5, 2, 9, 0.55) 33% 38%,
-      transparent 38.5%),
-    conic-gradient(from 90deg,
-      #ff2d55, #ff7a00, #ffcc00, #46d33a, #00c7be,
-      #1f9dff, #4b4bff, #a24bff, #ff3ba7, #ff2d55);
-  box-shadow:
-    inset 0 2px 2px rgba(255, 255, 255, 0.5),
-    inset 0 -3px 5px rgba(0, 0, 0, 0.38),
-    0 0 0 3px rgba(5, 2, 9, 0.85),
-    0 4px 0 rgba(5, 2, 9, 0.55),
-    0 8px 14px rgba(0, 0, 0, 0.45);
+  background: transparent;
+  box-shadow: none;
   animation: colorCirclePop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
 .colorCircle:active {
-  transform: translateX(-50%) scale(0.9);
+  transform: scale(0.9);
 }
 
 @keyframes colorCirclePop {
-  from { transform: translateX(-50%) scale(0.6); }
-  to   { transform: translateX(-50%) scale(1); }
+  from { transform: scale(0.6); }
+  to   { transform: scale(1); }
 }
 
 .zoomWrap {
   --zoom-track-size: 16px;
-  --zoom-thumb-size: 72px;
+  --zoom-thumb-size: 68px;
   position: absolute;
   touch-action: none;
   /* The RAIL hugs the bezel; the grab column reaches inboard from it. Before,
@@ -521,23 +497,18 @@
      it and the catchment grows leftwards, over map the thumb was covering
      anyway. `right` keeps clear of the strip iOS reserves for its own edge
      gestures (back-swipe, Control Center). */
-  right: auto;
-  left: var(--map-search-center);
-  /* The rail's BOTTOM is anchored to the colour wheel, not centred in the
-     viewport. Centred, the rail's lower tip landed at roughly the same height
-     as the wheel's top edge on a 393x852 phone — the two controls touched, and
-     the wheel read as a bead hanging off the end of the slider rather than as
-     its own control. Anchoring both to --home-cube keeps a fixed 30px of air
-     between them at every screen size, the same arithmetic the weather mark
-     and the level button already use. */
-  top: auto;
-  bottom: calc(var(--home-cube) + 96px);
-  transform: translateX(-50%);
+  right: max(12px, env(safe-area-inset-right, 0px));
+  left: auto;
+  /* Match the opposite 44px/12px side-control stack exactly. Preview mode has
+     one extra dice control, so ClayMap receives the corresponding larger span. */
+  top: max(154px, calc(env(safe-area-inset-top, 0px) + 112px));
+  bottom: auto;
+  transform: none;
   z-index: 26;
-  height: min(52vh, 420px);
+  height: var(--mapControlSpan, 492px);
   /* Wide invisible catchment: the pad of a thumb is ~45px across and lands
      inboard of where the user thinks they are aiming. */
-  width: 96px;
+  width: 44px;
   box-sizing: border-box;
   /* Keep the full clay thumb inside the viewport. The rail used to sit on the
      wrapper's far edge, so half of the oversized thumb extended beyond the
@@ -1614,6 +1585,22 @@
   color: #fff4fb;
 }
 
+/* The supplied alert art becomes live UI here: the weather values, condition,
+   and forecast remain React data, while its thick candy shell and inset black
+   panel carry the new Poplur notification language. */
+section.weatherForecast {
+  border: 4px solid #f23892;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 82% 6%, rgba(255, 79, 166, .28), transparent 34%),
+    linear-gradient(180deg, rgba(36, 32, 37, .99), rgba(10, 9, 13, .99));
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, .26),
+    inset 0 -4px 0 rgba(91, 0, 45, .86),
+    0 18px 42px rgba(0, 0, 0, .7),
+    0 0 28px rgba(246, 59, 154, .34);
+}
+
 .weatherTitleBar {
   position: sticky;
   z-index: 2;
@@ -1629,9 +1616,16 @@
   user-select: none;
 }
 
+header.weatherTitleBar {
+  background:
+    radial-gradient(circle at 18% -20%, rgba(255, 255, 255, .3), transparent 36%),
+    linear-gradient(180deg, rgba(246, 59, 154, .98), rgba(159, 10, 83, .98));
+  border-bottom: 3px solid #6e0739;
+}
+
 .weatherKicker {
   display: block;
-  color: #ff9ad2;
+  color: #fff;
   font: 900 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   letter-spacing: 1.25px;
   text-shadow: 0 2px 4px rgba(5, 0, 12, 0.9);
@@ -1640,7 +1634,7 @@
 .weatherUpdated {
   display: block;
   margin-top: 3px;
-  color: rgba(224, 213, 244, 0.68);
+  color: rgba(255, 238, 247, .82);
   font: 700 10px/1 system-ui, -apple-system, sans-serif;
   text-shadow: 0 2px 4px rgba(5, 0, 12, 0.9);
 }
@@ -1916,13 +1910,10 @@
   .zoomWrap {
     --zoom-track-size: 14px;
     --zoom-thumb-size: 64px;
-    /* NOT right: 0 — that put the rail back inside the strip iOS reserves for
-       its own edge gestures, so drags were stolen by the OS on exactly the
-       small phones this branch is for. Narrower column, same clearance. */
-    right: auto;
-    left: var(--map-search-center);
-    width: 132px;
-    height: min(52vh, 380px);
+    right: max(12px, env(safe-area-inset-right, 0px));
+    left: auto;
+    width: 44px;
+    height: var(--mapControlSpan, 492px);
   }
 
   .zoomWeather {
@@ -2013,11 +2004,6 @@
   overflow: visible;
 }
 
-.popPinMarkerFlat {
-  width: 60px;
-  height: 60px;
-}
-
 .popPin {
   width: 64px;
   height: 64px;
@@ -2041,15 +2027,6 @@
 }
 .popPin:active { transform: translateY(6px) scale(0.92); }
 
-/* Flat map, flat pin: no lift, a tighter shadow. The sprite itself is already
-   the straight-on camera — this stops the 3D tier's floating look coming with
-   it into 2D. */
-.popPinFlat {
-  width: 60px;
-  height: 60px;
-}
-.popPinFlat img { filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5)); }
-
 /* Yours, on a board full of other people's. */
 .popPinMine { transform: translateY(6px) scale(1.16); }
 .popPinMine:active { transform: translateY(6px) scale(1.02); }
@@ -2071,15 +2048,6 @@
   pointer-events: none;
 }
 
-/* One live owner marker in the radius picker. It is not part of the world-pin
-   pool, so it cannot multiply decoders as the camera moves. */
-.radiusPreviewPinMarker {
-  z-index: 12;
-  pointer-events: none;
-}
-.radiusPreviewPinMarker .popPin {
-  filter: drop-shadow(0 0 9px rgba(255, 74, 169, .78));
-}
 .popPinSelfieVideo {
   overflow: hidden;
   object-position: 50% 50%;
