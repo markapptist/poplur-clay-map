@@ -33,27 +33,24 @@ export function reconcileMapWaterCube(
 
 /**
  * Resolve only the outer-world part of the navigator priority. Airport intent
- * remains deliberate, country acknowledgement beats ambient hover, and an
- * inactive water pulse falls back to the globe instead of leaving a boat up.
+ * remains deliberate, and an inactive water pulse falls back to the globe
+ * instead of leaving a boat up.
  */
 export function resolveOuterMapNavigatorModel({
   hoverKind,
   boatPulse,
   airportSignalModel,
-  countryFlagModel,
   airportHoverModel,
   globeModel,
 }: {
   hoverKind: MapHoverCubeKind | null
   boatPulse: boolean
   airportSignalModel: string | null
-  countryFlagModel: string | null
   airportHoverModel: string
   globeModel: string
 }): string | null {
   if (hoverKind === 'airport') return airportHoverModel
   if (airportSignalModel) return airportSignalModel
-  if (countryFlagModel) return countryFlagModel
   if (hoverKind === 'water') return boatPulse ? MAP_WATER_HOVER_MODEL : globeModel
   return hoverKind === 'globe' ? globeModel : null
 }

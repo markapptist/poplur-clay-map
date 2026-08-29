@@ -5,8 +5,6 @@ import {
 } from './characterStore'
 import { STUDIO_OPTIONS, studioInitialCharacter, type StudioCategory } from './AvatarStudioCharacter'
 import ThreeAvatarStudio from './ThreeAvatarStudio'
-import FittedAvatarWardrobe from './FittedAvatarWardrobe'
-import { readSavedAvaturnAvatar } from './avaturnAvatarStore'
 import { WARDROBE_SCENE_SRC } from './characterParts'
 import {
   ACCESSORY_FASHION_STYLES,
@@ -59,24 +57,10 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
   const [activeCategory, setActiveCategory] = useState<StudioCategory>('body')
   const [sceneReady, setSceneReady] = useState(false)
   const [remoteFashion, setRemoteFashion] = useState<RemoteWardrobeStyles>({ top: [], bottom: [] })
-  const [wardrobeProvider, setWardrobeProvider] = useState<'avaturn' | 'poplur'>(() => {
-    try {
-      const saved = localStorage.getItem('poplur.wardrobe.provider.v1')
-      // Avaturn is an optional fitted-avatar provider, not the Wardrobe's sign-
-      // in wall. Preserve it only after the person has actually saved an export;
-      // everyone else opens directly into the local Poplur wardrobe.
-      return saved === 'avaturn' && readSavedAvaturnAvatar() ? 'avaturn' : 'poplur'
-    } catch { return 'poplur' }
-  })
   // Wardrobe opens ready to dress the character. The cube still toggles the
   // studio and saves on close, but users no longer arrive at an inert model.
   const [studioOpen, setStudioOpen] = useState(true)
   const [studioOffset, setStudioOffset] = useState({ x: 0, y: 0 })
-
-  const chooseWardrobeProvider = useCallback((provider: 'avaturn' | 'poplur') => {
-    setWardrobeProvider(provider)
-    try { localStorage.setItem('poplur.wardrobe.provider.v1', provider) } catch { /* private browsing */ }
-  }, [])
 
   const beginStudioDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest('button')) return
@@ -215,16 +199,10 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
       <img src={WARDROBE_SCENE_SRC} alt='Your Poplur wardrobe room' className={sceneReady ? styles.roomArtReady : styles.roomArt} draggable={false} onLoad={() => setSceneReady(true)} onError={event => { setSceneReady(false); event.currentTarget.style.display = 'none' }} />
       <div className={styles.roomLight} aria-hidden='true' />
 
-      {wardrobeProvider === 'avaturn' && <FittedAvatarWardrobe onUseClassic={() => chooseWardrobeProvider('poplur')} />}
-
-      {wardrobeProvider === 'poplur' && <><div className={styles.characterStage}>
+      <div className={styles.characterStage}>
         <ThreeAvatarStudio character={character} mode='3d' remoteFashion={remoteFashion} />
         <span className={styles.characterShadow} aria-hidden='true' />
       </div>
-
-      <button type='button' className={styles.fittedWardrobeButton} onClick={() => chooseWardrobeProvider('avaturn')}>
-        <strong>Fitted wardrobe</strong><small>Free avatar fitting</small>
-      </button>
 
       {studioOpen && <div className={styles.studioLayout}>
       <aside
@@ -292,7 +270,7 @@ export default function CharacterEditor({ bindCubePress }: { bindCubePress?: Cub
       <div className={styles.avatarStatureControl} aria-label='Character stature control'>
         <ScaleKnobControl label='Stature' value={character.statureScale ?? 0.96} onChange={value => apply({ statureScale: value })} />
       </div>
-      </div>}</>}
+      </div>}
     </main>
   )
 }

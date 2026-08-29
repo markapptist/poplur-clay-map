@@ -52,6 +52,7 @@ const PRODUCTION_SPRITE_SOURCES = new Set([
   'zoom_buildings.glb',
   'zoom_globe.glb',
   'poplur_camera_kodak.glb',
+  'poplur_dice_lite.glb',
   'poplur_mark_head_navigator.glb',
 ])
 

@@ -4,6 +4,7 @@ import {
   buildingClaimColorExpression,
   dominantBuildingClaims,
 } from '../buildingClaimDominance'
+import { ownershipTerrainMask } from '../ownershipTerrain'
 
 describe('building claim dominance', () => {
   it('checks the largest radius first so it wins every overlap', () => {
@@ -41,7 +42,8 @@ describe('building claim dominance', () => {
     expect(expression).toHaveLength(2 + MAX_VISIBLE_BUILDING_CLAIMS * 2)
     const firstWithin = expression[1] as [string, GeoJSON.FeatureCollection<GeoJSON.Polygon>]
     expect(firstWithin[0]).toBe('within')
-    expect(firstWithin[1].features[0].geometry.coordinates[0]).toHaveLength(17)
+    expect(firstWithin[1].features[0].geometry.coordinates[0]).toHaveLength(13)
+    expect(firstWithin[1]).toEqual(ownershipTerrainMask(claims[0].center, claims[0].radiusKm))
   })
 
   it('returns the ordinary building palette untouched when no claim applies', () => {

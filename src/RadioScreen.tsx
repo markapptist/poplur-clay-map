@@ -3,8 +3,8 @@ import styles from './RadioScreen.module.css'
 import { playPop } from './pop'
 import { isUserMuted, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
-import ClayMuteButton from './ClayMuteButton'
 import RadioBoot from './RadioBootScreen'
+import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import {
   listLocalRadioStations,
   listPoplurLiveStations,
@@ -323,15 +323,23 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     >
       <header className={styles.head}>
         <div className={styles.brand}>
-          <img className={styles.brandIcon} src="logo_icon.png" alt="" draggable="false" />
+          <SideControlIconImage
+            icon="media.radio"
+            displaySize={46}
+            className={styles.brandIcon}
+            loading="eager"
+          />
           <span className={styles.brandName}>poplur radio</span>
         </div>
         <div className={styles.headTools}>
-          {/* the same clay mute object the feed and TV guide carry */}
-          <ClayMuteButton
-            muted={muted}
-            onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next) }}
-            size={40}
+          <SideControlIconButton
+            icon="media.volume"
+            className={styles.mediaVolumeButton}
+            imageSize={48}
+            aria-label={muted ? 'Unmute radio' : 'Mute radio'}
+            aria-pressed={muted}
+            onActivate={() => { const next = !muted; setUserMuted(next); setMuted(next) }}
+            overlay={muted ? <span className={styles.mediaMutedBadge} aria-hidden="true">×</span> : undefined}
           />
           {/* No ✕ — the cube is the back control for every subscreen. */}
         </div>

@@ -9,6 +9,13 @@ vi.mock('../pop', () => ({ playPop: vi.fn() }))
 import CameraARButton from '../CameraARButton'
 import CameraScanButton from '../CameraScanButton'
 import ClayChannelArrows from '../ClayChannelArrows'
+import {
+  MAP_COLOR_CONTROL_GAP,
+  channelControlImageSize,
+  mapSideControlRailSpan,
+  mapSideControlRailWithColorSpan,
+  responsiveChannelControlSize,
+} from '../channelControlSizing'
 import ConquerGlance from '../ConquerGlance'
 import MapConquerButton from '../MapConquerButton'
 import MapNewsButton from '../MapNewsButton'
@@ -122,16 +129,16 @@ function pngAlphaAt(file: URL, x: number, y: number) {
 }
 
 describe('Poplur side-control asset registry', () => {
-  it('contains the exact 28 control IDs and 14 weather IDs from the package', () => {
-    expect(SIDE_CONTROL_ICON_IDS).toHaveLength(28)
+  it('contains the exact 35 control IDs and 14 weather IDs from the package', () => {
+    expect(SIDE_CONTROL_ICON_IDS).toHaveLength(35)
     expect(WEATHER_ICON_IDS).toHaveLength(14)
-    expect(new Set(ALL_IDS).size).toBe(42)
+    expect(new Set(ALL_IDS).size).toBe(49)
     expect(Object.keys(POPLUR_SIDE_ICONS).sort()).toEqual([...ALL_IDS].sort())
-    expect(SIDE_ICON_MANIFEST.buttonCount).toBe(28)
+    expect(SIDE_ICON_MANIFEST.buttonCount).toBe(35)
     expect(SIDE_ICON_MANIFEST.weatherConditionCount).toBe(14)
   })
 
-  it('resolves all 126 declared PNGs at their declared dimensions with transparency', () => {
+  it('resolves all 147 declared PNGs at their declared dimensions with transparency', () => {
     for (const id of ALL_IDS) {
       for (const size of SIZES) {
         const file = assetFile(id, size)
@@ -292,6 +299,41 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(controls[3].props['aria-pressed']).toBe(true)
   })
 
+  it('adds the supplied delete artwork only when an opened Profile post is deletable', () => {
+    const sharedProps = {
+      side: 'left' as const,
+      label: 'Profile post controls',
+      muted: true,
+      captionsOn: false,
+      commentsAtEnd: false,
+      onToggleMute: vi.fn(),
+      onShare: vi.fn(),
+      onToggleCaptions: vi.fn(),
+      onToggleCommentsAtEnd: vi.fn(),
+      onComment: vi.fn(),
+      onLike: vi.fn(),
+      onDislike: vi.fn(),
+    }
+    const withoutDelete = PostActionRail(sharedProps) as LooseElement
+    expect(renderToStaticMarkup(withoutDelete)).not.toContain('data-side-control-id="profile.delete"')
+
+    const onDelete = vi.fn()
+    const withDelete = PostActionRail({ ...sharedProps, onDelete }) as LooseElement
+    const controls = Children.toArray(withDelete.props.children as ReactNode) as LooseElement[]
+    const deleteWrapper = controls[controls.length - 1]
+    const deleteControl = deleteWrapper.props.children as LooseElement
+    expect(deleteControl.type).toBe(SideControlIconButton)
+    expect(deleteControl.props.icon).toBe('profile.delete')
+    ;(deleteControl.props.onActivate as () => void)()
+    expect(onDelete).toHaveBeenCalledOnce()
+    expect(renderToStaticMarkup(withDelete)).toContain('aria-label="Delete this post"')
+
+    const profile = readFileSync(new URL('../ProfileTwin.tsx', import.meta.url), 'utf8')
+    expect(profile).toMatch(/const canDeleteViewerPost = Boolean\([\s\S]*?!visiting[\s\S]*?mode === 'media'[\s\S]*?uploadedPostsLoaded/)
+    expect(profile).toMatch(/onDelete=\{canDeleteViewerPost \?[\s\S]*?setDeletePromptPost\(viewerPost\)/)
+    expect(profile).toContain("type: 'deleteProfilePost'")
+  })
+
   it('keeps wrapper handlers for scan, AR, map news, and Conquer', () => {
     const handlers = Array.from({ length: 4 }, () => vi.fn())
     const controls = [
@@ -423,8 +465,8 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(controls.map(control => control.type)).toEqual([SideControlIconButton, SideControlIconButton])
     expect(controls[0].props.imageStyle).toMatchObject({ transform: 'rotate(-90deg)' })
     expect(controls[0].props.imageSize).toBe(71)
-    expect(controls[0].props.style).toMatchObject({ width: '50%' })
-    expect(controls[1].props.style).toMatchObject({ width: '50%' })
+    expect(controls[0].props.style).toMatchObject({ left: 0, width: '44%' })
+    expect(controls[1].props.style).toMatchObject({ right: 0, width: '44%' })
     ;(controls[0].props.onActivate as () => void)()
     ;(controls[1].props.onActivate as () => void)()
     expect(onUp).toHaveBeenCalledOnce()
@@ -434,6 +476,56 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(markup).toContain('data-side-control-id="global.channel_up"')
     expect(markup).toContain('data-side-control-id="global.channel_down"')
     expect(markup).toContain('transform:rotate(-90deg)')
+  })
+
+  it('uses one responsive scale for the vertical and horizontal channel pairs', () => {
+    expect(responsiveChannelControlSize(390)).toBe(144)
+    expect(responsiveChannelControlSize(320)).toBe(124)
+    expect(responsiveChannelControlSize(900)).toBe(176)
+    expect(channelControlImageSize(144)).toBe(58)
+
+    const horizontal = ClayChannelArrows({
+      number: 1,
+      orientation: 'horizontal',
+      size: responsiveChannelControlSize(390),
+      onUp: vi.fn(),
+      onDown: vi.fn(),
+    }) as LooseElement
+    const horizontalControls = (Children.toArray(horizontal.props.children as ReactNode) as LooseElement[])
+      .filter(child => child.props?.icon === 'global.channel_up' || child.props?.icon === 'global.channel_down')
+    expect(horizontalControls[0].props.imageSize).toBe(58)
+
+    const vertical = PoplurChannelRail({
+      number: 1,
+      size: responsiveChannelControlSize(390),
+      onUp: vi.fn(),
+      onDown: vi.fn(),
+    }) as LooseElement
+    const verticalMarkup = renderToStaticMarkup(vertical)
+    expect(verticalMarkup).toContain('width="58"')
+    expect(verticalMarkup).toContain('height="58"')
+  })
+
+  it('keeps the opposite zoom rail on the exact 44px/12px map-control span', () => {
+    expect(mapSideControlRailSpan(9)).toBe(492)
+    expect(mapSideControlRailSpan(10)).toBe(548)
+    expect(mapSideControlRailSpan(11)).toBe(604)
+    expect(MAP_COLOR_CONTROL_GAP).toBe(24)
+    expect(mapSideControlRailWithColorSpan(9)).toBe(560)
+    expect(mapSideControlRailWithColorSpan(10)).toBe(616)
+
+    const clayMap = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const clayMapCss = readFileSync(new URL('../ClayMap.module.css', import.meta.url), 'utf8')
+    const nativeCss = readFileSync(new URL('../HomeTwin.module.css', import.meta.url), 'utf8')
+    expect(clayMap).toContain("'--mapControlSpan': `${mapSideControlSpan}px`")
+    expect(clayMap).toContain("'--mapBaseControlSpan': `${mapBaseSideControlSpan}px`")
+    expect(clayMap).toContain("'--mapColorControlGap': `${MAP_COLOR_CONTROL_GAP}px`")
+    expect(clayMap).toContain('data-poplur-color-side-control=""')
+    expect(clayMap).toContain('<SideControlIconImage icon="map.color" displaySize={44} loading="eager" />')
+    expect(clayMapCss).not.toContain('conic-gradient(from 90deg at 50% 50%')
+    expect(clayMapCss).toMatch(/\.zoomWrap\s*\{[\s\S]*?height:\s*var\(--mapControlSpan, 492px\)/)
+    expect(clayMapCss).toMatch(/\.colorCircle\s*\{[\s\S]*?left:\s*max\(12px,[\s\S]*?var\(--mapBaseControlSpan, 492px\)[\s\S]*?var\(--mapColorControlGap, 24px\)[\s\S]*?width:\s*44px;[\s\S]*?height:\s*44px;/)
+    expect(nativeCss).toMatch(/\.nativeMapZoom\s*\{[\s\S]*?height:\s*var\(--mapControlSpan, 492px\)/)
   })
 })
 

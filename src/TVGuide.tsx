@@ -8,7 +8,7 @@ import { channelUrl, feedUrl } from './assetPacks'
 import { playPop } from './pop'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import ClayCornerButton from './ClayCornerButton'
-import ClayMuteButton from './ClayMuteButton'
+import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 // Web twin of FeedTVGuideView.swift — the TV guide as it worked before the clay
@@ -284,14 +284,23 @@ export default function TVGuide({
         {/* No TV GUIDE heading — the Poplur wordmark above is the title of every
             subscreen. What the screen is showing you stays. */}
         <div className={styles.titles}>
+          <SideControlIconImage
+            icon="media.tv"
+            displaySize={48}
+            className={styles.tvIdentity}
+            loading="eager"
+          />
           <p className={styles.subtitle}>LIVE CHANNELS</p>
         </div>
         <div className={styles.headerTools}>
-          {/* same clay mute object the feed carries */}
-          <ClayMuteButton
-            muted={muted}
-            onToggle={() => { const next = !muted; setUserMuted(next); setMuted(next) }}
-            size={40}
+          <SideControlIconButton
+            icon="media.volume"
+            className={styles.mediaVolumeButton}
+            imageSize={48}
+            aria-label={muted ? 'Unmute TV Guide preview' : 'Mute TV Guide preview'}
+            aria-pressed={muted}
+            onActivate={() => { const next = !muted; setUserMuted(next); setMuted(next) }}
+            overlay={muted ? <span className={styles.mediaMutedBadge} aria-hidden="true">×</span> : undefined}
           />
           {/* No ✕ — the cube is the back control for every subscreen. */}
         </div>

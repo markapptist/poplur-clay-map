@@ -13,3 +13,5 @@ public/country-flags/**/*.glb
 # 16MB exports. The shipped product is public/landmarks/*.glb, decimated.
 scripts/.meshy-landmarks.json
 scripts/.meshy-out/
+scripts/.meshy-gamepiece-landmarks.json
+scripts/.meshy-gamepiece-out/

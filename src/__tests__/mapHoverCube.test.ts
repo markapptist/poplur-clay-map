@@ -72,13 +72,12 @@ describe('world-map hover cube', () => {
     expect(reconcileMapWaterCube('water', first.nextEligibleAt, first.nextEligibleAt).pulse).toBe(true)
   })
 
-  it('lets country flags beat boats while retaining airport priority', () => {
+  it('retains airport priority over ambient world navigation', () => {
     const resolve = (overrides: Partial<Parameters<typeof resolveOuterMapNavigatorModel>[0]> = {}) => (
       resolveOuterMapNavigatorModel({
         hoverKind: 'water',
         boatPulse: true,
         airportSignalModel: null,
-        countryFlagModel: null,
         airportHoverModel: 'airplane.glb',
         globeModel: 'globe.glb',
         ...overrides,
@@ -87,9 +86,8 @@ describe('world-map hover cube', () => {
 
     expect(resolve()).toBe(MAP_WATER_HOVER_MODEL)
     expect(resolve({ boatPulse: false })).toBe('globe.glb')
-    expect(resolve({ countryFlagModel: 'canada.glb' })).toBe('canada.glb')
-    expect(resolve({ hoverKind: 'airport', countryFlagModel: 'canada.glb' })).toBe('airplane.glb')
-    expect(resolve({ airportSignalModel: 'airport-signal.glb', countryFlagModel: 'canada.glb' }))
+    expect(resolve({ hoverKind: 'airport' })).toBe('airplane.glb')
+    expect(resolve({ airportSignalModel: 'airport-signal.glb' }))
       .toBe('airport-signal.glb')
   })
 })

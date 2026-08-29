@@ -12,6 +12,13 @@ describe('Wardrobe character studio controls', () => {
     expect(renderer).toContain('Fitting selected outfit…')
   })
 
+  it('keeps the wardrobe native while the external fitted provider is parked', () => {
+    const editor = readFileSync(resolve(process.cwd(), 'src', 'CharacterEditor.tsx'), 'utf8')
+    expect(editor).not.toContain('FittedAvatarWardrobe')
+    expect(editor).not.toContain('fittedWardrobeButton')
+    expect(editor).not.toContain('poplur.wardrobe.provider.v1')
+  })
+
   it('settles readiness after every synchronous procedural garment fallback', () => {
     const renderer = readFileSync(resolve(process.cwd(), 'src', 'ThreeAvatarStudio.tsx'), 'utf8')
     const loadGarment = renderer.slice(

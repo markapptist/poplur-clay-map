@@ -1,3 +1,6 @@
+import { dominancePower } from './mapDominance'
+import { ownershipTerrainMask } from './ownershipTerrain'
+
 /**
  * The building renderer needs more than the ground fill's binary
  * "claimed/unclaimed" answer: it must know WHICH owner wins at a footprint.
@@ -7,7 +10,6 @@
  * expensive on a phone.
  */
 export const MAX_VISIBLE_BUILDING_CLAIMS = 24
-const BUILDING_CLAIM_RING_STEPS = 16
 
 export interface BuildingDominanceClaim {
   id: string
@@ -37,30 +39,6 @@ export function dominantBuildingClaims<T extends BuildingDominanceClaim>(
     .slice(0, boundedLimit)
 }
 
-function coarseClaimPolygon(
-  claim: BuildingDominanceClaim,
-): GeoJSON.FeatureCollection<GeoJSON.Polygon> {
-  const [lng, lat] = claim.center
-  const kmPerDegLat = 110.574
-  const kmPerDegLng = 111.320 * Math.cos((lat * Math.PI) / 180)
-  const ring: [number, number][] = []
-  for (let i = 0; i <= BUILDING_CLAIM_RING_STEPS; i += 1) {
-    const theta = (i / BUILDING_CLAIM_RING_STEPS) * Math.PI * 2
-    ring.push([
-      lng + (claim.radiusKm / kmPerDegLng) * Math.cos(theta),
-      lat + (claim.radiusKm / kmPerDegLat) * Math.sin(theta),
-    ])
-  }
-  return {
-    type: 'FeatureCollection',
-    features: [{
-      type: 'Feature',
-      properties: {},
-      geometry: { type: 'Polygon', coordinates: [ring] },
-    }],
-  }
-}
-
 /**
  * Build a bounded Mapbox colour expression for non-landmark building layers.
  * Rival claims carry their own colour; claims without one use `ownColor`.
@@ -79,10 +57,9 @@ export function buildingClaimColorExpression(
   const branches: unknown[] = []
   for (const claim of ordered) {
     branches.push(
-      ['within', coarseClaimPolygon(claim)],
+      ['within', ownershipTerrainMask(claim.center, claim.radiusKm)],
       claim.color || ownColor,
     )
   }
   return ['case', ...branches, unclaimedColor]
 }
-import { dominancePower } from './mapDominance'

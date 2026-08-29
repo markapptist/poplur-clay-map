@@ -24,7 +24,8 @@ const EXPECTED_LANDMARKS = [
 describe('landmark material identities', () => {
   it('defines a real-material treatment for every shipped grounded model', () => {
     expect(Object.keys(LANDMARK_MATERIAL_IDENTITIES).sort()).toEqual(EXPECTED_LANDMARKS)
-    expect(LANDMARK_MATERIAL_IDENTITIES.eiffel.metalness).toBeGreaterThan(0.5)
+    expect(LANDMARK_MATERIAL_IDENTITIES.eiffel.tint).toBe(0xffffff)
+    expect(LANDMARK_MATERIAL_IDENTITIES.eiffel.metalness).toBeLessThan(0.3)
     expect(LANDMARK_MATERIAL_IDENTITIES['statue-liberty'].tint).toBe(0x72aa91)
     expect(LANDMARK_MATERIAL_IDENTITIES.giza.roughness).toBeGreaterThan(0.8)
   })
@@ -41,9 +42,9 @@ describe('landmark material identities', () => {
     applyLandmarkMaterialIdentity(material, LANDMARK_MATERIAL_IDENTITIES.eiffel)
 
     expect(material.map).toBe(texture)
-    expect(material.color.getHex()).toBe(0x76543a)
-    expect(material.metalness).toBe(0.62)
-    expect(material.roughness).toBe(0.48)
+    expect(material.color.getHex()).toBe(0xffffff)
+    expect(material.metalness).toBe(0.18)
+    expect(material.roughness).toBe(0.32)
 
     material.dispose()
     texture.dispose()

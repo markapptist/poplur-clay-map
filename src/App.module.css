@@ -27,6 +27,21 @@
     0 0 60px rgba(0,0,0,0.9);
 }
 
+/* App-driven close-map travel keeps the controls and HUD crisp while giving
+   only the moving map surface a brief photographic smear. The attribute is
+   removed on moveend, interruption, timeout, or a reduced-motion change. */
+.shell[data-programmatic-camera-motion='true'] :global(.mapboxgl-canvas) {
+  filter: blur(1.2px);
+  will-change: filter;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell[data-programmatic-camera-motion='true'] :global(.mapboxgl-canvas) {
+    filter: none;
+    will-change: auto;
+  }
+}
+
 .conquerBoardOverlay {
   position: absolute;
   inset: 0;
@@ -381,6 +396,32 @@
     drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
   pointer-events: none;
   white-space: nowrap;
+  animation: tickerIn 0.6s ease-out both;
+}
+
+/* Radio is a second, conditional status line: location stays first, the
+   tuned station appears directly beneath it, then the area's post count. */
+.mapRadioLabel {
+  max-width: min(84vw, 560px);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.24;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: #7fe3ff;
+  -webkit-text-fill-color: #7fe3ff;
+  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.92);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
+  pointer-events: none;
   animation: tickerIn 0.6s ease-out both;
 }
 

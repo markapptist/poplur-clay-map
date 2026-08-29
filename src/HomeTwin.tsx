@@ -10,10 +10,16 @@ import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
 import { silenceAllAudio } from './audioFocus'
 import PoplurChannelRail from './PoplurChannelRail'
+import { responsiveChannelControlSize } from './channelControlSizing'
 import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
+import { mapSideControlRailSpan } from './channelControlSizing'
 import MapLevelButton from './MapLevelButton'
 import MapNewsButton from './MapNewsButton'
+import MapRadioButton from './MapRadioButton'
+import MapRadioStatusLabel from './MapRadioStatusLabel'
+import { mapTourControlState } from './mapTourControl'
+import MapRewardRollButton from './MapRewardRollButton'
 import { readMapNewsOpenRequest } from './mapNewsBridge'
 import MapConquerButton from './MapConquerButton'
 import { WeatherMark } from './ClayMap'
@@ -77,7 +83,14 @@ import {
   hasPendingPodcastMapPick,
 } from './podcastMapDraft'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
-import { startRadioOnBoot } from './mapRadio'
+import {
+  getRadioPlaybackState,
+  isMapRadioActive,
+  startRadioForMap,
+  startRadioOnBoot,
+  stopMapRadio,
+  subscribeRadioPlayback,
+} from './mapRadio'
 import {
   cancelManagedRenderingWake,
   isIOSNativeShell,
@@ -114,7 +127,18 @@ import {
   resolveOuterMapNavigatorModel,
   type MapHoverCubeKind,
 } from './mapHoverCube'
-import { COUNTRY_FLAG_CUBE_DISPLAY_MS } from './countryFlags'
+import {
+  RADIUS_REWARD_DICE_ROLL_EVENT,
+  RADIUS_REWARD_DICE_MODEL,
+  RADIUS_REWARD_NAVIGATOR_EVENT,
+  announceRadiusRewardDiceReady,
+  announceRadiusRewardNavigator,
+  radiusRewardDiceRollSignalFromEvent,
+  radiusRewardNavigatorSignalFromEvent,
+  radiusRewardPreviewEnabled,
+  type RadiusRewardDiceRollSignal,
+  type RadiusRewardNavigatorSignal,
+} from './radiusRewardNavigator'
 import type { HarnessView } from './ViewHarness'
 import { playRadiusCounterDone, playRadiusCounterTick } from './motionEffectsAudio'
 import {
@@ -561,8 +585,7 @@ const STORE_CARD_CUBE_MODEL: Record<string, string> = {
 // The cube scales with the phone width so it and the two flanking counters
 // always fit — full 176 on a roomy phone, shrinking on tighter ones.
 function cubeSizeFor(): number {
-  if (typeof window === 'undefined') return 176
-  return Math.round(Math.min(176, Math.max(124, window.innerWidth * 0.37)))
+  return responsiveChannelControlSize()
 }
 
 // Page visibility is part of the screen lifecycle, not just an animation hint.
@@ -844,6 +867,7 @@ const CLAY_MAP_SRC = (() => {
   const weatherCycle = parentParams.get('weather-cycle')
   const weatherTest = parentParams.get('weather-test')
   const newsTest = parentParams.get('news-test')
+  const buildingDensityLab = parentParams.get('radiusPreview') === '1'
   const managedLocation = parentParams.get('managedLocation') === '1'
   const rawTourSpeed = Number(parentParams.get('tour-speed'))
   // The hidden map mounts while Home's custom location primer is visible.
@@ -858,14 +882,15 @@ const CLAY_MAP_SRC = (() => {
     ? `&weather-cycle=${weatherCycle}` : ''
   const weatherTestQuery = weatherTest === '1' ? '&weather-test=1' : ''
   const newsTestQuery = newsTest === '1' ? '&news-test=1' : ''
+  const buildingDensityLabQuery = buildingDensityLab ? '&buildingDensityLab=1' : ''
   const tourSpeedQuery = Number.isFinite(rawTourSpeed) && rawTourSpeed >= 0.1 && rawTourSpeed <= 5
     ? `&tour-speed=${encodeURIComponent(rawTourSpeed)}`
     : ''
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
   const managedLocationQuery = managedLocation ? '&managedLocation=1' : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}`
 })()
 
 function clockMapNight(): boolean {
@@ -898,6 +923,9 @@ const NATIVE_ADAPTIVE_MAP =
   && isIOSNativeShell()
   && new URLSearchParams(window.location.search).get('nativeMap') === '1'
 
+const RADIUS_REWARD_PREVIEW_ENABLED =
+  typeof window !== 'undefined' && radiusRewardPreviewEnabled(window.location.search)
+
 // Android app shell (PoplurNative bridge). Also gates the native camera preview.
 const ANDROID_SHELL =
   typeof window !== 'undefined' &&
@@ -927,21 +955,31 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
   const [mapNight, setMapNight] = useState(clockMapNight)
   const [mapMoon, setMapMoon] = useState<'full' | 'crescent'>(() => moonPhase(new Date()).model)
-  // At the exact world zoom, every country crossing briefly pops that flag.
-  // The normal phase-aware map object (globe/sun/moon) reclaims the navigator
-  // after the acknowledgement, even if the user keeps panning.
-  const [mapCountryFlagPulse, setMapCountryFlagPulse] = useState<{
-    modelUrl: string
-    changedAt: number
-  } | null>(null)
+  const [radiusRewardDiceSignal, setRadiusRewardDiceSignal] = useState<RadiusRewardNavigatorSignal | null>(null)
+  const [radiusRewardDiceRollSignal, setRadiusRewardDiceRollSignal] = useState<RadiusRewardDiceRollSignal | null>(null)
+  const radiusRewardDiceSessionRef = useRef<number | null>(null)
   useEffect(() => {
-    if (!mapCountryFlagPulse) return
-    const pulse = mapCountryFlagPulse
-    const timer = window.setTimeout(() => {
-      setMapCountryFlagPulse(current => current?.changedAt === pulse.changedAt ? null : current)
-    }, COUNTRY_FLAG_CUBE_DISPLAY_MS)
-    return () => window.clearTimeout(timer)
-  }, [mapCountryFlagPulse])
+    if (!RADIUS_REWARD_PREVIEW_ENABLED) return
+    const onNavigatorSignal = (event: Event) => {
+      const signal = radiusRewardNavigatorSignalFromEvent(event)
+      if (!signal) return
+      radiusRewardDiceSessionRef.current = signal.active ? signal.changedAt : null
+      setRadiusRewardDiceSignal(signal.active ? signal : null)
+      if (!signal.active) setRadiusRewardDiceRollSignal(null)
+    }
+    window.addEventListener(RADIUS_REWARD_NAVIGATOR_EVENT, onNavigatorSignal)
+    return () => window.removeEventListener(RADIUS_REWARD_NAVIGATOR_EVENT, onNavigatorSignal)
+  }, [])
+  useEffect(() => {
+    if (!RADIUS_REWARD_PREVIEW_ENABLED) return
+    const onDiceRoll = (event: Event) => {
+      const signal = radiusRewardDiceRollSignalFromEvent(event)
+      if (!signal || signal.session !== radiusRewardDiceSessionRef.current) return
+      setRadiusRewardDiceRollSignal(signal)
+    }
+    window.addEventListener(RADIUS_REWARD_DICE_ROLL_EVENT, onDiceRoll)
+    return () => window.removeEventListener(RADIUS_REWARD_DICE_ROLL_EVENT, onDiceRoll)
+  }, [])
   const [mapAirportSignal, setMapAirportSignal] = useState<{
     id: string
     name: string
@@ -1060,6 +1098,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // opt-in radio session can reassert itself when that child becomes ready,
   // without falling back to the generic home coordinate or retuning a station.
   const radioLocationRef = useRef<{ lat: number; lng: number } | null>(null)
+  const mapRadioState = useSyncExternalStore(
+    subscribeRadioPlayback,
+    getRadioPlaybackState,
+    getRadioPlaybackState,
+  )
   // Do not request OS location here: opening Radio owns the automatic nearby
   // tune. Home merely lets an already-active, explicitly opted-in session
   // reassert its focus after a map remount.
@@ -1773,6 +1816,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // the model changes at the expanded peak so the handoff reads as one
   // continuous clay pop rather than a disappearance and reappearance.
   const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab, mapNight, mapMoon, mapMorning))
+  const [readyCubeModel, setReadyCubeModel] = useState<string | null>(null)
   // Which swap the navigator uses, chosen in Settings > Cube change. Read live
   // so flipping it there is felt on the very next tab swipe. This setting had
   // no consumer at all: it persisted and read back in Settings while nothing
@@ -1807,6 +1851,20 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // same value and the DOM attribute is a no-op write instead of a live one.
   const [cubeSwapVec, setCubeSwapVec] = useState<{ x: 0 | 1 | -1; y: 0 | 1 | -1 }>({ x: 1, y: 0 })
   const [cubeSwapPhase, setCubeSwapPhase] = useState<'idle' | 'exit' | 'waiting' | 'enter'>('idle')
+  const radiusRewardReadySessionRef = useRef<number | null>(null)
+  useEffect(() => {
+    const session = radiusRewardDiceSignal?.changedAt ?? null
+    if (session === null) {
+      radiusRewardReadySessionRef.current = null
+      return
+    }
+    if (radiusRewardReadySessionRef.current === session) return
+    if (appliedCubeModel !== RADIUS_REWARD_DICE_MODEL
+      || readyCubeModel !== RADIUS_REWARD_DICE_MODEL
+      || cubeSwapPhase !== 'idle') return
+    radiusRewardReadySessionRef.current = session
+    announceRadiusRewardDiceReady(session)
+  }, [appliedCubeModel, cubeSwapPhase, radiusRewardDiceSignal, readyCubeModel])
   /** A navigation that moves the screen but does NOT change the cube's object.
    *  Non-zero for the length of one directional nudge; the axis comes from
    *  cubeSwapVec, the same pair the real slide reads, so both travel the way
@@ -2671,17 +2729,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         setMapPainted(false)
         setMapOverlayOpen(false)
         setMapWeatherSignal(null)
-        setMapCountryFlagPulse(null)
         setMapAirportSignal(null)
         applyMapWorldHover(null)
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
-      }
-      if (event.data.type === 'poplur-map-country-flag') {
-        const modelUrl = typeof event.data.modelUrl === 'string' && event.data.modelUrl.trim()
-          ? event.data.modelUrl
-          : null
-        setMapCountryFlagPulse(modelUrl ? { modelUrl, changedAt: Date.now() } : null)
       }
       if (event.data.type === 'poplur-map-airport') {
         const id = typeof event.data.airportId === 'string'
@@ -2743,7 +2794,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         }
       }
       if (event.data.type === 'poplur-map-failed') {
-        setMapCountryFlagPulse(null)
         setMapAirportSignal(null)
         applyMapWorldHover(null)
         setMapNewsTourOn(false)
@@ -2841,6 +2891,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         const index = Number(event.data.index)
         const total = Number(event.data.total)
         setMapTourOn(on)
+        setMapTourPaused(on && Boolean(event.data.paused))
         setMapTourPosition(on
           && Number.isInteger(index)
           && Number.isInteger(total)
@@ -3291,6 +3342,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-games-chrome-mute', onGamesChrome)
   }, [])
   const [mapTourOn, setMapTourOn] = useState(false)
+  const [mapTourPaused, setMapTourPaused] = useState(false)
   const [mapTourPosition, setMapTourPosition] = useState<{ n: number; of: number } | null>(null)
   const [mapNewsTourOn, setMapNewsTourOn] = useState(false)
   const [mapNewsLoading, setMapNewsLoading] = useState(false)
@@ -4291,9 +4343,13 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     && cubeScreen == null && mapAirportSignal
     ? AIRPORT_NAVIGATOR_MODEL
     : null
-  const countryFlagCubeModel = activeTab === 'map' && committedTab === 'map'
-    && cubeScreen == null && mapCountryFlagPulse
-    ? mapCountryFlagPulse.modelUrl
+  // The reward button lives on the visible Map chrome, so its deliberate
+  // navigator takeover must follow the visible Map tab itself.  Gating this
+  // on the transition-only `committedTab`/`cubeScreen` pair could leave the
+  // button active while the ambient moon/globe kept the cube, which in turn
+  // meant the reward flow waited forever for a die-ready signal.
+  const radiusRewardNavigatorModel = activeTab === 'map' && radiusRewardDiceSignal
+    ? RADIUS_REWARD_DICE_MODEL
     : null
   const outerMapNavigatorModel = activeTab === 'map' && committedTab === 'map'
     && cubeScreen == null
@@ -4301,7 +4357,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
         hoverKind: mapWorldHover,
         boatPulse: mapBoatCubePulse,
         airportSignalModel: airportCubeModel,
-        countryFlagModel: countryFlagCubeModel,
         airportHoverModel: AIRPORT_NAVIGATOR_MODEL,
         globeModel: MAP_GLOBE_MODEL,
       })
@@ -4394,15 +4449,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const eventCubeModel = mapContextModel ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
   const cubeEventSignal = postVerifiedCubeActive
     ? 'posted'
+    : radiusRewardNavigatorModel
+      ? `map-reward:dice:${radiusRewardDiceSignal?.changedAt ?? 'unknown'}`
     : breakingNewsCubeActive
       ? `map-news:${mapNewsEvent?.status ?? 'unknown'}:${mapNewsEvent?.id ?? 'unknown'}`
       : mapWorldHover === 'airport' && outerMapNavigatorModel
         ? 'map-hover:airport'
         : airportCubeModel
           ? `airport:${mapAirportSignal?.id ?? 'unknown'}`
-          : countryFlagCubeModel
-            ? `country:${mapCountryFlagPulse?.changedAt ?? 'unknown'}`
-            : outerMapNavigatorModel
+          : outerMapNavigatorModel
               ? `map-hover:${mapWorldHover ?? 'globe'}:${mapBoatCubePulse ? 'boat' : 'globe'}`
               : weatherCubeModel
                 ? mapWeatherSignal?.kind ?? 'none'
@@ -4479,6 +4534,11 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     // the unobscured Feed root.
     : activeTab === 'feed' && committedTab === 'feed' && cubeScreen == null
     ? FEED_TV_CUBE_MODEL
+    // The reward roll is a deliberate Map action. Its actual 3D die owns the
+    // persistent navigator until the glossy reward panel closes, then the
+    // normal globe/sun/moon returns with the ordinary Map return pop.
+    : radiusRewardNavigatorModel
+    ? radiusRewardNavigatorModel
     // A visible breaking/live story is the deliberate Map action right now.
     // It must temporarily outrank an airport we happen to be flying over;
     // clearing the story immediately falls through to that airplane again.
@@ -4488,15 +4548,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     : mapWorldHover === 'airport' && outerMapNavigatorModel
     ? outerMapNavigatorModel
     // Passing a visible airport briefly turns the one navigator into the
-    // decimated clay airplane. It outranks world flags and ambient effects,
+    // decimated clay airplane. It outranks ambient effects,
     // but every deliberate interaction above still owns the object first.
     : airportCubeModel
     ? airportCubeModel
-    // A world-map country crossing briefly becomes the navigator. It outranks
-    // the ambient boat/globe hover as well as weather/music, so crossing water
-    // can never hide the flag acknowledgement.
-    : countryFlagCubeModel
-    ? countryFlagCubeModel
     // Water is intentionally occasional: one short cooldown-limited boat
     // pulse, then the literal globe. Ordinary land is the globe immediately.
     : outerMapNavigatorModel
@@ -4539,7 +4594,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // While a swap is underway, preparing the actual request takes precedence.
   // A subscreen instead warms its owning tab's main object for a quick exit.
   const nextTabIndex = (TAB_ORDER.indexOf(activeTab) + 1) % TAB_ORDER.length
-  const cubePreparationModel = requestedCubeModel !== appliedCubeModel
+  const cubePreparationModel = requestedCubeModel !== readyCubeModel
     ? requestedCubeModel
     : cubeScreen
       ? tabNavigatorModel(activeTab, mapNight, mapMoon, mapMorning)
@@ -4832,6 +4887,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     subscreenRequested,
     permissionOpen: activePermission !== null,
   })
+  const landmarkTourControl = mapTourControlState(mapTourOn, mapTourPaused)
 
   return (
     <section
@@ -4938,6 +4994,27 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 if (!next) playPop(0.2)
               }}
             />
+            <MapRadioButton
+              active={mapRadioState !== 'off'}
+              onPress={() => {
+                playPop(0.25)
+                if (isMapRadioActive()) {
+                  stopMapRadio()
+                  return
+                }
+                const location = radioLocationRef.current
+                if (location) startRadioForMap(location.lat, location.lng)
+                else startRadioForMap()
+              }}
+            />
+            {RADIUS_REWARD_PREVIEW_ENABLED && (
+              <MapRewardRollButton
+                active={Boolean(radiusRewardDiceSignal)}
+                onPress={() => {
+                  if (!radiusRewardDiceSignal) announceRadiusRewardNavigator(true)
+                }}
+              />
+            )}
             <SideControlIconButton
               icon="map.locate"
               aria-label="Go to my location"
@@ -4949,10 +5026,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               onActivate={() => { playPop(0.25); sendMapAction('search') }}
             />
             <SideControlIconButton
-              icon="map.tour_play"
-              aria-pressed={mapTourOn}
-              aria-label={mapTourOn ? 'Stop map tour' : 'Start map tour'}
-              onActivate={() => { playPop(0.25); sendMapAction('tour') }}
+              icon={landmarkTourControl.icon}
+              aria-pressed={landmarkTourControl.pressed}
+              aria-label={landmarkTourControl.label}
+              onActivate={() => { playPop(0.25); sendMapAction(landmarkTourControl.action) }}
             />
             <MapNewsButton
               active={mapNewsTourOn}
@@ -5008,6 +5085,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           {NATIVE_ADAPTIVE_MAP && !nativeMapWebFallback && (
             <label
               className={styles.nativeMapZoom}
+              style={{
+                '--mapControlSpan': `${mapSideControlRailSpan(RADIUS_REWARD_PREVIEW_ENABLED ? 10 : 9)}px`,
+              } as React.CSSProperties}
               aria-label="Map zoom"
               data-poplur-native-hit-region
               onPointerDown={beginNativeZoomGesture}
@@ -5332,6 +5412,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
           aria-live="polite"
         >
           <span key={mapPlace} className={styles.mapTitleText}>{mapPlace}</span>
+          <MapRadioStatusLabel className={styles.mapRadioLabel} />
           {/* Your pops standing in this area — same outlined-blue voice as the
               place line, one size down. A tap opens the profile with exactly
               these pops lit up. */}
@@ -5431,11 +5512,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               cameraFlashArmed={cameraFlashArmed}
               cameraFlashPulse={cameraFlashPulse}
               camcorderRecording={recordMs != null}
+              diceRollPulse={radiusRewardDiceRollSignal?.pulse}
+              diceRollFace={radiusRewardDiceRollSignal?.face}
               motionContextKey={`${committedTab}:${cubeScreen ?? 'root'}:${appliedCubeModel}`}
               // One forward destination and one just-retired object form the
               // bounded navigator pool. Only this current model is rendered.
               prepareModelUrl={cubePreparationModel}
               onModelReady={url => {
+                setReadyCubeModel(url)
                 const awaiting = awaitingCubeModelRef.current
                 if (!awaiting || url !== awaiting.model) return
                 if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)

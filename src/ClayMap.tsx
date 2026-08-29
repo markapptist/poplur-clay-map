@@ -7,17 +7,22 @@ import { SideControlIconImage } from './SideControlIcon'
 import { weatherIconIdForMode } from './sideControlIcons'
 import {
   MAP_BROWSE_3D_BEARING,
-  MAP_BROWSE_3D_EXIT_ZOOM,
+  MAP_BROWSE_3D_ENTER_ZOOM,
   MAP_BROWSE_3D_MAX_PITCH,
   MAP_BROWSE_3D_PITCH,
+  MAP_BUILDING_DENSITY_LAB_EVENT,
+  MAP_BUILDING_DENSITY_LAB_MAX,
+  MAP_BUILDING_DENSITY_LAB_STATE_MESSAGE,
+  MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM,
   MAP_BUILDING_DETAIL_MAX,
   MAP_LANDMARK_3D_MAX_PITCH,
-  mapBuildingDetailBudget,
+  mapBuildingDensityLabBudget,
   mapBuildingDetailPlan,
   mapBuildingExtrusionMinHeightM,
   mapBuildingExtrusionRadiusM,
   mapBrowsePresentation,
   nearestMapBuildingDetailIds,
+  normalizeMapBuildingDensityLabBudget,
   preserveLandmarkCamera,
   type MapBuildingDetailCandidate,
 } from './mapPresentationPolicy'
@@ -48,6 +53,11 @@ import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { modelSprite } from './modelSprite'
 import {
+  MAP_COLOR_CONTROL_GAP,
+  mapSideControlRailSpan,
+  mapSideControlRailWithColorSpan,
+} from './channelControlSizing'
+import {
   GROUNDED_SPRITE_BOTTOM_GUTTER,
   visibleBaseOffsetPx,
 } from './groundedSpritePlacement'
@@ -63,6 +73,7 @@ import {
 import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer } from './mapClaims'
+import { ownershipTerrainPolygon } from './ownershipTerrain'
 import {
   dominanceFameScore,
   dominanceLeaders,
@@ -70,7 +81,7 @@ import {
 } from './mapDominance'
 import { createMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
-import { takeoverTint, takeoverTintRGB, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
+import { takeoverTint, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
 import {
   fetchRoute,
   installRouteLayers,
@@ -88,12 +99,14 @@ import styles from './ClayMap.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import { dropNewsMessage, MESSAGE_MAX } from './newsMessages'
 import {
-  countryFlagModelUrl,
+  countryNameForCode,
   nearestCountryCode,
-  WORLD_FLAG_MOVE_SAMPLE_MS,
-  worldFlagZoomActive,
+  transitionWorldCountryCode,
+  WORLD_COUNTRY_MOVE_SAMPLE_MS,
+  worldCountryZoomActive,
   type CountryMapFeature,
-} from './countryFlags'
+  type WorldCountryUpdate,
+} from './mapCountrySignal'
 import {
   airportCubeHit,
   isAirportMapFeature,
@@ -162,6 +175,9 @@ export interface ClayMapProps {
   /** Receives the same bounded viewport ranking published to an embedding
    *  shell, allowing the standalone map route to own its Conquer preview. */
   onConquerSnapshot?: (snapshot: MapConquerSnapshot) => void
+  /** At true world zoom, reports the country under the sampled camera centre.
+   *  The shell uses this for the ordinary blue location label. */
+  onWorldCountryChange?: (country: WorldCountryUpdate) => void
   /** A pin was tapped: go to that poster's profile, with this pop's post lit. */
   onPinOpen?: (pin: PopPin) => void
   /** The signed-in user's profile photo, used by the persistent self-location
@@ -259,16 +275,15 @@ function WeatherSticker({ mode, className = '' }: { mode: WeatherMode; className
   )
 }
 
-// One cross-platform renderer: Mercator and flat at city/region scale, with
-// our scoped clay building extrusions appearing only at close street zoom.
-// This is deliberately distinct from the former flat-only fallback and from
-// the former globe/always-3D mode.
+// One cross-platform renderer: Mercator and top-down at world/region scale,
+// then a shallow isometric board at local scale. Roads and land stay flat;
+// close browsing replaces the footprint sheet with a stable, count-bounded
+// 10% sample of true 3D buildings while independent landmark models pop up.
 export const MAP_2D = false
 const SHARED_ADAPTIVE_MAP = true
-// Extrusions become eligible only after the close-map hysteresis boundary.
-// Flat footprints remain underneath at every zoom, so the city never has to
-// swap every house into 3D just to retain its visual detail.
-const BUILDING_3D_MIN_ZOOM = MAP_BROWSE_3D_EXIT_ZOOM
+// The dormant generic extrusion layer becomes eligible only after the close-
+// detail threshold. Flat footprints remain the mid-zoom presentation.
+const BUILDING_3D_MIN_ZOOM = MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM
 const MAP_LITE_REQUESTED =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).get('mapLite') === '1'
@@ -297,6 +312,7 @@ const BUILDING_DETAIL_USES_PROPERTY_ID = !import.meta.env.DEV && OVERTURE_BUILDI
 const BUILDING_DETAIL_SOURCE_ID = BUILDING_DETAIL_USES_PROPERTY_ID
   ? 'overture-buildings'
   : 'clay-streets'
+const BUILDING_DETAIL_QUERY_LAYER_ID = 'clay-building-detail-candidates'
 
 // Shader-like label material that stays inside Mapbox's batched SDF glyph
 // renderer. The soft plum edge gives the type molded depth while a restrained
@@ -779,15 +795,22 @@ function mappedBuildingHeightExpression() {
 
 /** The extrusion layer is finite in geography as well as zoom. A pitched
  * camera can see several vector tiles toward the horizon, so a zoom-only gate
- * still loaded city-wide geometry. The flat footprint layer remains outside
- * this circle and preserves the full map. */
+ * still loaded city-wide geometry. At close detail, ids outside this finite
+ * set stay absent rather than falling back to a flat footprint sheet. */
 function boundedBuildingExtrusionFilter(
   _center: [number, number],
   _radiusM: number,
   _minHeightM: number,
   detailIds: readonly (string | number)[],
+  maxDetailBuildings = MAP_BUILDING_DETAIL_MAX,
 ) {
-  const boundedDetailIds = detailIds.slice(0, MAP_BUILDING_DETAIL_MAX)
+  const boundedDetailIds = detailIds.slice(
+    0,
+    Math.min(
+      normalizeMapBuildingDensityLabBudget(maxDetailBuildings),
+      MAP_BUILDING_DENSITY_LAB_MAX,
+    ),
+  )
   // Height, camera radius and landmark replacement are resolved before an id
   // enters this finite set. Keeping the runtime filter id-only matters on
   // iPhone: Mapbox can evaluate geometry-distance expressions differently
@@ -1005,71 +1028,8 @@ function circlePolygon(center: mapboxgl.LngLat, radiusMeters: number, steps = 28
   }
 }
 
-/**
- * The ground a pop holds. A radius is a number, but a TERRITORY is not a disc —
- * "it still looks like a circle" was the whole complaint, and painting a
- * perfect compass circle over a city says "here is a measurement", not "here is
- * land somebody took".
- *
- * So the reach is modulated by a few beating sines: the claim bulges down some
- * bearings and falls short on others, the way real ground gets taken. The area
- * still averages the stated radius, so the RADIUS card keeps telling the truth.
- *
- * Seeded off the centre coordinates, so a pop's territory is the SAME shape
- * every time you fly back to it. A random one would re-draw its own borders on
- * every visit, which is worse than a circle.
- */
-function territoryPolygon(center: mapboxgl.LngLat, radiusMeters: number, steps = 128) {
-  const coordinates: [number, number][] = []
-  const latRadius = radiusMeters / 110_540
-  const lngRadius = radiusMeters / (111_320 * Math.max(0.2, Math.cos(center.lat * Math.PI / 180)))
-  // Deterministic phases from the centre. Irrational multipliers keep the three
-  // waves from lining up into something that reads as a regular polygon.
-  const seed = Math.abs(center.lng * 1000) + Math.abs(center.lat * 1000)
-  const p1 = seed % (Math.PI * 2)
-  const p2 = (seed * 1.618) % (Math.PI * 2)
-  const p3 = (seed * 2.414) % (Math.PI * 2)
-  for (let i = 0; i <= steps; i += 1) {
-    const angle = (i / steps) * Math.PI * 2
-    const wobble =
-      1
-      + 0.20 * Math.sin(angle * 3 + p1)
-      + 0.12 * Math.sin(angle * 5 + p2)
-      + 0.07 * Math.sin(angle * 8 + p3)
-    coordinates.push([
-      center.lng + Math.cos(angle) * lngRadius * wobble,
-      center.lat + Math.sin(angle) * latRadius * wobble,
-    ])
-  }
-  // Close on the exact first point. A seam of a few metres is invisible in the
-  // fill but shows as a nick in the dashed edge drawn from the same ring.
-  coordinates[coordinates.length - 1] = coordinates[0]
-  return { type: 'Polygon' as const, coordinates: [coordinates] }
-}
-
 const COMPOSE_RADIUS_SOURCE = 'poplur-compose-radius'
 const COMPOSE_RADIUS_FILL = 'poplur-compose-radius-fill'
-const COMPOSE_RADIUS_TEXTURE = 'poplur-compose-radius-texture'
-const COMPOSE_RADIUS_TEXTURE_IMAGE = 'poplur-compose-radius-hatch'
-const COMPOSE_RADIUS_EDGE = 'poplur-compose-radius-edge'
-const COMPOSE_RADIUS_LABEL = 'poplur-compose-radius-label'
-
-function composeRadiusTexture() {
-  const size = 16
-  const data = new Uint8Array(size * size * 4)
-  const [red, green, blue] = takeoverTintRGB(255, 214, 235)
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      if ((x + y) % 8 > 1) continue
-      const offset = (y * size + x) * 4
-      data[offset] = red
-      data[offset + 1] = green
-      data[offset + 2] = blue
-      data[offset + 3] = 88
-    }
-  }
-  return { width: size, height: size, data }
-}
 
 /**
  * Where the takeover paint belongs in the layer stack.
@@ -1108,9 +1068,6 @@ export function installComposeRadiusPreview(map: mapboxgl.Map) {
       data: { type: 'FeatureCollection', features: [] },
     })
   }
-  if (!map.hasImage(COMPOSE_RADIUS_TEXTURE_IMAGE)) {
-    map.addImage(COMPOSE_RADIUS_TEXTURE_IMAGE, composeRadiusTexture(), { pixelRatio: 2 })
-  }
   if (!map.getLayer(COMPOSE_RADIUS_FILL)) {
     map.addLayer({
       id: COMPOSE_RADIUS_FILL,
@@ -1130,54 +1087,6 @@ export function installComposeRadiusPreview(map: mapboxgl.Map) {
         'fill-opacity': 0.62,
       },
     }, takeoverInsertBefore(map))
-  }
-  if (!map.getLayer(COMPOSE_RADIUS_TEXTURE)) {
-    map.addLayer({
-      id: COMPOSE_RADIUS_TEXTURE,
-      // Same reasoning as the fill: beforeId, not slot, so water masks it.
-      type: 'fill',
-      source: COMPOSE_RADIUS_SOURCE,
-      paint: {
-        'fill-pattern': COMPOSE_RADIUS_TEXTURE_IMAGE,
-        'fill-opacity': 0.72,
-      },
-    }, takeoverInsertBefore(map))
-  }
-  if (!map.getLayer(COMPOSE_RADIUS_EDGE)) {
-    map.addLayer({
-      id: COMPOSE_RADIUS_EDGE,
-      slot: 'top',
-      type: 'line',
-      source: COMPOSE_RADIUS_SOURCE,
-      paint: {
-        'line-color': '#FFF2F8',
-        'line-width': 3,
-        'line-opacity': 0.96,
-        'line-dasharray': [1.5, 1.25],
-      },
-    })
-  }
-  if (!map.getLayer(COMPOSE_RADIUS_LABEL)) {
-    map.addLayer({
-      id: COMPOSE_RADIUS_LABEL,
-      slot: 'top',
-      type: 'symbol',
-      source: COMPOSE_RADIUS_SOURCE,
-      filter: ['==', ['geometry-type'], 'Point'] as never,
-      layout: {
-        'text-field': ['get', 'label'],
-        'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
-        'text-size': 13,
-        'text-anchor': 'center',
-        'text-allow-overlap': true,
-        'text-ignore-placement': true,
-      },
-      paint: {
-        'text-color': '#FFF2F8',
-        'text-halo-color': '#8F1556',
-        'text-halo-width': 2.5,
-      },
-    })
   }
 }
 
@@ -1213,38 +1122,19 @@ export function updateComposeRadiusPreview(
   }
 
   const radiusMeters = radiusKm * 1000
-  const polygon = territoryPolygon(center, radiusMeters)
+  const polygon = ownershipTerrainPolygon([center.lng, center.lat], radiusKm, {
+    kind: 'coverage',
+  })
   const latRadius = radiusMeters / 110_540
   const lngRadius = radiusMeters / (111_320 * Math.max(0.2, Math.cos(center.lat * Math.PI / 180)))
-  const diameterKm = radiusKm * 2
   const preview: GeoJSON.FeatureCollection = {
     type: 'FeatureCollection',
-    features: [
-      {
-        type: 'Feature',
-        properties: { kind: 'coverage' },
-        geometry: polygon,
-      },
-      {
-        type: 'Feature',
-        properties: {
-          kind: 'label',
-          label: `${radiusKm} km radius · ${diameterKm} km across`,
-        },
-        geometry: {
-          type: 'Point',
-          coordinates: [center.lng + lngRadius * 0.64, center.lat],
-        },
-      },
-    ],
+    features: [polygon],
   }
   source.setData(preview)
   try {
     if (map.getLayer(COMPOSE_RADIUS_FILL)) {
       map.setPaintProperty(COMPOSE_RADIUS_FILL, 'fill-color', takeoverTint('#E04791'))
-    }
-    if (map.hasImage(COMPOSE_RADIUS_TEXTURE_IMAGE)) {
-      map.updateImage(COMPOSE_RADIUS_TEXTURE_IMAGE, composeRadiusTexture())
     }
   } catch { /* style changed while the preview was repainting */ }
   applyComposeSurfacePreview(map, preview, theme)
@@ -1374,6 +1264,9 @@ const FOV_DEFAULT = 45
 const HOME_CENTER: [number, number] = [-79.3811, 43.6487]
 const MANAGED_CAMERA_SETTLE_MS = 400
 const MANAGED_CAMERA_JUMP_MS = 350
+/** One finite handoff after a zoom settles. Long enough to read as the board
+ * tilting into place, short enough that a new pinch immediately owns camera. */
+const ISOMETRIC_CAMERA_TRANSITION_MS = 280
 
 // Map lite tier: 3GB-class devices in the native shell (deviceMemory quantizes
 // the A03s to 2; iOS never reports it). Measured on Mali-G52: the map at full
@@ -1438,11 +1331,17 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
   const radiusPreviewLaunch = launchParams.get('radiusReview') === '1'
+  const buildingDensityLabLaunch = launchParams.get('buildingDensityLab') === '1'
+  const mapBaseSideControlCount = buildingDensityLabLaunch || radiusPreviewLaunch ? 10 : 9
+  const mapBaseSideControlSpan = mapSideControlRailSpan(mapBaseSideControlCount)
+  // The colour picker is the final left-rail side button. The opposite zoom
+  // rail spans the complete stack, including this control.
+  const mapSideControlSpan = mapSideControlRailWithColorSpan(mapBaseSideControlCount)
   const focusedPostLaunch = launchParams.get('pickSpot') === '1' || radiusPreviewLaunch
   const adaptiveIOSLaunch = !focusedPostLaunch && (
     SHARED_ADAPTIVE_MAP || launchParams.get('iosTier') === '1'
@@ -1490,7 +1389,6 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   }, [weatherOpen])
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([])
-  const radiusPreviewPinRef = useRef<mapboxgl.Marker | null>(null)
   // Read through a ref inside the marker's click listener: the listener is
   // attached once when the pin is built, and capturing the prop directly would
   // freeze whatever callback identity existed at that moment.
@@ -1634,7 +1532,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // Retain the old end-stop hint for older shell bundles. The current
           // shell owns visibility through its explicit Conquer toggle and can
           // show this same bounded snapshot at either WORLD or LOCAL scope.
-          atFarthestZoom: worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM),
+          atFarthestZoom: worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM),
         }, '*')
       }
       pulseDominanceLayer(map, rankedPins.slice(0, 4).map(pin => pin.id))
@@ -2333,15 +2231,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     map.on('zoom', () => syncZoom(false))
     map.on('zoomend', () => syncZoom(true))
 
-    // ── World-centre country → navigator flag ───────────────────────────────
+    // ── World-centre country → blue location label ─────────────────────────
     // Use country-coded place-label points from the vector tiles Mapbox has
     // already loaded. This works without a reverse-geocoding request and, over
     // water, naturally answers with the nearest visible country. During a
-    // world-view drag, sample at a bounded cadence so the navigator can pop a
-    // flag for each country crossed without querying on every move frame.
-    let activeWorldFlagCode: string | null = null
-    let worldFlagRequest = 0
-    let worldFlagMoveTimer: number | null = null
+    // world-view drag, sample at a bounded cadence so the location label can
+    // follow the country under the centre without querying every move frame.
+    let activeWorldCountryCode: string | null = null
+    let worldCountryMoveTimer: number | null = null
     const worldCountryFeatures = (): CountryMapFeature[] => {
       const features: CountryMapFeature[] = []
       const countryLayer = map.getLayer('country-label') as unknown as {
@@ -2362,64 +2259,49 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       } catch { /* country layer is not ready yet; idle retries once it is */ }
       return features
     }
-    const publishWorldFlag = () => {
-      if (!worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) {
-        worldFlagRequest += 1
-        if (activeWorldFlagCode !== null) {
-          activeWorldFlagCode = null
-          if (window.parent !== window) {
-            window.parent.postMessage({ type: 'poplur-map-country-flag', code: null, modelUrl: null }, '*')
-          }
-        }
+    const publishWorldCountry = () => {
+      const atWorldZoom = worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM)
+      if (!atWorldZoom) {
+        activeWorldCountryCode = transitionWorldCountryCode(
+          activeWorldCountryCode,
+          null,
+          false,
+        ).activeCode
         return
       }
       const center = map.getCenter()
-      const code = nearestCountryCode(worldCountryFeatures(), [center.lng, center.lat])
-      if (!code || code === activeWorldFlagCode) return
-      activeWorldFlagCode = code
-      const request = ++worldFlagRequest
-      void countryFlagModelUrl(code).then(modelUrl => {
-        if (disposed || request !== worldFlagRequest || activeWorldFlagCode !== code) return
-        if (!modelUrl) {
-          // Leave the state retryable. The asset resolver clears failed cache
-          // entries, so a later settled pan can recover without reloading map.
-          activeWorldFlagCode = null
-          return
-        }
-        if (window.parent !== window) {
-          window.parent.postMessage({ type: 'poplur-map-country-flag', code, modelUrl }, '*')
-        }
-      })
+      const transition = transitionWorldCountryCode(
+        activeWorldCountryCode,
+        nearestCountryCode(worldCountryFeatures(), [center.lng, center.lat]),
+        true,
+      )
+      activeWorldCountryCode = transition.activeCode
+      const code = transition.publishCode
+      if (!code) return
+      const name = countryNameForCode(code)
+      if (!name) return
+      onWorldCountryChange?.({ code, name })
     }
-    const sampleWorldFlagDuringMove = () => {
-      if (!worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) {
-        publishWorldFlag()
-        return
-      }
+    const sampleWorldCountryDuringMove = () => {
+      if (!worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM)) return
       // Coalesce a stream of touch/trackpad move events into one lightweight
       // tile query per sampling window. The timeout is map-owned and cleared
       // with every other delayed map job during disposal.
-      if (worldFlagMoveTimer !== null) return
-      worldFlagMoveTimer = later(() => {
-        worldFlagMoveTimer = null
-        publishWorldFlag()
-      }, WORLD_FLAG_MOVE_SAMPLE_MS)
+      if (worldCountryMoveTimer !== null) return
+      worldCountryMoveTimer = later(() => {
+        worldCountryMoveTimer = null
+        publishWorldCountry()
+      }, WORLD_COUNTRY_MOVE_SAMPLE_MS)
     }
-    // Crossing inward restores the ordinary map object on the first zoom
-    // frame; a settled camera still gets one exact final country sample.
-    const clearWorldFlagPastOuterZoom = () => {
-      if (!worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) publishWorldFlag()
-    }
-    const retryFirstWorldFlagOnIdle = () => {
-      if (activeWorldFlagCode === null && worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) {
-        publishWorldFlag()
+    const retryFirstWorldCountryOnIdle = () => {
+      if (activeWorldCountryCode === null && worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM)) {
+        publishWorldCountry()
       }
     }
-    map.on('zoom', clearWorldFlagPastOuterZoom)
-    map.on('move', sampleWorldFlagDuringMove)
-    map.on('moveend', publishWorldFlag)
-    map.on('zoomend', publishWorldFlag)
-    map.on('idle', retryFirstWorldFlagOnIdle)
+    map.on('move', sampleWorldCountryDuringMove)
+    map.on('moveend', publishWorldCountry)
+    map.on('zoomend', publishWorldCountry)
+    map.on('idle', retryFirstWorldCountryOnIdle)
 
     // ── Visible airport → navigator airplane ─────────────────────────────────
     // The airport moment follows the camera, not the render loop. Query only
@@ -2429,6 +2311,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     let airportLayerIds: string[] | null = null
     let activeAirportId: string | null = null
     const visibleAirportFeatures = (): AirportMapFeature[] => {
+      // Camera changes can still emit move/zoom edges while Mapbox is swapping
+      // or rebuilding its style (notably after Vite/native WebView reloads).
+      // `getStyle()` throws during that narrow window; airport discovery is
+      // opportunistic, so wait for the next settled/idle edge instead of
+      // crashing the owning map/preview surface.
+      if (!map.isStyleLoaded()) return []
       if (airportLayerIds === null) {
         airportLayerIds = (map.getStyle()?.layers ?? [])
           .filter(layer => layer.type === 'symbol' && /airport|aerodrome|poi/i.test(layer.id))
@@ -2499,7 +2387,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       worldHoverTimer = null
       const point = pendingWorldHoverPoint
       pendingWorldHoverPoint = null
-      const worldZoom = worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)
+      const worldZoom = worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM)
       if (!point || !worldZoom) {
         publishWorldHover(null)
         return
@@ -2530,7 +2418,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }))
     }
     const sampleWorldHover = (event: MouseEvent) => {
-      if (!worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) return
+      if (!worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM)) return
       const bounds = mapCanvas.getBoundingClientRect()
       pendingWorldHoverPoint = new mapboxgl.Point(
         event.clientX - bounds.left,
@@ -2549,10 +2437,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       publishWorldHover(restore)
     }
     const leaveWorldHover = () => {
-      clearWorldHover(worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM) ? 'globe' : null)
+      clearWorldHover(worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM) ? 'globe' : null)
     }
     const clearWorldHoverPastOuterZoom = () => {
-      if (!worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM)) clearWorldHover()
+      if (!worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM)) clearWorldHover()
     }
     // Native canvas mouse events are the actual hover contract. Using them
     // directly also avoids relying on Mapbox's synthesized MapMouseEvent in a
@@ -2767,7 +2655,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // wake it "by accident", so without this the HUD could respond while
       // Mapbox's pan frame remained retained and looked frozen.
       wakeManagedRendering(3_200)
-      if (worldFlagZoomActive(map.getZoom(), MAP_MIN_ZOOM) && !map.dragPan.isEnabled()) {
+      if (worldCountryZoomActive(map.getZoom(), MAP_MIN_ZOOM) && !map.dragPan.isEnabled()) {
         map.dragPan.enable()
       }
       map.triggerRepaint()
@@ -2950,15 +2838,19 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     map.on('zoomend', cullMarkersToViewport)
     map.on('idle', cullMarkersToViewport)
 
-    // ── Camera policy: flat by default, shallow depth only very close ────────
-    // The social map stays calm and north-up like Snap Map. At close street
-    // scale it may add a restrained amount of depth, but never the former
-    // 55-70 degree diorama. Thermal/power pressure reduces the finite building
-    // batch while retaining the close camera's readable pitched framing.
-    const HYBRID_ZOOM = MAP_BROWSE_3D_EXIT_ZOOM
+    // ── Camera policy: world 2D, local isometric landmark board ──────────────
+    // The world remains calm, top-down and north-up. At local scale the flat
+    // land/road sheet tilts once into a restrained 2.5D board. Inside the
+    // close-detail band, a stable distributed 10% sample of ordinary buildings
+    // pops up (with a hard count ceiling) while the rest disappear instead of
+    // becoming a flat roof field. Landmarks remain independently governed hero
+    // pieces, and Street View retains the same finite generic-building batch.
     let adaptiveCameraFrame: number | null = null
-    let adaptiveThreeDimensional = false
+    let adaptiveIsometric = false
     let lastThreeDLayerVisibility: boolean | null = null
+    let buildingDensityLabRequestedMax: number | null = null
+    let buildingDensityLabRequestId = 'density-0'
+    let lastBuildingDensitySelected = 0
     const threeDLayerIds = ['clay-buildings-3d', 'clay-building-caps'] as const
     let lastBuildingCull: {
       lng: number
@@ -2978,7 +2870,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const radiusM = mapBuildingExtrusionRadiusM(map.getZoom(), performanceMode)
       if (radiusM == null) return false
       const minHeightM = mapBuildingExtrusionMinHeightM(performanceMode)
-      const detailBudget = mapBuildingDetailBudget(performanceMode)
+      const detailBudget = mapBuildingDensityLabBudget(
+        buildingDensityLabRequestedMax,
+        performanceMode,
+      )
       const center = map.getCenter()
       const budgetChanged = !lastBuildingCull
         || lastBuildingCull.radiusM !== radiusM
@@ -2996,13 +2891,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const point = forwardBuildingCullCenter(center, map.getBearing(), radiusM)
       let rendered: mapboxgl.MapboxGeoJSONFeature[]
       try {
-        if (!map.getLayer('clay-buildings-2d')
+        if (!map.getLayer(BUILDING_DETAIL_QUERY_LAYER_ID)
           || !map.getSource(BUILDING_DETAIL_SOURCE_ID)
           || !map.isSourceLoaded(BUILDING_DETAIL_SOURCE_ID)) {
           return false
         }
         rendered = map.queryRenderedFeatures(undefined as never, {
-          layers: ['clay-buildings-2d'],
+          layers: [BUILDING_DETAIL_QUERY_LAYER_ID],
         })
       } catch {
         return false
@@ -3042,6 +2937,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         performanceMode,
         minHeightM,
         radiusM,
+        buildingDensityLabRequestedMax,
       )
       const selectionKey = detailIds.map(id => `${typeof id}:${String(id)}`).join('|')
       if (!forceApply && !budgetChanged && movedM < radiusM * 0.16
@@ -3049,7 +2945,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       try {
         map.setFilter(
           'clay-buildings-3d',
-          boundedBuildingExtrusionFilter(point, radiusM, minHeightM, detailIds) as never,
+          boundedBuildingExtrusionFilter(
+            point,
+            radiusM,
+            minHeightM,
+            detailIds,
+            detailBudget,
+          ) as never,
         )
         lastBuildingCull = {
           lng: center.lng,
@@ -3077,15 +2979,69 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
               radiusM,
               Math.max(45, minHeightM),
               detailIds,
+              detailBudget,
             ) as never,
           )
         } catch { /* main finite extrusion batch is already settled */ }
       }
+      lastBuildingDensitySelected = detailIds.length
+      postBuildingDensityLabState(detailIds.length, true)
       return true
+    }
+    const postBuildingDensityLabState = (
+      selectedBuildings: number,
+      close3dActive = lastThreeDLayerVisibility === true,
+    ) => {
+      if (!buildingDensityLabLaunch || window.parent === window) return
+      const performanceMode = PoplurPerformanceManager.policy.mode
+      window.parent.postMessage({
+        type: MAP_BUILDING_DENSITY_LAB_STATE_MESSAGE,
+        version: 1,
+        requestId: buildingDensityLabRequestId,
+        requestedMaxBuildings: buildingDensityLabRequestedMax,
+        effectiveMaxBuildings: mapBuildingDensityLabBudget(
+          buildingDensityLabRequestedMax,
+          performanceMode,
+        ),
+        selectedBuildings: Math.max(0, Math.floor(selectedBuildings)),
+        performanceMode,
+        close3dActive,
+      }, window.location.origin === 'null' ? '*' : window.location.origin)
     }
     const buildingCullScheduler = createMapBuildingCullScheduler(refreshSelection => {
       return updateBuildingExtrusionCull(false, refreshSelection)
     })
+    const onBuildingDensityLab = (event: Event) => {
+      if (!buildingDensityLabLaunch) return
+      const detail = (event as CustomEvent<{
+        version?: unknown
+        requestId?: unknown
+        maxBuildings?: unknown
+      }>).detail
+      if (detail?.version !== 1) return
+      const requestedMax = detail.maxBuildings == null
+        ? null
+        : normalizeMapBuildingDensityLabBudget(detail.maxBuildings)
+      buildingDensityLabRequestId = typeof detail.requestId === 'string'
+        ? detail.requestId.slice(0, 64)
+        : buildingDensityLabRequestId
+      if (requestedMax === buildingDensityLabRequestedMax) {
+        postBuildingDensityLabState(
+          lastThreeDLayerVisibility === true ? lastBuildingDensitySelected : 0,
+        )
+        return
+      }
+      buildingDensityLabRequestedMax = requestedMax
+      lastBuildingCull = null
+      buildingCullScheduler.markPolicyChanged()
+      if (lastThreeDLayerVisibility === true && adaptiveCameraFrame == null) {
+        buildingCullScheduler.onIdle(true)
+      } else {
+        lastBuildingDensitySelected = 0
+        postBuildingDensityLabState(0, false)
+      }
+    }
+    window.addEventListener(MAP_BUILDING_DENSITY_LAB_EVENT, onBuildingDensityLab)
     const threeDVisibilityRetry = createSettledMapLayerVisibilityRetry(enabled => {
       if (!map.isStyleLoaded()) {
         lastThreeDLayerVisibility = null
@@ -3106,11 +3062,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           needsReconcile = true
         }
       }
-      // The layer boots with an empty filter. Queue one settled selection
-      // before/after close-3D entry instead of querying during zoomend and
-      // again on idle.
+      // The layer boots with an empty filter. Close ordinary browsing and
+      // explicit Street View each queue one settled, finite selection pass.
       if (enabled && (lastThreeDLayerVisibility !== true || needsReconcile)) {
         buildingCullScheduler.markPolicyChanged()
+      }
+      if (!enabled) {
+        lastBuildingDensitySelected = 0
+        postBuildingDensityLabState(0, false)
       }
       // Never cache a rejected style-transition write. The next settled idle
       // edge retries once, even if the camera was restored directly at its
@@ -3125,37 +3084,34 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // `zoomend` is emitted while Mapbox may still be finishing symbol
       // placement. Scheduling the one-shot camera settle for the next paint
       // avoids mutating that placement pass (which can otherwise throw inside
-      // Mapbox on the close-zoom handoff). This is gesture-driven, never a
-      // standing render loop. It also replaces any pending settle.
+      // Mapbox on the local-board handoff). A brief ease reads as one physical
+      // tilt instead of a 2D/3D flash. This is gesture-driven, never a standing
+      // render loop, and a newer settle replaces any pending frame.
       adaptiveCameraFrame = nextFrame(() => {
         adaptiveCameraFrame = null
         if (disposed || !map.isStyleLoaded()) return
-        map.jumpTo({ pitch, bearing })
+        wakeManagedRendering(ISOMETRIC_CAMERA_TRANSITION_MS + MANAGED_CAMERA_SETTLE_MS)
+        map.easeTo({
+          pitch,
+          bearing,
+          duration: ISOMETRIC_CAMERA_TRANSITION_MS,
+          essential: true,
+        })
       })
     }
     const enforceHybridPitch = () => {
       if (MAP_2D) {
-        adaptiveThreeDimensional = false
+        adaptiveIsometric = false
         setThreeDLayerVisibility(false)
         if (map.getMinPitch() !== 0) map.setMinPitch(0)
         if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
         return
       }
       const performanceMode = PoplurPerformanceManager.policy.mode
-      const authoredDetail = () => mapBuildingDetailPlan({
-        intent: 'authored',
-        zoom: map.getZoom(),
-        pitch: map.getPitch(),
-        wasThreeDimensional: adaptiveThreeDimensional,
-        performanceMode,
-      })
       if ((map as unknown as { __cinematic?: boolean }).__cinematic) {
-        // Tour travel stays flat while it is wide, then reveals only the
-        // bounded nearby batch as the authored camera arrives close and
-        // pitched. Never replace the tour's own angle in normal quality.
-        const plan = authoredDetail()
-        adaptiveThreeDimensional = plan.threeDimensional
-        setThreeDLayerVisibility(plan.threeDimensional)
+        // Tours own their camera angle and independently reveal their intended
+        // landmark. Keep the ordinary ground/building sheet flat throughout.
+        setThreeDLayerVisibility(false)
         return
       }
       if ((map as unknown as { __streetView?: boolean }).__streetView) {
@@ -3163,10 +3119,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           intent: 'street',
           zoom: map.getZoom(),
           pitch: map.getPitch(),
-          wasThreeDimensional: adaptiveThreeDimensional,
+          wasThreeDimensional: adaptiveIsometric,
           performanceMode,
         })
-        adaptiveThreeDimensional = plan.threeDimensional
         setThreeDLayerVisibility(plan.threeDimensional)
         if (!plan.threeDimensional) return
         if (map.getMaxZoom() !== STREET_VIEW_MAX_ZOOM) map.setMaxZoom(STREET_VIEW_MAX_ZOOM)
@@ -3176,18 +3131,24 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const activeLandmark = [...landmarks3dRef.current.entries()]
         .find(([, handle]) => handle.isActive())
       if (preserveLandmarkCamera(Boolean(activeLandmark), performanceMode)) {
-        // Preserve the authored landmark angle while applying the same close,
-        // count-bounded district batch as normal browsing. Large landmarks
-        // whose authored frame stays wide retain only their custom model.
-        const plan = authoredDetail()
-        adaptiveThreeDimensional = plan.threeDimensional
-        setThreeDLayerVisibility(plan.threeDimensional)
+        // Preserve the authored landmark angle while its custom model pops up,
+        // but use the ordinary browse eligibility for nearby generic detail.
+        // The 10% sample and 5/5/3/1 ceilings keep the hero dominant without
+        // flattening every surrounding building at a close destination.
+        const frame = activeLandmark ? resolveLandmarkCameraFrame(activeLandmark[0]) : null
+        const buildingPlan = mapBuildingDetailPlan({
+          intent: 'browse',
+          zoom: map.getZoom(),
+          pitch: frame?.pitch ?? map.getPitch(),
+          wasThreeDimensional: true,
+          performanceMode,
+        })
+        setThreeDLayerVisibility(buildingPlan.threeDimensional)
         if (map.getMaxPitch() !== MAP_LANDMARK_3D_MAX_PITCH) map.setMaxPitch(MAP_LANDMARK_3D_MAX_PITCH)
         if (map.getMinPitch() !== 0) map.setMinPitch(0)
         // Normal iPhone quality is REDUCED. Restoring the authored shallow
         // hero frame here is what makes a tower read upright and grounded
         // after a top-down wide-map visit instead of showing only its roof.
-        const frame = activeLandmark ? resolveLandmarkCameraFrame(activeLandmark[0]) : null
         if (SHARED_ADAPTIVE_MAP && frame && (
           Math.abs(map.getPitch() - frame.pitch) > 0.5
           || Math.abs(map.getBearing() - (frame.bearing ?? 0)) > 0.5
@@ -3198,38 +3159,52 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
       const presentation = mapBrowsePresentation({
         zoom: map.getZoom(),
-        wasThreeDimensional: adaptiveThreeDimensional,
+        wasThreeDimensional: adaptiveIsometric,
         performanceMode,
       })
-      const enteredThreeDimensions = presentation.threeDimensional && !adaptiveThreeDimensional
-      adaptiveThreeDimensional = presentation.threeDimensional
-      setThreeDLayerVisibility(presentation.threeDimensional)
+      const enteredIsometric = presentation.threeDimensional && !adaptiveIsometric
+      adaptiveIsometric = presentation.threeDimensional
+      const buildingPlan = mapBuildingDetailPlan({
+        intent: 'browse',
+        zoom: map.getZoom(),
+        pitch: presentation.pitch,
+        wasThreeDimensional: adaptiveIsometric,
+        performanceMode,
+      })
+      // Camera depth begins before generic building detail. At the final close
+      // band, reveal only the stable sampled/capped batch; omitted buildings
+      // stay absent so the board remains legible and thermally bounded.
+      setThreeDLayerVisibility(buildingPlan.threeDimensional)
       if (presentation.threeDimensional) {
-        // Wide mode leaves maxPitch at zero. Raise the ceiling before setting
-        // the shallow target so Mapbox accepts the camera transition.
-        if (map.getMaxPitch() !== presentation.maxPitch) map.setMaxPitch(presentation.maxPitch)
+        // Wide mode leaves maxPitch at zero. Raise the ceiling before the one
+        // finite tilt. If an authored landmark is currently steeper, do not
+        // clamp it before the easing frame has brought it down naturally.
+        const transitionCeiling = Math.max(presentation.maxPitch, map.getPitch())
+        if (map.getMaxPitch() !== transitionCeiling) map.setMaxPitch(transitionCeiling)
         if (map.getMinPitch() !== presentation.minPitch) map.setMinPitch(presentation.minPitch)
         if (SHARED_ADAPTIVE_MAP && (
-          enteredThreeDimensions
+          enteredIsometric
           // A landmark flight, style reload or native restore can flatten an
           // already-close camera without crossing the zoom threshold again.
-          // Re-assert the shallow dimensional frame instead of leaving the
-          // extrusion layer visible from an unreadable roof-only view.
+          // Re-assert the shallow board frame instead of leaving the flat
+          // footprints in an unreadable roof-only view.
           || Math.abs(map.getPitch() - presentation.pitch) > 0.5
           || Math.abs(map.getBearing() - presentation.bearing) > 0.5
         )) {
           settleAdaptiveCamera(presentation.pitch, presentation.bearing)
         }
       } else {
-        // Wide Mercator views are strictly top-down. Letting the former 3D
-        // max-pitch survive here allows a pinch-out to look past the finite
-        // world sheet before the settle callback can flatten it.
+        // Wide Mercator views are strictly top-down. Do not clamp maxPitch to
+        // zero while the camera is still tilted: Mapbox applies that clamp as
+        // an abrupt jump. Keep a temporary ceiling, ease flat, then the
+        // moveend policy call locks the already-flat camera to zero.
         if (map.getMinPitch() !== 0) map.setMinPitch(0)
-        if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
-        // Pulling back returns to the light, north-up 2D map. This prevents a
-        // close-up 3D camera from persisting after the buildings have culled.
         if (SHARED_ADAPTIVE_MAP && (map.getPitch() > 0.5 || Math.abs(map.getBearing()) > 0.5)) {
+          const transitionCeiling = Math.max(MAP_BROWSE_3D_MAX_PITCH, map.getPitch())
+          if (map.getMaxPitch() !== transitionCeiling) map.setMaxPitch(transitionCeiling)
           settleAdaptiveCamera(0, 0)
+        } else if (map.getMaxPitch() !== 0) {
+          map.setMaxPitch(0)
         }
       }
     }
@@ -3241,13 +3216,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       buildingCullScheduler.markSourceTilesChanged()
     }
     const refreshBuildingCullAfterTiles = () => {
-      // `settleAdaptiveCamera` uses jumpTo, and Mapbox emits movestart for that
-      // internal pitch/bearing handoff. Do not let the user gesture's earlier
-      // idle query once before the next-frame jump and again afterward. Pending
-      // work stays coalesced until the one-shot camera frame has completed.
+      // A camera tilt by itself is not a building-detail request. Query generic
+      // building ids only when the close browse/Street layer is actually
+      // visible; the scheduler coalesces the one finite isometric ease into the
+      // same settled selection epoch instead of doubling a gesture query.
       threeDVisibilityRetry.retryOnSettled()
       buildingCullScheduler.onIdle(
-        adaptiveThreeDimensional && adaptiveCameraFrame == null,
+        lastThreeDLayerVisibility === true && adaptiveCameraFrame == null,
       )
     }
     map.on('movestart', queueBuildingCullRefresh)
@@ -3257,22 +3232,24 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     stopAdaptivePresentationPolicy = PoplurPerformanceManager.subscribe(() => {
       buildingCullScheduler.markPolicyChanged()
       enforceHybridPitch()
+      // Thermal/low-power changes can happen while the camera is already
+      // motionless, so they may not produce another Mapbox idle edge. Apply
+      // the smaller (or restored) budget immediately when the close layer is
+      // genuinely settled. If a gesture/ease is active, the pending scheduler
+      // epoch is consumed by that movement's one ordinary idle instead.
+      if (lastThreeDLayerVisibility === true
+        && adaptiveCameraFrame == null
+        && !map.isMoving()) {
+        buildingCullScheduler.onIdle(true)
+      }
     })
 
-    // A native pinch can cross the 3D threshold long before zoomend. Flatten
-    // at the crossing itself so a still-pitched camera never looks past the
-    // finite Mercator sheet while the fingers are still moving. Cinematic
-    // flights own their own staged pitch policy and are deliberately skipped.
-    const flattenWideDuringGesture = () => {
-      const camera = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
-      if (MAP_2D || camera.__cinematic || camera.__tripping || map.getZoom() >= HYBRID_ZOOM) return
-      const landmarkActive = [...landmarks3dRef.current.values()].some(handle => handle.isActive())
-      if (preserveLandmarkCamera(landmarkActive, PoplurPerformanceManager.policy.mode)) return
-      if (map.getMinPitch() !== 0) map.setMinPitch(0)
-      if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
-      if (map.getPitch() !== 0) map.setPitch(0)
-    }
-    map.on('zoom', flattenWideDuringGesture)
+    // Do not mutate pitch or layer mode while a pinch is still in flight.
+    // Mapbox emits many `zoom` samples around the threshold, and flattening on
+    // one of those samples before restoring the settled close camera made the
+    // map visibly flash between top-down and isometric. The flat footprint
+    // sheet is cheap enough to retain unchanged for the whole gesture;
+    // zoomend above performs the one authoritative camera handoff.
     map.on('zoomend', updateLabelCull)
     map.on('pitchend', updateLabelCull)
 
@@ -3943,11 +3920,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
 
       if (!REALISTIC_MAP && !MAP_2D) {
-        // Keep every real footprint visible, but reserve extrusion geometry
-        // for buildings tall enough to benefit from depth. Houses remain in
-        // the inexpensive flat layer below instead of tessellating an entire
-        // neighbourhood into 3D. Overture carries height, num_floors×3.2m, or
-        // nothing, in that order of preference.
+        // Keep every footprint as the inexpensive mid-zoom city sheet, then
+        // replace that sheet at close detail with a stable distributed 10%
+        // sample of true extrusion geometry. The other ~90% are visually
+        // absent—not flattened—so the isometric view reads as a sparse Poplur
+        // board rather than a dense roof field. Overture carries height,
+        // num_floors×3.2m, or nothing, in that order of preference.
         const mappedBuildingHeight = mappedBuildingHeightExpression() as never
         const clayHeight = ['max',
           ['case',
@@ -4136,7 +4114,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       } // end !REALISTIC_MAP fill-extrusion buildings
 
       if (!REALISTIC_MAP && (MAP_2D || SHARED_ADAPTIVE_MAP)) {
-        // Flat clay building footprints for the low-cost renderer.
+        // Flat clay building footprints for the low-cost/mid-zoom renderer.
         //
         // These used to read from Mapbox Streets purely because it was already
         // resident in the style. The saving was real but the coverage was not:
@@ -4166,6 +4144,29 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         const adaptiveThreeDLayerOrder = SHARED_ADAPTIVE_MAP && map.getLayer('clay-buildings-3d')
           ? 'clay-buildings-3d'
           : undefined
+        // Keep selection independent from presentation. The visible footprint
+        // sheet ends as soon as the camera enters the isometric band, so a
+        // pitched view never turns ordinary buildings into flat cardboard.
+        // Sparse 3D massing remains dormant until its separately governed
+        // close-detail band; between those thresholds ordinary buildings are
+        // simply absent. This zero-opacity layer stays queryable at every local zoom and
+        // gives the culler its candidate catalogue after the visible sheet has
+        // gone away. A native `maxzoom` boundary also avoids a zoom-dependent
+        // paint expression: nesting `zoom` below arithmetic/case is rejected by
+        // Mapbox during style construction and can abort the whole clay-world
+        // boot, which presents as a black/empty map in the native shell.
+        map.addLayer({
+          id: BUILDING_DETAIL_QUERY_LAYER_ID,
+          slot: 'top',
+          type: 'fill',
+          source: flatSource,
+          'source-layer': 'building',
+          minzoom: 13.2,
+          paint: {
+            'fill-color': '#000000',
+            'fill-opacity': 0,
+          },
+        }, adaptiveThreeDLayerOrder)
         map.addLayer({
           id: 'clay-buildings-2d-shadow',
           slot: 'top',
@@ -4173,6 +4174,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           source: flatSource,
           'source-layer': 'building',
           minzoom: 13.2,
+          ...(SHARED_ADAPTIVE_MAP
+            ? { maxzoom: MAP_BROWSE_3D_ENTER_ZOOM }
+            : {}),
           paint: {
             'fill-color': '#604836',
             'fill-opacity': 0.42,
@@ -4187,6 +4191,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           source: flatSource,
           'source-layer': 'building',
           minzoom: 13.2,
+          ...(SHARED_ADAPTIVE_MAP
+            ? { maxzoom: MAP_BROWSE_3D_ENTER_ZOOM }
+            : {}),
           paint: {
             'fill-color': building2DColor(map) as never,
             'fill-opacity': 0.96,
@@ -4709,28 +4716,6 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // route beneath towers.
       installRouteLayers(map)
       installComposeRadiusPreview(map)
-      if (radiusPreviewLaunch) {
-        // This screen previews TERRAIN COVERAGE, not claim geometry. Existing
-        // posts normally draw rims and shockwave rings, and the temporary
-        // composer normally draws a dashed edge. Leaving those on makes the
-        // real recoloured roads/buildings look like another circle overlay.
-        // Hide only those outlines in the dedicated review launch; the land,
-        // streets, parks and buildings remain the radius visualization.
-        const hidePaint: Array<[string, string]> = [
-          [COMPOSE_RADIUS_EDGE, 'line-opacity'],
-          [COMPOSE_RADIUS_LABEL, 'text-opacity'],
-          ['poplur-claims-rim', 'line-opacity'],
-          ['poplur-claims-rings', 'line-opacity'],
-          ['poplur-claims-core', 'circle-opacity'],
-          ['poplur-claims-globe', 'circle-opacity'],
-          ['poplur-claims-globe-bloom', 'circle-opacity'],
-        ]
-        for (const [layer, property] of hidePaint) {
-          try {
-            if (map.getLayer(layer)) map.setPaintProperty(layer, property as never, 0 as never)
-          } catch { /* style changed while entering the review */ }
-        }
-      }
       if (prototypeComposer) {
         // Drop a pop by HOLDING the ground you want it on. It used to be a
         // plain tap, which left the map with no tap of its own — and the map
@@ -5232,6 +5217,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       map.off('zoomstart', queueBuildingCullRefresh)
       map.off('sourcedata', markBuildingSourceTilesChanged)
       map.off('idle', refreshBuildingCullAfterTiles)
+      window.removeEventListener(MAP_BUILDING_DENSITY_LAB_EVENT, onBuildingDensityLab)
       idleSnapshot.dispose()
       if (idleSnapshotRef.current === idleSnapshot) idleSnapshotRef.current = null
       stopCarAudio()
@@ -5243,8 +5229,6 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         ref.current.forEach(mk => mk.remove())
         ref.current = []
       })
-      radiusPreviewPinRef.current?.remove()
-      radiusPreviewPinRef.current = null
       markersRef.current.forEach(m => m.remove())
       let gl: WebGLRenderingContext | WebGL2RenderingContext | null = null
       try {
@@ -5299,7 +5283,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const raf = window.requestAnimationFrame(() => {
       updateComposeRadiusPreview(map, center, composeRadiusKm, theme, {
         // In the review, the camera must show the ENTIRE changing claim. Keep
-        // the map's dimensional building angle while pulling back for a larger
+        // the stable isometric board angle while pulling back for a larger
         // radius and diving in again for a smaller one.
         fit: true,
         pitch: radiusPreviewLaunch ? MAP_BROWSE_3D_PITCH : undefined,
@@ -5311,97 +5295,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     return () => window.cancelAnimationFrame(raf)
   }, [composeAt?.lng, composeAt?.lat, composeRadiusKm, mapEpoch, mapRef, radiusPreviewLaunch, takeoverFace, theme])
 
-  // The claim review owns exactly one pin and one optional video decoder. It
-  // follows the chosen ground point and is torn down as a unit when this map
-  // leaves memory, so the live profile loop never joins the normal world-pin
-  // pool or survives screen navigation.
-  useEffect(() => {
-    const map = mapRef.current
-    radiusPreviewPinRef.current?.remove()
-    radiusPreviewPinRef.current = null
-    if (!radiusPreviewLaunch || !map || mapEpoch === 0 || !composeAt) return
-
-    let cancelled = false
-    let selfieVideo: HTMLVideoElement | null = null
-    const readStored = (key: string): string | null => {
-      try { return window.localStorage.getItem(key) } catch { return null }
-    }
-    const profileVideo = readStored('poplur.profile.selfieVideo')
-    const usableVideo = profileVideo && (
-      profileVideo.startsWith('data:video/')
-      || /^https:\/\//i.test(profileVideo)
-      || /^poplur-clay:\/\//i.test(profileVideo)
-      || /^[\w-]+\/.+\.(?:mp4|webm)(?:[?#].*)?$/i.test(profileVideo)
-    ) ? profileVideo : null
-    const profilePhoto = readStored('poplur.profile.photo')
-    const usablePhoto = profilePhoto && (
-      profilePhoto.startsWith('data:image/')
-      || /^https:\/\//i.test(profilePhoto)
-      || /^poplur-clay:\/\//i.test(profilePhoto)
-    ) ? profilePhoto : '/mark_talk0.png'
-
-    void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: '3d' })
-      .then(src => {
-        if (cancelled || mapRef.current !== map) return
-        const markerRoot = document.createElement('div')
-        markerRoot.className = `${styles.popPinMarker} ${styles.radiusPreviewPinMarker}`
-        markerRoot.dataset.radiusPreviewPin = 'true'
-
-        const pin = document.createElement('div')
-        pin.className = `${styles.popPin} ${styles.popPinMine}`
-        const pinImage = document.createElement('img')
-        pinImage.src = src
-        pinImage.alt = ''
-        pinImage.draggable = false
-        pin.appendChild(pinImage)
-        markerRoot.appendChild(pin)
-
-        if (usableVideo) {
-          selfieVideo = document.createElement('video')
-          selfieVideo.className = `${styles.popPinSelfie} ${styles.popPinSelfieVideo}`
-          selfieVideo.dataset.radiusSelfie = 'video'
-          selfieVideo.src = usableVideo
-          selfieVideo.poster = usablePhoto
-          selfieVideo.muted = true
-          selfieVideo.loop = true
-          selfieVideo.playsInline = true
-          selfieVideo.autoplay = true
-          selfieVideo.preload = 'metadata'
-          selfieVideo.setAttribute('aria-hidden', 'true')
-          markerRoot.appendChild(selfieVideo)
-          void selfieVideo.play().catch(() => { /* a stored native URL resumes in its shell */ })
-        } else {
-          const face = document.createElement('img')
-          face.className = styles.popPinSelfie
-          face.dataset.radiusSelfie = 'photo'
-          face.src = usablePhoto
-          face.alt = ''
-          face.draggable = false
-          markerRoot.appendChild(face)
-        }
-
-        radiusPreviewPinRef.current = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
-          .setLngLat([composeAt.lng, composeAt.lat])
-          .addTo(map)
-      })
-
-    return () => {
-      cancelled = true
-      if (selfieVideo) {
-        selfieVideo.pause()
-        selfieVideo.removeAttribute('src')
-        selfieVideo.load()
-      }
-      radiusPreviewPinRef.current?.remove()
-      radiusPreviewPinRef.current = null
-    }
-  }, [composeAt?.lat, composeAt?.lng, mapEpoch, mapRef, radiusPreviewLaunch, takeoverFace])
-
   // Persistent "you are here" marker: your profile face standing on your live
-  // GPS point. Draws whenever a location is known — unlike the radius-preview
-  // pin above, which is only up while composing a new pop. Reads photo/video
-  // from the props the shell forwards over postMessage (the iframe cannot read
-  // the shell's own localStorage, so it must be told).
+  // GPS point. Reads photo/video from the props the shell forwards over
+  // postMessage (the iframe cannot read the shell's own localStorage, so it
+  // must be told).
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -5422,13 +5319,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     ) ? ownProfilePhoto : null
     if (!usablePhoto && !usableVideo) return
     const build = (coords: [number, number]) => {
-      void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: MAP_2D || SHARED_ADAPTIVE_MAP ? '2d' : '3d' })
+      void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: '3d' })
         .then(src => {
           if (cancelled || mapRef.current !== map) return
           const markerRoot = document.createElement('div')
-          markerRoot.className = `${styles.popPinMarker}${MAP_2D || SHARED_ADAPTIVE_MAP ? ` ${styles.popPinMarkerFlat}` : ''}`
+          markerRoot.className = styles.popPinMarker
           const pin = document.createElement('div')
-          pin.className = `${styles.popPin} ${styles.popPinMine}${MAP_2D || SHARED_ADAPTIVE_MAP ? ` ${styles.popPinFlat}` : ''}`
+          pin.className = `${styles.popPin} ${styles.popPinMine}`
           const pinImage = document.createElement('img')
           pinImage.src = src
           pinImage.alt = ''
@@ -5538,8 +5435,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       return inView.slice(0, maxLive)
     }
 
-    // The pin's look follows the render tier: dimensional in 3D, flat in 2D.
-    const tier: '2d' | '3d' = MAP_2D || SHARED_ADAPTIVE_MAP ? '2d' : '3d'
+    // Pins are Poplur game pieces, independent of the terrain presentation.
+    // Even when the basemap is flat or thermally reduced, keep the authored
+    // dimensional pin and never substitute the legacy 2D marker.
+    const tier: '3d' = '3d'
     // Bake-only: .codex/prerender-sprites.mjs installs this collector before any
     // app code runs. A bake run boots in ONE tier, so it would only ever capture
     // that tier's pin and the other would be left decoding 29MB of GLB on a real
@@ -5561,13 +5460,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // that owns Poplur's press/ownership transition; sharing one element
       // restarted five CSS transitions on every map frame.
       const markerRoot = document.createElement('div')
-      markerRoot.className = MAP_2D || SHARED_ADAPTIVE_MAP
-        ? `${styles.popPinMarker} ${styles.popPinMarkerFlat} ${styles.popPinMarkerReveal}`
-        : `${styles.popPinMarker} ${styles.popPinMarkerReveal}`
+      markerRoot.className = `${styles.popPinMarker} ${styles.popPinMarkerReveal}`
       markerRoot.dataset.dominationOwner = pin.ownerId ?? pin.user ?? 'self'
       markerRoot.style.setProperty('--dominationColor', pin.color)
       const el = document.createElement('button')
-      el.className = MAP_2D || SHARED_ADAPTIVE_MAP ? `${styles.popPin} ${styles.popPinFlat}` : styles.popPin
+      el.className = styles.popPin
       el.type = 'button'
       el.setAttribute('aria-label', pin.mine
         ? `Your pop at ${pin.name}, ${pin.radiusKm} km`
@@ -6251,11 +6148,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           aria-labelledby="poplur-weather-title"
           aria-describedby={!hasWeatherForecast ? 'poplur-weather-status' : undefined}
           aria-busy={weatherForecastStatus === 'loading'}
+          data-poplur-weather-update
           onKeyDown={handleWeatherDialogKeyDown}
         >
           <header className={`${styles.weatherTitleBar} ${surfaceStyles.header}`}>
             <div>
-              <span className={styles.weatherKicker} id="poplur-weather-title">LOCAL WEATHER</span>
+              <span className={styles.weatherKicker} id="poplur-weather-title">WEATHER UPDATE</span>
               <span className={styles.weatherUpdated}>
                 {weatherForecastStatus === 'loading'
                   ? 'Updating conditions'
@@ -6347,6 +6245,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           '--zoomFillA': takeoverTint('#ffe1f1'),
           '--zoomFillB': takeoverTint('#ff86c4'),
           '--zoomFillC': takeoverTint('#f53c99'),
+          '--mapControlSpan': `${mapSideControlSpan}px`,
         } as React.CSSProperties}
         role="slider"
         aria-label="Zoom"
@@ -6420,7 +6319,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         type="button"
         key={`takeover-${takeoverFace}`}
         className={controlsObscured ? `${styles.colorCircle} ${styles.mapControlsObscured}` : styles.colorCircle}
-        style={{ '--takeoverFace': takeoverFace } as React.CSSProperties}
+        style={{
+          '--takeoverFace': takeoverFace,
+          '--mapBaseControlSpan': `${mapBaseSideControlSpan}px`,
+          '--mapColorControlGap': `${MAP_COLOR_CONTROL_GAP}px`,
+          '--mapControlSpan': `${mapSideControlSpan}px`,
+        } as React.CSSProperties}
+        data-poplur-color-side-control=""
         aria-label="Change your takeover colour. Hold to choose a colour"
         aria-haspopup="dialog"
         aria-expanded={colorPaletteOpen}
@@ -6476,7 +6381,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           }
           randomizeTakeoverColor()
         }}
-      />
+      >
+        <SideControlIconImage icon="map.color" displaySize={44} loading="eager" />
+      </button>
 
       {/* FOV slider moved into the HOLD MENU (declutter): its entry cycles
           presets via the poplur-map-action 'fov' message. */}

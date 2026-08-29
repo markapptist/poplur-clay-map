@@ -7,6 +7,7 @@ import {
   MAP_BROWSE_3D_EXIT_ZOOM,
   MAP_BROWSE_3D_MAX_PITCH,
   MAP_BROWSE_3D_PITCH,
+  MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM,
   MAP_BUILDING_DETAIL_BUDGET_FULL,
   MAP_BUILDING_DETAIL_BUDGET_EMERGENCY,
   MAP_BUILDING_DETAIL_BUDGET_LOW_POWER,
@@ -14,13 +15,18 @@ import {
   MAP_BUILDING_DETAIL_MAX,
   MAP_BUILDING_DETAIL_MIN_HEIGHT_M,
   MAP_BUILDING_DETAIL_SAMPLE_DIVISOR,
+  MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR,
+  MAP_BUILDING_DENSITY_LAB_DEFAULT,
+  MAP_BUILDING_DENSITY_LAB_MAX,
   landmarkRevealZoomForFrame,
   mapBuildingExtrusionMinHeightM,
   mapBuildingExtrusionRadiusM,
+  mapBuildingDensityLabBudget,
   mapBuildingDetailBudget,
   mapBuildingDetailPlan,
   mapBrowsePresentation,
   nearestMapBuildingDetailIds,
+  normalizeMapBuildingDensityLabBudget,
   preserveLandmarkCamera,
   subtleLandmarkPitch,
   type MapBuildingDetailCandidate,
@@ -54,7 +60,7 @@ describe('subtle Map presentation policy', () => {
     expect(buildingFootprintWithinPointDistance(clippedNearEdge, eiffel, 60)).toBe(true)
     expect(buildingFootprintWithinPointDistance(clippedNearEdge, eiffel, 10)).toBe(false)
   })
-  it('keeps ordinary wide and city browsing flat and north-up', () => {
+  it('keeps wide and regional browsing flat and north-up', () => {
     expect(mapBrowsePresentation({
       zoom: MAP_BROWSE_3D_ENTER_ZOOM - 0.01,
       wasThreeDimensional: false,
@@ -68,7 +74,7 @@ describe('subtle Map presentation policy', () => {
     })
   })
 
-  it('uses shallow, north-up depth only at close street scale', () => {
+  it('uses a shallow north-up isometric board at local scale in every mode', () => {
     for (const performanceMode of ['FULL', 'REDUCED', 'LOW_POWER', 'EMERGENCY'] as const) {
       const presentation = mapBrowsePresentation({
         zoom: MAP_BROWSE_3D_ENTER_ZOOM,
@@ -82,8 +88,8 @@ describe('subtle Map presentation policy', () => {
         minPitch: 0,
         maxPitch: MAP_BROWSE_3D_MAX_PITCH,
       })
-      expect(presentation.pitch).toBeLessThanOrEqual(35)
-      expect(presentation.maxPitch).toBeLessThanOrEqual(45)
+      expect(presentation.pitch).toBeLessThanOrEqual(30)
+      expect(presentation.maxPitch).toBeLessThanOrEqual(40)
     }
   })
 
@@ -100,11 +106,35 @@ describe('subtle Map presentation policy', () => {
 
     expect(filterFactory).toContain('detailIds: readonly (string | number)[]')
     expect(filterFactory).not.toContain('| null')
-    expect(filterFactory).toContain('detailIds.slice(0, MAP_BUILDING_DETAIL_MAX)')
+    expect(filterFactory).toContain('normalizeMapBuildingDensityLabBudget(maxDetailBuildings)')
+    expect(filterFactory).toContain('MAP_BUILDING_DENSITY_LAB_MAX')
     expect(initialFilter).toMatch(/mapBuildingExtrusionMinHeightM\([\s\S]*?\),\s*\[\],\s*\)/)
   })
 
+  it('normalizes the temporary density lab to a strict 0-20 range', () => {
+    expect(MAP_BUILDING_DENSITY_LAB_DEFAULT).toBe(MAP_BUILDING_DETAIL_BUDGET_REDUCED)
+    expect(MAP_BUILDING_DENSITY_LAB_MAX).toBe(20)
+    expect(normalizeMapBuildingDensityLabBudget(-8)).toBe(0)
+    expect(normalizeMapBuildingDensityLabBudget(7.6)).toBe(8)
+    expect(normalizeMapBuildingDensityLabBudget('12')).toBe(12)
+    expect(normalizeMapBuildingDensityLabBudget(900)).toBe(20)
+    expect(normalizeMapBuildingDensityLabBudget(Number.NaN)).toBe(MAP_BUILDING_DENSITY_LAB_DEFAULT)
+  })
+
+  it('lets the lab vary normal density while thermal modes retain authority', () => {
+    expect(mapBuildingDensityLabBudget(null, 'REDUCED')).toBe(5)
+    expect(mapBuildingDensityLabBudget(0, 'FULL')).toBe(0)
+    expect(mapBuildingDensityLabBudget(20, 'FULL')).toBe(20)
+    expect(mapBuildingDensityLabBudget(20, 'REDUCED')).toBe(20)
+    expect(mapBuildingDensityLabBudget(20, 'LOW_POWER')).toBe(3)
+    expect(mapBuildingDensityLabBudget(20, 'EMERGENCY')).toBe(1)
+    expect(mapBuildingDensityLabBudget(2, 'LOW_POWER')).toBe(2)
+    expect(mapBuildingDensityLabBudget(0, 'EMERGENCY')).toBe(0)
+  })
+
   it('uses hysteresis instead of flapping around the 3D boundary', () => {
+    expect(MAP_BROWSE_3D_ENTER_ZOOM - MAP_BROWSE_3D_EXIT_ZOOM)
+      .toBeGreaterThanOrEqual(0.75)
     const between = (MAP_BROWSE_3D_ENTER_ZOOM + MAP_BROWSE_3D_EXIT_ZOOM) / 2
     expect(mapBrowsePresentation({
       zoom: between,
@@ -118,7 +148,22 @@ describe('subtle Map presentation policy', () => {
     }).threeDimensional).toBe(true)
   })
 
-  it('transitions wide 2D to close 3D and back without boundary flapping', () => {
+  it('defers one smooth top-down/isometric handoff until the gesture settles', () => {
+    const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const cameraPolicy = source.slice(
+      source.indexOf('// ── Camera policy:'),
+      source.indexOf('// Boot from Mapbox'),
+    )
+
+    expect(cameraPolicy).toContain("map.on('zoomend', enforceHybridPitch)")
+    expect(cameraPolicy).not.toContain("map.on('zoom', enforceHybridPitch)")
+    expect(cameraPolicy).not.toContain('flattenWideDuringGesture')
+    expect(cameraPolicy).toContain('map.easeTo({')
+    expect(cameraPolicy).toContain('duration: ISOMETRIC_CAMERA_TRANSITION_MS')
+    expect(cameraPolicy).not.toContain('map.jumpTo({ pitch, bearing })')
+  })
+
+  it('transitions wide 2D to local isometric and back without boundary flapping', () => {
     let wasThreeDimensional = false
     const wide = mapBrowsePresentation({
       zoom: MAP_BROWSE_3D_EXIT_ZOOM - 0.1,
@@ -151,7 +196,7 @@ describe('subtle Map presentation policy', () => {
     expect(pulledBack).toMatchObject({ threeDimensional: false, pitch: 0, bearing: 0 })
   })
 
-  it('keeps the close camera dimensional while thermal modes reduce geometry', () => {
+  it('keeps the local camera isometric under thermal pressure', () => {
     for (const performanceMode of ['LOW_POWER', 'EMERGENCY'] as const) {
       expect(mapBrowsePresentation({
         zoom: 19,
@@ -165,28 +210,55 @@ describe('subtle Map presentation policy', () => {
     }
   })
 
-  it('uses the existing hysteresis for the browse building-detail plan', () => {
-    const between = (MAP_BROWSE_3D_ENTER_ZOOM + MAP_BROWSE_3D_EXIT_ZOOM) / 2
-    expect(mapBuildingDetailPlan({
+  it('reveals bounded generic buildings only in ordinary close 2.5D browsing', () => {
+    const browse = (zoom: number) => mapBuildingDetailPlan({
       intent: 'browse',
-      zoom: between,
-      pitch: MAP_BROWSE_3D_PITCH,
-      wasThreeDimensional: false,
-      performanceMode: 'FULL',
-    })).toEqual({ threeDimensional: false, maxDetailedBuildings: 0 })
-    expect(mapBuildingDetailPlan({
-      intent: 'browse',
-      zoom: between,
+      zoom,
       pitch: MAP_BROWSE_3D_PITCH,
       wasThreeDimensional: true,
       performanceMode: 'FULL',
-    })).toEqual({
+    })
+
+    expect(browse(MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM - 0.01))
+      .toEqual({ threeDimensional: false, maxDetailedBuildings: 0 })
+    expect(browse(MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM)).toEqual({
       threeDimensional: true,
       maxDetailedBuildings: MAP_BUILDING_DETAIL_BUDGET_FULL,
     })
+
+    const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const cameraPolicy = source.slice(
+      source.indexOf('// ── Camera policy:'),
+      source.indexOf('// Boot from Mapbox'),
+    )
+    expect(cameraPolicy).toMatch(/const buildingPlan = mapBuildingDetailPlan\(\{[\s\S]*?intent: 'browse'/)
+    expect(cameraPolicy).toContain('setThreeDLayerVisibility(buildingPlan.threeDimensional)')
   })
 
-  it('requires both close zoom and positive pitch for authored building detail', () => {
+  it('removes flat footprints throughout isometric zoom while retaining a query-only candidate layer', () => {
+    const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const cull = source.slice(
+      source.indexOf('const updateBuildingExtrusionCull'),
+      source.indexOf('const buildingCullScheduler'),
+    )
+    const footprintLayers = source.slice(
+      source.indexOf('// Keep selection independent from presentation.'),
+      source.indexOf('// The adaptive close-up already has labels'),
+    )
+    expect(cull).toContain('map.getLayer(BUILDING_DETAIL_QUERY_LAYER_ID)')
+    expect(cull).toContain('layers: [BUILDING_DETAIL_QUERY_LAYER_ID]')
+    expect(footprintLayers).toContain('id: BUILDING_DETAIL_QUERY_LAYER_ID')
+    expect(footprintLayers).toContain("'fill-opacity': 0")
+    expect(footprintLayers.match(/\? \{ maxzoom: MAP_BROWSE_3D_ENTER_ZOOM \}/g))
+      .toHaveLength(2)
+    expect(footprintLayers).not.toContain('maxzoom: undefined')
+    expect(footprintLayers).toContain("'fill-opacity': 0.42")
+    expect(footprintLayers).toContain("'fill-opacity': 0.96")
+    expect(footprintLayers).not.toContain('closeFootprintOpacity')
+    expect(footprintLayers).not.toContain("['zoom']")
+  })
+
+  it('keeps the authored tour intent independent from generic building detail', () => {
     const authored = (zoom: number, pitch: number) => mapBuildingDetailPlan({
       intent: 'authored',
       zoom,
@@ -199,10 +271,22 @@ describe('subtle Map presentation policy', () => {
       .toEqual({ threeDimensional: false, maxDetailedBuildings: 0 })
     expect(authored(MAP_BROWSE_3D_ENTER_ZOOM, 0))
       .toEqual({ threeDimensional: false, maxDetailedBuildings: 0 })
-    expect(authored(MAP_BROWSE_3D_ENTER_ZOOM, 0.01)).toEqual({
-      threeDimensional: true,
-      maxDetailedBuildings: MAP_BUILDING_DETAIL_BUDGET_REDUCED,
-    })
+    expect(authored(MAP_BROWSE_3D_ENTER_ZOOM, 42))
+      .toEqual({ threeDimensional: false, maxDetailedBuildings: 0 })
+  })
+
+  it('uses sparse browse eligibility around an active landmark without changing its frame', () => {
+    const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const activeLandmarkBranch = source.slice(
+      source.indexOf('if (preserveLandmarkCamera(Boolean(activeLandmark), performanceMode))'),
+      source.indexOf('const presentation = mapBrowsePresentation({'),
+    )
+
+    expect(activeLandmarkBranch).toContain("intent: 'browse'")
+    expect(activeLandmarkBranch).toContain('setThreeDLayerVisibility(buildingPlan.threeDimensional)')
+    expect(activeLandmarkBranch).not.toContain('setThreeDLayerVisibility(false)')
+    expect(activeLandmarkBranch).toContain('resolveLandmarkCameraFrame(activeLandmark[0])')
+    expect(activeLandmarkBranch).toContain('settleAdaptiveCamera(frame.pitch, frame.bearing ?? 0)')
   })
 
   it('allows explicit street detail with a bounded budget in every mode', () => {
@@ -220,7 +304,7 @@ describe('subtle Map presentation policy', () => {
     }
   })
 
-  it('reduces but never unbounds close detail under thermal pressure', () => {
+  it('bounds close browse and Street detail while authored landmarks stay independent', () => {
     for (const performanceMode of ['LOW_POWER', 'EMERGENCY'] as const) {
       for (const intent of ['browse', 'authored', 'street'] as const) {
         const plan = mapBuildingDetailPlan({
@@ -230,11 +314,31 @@ describe('subtle Map presentation policy', () => {
           wasThreeDimensional: true,
           performanceMode,
         })
-        expect(plan.threeDimensional).toBe(true)
-        expect(plan.maxDetailedBuildings).toBeGreaterThan(0)
+        expect(plan.threeDimensional).toBe(intent !== 'authored')
+        if (intent !== 'authored') expect(plan.maxDetailedBuildings).toBeGreaterThan(0)
+        else expect(plan.maxDetailedBuildings).toBe(0)
         expect(plan.maxDetailedBuildings).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
       }
     }
+  })
+
+  it('keeps the broader isometric band free of both flat and generic 3D buildings', () => {
+    expect(MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM).toBeGreaterThan(MAP_BROWSE_3D_ENTER_ZOOM)
+    expect(mapBuildingDetailPlan({
+      intent: 'browse',
+      zoom: MAP_BROWSE_3D_ENTER_ZOOM,
+      pitch: MAP_BROWSE_3D_PITCH,
+      wasThreeDimensional: true,
+      performanceMode: 'FULL',
+    })).toEqual({ threeDimensional: false, maxDetailedBuildings: 0 })
+
+    const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const footprintLayers = source.slice(
+      source.indexOf('// Keep selection independent from presentation.'),
+      source.indexOf('// The adaptive close-up already has labels'),
+    )
+    expect(footprintLayers.match(/maxzoom: MAP_BROWSE_3D_ENTER_ZOOM/g)).toHaveLength(2)
+    expect(footprintLayers).not.toContain('maxzoom: MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM')
   })
 
   it('bounds close extrusion geography in every performance mode', () => {
@@ -251,15 +355,17 @@ describe('subtle Map presentation policy', () => {
     expect(mapBuildingExtrusionRadiusM(19, 'EMERGENCY')).toBe(100)
   })
 
-  it('keeps a stable distributed skyline under the absolute 20-building cap', () => {
+  it('keeps a stable distributed skyline under the five-building production budget', () => {
     const nearby = Array.from({ length: 60 }, (_, index) => ({
       id: `near-${index}`,
       distanceM: index,
       heightM: 9,
     }))
     const selected = nearestMapBuildingDetailIds(nearby, 'FULL')
-    expect(MAP_BUILDING_DETAIL_MAX).toBe(20)
-    expect(MAP_BUILDING_DETAIL_SAMPLE_DIVISOR).toBe(3)
+    expect(MAP_BUILDING_DETAIL_MAX).toBe(MAP_BUILDING_DENSITY_LAB_MAX)
+    expect(MAP_BUILDING_DETAIL_BUDGET_FULL).toBe(MAP_BUILDING_DENSITY_LAB_DEFAULT)
+    expect(MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR).toBe(1)
+    expect(MAP_BUILDING_DETAIL_SAMPLE_DIVISOR).toBe(10)
     expect(selected.length).toBeGreaterThan(0)
     expect(selected.length).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
     expect(selected.every(id => nearby.some(candidate => candidate.id === id))).toBe(true)
@@ -273,7 +379,58 @@ describe('subtle Map presentation policy', () => {
     expect(ids).toHaveLength(MAP_BUILDING_DETAIL_BUDGET_FULL)
     const selectedDistances = ids.map(id => candidates.find(candidate => candidate.id === id)!.distanceM)
     expect(selectedDistances).toEqual([...selectedDistances].sort((a, b) => a - b))
-    expect(ids).toHaveLength(MAP_BUILDING_DETAIL_MAX)
+    expect(ids).toHaveLength(MAP_BUILDING_DENSITY_LAB_DEFAULT)
+  })
+
+  it('keeps stable sampling while the lab varies the hard count ceiling', () => {
+    const candidates = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `lab-${index}`,
+      distanceM: index,
+      heightM: 12,
+    }))
+    const production = nearestMapBuildingDetailIds(candidates, 'REDUCED')
+    const empty = nearestMapBuildingDetailIds(candidates, 'REDUCED', 6, Infinity, 0)
+    const stress = nearestMapBuildingDetailIds(candidates, 'REDUCED', 6, Infinity, 20)
+    const lowPower = nearestMapBuildingDetailIds(candidates, 'LOW_POWER', 6, Infinity, 20)
+    const emergency = nearestMapBuildingDetailIds(candidates, 'EMERGENCY', 6, Infinity, 20)
+
+    expect(production).toHaveLength(MAP_BUILDING_DENSITY_LAB_DEFAULT)
+    expect(empty).toEqual([])
+    expect(stress).toHaveLength(MAP_BUILDING_DENSITY_LAB_MAX)
+    expect(stress.slice(0, production.length)).toEqual(production)
+    expect(lowPower).toHaveLength(MAP_BUILDING_DETAIL_BUDGET_LOW_POWER)
+    expect(emergency).toHaveLength(MAP_BUILDING_DETAIL_BUDGET_EMERGENCY)
+  })
+
+  it('forces an explicit empty filter at zero instead of restoring flat buildings', () => {
+    const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const filterFactory = source.slice(
+      source.indexOf('function boundedBuildingExtrusionFilter'),
+      source.indexOf('function renderedBuildingDetailId'),
+    )
+    const densityRuntime = source.slice(
+      source.indexOf('const updateBuildingExtrusionCull'),
+      source.indexOf('// Do not mutate pitch'),
+    )
+
+    expect(filterFactory).toContain("['literal', [...boundedDetailIds]]")
+    expect(densityRuntime).toContain('buildingDensityLabRequestedMax')
+    expect(densityRuntime).toContain('boundedBuildingExtrusionFilter(')
+    expect(densityRuntime).not.toContain("map.setLayoutProperty('clay-buildings-2d'")
+  })
+
+  it('reculls a settled visible close layer immediately on performance changes', () => {
+    const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const subscription = source.slice(
+      source.indexOf('stopAdaptivePresentationPolicy = PoplurPerformanceManager.subscribe'),
+      source.indexOf('// Do not mutate pitch'),
+    )
+
+    expect(subscription).toContain('buildingCullScheduler.markPolicyChanged()')
+    expect(subscription).toContain('lastThreeDLayerVisibility === true')
+    expect(subscription).toContain('adaptiveCameraFrame == null')
+    expect(subscription).toContain('!map.isMoving()')
+    expect(subscription).toContain('buildingCullScheduler.onIdle(true)')
   })
 
   it('deduplicates tile fragments and reduces the batch under heat', () => {
@@ -285,6 +442,11 @@ describe('subtle Map presentation policy', () => {
     candidates.push({ id: 'building-0', distanceM: 2, heightM: 12 })
     candidates.push({ id: null, distanceM: 0, heightM: 300 })
     candidates.push({ id: 'too-short', distanceM: 0, heightM: 2 })
+
+    expect(mapBuildingDetailBudget('FULL')).toBe(5)
+    expect(mapBuildingDetailBudget('REDUCED')).toBe(5)
+    expect(mapBuildingDetailBudget('LOW_POWER')).toBe(3)
+    expect(mapBuildingDetailBudget('EMERGENCY')).toBe(1)
 
     const reduced = nearestMapBuildingDetailIds(candidates, 'REDUCED')
     expect(mapBuildingDetailBudget('REDUCED')).toBe(MAP_BUILDING_DETAIL_BUDGET_REDUCED)
@@ -299,30 +461,27 @@ describe('subtle Map presentation policy', () => {
     expect(MAP_BUILDING_DETAIL_BUDGET_REDUCED).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
   })
 
-  it('never raises candidate-rich REDUCED load above the previous sampled renderer', () => {
-    const legacySampled = (id: string | number) => {
-      const text = `${typeof id}:${String(id)}`
+  it('retains a stable distributed 8-12% before applying the thermal cap', () => {
+    const candidates = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `distributed-${index}`,
+      distanceM: index,
+      heightM: 12,
+    }))
+    const uncappedModeCount = candidates.filter(candidate => {
+      const text = `${typeof candidate.id}:${String(candidate.id)}`
       let hash = 0x811c9dc5
       for (let index = 0; index < text.length; index += 1) {
         hash ^= text.charCodeAt(index)
         hash = Math.imul(hash, 0x01000193)
       }
-      return (hash >>> 0) % 3 === 0
-    }
-    for (const count of [20, 40, 80, 160]) {
-      const candidates = Array.from({ length: count }, (_, index) => ({
-        id: `dense-${index}`,
-        distanceM: index,
-        heightM: 12,
-      }))
-      const previousCount = Math.min(
-        candidates.filter(candidate => legacySampled(candidate.id)).length || 1,
-        18,
-      )
-      const currentCount = nearestMapBuildingDetailIds(candidates, 'REDUCED').length
-      expect(currentCount).toBeLessThanOrEqual(previousCount)
-      expect(currentCount).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_BUDGET_REDUCED)
-    }
+      return (hash >>> 0) % MAP_BUILDING_DETAIL_SAMPLE_DIVISOR
+        < MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR
+    }).length
+
+    expect(uncappedModeCount / candidates.length).toBeGreaterThan(0.08)
+    expect(uncappedModeCount / candidates.length).toBeLessThan(0.12)
+    expect(nearestMapBuildingDetailIds(candidates, 'REDUCED'))
+      .toHaveLength(MAP_BUILDING_DETAIL_BUDGET_REDUCED)
   })
 
   it('selects only buildings inside the finite camera-centred radius', () => {
@@ -362,7 +521,7 @@ describe('subtle Map presentation policy', () => {
   it('caps authored landmark angles without flattening intentional landmarks', () => {
     expect(subtleLandmarkPitch(58)).toBe(42)
     expect(subtleLandmarkPitch(38)).toBe(38)
-    expect(subtleLandmarkPitch(20)).toBe(32)
+    expect(subtleLandmarkPitch(20)).toBe(28)
   })
 
   it('retains a single bounded landmark hero angle at normal iPhone quality', () => {
@@ -379,5 +538,6 @@ describe('subtle Map presentation policy', () => {
     expect(landmarkRevealZoomForFrame(13.973)).toBeCloseTo(13.673)
     expect(landmarkRevealZoomForFrame(14.547)).toBeCloseTo(14.247)
     expect(landmarkRevealZoomForFrame(15.6, 15)).toBe(15)
+    expect(MAP_BROWSE_3D_ENTER_ZOOM).toBeLessThanOrEqual(13.673)
   })
 })

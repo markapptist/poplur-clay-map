@@ -101,13 +101,14 @@
 .nativeMapZoom {
   position: absolute;
   z-index: 48;
-  top: max(226px, calc(env(safe-area-inset-top, 0px) + 190px));
-  right: max(10px, env(safe-area-inset-right, 0px));
-  bottom: max(132px, calc(env(safe-area-inset-bottom, 0px) + 116px));
-  width: 56px;
-  min-height: 250px;
+  top: max(154px, calc(env(safe-area-inset-top, 0px) + 112px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: auto;
+  width: 44px;
+  height: var(--mapControlSpan, 492px);
+  min-height: 0;
   display: grid;
-  grid-template-rows: 52px minmax(132px, 1fr) 52px;
+  grid-template-rows: 44px minmax(132px, 1fr) 44px;
   justify-items: center;
   align-items: center;
   filter: drop-shadow(0 7px 10px rgba(38, 3, 22, 0.56));
@@ -155,8 +156,8 @@
 
 .nativeMapZoomCity,
 .nativeMapZoomGlobe {
-  width: 54px;
-  height: 54px;
+  width: 44px;
+  height: 44px;
   object-fit: contain;
   pointer-events: none;
   user-select: none;
@@ -803,6 +804,29 @@
   animation: mapTitleIn 0.6s ease-out both;
 }
 
+.mapRadioLabel {
+  max-width: 100%;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.24;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: #7fe3ff;
+  -webkit-text-fill-color: #7fe3ff;
+  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.92);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
+  animation: mapTitleIn 0.6s ease-out both;
+}
+
 @keyframes mapTitleIn {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 0.92; transform: translateY(0); }
@@ -844,7 +868,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mapTitleText, .mapAreaPops { animation: none; }
+  .mapTitleText, .mapRadioLabel, .mapAreaPops { animation: none; }
 }
 
 .cubeFloat {

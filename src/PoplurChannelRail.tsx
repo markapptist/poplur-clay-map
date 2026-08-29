@@ -1,6 +1,7 @@
 import { SideControlIconImage } from './SideControlIcon'
 import { SIDE_CONTROL_ICONS } from './sideControlIcons'
 import { playPop } from './pop'
+import { channelControlImageSize } from './channelControlSizing'
 import styles from './PoplurChannelRail.module.css'
 
 /** Static artwork for the one persistent global channel rail. */
@@ -22,7 +23,7 @@ export default function PoplurChannelRail({
   size?: number
 }) {
   const width = Math.round(size / 2)
-  const imageSize = Math.round(Math.min(width, size * .42) * .96)
+  const imageSize = channelControlImageSize(size)
   const activate = (handler: () => void) => {
     playPop()
     handler()

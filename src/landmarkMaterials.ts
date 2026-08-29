@@ -32,7 +32,10 @@ export const LANDMARK_MATERIAL_IDENTITIES = {
   'burj-khalifa': { tint: 0xdce4e6, metalness: 0.48, roughness: 0.3 },
   'cn-tower': { tint: 0xffffff },
   'rogers-centre': { tint: 0xffffff },
-  eiffel: { tint: 0x76543a, metalness: 0.62, roughness: 0.48 },
+  // The approved Meshy game piece carries its pink, charcoal and white colour
+  // separation in the authored base map. A neutral identity keeps those
+  // colours intact; low metalness and soft gloss read as molded polymer clay.
+  eiffel: { tint: 0xffffff, metalness: 0.18, roughness: 0.32 },
   'space-needle': { tint: 0xe2e1dc, metalness: 0.48, roughness: 0.34 },
   'golden-gate': { tint: 0xdd5b38, metalness: 0.38, roughness: 0.47 },
   'statue-liberty': { tint: 0x72aa91, metalness: 0.34, roughness: 0.5 },
