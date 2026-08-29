@@ -62,6 +62,12 @@ import {
   setLocalAccountPrivacy,
   type AccountPrivacySnapshot,
 } from './accountPrivacy'
+import {
+  isTestActivityConsentEnabled,
+  loadTestActivityConsent,
+  onTestActivityConsentChange,
+  setTestActivityConsent,
+} from './testActivity'
 
 
 
@@ -149,6 +155,8 @@ export default function SettingsScreen({ bindBack }: {
   const [gender, setGenderState] = useState<ProfileGender>(readProfileGender)
   const [verification, setVerification] = useState<VerificationState>(readVerification)
   const [accountPrivacy, setAccountPrivacyState] = useState<AccountPrivacySnapshot>(accountPrivacySnapshot)
+  const [testActivityConsent, setTestActivityConsentState] = useState(isTestActivityConsentEnabled)
+  const [testActivityConsentSaving, setTestActivityConsentSaving] = useState(false)
   const [verifyChoice, setVerifyChoice] = useState<VerificationCategoryID | null>(null)
   // null is the root list. The cube still closes Settings outright, so this only
   // ever has to walk back one level.
@@ -245,6 +253,14 @@ export default function SettingsScreen({ bindBack }: {
   useEffect(() => onAccountPrivacyChange(setAccountPrivacyState), [])
 
   useEffect(() => {
+    const off = onTestActivityConsentChange(setTestActivityConsentState)
+    // Server state is authoritative per signed-in account. A missing network
+    // response leaves the safe local default (off) in place.
+    void loadTestActivityConsent().catch(() => {})
+    return off
+  }, [])
+
+  useEffect(() => {
     const onNativePrivacy = (event: Event) => {
       const detail = (event as CustomEvent<{
         privateAccount?: unknown
@@ -278,6 +294,22 @@ export default function SettingsScreen({ bindBack }: {
     if (!postNativeEvent({ type: 'accountPrivacyChanged', ...next })) {
       setAccountPrivacySaving(false)
       say('Privacy could not be saved on this device.')
+    }
+  }
+
+  const changeTestActivityConsent = async () => {
+    if (testActivityConsentSaving) return
+    playPop()
+    const next = !testActivityConsent
+    setTestActivityConsentSaving(true)
+    try {
+      const saved = await setTestActivityConsent(next)
+      setTestActivityConsentState(saved)
+      say(saved ? 'Closed-beta activity sharing is on.' : 'Closed-beta activity sharing is off.')
+    } catch (reason) {
+      say(reason instanceof Error ? reason.message : 'Beta activity sharing could not be saved.')
+    } finally {
+      setTestActivityConsentSaving(false)
     }
   }
 
@@ -762,9 +794,30 @@ export default function SettingsScreen({ bindBack }: {
             </span>
           </button>
 
+          <button
+            type="button"
+            className={styles.switchRow}
+            role="switch"
+            aria-checked={testActivityConsent}
+            disabled={testActivityConsentSaving}
+            onClick={() => { void changeTestActivityConsent() }}
+          >
+            <span className={styles.switchText}>
+              <b>Share closed-beta activity</b>
+              <i>Help test Poplur by sharing coarse screen, platform, app version and activity timing for up to 14 days.</i>
+            </span>
+            <span className={testActivityConsent ? `${styles.switchTrack} ${styles.switchOn}` : styles.switchTrack}>
+              <em />
+            </span>
+          </button>
+
           <p className={styles.radioScopeNote}>
             Exact coordinates are never public in either mode. Public accounts show only a coarse map area; private or ghost posts show no map origin.
             {accountPrivacy.saving ? ' Updating existing posts…' : ''}
+          </p>
+          <p className={styles.radioScopeNote}>
+            Closed-beta sharing is off by default and belongs only to this signed-in account. It never includes message text, media, precise coordinates, microphone or camera data. You can turn it off here at any time.
+            {testActivityConsentSaving ? ' Saving…' : ''}
           </p>
         </article>
         )}

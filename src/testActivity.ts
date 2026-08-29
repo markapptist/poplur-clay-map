@@ -3,6 +3,11 @@ import { accountSnapshot, onAccountChange } from './accountStore'
 import { isNativeShell } from './nativeBridge'
 import { authToken, requestAuthToken } from './nativeAuth'
 import { setLiveSimulationEnabled } from './simulationControl'
+import {
+  normalizeSimulationFeed,
+  unseenSimulationEngagements,
+  type BetaSimulationFeed,
+} from './betaSyntheticCohort'
 
 /**
  * The Test Control Center is deliberately narrow. It reports a tester's
@@ -12,13 +17,16 @@ import { setLiveSimulationEnabled } from './simulationControl'
  * and the server before a heartbeat may be written.
  */
 
-const CONSENT_KEY = 'poplur.testing.activity-consent'
+const CONSENT_KEY_PREFIX = 'poplur.testing.activity-consent.'
+const SIMULATION_CURSOR_KEY_PREFIX = 'poplur.testing.simulation-feed-cursor.'
 const CONSENT_EVENT = 'poplur-testing-activity-consent'
 const FUNCTION_URL = 'https://us-central1-poplur2025.cloudfunctions.net/testActivityControl'
 const HEARTBEAT_MS = 60_000
 const DASHBOARD_REFRESH_MS = 15_000
 const SIMULATION_SYNC_MS = 30_000
 const SIMULATION_PULSE_MS = 15_000
+export const SIMULATION_FEED_REFRESH_MS = 15_000
+const MAX_SEEN_SIMULATION_EVENTS = 256
 
 export type TestActivityScreen =
   | 'home' | 'map' | 'feed' | 'camera' | 'camera-roll' | 'profile'
@@ -59,31 +67,53 @@ export function coarsePostingArea(latitude: number, longitude: number): string {
 
 type CallableResult<T> = { result?: T; error?: { message?: string } }
 
-let memoryConsent = false
+const memoryConsentByUid = new Map<string, boolean>()
 let heartbeatTimer = 0
 let lastHeartbeatAt = 0
 let lastHeartbeatKey = ''
 let lastSimulationSyncAt = 0
 const lastPulseAt = new Map<string, number>()
+const seenSimulationEventIds = new Set<string>()
+const seenSimulationEventOrder: string[] = []
+const simulationCursorByUid = new Map<string, number>()
+let simulationFeedInFlight = false
 
 function storage(): Storage | null {
   if (typeof window === 'undefined') return null
   try { return window.localStorage } catch { return null }
 }
 
-function readConsent(): boolean {
-  const persisted = storage()?.getItem(CONSENT_KEY)
-  return persisted == null ? memoryConsent : persisted === 'on'
+function consentUid(): string | null {
+  const account = accountSnapshot()
+  return account.authenticated && account.uid ? account.uid : null
 }
 
-function rememberConsent(enabled: boolean): boolean {
-  memoryConsent = enabled === true
+function consentStorageKey(uid: string): string {
+  return `${CONSENT_KEY_PREFIX}${uid}`
+}
+
+function readConsent(): boolean {
+  const uid = consentUid()
+  if (!uid) return false
+  const persisted = storage()?.getItem(consentStorageKey(uid))
+  return persisted == null ? memoryConsentByUid.get(uid) === true : persisted === 'on'
+}
+
+function rememberConsent(enabled: boolean, uid = consentUid()): boolean {
+  if (!uid) {
+    try { window.dispatchEvent(new CustomEvent(CONSENT_EVENT, { detail: false })) } catch { /* SSR */ }
+    return false
+  }
+  const next = enabled === true
+  memoryConsentByUid.set(uid, next)
   try {
-    if (memoryConsent) storage()?.setItem(CONSENT_KEY, 'on')
-    else storage()?.removeItem(CONSENT_KEY)
+    if (next) storage()?.setItem(consentStorageKey(uid), 'on')
+    else storage()?.removeItem(consentStorageKey(uid))
   } catch { /* Private browsing retains an in-memory consent choice. */ }
-  try { window.dispatchEvent(new CustomEvent(CONSENT_EVENT, { detail: memoryConsent })) } catch { /* SSR */ }
-  return memoryConsent
+  try { window.dispatchEvent(new CustomEvent(CONSENT_EVENT, { detail: next })) } catch { /* SSR */ }
+  // If the account changed while a request was in flight, never apply its
+  // answer to the account now on screen.
+  return consentUid() === uid ? next : readConsent()
 }
 
 export function isTestActivityConsentEnabled(): boolean {
@@ -138,14 +168,18 @@ async function callTestActivity<T>(data: Record<string, unknown>): Promise<T> {
 
 /** Save explicit consent server-side before permitting any activity write. */
 export async function setTestActivityConsent(enabled: boolean): Promise<boolean> {
+  const uid = consentUid()
+  if (!uid) throw new Error('Sign in to change closed-beta activity sharing.')
   const result = await callTestActivity<{ enabled?: boolean }>({ action: 'setConsent', enabled: enabled === true })
-  return rememberConsent(result.enabled === true)
+  return rememberConsent(result.enabled === true, uid)
 }
 
 /** Read the explicit server choice on launch; the app never assumes consent. */
 export async function loadTestActivityConsent(): Promise<boolean> {
+  const uid = consentUid()
+  if (!uid) return rememberConsent(false)
   const result = await callTestActivity<{ enabled?: boolean }>({ action: 'getConsent' })
-  return rememberConsent(result.enabled === true)
+  return rememberConsent(result.enabled === true, uid)
 }
 
 /** The private desk owns synthetic activity, so every test device agrees. */
@@ -154,6 +188,84 @@ export async function loadTestSimulation(): Promise<boolean> {
   const enabled = result.enabled === true
   setLiveSimulationEnabled(enabled)
   return enabled
+}
+
+/**
+ * Read the same synthetic stream the private Beta Control Room displays. This
+ * is incoming labelled test data, so it does not depend on a human tester's
+ * optional telemetry consent; authentication is still mandatory.
+ */
+export async function loadTestSimulationFeed(): Promise<BetaSimulationFeed> {
+  const uid = consentUid()
+  const afterEventAtMs = uid ? readSimulationCursor(uid) : 0
+  const result = await callTestActivity<unknown>({ action: 'simulationFeed', afterEventAtMs })
+  const feed = normalizeSimulationFeed(result)
+  setLiveSimulationEnabled(feed.enabled)
+  return feed
+}
+
+function simulationCursorStorageKey(uid: string): string {
+  return `${SIMULATION_CURSOR_KEY_PREFIX}${uid}`
+}
+
+function readSimulationCursor(uid: string): number {
+  const memory = simulationCursorByUid.get(uid) ?? 0
+  let persisted = 0
+  try { persisted = Number(storage()?.getItem(simulationCursorStorageKey(uid)) ?? 0) } catch { /* memory remains available */ }
+  const safePersisted = Number.isFinite(persisted) && persisted > 0 ? persisted : 0
+  return Math.max(memory, safePersisted)
+}
+
+function rememberSimulationCursor(uid: string, value: number): void {
+  if (!Number.isFinite(value) || value <= 0) return
+  const next = Math.max(readSimulationCursor(uid), value)
+  simulationCursorByUid.set(uid, next)
+  try { storage()?.setItem(simulationCursorStorageKey(uid), String(next)) } catch { /* memory remains available */ }
+}
+
+function rememberSimulationEvent(eventId: string): void {
+  if (seenSimulationEventIds.has(eventId)) return
+  seenSimulationEventIds.add(eventId)
+  seenSimulationEventOrder.push(eventId)
+  while (seenSimulationEventOrder.length > MAX_SEEN_SIMULATION_EVENTS) {
+    const oldest = seenSimulationEventOrder.shift()
+    if (oldest) seenSimulationEventIds.delete(oldest)
+  }
+}
+
+/** @internal exported so focused tests can prove stable de-duplication. */
+export function dispatchSimulationFeed(feed: BetaSimulationFeed, now = Date.now()): number {
+  const arrivals = unseenSimulationEngagements(feed, seenSimulationEventIds, now)
+  arrivals.forEach(arrival => {
+    rememberSimulationEvent(arrival.eventId)
+    window.dispatchEvent(new CustomEvent('poplur-engagement', { detail: arrival.engagement }))
+  })
+  return arrivals.length
+}
+
+async function pollSimulationFeed(): Promise<void> {
+  // The top-level shell owns notices and forwards their map destination into
+  // the Map iframe. Polling inside that iframe too would display every event
+  // twice and run a second network timer for no benefit.
+  if (window.parent !== window || document.hidden || !accountSnapshot().authenticated || simulationFeedInFlight) return
+  simulationFeedInFlight = true
+  const uid = consentUid()
+  if (!uid) {
+    simulationFeedInFlight = false
+    return
+  }
+  try {
+    const feed = await loadTestSimulationFeed()
+    if (window.parent === window && !document.hidden && consentUid() === uid) {
+      dispatchSimulationFeed(feed)
+      rememberSimulationCursor(uid, feed.latestEventAtMs)
+    }
+  } catch {
+    // Closed-beta activity is optional. Offline testers retain the real app;
+    // a failed poll never falls back to a different fake population.
+  } finally {
+    simulationFeedInFlight = false
+  }
 }
 
 export async function setTestSimulationEnabled(enabled: boolean): Promise<boolean> {
@@ -253,11 +365,32 @@ export function useTestActivityReporter(screen: string): void {
       lastSimulationSyncAt = now
       void loadTestSimulation().catch(() => setLiveSimulationEnabled(false))
     }
+    let simulationFeedTimer = 0
+    const syncSimulationFeedTimer = () => {
+      window.clearInterval(simulationFeedTimer)
+      simulationFeedTimer = 0
+      if (window.parent !== window || document.hidden || !accountSnapshot().authenticated) return
+      void pollSimulationFeed()
+      // A single bounded poll belongs to the visible, authenticated shell.
+      // Logging out, backgrounding, navigating into an iframe, or unmounting
+      // clears it immediately.
+      simulationFeedTimer = window.setInterval(() => { void pollSimulationFeed() }, SIMULATION_FEED_REFRESH_MS)
+    }
     send()
     syncConsent()
     syncSimulation()
-    const offAccount = onAccountChange(() => { syncConsent(); syncSimulation(); send() })
-    const onVisibility = () => { send(); syncSimulation() }
+    syncSimulationFeedTimer()
+    const offAccount = onAccountChange(() => {
+      syncConsent()
+      syncSimulation()
+      syncSimulationFeedTimer()
+      send()
+    })
+    const onVisibility = () => {
+      send()
+      syncSimulation()
+      syncSimulationFeedTimer()
+    }
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener(CONSENT_EVENT, send)
     heartbeatTimer = window.setInterval(() => {
@@ -271,7 +404,9 @@ export function useTestActivityReporter(screen: string): void {
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener(CONSENT_EVENT, send)
       window.clearInterval(heartbeatTimer)
+      window.clearInterval(simulationFeedTimer)
       heartbeatTimer = 0
+      simulationFeedTimer = 0
     }
   }, [screen])
 }
@@ -313,10 +448,27 @@ export function useTestActivityDashboard(enabled: boolean): {
 
 /** @internal test hook */
 export function resetTestActivityForTests(): void {
-  memoryConsent = false
+  memoryConsentByUid.clear()
   lastHeartbeatAt = 0
   lastHeartbeatKey = ''
   lastSimulationSyncAt = 0
   lastPulseAt.clear()
-  try { storage()?.removeItem(CONSENT_KEY) } catch { /* best effort */ }
+  seenSimulationEventIds.clear()
+  seenSimulationEventOrder.splice(0)
+  simulationCursorByUid.clear()
+  simulationFeedInFlight = false
+  try {
+    const store = storage()
+    if (store) {
+      for (let index = store.length - 1; index >= 0; index -= 1) {
+        const key = store.key(index)
+        if (key?.startsWith(CONSENT_KEY_PREFIX) || key?.startsWith(SIMULATION_CURSOR_KEY_PREFIX)) {
+          store.removeItem(key)
+        }
+      }
+      // Remove the pre-account-scoped beta key so it can never silently grant
+      // consent to a different person on a shared device.
+      store.removeItem('poplur.testing.activity-consent')
+    }
+  } catch { /* best effort */ }
 }

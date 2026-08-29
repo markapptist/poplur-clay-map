@@ -938,13 +938,10 @@ export default function MapApp() {
           gestureEvents.forEach(name => map.off(name, onGesture))
         }
         stopChips = startEngagementChips({
-          // The fake 6–14s arrival is useful in the browser prototype. Keep it
-          // out of both a real shell and `?iosTier=1`, which is the gate's
-          // headless iPhone simulation: otherwise a browser-only fake event
-          // zooms the new flat launch into 3D without a touch and measures work
-          // that never exists on device. Real engagement remains event-driven.
-          demo: !isNativeShell()
-            && !document.documentElement.classList.contains('tier-ios'),
+          // The authenticated closed-beta feed is the only simulation source.
+          // The top-level shell forwards those arrivals here, which keeps the
+          // app and private Control Room on the same stable event stream.
+          demo: false,
           // The embed generates but does not draw: its PopupHost is inside the
           // map iframe, and the shell renders one above it. Drawing in both
           // would double every notice on the map surface.

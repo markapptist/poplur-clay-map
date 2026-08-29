@@ -51,7 +51,6 @@ import {
   type CubeTransition, type HoldPreviewMode, type ScreenTransition,
 } from './cubeTransitions'
 import { cubeSwapShouldPlaySound, isMapCubeReturnTransition } from './cubeSwapSoundPolicy'
-import { startEngagementChips } from './engagement'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
@@ -2208,37 +2207,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     if (mapRetryTimerRef.current !== null) window.clearTimeout(mapRetryTimerRef.current)
   }, [])
 
-  // ── Engagement must not depend on the map being mounted ───────────────────
-  //
-  // The generator has always lived in the map document, on the stated
-  // assumption that the map "runs in an always-mounted iframe behind Feed and
-  // Profile". That stopped being true when the iframe began unmounting the
-  // moment you leave the Map tab — a deliberate thermal fix (profile measured
-  // 5.5 -> 59.9fps once the map was gone) which took engagement with it. No
-  // iframe, no generator: no likes on the feed, nothing written to the
-  // notifications log, and the outside-app notification stuck on whatever it
-  // last had.
-  //
-  // So the SHELL owns it whenever the map is not mounted. Only one document
-  // generates at a time, which is what keeps notices from doubling: with the
-  // map front the embed generates and forwards (and keeps its camera traversal
-  // and radius reward, which are map concerns); everywhere else this runs.
-  //
-  // Demo stays in the browser workbench only. Installed apps now read the
-  // persisted Firestore inbox, so generating pretend engagement on a phone
-  // would create a badge for activity that never happened.
-  //
-  // GENERATOR ONLY (`wire: false`). App's relay instance runs for the whole
-  // session in this same document and is the one subscribed to the real
-  // `poplur-engagement` wire. While this instance subscribed too, a single
-  // native/live arrival was handled twice — logged twice and popped twice —
-  // any time the map iframe was not mounted, which is every tab but Map. The
-  // old dropdown de-duped its own rows and hid it; the NOTIFICATIONS screen
-  // listed both copies, which is how it was found.
-  useEffect(() => {
-    if (mapMounted) return
-    return startEngagementChips({ demo: !isNativeShell(), wire: false })
-  }, [mapMounted])
+  // Synthetic arrivals no longer need an off-map generator here. The
+  // authenticated top-level poll dispatches the same stable events shown in
+  // the private Control Room; App owns their one notice relay and this screen
+  // forwards only their coarse destination into the Map when it is mounted.
   // Camera uploads use the Map as a focused location picker, not as a normal
   // destination. Keep that intent on the iframe URL for this mount so ClayMap
   // can skip its globe launch before the first frame is drawn. An empty object
