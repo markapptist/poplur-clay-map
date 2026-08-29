@@ -702,6 +702,221 @@
 @keyframes postedLinePop { from { opacity: 0; transform: translateY(12px) scale(.86); } }
 @keyframes celebrateFall { to { transform: translate3d(28px,920px,0) rotate(620deg); } }
 
+/* Upload-review chrome follows the supplied Poplur clay panel system: glossy
+   hot-pink shells, black inset working surfaces, and honest live controls. */
+.workspace {
+  --clay-pink: #ff168d;
+  --clay-pink-light: #ff78bd;
+  --clay-pink-dark: #7a003c;
+  --clay-black: #0c0b0d;
+  --clay-panel: #171519;
+  background:
+    radial-gradient(circle at 72% 17%, rgba(255, 22, 141, .16), transparent 30%),
+    linear-gradient(145deg, #080708 0%, #180911 58%, #050405 100%);
+}
+
+.sidebar {
+  position: relative;
+  border-right: 4px solid var(--clay-pink);
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, .06), transparent 18%),
+    linear-gradient(180deg, #1c191d 0%, #0d0c0e 100%);
+  box-shadow:
+    5px 0 0 var(--clay-pink-dark),
+    14px 0 32px rgba(0, 0, 0, .48),
+    inset -2px 0 rgba(255, 255, 255, .12);
+}
+
+.heading {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 11px;
+  border: 3px solid var(--clay-pink);
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .11), transparent 25%),
+    linear-gradient(165deg, #29262a, #111013 68%);
+  box-shadow:
+    0 5px 0 var(--clay-pink-dark),
+    0 12px 24px rgba(0, 0, 0, .42),
+    inset 0 2px rgba(255, 255, 255, .28);
+}
+
+.headingBadge {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 8px rgba(255, 17, 137, .34));
+}
+
+.heading h1 { color: #fff; font-size: 22px; font-weight: 950; letter-spacing: -.035em; }
+.heading p { color: #c8b7c1; }
+.heading span,
+.previewHeader span { color: var(--clay-pink-light); letter-spacing: .13em; }
+
+.flowTabs {
+  gap: 4px;
+  padding: 5px;
+  border: 3px solid var(--clay-pink);
+  border-radius: 16px;
+  background: #080708;
+  box-shadow: 0 4px 0 var(--clay-pink-dark), inset 0 3px 8px #000;
+}
+
+.flowTabs button,
+.previewTools button,
+.mediaTabs button,
+.sidebarFooter button {
+  min-height: 44px;
+  border-radius: 11px;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+
+.flowTabs button { color: #d8cbd2; }
+.flowTabs .flowActive,
+.mediaTabs .mediaActive,
+.previewTools .motionLabActive {
+  color: #fff;
+  background: linear-gradient(180deg, #ff70b8 0%, #f71484 54%, #bc005c 100%);
+  box-shadow: inset 0 2px rgba(255, 255, 255, .55), 0 3px 0 #750038;
+  text-shadow: 0 1px 2px #67002f;
+}
+
+.screenList { gap: 8px; padding-top: 7px; scrollbar-color: var(--clay-pink) transparent; }
+
+.screenList button {
+  min-height: 58px;
+  border: 2px solid #423c42;
+  border-radius: 15px;
+  color: #eee7eb;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .06), transparent 22%),
+    linear-gradient(165deg, #242126, #111012);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .12), 0 3px 0 #050405;
+}
+
+.screenList button:hover { border-color: #ba346f; background: #21171d; }
+.screenList .screenActive {
+  border: 3px solid var(--clay-pink);
+  color: #fff;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .13), transparent 22%),
+    linear-gradient(165deg, #30272d, #100d10 72%);
+  box-shadow: 0 4px 0 var(--clay-pink-dark), 0 10px 18px rgba(0, 0, 0, .35), inset 0 2px rgba(255, 255, 255, .2);
+}
+
+.screenList b {
+  border: 2px solid #ef0c79;
+  border-radius: 10px;
+  color: #ff82c2;
+  background: #090709;
+  box-shadow: inset 0 2px 4px #000, 0 2px 0 #690033;
+}
+
+.screenList .screenActive b {
+  color: #fff;
+  background: linear-gradient(180deg, #ff6db6, #ed0879);
+  box-shadow: inset 0 2px rgba(255, 255, 255, .5), 0 2px 0 #750039;
+}
+
+.screenList small { color: #aa98a3; }
+
+.sidebarFooter {
+  border-top: 3px solid var(--clay-pink);
+}
+
+.sidebarFooter button,
+.previewTools button {
+  border: 2px solid #f21a82;
+  color: #fff;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .1), transparent 26%),
+    linear-gradient(180deg, #282429, #121013);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .16), 0 3px 0 #62002f;
+}
+
+.sidebarFooter button:not(:disabled):active,
+.previewTools button:active,
+.flowTabs button:active,
+.mediaTabs button:active { transform: translateY(2px); box-shadow: inset 0 2px 6px rgba(0, 0, 0, .5), 0 1px 0 #62002f; }
+
+.previewArea {
+  background:
+    radial-gradient(circle at 50% 48%, rgba(255, 42, 146, .11), transparent 42%),
+    repeating-linear-gradient(135deg, transparent 0 20px, rgba(255, 255, 255, .012) 20px 21px);
+}
+
+.previewHeader {
+  box-sizing: border-box;
+  padding: 10px 13px;
+  border: 3px solid var(--clay-pink);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .09), transparent 24%),
+    linear-gradient(165deg, #272429, #0e0d0f);
+  box-shadow: 0 5px 0 var(--clay-pink-dark), 0 12px 26px rgba(0, 0, 0, .35), inset 0 2px rgba(255, 255, 255, .18);
+}
+
+.previewHeader h2 { color: #fff; font-weight: 950; letter-spacing: -.03em; }
+.previewHeader p { color: #c5b7bf; }
+
+.mediaTabs {
+  gap: 4px;
+  padding: 4px;
+  border: 2px solid var(--clay-pink);
+  border-radius: 13px;
+  background: #070607;
+  box-shadow: inset 0 3px 7px #000;
+}
+
+.device {
+  padding: 8px;
+  border: 5px solid var(--clay-pink);
+  border-radius: 35px;
+  background:
+    linear-gradient(145deg, #ff7cc0 0%, #ff168d 22%, #940047 75%, #5b002a 100%);
+  box-shadow:
+    0 7px 0 #680032,
+    0 28px 80px rgba(0, 0, 0, .58),
+    0 0 35px rgba(255, 20, 140, .26),
+    inset 0 3px 2px rgba(255, 255, 255, .68);
+}
+
+.deviceViewport { border-radius: 24px; box-shadow: inset 0 0 0 2px #050405; }
+
+.retainedSpot,
+.locationIntro,
+.locationControls {
+  border: 4px solid var(--clay-pink);
+  color: #fff;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .12), transparent 22%),
+    linear-gradient(160deg, #2c292d 0%, #121013 62%, #070607 100%);
+  box-shadow:
+    0 5px 0 var(--clay-pink-dark),
+    0 16px 32px rgba(0, 0, 0, .48),
+    inset 0 2px rgba(255, 255, 255, .35),
+    inset 0 -5px 9px rgba(0, 0, 0, .55);
+}
+
+.retainedSpot { border-radius: 17px; }
+.locationIntro { border-radius: 21px; }
+.locationControls { border-radius: 22px; }
+.locationIntro span,
+.retainedSpot b { color: var(--clay-pink-light); }
+
+.locationContinue {
+  min-height: 56px;
+  border: 2px solid #ff8ac5;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ff68b4 0%, #f31081 52%, #b60057 100%);
+  box-shadow: 0 6px 0 #740038, 0 12px 24px rgba(95, 0, 46, .42), inset 0 2px rgba(255, 255, 255, .55);
+}
+
+.locationContinue b { border-radius: 50%; background: #0d0b0e; box-shadow: inset 0 2px 4px #000, 0 1px rgba(255, 255, 255, .18); }
+
 @media (max-width: 900px) and (min-width: 521px) {
   .workspace { grid-template-columns: 184px minmax(0, 1fr); }
   .sidebar { padding: 12px 9px 9px; }
@@ -738,6 +953,6 @@
   .previewHeader p { display: none; }
   .previewHeader h2 { font-size: 17px; }
   .previewTools { gap: 6px; }
-  .previewTools button { min-height: 30px; padding-inline: 8px; font-size: 10px; }
+  .previewTools button { min-height: 44px; padding-inline: 8px; font-size: 10px; }
   .device { width: auto; height: 100%; max-width: 100%; }
 }

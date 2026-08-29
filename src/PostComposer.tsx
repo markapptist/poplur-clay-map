@@ -178,6 +178,7 @@ export default function PostComposer({
   const [aiPrompt, setAiPrompt] = useState(draft?.aiPrompt ?? '')
   const [aiStatus, setAiStatus] = useState<string | null>(null)
   const [aiGenerating, setAiGenerating] = useState(false)
+  const aiRequestRef = useRef<AbortController | null>(null)
   const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
   const usedAIRef = useRef(usedAI)
   usedAIRef.current = usedAI
@@ -204,6 +205,11 @@ export default function PostComposer({
   const reviewInitialStepRef = useRef(initialStep)
 
   useEffect(() => onAccountPrivacyChange(setAccountPrivacy), [])
+
+  useEffect(() => () => {
+    aiRequestRef.current?.abort()
+    aiRequestRef.current = null
+  }, [])
 
   // The upload-flow workbench can jump directly between canonical stages.
   // Sync only when its requested stage PROP changes; watching `step` here
@@ -879,32 +885,43 @@ export default function PostComposer({
               continueAfterFinish()
               return
             }
-              setAiGenerating(true)
-              setAiStatus(media.kind === 'photo' ? 'Preparing your capture for AI editing…' : 'Creating your AI image…')
-              const source = media.kind === 'photo'
-                ? prepareAIImageSource(media.src)
-                : Promise.resolve(undefined)
-              void source.then(sourceImage => generateWithPoplurAI({
-                prompt: aiPrompt || 'Create an original Poplur social post with an energetic editorial mood.',
-                channelId,
-                sourceImage,
-                metadata: { surface: 'post_composer', requestedFrom: media.kind },
-              })).then(result => {
-                if (result.status !== 'completed' || !result.outputUrl) {
-                  setAiStatus('Your AI job is still processing. Keep this draft open and try again shortly.')
-                  return
-                }
-                setEditedMedia({ kind: 'photo', src: result.outputUrl })
-                setPreviewStill(null)
-                usedAIRef.current = true
-                setUsedAI(true)
-                setAiStatus(null)
-                setAiGenerating(false)
-                continueAfterFinish()
-              }).catch(error => {
-                setAiStatus(error instanceof Error ? error.message : 'Poplur AI could not generate that right now.')
-                setAiGenerating(false)
-              })
+            const controller = new AbortController()
+            aiRequestRef.current = controller
+            setAiGenerating(true)
+            setAiStatus(media.kind === 'photo'
+              ? 'Preparing your capture for AI editing…'
+              : previewStill
+                ? 'Preparing a frame from your recording for AI editing…'
+                : 'Creating your AI image from your direction…')
+            const sourceAsset = media.kind === 'photo' ? media.src : previewStill
+            const source = sourceAsset
+              ? prepareAIImageSource(sourceAsset)
+              : Promise.resolve(undefined)
+            void source.then(sourceImage => generateWithPoplurAI({
+              prompt: aiPrompt || 'Create an original Poplur social post with an energetic editorial mood.',
+              channelId,
+              sourceImage,
+              metadata: { surface: 'post_composer', requestedFrom: media.kind },
+              signal: controller.signal,
+            })).then(result => {
+              if (result.status !== 'completed' || !result.outputUrl) {
+                setAiStatus('Your AI job is still processing. You can use this edit now or try AI again shortly.')
+                return
+              }
+              setEditedMedia({ kind: 'photo', src: result.outputUrl })
+              setPreviewStill(null)
+              usedAIRef.current = true
+              setUsedAI(true)
+              setAiStatus(null)
+              continueAfterFinish()
+            }).catch(error => {
+              if (controller.signal.aborted) return
+              setAiStatus(error instanceof Error ? error.message : 'Poplur AI could not generate that right now.')
+            }).finally(() => {
+              if (aiRequestRef.current !== controller) return
+              aiRequestRef.current = null
+              setAiGenerating(false)
+            })
           }}
           onUseOriginal={() => {
             playPop()

@@ -1,4 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useState } from 'react'
+import NotifConfetti from './NotifConfetti'
 import styles from './UploadStatusView.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
 
@@ -37,7 +38,11 @@ export default function UploadStatusView({
   const percent = progress === null ? null : Math.round(Math.max(0, Math.min(1, progress)) * 100)
 
   return (
-    <section className={styles.statusScreen} aria-label={complete ? 'Posted confirmation' : 'Post upload progress'}>
+    <section
+      className={`${styles.statusScreen} ${complete ? styles.completeScreen : ''}`}
+      data-upload-tone={complete ? 'posted-white' : 'working-clay'}
+      aria-label={complete ? 'Posted confirmation' : 'Post upload progress'}
+    >
       <div className={styles.dotMap} aria-hidden='true' />
       <img className={styles.globe} src='/sprites/zoom_globe_y20_p12_s256.png' alt='Poplur clay globe' />
       {!complete && <div className={styles.statusScroll}>
@@ -65,14 +70,7 @@ export default function UploadStatusView({
         </div>
       </div>}
       {complete && <div className={`${styles.postedOverlay} ${surfaceStyles.scrim}`} role='dialog' aria-label={note ? 'Capture saved but not uploaded' : 'Congratulations, your pop is posted'}>
-        <div className={styles.confetti} aria-hidden='true'>
-          {Array.from({ length: 30 }, (_, index) => <i key={index} style={{
-            '--piece': index,
-            left: `${(index * 37) % 101}%`,
-            background: `hsl(${(index * 47) % 360} 88% 62%)`,
-            animationDelay: `${(index % 8) * -.22}s`,
-          } as CSSProperties} />)}
-        </div>
+        <NotifConfetti />
         <div className={`${styles.postedPopup} ${surfaceStyles.surface}`}>
           <img src='/logo_icon.png' alt='' />
           <span>{note ? 'CAPTURE SAVED' : 'POP IS LIVE'}</span>

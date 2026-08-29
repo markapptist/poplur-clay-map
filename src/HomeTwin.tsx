@@ -22,7 +22,7 @@ import { mapTourControlState } from './mapTourControl'
 import MapRewardRollButton from './MapRewardRollButton'
 import { readMapNewsOpenRequest } from './mapNewsBridge'
 import MapConquerButton from './MapConquerButton'
-import { WeatherMark } from './ClayMap'
+import WeatherMark from './WeatherMark'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import { nativeMapWeatherVisible } from './nativeMapWeather'
 import { createNativeMapConquerSnapshot } from './nativeMapConquerSnapshot'
@@ -179,6 +179,7 @@ import {
   type IpodSection,
 } from './ipodNavigation'
 import { homeSurfaceIsVisible } from './mapThermalPolicy'
+import { reportTestPost, reportTestRadius } from './testActivity'
 
 
 /**
@@ -1917,11 +1918,17 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // persisted ledger on mount, so an off-screen map never needs to stay
       // alive merely to hear a reward.
       const detail = (event as CustomEvent<{
-        events?: Array<{ postId?: unknown; deltaKm?: unknown }>
+        events?: Array<{ postId?: unknown; deltaKm?: unknown; kind?: unknown }>
       }> | undefined)?.detail
       const events = Array.isArray(detail?.events) ? detail.events : []
       const latest = events.length ? events[events.length - 1] : null
       if (typeof latest?.postId === 'string' && typeof latest.deltaKm === 'number' && latest.deltaKm !== 0) {
+        reportTestRadius(
+          latest.postId,
+          radiusKm(),
+          latest.deltaKm,
+          typeof latest.kind === 'string' ? latest.kind : 'radius',
+        )
         mapFrameRef.current?.contentWindow?.postMessage({
           type: 'poplur-map-action',
           action: 'applyRadiusDelta',
@@ -4057,25 +4064,6 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-news-active-entry', onNewsEntry)
   }, [])
 
-  // Every pop's reach combined, read from the slot the map writes on every
-  // claim settle. Shown on the RADIUS card while Profile is front: the profile
-  // is the identity the total belongs to, and the card is the home view's one
-  // honest place for radius numbers — a second label inside ProfileTwin was
-  // just the same fact in a second font.
-  const [profileTotalKm, setProfileTotalKm] = useState<number | null>(() => {
-    try {
-      const v = parseFloat(window.localStorage.getItem('poplur.totalRadiusKm') ?? '')
-      return Number.isFinite(v) ? v : null
-    } catch { return null }
-  })
-  useEffect(() => {
-    if (activeTab !== 'profile') return
-    try {
-      const v = parseFloat(window.localStorage.getItem('poplur.totalRadiusKm') ?? '')
-      if (Number.isFinite(v)) setProfileTotalKm(v)
-    } catch { /* private */ }
-  }, [activeTab])
-
   /** Takeover radius of the pop currently centred on the map, in km. */
   const [mapPopRadiusKm, setMapPopRadiusKm] = useState<number | null>(null)
   /** Sum of every pop's radius whenever no individual map pop is the subject. */
@@ -4096,11 +4084,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       // scanner's readout.
       : activeTab === 'post' && scanKm != null && scanKm > 0
         ? earnedRadiusKm + scanKm
-        // Profile is the identity every claim belongs to, so its card reports
-        // the ACCUMULATED total — the same number the planet-scope globe shows.
-        : activeTab === 'profile' && profileTotalKm != null
-          ? profileTotalKm
-          // On the feed the card reads the PLAYING VIDEO's reach, re-counting
+        // On the feed the card reads the PLAYING VIDEO's reach, re-counting
           // on every change — the same fact as the "reached you from" line,
           // but told by the counter that owns radius numbers.
           : activeTab === 'feed' && feedReachKm != null
@@ -5207,6 +5191,10 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               // draws the claim; the tab switch shows it to you.
               if (!post.target) return
               const radiusKmAtPost = post.target.radiusKm ?? 2
+              // Closed-beta desk telemetry gets only the coarse regional
+              // bucket computed in testActivity; the target coordinates stay
+              // inside the map and are never written to the dashboard.
+              reportTestPost(postId, post.target.lat, post.target.lng, radiusKmAtPost)
               dropAt(
                 post.media.kind,
                 itemId,
@@ -5352,7 +5340,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 ? 'POST RADIUS ◆'
               : mapHasPopSubject
                 ? 'POP RADIUS ◆'
-                : mapHasAccumulatedRadius || (profileTotalKm != null && activeTab === 'profile')
+                : mapHasAccumulatedRadius || activeTab === 'profile'
                   ? 'TOTAL RADIUS ◆'
                   : 'RADIUS ◆'}</span>
             {/* `&& !chromeIdle` on all three counters: the swap beat already
@@ -5369,9 +5357,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
               active={recordMs == null && !chromeIdle && (activeTab === 'profile' ? profileMetric === 'radius' : !showOnlineAudience)}
-              accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && profileTotalKm != null))}
+              accumulated={!seenUser && (mapHasAccumulatedRadius || activeTab === 'profile')}
             />
-            <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
+            <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : activeTab === 'profile' ? `${profilePostCount} posts` : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
           </div>
           <div
             className={recordMs == null && (activeTab === 'profile' ? profileMetric === 'online' : showOnlineAudience) ? styles.statCard : styles.statCardOut}
@@ -5515,6 +5503,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
               diceRollPulse={radiusRewardDiceRollSignal?.pulse}
               diceRollFace={radiusRewardDiceRollSignal?.face}
               motionContextKey={`${committedTab}:${cubeScreen ?? 'root'}:${appliedCubeModel}`}
+              renderingVisible={surfaceVisible && (Boolean(incomingCall) || !cubeChromeGone)}
               // One forward destination and one just-retired object form the
               // bounded navigator pool. Only this current model is rendered.
               prepareModelUrl={cubePreparationModel}

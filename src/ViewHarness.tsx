@@ -3,6 +3,7 @@ import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import UploadFlowReview from './UploadFlowReview'
 import { offlineGameDirector } from './gameDirector'
+import { useTestActivityReporter } from './testActivity'
 import styles from './ViewHarness.module.css'
 
 // These routes bring the full game runtimes, generated creature art resolver,
@@ -78,6 +79,12 @@ export function holdMenuBaseViewFromLocation(): HomeHarnessView {
 
 export default function ViewHarness({ initialView }: { initialView: HarnessView }) {
   const [view, setView] = useState<HarnessView>(initialView)
+  useTestActivityReporter(
+    view === 'cameraroll' ? 'camera-roll'
+      : view === 'holdmenu' ? 'hold-menu'
+        : view === 'uploadflows' ? 'upload-flows'
+          : view,
+  )
 
   useEffect(() => {
     const onHashChange = () => {

@@ -33,6 +33,8 @@ import { POIS } from './data'
 import { ambientAllowed, onTick } from './frameGovernor'
 import { showPopup, clearPopups } from './popups'
 import { recordEngagement } from './engagementLog'
+import { isLiveSimulationEnabled } from './simulationControl'
+import { reportSimulationPulse } from './testActivity'
 
 export interface EngagementEvent {
   user: string
@@ -204,10 +206,10 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
     : onTick((_dtMs, now) => {
       if (now < nextDemoAt) return
       nextDemoAt = now + 6_000 + Math.random() * 8_000
-      if (document.visibilityState !== 'visible' || !ambientAllowed()) return
+      if (!isLiveSimulationEnabled() || document.visibilityState !== 'visible' || !ambientAllowed()) return
       const roll = Math.random()
       const poi = POIS[Math.floor(Math.random() * POIS.length)]
-      show({
+      const event: EngagementEvent = {
         user: CAST[Math.floor(Math.random() * CAST.length)],
         // 45 / 35 / 20. Likes still lead, as they would in life, but comments
         // at the old 10% were rare enough that the surface read as likes-only
@@ -216,6 +218,16 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
         coords: poi.coords,
         radiusKm: poi.radiusKm,
         place: poi.name,
+      }
+      show(event)
+      // The private Test Control Center receives this exact simulation pulse,
+      // so its newsroom map and the in-app demo never drift apart. It is a
+      // labelled synthetic event, not a real-person activity record.
+      reportSimulationPulse({
+        actor: event.user,
+        kind: event.kind,
+        place: event.place,
+        radiusKm: event.radiusKm,
       })
     }, 1_000)
 

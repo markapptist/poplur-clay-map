@@ -27,6 +27,18 @@ html, body, #root {
   --poplur-ink-soft: color-mix(in srgb, var(--poplur-ink) 62%, transparent);
   --poplur-theme-accent: #f63b9a;
   --poplur-theme-accent-2: #5fe1ea;
+  /* One vertical guide for the Map's controls in both documents: Home owns
+     the left rail while the embedded Map owns the zoom rail and colour
+     control. Keeping the guide global prevents those two halves drifting. */
+  --poplur-map-control-top: max(154px, calc(env(safe-area-inset-top, 0px) + 112px));
+}
+
+/* Give the controls a little more room beneath the bottom HUD on phones. The
+   desktop composition stays on its authored 154px guide. */
+@media (max-width: 600px) {
+  :root {
+    --poplur-map-control-top: max(136px, calc(env(safe-area-inset-top, 0px) + 94px));
+  }
 }
 
 /* The declaration above only covers gaps once this stylesheet has loaded. Before

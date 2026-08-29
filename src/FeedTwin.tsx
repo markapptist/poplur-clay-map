@@ -26,6 +26,7 @@ import type { MapFeedHandoff, MapFeedHandoffRequest } from './mapFeedHandoff'
 import {
   mixPublishedMediaWithPromotions,
   nextFeedPostIndex,
+  spaceRankedPromotions,
   shouldReacquireFeedDecoder,
   shouldResumeFeedAfterFocus,
 } from './feedMediaSequence'
@@ -446,11 +447,11 @@ function rankedPostsFor(
       ),
     }
   })
-  const ranked = rankFeedPosts(candidates.map(post => ({
+  const ranked = spaceRankedPromotions(rankFeedPosts(candidates.map(post => ({
     ...post,
     channelId: channel.id,
     radiusMeters: (post.reachKm ?? 0) * 1_000,
-  })), discovery)
+  })), discovery), post => post.sponsored === true)
   if (!focusedContent || focusedContent.channelId !== channel.id) return ranked
 
   const focusedPost: ChannelPost = {

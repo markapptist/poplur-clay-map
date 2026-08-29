@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   mixPublishedMediaWithPromotions,
   nextFeedPostIndex,
+  spaceRankedPromotions,
   shouldReacquireFeedDecoder,
   shouldResumeFeedAfterFocus,
 } from '../feedMediaSequence'
@@ -24,6 +25,19 @@ describe('Feed TV media sequence', () => {
       [{ id: 'my-photo' }],
       [{ id: 'sponsored-video' }],
     ).map(item => item.id)).toEqual(['my-photo', 'sponsored-video'])
+  })
+
+  it('keeps ranked sponsored clips visible every other item', () => {
+    const ranked = [
+      { id: 'creator-one', sponsored: false },
+      { id: 'creator-two', sponsored: false },
+      { id: 'google-ad-one', sponsored: true },
+      { id: 'google-ad-two', sponsored: true },
+      { id: 'creator-three', sponsored: false },
+    ]
+
+    expect(spaceRankedPromotions(ranked, item => item.sponsored).map(item => item.id))
+      .toEqual(['creator-one', 'google-ad-one', 'creator-two', 'google-ad-two', 'creator-three'])
   })
 
   it('continues through repeated clip completions instead of resting', () => {

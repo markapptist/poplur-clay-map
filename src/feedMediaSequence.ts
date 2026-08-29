@@ -32,6 +32,23 @@ export function mixPublishedMediaWithPromotions<T>(
   return mixed
 }
 
+/**
+ * Discovery ranking is allowed to choose *which* creator posts and advertiser
+ * creatives deserve the next slots, but it must not collapse the commercial
+ * cadence.  Ranking the combined list alone can cluster every promotion at
+ * the end (or front) of a channel.  Keep the ranked order within each group,
+ * then alternate one creator item with one sponsored creative.
+ */
+export function spaceRankedPromotions<T>(
+  ranked: readonly T[],
+  isPromotion: (item: T) => boolean,
+  publishedPerPromotion = 1,
+): T[] {
+  const published = ranked.filter(item => !isPromotion(item))
+  const promotions = ranked.filter(isPromotion)
+  return mixPublishedMediaWithPromotions(published, promotions, publishedPerPromotion)
+}
+
 /** A completed multi-post channel always continues; foreground Feed TV has no
  * hidden inactivity cutoff. Single-post channels use the video's native loop. */
 export function nextFeedPostIndex(current: number, count: number): number {

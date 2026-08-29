@@ -143,6 +143,12 @@ class PoplurPerformanceManagerImpl {
   private order = 0
   private quality = currentQuality()
   private foreground = !document.hidden
+  // Once UIKit has reported a lifecycle state it is the source of truth.
+  // WKWebView can keep `document.hidden === false` after the app has already
+  // entered the background, and it can retain `hidden === true` briefly on
+  // foreground return. Until the first native signal ordinary browser
+  // visibility/page events keep their existing behaviour.
+  private nativeAppActive: boolean | null = null
   private memoryPressure: PoplurMemoryPressure = 'normal'
   private memoryWarningCount = 0
   private lowPowerMode = false
@@ -154,18 +160,25 @@ class PoplurPerformanceManagerImpl {
       this.reconcile(true)
     })
     document.addEventListener('visibilitychange', () => {
-      this.foreground = !document.hidden
-      if (!this.foreground) poplurAssetCache.trimToFraction(.25, 'background')
-      this.reconcile()
+      this.setForegroundFromEnvironment('background')
     })
     window.addEventListener('pagehide', () => {
-      this.foreground = false
-      poplurAssetCache.trimToFraction(.25, 'page hidden')
-      this.reconcile()
+      // A browser without a native host still gets the historical hard
+      // pagehide park. In the app, UIKit remains authoritative: transient
+      // WebKit pagehide events must not override an explicit active=true.
+      if (this.nativeAppActive === null) this.setForeground(false, 'page hidden')
+      else this.setForeground(this.nativeAppActive, 'native background')
     })
     window.addEventListener('pageshow', () => {
-      this.foreground = !document.hidden
-      this.reconcile()
+      this.setForegroundFromEnvironment('background')
+    })
+    window.addEventListener('poplur-native-app-lifecycle', event => {
+      const active = (event as CustomEvent<{ active?: unknown }>).detail?.active
+      if (typeof active !== 'boolean') return
+      this.nativeAppActive = active
+      ;(window as typeof window & { __poplurNativeAppActive?: boolean })
+        .__poplurNativeAppActive = active
+      this.setForeground(active, 'native background')
     })
     window.addEventListener('poplur-low-power-mode', event => {
       this.setLowPowerMode(Boolean((event as CustomEvent).detail))
@@ -285,6 +298,16 @@ class PoplurPerformanceManagerImpl {
     this.memoryPressure = 'normal'
     setMemoryPressure('normal')
     this.emit()
+  }
+
+  private setForegroundFromEnvironment(backgroundReason: string) {
+    this.setForeground(this.nativeAppActive ?? !document.hidden, backgroundReason)
+  }
+
+  private setForeground(foreground: boolean, backgroundReason: string) {
+    this.foreground = foreground
+    if (!foreground) poplurAssetCache.trimToFraction(.25, backgroundReason)
+    this.reconcile()
   }
 
   private applyPolicy() {

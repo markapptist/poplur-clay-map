@@ -15,6 +15,8 @@ interface OwnedPost {
   inactivityApplied?: boolean
 }
 
+// A published post establishes the account's starting claim. It is never
+// displayed before the account has actually published something.
 const BASE_RADIUS_KM = 41.8
 const EVENT_KEY = 'poplur.radius.events.v1'
 const OWNED_POST_KEY = 'poplur.radius.owned-posts.v1'
@@ -41,6 +43,20 @@ function writeJson(key: string, value: unknown) {
 
 function events(): RadiusEvent[] {
   return readJson<RadiusEvent[]>(EVENT_KEY, []).filter(event => Number.isFinite(event.deltaKm))
+}
+
+function ownedPosts(): OwnedPost[] {
+  return readJson<OwnedPost[]>(OWNED_POST_KEY, [])
+    .filter(post => typeof post.id === 'string' && post.id.length > 0)
+}
+
+/** Total Radius belongs only to work published by this account. A reaction to
+ * somebody else's Feed item can still be recorded for that item's own reach,
+ * but it must never inflate the viewer's account total. */
+function accountEvents(posts = ownedPosts()): RadiusEvent[] {
+  if (posts.length === 0) return []
+  const ids = new Set(posts.map(post => post.id))
+  return events().filter(event => typeof event.postId === 'string' && ids.has(event.postId))
 }
 
 function publish() {
@@ -105,7 +121,7 @@ export function recordProfileVisitAfterView(postId: string): boolean {
 }
 
 export function registerOwnedPost(postId: string, createdAt = Date.now()) {
-  const owned = readJson<OwnedPost[]>(OWNED_POST_KEY, [])
+  const owned = ownedPosts()
   if (owned.some(post => post.id === postId)) return
   writeJson(OWNED_POST_KEY, [...owned, { id: postId, createdAt }].slice(-500))
   // Home schedules the exact inactivity deadline from this event; without it a
@@ -115,7 +131,7 @@ export function registerOwnedPost(postId: string, createdAt = Date.now()) {
 
 /** Apply the one-hour no-view penalty exactly once per owned post. */
 export function reconcileRadiusInactivity(now = Date.now()) {
-  const owned = readJson<OwnedPost[]>(OWNED_POST_KEY, [])
+  const owned = ownedPosts()
   const due: string[] = []
   const next = owned.map(post => {
     if (post.viewedAt || post.inactivityApplied || now - post.createdAt < INACTIVITY_MS) return post
@@ -133,7 +149,7 @@ export function reconcileRadiusInactivity(now = Date.now()) {
 /** Earliest exact one-hour deadline still awaiting a view or penalty. */
 export function nextRadiusInactivityAt(): number | null {
   let next = Number.POSITIVE_INFINITY
-  for (const post of readJson<OwnedPost[]>(OWNED_POST_KEY, [])) {
+  for (const post of ownedPosts()) {
     if (post.viewedAt || post.inactivityApplied || !Number.isFinite(post.createdAt)) continue
     next = Math.min(next, post.createdAt + INACTIVITY_MS)
   }
@@ -144,11 +160,15 @@ export function nextRadiusInactivityAt(): number | null {
     roll the inactivity clock runs on, so "posts" means the same thing to the
     trophy wall as it does to the radius. */
 export function ownedPostCount(): number {
-  return readJson<OwnedPost[]>(OWNED_POST_KEY, []).length
+  return ownedPosts().length
 }
 
 export function radiusKm(): number {
-  const delta = events().reduce((sum, event) => sum + event.deltaKm, 0)
+  const owned = ownedPosts()
+  // A profile with no published posts owns no radius — never a seeded demo
+  // value. This also makes an empty profile and the Map's account total agree.
+  if (owned.length === 0) return 0
+  const delta = accountEvents(owned).reduce((sum, event) => sum + event.deltaKm, 0)
   return Math.max(0, BASE_RADIUS_KM + delta)
 }
 
@@ -188,12 +208,12 @@ export function radiusDeltaForPost(postId: string): number {
 }
 
 export function radiusStats() {
-  const all = events()
+  const all = accountEvents()
   const count = (kind: RadiusEventKind) => all.filter(event => event.kind === kind).length
   const gains = all.filter(event => event.deltaKm > 0).reduce((sum, event) => sum + event.deltaKm, 0)
   const losses = Math.abs(all.filter(event => event.deltaKm < 0).reduce((sum, event) => sum + event.deltaKm, 0))
   return {
-    radiusKm: Math.max(0, BASE_RADIUS_KM + gains - losses),
+    radiusKm: radiusKm(),
     gains,
     losses,
     views: count('view'),

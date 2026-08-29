@@ -453,7 +453,7 @@
   position: absolute;
   left: max(12px, env(safe-area-inset-left, 0px));
   right: auto;
-  top: calc(max(154px, calc(env(safe-area-inset-top, 0px) + 112px)) + var(--mapBaseControlSpan, 492px) + var(--mapColorControlGap, 24px));
+  top: calc(var(--poplur-map-control-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px))) + var(--mapBaseControlSpan, 492px) + var(--mapColorControlGap, 24px));
   bottom: auto;
   z-index: 26;
   /* A full side-control target: same 44px square and 12px cadence as the left
@@ -501,7 +501,7 @@
   left: auto;
   /* Match the opposite 44px/12px side-control stack exactly. Preview mode has
      one extra dice control, so ClayMap receives the corresponding larger span. */
-  top: max(154px, calc(env(safe-area-inset-top, 0px) + 112px));
+  top: var(--poplur-map-control-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)));
   bottom: auto;
   transform: none;
   z-index: 26;

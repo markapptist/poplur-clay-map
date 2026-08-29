@@ -24,7 +24,7 @@ describe('MapRadioButton', () => {
   })
 
   it('wires both real Map rails locally without forcing native Map fallback', () => {
-    const app = source('App.tsx')
+    const app = source('MapApp.tsx')
     const home = source('HomeTwin.tsx')
     const radio = source('mapRadio.ts')
 
@@ -39,7 +39,7 @@ describe('MapRadioButton', () => {
   })
 
   it('mounts the now-playing label directly in both Map title stacks', () => {
-    const app = source('App.tsx')
+    const app = source('MapApp.tsx')
     const home = source('HomeTwin.tsx')
 
     expect(app).toContain('<MapRadioStatusLabel className={styles.mapRadioLabel} />')

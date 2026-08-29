@@ -153,7 +153,12 @@ export default defineConfig(({ command }) => ({
         // first and the heavy engines while the shell is already on screen.
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
-          if (id.includes('mapbox-gl')) return 'mapbox'
+          // Keep Mapbox's small stylesheet available to the shell without
+          // assigning that CSS module to the Mapbox JavaScript chunk. Grouping
+          // both under `mapbox` turns main.tsx's static CSS import into a
+          // static JS edge, which preloads the full 1.86MB engine on Home even
+          // though MapApp itself is lazy.
+          if (id.includes('mapbox-gl') && !id.includes('.css')) return 'mapbox'
           if (id.includes('three')) return 'three'
           if (id.includes('react-dom') || id.includes('/react/') || id.includes('scheduler')) return 'react'
           return undefined

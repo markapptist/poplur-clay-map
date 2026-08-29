@@ -323,14 +323,23 @@ function MediaCredits({ media }: { media: EntryMediaAttachment[] }) {
   )
 }
 
-function EntryMedia({ media, large }: { media: EntryMediaAttachment[], large?: boolean }) {
+function EntryMedia({
+  media,
+  large,
+  active = true,
+}: {
+  media: EntryMediaAttachment[]
+  large?: boolean
+  /** Only the exposed edition or its opaque detail owner may decode video. */
+  active?: boolean
+}) {
   if (!media.length) return null
   const first = media[0]
 
   if (first.kind === 'video') {
     return (
       <figure className={large ? styles.mediaCardLarge : styles.mediaCard}>
-        <ShaderVideoPlayer src={first.src} poster={first.poster} />
+        <ShaderVideoPlayer src={first.src} poster={first.poster} active={active} />
         <MediaCredits media={[first]} />
       </figure>
     )
@@ -682,7 +691,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               <span className={styles.dropCap}>{lead.body.trim()[0]}</span>
               {lead.body.trim().slice(1)}
             </p>
-            {lead.media?.length ? <EntryMedia media={lead.media} large /> : null}
+            {lead.media?.length ? <EntryMedia media={lead.media} large active={!detail} /> : null}
             {snapshotFor(lead) && (
               <figure className={styles.plate}>
                 <img className={styles.plateImg} src={snapshotFor(lead)!} alt="Map of the area this story covers" loading="lazy" />
@@ -749,7 +758,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 </div>
                 {entry.headline && <h3 className={styles.entryHeadline}>{entry.headline}</h3>}
                 <p className={styles.body}>{entry.body}</p>
-                {entry.media?.length ? <EntryMedia media={entry.media} /> : null}
+                {entry.media?.length ? <EntryMedia media={entry.media} active={!detail} /> : null}
                 {(entry.kind === 'dispatch' || entry.kind === 'liveNews' || entry.mine) && snapshotFor(entry) && (
                   <figure className={styles.plateSmall}>
                     <img
@@ -823,7 +832,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               </button>
 
               <p className={styles.detailBody}>{detail.body}</p>
-              {detail.media?.length ? <EntryMedia media={detail.media} large /> : null}
+              {detail.media?.length ? <EntryMedia media={detail.media} large active /> : null}
               <p className={styles.detailWhen}>{detail.when === 'now' ? 'just now' : `${detail.when} ago`}</p>
 
               {detail.liveEvent && (

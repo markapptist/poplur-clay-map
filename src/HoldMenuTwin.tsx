@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import styles from './HoldMenuTwin.module.css'
 import { playPop, primePopAudio } from './pop'
 import type { CubeTab } from './CubeTab3D'
@@ -37,12 +37,19 @@ import {
   dmPhoneReturnThreadId,
   type DMPhoneCallRoute,
 } from './dmCallNavigation'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
+import HoldMenuContentGate from './HoldMenuContentGate'
 
 // Games pulls in the FPS bridge, model-viewer controller, and both local game
 // runtimes. Load it only after the GAMES tile is opened so every ordinary map,
 // feed, camera, and profile launch stays out of that parse path.
 const GamesScreen = React.lazy(() => import('./GamesScreen'))
 const HouseScreen = React.lazy(() => import('./HouseScreen'))
+
+const subscribePerformanceForeground = (notify: () => void) =>
+  PoplurPerformanceManager.subscribe(() => notify())
+const performanceForegroundSnapshot = () => PoplurPerformanceManager.snapshot.isForeground
+const performanceForegroundServerSnapshot = () => true
 
 // Web twin of CubeMenuWheelOverlay.swift — the cube's long-press "hold menu"
 // as the app currently ships it: a curved VERTICAL wheel. The selected item
@@ -360,6 +367,15 @@ export default function HoldMenuTwin({
   onAcceptCall?: (call: import('./PhoneScreen').IncomingCall) => void
   onDeclineCall?: (call: import('./PhoneScreen').IncomingCall) => void
 }) {
+  // HoldMenuTwin owns navigation state, so keep this component alive across a
+  // native background interval. The content gate at the return boundary
+  // unmounts its expensive page/wheel descendants while the central governor
+  // is parked, then rebuilds the same selected page when UIKit reports active.
+  const performanceForeground = useSyncExternalStore(
+    subscribePerformanceForeground,
+    performanceForegroundSnapshot,
+    performanceForegroundServerSnapshot,
+  )
   // The item set is fixed to the tab the menu was opened from.
   const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).filter(item =>
     !isRetiredNavigationScreen(item.screen)).map(item => {
@@ -925,6 +941,7 @@ export default function HoldMenuTwin({
   // boost is held for as long as the wheel is actually moving, and dropped the
   // moment it settles: smooth where it matters, and nothing burned at rest.
   useEffect(() => {
+    if (!performanceForeground) return
     const stop = onFrame((elapsedMs, t) => {
       const dt = Math.min(elapsedMs / 1000, 1 / 30)
       const count = countRef.current
@@ -970,7 +987,7 @@ export default function HoldMenuTwin({
       }
     }, 'ambient')
     return stop
-  }, [])
+  }, [performanceForeground])
 
   // Pointer drag (finger scrub). Dragging up advances toward the next item.
   // A near-stationary press+release opens the tapped tile directly; empty
@@ -1464,14 +1481,18 @@ export default function HoldMenuTwin({
         {renderSubscreen()}
       </React.Fragment>
     )
-    if (!wheelOverPage) return page
-    return (
+    const content = !wheelOverPage ? page : (
       <>
         {page}
         {renderWheel(true)}
       </>
     )
+    return <HoldMenuContentGate active={performanceForeground}>{content}</HoldMenuContentGate>
   }
 
-  return renderWheel(false)
+  return (
+    <HoldMenuContentGate active={performanceForeground}>
+      {renderWheel(false)}
+    </HoldMenuContentGate>
+  )
 }

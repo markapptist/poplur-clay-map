@@ -98,10 +98,18 @@
    touches and costs no compositor animation. */
 .nativeMapChrome { display: contents; }
 
+/* The Map's left rail lives in Home while its Mapbox zoom rail lives in the
+   iframe. Both consume the same global guide so the phone-only lift remains
+   exactly aligned across that document boundary. Other tab rails retain the
+   shared TabControlRail position. */
+.nativeMapChrome :global([data-poplur-control-rail]) {
+  top: var(--poplur-map-control-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)));
+}
+
 .nativeMapZoom {
   position: absolute;
   z-index: 48;
-  top: max(154px, calc(env(safe-area-inset-top, 0px) + 112px));
+  top: var(--poplur-map-control-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)));
   right: max(12px, env(safe-area-inset-right, 0px));
   bottom: auto;
   width: 44px;

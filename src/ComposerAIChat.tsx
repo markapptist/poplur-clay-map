@@ -41,7 +41,11 @@ export default function ComposerAIChat({
       <div className={styles.conversation}>
         <article className={styles.assistantMessage}>
           <span>P&nbsp;&nbsp;POPLUR AI</span>
-          <p>I’ll use your photo and direction to make an AI edit. Keep this edit, or use the generated result.</p>
+          <p>{media.kind === 'photo'
+            ? 'I’ll use your photo and direction to make an AI edit. Keep this edit, or use the generated result.'
+            : poster
+              ? 'I’ll use a frame from your recording and your direction to make an AI edit. Keep your recording, or use the generated result.'
+              : 'I’ll use your direction to make an AI image while your recording stays attached.'}</p>
         </article>
 
         {status && <p className={styles.status} role="status">{status}</p>}
@@ -57,7 +61,7 @@ export default function ComposerAIChat({
           ) : (
             <img src={media.src} alt="Capture attached to Poplur AI" />
           )}
-          <span><b>{media.kind === 'video' ? 'YOUR RECORDING' : 'YOUR CAPTURE'}</b><small>{media.kind === 'photo' ? 'Will be sent securely for this edit' : 'Reference while you write your prompt'}</small></span>
+          <span><b>{media.kind === 'video' ? 'YOUR RECORDING' : 'YOUR CAPTURE'}</b><small>{media.kind === 'photo' ? 'Will be sent securely for this edit' : poster ? 'One bounded frame will guide this edit' : 'Your recording remains attached'}</small></span>
           <em>✓</em>
         </div>
 

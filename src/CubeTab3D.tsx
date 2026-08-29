@@ -12,6 +12,14 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import { mapGlobeSpinIsActive } from './mapThermalPolicy'
 import {
+  advanceCubeMotionLease,
+  cubeMotionFPS,
+  cubeRendererCanWork,
+  CUBE_MOTION_LEASE_MS,
+  type CubeMotionLease,
+  type CubeMotionSample,
+} from './cubeMotionThermalPolicy'
+import {
   RADIUS_REWARD_DICE_REDUCED_TUMBLE_MS,
   RADIUS_REWARD_DICE_TUMBLE_MS,
   radiusRewardDiceFaceOrientation,
@@ -43,6 +51,8 @@ declare global {
     }
     __poplurDisplayRAF?: (callback: FrameRequestCallback) => number
     __poplurCancelDisplayRAF?: (id: number) => void
+    /** Last native lifecycle edge retained by the shared performance manager. */
+    __poplurNativeAppActive?: boolean
     /** Last accepted handset attitude. It lives on the document rather than
         inside the renderer so a WebGL recovery/model remount cannot lose a
         stable pose that the native bridge has already deduplicated. */
@@ -161,12 +171,6 @@ const CAMCORDER_MOTION_GAIN = 1.15
 /** …and it arrives while you are still moving. The parallax spring's weight is
     the whole point on a clay cube and completely wrong on a viewfinder. */
 const CAMCORDER_MOTION_SMOOTHING = 62
-/** Sensor/event/render cadence follows what the navigator object means. Small
- *  clay parallax is legible at 20 Hz; the camcorder remains display-rate because
- *  it is aimed directly with the handset. */
-const NAVIGATOR_PARALLAX_FPS = 20
-const CAMCORDER_AIMING_FPS = 60
-
 function reportNavigatorMotionDemand(aiming: boolean): void {
   if (!isNativeShell()) return
   postNativeEvent({ type: 'navigatorMotionDemandChanged', aiming })
@@ -273,6 +277,10 @@ export interface CubeTab3DProps {
       reapplying the retained handset pose prevents that unchanged object from
       looking frozen after the page transition. */
   motionContextKey?: string
+  /** False while a platform-owned takeover or app lifecycle edge covers this
+      persistent canvas. The scene remains mounted, but owns no renderer lease,
+      scheduled frame, or sensor-response work until it is visible again. */
+  renderingVisible?: boolean
 }
 
 /** The designed cube is authored as a true box, so it is normalised per-axis to
@@ -591,7 +599,7 @@ function disposeModel(node: THREE.Object3D) {
   })
 }
 
-export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, onTap, onHold, onDoubleTap, doubleTapWindowMs = 0, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false, diceRollPulse, diceRollFace, motionContextKey }: CubeTab3DProps) {
+export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, onTap, onHold, onDoubleTap, doubleTapWindowMs = 0, size = 200, modelUrl = CUBE_MODEL, showFoodFace = false, prepareModelUrl, onModelReady, cameraFlashArmed = false, cameraFlashPulse = 0, camcorderRecording = false, diceRollPulse, diceRollFace, motionContextKey, renderingVisible = true }: CubeTab3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [glFailed, setGlFailed] = useState(false)
   // Which clay model is actually ON SCREEN right now. Mirrored to a data
@@ -608,6 +616,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
   // below. Model swaps need both halves: merely waking a clean loop leaves the
   // old framebuffer on screen until a tap marks it dirty.
   const wakeLoopRef = useRef<() => void>(() => {})
+  const renderingVisibleRef = useRef(renderingVisible)
+  renderingVisibleRef.current = renderingVisible
+  const syncRenderingVisibilityRef = useRef<(visible: boolean) => void>(() => {})
   const callbacksRef = useRef({ onFaceChange, onVerticalSwipe, onTap, onHold, onModelReady, onDoubleTap, doubleTapWindowMs })
   callbacksRef.current = { onFaceChange, onVerticalSwipe, onTap, onHold, onModelReady, onDoubleTap, doubleTapWindowMs }
 
@@ -657,6 +668,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
   camcorderRecordingRef.current = camcorderRecording
   const updateCamcorderRecordingRef = useRef<() => void>(() => {})
   const reconcileMotionRef = useRef<() => void>(() => {})
+  const syncNavigatorMotionDemandRef = useRef<() => void>(() => {})
   const armGlobeSpinRef = useRef<(durationMs: number) => void>(() => {})
   const triggerDiceRollRef = useRef<(pulse: number, face: RadiusRewardDiceFace) => void>(() => {})
 
@@ -683,6 +695,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     // same model and therefore do not run the model-swap effect below.
     reconcileMotionRef.current()
   }, [motionContextKey])
+  useEffect(() => {
+    syncRenderingVisibilityRef.current(renderingVisible)
+  }, [renderingVisible])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -831,6 +846,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let dragging = false
     let disposed = false
     let needsRender = true
+    // A Cube can mount after the lifecycle edge that backgrounded the app.
+    // Start from the retained host value so it cannot briefly claim a renderer
+    // lease while waiting for an event that has already happened.
+    let nativeLifecycleActive = typeof window.__poplurNativeAppActive === 'boolean'
+      ? window.__poplurNativeAppActive
+      : true
+    let rendererLeaseGranted = false
+    let performanceRenderer: ReturnType<typeof PoplurPerformanceManager.registerRenderer> | null = null
     let pitch = showFoodFaceRef.current ? HALF_PI : 0
     let pitchVelocity = 0
     let pitchTarget: number | null = null
@@ -877,9 +900,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let lastRawHeading = 0
     // The visible navigator is allowed to be genuinely smooth while it is
     // changing, but never owns a display-rate loop merely because it exists.
-    // FULL mode therefore leaves direct gestures and camera aiming at 60fps;
-    // ordinary parallax/ambient motion is capped separately below. Lower
-    // thermal modes step even that finite work down.
+    // Direct gestures use this policy ladder; sensor-driven parallax and camera
+    // aiming have stricter caps in cubeMotionThermalPolicy.
     const fpsForMode = (mode: typeof initialNavigatorPolicy.mode) => (
       mode === 'FULL' ? 60
         : mode === 'REDUCED' ? 48
@@ -894,6 +916,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     /// after the handset stopped and became sustained work on every tab.
     const MOTION_KEEPALIVE_MS = 250
     let motionActiveUntil = 0
+    let motionLease: CubeMotionLease = { until: 0, anchor: null }
     // The wardrobe tee's cloth spring (see the tick in the render loop).
     let clothSwingVelX = 0
     let clothSwingVelY = 0
@@ -924,6 +947,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     }
     const requestDisplayFrame = window.requestAnimationFrame.bind(window)
     const cancelDisplayFrame = window.cancelAnimationFrame.bind(window)
+    const rendererEligible = () => cubeRendererCanWork({
+      surfaceVisible: renderingVisibleRef.current,
+      documentVisible: document.visibilityState === 'visible',
+      nativeLifecycleActive,
+      displayActive: window.__poplurDisplayActive?.() ?? true,
+    })
     // A map subscreen keeps `targetTab` on map while replacing the globe with
     // its own navigator object. Key the world-anchored terms to the object that
     // is actually loaded, otherwise radio/iPod inherit the globe's accumulated
@@ -932,16 +961,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       targetTabRef.current === 'map'
       && /(?:globe|earth)/i.test(loadedUrlRef.current ?? '')
     const mapGlobeIsVisible = () =>
-      document.visibilityState === 'visible'
-      && (window.__poplurDisplayActive?.() ?? true)
+      rendererEligible()
       // Eligibility is separate from the bounded turn deadline. The globe can
       // remain visible without retaining a second continuous WebGL loop beside
       // Mapbox; model arrival and genuine interactions extend globeSpinUntil.
       && window.__poplurChromeIdle !== true
       && isMapGlobe()
     const discoBallIsVisible = () =>
-      document.visibilityState === 'visible'
-      && (window.__poplurDisplayActive?.() ?? true)
+      rendererEligible()
       && window.__poplurChromeIdle !== true
       && loadedUrlRef.current === DISCO_BALL_MODEL
     const armGlobeSpin = (durationMs: number) => {
@@ -957,6 +984,20 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         wider camcorder envelope ended up unreachable. */
     const isAiming = () => loadedUrlRef.current === CAMCORDER_MODEL
     const isFrontOnly = () => !!loadedUrlRef.current && FRONT_ONLY_MODELS.has(loadedUrlRef.current)
+    const syncNavigatorMotionDemand = () => {
+      reportNavigatorMotionDemand(rendererEligible() && isAiming())
+    }
+    syncNavigatorMotionDemandRef.current = syncNavigatorMotionDemand
+    const admitMotionSample = (sample: CubeMotionSample, now: number) => {
+      const decision = advanceCubeMotionLease({
+        now,
+        current: motionLease,
+        sample,
+        eligible: rendererEligible(),
+      })
+      motionLease = { until: decision.until, anchor: decision.anchor }
+      return decision.accepted
+    }
 
     /** WHICH WAY AN OBJECT FACES, and why — decided by what the object MEANS
         on the screen it is on, not by listing models that misbehave.
@@ -1131,7 +1172,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
           fitIntoGroup(model, group, requestedUrl, navigatorAnisotropy, shaderPrecision)
           modelNodeRef.current = model
           loadedUrlRef.current = requestedUrl
-          reportNavigatorMotionDemand(requestedUrl === CAMCORDER_MODEL)
+          syncNavigatorMotionDemand()
           armGlobeSpin(8000)
           setLoadedModel(requestedUrl)
           setSceneReadyVersion(version => version + 1)
@@ -1346,9 +1387,17 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       event.preventDefault()
       setGlFailed(true)
     }
+    const suspendRendererWork = () => {
+      motionActiveUntil = 0
+      motionLease = { until: 0, anchor: motionLease.anchor }
+      finishDiceTumble()
+      cancelScheduledFrame()
+      performanceRenderer?.setDemand(false)
+      syncNavigatorMotionDemand()
+    }
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') {
-        finishDiceTumble()
+        suspendRendererWork()
         return
       }
       // WebKit may discard a pending native rAF while the app is inactive but
@@ -1359,20 +1408,23 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       if (frameTimer) window.clearTimeout(frameTimer)
       raf = 0
       frameTimer = 0
+      syncNavigatorMotionDemand()
       armGlobeSpin(4000)
       reconcileLatestMotion()
       wakeLoopRef.current()
     }
     const onNativeLifecycle = (event: Event) => {
       const active = (event as CustomEvent<{ active?: boolean }>).detail?.active
+      nativeLifecycleActive = active === true
       if (active !== true) {
-        finishDiceTumble()
+        suspendRendererWork()
         return
       }
       if (raf) cancelDisplayFrame(raf)
       if (frameTimer) window.clearTimeout(frameTimer)
       raf = 0
       frameTimer = 0
+      syncNavigatorMotionDemand()
       armGlobeSpin(4000)
       reconcileLatestMotion()
       wakeLoopRef.current()
@@ -1400,32 +1452,40 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       return null
     }
     const onDeviceOrientation = (event: DeviceOrientationEvent) => {
-      if (document.visibilityState !== 'visible') return
       const headingDeg = readCompassHeadingDeg(event)
       if (event.gamma == null && event.beta == null) {
-        if (headingDeg != null && applyHeadingTarget(THREE.MathUtils.degToRad(headingDeg))) {
-          motionActiveUntil = performance.now() + MOTION_KEEPALIVE_MS
+        const now = performance.now()
+        const heading = headingDeg == null ? undefined : THREE.MathUtils.degToRad(headingDeg)
+        if (heading != null
+          && admitMotionSample({ heading }, now)
+          && applyHeadingTarget(heading)) {
+          motionActiveUntil = now + MOTION_KEEPALIVE_MS
         }
         return
       }
       const now = performance.now()
-      // Ordinary clay parallax is a small 176px affordance. Reserve display-rate
-      // sampling for the camcorder, whose whole purpose is following the aim.
-      const sampleIntervalMs = 1000 / (isAiming() ? CAMCORDER_AIMING_FPS : NAVIGATOR_PARALLAX_FPS)
+      const sampleFPS = cubeMotionFPS({
+        aiming: isAiming(),
+        performanceFPS: navigatorFPS,
+        eligible: rendererEligible(),
+      })
+      if (sampleFPS === 0) return
+      const sampleIntervalMs = 1000 / sampleFPS
       if (now - lastMotionAt < sampleIntervalMs) return
       lastMotionAt = now
       // beta runs from the tabletop hold (0°) to upright (90°). The folded
       // pitch response keeps the navigator flat at either end of that range.
       const roll = THREE.MathUtils.degToRad(event.gamma ?? 0)
       const devicePitch = THREE.MathUtils.degToRad(event.beta ?? 0)
+      const heading = headingDeg == null ? undefined : THREE.MathUtils.degToRad(headingDeg)
       window.__poplurLatestCubeMotion = { roll, pitch: devicePitch }
+      if (!admitMotionSample({ roll, pitch: devicePitch, heading }, now)) return
       const motionChanged = applyMotionTarget(
         roll,
         devicePitch,
         THREE.MathUtils.degToRad(0.2),
       )
-      const headingChanged = headingDeg != null
-        && applyHeadingTarget(THREE.MathUtils.degToRad(headingDeg))
+      const headingChanged = heading != null && applyHeadingTarget(heading)
       if (motionChanged || headingChanged) motionActiveUntil = now + MOTION_KEEPALIVE_MS
     }
     const onNativeMotion = (event: Event) => {
@@ -1442,19 +1502,31 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       if (typeof roll === 'number' || typeof devicePitch === 'number') {
         window.__poplurLatestCubeMotion = next
       }
-      if (document.visibilityState !== 'visible') return
       const nativeNow = performance.now()
-      const sampleIntervalMs = 1000 / (isAiming() ? CAMCORDER_AIMING_FPS : NAVIGATOR_PARALLAX_FPS)
+      const sampleFPS = cubeMotionFPS({
+        aiming: isAiming(),
+        performanceFPS: navigatorFPS,
+        eligible: rendererEligible(),
+      })
+      if (sampleFPS === 0) return
+      const sampleIntervalMs = 1000 / sampleFPS
       if (nativeNow - lastMotionAt < sampleIntervalMs) return
       lastMotionAt = nativeNow
+      const heading = hasHeading
+        ? THREE.MathUtils.degToRad(detail.heading as number)
+        : undefined
+      if (!admitMotionSample({
+        roll: typeof roll === 'number' ? next.roll : undefined,
+        pitch: typeof devicePitch === 'number' ? next.pitch : undefined,
+        heading,
+      }, nativeNow)) return
       // 0.2°, matching the web path. At the navigator's ~176px size a degree
       // of yaw moves the silhouette about 1.5px, so 0.08° was a fifth of a
       // pixel — below anything a person can see, and it was forcing a draw.
       const motionChanged = typeof roll === 'number' || typeof devicePitch === 'number'
         ? applyMotionTarget(next.roll, next.pitch, THREE.MathUtils.degToRad(0.2))
         : false
-      const headingChanged = hasHeading
-        && applyHeadingTarget(THREE.MathUtils.degToRad(detail.heading as number))
+      const headingChanged = heading != null && applyHeadingTarget(heading)
       if (motionChanged || headingChanged) {
         motionActiveUntil = nativeNow + MOTION_KEEPALIVE_MS
       }
@@ -1494,7 +1566,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     // capture-phase listener flips __poplurChromeIdle first — it registered
     // earlier, so it runs earlier). Give the globe one short acknowledgement
     // turn, then let the demand-driven renderer park again.
-    const onAnyPress = () => { armGlobeSpin(1200) }
+    const onAnyPress = () => {
+      motionLease.until = Math.max(motionLease.until, performance.now() + CUBE_MOTION_LEASE_MS)
+      armGlobeSpin(1200)
+    }
     document.addEventListener('pointerdown', onAnyPress, { capture: true, passive: true })
 
     // ---- finite pitch + event-driven render loop ----
@@ -1511,11 +1586,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       scheduledAt = 0
     }
     const scheduleLoop = (delayMs = 0) => {
-      if (disposed || raf || frameTimer) return
+      if (disposed || raf || frameTimer || !rendererLeaseGranted || !rendererEligible()) return
       scheduledAt = performance.now()
       const armFrame = () => {
         frameTimer = 0
-        if (disposed || raf) return
+        if (disposed || raf || !rendererLeaseGranted || !rendererEligible()) return
         raf = requestDisplayFrame(loop)
       }
       if (delayMs > 2) frameTimer = window.setTimeout(armFrame, delayMs)
@@ -1526,6 +1601,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       raf = 0
       scheduledAt = 0
       lastLoopCallbackAt = now
+      if (!rendererLeaseGranted || !rendererEligible()) {
+        performanceRenderer?.setDemand(false)
+        return
+      }
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
 
@@ -1743,7 +1822,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         }
       }
 
-      if (needsRender) {
+      if (needsRender && rendererLeaseGranted && rendererEligible()) {
         // The globe's authored entrance turn and live device response share
         // one rotation. Every other object stays front-facing and moves only
         // from device tilt; a tab change never carries the globe's yaw into it.
@@ -1773,38 +1852,54 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // parking between samples and stuttering.
       const motionLive = now < motionActiveUntil
       if (active || globeAnimating || discoAnimating || diceAnimating || motionLive || clothSettling) {
-        // Ambient navigator work gets 20Hz; a direct gesture and camera aim
-        // keep the full policy rate.
+        // Ambient navigator work gets 20Hz; direct pointer gestures keep the
+        // full policy rate. Sensor-driven camcorder aiming is capped at 30Hz.
         //
-        // The loop parks correctly when a phone is PUT DOWN, but a phone in a
-        // hand never stops sending motion, so `motionLive` stays true and the
-        // spring chases a target that keeps moving — a continuous display-rate
-        // render of the cube, on every tab, for as long as it is held. That is
-        // the sustained load behind the heat, and it is invisible to the
-        // thermal gate, which measures a page nobody is holding.
+        // A held phone never reports an exactly stable pose. The meaningful-
+        // motion lease above stops that sensor jitter from renewing this loop
+        // forever: small changes are responsive during the finite lease, then
+        // ignored until the handset has actually moved two cumulative degrees.
         //
         // The 176px clay objects, cloth settling, globe turn, and parallax all
-        // read cleanly at 20Hz. Only an actual pointer gesture or the camcorder
-        // is presentation-critical; keeping the globe at 60 merely because it
-        // is authored motion recreated a permanent display-rate WebGL loop.
+        // read cleanly at 20Hz. Aiming still gets a higher 30Hz ceiling, while
+        // keeping the globe at 60 merely because it is authored motion would
+        // recreate a permanent display-rate WebGL loop.
         const ambientOnly = pitchTarget === null && !dragging && !isAiming() && !diceAnimating
+        const sensorFPS = cubeMotionFPS({
+          aiming: isAiming(),
+          performanceFPS: navigatorFPS,
+          eligible: rendererEligible(),
+        })
         const loopFPS = diceAnimating
           ? Math.min(navigatorFPS, 30)
+          : isAiming()
+          ? sensorFPS
           : ambientOnly
-          ? Math.min(navigatorFPS, NAVIGATOR_PARALLAX_FPS)
+          ? sensorFPS
           : navigatorFPS
         // Arm shortly before the desired presentation edge, then let rAF align
         // the actual draw. This prevents an Android 60/120Hz display from
         // invoking a no-op JS callback for every hardware refresh.
-        scheduleLoop(Math.max(0, 1000 / loopFPS - 8))
+        if (loopFPS > 0) scheduleLoop(Math.max(0, 1000 / loopFPS - 8))
+        else performanceRenderer?.setDemand(false)
       } else if (window.__poplurGlobeSpin) {
         // Nothing re-armed: the loop is parked until something wakes it. Say so,
         // or a parked loop reads as "gated" forever off its last pass.
         window.__poplurGlobeSpin = { spinning: false, gate: 'parked', at: now }
+        performanceRenderer?.setDemand(false)
+      } else {
+        performanceRenderer?.setDemand(false)
       }
     }
     const wake = () => {
       const now = performance.now()
+      if (!rendererEligible()) {
+        cancelScheduledFrame()
+        performanceRenderer?.setDemand(false)
+        return
+      }
+      performanceRenderer?.setDemand(true)
+      if (!rendererLeaseGranted) return
       // WebKit may discard a pending callback across app lifecycle changes.
       // Replace only a genuinely stale request; incoming motion samples
       // otherwise share the already-scheduled frame instead of raising FPS.
@@ -1841,27 +1936,59 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       needsRender = true
       wake()
     }
-    const stopPerformancePolicy = PoplurPerformanceManager.subscribe(snapshot => {
-      navigatorPerformanceMode = snapshot.mode
-      if (snapshot.mode === 'LOW_POWER' || snapshot.mode === 'EMERGENCY') {
+    const applyNavigatorPolicy = (policy: typeof initialNavigatorPolicy) => {
+      navigatorPerformanceMode = policy.mode
+      if (policy.mode === 'LOW_POWER' || policy.mode === 'EMERGENCY') {
         syncDiceMotionBlur(0)
       }
-      navigatorFPS = fpsForMode(snapshot.mode)
+      navigatorFPS = fpsForMode(policy.mode)
       navigatorFrameMs = 1000 / navigatorFPS
       renderer.setPixelRatio(Math.min(
         window.devicePixelRatio || 1,
-        snapshot.maximumPixelRatio,
+        policy.maximumPixelRatio,
         maximumNavigatorDPR,
       ))
       renderer.setSize(size, size, false)
+    }
+    performanceRenderer = PoplurPerformanceManager.registerRenderer({
+      id: 'CubeTab3D',
+      // A 176px event-driven navigator is a light renderer. It still requests
+      // a real lease so hidden/background work is visible to diagnostics and
+      // cannot silently exceed the manager's light-renderer budget.
+      heavy: false,
+      priority: 100,
+      visible: renderingVisibleRef.current,
+      demanded: false,
+      onActiveChange: (active, policy) => {
+        rendererLeaseGranted = active
+        canvas.dataset.rendererActive = String(active)
+        if (!active) {
+          cancelScheduledFrame()
+          return
+        }
+        applyNavigatorPolicy(policy)
+        needsRender = true
+        scheduleLoop()
+      },
+      releaseInactiveResources: cancelScheduledFrame,
+    })
+    syncRenderingVisibilityRef.current = visible => {
+      performanceRenderer?.setVisible(visible)
+      if (!visible) {
+        suspendRendererWork()
+        return
+      }
+      syncNavigatorMotionDemand()
+      reconcileLatestMotion()
       needsRender = true
       wake()
-    })
-    scheduleLoop()
+    }
+    syncRenderingVisibilityRef.current(renderingVisibleRef.current)
 
     return () => {
       disposed = true
-      stopPerformancePolicy()
+      performanceRenderer?.dispose()
+      performanceRenderer = null
       cancelScheduledFrame()
       window.clearTimeout(flashPulseTimer)
       if (pendingTapTimer != null) clearTimeout(pendingTapTimer)
@@ -1887,15 +2014,18 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       modelNodeRef.current = null
       loadedUrlRef.current = null
       wakeLoopRef.current = () => {}
+      syncRenderingVisibilityRef.current = () => {}
       updateCameraFlashRef.current = () => {}
       updateCamcorderRecordingRef.current = () => {}
       reconcileMotionRef.current = () => {}
+      syncNavigatorMotionDemandRef.current = () => {}
       armGlobeSpinRef.current = () => {}
       triggerDiceRollRef.current = () => {}
       syncDiceMotionBlur(0)
       delete canvas.dataset.diceRolling
       delete canvas.dataset.diceFace
       delete canvas.dataset.diceMotionBlur
+      delete canvas.dataset.rendererActive
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size])
@@ -2006,7 +2136,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       }
       modelNodeRef.current = model
       loadedUrlRef.current = modelUrl
-      reportNavigatorMotionDemand(modelUrl === CAMCORDER_MODEL)
+      syncNavigatorMotionDemandRef.current()
       armGlobeSpinRef.current(8000)
       setLoadedModel(modelUrl)
       updateCameraFlashRef.current(cameraFlashArmedRef.current, false)

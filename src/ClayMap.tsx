@@ -226,28 +226,6 @@ export interface PopPin {
   mine: boolean
 }
 
-export function WeatherMark({
-  mode,
-  icon: _icon,
-  cloud: _cloud,
-  compact = false,
-}: {
-  mode: WeatherMode
-  icon: string
-  cloud?: string | null
-  compact?: boolean
-}) {
-  return (
-    <span className={`${styles.weatherVisual}${compact ? ` ${styles.weatherVisualCompact}` : ''}`}>
-      <SideControlIconImage
-        icon={weatherIconIdForMode(mode)}
-        displaySize={compact ? 42 : 44}
-        className={styles.weatherStaticImage}
-      />
-    </span>
-  )
-}
-
 function weatherConditionLabel(mode: WeatherMode) {
   switch (mode) {
     case 'clear': return 'Sunny now'

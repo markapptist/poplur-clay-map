@@ -352,9 +352,12 @@ export default function UploadFlowReview() {
       <aside className={styles.sidebar}>
         <div className={styles.sidebarTop}>
           <div className={styles.heading}>
-            <span>POPLUR REVIEW</span>
-            <h1>Upload pipeline</h1>
-            <p>One draft · eight distinct stages</p>
+            <img className={styles.headingBadge} src="/logo_icon.png" alt="" />
+            <div>
+              <span>POPLUR REVIEW</span>
+              <h1>Upload pipeline</h1>
+              <p>One draft · eight distinct stages</p>
+            </div>
           </div>
           <div className={styles.flowTabs} role="tablist" aria-label="Upload entry flow">
             <button type="button" role="tab" aria-selected={flow === 'camera'} className={flow === 'camera' ? styles.flowActive : ''} onClick={() => chooseFlow('camera')}>Camera first</button>
@@ -411,7 +414,12 @@ export default function UploadFlowReview() {
           </div>
         </header>
         <div className={styles.device}>
-          <div className={styles.deviceViewport} data-testid="upload-device">
+          <div
+            className={styles.deviceViewport}
+            data-testid="upload-device"
+            data-upload-flow={flow}
+            data-upload-stage={current.id}
+          >
             <div className={`${styles.composerLayer} ${composerVisible ? '' : styles.composerLayerHidden}`} aria-hidden={!composerVisible}>
               <ComposerReview
                 key={`${flow}-${media}`}
