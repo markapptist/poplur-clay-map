@@ -1,7 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import mapboxgl from 'mapbox-gl'
-import { POIS, MAP_THEMES, OTHER_POPS, PALETTE, type PopLevel } from './data'
-import { feedUrl } from './assetPacks'
+import { MAP_THEMES, PALETTE, type POI, type PopLevel } from './data'
 
 /** Takeover test mode — `?takeover=1`.
  *
@@ -18,7 +17,8 @@ import { feedUrl } from './assetPacks'
  *
  *  Follows the existing dev-flag convention — kebab query param compared to
  *  '1', same as sample-claims, mapLite, day-cycle and sky-cycle. */
-const TAKEOVER_TEST = new URLSearchParams(window.location.search).get('takeover') === '1'
+const TAKEOVER_TEST = import.meta.env.DEV
+  && new URLSearchParams(window.location.search).get('takeover') === '1'
 const WEATHER_TEST_ENABLED = weatherTestHarnessEnabled(
   window.location.search,
   import.meta.env.DEV,
@@ -49,8 +49,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
   return claims
 }
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
-import { setClaim, seedClaims, setClaimGroup, totalClaimedKm, onClaimsSettled, getClaims } from './mapClaims'
-import { userUnitsToKm } from './units'
+import { setClaimGroup, onClaimsSettled } from './mapClaims'
 import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
 import WeatherMark from './WeatherMark'
 import {
@@ -108,24 +107,16 @@ import {
 } from './liveNews'
 import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
-import { radiusDeltaForChannel, radiusEngagementForChannel } from './radiusLedger'
-import { contentPostId, listPostings, onPostedContentChange, radiusKmFor, POSTINGS_KEY } from './postedContent'
+import { accountRadiusTotalKm } from './mapAccountRadius'
+import { subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
+import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
 import { worldCountryZoomActive, type WorldCountryUpdate } from './mapCountrySignal'
 
-/** The shipped games by id, so a dropped game's claim can wear its title on
- *  the pin. A tiny local map rather than an import of GamesScreen: this
- *  document is the MAP, and pulling the whole games screen (model-viewer,
- *  playables) into its bundle to read three strings would be absurd. */
-const GAME_TITLES: Record<string, string> = {
-  fps: 'FPS Shooter',
-  poplurgatchi: 'Poplurgatchi',
-  arcade: 'Poplur Boy',
-}
-
-/** Dropped games all claim in the house cyan — one recognisable colour for
- *  the kind, the way other people's pops each keep theirs. */
-const GAME_CLAIM_COLOR = '#33ccff'
+/** Static places still drive landmark/search tours, but they are not posts.
+ * The production Map deliberately passes this empty list into ClayMap so a
+ * wiped Firestore collection really renders zero user markers. */
+const NO_USER_POIS: POI[] = []
 
 interface RadioStationCue {
   name: string
@@ -412,7 +403,6 @@ const TOUR_FLIGHT_MS = Math.round(4_000 / TOUR_SPEED)
 const TOUR_DWELL_MS = Math.round(11_000 / TOUR_SPEED)
 const TOUR_3D_REVEAL_START_ZOOM = 13.9
 const NO_MAP_PINS: PopPin[] = []
-const MAP_TOTAL_OWN_POSTS = 128
 const MAP_GLOBAL_ONLINE = 1_200_000
 
 // ── The pop-to-pop trip ─────────────────────────────────────────────────────
@@ -456,7 +446,6 @@ const ENGAGEMENT_POP_MATCH_M = 400
 // something. So it is the engagement that pays ground, and it pays into the
 // pop it was left on — the disc grows on the map where the conversation
 // happened, which is the whole takeover idea working in your favour.
-const COMMENT_RADIUS_STEP = 2
 
 /** Deterministic day/night shade for native controls and browser QA. The live
  * clock remains the default; this just makes an explicit override change the
@@ -541,15 +530,19 @@ function distanceMeters(a: [number, number], b: [number, number]): number {
   return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
-function accumulatedRadiusKm(): number {
-  const live = totalClaimedKm()
-  return live > 0 ? live : POIS.reduce((sum, poi) => sum + poi.radiusKm, 0)
+function accountPostedClaims(pins: readonly LiveMapPostPin[]) {
+  return pins.filter(pin => pin.mine).map(pin => ({
+    id: pin.id,
+    coords: pin.coords,
+    radiusKm: Math.max(0, pin.radiusKm),
+  }))
 }
 
-/** A map pin's standing territory is its published reach plus real, persisted
- * reactions for the Feed channel attached to that post. */
-function livePoiRadiusKm(poi: Pick<typeof POIS[number], 'radiusKm' | 'channel'>): number {
-  return Math.max(0, poi.radiusKm + radiusDeltaForChannel(poi.channel))
+/** Account totals are calculated only from the same authoritative Firestore
+ * snapshot that draws the Map. Clearing production content therefore clears
+ * both the pins and the radius HUD in the same realtime update. */
+function accumulatedRadiusKm(pins: readonly LiveMapPostPin[]): number {
+  return accountRadiusTotalKm(accountPostedClaims(pins))
 }
 
 /** Stable local presence until the live audience service replaces it. Keeping
@@ -666,7 +659,7 @@ export default function MapApp() {
     if (window.parent === window) return
     window.parent.postMessage({ type: 'poplur-food-ad-visibility', visible }, '*')
   }), [])
-  const [selectedId, setSelectedId] = useState<string | null>('queen')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   // Theme switching lives in the app's Profile → Settings; the prototype
   // ships the default clay skin with the infrastructure in place.
   const [theme] = useState(MAP_THEMES[0])
@@ -864,26 +857,6 @@ export default function MapApp() {
     getRadioPlaybackState,
   )
 
-  /**
-   * A comment landed on one of your pops — grow it by COMMENT_RADIUS_STEP.
-   *
-   * `setClaim` is built for exactly this ("call again with a larger radius as
-   * the post's reach climbs") and animates the disc out to the new size, so the
-   * ground visibly grows where the conversation happened. Only YOUR claims pay:
-   * other people's carry a colour, and their ground is not yours to grow.
-   */
-  const growRadiusForComment = useCallback((event: EngagementEvent) => {
-    if (event.kind !== 'comment' || !event.coords) return
-    const map = mapRef.current
-    if (!map) return
-    const coords = event.coords
-    const mine = getClaims().find(c => !c.color && distanceMeters(c.center, coords) < ENGAGEMENT_POP_MATCH_M)
-    if (!mine) return
-    try {
-      setClaim(map, { ...mine, radiusKm: mine.radiusKm + userUnitsToKm(COMMENT_RADIUS_STEP) })
-    } catch { /* style not ready; the next comment grows it */ }
-  }, [])
-
   // When the user last had their hands on the map. Engagement will not take a
   // camera someone is already driving (see traverseToEngagement).
   const lastGestureRef = useRef(0)
@@ -947,10 +920,9 @@ export default function MapApp() {
           // would double every notice on the map surface.
           forwardToParent: true,
           onEngagement: event => {
-            // The reward is NOT behind the traversal's guards. Whether the
-            // camera is allowed to fly right now has nothing to do with
-            // whether you earned the ground.
-            growRadiusForComment(event)
+            // Radius changes arrive through the same authoritative Firestore
+            // post listener as pin creation/deletion. A local engagement must
+            // never invent territory that the database does not contain.
             engagementTraverseRef.current?.(event)
           },
         })
@@ -2626,41 +2598,6 @@ export default function MapApp() {
 
   const [mapLive, setMapLive] = useState(0)
 
-  // ── The pops EXIST on the map, always ────────────────────────────────────
-  // Your posts are territory, and territory does not appear only when a camera
-  // flies at it. Every pop is seeded as a standing claim: painted ground at
-  // street zoom, a glowing clay dot from space (mapClaims' globe layer). This
-  // is also what makes the planet view mean something — see the scope report
-  // below.
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !mapLive) return
-    // One batch, and only once the launch flight has settled — seeding during
-    // the intro contends with the dive on the main thread, and the A03 profile
-    // billed that burst to whichever tab was front.
-    let seeded = false
-    const seed = () => {
-      if (seeded) return
-      seeded = true
-      try {
-        seedClaims(map, POIS.map(poi => ({
-          id: `pop-${poi.id}`,
-          ownerId: 'self',
-          center: poi.coords as [number, number],
-          radiusKm: livePoiRadiusKm(poi),
-          fameScore: dominanceFameScore(
-            livePoiRadiusKm(poi),
-            radiusEngagementForChannel(poi.channel),
-          ),
-        })))
-      } catch { /* map torn down */ }
-    }
-    map.once('idle', seed)
-    // An orbiting map never idles — make sure the pops still exist.
-    const fallback = window.setTimeout(seed, 8000)
-    return () => { map.off('idle', seed); window.clearTimeout(fallback) }
-  }, [mapLive])
-
   // ── Pop level: whose takeovers the map is showing ────────────────────────
   // A map of only your own pops cannot answer "am I winning here", because
   // there is nobody to be winning against. The level switch (shell HUD, above
@@ -2669,10 +2606,20 @@ export default function MapApp() {
   // The visible control is numbered 1 → 2 → 3. Launch with all three layers
   // present so the first map frame explains the shared domination system.
   const [popLevel, setPopLevel] = useState<PopLevel>('all')
-  const [publishedPins, setPublishedPins] = useState<PopPin[]>([])
-  // Values remain in radiusLedger; this revision only recomputes the visible
-  // pin set after Home relays a signed reward or loss into this iframe.
-  const [radiusLedgerRevision, setRadiusLedgerRevision] = useState(0)
+  const [ownUid, setOwnUid] = useState<string | null>(() => currentUid())
+  const [liveMapPosts, setLiveMapPosts] = useState<LiveMapPostPin[]>([])
+  const liveMapPostsRef = useRef(liveMapPosts)
+  liveMapPostsRef.current = liveMapPosts
+  const [liveMapPostsReady, setLiveMapPostsReady] = useState(false)
+  useEffect(() => onUser(user => setOwnUid(user?.uid ?? null)), [])
+  useEffect(() => subscribeLiveMapPosts(
+    pins => {
+      setLiveMapPosts(pins)
+      setLiveMapPostsReady(true)
+    },
+    () => setLiveMapPostsReady(true),
+    ownUid,
+  ), [ownUid])
   const [pinRadiusPulse, setPinRadiusPulse] = useState<{
     id: string
     deltaKm: number
@@ -2705,96 +2652,60 @@ export default function MapApp() {
     if (typeof postId !== 'string' || typeof deltaKm !== 'number' || !Number.isFinite(deltaKm) || deltaKm === 0) return
     const separator = postId.indexOf(':')
     const channel = separator > 0 ? postId.slice(0, separator) : ''
-    const poi = POIS.find(candidate => candidate.channel === channel)
-    if (!poi) return
-
-    // The ledger already contains this event when Home posts it. This makes
-    // repeated bridge delivery idempotent rather than growing the same claim
-    // twice.
-    const nextRadiusKm = livePoiRadiusKm(poi)
-    const claimId = `pop-${poi.id}`
-    const existing = getClaims().find(claim => claim.id === claimId)
-    const previousRadiusKm = existing?.radiusKm ?? Math.max(0, nextRadiusKm - deltaKm)
-    const appliedDeltaKm = nextRadiusKm - previousRadiusKm
-    setRadiusLedgerRevision(revision => revision + 1)
-    if (Math.abs(appliedDeltaKm) < 0.001) return
-
-    showPinRadiusPulse(claimId, appliedDeltaKm)
-    const map = mapRef.current
-    if (map) {
-      try {
-        setClaim(map, {
-          id: claimId,
-          ownerId: 'self',
-          center: poi.coords as [number, number],
-          radiusKm: nextRadiusKm,
-          fameScore: dominanceFameScore(nextRadiusKm, radiusEngagementForChannel(poi.channel)),
-        })
-      } catch { /* style can be rebuilding; persisted value is used on remount */ }
+    const pin = liveMapPosts.find(candidate => candidate.id === postId
+      || candidate.id === `firestore:${postId}`
+      || (channel && candidate.channel === channel))
+    if (!pin) return
+    // The database remains authoritative for geometry. This is only the short
+    // signed +/− badge while the Firestore listener delivers the new radius.
+    showPinRadiusPulse(pin.id, deltaKm)
+    if (openedPinRef.current === pin.id) {
+      window.parent?.postMessage({ type: 'poplur-map-radius', popId: pin.id, radiusKm: pin.radiusKm }, '*')
     }
-    if (openedPinRef.current === claimId) {
-      window.parent?.postMessage({ type: 'poplur-map-radius', popId: claimId, radiusKm: nextRadiusKm }, '*')
-    }
-  }, [showPinRadiusPulse])
+  }, [liveMapPosts, showPinRadiusPulse])
 
-  // Your own claims are seeded above and never re-pushed by the level switch;
-  // only the OTHERS half arrives and leaves, which is why this uses the
-  // owner-partitioned setter rather than clear-and-reseed.
+  // Firestore is the one production source for user territory. onSnapshot
+  // gives this effect the initial empty collection and every add/change/delete
+  // after it, so a database wipe clears claims immediately and a later
+  // simulation post appears without polling or reloading.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLive) return
-    const applyMine = (effectiveLevel: PopLevel) => {
-      const persisted = listPostings()
-        .filter(posting => posting.kind !== 'game')
-        .map(posting => ({
-          id: `posted:${contentPostId(posting.kind, posting.itemId)}`,
-          center: posting.coords,
-          radiusKm: radiusKmFor(posting.kind, posting.itemId) ?? posting.radiusKmAtPost,
-        }))
-      setClaimGroup(map, 'mine',
-        TAKEOVER_TEST && popLevel === 'all'
-          ? worldTakeoverClaims()
-          : effectiveLevel === 'others' ? [] : [
-            ...POIS.map(poi => ({
-              id: `pop-${poi.id}`,
-              ownerId: 'self',
-              center: poi.coords as [number, number],
-              radiusKm: livePoiRadiusKm(poi),
-              fameScore: dominanceFameScore(
-                livePoiRadiusKm(poi),
-                radiusEngagementForChannel(poi.channel),
-              ),
-            })),
-            ...persisted,
-          ])
-    }
     let previousEffectiveLevel: PopLevel | null = null
     const apply = () => {
       // Regional and planet views are always the colour-coded scoreboard.
       // Close 3D returns to the selected level, so the extra rival polygons
       // are not kept active around building views and cannot add GPU pressure.
       const effectiveLevel = effectiveDominanceLevel(popLevel, map.getZoom())
-      if (effectiveLevel === previousEffectiveLevel) return
+      if (effectiveLevel === previousEffectiveLevel && liveMapPostsReady) return
       previousEffectiveLevel = effectiveLevel
       try {
-        setClaimGroup(map, 'others', effectiveLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
-          id: pop.id,
-          ownerId: pop.user,
-          center: pop.coords,
-          radiusKm: pop.radiusKm,
-          fameScore: dominanceFameScore(pop.radiusKm),
-          color: pop.color,
-          user: pop.user,
+        const mine = liveMapPosts.filter(pin => pin.mine)
+        const others = liveMapPosts.filter(pin => !pin.mine)
+        setClaimGroup(map, 'others', effectiveLevel === 'mine' ? [] : others.map(pin => ({
+          id: pin.id,
+          ownerId: pin.ownerId,
+          center: pin.coords,
+          radiusKm: pin.radiusKm,
+          fameScore: dominanceFameScore(pin.radiusKm, pin.engagement),
+          color: pin.color,
+          user: pin.user ?? undefined,
         })))
-        // 'others' means ONLY theirs: your ground comes off the board so the
-        // level reads as a filter rather than an addition.
-        // Takeover test: on `all`, YOUR ground becomes the whole world, so the
-        // terrain wrap can be judged at range. Only on `all` — the flag must
-        // not quietly change what levels 1 and 2 mean.
-        applyMine(effectiveLevel)
+        setClaimGroup(map, 'mine', TAKEOVER_TEST && popLevel === 'all'
+          ? worldTakeoverClaims()
+          : effectiveLevel === 'others' ? [] : mine.map(pin => ({
+            id: pin.id,
+            ownerId: pin.ownerId ?? ownUid ?? 'self',
+            center: pin.coords,
+            radiusKm: pin.radiusKm,
+            fameScore: dominanceFameScore(pin.radiusKm, pin.engagement),
+          })))
+        // Legacy local-storage game/post ledgers are deliberately cleared.
+        // A user-visible marker must correspond to a current Firestore post.
+        setClaimGroup(map, 'games', [])
       } catch { /* map torn down */ }
     }
-    // Let the first seed land before the level starts rearranging the board.
+    // Let the style's claim sources finish attaching before the first batch.
     const t = window.setTimeout(apply, 60)
     // `zoomend`, not `zoom`: one bounded source update only when a settled
     // camera crosses the overview boundary. Pinching/flying does no claim work
@@ -2809,47 +2720,7 @@ export default function MapApp() {
       window.clearTimeout(t)
       map.off('zoomend', apply)
     }
-  }, [popLevel, mapLive])
-
-  // ── Dropped games are territory too ──────────────────────────────────────
-  // GamesScreen drops a created game on the ground (postedContent, kind
-  // 'game'), and dropped ground is a standing claim like any other pop's.
-  // Reach is read live (radiusKmFor = snapshot + earned delta), so a like
-  // landing on a game grows its disc on the next recompute. Two listeners
-  // because the shell and this map are SEPARATE documents on one origin:
-  // drops made in this document announce via the change event, drops made in
-  // the shell only arrive as the localStorage `storage` event.
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !mapLive) return
-    const apply = () => {
-      try {
-        setClaimGroup(map, 'games', listPostings('game').map(posting => ({
-          id: `game-${posting.itemId}`,
-          center: posting.coords,
-          radiusKm: radiusKmFor('game', posting.itemId) ?? posting.radiusKmAtPost,
-          color: GAME_CLAIM_COLOR,
-          user: GAME_TITLES[posting.itemId] ?? posting.itemId,
-          // The group tag keeps these out of the colour partition, or the pop
-          // level switch would sweep them off with the 'others' half.
-          group: 'games' as const,
-        })))
-      } catch { /* style can be rebuilding; the next change re-applies */ }
-    }
-    // Same beat as the level effect above: let the first seed land first.
-    const t = window.setTimeout(apply, 60)
-    const stopLocal = onPostedContentChange(apply)
-    // A cleared storage (key null) can also have taken postings with it.
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === null || event.key === POSTINGS_KEY) apply()
-    }
-    window.addEventListener('storage', onStorage)
-    return () => {
-      window.clearTimeout(t)
-      stopLocal()
-      window.removeEventListener('storage', onStorage)
-    }
-  }, [mapLive])
+  }, [liveMapPosts, liveMapPostsReady, mapLive, ownUid, popLevel])
 
   // The pins the map should stand up, derived from the same level. Own pins
   // do not wear a profile photo; the short selfie video sits above one of them.
@@ -2872,55 +2743,33 @@ export default function MapApp() {
   const [myColor, setMyColor] = useState(() => takeoverTint(PALETTE.pinkHot))
   useEffect(() => onTakeoverColor(() => setMyColor(takeoverTint(PALETTE.pinkHot))), [])
   const mapPins = useMemo(() => {
-    const mine = popLevel === 'others' ? [] : POIS.map(poi => ({
-      id: `pop-${poi.id}`,
-      ownerId: 'self',
-      user: null,
-      name: poi.name,
-      coords: poi.coords as [number, number],
-      radiusKm: livePoiRadiusKm(poi),
-      engagement: radiusEngagementForChannel(poi.channel),
-      color: myColor,
-      avatar: ownAvatar,
-      selfieVideo: ownSelfieVideo ? { src: ownSelfieVideo, poster: ownAvatar ?? undefined } : undefined,
-      channel: poi.channel,
-      // Your OWN pops carry their post too: arriving on your ground should
-      // play what you put there, exactly as arriving on someone else's does.
-      // Every POI channel ships a clip, so this never falls back to a still.
-      media: {
-        kind: 'video' as const,
-        src: feedUrl(`ad-${poi.channel}.mp4`),
-        poster: feedUrl(`posters/ad-${poi.channel}.jpg`),
-        alt: `Your post at ${poi.name}`,
-      },
-      world: false,
-      radiusDeltaKm: pinRadiusPulse?.id === `pop-${poi.id}` ? pinRadiusPulse.deltaKm : undefined,
-      mine: true,
-    }))
-    const others = popLevel === 'mine' ? [] : OTHER_POPS.map(pop => ({
-      id: pop.id,
-      ownerId: pop.user,
-      user: pop.user,
-      name: pop.name,
-      coords: pop.coords,
-      radiusKm: pop.radiusKm,
-      color: pop.color,
-      avatar: pop.avatar,
-      channel: pop.channel,
-      media: pop.video
-        ? { kind: 'video' as const, src: pop.video, poster: pop.avatar, alt: `${pop.user} post at ${pop.name}` }
-        : { kind: 'image' as const, src: pop.avatar, alt: `${pop.user} post at ${pop.name}` },
-      world: pop.world === true,
-      mine: false,
-    }))
-    const published = popLevel === 'others' ? [] : publishedPins.map(pin => ({
-      ...pin,
-      color: myColor,
-      avatar: ownAvatar,
-      selfieVideo: undefined,
-    }))
-    return [...others, ...mine, ...published]
-  }, [popLevel, ownAvatar, ownSelfieVideo, myColor, publishedPins, radiusLedgerRevision, pinRadiusPulse])
+    return liveMapPosts
+      .filter(pin => popLevel === 'all'
+        || (popLevel === 'mine' ? pin.mine : !pin.mine))
+      .map(pin => ({
+        ...pin,
+        color: pin.mine ? myColor : pin.color,
+        avatar: pin.mine ? (ownAvatar ?? pin.avatar) : pin.avatar,
+        selfieVideo: pin.mine && ownSelfieVideo
+          ? { src: ownSelfieVideo, poster: ownAvatar ?? pin.avatar ?? undefined }
+          : undefined,
+        radiusDeltaKm: pinRadiusPulse?.id === pin.id ? pinRadiusPulse.deltaKm : undefined,
+      }))
+  }, [liveMapPosts, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
+
+  // A delete or privacy change removes a post from the snapshot. Its marker
+  // and claim disappear through mapPins/setClaimGroup; dismiss any open card
+  // and stale selection in the same React update so hidden content cannot
+  // remain floating above an otherwise-current Map.
+  useEffect(() => {
+    const liveIds = new Set(liveMapPosts.map(pin => pin.id))
+    const openedId = openedPinRef.current
+    if (openedId && !liveIds.has(openedId)) {
+      openedPinRef.current = null
+      clearPopups('mapContent')
+    }
+    setSelectedId(current => current && !liveIds.has(current) ? null : current)
+  }, [liveMapPosts])
 
   const openClickedMapPinContent = useCallback((pin: PopPin) => {
     // Never substitute an ad or cube for a post whose media record is missing.
@@ -2937,15 +2786,16 @@ export default function MapApp() {
     openedPinRef.current = pin.id
     setCurrentPlace(displayPlaceName(pin.name))
 
-    const ownNearby = POIS.filter(poi => distanceMeters(poi.coords, pin.coords) <= POPS_NEARBY_M)
-    setAreaPops({ count: ownNearby.length, ids: ownNearby.map(poi => poi.id) })
+    const ownPosts = accountPostedClaims(liveMapPosts)
+    const ownNearby = ownPosts.filter(claim => distanceMeters(claim.coords, pin.coords) <= POPS_NEARBY_M)
+    setAreaPops({ count: ownNearby.length, ids: ownNearby.map(claim => claim.id) })
     window.parent?.postMessage({
       type: 'poplur-map-context',
       scope: 'pop',
-      ownPostsTotal: MAP_TOTAL_OWN_POSTS,
+      ownPostsTotal: ownPosts.length,
       ownPostsArea: ownNearby.length,
-      ownPostIds: ownNearby.map(poi => poi.id),
-      totalRadiusKm: accumulatedRadiusKm(),
+      ownPostIds: ownNearby.map(claim => claim.id),
+      totalRadiusKm: accumulatedRadiusKm(liveMapPosts),
       popRadiusKm: pin.radiusKm,
       onlineUsers: mapAreaOnline(pin.coords, ownNearby.length),
       popId: pin.id,
@@ -2993,7 +2843,7 @@ export default function MapApp() {
         },
       },
     })
-  }, [])
+  }, [liveMapPosts])
 
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
@@ -3016,7 +2866,8 @@ export default function MapApp() {
       const c = map.getCenter()
       const center: [number, number] = [c.lng, c.lat]
       const areaRadiusM = zoom >= 14 ? 2_000 : zoom >= 9 ? 8_000 : 30_000
-      const ownArea = POIS.filter(poi => distanceMeters(poi.coords, center) <= areaRadiusM)
+      const ownPosts = accountPostedClaims(liveMapPosts)
+      const ownArea = ownPosts.filter(claim => distanceMeters(claim.coords, center) <= areaRadiusM)
 
       let nearestPin: PopPin | null = null
       let nearestMeters = Infinity
@@ -3040,12 +2891,12 @@ export default function MapApp() {
       const atCurrent = !atWorld && !atPop
         && distanceMeters(center, navigationOriginRef.current) <= CURRENT_LOCATION_M
       const scope = atWorld ? 'world' : atPop ? 'pop' : atCurrent ? 'current' : 'area'
-      const count = atWorld ? MAP_TOTAL_OWN_POSTS : ownArea.length
-      const ids = atWorld ? POIS.map(poi => poi.id) : ownArea.map(poi => poi.id)
+      const count = atWorld ? ownPosts.length : ownArea.length
+      const ids = atWorld ? ownPosts.map(claim => claim.id) : ownArea.map(claim => claim.id)
       const onlineUsers = scope === 'world' || scope === 'current'
         ? MAP_GLOBAL_ONLINE
         : mapAreaOnline(center, ownArea.length)
-      const totalRadius = accumulatedRadiusKm()
+      const totalRadius = accumulatedRadiusKm(liveMapPosts)
       const popRadius = atPop ? nearestPin?.radiusKm : undefined
       const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2), onlineUsers].join('|')
       if (!force && signature === previous) return
@@ -3055,7 +2906,7 @@ export default function MapApp() {
       window.parent?.postMessage({
         type: 'poplur-map-context',
         scope,
-        ownPostsTotal: MAP_TOTAL_OWN_POSTS,
+        ownPostsTotal: ownPosts.length,
         ownPostsArea: ownArea.length,
         ownPostIds: ids,
         totalRadiusKm: totalRadius,
@@ -3067,7 +2918,7 @@ export default function MapApp() {
 
     const offSettle = onClaimsSettled(() => {
       report(true)
-      try { window.localStorage.setItem('poplur.totalRadiusKm', String(accumulatedRadiusKm())) } catch { /* private */ }
+      try { window.localStorage.setItem('poplur.totalRadiusKm', String(accumulatedRadiusKm(liveMapPosts))) } catch { /* private */ }
     })
     const onCameraSettle = () => report()
     map.on('moveend', onCameraSettle)
@@ -3078,7 +2929,7 @@ export default function MapApp() {
       map.off('zoomend', onCameraSettle)
       offSettle()
     }
-  }, [mapLive])
+  }, [liveMapPosts, mapLive])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
     // Readiness belongs exclusively to handleGlobeReady, which now follows a
@@ -3136,9 +2987,14 @@ export default function MapApp() {
       // fastest and where people are posting. The tour stays idle-gated
       // (the hold-menu tile starts it) — this is a tip, not a takeover of the
       // camera.
-      const growing = [...POIS].sort((a, b) => b.radiusKm - a.radiusKm)[0]
-      const posting = [...POIS].sort((a, b) => b.likes - a.likes)
-        .find(poi => poi.id !== growing?.id)
+      const currentPosts = liveMapPostsRef.current
+      const growing = [...currentPosts].sort((a, b) => b.radiusKm - a.radiusKm)[0]
+      const posting = [...currentPosts].sort((a, b) => {
+        const score = (pin: LiveMapPostPin) => (pin.engagement?.views ?? 0)
+          + (pin.engagement?.upvotes ?? 0)
+          + (pin.engagement?.comments ?? 0)
+        return score(b) - score(a)
+      }).find(pin => pin.id !== growing?.id)
       if (!growing || !posting) return
       const tip = `Nearby, ${growing.name} is growing fast — a ${growing.radiusKm} kilometre radius. `
         + `People are posting around ${posting.name}. Use the channel buttons to visit them.`
@@ -3216,12 +3072,9 @@ export default function MapApp() {
   /**
    * The pops the channel arrows walk, for the level currently on screen.
    *
-   * POIS and OTHER_POPS are different record types (yours carry a category and
-   * a distance string, theirs a poster, colour and avatar), but travelling to
-   * one only ever needs where it is, how much ground it holds and what to call
-   * it — so the route is narrowed to that and the two lists concatenate
-   * cleanly. On ALL yours come first, which keeps the arrows' starting position
-   * meaningful for the common case.
+   * The route is the same realtime Firestore snapshot used by the visible
+   * pins and claims. Deleting a post removes it from traversal on that same
+   * snapshot, so arrows can never fly toward a wiped fixture.
    *
    * Read through the ref, not the state: this is called from the message
    * listener, which is installed once and would otherwise capture the level
@@ -3230,16 +3083,26 @@ export default function MapApp() {
   const traversalPops = useCallback((): Array<{
     id: string; name: string; coords: [number, number]; radiusKm: number; channel: string; mine: boolean
   }> => {
-    const mine = POIS.map(p => ({
-      id: p.id, name: p.name, coords: p.coords as [number, number], radiusKm: p.radiusKm, channel: p.channel, mine: true,
+    const mine = liveMapPosts.filter(pin => pin.mine).map(pin => ({
+      id: pin.id,
+      name: pin.name,
+      coords: pin.coords,
+      radiusKm: pin.radiusKm,
+      channel: pin.channel ?? 'live',
+      mine: true,
     }))
-    const theirs = OTHER_POPS.map(p => ({
-      id: p.id, name: p.name, coords: p.coords, radiusKm: p.radiusKm, channel: p.channel, mine: false,
+    const theirs = liveMapPosts.filter(pin => !pin.mine).map(pin => ({
+      id: pin.id,
+      name: pin.name,
+      coords: pin.coords,
+      radiusKm: pin.radiusKm,
+      channel: pin.channel ?? 'live',
+      mine: false,
     }))
     if (popLevelRef.current === 'mine') return mine
     if (popLevelRef.current === 'others') return theirs
     return [...mine, ...theirs]
-  }, [])
+  }, [liveMapPosts])
 
   // Changing the level changes the list the arrows index into, so a position
   // held over from the old list points at a different pop (or past the end of
@@ -3291,7 +3154,7 @@ export default function MapApp() {
 
     // What the map knows about this place. The live wire may send coordinates
     // and nothing else, so a pop standing at those coordinates fills the rest.
-    const poi = POIS.find(p => distanceMeters(p.coords, coords) < ENGAGEMENT_POP_MATCH_M)
+    const poi = liveMapPosts.find(pin => distanceMeters(pin.coords, coords) < ENGAGEMENT_POP_MATCH_M)
     const radiusKm = event.radiusKm ?? poi?.radiusKm ?? 2
     const place = event.place ?? poi?.name
     const line = `${event.user} ${engagementVerb(event.kind)}`
@@ -3318,9 +3181,9 @@ export default function MapApp() {
           {
             type: 'poplur-map-pop',
             index: popCycleRef.current,
-            total: POIS.length,
+            total: route.length,
             name: poi.name,
-            radiusKm: livePoiRadiusKm(poi),
+            radiusKm: poi.radiusKm,
             // How many of YOUR pops stand in this area — the shell renders the
             // count under the place title and routes a tap to the profile.
             nearby: nearby.length,
@@ -3344,7 +3207,7 @@ export default function MapApp() {
         updateComposeRadiusPreview(live, new mapboxgl.LngLat(coords[0], coords[1]), radiusKm, theme, { fit: false })
       } catch { /* style not ready yet; the next arrival draws it */ }
     }, TRIP_TOTAL_MS)
-  }, [flyToPop, theme])
+  }, [flyToPop, liveMapPosts, theme, traversalPops])
   engagementTraverseRef.current = traverseToEngagement
   useEffect(() => {
     const onAction = (event: MessageEvent) => {
@@ -3424,8 +3287,10 @@ export default function MapApp() {
           break
         }
         case 'setOwnProfileMedia': {
+          const uid = event.data.uid
           const photo = event.data.photo
           const video = event.data.video
+          setOwnUid(typeof uid === 'string' && uid.trim() ? uid.trim() : null)
           setOwnAvatar(typeof photo === 'string' && (photo.startsWith('data:image/') || /^https:\/\//i.test(photo) || /^poplur-clay:\/\//i.test(photo)) ? photo : null)
           setOwnSelfieVideo(
             typeof video === 'string' && (video.startsWith('data:video/') || /^https:\/\//i.test(video) || /^poplur-clay:\/\//i.test(video))
@@ -3462,58 +3327,18 @@ export default function MapApp() {
           break
         }
         // A post just published to a coordinate (map→camera capture flow).
-        // Paint the territory and fly the trip camera at it, so posting ends
-        // on the land you now hold, watching it pop.
+        // The message may move the camera, but it may not create a marker or
+        // claim. Firestore's snapshot is the only publication authority.
         case 'dropClaim': {
           const map = mapRef.current
           const center = event.data.center as [number, number] | undefined
           if (!map || !center) break
-          const radiusKm = typeof event.data.radiusKm === 'number' ? event.data.radiusKm : 2
-          const droppedId = typeof event.data.id === 'string'
-            ? event.data.id
-            : `drop-${center[0].toFixed(4)},${center[1].toFixed(4)}`
-          const rawMedia = event.data.media
-          const media = rawMedia && (rawMedia.kind === 'photo' || rawMedia.kind === 'video')
-            && typeof rawMedia.src === 'string'
-            ? {
-                kind: rawMedia.kind === 'video' ? 'video' as const : 'image' as const,
-                src: rawMedia.src,
-                alt: typeof event.data.caption === 'string' && event.data.caption.trim()
-                  ? event.data.caption.trim()
-                  : 'Your published pop',
-              }
-            : undefined
-          if (media) {
-            setPublishedPins(current => [
-              ...current.filter(pin => pin.id !== droppedId),
-              {
-                id: droppedId,
-                user: null,
-                name: typeof event.data.caption === 'string' && event.data.caption.trim()
-                  ? event.data.caption.trim()
-                  : 'Your new pop',
-                coords: center,
-                radiusKm,
-                color: myColor,
-                avatar: ownAvatar,
-                channel: typeof event.data.channel === 'string' ? event.data.channel : undefined,
-                media,
-                mine: true,
-              },
-            ])
-          }
-          // Rehydrate the bounded Home-owned pin set after the Map iframe is
-          // remounted without replaying a stack of camera flights/popups.
-          if (event.data.replay === true) {
-            try { setClaim(map, { id: droppedId, center, radiusKm }) } catch { /* torn down */ }
-            break
-          }
+          // Old Home bundles replayed localStorage claims on Map remount. A
+          // replay is now intentionally ignored: deleted database content
+          // must not come back from a device cache.
+          if (event.data.replay === true) break
           stopTour()
           flyToPop(center)
-          // Let the claim pop AS the camera arrives, not before it.
-          window.setTimeout(() => {
-            try { setClaim(map, { id: droppedId, center, radiusKm }) } catch { /* torn down */ }
-          }, 2400)
           break
         }
         // Engagement that was delivered to the SHELL. The live wire posts into
@@ -3609,7 +3434,7 @@ export default function MapApp() {
                   name: poi.name,
                   // The HUD's RADIUS card shows THIS pop's takeover while you
                   // travel, not the signed-in user's own reach.
-                  radiusKm: livePoiRadiusKm(poi),
+                  radiusKm: poi.radiusKm,
                   // How many of YOUR pops stand in this area — the shell
                   // renders the count under the place title and routes a tap
                   // to the profile.
@@ -3645,14 +3470,14 @@ export default function MapApp() {
 
   const handleSelectPoi = useCallback((id: string) => {
     setSelectedId(id)
-    const poi = POIS.find(p => p.id === id)
+    const poi = liveMapPosts.find(pin => pin.id === id)
     if (!poi) return
     setCurrentPlace(displayPlaceName(poi.name))
     clearPopups('suggestion')
     clearPopups('mapContent')
     flyToCenter(poi.coords, 4600)
     // Selection moves to the post; only its marker button opens its content.
-  }, [flyToCenter])
+  }, [flyToCenter, liveMapPosts])
 
   const weatherMode: WeatherMode = weatherOverride ?? (weather ? modeForCode(weather.code) : 'clear')
   const weatherTemperatureText = formatWeatherTemperature(weather?.temp ?? null)
@@ -3710,7 +3535,7 @@ export default function MapApp() {
           future scoped "look around this venue in 3D" moment. */}
       <ClayMap
         token={TOKEN}
-        pois={POIS}
+        pois={NO_USER_POIS}
         airportPoints={TOUR_AIRPORTS}
         pins={tourOn ? NO_MAP_PINS : mapPins}
         onConquerSnapshot={isEmbedded ? undefined : setMapConquerSnapshot}

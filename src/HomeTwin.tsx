@@ -114,6 +114,7 @@ import {
   type QueuedMapAction,
 } from './nativeMapFallback'
 import { readMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
+import { accountSnapshot, onAccountChange } from './accountStore'
 import ConquerGlance from './ConquerGlance'
 import {
   AIRPORT_CUBE_DISPLAY_MS,
@@ -3204,6 +3205,8 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   const [ownSelfieVideo, setOwnSelfieVideo] = useState<string | null>(() => {
     try { return window.localStorage.getItem('poplur.profile.selfieVideo') } catch { return null }
   })
+  const [ownUid, setOwnUid] = useState<string | null>(() => accountSnapshot().uid)
+  useEffect(() => onAccountChange(account => setOwnUid(account.uid)), [])
   useEffect(() => {
     const onPhoto = (event: Event) => {
       const next = (event as CustomEvent<{ photo?: string | null }>).detail?.photo ?? null
@@ -3213,8 +3216,9 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
     return () => window.removeEventListener('poplur-profile-photo', onPhoto)
   }, [])
   useEffect(() => {
-    type ProfileMedia = { username?: string; photo?: string | null; video?: string | null }
+    type ProfileMedia = { uid?: string | null; username?: string; photo?: string | null; video?: string | null }
     const applyProfileMedia = (detail: ProfileMedia | undefined) => {
+      if (typeof detail?.uid === 'string' || detail?.uid === null) setOwnUid(detail.uid ?? null)
       if (typeof detail?.photo === 'string' || detail?.photo === null) setOwnPhoto(detail.photo ?? null)
       if (typeof detail?.video === 'string' || detail?.video === null) setOwnSelfieVideo(detail.video ?? null)
       if (detail?.username?.trim()) {
@@ -3259,11 +3263,12 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
       {
         type: 'poplur-map-action',
         action: 'setOwnProfileMedia',
+        uid: ownUid,
         photo,
         video,
       }, '*',
     )
-  }, [ownPhoto, ownSelfieVideo, mapReady])
+  }, [ownPhoto, ownSelfieVideo, ownUid, mapReady])
   // A subscreen asking for the whole screen (the radio's long press). Kept as
   // shell state for the same reason feedFullscreen is: the chrome layer sits
   // ABOVE the subscreen stage, so a subscreen can neither cover it nor hide it

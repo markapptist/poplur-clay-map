@@ -51,6 +51,7 @@ import { installMapIdleSnapshot, type MapIdleSnapshotController } from './mapIdl
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
+import { mapPinRenderKey } from './mapPinRenderKey'
 import { modelSprite } from './modelSprite'
 import {
   MAP_COLOR_CONTROL_GAP,
@@ -1613,7 +1614,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // why tapping the map did nothing. ?compose=0 opts back out.
   const prototypeComposer = typeof window === 'undefined'
     || new URLSearchParams(window.location.search).get('compose') !== '0'
-  const prototypeClaimSeeds = typeof window !== 'undefined'
+  const prototypeClaimSeeds = import.meta.env.DEV && typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('sample-claims') === '1'
 
   const composeScreenPoint = useCallback((map: mapboxgl.Map, point: { x: number; y: number }) => {
@@ -5370,10 +5371,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // camera move: the sprite composite is async and re-running it per frame
   // would thrash. Markers are plain DOM, so they inherit the existing viewport
   // cull and the zoom-band visibility rules for free.
-  const pinKey = (pins ?? []).map(p => {
-    const e = p.engagement
-    return `${p.id}:${p.ownerId ?? ''}:${p.user ?? ''}:${p.radiusKm}:${p.radiusDeltaKm ?? ''}:${p.color}:${p.avatar ?? ''}:${p.selfieVideo?.src ?? ''}:${p.selfieVideo?.poster ?? ''}:${e?.views ?? 0}:${e?.repeatViews ?? 0}:${e?.upvotes ?? 0}:${e?.downvotes ?? 0}:${e?.comments ?? 0}:${e?.profileVisits ?? 0}`
-  }).join('|')
+  const pinKey = (pins ?? []).map(mapPinRenderKey).join('|')
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -5996,12 +5994,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                     setComposeMessage('')
                     setComposeAt(null)
                     if (!dropped) return
-                    const map = mapRef.current
-                    if (map) {
-                      try {
-                        setClaim(map, { id: dropped.id, center: [lng, lat], radiusKm: composeRadiusKm })
-                      } catch { /* map torn down mid-drop */ }
-                    }
+                    // A local newspaper message is not a Firestore post and
+                    // therefore cannot claim persistent Map territory. A real
+                    // post appears only through MapApp's live snapshot.
                     window.parent?.postMessage({ type: 'poplur-post-message', message: dropped }, '*')
                     return
                   }
