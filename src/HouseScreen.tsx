@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { studioInitialCharacter } from './AvatarStudioCharacter'
 import { onCharacterChange, readCharacter, type PoplurCharacter } from './characterStore'
 import { readSavedAvaturnAvatar, resolveSavedAvaturnAvatarUrl } from './avaturnAvatarStore'
-import { accountSnapshot } from './accountStore'
-import { type HouseGuest, normalizeHouseGuests, previewHouseGuests } from './houseGuests'
+import { accountSnapshot, onAccountChange } from './accountStore'
+import { type HouseGuest } from './houseGuests'
 import { createPoplurAvatarRuntime, type PoplurAvatarHandle } from './ThreeAvatarStudio'
 import { type PoplurAvatarMotion } from './avatarMotion'
 import { createExternalAvatarMotion, type ExternalAvatarMotionHandle } from './externalAvatarMotion'
@@ -21,8 +21,9 @@ import {
   type HouseActivityId,
   type HouseLifeState,
 } from './houseLife'
-import { isNativeShell } from './nativeBridge'
 import { useNearbyLocation } from './nearbyLocation'
+import { nativeFeedPostsSnapshot, onNativeFeedPosts } from './nativeFeedPosts'
+import { houseGuestsFromRealtimePosts } from './webHouseGuests'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { releaseWebGL } from './threeCleanup'
@@ -33,7 +34,6 @@ import styles from './HouseScreen.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
 
 let houseRendererSequence = 0
-let houseGuestRequestSequence = 0
 
 type HouseRuntime = {
   moveTo: (x: number, z: number, activity?: HouseActivityId | 'idle') => void
@@ -351,13 +351,19 @@ export default function HouseScreen() {
   const remoteFashionRef = useRef(remoteFashion)
   remoteFashionRef.current = remoteFashion
   const [reach, setReach] = useState(() => radiusKm())
-  const [guests, setGuests] = useState<HouseGuest[]>([])
-  const [guestsLoading, setGuestsLoading] = useState(true)
-  const [guestRefresh, setGuestRefresh] = useState(0)
+  const [ownUid, setOwnUid] = useState(() => accountSnapshot().uid)
   const [partyOpen, setPartyOpen] = useState(false)
   const [invitedGuest, setInvitedGuest] = useState<HouseGuest | null>(null)
   const [call, setCall] = useState<CallSnapshot | null>(() => callState())
   const location = useNearbyLocation()
+  const livePosts = useSyncExternalStore(
+    onNativeFeedPosts,
+    nativeFeedPostsSnapshot,
+    nativeFeedPostsSnapshot,
+  )
+  const guests = useMemo(() => location?.source === 'device'
+    ? houseGuestsFromRealtimePosts(livePosts, ownUid, location, reach)
+    : [], [livePosts, location, ownUid, reach])
   const [rendererId] = useState(() => `HouseScreen:${++houseRendererSequence}`)
 
   const commit = useCallback((next: HouseLifeState) => {
@@ -378,6 +384,8 @@ export default function HouseScreen() {
   useEffect(() => onCharacterChange(() => {
     setCharacter(studioInitialCharacter(readCharacter()))
   }), [])
+
+  useEffect(() => onAccountChange(account => setOwnUid(account.uid)), [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -414,79 +422,6 @@ export default function HouseScreen() {
       : null
     runtimeRef.current?.setGuest(liveGuest)
   }, [call?.callId, call?.peerName, call?.phase, invitedGuest?.id])
-
-  useEffect(() => {
-    let cancelled = false
-    let bridgeAnswered = false
-    const currentUid = accountSnapshot().uid
-    setGuestsLoading(true)
-
-    // A catalogue fallback is useful for browsing media, but it is not the
-    // person's position. House invitations must wait for an actual device fix
-    // or they could mislabel Toronto accounts as being in the user's radius.
-    if (!location) return () => { cancelled = true }
-    if (location.source !== 'device') {
-      setGuests([])
-      setGuestsLoading(false)
-      return () => { cancelled = true }
-    }
-
-    const requestId = `house-guests:${Date.now()}:${++houseGuestRequestSequence}`
-
-    const accept = (data: unknown) => {
-      if (!data || typeof data !== 'object') return
-      const payload = data as { type?: unknown, contacts?: unknown, requestId?: unknown }
-      if (payload.type !== 'poplurPhoneContacts'
-        || payload.requestId !== requestId
-        || !Array.isArray(payload.contacts)) return
-      // Home returns an empty acknowledgement in a plain browser. That is not
-      // a real nearby result, so let the authenticated web query/preview take
-      // over instead of treating it as an authoritative empty radius.
-      if (!isNativeShell() && payload.contacts.length === 0) return
-      bridgeAnswered = true
-      if (!cancelled) {
-        setGuests(normalizeHouseGuests(payload.contacts, currentUid, reach))
-        setGuestsLoading(false)
-      }
-    }
-    const onResult = (event: Event) => accept((event as CustomEvent).detail)
-    window.addEventListener('poplur-dm-result', onResult)
-
-    // Use Home's existing validated native relay. It supplies the current
-    // radius/location again at the shell boundary and never publishes either
-    // coordinate in House or in the invitation UI.
-    window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
-      detail: {
-        type: 'requestPhoneContacts',
-        requestId,
-        radiusKm: reach,
-        latitude: location.lat,
-        longitude: location.lng,
-      },
-    }))
-
-    const fallback = window.setTimeout(() => {
-      if (bridgeAnswered || cancelled) return
-      void (async () => {
-        let real: HouseGuest[] = []
-        if (location) {
-          try {
-            const { fetchWebHouseGuests } = await import('./webHouseGuests')
-            real = await fetchWebHouseGuests(location, reach)
-          } catch { /* signed-out/offline browser falls through to preview */ }
-        }
-        if (cancelled || bridgeAnswered) return
-        setGuests(real.length ? real : previewHouseGuests(reach, 6))
-        setGuestsLoading(false)
-      })()
-    }, 650)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(fallback)
-      window.removeEventListener('poplur-dm-result', onResult)
-    }
-  }, [guestRefresh, location, reach])
 
   const inviteGuest = useCallback((guest: HouseGuest) => {
     playPop()
@@ -897,16 +832,15 @@ export default function HouseScreen() {
         <p>Invite one person at a time to join your House over mic. Your coordinates are never shown.</p>
         <div className={styles.partyActions}>
           <span>{reach.toFixed(reach >= 100 ? 0 : 1)} km radius</span>
-          <button type='button' className={surfaceStyles.secondary} onClick={() => { playPop(); setGuestRefresh(value => value + 1) }}>Refresh</button>
+          <span aria-label='House guests update live'>Live</span>
         </div>
         <div className={styles.guestList} aria-live='polite'>
-          {guestsLoading && <div className={styles.emptyGuests}>Looking inside your radius…</div>}
-          {!guestsLoading && guests.length === 0 && <div className={styles.emptyGuests}>
+          {guests.length === 0 && <div className={styles.emptyGuests}>
             {location?.source === 'fallback'
               ? 'Turn on location to find people in your radius.'
               : 'Nobody is in your radius right now.'}
           </div>}
-          {!guestsLoading && guests.map(guest => {
+          {guests.map(guest => {
             const busy = Boolean(call && call.phase !== 'idle' && call.phase !== 'ended')
             return <article key={`${guest.preview ? 'preview' : 'live'}:${guest.id}`} className={styles.guestRow}>
               <span className={styles.guestAvatar} style={{ '--guest-color': guestPalette(guest.id) } as CSSProperties}>{guest.name.replace(/^@/, '').slice(0, 1).toUpperCase()}</span>
@@ -917,7 +851,6 @@ export default function HouseScreen() {
             </article>
           })}
         </div>
-        {guests.some(guest => guest.preview) && <small className={styles.previewNote}>Preview people are examples. Sign in to discover and call real nearby accounts.</small>}
       </section>}
       {call?.context === 'house' && call.phase !== 'idle' && call.phase !== 'ended' && <section className={styles.voiceDock} aria-label='House voice room'>
         <span className={styles.liveDot} aria-hidden='true' />

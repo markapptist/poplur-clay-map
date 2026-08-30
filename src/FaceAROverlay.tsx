@@ -12,11 +12,21 @@ const isFace = (detection: Detection) => {
   )
 }
 
+const usablePoint = (point: { x: number, y: number } | undefined) => {
+  return point && Number.isFinite(point.x) && Number.isFinite(point.y)
+    && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1
+    ? point
+    : null
+}
+
 /** Ids whose costume the canvas painter below knows how to draw. */
 const CANVAS_COSTUMES = new Set([
   'puppy-love', 'butterfly-dream', 'inferno-eyes',
   'heart-crown', 'dino-hood', 'angel', 'flower-crown',
 ])
+
+/** True when the captured-photo painter has artwork for this filter. */
+export const hasCaptureCostume = (filter: string) => CANVAS_COSTUMES.has(filter)
 
 /** Web-authored pixel values are quoted at the ~390pt reference width, the same
  *  convention `applyAnaglyphToCanvas` rescales by, so a 4K still gets a shadow
@@ -76,7 +86,7 @@ export function drawFaceAREffect(
     const y = face.y * height
     const w = face.w * width
     const h = face.h * height
-    if (filter === 'puppy-love') drawBlush(context, x, y, w, h, width)
+    if (filter === 'puppy-love') drawBlush(context, face, x, y, w, h, width)
     buffer = drawCostumeOnCanvas(context, filter, x, y, w, h, width, height, buffer)
   }
   context.restore()
@@ -89,14 +99,28 @@ export function drawFaceAREffect(
  */
 function drawBlush(
   c: CanvasRenderingContext2D,
+  face: Detection,
   x: number, y: number, w: number, h: number, frameWidth: number,
 ) {
   c.save()
   c.fillStyle = 'rgba(255,73,151,0.34)'
   c.filter = `blur(${Math.max(1, 4 * refScale(frameWidth))}px)`
-  for (const cx of [x + w * 0.23, x + w * 0.77]) {
+  const nose = usablePoint(face.landmarks?.nose)
+  const leftEye = usablePoint(face.landmarks?.leftEye)
+  const rightEye = usablePoint(face.landmarks?.rightEye)
+  // With real landmarks, follow the nose vertically and place each cheek
+  // between its eye and the nose. Browser/Android detections retain the exact
+  // bounding-box fallback when they do not supply a landmark track.
+  const cheekY = nose ? nose.y * c.canvas.height : y + h * 0.625
+  const cheeks = nose && leftEye && rightEye
+    ? [
+        (leftEye.x * 0.72 + nose.x * 0.28) * c.canvas.width,
+        (rightEye.x * 0.72 + nose.x * 0.28) * c.canvas.width,
+      ]
+    : [x + w * 0.23, x + w * 0.77]
+  for (const cx of cheeks) {
     c.beginPath()
-    c.ellipse(cx, y + h * 0.625, w * 0.11, h * 0.055, 0, 0, Math.PI * 2)
+    c.ellipse(cx, cheekY, w * 0.11, h * 0.055, 0, 0, Math.PI * 2)
     c.fill()
   }
   c.restore()
@@ -328,10 +352,10 @@ function FaceEffect({ filter }: { filter: string }) {
  * at x 11.5–88.5 and y 30–97. Working landmarks, consistent across every
  * costume below: head top y30, eyes y57, nose y68, chin y95, centre x50.
  *
- * These are BOX-anchored, not landmark-anchored — the web detector gives a
- * rectangle and nothing finer. iOS has Vision landmarks and should place the
- * nose and eye pieces from those instead; the two that will notice the
- * difference are puppy-love and inferno-eyes.
+ * These retain a box-based drawing frame so browser and Android fallbacks work
+ * without a face mesh. On iOS, Vision eye/nose centres travel through the
+ * bridge and improve the root and facial-feature anchors instead of being
+ * discarded at the native boundary.
  *
  * `paintCostume` above is the same set traced into a 2D context for captured
  * stills. Change a shape here and change it there in the same edit, or the

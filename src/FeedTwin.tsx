@@ -10,7 +10,6 @@ import { setMusicPlayback } from './musicPlayback'
 import {
   nativeFeedPostsSnapshot,
   onNativeFeedPosts,
-  requestNativeFeedPosts,
   type NativeFeedPost,
 } from './nativeFeedPosts'
 import {
@@ -24,9 +23,7 @@ import {
 } from './feedDiscovery'
 import type { MapFeedHandoff, MapFeedHandoffRequest } from './mapFeedHandoff'
 import {
-  mixPublishedMediaWithPromotions,
   nextFeedPostIndex,
-  spaceRankedPromotions,
   shouldReacquireFeedDecoder,
   shouldResumeFeedAfterFocus,
 } from './feedMediaSequence'
@@ -46,12 +43,10 @@ import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
 import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
+import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
 import styles from './FeedTwin.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
-import { interceptingLive, isLive, onLiveStore } from './liveStore'
 import {
-  RADIUS_CHANGE_EVENT,
-  radiusDeltaForPost,
   recordPostComment,
   recordPostDislike,
   recordPostLike,
@@ -66,9 +61,9 @@ import {
 // username↔"CH 101" and coordinates↔CATEGORY in green monospace, a flag +
 // channel icon, a bottom AI caption, and a clean channel change with no static.
 //
-// Authenticated native shells now send the bounded media rows users actually
-// publish. Bundled channel creatives remain the deterministic browser-preview
-// fallback and the empty-channel fallback only.
+// One shared Firestore listener supplies the bounded media rows users actually
+// publish. Empty channels remain honestly empty in browser and native shells;
+// bundled TV-guide artwork never masquerades as a user post here.
 
 interface Channel {
   id: string
@@ -81,39 +76,16 @@ interface Channel {
   caption: string
   lang: string            // translation badge target
   theme: [string, string, string]  // gradient stops
-  videos?: string[]       // /feed/*.mp4 — the channel's content (the previous
-                          // app version's Drive / AI Studio ads, bundled
-                          // locally), ORDERED largest→smallest by the radius
-                          // intercepting your current location; horizontal
-                          // swipe steps through it
+  /** Legacy TV-guide preview metadata. Feed content never reads this field. */
+  videos?: string[]
 }
 
 // How far a post travelled to reach you. This is the whole point of the radius:
 // a post radiates from where it was dropped, and you receive it because your
 // location falls inside that circle. The feed said "43.6480, -79.3810" here,
 // which tells a viewer nothing — this says why the post is in front of them.
-// Deterministic per post so it never flickers between renders.
-//
-// August (real data): this must read the poster's radius AT THE MOMENT THEY
-// POSTED, stored on the post — not their radius now. Radius decays when you
-// stop posting, so a live read would retroactively shrink how far an old post
-// "reached", rewriting history and erasing the thing the poster earned. Snapshot
-// on write, never recompute on read.
-function reachKmFor(key: string): number {
-  let h = 0
-  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0
-  return 0.3 + (h % 397) / 10
-}
-
-function discoverySeed(key: string): number {
-  let hash = 2_166_136_261
-  for (let index = 0; index < key.length; index += 1) {
-    hash ^= key.charCodeAt(index)
-    hash = Math.imul(hash, 16_777_619)
-  }
-  return hash >>> 0
-}
-
+// It reads the poster's stored radius AT THE MOMENT THEY POSTED — not their
+// current radius. Radius decay therefore cannot rewrite an old post's reach.
 function radiusPostId(channelId: string, post?: ChannelPost): string {
   return post?.id ?? `${channelId}:${post?.user ?? 'unknown'}:${post?.video ?? 'live'}`
 }
@@ -165,24 +137,7 @@ export const CHANNELS: Channel[] = [
 // own index.
 export type FeedAction = 'like' | 'comment' | 'share' | 'captions' | 'profile' | 'suggestion'
 
-// A channel is a stack of POSTS by different users. Channels that don't ship
-// their own creative borrow a stock clip, chosen by channel number, so a
-// channel is never empty and the static never sticks with nothing behind it.
-const STOCK_CLIPS = [
-  feedUrl('ad-food.mp4'), feedUrl('ad-sports.mp4'), feedUrl('ad-music.mp4'), feedUrl('ad-french.mp4'),
-  feedUrl('ad-shopping.mp4'), feedUrl('ad-cartoon.mp4'), feedUrl('ad-kids.mp4'), feedUrl('ad-comedy.mp4'),
-  feedUrl('ad-spanish-1.mp4'), feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4'),
-]
-
 const MAX_PLAYBACK_RECOVERY_SOURCES = 2
-
-function posterForFeedClip(source: string): string {
-  const localSource = source.split(/[?#]/, 1)[0].replace(/^\/+/, '')
-  if ((localSource.startsWith('feed/') || localSource.includes('/feed/')) && localSource.endsWith('.mp4')) {
-    return localSource.replace(/feed\//, 'feed/posters/').replace(/\.mp4$/, '.jpg')
-  }
-  return feedUrl('posters/ad-food.jpg')
-}
 
 /**
  * Ended media must release its decoder, not merely leave the DOM. The stall
@@ -218,31 +173,11 @@ function shouldUnlockFeedAudioOnMount(explicitNavigation: boolean): boolean {
   return explicitNavigation
 }
 
-const CHANNEL_USERS: Record<string, string[]> = {
-  food: ['@sauceboss', '@nightmarket', '@poutine.patrol'],
-  beauty: ['@glowgetter', '@softglam', '@lash.lab'],
-  sports: ['@pitchside', '@extratime', '@thekop'],
-  modelling: ['@runwayraw', '@backstage', '@lookbook'],
-  fashion: ['@fitcheckdaily', '@thriftking', '@atelier'],
-  music: ['@basement.set', '@warehouse', '@bpm'],
-  tech: ['@shipit', '@desksetup', '@benchmark'],
-  news: ['@localwire', '@harbourfront', '@citydesk'],
-  french: ['@paris.pov', '@terrasse', '@boulangerie'],
-  spanish: ['@vibra.cdmx', '@alpastor', '@mercado'],
-  shopping: ['@hauls', '@samplesale', '@under20'],
-  cartoon: ['@doodlecast', '@clayoc', '@keyframe'],
-  kids: ['@playtime', '@blanketfort', '@snacktime'],
-  comedy: ['@bitmerchant', '@openmic', '@baristabit'],
-}
-
 export interface ChannelPost {
   id: string
   user: string
   video: string
   poster?: string
-  real?: boolean
-  /** Bundled advertiser creative, distinct from a user's uploaded post. */
-  sponsored?: boolean
   mediaType?: 'photo' | 'video'
   /** Named venue behind this post, used to ground its live ad lookup. */
   place?: string
@@ -273,33 +208,20 @@ export interface ChannelPost {
   distanceMeters?: number
 }
 
-const CHANNEL_PLACES: Record<string, string[]> = {
-  food: ['Nom Nom Nom Poutine Toronto', 'Kensington Market Toronto', 'St. Lawrence Market Toronto'],
-  beauty: ['Sephora Toronto Eaton Centre', 'Yorkville Toronto', 'The Well Toronto'],
-  sports: ['Scotiabank Arena Toronto', 'BMO Field Toronto', 'Rogers Centre Toronto'],
-  modelling: ['Fashion Art Toronto', 'Yorkville Village Toronto', 'The Bentway Toronto'],
-  fashion: ['Queen Street West Toronto', 'Stackt Market Toronto', 'Toronto Eaton Centre'],
-  music: ['History Toronto', 'The Great Hall Toronto', 'Danforth Music Hall Toronto'],
-  tech: ['Canada Computers College Street Toronto', 'Best Buy Toronto Eaton Centre', 'The Well Toronto'],
-  news: ['Harbourfront Centre Toronto', 'Nathan Phillips Square Toronto', 'Queen\'s Park Toronto'],
-  french: ['Cafe de Flore Paris', 'Saint-Germain-des-Pres Paris', 'Rue Montorgueil Paris'],
-  spanish: ['El Vilsito Mexico City', 'Mercado Roma Mexico City', 'Taqueria Orinoco Mexico City'],
-  shopping: ['Toronto Eaton Centre', 'Yorkdale Shopping Centre Toronto', 'Stackt Market Toronto'],
-  cartoon: ['TIFF Lightbox Toronto', 'Ontario Science Centre Toronto', 'The Bentway Toronto'],
-  kids: ['Ripley\'s Aquarium of Canada', 'High Park Toronto', 'Little Canada Toronto'],
-  comedy: ['Comedy Bar Toronto', 'Second City Toronto', 'Yuk Yuk\'s Toronto'],
-}
-
-// Ordered by the post's radius intercepting your location, widest first.
-function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPost[] {
-  const realPosts: ChannelPost[] = published
-    .filter(post => post.channelId === channel.id)
+/** Production Feed rows come only from the shared Firestore snapshot. A wiped
+ * collection therefore produces a genuinely empty channel instead of bundled
+ * people, counters, comments, or media pretending to be user activity. */
+export function feedPostsForChannel(
+  channelId: string,
+  published: readonly NativeFeedPost[] = [],
+): ChannelPost[] {
+  return published
+    .filter(post => post.channelId === channelId)
     .map(post => ({
       id: post.id,
       user: post.username,
       video: post.mediaURL,
       poster: post.mediaType === 'photo' ? post.mediaURL : post.posterURL,
-      real: true,
       mediaType: post.mediaType,
       caption: post.caption,
       reachKm: post.radiusMeters == null ? undefined : post.radiusMeters / 1_000,
@@ -312,104 +234,10 @@ function postsFor(channel: Channel, published: NativeFeedPost[] = []): ChannelPo
       originLatitude: post.originLatitude,
       originLongitude: post.originLongitude,
     }))
-  // LIVE: whoever is streaming into your radius, your own broadcast first.
-  // An empty channel still gets a playable Poplur clip: static is a transition,
-  // never a permanent startup state.
-  if (channel.id === 'live') {
-    const broadcasts: ChannelPost[] = interceptingLive().map(b => ({
-      id: `${channel.id}:${b.user}:${b.video ?? 'camera'}`,
-      user: b.user,
-      video: b.video ?? '',
-      stream: b.stream,
-      live: true,
-      caption: b.caption,
-      viewers: b.viewers,
-      reachKm: reachKmFor(`${channel.id}:${b.user}:${b.video ?? ''}`),
-      createdAtMillis: Date.now(),
-      viewCount: b.viewers,
-      locationVisibility: 'hidden' as const,
-    }))
-    const video = STOCK_CLIPS[channel.number % STOCK_CLIPS.length]
-    const fallback: ChannelPost = {
-      id: `${channel.id}:fallback:${video}`,
-      user: '@poplur.live',
-      video,
-      mediaType: 'video',
-      sponsored: true,
-      caption: 'Live around your radius',
-      reachKm: reachKmFor(`${channel.id}:fallback:${video}`),
-      createdAtMillis: Date.UTC(2026, 7, 25, 12),
-      viewCount: 18,
-      locationVisibility: 'approximate' as const,
-      distanceMeters: 1_400,
-    }
-    const liveMedia = [...realPosts, ...broadcasts]
-    return liveMedia.length
-      ? mixPublishedMediaWithPromotions(liveMedia, [fallback])
-      : [fallback]
-  }
-  const users = CHANNEL_USERS[channel.id] ?? [channel.user]
-  const own = channel.videos ?? []
-  // Each user posts something different: the channel's own clips first, then
-  // REAL AD CREATIVES from the bundled pool — not stock footage. Six channels
-  // (beauty, modelling, fashion, tech, news, live-adjacent) shipped no clips
-  // of their own and fell back to stock, which read as "no real ads in the
-  // feed": an advertiser's creative intercepts your radius on ANY channel, so
-  // the pool rotates through every supplied ad, offset per channel so
-  // neighbouring channels do not mirror each other.
-  const promotions: ChannelPost[] = users.map((user, i) => {
-    const isSponsored = own[i] == null
-    const video = own[i] ?? AD_POOL[(channel.number * 3 + i) % AD_POOL.length]
-    const places = CHANNEL_PLACES[channel.id] ?? []
-    const id = `${channel.id}:${user}:${video}`
-    const seed = discoverySeed(id)
-    return {
-      id,
-      user,
-      video,
-      mediaType: 'video',
-      sponsored: isSponsored,
-      place: places[i % places.length],
-      reachKm: reachKmFor(id),
-      createdAtMillis: Date.UTC(2026, 7, 25, 18) - (seed % (10 * 86_400_000)),
-      viewCount: 30 + seed % 14_000,
-      likeCount: 4 + (seed >>> 5) % 1_800,
-      commentCount: (seed >>> 11) % 220,
-      shareCount: (seed >>> 17) % 90,
-      locationVisibility: 'approximate' as const,
-      distanceMeters: 250 + (seed % 24_000),
-    }
-  })
-  // Native shells supply the person's real photos. Browser/GCL previews do
-  // not have that bridge, so exercise the exact same still-image path with one
-  // bundled channel photo whenever no real photo intercepted this channel.
-  // This is ordinary Feed content, not another promotion, and therefore never
-  // carries the removed custom Sponsored pill.
-  const photoSource = posterForFeedClip(
-    promotions[0]?.video ?? STOCK_CLIPS[channel.number % STOCK_CLIPS.length],
-  )
-  const fallbackPhotoId = `${channel.id}:photo:${photoSource}`
-  const fallbackPhoto: ChannelPost = {
-    id: fallbackPhotoId,
-    user: channel.user,
-    video: photoSource,
-    poster: photoSource,
-    mediaType: 'photo',
-    caption: `${channel.name} photo from your radius`,
-    place: CHANNEL_PLACES[channel.id]?.[0],
-    reachKm: 40 + (channel.number % 9) / 10,
-    createdAtMillis: Date.UTC(2026, 7, 26, 18),
-    viewCount: 42 + channel.number,
-    likeCount: 8 + channel.number % 17,
-    commentCount: channel.number % 9,
-    shareCount: channel.number % 5,
-    locationVisibility: 'approximate',
-    distanceMeters: 300 + (channel.number % 12) * 170,
-  }
-  const publishedMedia = realPosts.some(post => post.mediaType === 'photo')
-    ? realPosts
-    : [fallbackPhoto, ...realPosts]
-  return mixPublishedMediaWithPromotions(publishedMedia, promotions)
+}
+
+function canonicalFeedPostId(id: string): string {
+  return id.startsWith('firestore:') ? id.slice('firestore:'.length) : id
 }
 
 function currentViewerCoords(): [number, number] | null {
@@ -436,7 +264,7 @@ function rankedPostsFor(
   focusedContent?: MapFeedHandoff,
 ): ChannelPost[] {
   const viewer = currentViewerCoords()
-  const candidates = postsFor(channel, published).map(post => {
+  const candidates = feedPostsForChannel(channel.id, published).map(post => {
     if (post.distanceMeters != null || post.locationVisibility !== 'approximate' || !viewer
       || !Number.isFinite(post.originLatitude) || !Number.isFinite(post.originLongitude)) return post
     return {
@@ -447,40 +275,19 @@ function rankedPostsFor(
       ),
     }
   })
-  const ranked = spaceRankedPromotions(rankFeedPosts(candidates.map(post => ({
+  const ranked = rankFeedPosts(candidates.map(post => ({
     ...post,
     channelId: channel.id,
     radiusMeters: (post.reachKm ?? 0) * 1_000,
-  })), discovery), post => post.sponsored === true)
+  })), discovery)
   if (!focusedContent || focusedContent.channelId !== channel.id) return ranked
-
-  const focusedPost: ChannelPost = {
-    id: focusedContent.id,
-    user: focusedContent.username,
-    video: focusedContent.mediaURL,
-    poster: focusedContent.mediaType === 'photo'
-      ? focusedContent.mediaURL
-      : focusedContent.posterURL,
-    real: true,
-    mediaType: focusedContent.mediaType,
-    caption: focusedContent.caption,
-    reachKm: focusedContent.radiusMeters == null ? undefined : focusedContent.radiusMeters / 1_000,
-    createdAtMillis: focusedContent.createdAtMillis,
-    locationVisibility: focusedContent.locationVisibility,
-    originLatitude: focusedContent.originLatitude,
-    originLongitude: focusedContent.originLongitude,
-  }
-  if (focusedContent.locationVisibility === 'approximate' && viewer
-    && focusedContent.originLatitude != null && focusedContent.originLongitude != null) {
-    focusedPost.distanceMeters = distanceMetersBetween(
-      viewer,
-      [focusedContent.originLongitude, focusedContent.originLatitude],
-    )
-  }
-  // Direct navigation outranks recommendation filters for this visit. A Map
-  // tap must not silently fail because the item was hidden earlier or because
-  // an old Local preference filtered out its private/coarse origin.
-  return [focusedPost, ...ranked.filter(post => post.id !== focusedPost.id)]
+  // A Map handoff may reorder a post already present in the authoritative
+  // snapshot, but it cannot resurrect a post deleted after the handoff.
+  const focusedId = canonicalFeedPostId(focusedContent.id)
+  const focusedPost = candidates.find(post => post.id === focusedId)
+  return focusedPost
+    ? [focusedPost, ...ranked.filter(post => post.id !== focusedPost.id)]
+    : ranked
 }
 
 function radiusDiscoverySnapshot(
@@ -489,35 +296,11 @@ function radiusDiscoverySnapshot(
   return state.mode === 'radius' ? state : { ...state, mode: 'radius' }
 }
 
-// Every bundled ad creative — the pool channels without their own clips draw
-// from. All supplied assets; nothing synthesized.
-const AD_POOL = [
-  feedUrl('ad-food.mp4'), feedUrl('ad-sports.mp4'), feedUrl('ad-music.mp4'),
-  feedUrl('ad-shopping.mp4'), feedUrl('ad-french.mp4'), feedUrl('ad-spanish-1.mp4'),
-  feedUrl('ad-spanish-2.mp4'), feedUrl('ad-spanish-3.mp4'), feedUrl('ad-cartoon.mp4'),
-  feedUrl('ad-comedy.mp4'), feedUrl('ad-kids.mp4'),
-]
-
 // Captions come from the clip's own audio (transcribed with whisper.cpp), so
 // they are keyed by VIDEO — each user's post has its own track.
 function cuesFor(video: string | undefined, fallback: string) {
   return (video && CAPTION_CUES[video]) || [{ t: 0, text: fallback }]
 }
-
-// Comments on the playing post. They roll like end credits above the box.
-// Pictures are spoofed from stills we already ship, same as the share sheet.
-const COMMENT_ROLL = [
-  { who: '@nightmarket', body: 'this is exactly my block 😭', pic: feedUrl('posters/ad-food.jpg') },
-  { who: '@poutine.patrol', body: 'the gravy shot at 0:12 is criminal', pic: feedUrl('posters/ad-comedy.jpg') },
-  { who: '@harbourfront', body: 'ok but where is this', pic: feedUrl('posters/ad-french.jpg') },
-  { who: '@queenwest', body: 'went last week, worth the line', pic: feedUrl('posters/ad-shopping.jpg') },
-  { who: '@the_annex', body: 'adding to my radius right now', pic: 'mark_talk0.png' },
-  { who: '@sauceboss', body: 'reply: open till 4am all weekend', pic: feedUrl('posters/ad-food.jpg') },
-  { who: '@kensington_eats', body: 'the curds squeak, i can hear it', pic: feedUrl('posters/ad-kids.jpg') },
-  { who: '@basement.set', body: 'soundtrack goes hard btw', pic: feedUrl('posters/ad-music.jpg') },
-  { who: '@localwire', body: 'covering this Friday, see you there', pic: feedUrl('posters/ad-sports.jpg') },
-  { who: '@hauls', body: 'my whole feed is this place today', pic: feedUrl('posters/ad-cartoon.jpg') },
-]
 
 export default function FeedTwin({
   index: controlledIndex,
@@ -700,6 +483,13 @@ export default function FeedTwin({
     feedDiscoverySnapshot,
   )
   const discovery = radiusDiscoverySnapshot(storedDiscovery)
+  // One module-level Firestore subscription is shared with Home. Its complete
+  // snapshots replace this list on every add/change/delete, including a wipe.
+  const publishedPosts = useSyncExternalStore(
+    onNativeFeedPosts,
+    nativeFeedPostsSnapshot,
+    nativeFeedPostsSnapshot,
+  )
   // The removed selector used to persist Trending/Local in localStorage. Reset
   // it as part of retiring that unapproved UI so an invisible old choice cannot
   // keep changing Feed order.
@@ -720,11 +510,11 @@ export default function FeedTwin({
       : undefined
     const focusedPostId = directTarget?.id ?? discovery.focusedPostId
     if (!focusedPostId) return
-    const ranked = rankedPostsFor(ch, nativeFeedPostsSnapshot(), discovery, directTarget)
-    if (!ranked.some(post => post.id === focusedPostId)) return
+    const ranked = rankedPostsFor(ch, publishedPosts, discovery, directTarget)
+    if (!ranked.some(post => post.id === canonicalFeedPostId(focusedPostId))) return
     contentIdxRef.current[ch.id] = 0
     forceContentRender(value => value + 1)
-  }, [ch.id, discovery.focusedPostId, focusedContent?.nonce])
+  }, [ch.id, discovery, focusedContent?.nonce, publishedPosts])
 
   useEffect(() => {
     const refresh = () => setLocationRevision(value => value + 1)
@@ -902,7 +692,7 @@ export default function FeedTwin({
     if (next === index) return
     const currentPosts = rankedPostsFor(
       ch,
-      nativeFeedPostsSnapshot(),
+      publishedPosts,
       radiusDiscoverySnapshot(),
       focusedContent?.target,
     )
@@ -917,7 +707,7 @@ export default function FeedTwin({
     playPop()
     if (onIndexChange) onIndexChange(next)
     else setOwnIndex(next)
-  }, [ch, focusedContent, index, onIndexChange])
+  }, [ch, focusedContent, index, onIndexChange, publishedPosts])
 
   const toggleMute = () => {
     const next = !muted
@@ -933,7 +723,7 @@ export default function FeedTwin({
   const changeContent = useCallback((dir: 1 | -1) => {
     const ranked = rankedPostsFor(
       ch,
-      nativeFeedPostsSnapshot(),
+      publishedPosts,
       radiusDiscoverySnapshot(),
       focusedContent?.target,
     )
@@ -950,7 +740,7 @@ export default function FeedTwin({
     playPop()
     onContentAdvance?.(ch.id, next)
     forceContentRender(n => n + 1)
-  }, [ch, focusedContent, onContentAdvance])
+  }, [ch, focusedContent, onContentAdvance, publishedPosts])
 
   // Feed playback is a continuous channel stream. A completed clip advances
   // to the next post instead of holding on its last frame or replaying itself.
@@ -959,7 +749,7 @@ export default function FeedTwin({
   const advanceCompletedContent = useCallback(() => {
     const ranked = rankedPostsFor(
       ch,
-      nativeFeedPostsSnapshot(),
+      publishedPosts,
       radiusDiscoverySnapshot(),
       focusedContent?.target,
     )
@@ -973,7 +763,7 @@ export default function FeedTwin({
     contentIdxRef.current[ch.id] = next
     onContentAdvance?.(ch.id, next)
     forceContentRender(n => n + 1)
-  }, [ch, focusedContent, onContentAdvance])
+  }, [ch, focusedContent, onContentAdvance, publishedPosts])
 
   const handleEdgeTap = useCallback((side: 'left' | 'right') => {
     changeContent(side === 'left' ? -1 : 1)
@@ -1012,45 +802,29 @@ export default function FeedTwin({
     window.setTimeout(() => { wheelLock.current = false }, 420)
   }
 
-  // The live channel's posts change as broadcasts start and stop.
-  useSyncExternalStore(onLiveStore, isLive, isLive)
-  const publishedPosts = useSyncExternalStore(
-    onNativeFeedPosts,
-    nativeFeedPostsSnapshot,
-    nativeFeedPostsSnapshot,
-  )
-  useEffect(() => { requestNativeFeedPosts() }, [])
   const posts = rankedPostsFor(ch, publishedPosts, discovery, focusedContent?.target)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   const postId = radiusPostId(ch.id, post)
-  // Every video change re-reports its reach — channel swipe, content swipe,
-  // or a live broadcast replacing the fallback clip. Cleared on unmount so the
-  // card falls back to your own radius the moment the feed is gone.
+  // Every Firestore snapshot re-reports the server-owned reach. The old local
+  // ledger is retained only when the authenticated write fails; it no longer
+  // sits on top of a server value and double-counts successful engagements.
   const reportedReachRef = useRef<string | null>(null)
   useEffect(() => {
-    const report = () => {
-      const baseKm = post?.reachKm
-      const km = baseKm == null ? null : Math.max(0, baseKm + radiusDeltaForPost(postId))
-      const signature = km == null ? 'none' : `${postId}:${km}`
-      if (signature === reportedReachRef.current) return
-      reportedReachRef.current = signature
-      onPostReach?.(km)
-    }
-    report()
-    window.addEventListener(RADIUS_CHANGE_EVENT, report)
-    return () => window.removeEventListener(RADIUS_CHANGE_EVENT, report)
+    const km = post?.reachKm ?? null
+    const signature = km == null ? 'none' : `${postId}:${km}`
+    if (signature === reportedReachRef.current) return
+    reportedReachRef.current = signature
+    onPostReach?.(km)
   }, [onPostReach, post?.reachKm, postId])
   useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
 
   const desiredAdSrc = post?.stream || post?.mediaType === 'photo'
     ? undefined
-    : (post?.video || STOCK_CLIPS[ch.number % STOCK_CLIPS.length])
+    : post?.video
   const sourceCandidates = desiredAdSrc
-    ? post?.real
-      // One remount of the original user clip handles transient WebKit decoder
-      // loss without replacing somebody's upload with unrelated stock media.
-      ? [desiredAdSrc, desiredAdSrc]
-      : [desiredAdSrc, ...STOCK_CLIPS.filter(source => source !== desiredAdSrc)]
+    // One remount of the original user clip handles transient WebKit decoder
+    // loss without replacing somebody's upload with unrelated stock media.
+    ? [desiredAdSrc, desiredAdSrc]
     : []
   const sourceKey = `${ch.id}:${post?.id ?? post?.user ?? 'no-post'}:${desiredAdSrc ?? 'stream'}`
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
@@ -1061,7 +835,7 @@ export default function FeedTwin({
     : undefined
   const posterSrc = post?.mediaType === 'photo'
     ? post.poster
-    : adSrc ? (post?.poster ?? posterForFeedClip(adSrc)) : undefined
+    : post?.poster
   const posterKey = posterSrc ? `${sourceKey}:${adSrc}:${posterSrc}` : null
   const [readyPosterKey, setReadyPosterKey] = useState<string | null>(null)
   const posterReady = Boolean(posterKey) && readyPosterKey === posterKey
@@ -1093,9 +867,9 @@ export default function FeedTwin({
     const nextAttempt = recoveryAttemptRef.current + 1
     const recoveryLimit = Math.min(MAX_PLAYBACK_RECOVERY_SOURCES, sourceCandidates.length)
     if (nextAttempt >= recoveryLimit) {
-      // Every bundled clip has a poster. After a bounded pair of decoder
-      // attempts, keep that real creative visible and release the broken
-      // pipeline instead of cycling TV static forever.
+      // After a bounded pair of attempts, release the broken pipeline. If the
+      // upload has a poster it stays visible; otherwise the honest channel
+      // identity remains instead of substituting unrelated bundled media.
       setPlaybackUnavailable(true)
       setRecoveringPlayback(false)
       return
@@ -1191,8 +965,13 @@ export default function FeedTwin({
   const playbackKey = adSrc ? `${sourceKey}:${adSrc}:${recoveryAttempt}` : null
   const adReady = Boolean(playbackKey) && readyPlaybackKey === playbackKey
   useEffect(() => {
-    if (adReady || posterReady || post?.stream) recordPostView(postId)
-  }, [adReady, posterReady, post?.stream, postId])
+    if (!post?.id || (!adReady && !posterReady && !post.stream)) return
+    void recordVisiblePostView(post.id).catch(() => {
+      // Offline/migration journal only. The existing reaction UI was already
+      // shown and the authoritative snapshot remains untouched.
+      recordPostView(postId)
+    })
+  }, [adReady, posterReady, post?.id, post?.stream, postId])
 
   // While the player is up, mirror the video's clock into the timeline. Native
   // media events only — no rAF loop, so the layer is idle between events and
@@ -1722,25 +1501,33 @@ export default function FeedTwin({
     clearPopups('suggestion')
     const channel = chRef.current
     const current = postRef.current
+    if (!current) return
     showPopup({
       kind: 'suggestion',
-      card: feedSuggestionFor({ ...channel, place: current?.place }),
+      card: feedSuggestionFor({
+        ...channel,
+        user: current.user,
+        caption: current.caption ?? `${channel.name} post`,
+        place: current.place,
+      }),
     })
   }, [commentOpen])
 
   const reactToCurrentPost = useCallback((direction: 'up' | 'down') => {
     const current = postRef.current
+    if (!current) return
     const id = radiusPostId(ch.id, current)
-    const amountKm = usesMiles() ? 1 / 0.621371 : 1
-    if (direction === 'up') recordPostLike(id, amountKm)
-    else recordPostDislike(id, amountKm)
+    void recordPostEngagement(id, direction === 'up' ? 'like' : 'dislike').catch(() => {
+      if (direction === 'up') recordPostLike(id, 1)
+      else recordPostDislike(id, 1)
+    })
     if (current) {
       recordFeedDiscoverySignal(
         { id: current.id, channelId: ch.id },
         direction === 'up' ? 'like' : 'dislike',
       )
     }
-    setRadiusReaction({ direction, amount: 1 })
+    setRadiusReaction({ direction, amount: usesMiles() ? 0.6 : 1 })
     playPop()
     if (radiusReactionTimerRef.current != null) window.clearTimeout(radiusReactionTimerRef.current)
     radiusReactionTimerRef.current = window.setTimeout(() => setRadiusReaction(null), 720)
@@ -1750,6 +1537,7 @@ export default function FeedTwin({
   const dislikeCurrentPost = useCallback(() => reactToCurrentPost('down'), [reactToCurrentPost])
 
   const openComments = useCallback(() => {
+    if (!postRef.current) return
     playPop()
     clearCommentRoll()
     setCommentOpen(true)
@@ -1773,12 +1561,13 @@ export default function FeedTwin({
   }, [])
 
   const sharePost = useCallback(() => {
-    playPop()
     const channel = chRef.current
     const post = postRef.current
-    const title = post?.caption ?? channel.caption
-    const by = post?.user ?? channel.user
-    if (post) recordFeedDiscoverySignal({ id: post.id, channelId: channel.id }, 'share')
+    if (!post) return
+    playPop()
+    const title = post.caption ?? `${channel.name} post`
+    const by = post.user
+    recordFeedDiscoverySignal({ id: post.id, channelId: channel.id }, 'share')
     // Native owns the real share sheet (UIActivityViewController); in the
     // browser the Web Share API is the same gesture. Browsers without it copy
     // a useful link and acknowledge the tap instead of silently doing nothing.
@@ -1842,13 +1631,15 @@ export default function FeedTwin({
       if (action === 'suggestion') { showCurrentSuggestion(); return }
       if (action === 'profile') {
         // whoever posted the video you are watching
+        const current = postRef.current
+        if (!current) return
         playPop()
-        recordProfileVisitAfterView(radiusPostId(ch.id, postRef.current))
-        onOpenProfile?.(postRef.current?.user ?? ch.user)
+        recordProfileVisitAfterView(radiusPostId(ch.id, current))
+        onOpenProfile?.(current.user)
       }
     })
     return () => bindActions(null)
-  }, [bindActions, ch.id, ch.user, likeCurrentPost, onOpenProfile, openComments, sharePost, showCurrentSuggestion, toggleCaptions])
+  }, [bindActions, ch.id, likeCurrentPost, onOpenProfile, openComments, sharePost, showCurrentSuggestion, toggleCaptions])
 
   // Tapping outside sends the window back up the way it came, then unmounts.
   const closeComments = () => {
@@ -1875,20 +1666,23 @@ export default function FeedTwin({
 
   const sendComment = () => {
     const body = commentText.trim()
-    if (!body) return
+    if (!body || !post) return
     playPop()
     // Into the roll for THIS post, at the top, before anything else happens —
     // a comment you cannot see afterwards reads as one that did not send.
-    const key = `${ch.id}:${post?.user ?? ''}`
+    const key = post.id
     let mine: string | null = null
     try { mine = window.localStorage.getItem('poplur.profile.photo') } catch { /* partitioned */ }
     setMyComments(all => ({
       ...all,
       [key]: [{ who: '@you', body, pic: mine ?? 'mark_talk0.png', mine: true }, ...(all[key] ?? [])],
     }))
-    recordPostComment(radiusPostId(ch.id, post), usesMiles() ? 2 / 0.621371 : 2)
-    if (post) recordFeedDiscoverySignal({ id: post.id, channelId: ch.id }, 'comment')
-    setRadiusReaction({ direction: 'up', amount: 2 })
+    const engagementPostId = radiusPostId(ch.id, post)
+    void recordPostEngagement(engagementPostId, 'comment').catch(() => {
+      recordPostComment(engagementPostId, 2)
+    })
+    recordFeedDiscoverySignal({ id: post.id, channelId: ch.id }, 'comment')
+    setRadiusReaction({ direction: 'up', amount: usesMiles() ? 1.2 : 2 })
     if (radiusReactionTimerRef.current != null) window.clearTimeout(radiusReactionTimerRef.current)
     radiusReactionTimerRef.current = window.setTimeout(() => setRadiusReaction(null), 720)
     setCommentText('')
@@ -1900,7 +1694,7 @@ export default function FeedTwin({
   useEffect(() => {
     if (!captionsOn) { setCaptionLine(''); return }
     const video = adVideoRef.current
-    const cues = cuesFor(adSrc, ch.caption)
+    const cues = cuesFor(adSrc, post?.caption ?? '')
     if (!video) { setCaptionLine(cues[0]?.text ?? ''); return }
     // clear the previous post's line the moment the clip changes
 
@@ -1938,14 +1732,12 @@ export default function FeedTwin({
     }
   }, [suppressed, adSrc, sourceKey, audioUnlocked, frontMost])
 
-  const [c0, c1, c2] = ch.theme
-
   // Your comment belongs in the comments, on the post you left it on. Keyed by
   // the post rather than held in one list, or a comment written on the ramen
   // clip would show up under the football one.
-  const rollKey = `${ch.id}:${post?.user ?? ''}`
-  const liveRoll = [...(myComments[rollKey] ?? []), ...COMMENT_ROLL]
-  const title = post?.caption ?? ch.caption
+  const rollKey = post?.id ?? ''
+  const liveRoll = myComments[rollKey] ?? []
+  const title = post?.caption ?? `${ch.name} post`
 
   return (
     <div
@@ -2121,23 +1913,26 @@ export default function FeedTwin({
           information underneath the title. */}
       {!playerMode && (
       <>
-        <PostActionRail
-          side={controlSide}
-          label="Feed controls"
-          muted={muted}
-          captionsOn={captionsOn}
-          commentsAtEnd={commentsAtEnd}
-          onToggleMute={toggleMute}
-          onShare={sharePost}
-          onToggleCaptions={toggleCaptions}
-          onToggleCommentsAtEnd={toggleCommentsAtEnd}
-          onComment={openComments}
-          onLike={likeCurrentPost}
-          onDislike={dislikeCurrentPost}
-        />
+        {post && (
+          <PostActionRail
+            side={controlSide}
+            label="Feed controls"
+            muted={muted}
+            captionsOn={captionsOn}
+            commentsAtEnd={commentsAtEnd}
+            onToggleMute={toggleMute}
+            onShare={sharePost}
+            onToggleCaptions={toggleCaptions}
+            onToggleCommentsAtEnd={toggleCommentsAtEnd}
+            onComment={openComments}
+            onLike={likeCurrentPost}
+            onDislike={dislikeCurrentPost}
+          />
+        )}
         <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
           <img className={styles.chIcon} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
         </div>
+        {post && (
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
             <div className={styles.feedHeaderCopy}>
@@ -2149,19 +1944,22 @@ export default function FeedTwin({
               </div>
               <div
                 className={styles.feedMetaRow}
-                aria-label={`${post?.user ?? ch.user}, ${reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}`}
+                aria-label={post.reachKm == null ? post.user : `${post.user}, ${reachLabel(post.reachKm)}`}
               >
                 <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
-                  {post?.user ?? ch.user}
+                  {post.user}
                   <svg viewBox="0 0 22 22" width="12" height="12" className={styles.verifyBadge} aria-label="Verified"><circle cx="11" cy="11" r="10" fill="#3b82f6" /><path d="M7 11.5l2.5 2.5 5.5-5.5" stroke="#fff" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </div>
-                <span className={`${styles.reachText} ${styles.feedReach}`} aria-hidden="true">
-                  {reachLabel(post?.reachKm ?? reachKmFor(`${ch.id}:${ch.user}:`))}
-                </span>
+                {post.reachKm != null && (
+                  <span className={`${styles.reachText} ${styles.feedReach}`} aria-hidden="true">
+                    {reachLabel(post.reachKm)}
+                  </span>
+                )}
               </div>
             </div>
           </div>
         </div>
+        )}
         {!post && (
           <div className={styles.discoveryEmpty} role="status">
             No posts in this channel
@@ -2185,7 +1983,7 @@ export default function FeedTwin({
       {/* End-of-clip comments: the roll drifts up when a play-through wraps,
           then leaves on its own. Watching only — no input, no keyboard. The
           COMMENT tile still opens the full window. Tap dismisses early. */}
-      {endComments && !commentOpen && !playerMode && (
+      {endComments && liveRoll.length > 0 && !commentOpen && !playerMode && (
         <div
           className={styles.endComments}
           onClick={() => {
@@ -2221,7 +2019,7 @@ export default function FeedTwin({
       )}
 
       {/* Comment box drops from the top, in the app's clay/glass language. */}
-      {commentOpen && (
+      {commentOpen && post && (
         <div className={`${styles.commentScrim} ${surfaceStyles.scrim}`} onClick={closeComments}>
           <div
             className={[
@@ -2231,7 +2029,7 @@ export default function FeedTwin({
             ].filter(Boolean).join(' ')}
             role="dialog"
             aria-modal="true"
-            aria-label={`Comment on ${post?.user ?? ch.user}`}
+            aria-label={`Comment on ${post.user}`}
             onClick={e => e.stopPropagation()}
           >
             {/* the roll drifts upward like end credits */}
@@ -2261,7 +2059,7 @@ export default function FeedTwin({
             </div>
 
             <div className={`${styles.commentHeading} ${surfaceStyles.header}`}>
-              <div className={styles.commentTitle}>Comment on {post?.user ?? ch.user}</div>
+              <div className={styles.commentTitle}>Comment on {post.user}</div>
               <button type="button" className={`${styles.commentClose} ${surfaceStyles.close}`} onClick={closeComments} aria-label="Close comments">×</button>
             </div>
             <div className={styles.commentRow}>

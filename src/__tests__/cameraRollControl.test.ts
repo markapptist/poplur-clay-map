@@ -22,11 +22,16 @@ describe('camera-roll side control', () => {
   it('keeps the camera-roll wrapper neutral instead of drawing shaded chrome', () => {
     const css = readFileSync(resolve(process.cwd(), 'src', 'ViewHarness.module.css'), 'utf8')
     const rule = css.match(/\.camRollBtn \{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const thumbnailRule = css.match(/\.camRollBtnThumb \{([\s\S]*?)\n\}/)?.[1] ?? ''
 
     expect(rule).toContain('border: 0;')
+    expect(rule).toContain('border-radius: 50%;')
     expect(rule).toContain('background: transparent;')
     expect(rule).toContain('backdrop-filter: none;')
     expect(rule).toContain('box-shadow: none;')
+    expect(rule).toContain('overflow: hidden;')
+    expect(thumbnailRule).toContain('display: block;')
+    expect(thumbnailRule).toContain('border-radius: inherit;')
     expect(css).not.toContain('camRollShaderSweep')
     expect(css).not.toContain('.camRollBtn::after')
   })

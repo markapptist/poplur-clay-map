@@ -967,6 +967,18 @@
   color: rgba(255, 233, 246, 0.66);
 }
 
+.profileEmpty {
+  grid-column: 1 / -1;
+  width: 100%;
+  padding: 28px 18px;
+  text-align: center;
+  color: rgba(52, 24, 39, 0.66);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  letter-spacing: 0.035em;
+}
+
 /* Says how to leave, since a full-page sheet has no visible "outside" and the
    cube is the app's only other way back. Sits under the last notification. */
 .notifFoot {

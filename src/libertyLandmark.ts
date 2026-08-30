@@ -8,7 +8,7 @@ import {
   applyLandmarkMaterialIdentity,
   type LandmarkMaterialIdentity,
 } from './landmarkMaterials'
-import { landmarkGroundOffsetY } from './landmarkGrounding'
+import { landmarkContactPlaneY, landmarkGroundOffsetY } from './landmarkGrounding'
 
 // ── World landmarks as TRUE 3D map models ────────────────────────────────────
 //
@@ -436,10 +436,9 @@ export function installNearLandmark3D(
           // height axis. It is converted to Mapbox Z during rendering.
           const s = cfg.heightM / (size.y || 1)
           built.scale.setScalar(s)
-          const box2 = new THREE.Box3().setFromObject(built)
           // Keep the model's local floor on the map plane. The shared layer
           // transform carries Three Y into Mapbox Z after this placement.
-          built.position.y -= box2.min.y
+          built.position.y = landmarkGroundOffsetY(box.min.y, s)
           // A subtle contact shadow on the actual map plane makes the base
           // legible against the clay ground. It is model-space geometry, not
           // a screen-fixed badge, so it stays at the landmark's coordinate.
@@ -462,9 +461,11 @@ export function installNearLandmark3D(
           )
           contact.name = 'landmark-ground-contact'
           // The model's local ground is XZ. Rotate the default XY circle into
-          // that plane, then park it at the mesh's local floor.
-          contact.rotation.x = Math.PI / 2
-          contact.position.y = box.min.y + 0.002
+          // that plane with its front face pointing up, then park it only two
+          // real centimetres above the mesh floor. The old model-space 0.002
+          // became a visible lift after a tall landmark's scale was applied.
+          contact.rotation.x = -Math.PI / 2
+          contact.position.y = landmarkContactPlaneY(box.min.y, s)
           built.add(contact)
           model = built
           modelReady = true

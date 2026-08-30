@@ -28,9 +28,26 @@ const SIMULATION_PULSE_MS = 15_000
 export const SIMULATION_FEED_REFRESH_MS = 15_000
 const MAX_SEEN_SIMULATION_EVENTS = 256
 
-export type TestActivityScreen =
-  | 'home' | 'map' | 'feed' | 'camera' | 'camera-roll' | 'profile'
-  | 'hold-menu' | 'upload-flows' | 'arcade' | 'games' | 'battle'
+/**
+ * The only surface names closed-beta activity may transmit. These are route
+ * identities, not captured content: no post/message text, media, location,
+ * contacts, typed input, camera state, or microphone state belongs here.
+ */
+export const TEST_ACTIVITY_SCREENS = [
+  'home', 'map', 'feed', 'camera', 'camera-roll', 'profile',
+  'hold-menu', 'upload-flows', 'arcade', 'games', 'battle',
+  'map-conquer', 'map-directions', 'map-ipod', 'map-radio', 'map-show-me',
+  'feed-apps', 'feed-browser', 'feed-casino', 'feed-games', 'feed-news', 'feed-tvguide',
+  'camera-ai-chat', 'camera-studio',
+  'profile-avatar', 'profile-house', 'profile-messages', 'profile-notifications',
+  'profile-phone', 'profile-settings', 'profile-stats', 'profile-store',
+  'profile-trophies', 'profile-wallet', 'profile-wardrobe',
+] as const
+
+export type TestActivityScreen = typeof TEST_ACTIVITY_SCREENS[number]
+export type TestActivityHomeTab = 'map' | 'feed' | 'post' | 'profile'
+
+const TEST_ACTIVITY_SCREEN_SET = new Set<string>(TEST_ACTIVITY_SCREENS)
 
 export type TestActivityStatus = 'foreground' | 'background'
 
@@ -319,11 +336,43 @@ export async function loadTestActivityDashboard(): Promise<TestActivityDashboard
 }
 
 export function normalizeTestActivityScreen(screen: string): TestActivityScreen {
-  const allowed: TestActivityScreen[] = [
-    'home', 'map', 'feed', 'camera', 'camera-roll', 'profile', 'hold-menu',
-    'upload-flows', 'arcade', 'games', 'battle',
-  ]
-  return (allowed as string[]).includes(screen) ? screen as TestActivityScreen : 'home'
+  return TEST_ACTIVITY_SCREEN_SET.has(screen) ? screen as TestActivityScreen : 'home'
+}
+
+export function isTestActivityScreen(screen: string): screen is TestActivityScreen {
+  return TEST_ACTIVITY_SCREEN_SET.has(screen)
+}
+
+/** Resolve the one user-visible Home surface without inspecting its contents. */
+export function visibleHomeTestActivityScreen(input: {
+  tab: TestActivityHomeTab
+  holdOpen: boolean
+  subscreen?: string | null
+  cameraRoll?: boolean
+  mapConquer?: boolean
+}): TestActivityScreen {
+  if (input.holdOpen) {
+    return input.subscreen && isTestActivityScreen(input.subscreen)
+      ? input.subscreen
+      : 'hold-menu'
+  }
+  if (input.mapConquer && input.tab === 'map') return 'map-conquer'
+  if (input.tab === 'post') return input.cameraRoll ? 'camera-roll' : 'camera'
+  return input.tab
+}
+
+/** @internal Pure scheduler seam: a new screen is always due immediately. */
+export function testActivityHeartbeatIsDue(input: {
+  screen: TestActivityScreen
+  status: TestActivityStatus
+  lastKey: string
+  lastAt: number
+  now: number
+}): boolean {
+  const key = `${input.screen}:${input.status}`
+  return input.status !== 'foreground'
+    || key !== input.lastKey
+    || input.now - input.lastAt >= HEARTBEAT_MS
 }
 
 /** A bounded foreground heartbeat. The dashboard must never turn into tracking. */
@@ -332,7 +381,13 @@ export function reportTestActivity(screen: string, status: TestActivityStatus = 
   const resolvedScreen = normalizeTestActivityScreen(screen)
   const key = `${resolvedScreen}:${status}`
   const now = Date.now()
-  if (status === 'foreground' && key === lastHeartbeatKey && now - lastHeartbeatAt < HEARTBEAT_MS) return
+  if (!testActivityHeartbeatIsDue({
+    screen: resolvedScreen,
+    status,
+    lastKey: lastHeartbeatKey,
+    lastAt: lastHeartbeatAt,
+    now,
+  })) return
   lastHeartbeatKey = key
   lastHeartbeatAt = now
   void callTestActivity({

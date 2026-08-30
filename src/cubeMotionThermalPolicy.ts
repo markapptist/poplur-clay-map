@@ -50,6 +50,24 @@ export function cubeMotionFPS({
   ))
 }
 
+/**
+ * The native motion bridge is work owned by the WebGL navigator, not by the
+ * foreground document. Keeping Core Motion leased merely because Home is
+ * visible leaves sensor hardware and a JS bridge running across Feed, Camera,
+ * Profile, and every subscreen after the navigator's render loop has parked.
+ */
+export function cubeMotionDemandIsActive({
+  eligible,
+  rendererLeaseGranted,
+  workDemanded,
+}: {
+  eligible: boolean
+  rendererLeaseGranted: boolean
+  workDemanded: boolean
+}): boolean {
+  return eligible && rendererLeaseGranted && workDemanded
+}
+
 function wrappedAngleDelta(a: number, b: number): number {
   let delta = a - b
   delta -= Math.round(delta / (Math.PI * 2)) * (Math.PI * 2)

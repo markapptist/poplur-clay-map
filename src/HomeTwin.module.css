@@ -887,6 +887,14 @@
   transform-origin: 50% 100%;
 }
 
+/* Once CubeTab3D has replaced its settled WebGL canvas with the retained PNG,
+   stop presenting that PNG through an infinite compositor animation too. A
+   direct navigator wake restores the live canvas and clears this document
+   flag before the first new frame. */
+:global(html[data-poplur-cube-static-frame='visible']) .cubeFloat {
+  animation-play-state: paused;
+}
+
 .cubePop {
   animation:
     cubeTapPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),

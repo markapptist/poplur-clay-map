@@ -6,6 +6,11 @@ import ClayNotifIcon from './ClayNotifIcon'
 import { markEngagementSeen } from './engagementLog'
 import { postNativeEvent } from './nativeBridge'
 import {
+  nativeNotificationUnreadIds,
+  reconnectNativeNotificationInbox,
+  startNativeNotificationInbox,
+} from './notificationInboxBridge'
+import {
   clearAllNotifications,
   listNotifications,
   markNotificationsSeen,
@@ -46,22 +51,17 @@ export default function NotificationsScreen({
   // mount and whenever pull-to-refresh runs, then replace the persisted slice
   // of the shared store. Plain-browser previews simply keep their local seed.
   useEffect(() => {
-    const onResult = (event: Event) => {
-      const detail = (event as CustomEvent<Record<string, unknown>>).detail
-      if (detail?.type !== 'poplurNotifications') return
-      const receivedUnread = Array.isArray(detail.notifications)
-        && detail.notifications.some(row => !!row && typeof row === 'object'
-          && (row as { unread?: unknown }).unread !== false)
-      replaceNativeNotifications(detail.notifications)
+    return startNativeNotificationInbox(window, notifications => {
+      const unreadIds = nativeNotificationUnreadIds(notifications)
+      replaceNativeNotifications(notifications)
       // The response may have raced the native read batch. This screen is
       // already open, so none of the rows it just received should relight the
       // bell locally.
       markNotificationsSeen()
-      if (receivedUnread) postNativeEvent({ type: 'notificationsRead' })
-    }
-    window.addEventListener('poplur-notifications-result', onResult)
-    postNativeEvent({ type: 'notificationsRequested' })
-    return () => window.removeEventListener('poplur-notifications-result', onResult)
+      if (unreadIds.length > 0) {
+        postNativeEvent({ type: 'notificationsRead', ids: unreadIds })
+      }
+    })
   }, [])
 
   // Reading the list is what clears the bell's dot. On MOUNT rather than on
@@ -81,7 +81,7 @@ export default function NotificationsScreen({
   // it owns DM reads. A browser workbench has no bridge and simply re-reads its
   // local preview rows rather than faking a network result.
   const refreshNotifications = useCallback(() => {
-    postNativeEvent({ type: 'notificationsRequested' })
+    reconnectNativeNotificationInbox()
     setNotifs(listNotifications())
   }, [])
 

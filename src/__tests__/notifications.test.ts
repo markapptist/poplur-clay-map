@@ -61,6 +61,16 @@ describe('notification inbox contract', () => {
     expect(listNotifications()[0].target).toEqual({ mode: 'media', postId: 'post-2', tile: undefined })
   })
 
+  it('bounds every authoritative native snapshot to the shell query limit', () => {
+    replaceNativeNotifications(Array.from({ length: 90 }, (_, index) => ({
+      id: `n-${index}`,
+      kind: 'like',
+      title: `row-${index}`,
+      createdAtMillis: index,
+    })))
+    expect(listNotifications()).toHaveLength(80)
+  })
+
   it('optimistically clears unread state and forwards clear-all ids to native', () => {
     replaceNativeNotifications([
       { id: 'n-1', kind: 'like', title: 'a', createdAtMillis: 10, unread: true },

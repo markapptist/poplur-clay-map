@@ -12,6 +12,23 @@
 // `identifier` strings would be, with a confidence that drifts like a real
 // classifier's does.
 
+export interface FaceLandmarkPoint {
+  /** Normalized in the source frame, with a top-left origin like Detection. */
+  x: number
+  y: number
+}
+
+/**
+ * The compact subset of Vision landmarks that materially improves Poplur's
+ * accessory anchors. Browser/Android detectors may omit it and retain the
+ * existing bounding-box placement.
+ */
+export interface FaceLandmarks {
+  leftEye?: FaceLandmarkPoint
+  rightEye?: FaceLandmarkPoint
+  nose?: FaceLandmarkPoint
+}
+
 export interface Detection {
   id: string
   /** all in 0..1 of the frame */
@@ -39,6 +56,8 @@ export interface Detection {
    *  turn with the head instead of remaining parallel to the phone. */
   roll?: number
   yaw?: number
+  /** Native Vision feature centres, normalized to the source frame. */
+  landmarks?: FaceLandmarks
 }
 
 // What the native model reports around a city — the COCO-ish classes its

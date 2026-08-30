@@ -48,6 +48,27 @@ export interface ARFilterCatalog {
   filters: ARFilterEntry[]
 }
 
+const GRADE_KEYS = new Set<keyof ARFilterGrade>([
+  'brightness', 'contrast', 'saturation', 'hueDegrees',
+  'sepia', 'blur', 'bloom', 'anaglyph',
+])
+
+/**
+ * A streamed filter is only useful to an older native binary when a complete,
+ * finite Core Image recipe travels with it. Reject unknown keys and empty
+ * recipes at the network boundary instead of letting Swift silently decode an
+ * identity grade and make a newly published filter look like it worked.
+ */
+export function isARFilterGrade(value: unknown): value is ARFilterGrade {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const entries = Object.entries(value as Record<string, unknown>)
+  return entries.length > 0 && entries.every(([key, number]) =>
+    GRADE_KEYS.has(key as keyof ARFilterGrade)
+    && typeof number === 'number'
+    && Number.isFinite(number),
+  )
+}
+
 const BUILT_IN = builtIn as ARFilterCatalog
 
 let current: ARFilterCatalog = BUILT_IN
@@ -69,15 +90,24 @@ export function onARFilterCatalogChange(fn: (c: ARFilterCatalog) => void): () =>
   return () => { listeners.delete(fn) }
 }
 
-function isCatalog(value: unknown): value is ARFilterCatalog {
+export function isARFilterCatalog(value: unknown): value is ARFilterCatalog {
   if (!value || typeof value !== 'object') return false
   const c = value as ARFilterCatalog
-  if (typeof c.version !== 'number' || !Array.isArray(c.filters)) return false
+  if (!Number.isInteger(c.version) || c.version < 1 || !Array.isArray(c.filters)) return false
   // Every entry must be usable on its own; one malformed row must not be able
   // to empty a rail that was working a moment ago.
-  return c.filters.every(f =>
-    f && typeof f.id === 'string' && typeof f.label === 'string'
-    && typeof f.css === 'string' && typeof f.thumbnail === 'string')
+  const ids = new Set<string>()
+  return c.filters.length > 0 && c.filters.every(f => {
+    if (!f || typeof f.id !== 'string' || f.id.trim() === ''
+      || typeof f.label !== 'string' || f.label.trim() === ''
+      || typeof f.css !== 'string' || f.css.trim() === ''
+      || typeof f.thumbnail !== 'string' || f.thumbnail.trim() === ''
+      || ids.has(f.id)) return false
+    ids.add(f.id)
+    return f.id === 'none'
+      ? (f.grade === undefined || isARFilterGrade(f.grade))
+      : isARFilterGrade(f.grade)
+  })
 }
 
 /**
@@ -95,7 +125,7 @@ export function loadARFilterCatalog(): Promise<ARFilterCatalog> {
       const res = await fetch(url, { cache: 'no-cache' })
       if (!res.ok) return current
       const next: unknown = await res.json()
-      if (!isCatalog(next)) {
+      if (!isARFilterCatalog(next)) {
         console.warn('[arFilterCatalog] published catalog is malformed — keeping the bundled one')
         return current
       }

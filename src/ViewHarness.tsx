@@ -3,7 +3,11 @@ import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import UploadFlowReview from './UploadFlowReview'
 import { offlineGameDirector } from './gameDirector'
-import { useTestActivityReporter } from './testActivity'
+import {
+  normalizeTestActivityScreen,
+  useTestActivityReporter,
+  type TestActivityScreen,
+} from './testActivity'
 import styles from './ViewHarness.module.css'
 
 // These routes bring the full game runtimes, generated creature art resolver,
@@ -79,12 +83,29 @@ export function holdMenuBaseViewFromLocation(): HomeHarnessView {
 
 export default function ViewHarness({ initialView }: { initialView: HarnessView }) {
   const [view, setView] = useState<HarnessView>(initialView)
-  useTestActivityReporter(
-    view === 'cameraroll' ? 'camera-roll'
-      : view === 'holdmenu' ? 'hold-menu'
-        : view === 'uploadflows' ? 'upload-flows'
-          : view,
-  )
+  const [visibleActivityScreen, setVisibleActivityScreen] = useState<TestActivityScreen>(() => (
+    normalizeTestActivityScreen(
+      // The home route visibly starts on Feed; do not publish a phantom Home
+      // stop before HomeTwin's first surface callback reaches this owner.
+      initialView === 'home' ? 'feed'
+        : initialView === 'cameraroll' ? 'camera-roll'
+          : initialView === 'holdmenu' ? 'hold-menu'
+            : initialView === 'uploadflows' ? 'upload-flows'
+              : initialView,
+    )
+  ))
+  useTestActivityReporter(visibleActivityScreen)
+
+  // Standalone routes do not mount HomeTwin, so they publish their own bounded
+  // surface name. Home-owned tabs and subscreens report through the callback
+  // below, which prevents a stale `?view=home` heartbeat while Feed, Mail,
+  // Wardrobe, or another real page is visibly in front.
+  useEffect(() => {
+    if (view === 'uploadflows') setVisibleActivityScreen('upload-flows')
+    else if (view === 'arcade' || view === 'games' || view === 'battle') {
+      setVisibleActivityScreen(view)
+    }
+  }, [view])
 
   useEffect(() => {
     const onHashChange = () => {
@@ -128,6 +149,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
       <HomeTwin
         onOpen={setHarnessView}
         onTabChange={setInlineTab}
+        onVisibleScreenChange={setVisibleActivityScreen}
         initialTab={VIEW_TO_TAB[baseView]}
         initialHoldOpen={view === 'holdmenu'}
         initialCameraPage={view === 'cameraroll' ? 'roll' : 'viewfinder'}

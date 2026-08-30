@@ -60,7 +60,10 @@ import {
 } from './mapPresentationPolicy'
 import {
   programmaticCameraBlurAllowed,
+  programmaticCameraPoseMatches,
   programmaticCameraPlan,
+  programmaticCameraPlanForMode,
+  type ProgrammaticCameraMode,
 } from './programmaticCameraMotion'
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
@@ -147,6 +150,7 @@ import MapLevelButton from './MapLevelButton'
 import MapConquerButton from './MapConquerButton'
 import MapRadioButton from './MapRadioButton'
 import MapRadioStatusLabel from './MapRadioStatusLabel'
+import MapRandomTourButton from './MapRandomTourButton'
 import { mapTourControlState } from './mapTourControl'
 import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
@@ -390,17 +394,21 @@ const LANDMARK_RENDER_SETTLE_MS = 9_000
 // All-landmark showcase pacing. The old 10s flight + 5s hold kept Mapbox
 // camera/tile work active for roughly 69% of the entire three-minute pass and
 // promoted every authored frame to iPhone's 60fps interaction budget. Keep the
-// same 15-second cadence, but spend four seconds travelling and eleven seconds
-// on a fully static landmark. Together with the authored-rate lease used below,
+// same 15-second cadence, but spend 4.8 seconds travelling and 10.2 seconds on
+// a fully static landmark. The slightly longer reveal makes the final subject
+// frame readable without extending the pass or adding any continuous work.
+// Together with the authored-rate lease used below,
 // this cuts tour render work by roughly 79% while preserving every stop and its
 // authored full-landmark frame. The dev multiplier keeps a full pass testable.
 const TOUR_SPEED = (() => {
-  if (typeof window === 'undefined') return 1
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return 1
   const raw = Number(new URLSearchParams(window.location.search).get('tour-speed'))
   return Number.isFinite(raw) && raw >= 0.1 && raw <= 5 ? raw : 1
 })()
-const TOUR_FLIGHT_MS = Math.round(4_000 / TOUR_SPEED)
-const TOUR_DWELL_MS = Math.round(11_000 / TOUR_SPEED)
+const TOUR_FLIGHT_MS = Math.round(4_800 / TOUR_SPEED)
+const TOUR_DWELL_MS = Math.round(10_200 / TOUR_SPEED)
+const TOUR_MAP_READY_RETRY_MS = 160
+const TOUR_MAP_READY_MAX_ATTEMPTS = 32
 const TOUR_3D_REVEAL_START_ZOOM = 13.9
 const NO_MAP_PINS: PopPin[] = []
 const MAP_GLOBAL_ONLINE = 1_200_000
@@ -643,16 +651,20 @@ export default function MapApp() {
   // touch, stop, or background transition invalidates the outstanding stage
   // listener before it can pull the camera away again.
   const stagedCameraFlightRef = useRef({ serial: 0 })
-  const cancelStagedCameraFlight = useCallback(() => {
+  const cancelStagedCameraFlight = useCallback((preserveCameraOwnership = false) => {
     stagedCameraFlightRef.current.serial += 1
     clearProgrammaticCameraMotion()
     const map = mapRef.current as (mapboxgl.Map & {
       __cinematic?: boolean
       __tripping?: boolean
+      __cancelAdaptiveCameraSettle?: () => void
     }) | null
     if (map) {
-      map.__cinematic = false
-      map.__tripping = false
+      map.__cancelAdaptiveCameraSettle?.()
+      if (!preserveCameraOwnership) {
+        map.__cinematic = false
+        map.__tripping = false
+      }
     }
   }, [clearProgrammaticCameraMotion])
   useEffect(() => onFoodSuggestionVisibilityChange(visible => {
@@ -1293,6 +1305,14 @@ export default function MapApp() {
     const updatePlace = () => {
       const map = attachedMap
       if (!map) return
+      // Authored tour frames may intentionally offset the ground anchor so a
+      // tall model is composed around the rail/title. That offset changes
+      // map.getCenter(), but it must not let reverse geocoding replace the
+      // landmark name while the camera is holding on that stop.
+      if (tourOnRef.current) {
+        lookupGeneration += 1
+        return
+      }
       // The world view has its own tile-local country signal. Do not let a
       // slower reverse-geocode response replace "France" with the nearest
       // city/POI a beat after the camera crosses France. Advancing the
@@ -1655,7 +1675,8 @@ export default function MapApp() {
     center: [number, number],
     duration = 4600,
     landmarkFrame?: LandmarkCameraFrame | null,
-    authoredMotion = false,
+    motionMode: ProgrammaticCameraMode = 'default',
+    onArrival?: () => void,
   ) => {
     const map = mapRef.current
     if (!map) return false
@@ -1665,8 +1686,17 @@ export default function MapApp() {
       __claimCamera?: () => void
       __poplurCameraClaimed?: boolean
       __suppressNextMapClickUntil?: number
+      __cancelAdaptiveCameraSettle?: () => void
     }
     cancelStagedCameraFlight()
+    mapCamera.__claimCamera?.()
+    mapCamera.__poplurCameraClaimed = true
+    // Hold ownership before retiring the old easing. Mapbox emits moveend from
+    // stop() synchronously; without these flags ClayMap can queue its ordinary
+    // adaptive settle in the tiny gap before the new authored flight begins.
+    mapCamera.__cinematic = true
+    mapCamera.__tripping = true
+    mapCamera.__cancelAdaptiveCameraSettle?.()
     // Retire any older Mapbox animation before arming this generation. Its
     // moveend listener sees the invalid serial and cannot launch another stage.
     map.stop()
@@ -1678,7 +1708,8 @@ export default function MapApp() {
       ? 82
       : subtleLandmarkPitch(landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH)
     const targetBearing = landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING
-    const cameraPlan = programmaticCameraPlan(map.getZoom(), targetZoom)
+    const authoredMotion = motionMode !== 'default'
+    const cameraPlan = programmaticCameraPlanForMode(map.getZoom(), targetZoom, motionMode)
     // The authored tour crosses flat and stops just below the 3D threshold.
     // Only the destination reveal requests close tiles/extrusions/GLB work;
     // doing that work during the tail of the world crossing rendered the same
@@ -1693,11 +1724,7 @@ export default function MapApp() {
       ? Math.max(260, Math.round(duration * 0.275))
       : Math.min(1100, Math.max(520, Math.round(duration * 0.12)))
     const travelMs = Math.max(authoredMotion ? 300 : 800, duration - flattenMs - arrivalMs)
-    mapCamera.__poplurCameraClaimed = true
     mapCamera.__suppressNextMapClickUntil = Date.now() + duration + 500
-    mapCamera.__claimCamera?.()
-    mapCamera.__cinematic = true
-    mapCamera.__tripping = true
     // Close adaptive views normally lock pitch into the 3D band. Temporarily
     // release that floor so the first beat can genuinely flatten.
     map.setMinPitch(0)
@@ -1713,16 +1740,19 @@ export default function MapApp() {
       // Centering the authored frame is enough to keep the destination in
       // view; there is no flatten/pull-back/reveal cycle to make the map pulse.
       map.setMinPitch(0)
-      map.setMaxPitch(streetView ? 85 : MAP_BROWSE_3D_MAX_PITCH)
+      map.setMaxPitch(streetView ? 85 : Math.max(MAP_BROWSE_3D_MAX_PITCH, targetPitch))
       beginProgrammaticCameraMotion(map, duration)
       map.once('moveend', () => {
         if (!ownsFlight()) return
         mapCamera.__tripping = false
         mapCamera.__cinematic = false
+        onArrival?.()
       })
       map.easeTo({
         center: targetCenter,
         zoom: cameraPlan.zoom,
+        ...(landmarkFrame ? { pitch: targetPitch, bearing: targetBearing } : {}),
+        ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
         duration,
         easing: (t: number) => t * t * (3 - 2 * t),
         essential: true,
@@ -1734,6 +1764,11 @@ export default function MapApp() {
     // the frustum because the map has not pulled back yet.
     map.once('moveend', () => {
       if (!ownsFlight()) return
+      if (!programmaticCameraPoseMatches(
+        { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
+        { pitch: 0, bearing: 0 },
+        { pitch: 0.75, bearing: 1.5 },
+      )) return
       window.setTimeout(() => {
         if (!ownsFlight()) return
         mapCamera.__cinematic = true
@@ -1746,25 +1781,39 @@ export default function MapApp() {
         // finite Mercator sheet and produced the black triangle.
         map.once('moveend', () => {
           if (!ownsFlight()) return
+          const travelledCenter = map.getCenter()
+          if (distanceMeters(
+            [travelledCenter.lng, travelledCenter.lat],
+            targetCenter,
+          ) > 650 || !programmaticCameraPoseMatches(
+            { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
+            { zoom: travelTargetZoom, pitch: 0, bearing: 0 },
+          )) return
           window.setTimeout(() => {
             if (!ownsFlight()) return
             mapCamera.__cinematic = true
             mapCamera.__tripping = true
-            map.setMaxPitch(streetView ? 85 : MAP_BROWSE_3D_MAX_PITCH)
+            map.setMaxPitch(streetView ? 85 : Math.max(MAP_BROWSE_3D_MAX_PITCH, targetPitch))
             map.setMinPitch(0)
 
             // Beat 3: only restore the landmark's hero angle after the camera
             // is back at its close target zoom, where the map fills the view.
             map.once('moveend', () => {
               if (!ownsFlight()) return
+              if (!programmaticCameraPoseMatches(
+                { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
+                { zoom: targetZoom, pitch: targetPitch, bearing: targetBearing },
+              )) return
               mapCamera.__tripping = false
               mapCamera.__cinematic = false
+              onArrival?.()
             })
             map.easeTo({
               center: targetCenter,
               zoom: targetZoom,
               pitch: targetPitch,
               bearing: targetBearing,
+              ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
               duration: arrivalMs,
               essential: true,
             })
@@ -2089,7 +2138,12 @@ export default function MapApp() {
   }, [])
   tourStopRef.current = stopTour
   searchInterruptRef.current = stopTour
-  useEffect(() => clearTourTimers, [clearTourTimers])
+  useEffect(() => () => {
+    clearTourTimers()
+    // Invalidate every staged listener and zero-delay continuation before a
+    // StrictMode/HMR teardown can remove the Mapbox instance they captured.
+    cancelStagedCameraFlight()
+  }, [cancelStagedCameraFlight, clearTourTimers])
 
   const handleToggleStreetView = useCallback(() => {
     const next = !streetView
@@ -2127,7 +2181,14 @@ export default function MapApp() {
     return () => { delete w.__goToCurrentLocation }
   }, [handleGoToCurrentLocation])
 
-  const activateTourDestination = useCallback((destination: TourDestination) => {
+  const activateTourDestination = useCallback((
+    destination: TourDestination,
+    onArrival?: () => void,
+  ): boolean => {
+    // Home can surface its rail a beat before the Mapbox instance finishes
+    // mounting. Do not narrate or count a stop that has no camera yet; the
+    // owning tour loop retries this same destination on a tracked timer.
+    if (!mapRef.current) return false
     const stations = radioStationsForDestination(destination)
     const line = RECOMMENDATIONS[Math.floor(Math.random() * RECOMMENDATIONS.length)](destination)
     const cityName = cityNameForDestination(destination)
@@ -2166,23 +2227,83 @@ export default function MapApp() {
     })
     speakMapLine(line, stations)
     const tourFrame = landmarkTourCameraFrame(destination.id)
-    flyToCenter(
-      destination.coords,
-      TOUR_FLIGHT_MS,
-      tourFrame,
-      true,
-    )
-    // The ARRIVAL beat keeps the narration/native metadata, but does not open
-    // an ad. Popups on the map now belong exclusively to a tapped post.
-    scheduleTourTimer(() => {
+    let arrivalFallback = 0
+    let arrivalSettled = false
+    const settleArrival = () => {
+      if (arrivalSettled) return
+      arrivalSettled = true
+      cancelTourTimer(arrivalFallback)
       tourFlightInProgressRef.current = false
-      if (!tourOnRef.current) return
+      if (!tourOnRef.current || tourModeRef.current !== 'landmarks') return
+      if (tourPausedRef.current) return
       // Headless drives read these; the UI never does.
       ;(window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard = smart
       speakMapLine(smart.line, stations)
-      if (tourPauseAfterStopRef.current) pauseTourAtCurrentStop()
-    }, TOUR_FLIGHT_MS)
-  }, [flyToCenter, pauseTourAtCurrentStop, scheduleTourTimer, speakMapLine])
+      if (tourPauseAfterStopRef.current) {
+        pauseTourAtCurrentStop()
+        return
+      }
+      onArrival?.()
+    }
+    const flew = flyToCenter(
+      destination.coords,
+      TOUR_FLIGHT_MS,
+      tourFrame,
+      'landmark-tour',
+      settleArrival,
+    )
+    if (!flew) return false
+
+    // Mapbox's final moveend is authoritative. If a style reload retires that
+    // event, finish by placing the exact authored frame; never call a partial
+    // camera an arrival and then begin the still dwell while it keeps moving.
+    arrivalFallback = scheduleTourTimer(() => {
+      if (arrivalSettled) return
+      const map = mapRef.current
+      if (!map || !tourOnRef.current || tourModeRef.current !== 'landmarks') return
+      cancelStagedCameraFlight()
+      const mapCamera = map as mapboxgl.Map & {
+        __cinematic?: boolean
+        __tripping?: boolean
+        __claimCamera?: () => void
+        __poplurCameraClaimed?: boolean
+        __cancelAdaptiveCameraSettle?: () => void
+      }
+      mapCamera.__claimCamera?.()
+      mapCamera.__poplurCameraClaimed = true
+      mapCamera.__cinematic = true
+      mapCamera.__tripping = true
+      mapCamera.__cancelAdaptiveCameraSettle?.()
+      map.stop()
+      const targetPitch = subtleLandmarkPitch(tourFrame?.pitch ?? MAP_BROWSE_3D_PITCH)
+      map.setMinPitch(0)
+      map.setMaxPitch(Math.max(MAP_BROWSE_3D_MAX_PITCH, targetPitch))
+      try {
+        // `jumpTo` silently ignores `offset` in Mapbox GL. A zero-duration
+        // ease is still an atomic recovery frame, but it honors the authored
+        // subject offset so a lost moveend cannot settle on a different crop.
+        map.easeTo({
+          center: tourFrame?.center ?? destination.coords,
+          zoom: tourFrame?.zoom ?? BUILDING_REVEAL_ZOOM,
+          pitch: targetPitch,
+          bearing: tourFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
+          ...(tourFrame?.offset ? { offset: tourFrame.offset } : {}),
+          duration: 0,
+          essential: true,
+        })
+      } catch {
+        mapCamera.__tripping = false
+        mapCamera.__cinematic = false
+        tourFlightInProgressRef.current = false
+        pauseTourAtCurrentStop()
+        return
+      }
+      mapCamera.__tripping = false
+      mapCamera.__cinematic = false
+      settleArrival()
+    }, TOUR_FLIGHT_MS + MANAGED_CAMERA_SETTLE_MS + 800)
+    return true
+  }, [cancelStagedCameraFlight, cancelTourTimer, flyToCenter, pauseTourAtCurrentStop, scheduleTourTimer, speakMapLine])
 
   // Whether the tour is running. The hold menu's tile has to read STOP TOUR
   // for as long as it is, so the map owns the truth and reports it upward —
@@ -2258,7 +2379,7 @@ export default function MapApp() {
       event.coords,
       TOUR_FLIGHT_MS,
       liveNewsCameraFrame(event),
-      true,
+      'authored',
     )
     if (!flew) {
       tourFlightInProgressRef.current = false
@@ -2366,7 +2487,7 @@ export default function MapApp() {
     if (!tourOnRef.current || tourModeRef.current !== 'news') return
     const events = newsTourRunEventsRef.current
     // A one-story edition has nowhere to step. Re-flying to the same point
-    // wastes four seconds of camera/GPU work and makes the control look broken.
+    // wastes nearly five seconds of camera/GPU work and makes the control look broken.
     if (events.length < 2) return
     newsNavigationFocusRef.current = restoreKeyboardFocus
       ? dir < 0 ? 'previous' : 'next'
@@ -2385,7 +2506,11 @@ export default function MapApp() {
     activateNewsTourStop(events[index], index, events.length)
   }, [activateNewsTourStop, cancelTourTimer])
 
-  const startExplicitTourLoop = useCallback((initialDelayMs = 0, firstDestination?: TourDestination) => {
+  const startExplicitTourLoop = useCallback((
+    initialDelayMs = 0,
+    firstDestination?: TourDestination,
+    suppliedOrder?: readonly TourDestination[],
+  ) => {
     newsStartSerialRef.current += 1
     clearTourTimers()
     setActiveNewsStop(null)
@@ -2411,7 +2536,9 @@ export default function MapApp() {
     const firstLandmarkIndex = firstDestination
       ? TOUR_LANDMARKS.findIndex(destination => destination.id === firstDestination.id)
       : -1
-    const tourOrder = firstLandmarkIndex >= 0
+    const tourOrder = suppliedOrder?.length
+      ? [...suppliedOrder]
+      : firstLandmarkIndex >= 0
       ? [
           ...TOUR_LANDMARKS.slice(firstLandmarkIndex),
           ...TOUR_LANDMARKS.slice(0, firstLandmarkIndex),
@@ -2432,6 +2559,7 @@ export default function MapApp() {
     delete (window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard
     ;(window as unknown as { __poplurTourOn?: boolean }).__poplurTourOn = true
     let currentStopIndex = -1
+    let mapReadyAttempts = 0
     const runStopAt = (requestedIndex: number) => {
       if (!tourOnRef.current) return
       if (tourPausedRef.current) {
@@ -2457,24 +2585,62 @@ export default function MapApp() {
         const map = mapRef.current as (mapboxgl.Map & {
           __cinematic?: boolean
           __tripping?: boolean
+          __claimCamera?: () => void
+          __poplurCameraClaimed?: boolean
+          __cancelAdaptiveCameraSettle?: () => void
         }) | null
-        map?.stop()
+        if (map) {
+          // Mapbox emits moveend synchronously from stop(). Keep the authored
+          // camera claim alive across that event so ClayMap cannot queue an
+          // ordinary adaptive ease after the user has pressed Pause.
+          map.__claimCamera?.()
+          map.__poplurCameraClaimed = true
+          map.__cinematic = true
+          map.__tripping = true
+          cancelStagedCameraFlight(true)
+          map.__cancelAdaptiveCameraSettle?.()
+          map.stop()
+          map.__cancelAdaptiveCameraSettle?.()
+          map.__tripping = false
+          map.__cinematic = false
+        } else {
+          cancelStagedCameraFlight()
+        }
         landmarkTourResumeRef.current = wasInFlight || !tourAutoAdvanceRef.current
           ? () => runStopAt(stopIndex)
           : afterStop
       }
       tourFlightInProgressRef.current = true
-      activateTourDestination(tourOrder[stopIndex])
-      if (!tourAutoAdvanceRef.current) return
-      // The sequence is deliberately finite: after the final landmark's hold,
-      // release the camera and reset the button instead of looping forever.
-      tourNextTimerRef.current = scheduleTourTimer(() => {
+      const started = activateTourDestination(tourOrder[stopIndex], () => {
+        if (!tourAutoAdvanceRef.current) return
         if (tourPausedRef.current) {
           landmarkTourResumeRef.current = afterStop
           return
         }
-        afterStop()
-      }, TOUR_FLIGHT_MS + TOUR_DWELL_MS)
+        // The sequence is deliberately finite: start the full still hold only
+        // after Mapbox confirms the authored hero frame has actually landed.
+        tourNextTimerRef.current = scheduleTourTimer(afterStop, TOUR_DWELL_MS)
+      })
+      if (!started) {
+        mapReadyAttempts += 1
+        if (mapReadyAttempts >= TOUR_MAP_READY_MAX_ATTEMPTS) {
+          tourFlightInProgressRef.current = false
+          setTourLine('Map is still loading. Try Tour again in a moment.')
+          stopTour()
+          return
+        }
+        // Waiting for Mapbox is still the current stop. Keeping this marked
+        // in-flight makes Pause/Resume retry it instead of choosing afterStop
+        // and silently skipping the first landmark.
+        tourFlightInProgressRef.current = true
+        landmarkTourResumeRef.current = () => runStopAt(stopIndex)
+        tourNextTimerRef.current = scheduleTourTimer(
+          () => runStopAt(stopIndex),
+          TOUR_MAP_READY_RETRY_MS,
+        )
+      } else {
+        mapReadyAttempts = 0
+      }
     }
     const runStop = () => runStopAt(currentStopIndex + 1)
     landmarkTourPauseNowRef.current = () => {
@@ -2486,7 +2652,19 @@ export default function MapApp() {
     } else {
       runStop()
     }
-  }, [activateTourDestination, clearTourTimers, reportNewsEvent, scheduleTourTimer, stopTour])
+  }, [activateTourDestination, cancelStagedCameraFlight, clearTourTimers, reportNewsEvent, scheduleTourTimer, stopTour])
+
+  const startRandomLandmarkTour = useCallback(() => {
+    // The dice uses the same cancellable, thermally governed camera loop as
+    // the full tour. Its former ClayMap-side async loop could outlive STOP and
+    // fight the next camera gesture because raw moveend awaits had no owner.
+    const order = [...TOUR_LANDMARKS]
+      .map(destination => ({ destination, rank: Math.random() }))
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, Math.min(4, TOUR_LANDMARKS.length))
+      .map(item => item.destination)
+    startExplicitTourLoop(0, undefined, order)
+  }, [startExplicitTourLoop])
 
   useEffect(() => onAmbientSleepChange(sleeping => {
     if (!sleeping || !tourOnRef.current) return
@@ -3313,6 +3491,10 @@ export default function MapApp() {
           else startExplicitTourLoop(0)
           break
         }
+        case 'randomTour': {
+          startRandomLandmarkTour()
+          break
+        }
         case 'pauseTour': {
           pauseLandmarkTour()
           break
@@ -3451,7 +3633,7 @@ export default function MapApp() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [applyRadiusDelta, closeSearchImmediately, flyToCenter, flyToPop, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, pauseLandmarkTour, resumeLandmarkTour, startExplicitTourLoop, startNewsTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
+  }, [applyRadiusDelta, closeSearchImmediately, flyToCenter, flyToPop, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, pauseLandmarkTour, resumeLandmarkTour, startExplicitTourLoop, startNewsTour, startRandomLandmarkTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -3660,6 +3842,12 @@ export default function MapApp() {
             playPop(0.25)
             if (isMapRadioActive()) stopMapRadio()
             else startRadioForMap(navigationOrigin[1], navigationOrigin[0])
+          }}
+        />
+        <MapRandomTourButton
+          onPress={() => {
+            playPop(0.25)
+            startRandomLandmarkTour()
           }}
         />
         <SideControlIconButton

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { askForMotion } from './motionPermission'
 import { createPortal } from 'react-dom'
 import styles from './ProfileTwin.module.css'
@@ -41,6 +41,7 @@ import {
   recordPostComment,
   recordPostDislike,
   recordPostLike,
+  recordPostView,
 } from './radiusLedger'
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
@@ -71,6 +72,13 @@ import {
   setAccountAuth,
   setAccountProfile,
 } from './accountStore'
+import {
+  nativeFeedPostsSnapshot,
+  onNativeFeedPosts,
+  requestNativeFeedPosts,
+} from './nativeFeedPosts'
+import { profilePostsFromRealtime } from './profileRealtimePosts'
+import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -94,46 +102,17 @@ interface Post {
   mediaType?: 'photo' | 'video'
 }
 
-interface NativeProfilePost {
-  id?: string
-  mediaURL?: string
-  posterURL?: string
-  mediaType?: string
-  caption?: string
-  channelId?: string
-}
-
-const POSTS: Post[] = [
-  { ch: 'CH 101', title: 'late-night poutine run downtown', video: feedUrl('ad-food.mp4') },
-  { ch: 'CH 104', title: 'stoppage-time winner', video: feedUrl('ad-sports.mp4') },
-  { ch: 'CH 107', title: 'live from the warehouse', video: feedUrl('ad-music.mp4') },
-  { ch: 'CH 110', title: 'un café en terrasse', video: feedUrl('ad-french.mp4') },
-  { ch: 'CH 112', title: 'sample sale finds under $20', video: feedUrl('ad-shopping.mp4') },
-  { ch: 'CH 113', title: 'animating my clay OC', video: feedUrl('ad-cartoon.mp4') },
-  { ch: 'CH 114', title: 'the biggest blanket fort', video: feedUrl('ad-kids.mp4') },
-  { ch: 'CH 115', title: 'when the barista spells your name wrong', video: feedUrl('ad-comedy.mp4') },
-  { ch: 'CH 111', title: 'tacos al pastor a medianoche', video: feedUrl('ad-spanish-1.mp4') },
-  { ch: 'CH 118', title: 'mercado de flores', video: feedUrl('ad-spanish-2.mp4') },
-  { ch: 'CH 121', title: 'la banda del barrio', video: feedUrl('ad-spanish-3.mp4') },
-  { ch: 'CH 124', title: 'crowd goes clay', video: feedUrl('ad-sports.mp4') },
-  { ch: 'CH 127', title: 'midnight ramen counter', video: feedUrl('ad-food.mp4') },
-  { ch: 'CH 130', title: 'rooftop DJ set', video: feedUrl('ad-music.mp4') },
-  { ch: 'CH 133', title: 'thrift haul hall of fame', video: feedUrl('ad-shopping.mp4') },
-]
+// Production profile media is Firestore-authoritative. A wiped database must
+// render an honest empty grid; bundled demo people/posts belong in explicit
+// preview fixtures, never in the live account surface.
+const POSTS: Post[] = []
 // LIKED is other people's work, not yours — that is the whole difference from
 // the Media grid, and why it carries a handle. It was "Saved", built by
 // reversing your OWN posts, which made the tab a second copy of your grid.
 // The clips are ones the app already ships (the same feed stills every other
 // surface uses); the handles are the feed's own cast.
 interface LikedPost extends Post { who: string }
-const LIKED: LikedPost[] = [
-  { who: 'kensington_eats', ch: 'CH 133', title: 'thrift haul hall of fame', video: feedUrl('ad-shopping.mp4') },
-  { who: 'harbourfront', ch: 'CH 130', title: 'rooftop DJ set', video: feedUrl('ad-music.mp4') },
-  { who: 'queenwest', ch: 'CH 127', title: 'midnight ramen counter', video: feedUrl('ad-food.mp4') },
-  { who: 'the_annex', ch: 'CH 124', title: 'crowd goes clay', video: feedUrl('ad-sports.mp4') },
-  { who: 'kensington_eats', ch: 'CH 121', title: 'la banda del barrio', video: feedUrl('ad-spanish-3.mp4') },
-  { who: 'harbourfront', ch: 'CH 118', title: 'mercado de flores', video: feedUrl('ad-spanish-2.mp4') },
-]
+const LIKED: LikedPost[] = []
 
 // ── The profile picture, on disk ────────────────────────────────────────────
 // One key, normally a data URI. The capture is already downscaled to 320px
@@ -240,44 +219,13 @@ function preferredSelfieMime(): string | undefined {
 /** Which grid tile is "the post that took this ground" on someone ELSE's
  *  profile. Same standing-in rule as your own pops above — in order, until
  *  real data joins posts to pops by id. */
-const VISITING_TILE_BY_POP_ID: Record<string, number> = Object.fromEntries(
-  OTHER_POPS.map((pop, i) => [pop.id, i % POSTS.length]),
-)
+const VISITING_TILE_BY_POP_ID: Record<string, number> = {}
 
 // Grid tiles show the post's first frame as a still (feed/posters/*.jpg, cut
 // from the clips themselves). A <video> per tile meant a decoder per tile —
 // sixteen of them dragged the screen to single-digit fps. Video is for the
 // fullscreen viewer only.
 const posterFor = (video: string) => video.replace(/feed\//, 'feed/posters/').replace('.mp4', '.jpg')
-const CHANNEL_NUMBER: Record<string, number> = {
-  food: 101, beauty: 103, sports: 104, modelling: 105, fashion: 106,
-  music: 107, tech: 108, news: 109, french: 110, spanish: 111,
-  shopping: 112, cartoon: 113, kids: 114, comedy: 115, live: 117,
-}
-function channelLabel(value: string | undefined): string {
-  const trimmed = value?.trim()
-  if (!trimmed) return 'CH 101'
-  if (/^ch\s+\d+$/i.test(trimmed)) return trimmed.toUpperCase()
-  return `CH ${CHANNEL_NUMBER[trimmed.toLowerCase()] ?? 101}`
-}
-function nativeProfilePost(value: NativeProfilePost): Post | null {
-  const media = value.mediaURL?.trim()
-  if (!media || !/^https:\/\//i.test(media)) return null
-  const declared = value.mediaType?.toLowerCase() ?? ''
-  const mediaType: 'photo' | 'video' = declared.includes('video')
-    || /\.(?:mp4|mov|m4v|webm)(?:[?#]|$)/i.test(media)
-    ? 'video'
-    : 'photo'
-  const poster = value.posterURL?.trim()
-  return {
-    id: value.id?.trim() || media,
-    ch: channelLabel(value.channelId),
-    title: value.caption?.trim() || 'Your pop',
-    video: media,
-    poster: poster && /^https:\/\//i.test(poster) ? poster : undefined,
-    mediaType,
-  }
-}
 function postIsVideo(post: Post): boolean {
   return post.mediaType === 'video'
     || (post.mediaType == null && /\.(?:mp4|mov|m4v|webm)(?:[?#]|$)/i.test(post.video))
@@ -303,26 +251,14 @@ function releaseViewerMedia(video: HTMLVideoElement): void {
 // Friends offered first in the share sheet — DM inside Poplur. Their pictures
 // are spoofed from stills we already ship (the ad posters and the Mark head)
 // until real accounts exist; nothing here is invented artwork.
-const FRIENDS = [
-  { handle: 'kensington_eats', name: 'Kensington', avatar: feedUrl('posters/ad-food.jpg') },
-  { handle: 'harbourfront', name: 'Harbour', avatar: feedUrl('posters/ad-comedy.jpg') },
-  { handle: 'queenwest', name: 'Queen W', avatar: feedUrl('posters/ad-shopping.jpg') },
-  { handle: 'the_annex', name: 'Annex', avatar: 'mark_talk0.png' },
-]
+const FRIENDS: Array<{ handle: string; name: string; avatar: string }> = []
 
 // Your inbox. Every message carries the RADIUS it reached you across, the same
 // number the feed's "reached you from" line and the HUD's radius card report —
 // a message is a pop like anything else here, so the distance it travelled is
 // part of what it is, not decoration. Presented the way The Poplur Times
 // presents its stories: a standing list you read down, not three sample rows.
-const MESSAGES: Array<{ who: string; text: string; when: string; radiusKm: number }> = [
-  { who: 'Poplur AI', text: 'Your radius grew 1.2 km near Queen West.', when: '2m', radiusKm: 1.2 },
-  { who: 'kensington_eats', text: 'that shawarma shot is trending 🔥', when: '18m', radiusKm: 28.6 },
-  { who: 'queenwest', text: 'saw your pop on the corner — nice one', when: '42m', radiusKm: 6.1 },
-  { who: 'harbourfront', text: 'blue hour meetup this Friday?', when: '1h', radiusKm: 12.4 },
-  { who: 'the_annex', text: 'that ramen counter is still open at 2am', when: '3h', radiusKm: 18.9 },
-  { who: 'Poplur AI', text: 'A pop you liked expired downtown.', when: '5h', radiusKm: 3.0 },
-]
+const MESSAGES: Array<{ who: string; text: string; when: string; radiusKm: number }> = []
 
 // Same continent silhouette used by the pre-login animated clay dot map. The
 // notification banner mounts this only while it is visible.
@@ -629,6 +565,12 @@ export default function ProfileTwin({
   const [failedProfileThemeID, setFailedProfileThemeID] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('media')
   const [activeCall, setActiveCall] = useState<{ who: string; video: boolean } | null>(null)
+  const [accountUid, setAccountUid] = useState(() => accountSnapshot().uid)
+  const realtimePosts = useSyncExternalStore(
+    onNativeFeedPosts,
+    nativeFeedPostsSnapshot,
+    nativeFeedPostsSnapshot,
+  )
   const [uploadedPosts, setUploadedPosts] = useState<Post[]>([])
   const [uploadedPostsLoaded, setUploadedPostsLoaded] = useState(false)
   const profilePosts = uploadedPostsLoaded ? uploadedPosts : POSTS
@@ -995,6 +937,7 @@ export default function ProfileTwin({
   }
 
   useEffect(() => onAccountChange(snapshot => {
+    setAccountUid(snapshot.uid)
     if (viewUser) return
     const next = usableUsername(snapshot.username)
     if (next && next !== persistedName.current) {
@@ -1140,32 +1083,15 @@ export default function ProfileTwin({
     }
   }, [capturing])
 
-  // The previous web Profile always rendered the seeded POSTS constant, even
-  // though native uploaders had successfully written the owner's real posts to
-  // Firestore. Ask the authenticated shell for a bounded metadata page whenever
-  // this screen mounts; previews stay as <img>s so this does not create a grid
-  // of active video decoders.
+  // Feed, Map and Profile now read one shared, lifecycle-owned Firestore posts
+  // snapshot. A complete add/change/delete snapshot replaces the grid; a wipe
+  // therefore removes every tile without reload. Visiting profiles are filtered
+  // by the real handle, while the owner's grid uses stable account identity.
   useEffect(() => {
-    if (!isNativeShell() || viewUser) return
-    type NativeProfilePosts = { posts?: NativeProfilePost[] }
-    const receivePosts = (event: Event) => {
-      const payload = (event as CustomEvent<NativeProfilePosts>).detail
-      const rows = Array.isArray(payload?.posts) ? payload.posts : []
-      const seen = new Set<string>()
-      const normalized = rows.flatMap(row => {
-        const post = nativeProfilePost(row)
-        if (!post || seen.has(post.id ?? post.video)) return []
-        seen.add(post.id ?? post.video)
-        return [post]
-      })
-      setUploadedPosts(normalized)
-      setUploadedPostsLoaded(true)
-      setViewerIdx(null)
-    }
-    window.addEventListener('poplur-native-profile-posts', receivePosts)
-    postNativeEvent({ type: 'requestProfilePosts' })
-    return () => window.removeEventListener('poplur-native-profile-posts', receivePosts)
-  }, [viewUser])
+    setUploadedPosts(profilePostsFromRealtime(realtimePosts, accountUid, viewUser))
+    setUploadedPostsLoaded(true)
+    setViewerIdx(null)
+  }, [accountUid, realtimePosts, viewUser])
 
   const markTileReady = useCallback((key: string) => {
     setReadyTiles(current => (current.has(key) ? current : new Set(current).add(key)))
@@ -1504,10 +1430,9 @@ export default function ProfileTwin({
     // until the refreshed response has loaded successfully.
     forceProfilePhotoReload()
     setSelfieVideo(current => readStoredSelfieVideo() ?? current)
-    // The grid's posts come from the shell, so refreshing asks for them again.
-    // Nothing answers in the browser preview and the grid keeps what it has —
-    // the gesture stays honest rather than pretending to have reloaded.
-    postNativeEvent({ type: 'requestProfilePosts' })
+    // Firestore is already live. This legacy entry point only re-arms the
+    // bounded native fallback if the shared web listener is unavailable.
+    requestNativeFeedPosts()
     // Identity too: the selfie video and photo arrive over the same bridge and
     // the mount-time request is one-shot — if the shell's Firestore load was
     // still in flight then, the selfie simply never appears (user-reported on
@@ -2081,8 +2006,10 @@ export default function ProfileTwin({
   const reactToViewerPost = (direction: 'up' | 'down') => {
     if (!viewerPost) return
     const postId = viewerPost.id ?? viewerPost.video
-    if (direction === 'up') recordPostLike(postId, 1)
-    else recordPostDislike(postId, 1)
+    void recordPostEngagement(postId, direction === 'up' ? 'like' : 'dislike').catch(() => {
+      if (direction === 'up') recordPostLike(postId, 1)
+      else recordPostDislike(postId, 1)
+    })
     playPop()
     flashNote(direction === 'up' ? '+1 radius' : '−1 radius')
   }
@@ -2095,7 +2022,7 @@ export default function ProfileTwin({
       ...current,
       [postId]: [...(current[postId] ?? []), body],
     }))
-    recordPostComment(postId, 2)
+    void recordPostEngagement(postId, 'comment').catch(() => recordPostComment(postId, 2))
     setViewerCommentText('')
     setViewerCommentOpen(false)
     playPop()
@@ -2139,7 +2066,7 @@ export default function ProfileTwin({
       setShareOpen(false)
       setDeletePromptPost(null)
       flashNote('Post deleted')
-      postNativeEvent({ type: 'requestProfilePosts' })
+      requestNativeFeedPosts()
     }
     window.addEventListener('poplur-native-profile-post-delete-result', receiveDeleteResult)
     return () => window.removeEventListener('poplur-native-profile-post-delete-result', receiveDeleteResult)
@@ -2171,6 +2098,10 @@ export default function ProfileTwin({
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
   const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
   const viewerPostComments = viewerPostId ? (viewerComments[viewerPostId] ?? []) : []
+  useEffect(() => {
+    if (!viewerPostId || !viewerPlaying || viewerCovered) return
+    void recordVisiblePostView(viewerPostId).catch(() => recordPostView(viewerPostId))
+  }, [viewerCovered, viewerPlaying, viewerPostId])
   // Someone else's profile: their handle, their picture, and none of your own
   // controls (you cannot set another person's photo or read their bell).
   const visiting = Boolean(viewUser)
@@ -2418,6 +2349,9 @@ export default function ProfileTwin({
         <div className={styles.pullInner} ref={pullRef}>
           {mode === 'messages' ? (
             <div className={styles.messages}>
+              {!MESSAGES.length && (
+                <div className={styles.profileEmpty}>No saved conversations yet. Your live DMs appear in Messages.</div>
+              )}
               {MESSAGES.map(m => (
                 <div
                   key={m.who + m.when}
@@ -2450,6 +2384,11 @@ export default function ProfileTwin({
             </div>
           ) : (
             <div className={styles.grid}>
+              {!posts.length && (
+                <div className={styles.profileEmpty}>
+                  {mode === 'liked' ? 'No liked posts yet.' : 'No posts yet. New Firestore posts will appear here live.'}
+                </div>
+              )}
               {posts.map((post, i) => (
                 <button
                   key={postTileKey(post, i)}
@@ -2717,6 +2656,7 @@ export default function ProfileTwin({
                     DM a friend inside your radius, or share it anywhere.
                   </p>
                   <div className={styles.shareFriends}>
+                    {!FRIENDS.length && <div className={styles.profileEmpty}>No recent DM contacts yet.</div>}
                     {FRIENDS.map(friend => (
                       <button
                         key={friend.handle}

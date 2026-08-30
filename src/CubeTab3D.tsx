@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { releaseWebGL } from './threeCleanup'
+import { installCubeIdleSnapshot } from './cubeIdleSnapshot'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { modelUrl } from './modelUrl'
@@ -13,6 +14,7 @@ import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import { mapGlobeSpinIsActive } from './mapThermalPolicy'
 import {
   advanceCubeMotionLease,
+  cubeMotionDemandIsActive,
   cubeMotionFPS,
   cubeRendererCanWork,
   CUBE_MOTION_LEASE_MS,
@@ -171,9 +173,9 @@ const CAMCORDER_MOTION_GAIN = 1.15
 /** …and it arrives while you are still moving. The parallax spring's weight is
     the whole point on a clay cube and completely wrong on a viewfinder. */
 const CAMCORDER_MOTION_SMOOTHING = 62
-function reportNavigatorMotionDemand(aiming: boolean): void {
+function reportNavigatorMotionDemand(active: boolean, aiming: boolean): void {
   if (!isNativeShell()) return
-  postNativeEvent({ type: 'navigatorMotionDemandChanged', aiming })
+  postNativeEvent({ type: 'navigatorMotionDemandChanged', active, aiming })
 }
 
 /** True-heading facing, layered ON TOP of the parallax envelope above rather
@@ -701,7 +703,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    const interactionSurface = canvas?.parentElement
+    if (!canvas || !interactionSurface) return
 
     const nativeShell = isNativeShell()
     const initialNavigatorPolicy = PoplurPerformanceManager.policy
@@ -746,6 +749,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.06
+    const idleSnapshot = installCubeIdleSnapshot(canvas)
     const navigatorAnisotropy = Math.min(
       renderer.capabilities.getMaxAnisotropy(),
       nativeShell ? 2 : 4,
@@ -853,6 +857,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       ? window.__poplurNativeAppActive
       : true
     let rendererLeaseGranted = false
+    // This is the semantic owner of native Core Motion. The WebGL canvas can
+    // remain mounted as a retained still, but sensor hardware and bridge
+    // deliveries exist only while its governed render loop has real work.
+    let motionWorkDemanded = false
+    let reportedMotionActive: boolean | null = null
+    let reportedMotionAiming: boolean | null = null
     let performanceRenderer: ReturnType<typeof PoplurPerformanceManager.registerRenderer> | null = null
     let pitch = showFoodFaceRef.current ? HALF_PI : 0
     let pitchVelocity = 0
@@ -985,7 +995,21 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     const isAiming = () => loadedUrlRef.current === CAMCORDER_MODEL
     const isFrontOnly = () => !!loadedUrlRef.current && FRONT_ONLY_MODELS.has(loadedUrlRef.current)
     const syncNavigatorMotionDemand = () => {
-      reportNavigatorMotionDemand(rendererEligible() && isAiming())
+      const active = cubeMotionDemandIsActive({
+        eligible: rendererEligible(),
+        rendererLeaseGranted,
+        workDemanded: motionWorkDemanded,
+      })
+      const aiming = isAiming()
+      if (active === reportedMotionActive && aiming === reportedMotionAiming) return
+      reportedMotionActive = active
+      reportedMotionAiming = aiming
+      reportNavigatorMotionDemand(active, aiming)
+    }
+    const setMotionWorkDemanded = (demanded: boolean) => {
+      if (motionWorkDemanded === demanded) return
+      motionWorkDemanded = demanded
+      syncNavigatorMotionDemand()
     }
     syncNavigatorMotionDemandRef.current = syncNavigatorMotionDemand
     const admitMotionSample = (sample: CubeMotionSample, now: number) => {
@@ -1218,10 +1242,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let scrolling = false
 
     /** The nearest thing under the pointer that actually scrolls and is not
-     *  an ancestor of the cube's own canvas. */
+     *  an ancestor of the navigator's permanent interaction surface. */
     const scrollableUnder = (x: number, y: number): Element | null => {
       for (const el of document.elementsFromPoint(x, y)) {
-        if (el === canvas || el.contains(canvas)) continue
+        if (el === interactionSurface || el.contains(interactionSurface)) continue
         if (el.scrollHeight - el.clientHeight <= 8) continue
         const overflow = getComputedStyle(el).overflowY
         if (overflow === 'auto' || overflow === 'scroll') return el
@@ -1246,7 +1270,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // the platform call is made from that card's Allow button (which is the
       // gesture iOS actually requires).
       askForMotion()
-      try { canvas.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
+      const now = performance.now()
+      motionLease.until = Math.max(motionLease.until, now + CUBE_MOTION_LEASE_MS)
+      // Motion is completely unleased while the navigator is parked. Its own
+      // deliberate gesture is the wake edge; ordinary taps on Feed, Camera or
+      // Map controls must not spin up this second renderer behind their work.
+      motionActiveUntil = Math.max(motionActiveUntil, now + MOTION_KEEPALIVE_MS)
+      wakeLoopRef.current()
+      try { interactionSurface.setPointerCapture(e.pointerId) } catch { /* synthetic pointer */ }
       // Read it now, while the pointer is still where it went down: the cube
       // captures the pointer, so elementsFromPoint later in the drag would
       // answer for wherever the finger has travelled to.
@@ -1258,7 +1289,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // object itself, so a vertical swipe ON the navigator scrolled the page
       // instead of navigating. Grabbing the object is a gesture for the cube;
       // the surround still belongs to whatever is underneath.
-      const box = canvas.getBoundingClientRect()
+      const box = interactionSurface.getBoundingClientRect()
       const grabR = Math.hypot(e.clientX - (box.x + box.width / 2), e.clientY - (box.y + box.height / 2))
       const onObject = grabR <= box.width * OBJECT_GRAB_RADIUS
       scrollBehind = onObject ? null : scrollableUnder(e.clientX, e.clientY)
@@ -1385,6 +1416,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
 
     const onContextLost = (event: Event) => {
       event.preventDefault()
+      idleSnapshot.park()
       setGlFailed(true)
     }
     const suspendRendererWork = () => {
@@ -1392,8 +1424,9 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       motionLease = { until: 0, anchor: motionLease.anchor }
       finishDiceTumble()
       cancelScheduledFrame()
+      idleSnapshot.park()
+      setMotionWorkDemanded(false)
       performanceRenderer?.setDemand(false)
-      syncNavigatorMotionDemand()
     }
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') {
@@ -1544,11 +1577,11 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       applyMotionTarget(rawMotionRoll, rawMotionPitch, 0)
     }
     canvas.addEventListener('webglcontextlost', onContextLost)
-    canvas.addEventListener('pointerdown', onPointerDown)
-    canvas.addEventListener('pointermove', onPointerMove)
-    canvas.addEventListener('pointerup', onPointerUp)
-    canvas.addEventListener('pointercancel', onPointerCancel)
-    canvas.addEventListener('keydown', onKeyDown)
+    interactionSurface.addEventListener('pointerdown', onPointerDown)
+    interactionSurface.addEventListener('pointermove', onPointerMove)
+    interactionSurface.addEventListener('pointerup', onPointerUp)
+    interactionSurface.addEventListener('pointercancel', onPointerCancel)
+    interactionSurface.addEventListener('keydown', onKeyDown)
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('poplur-native-app-lifecycle', onNativeLifecycle)
     if (!isNativeShell()) {
@@ -1562,16 +1595,6 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     }
     window.addEventListener('poplur-native-motion', onNativeMotion)
     window.addEventListener('poplur-motion-tuning', onMotionTuning)
-    // Any touch anywhere is what un-idles the chrome (HomeTwin's own
-    // capture-phase listener flips __poplurChromeIdle first — it registered
-    // earlier, so it runs earlier). Give the globe one short acknowledgement
-    // turn, then let the demand-driven renderer park again.
-    const onAnyPress = () => {
-      motionLease.until = Math.max(motionLease.until, performance.now() + CUBE_MOTION_LEASE_MS)
-      armGlobeSpin(1200)
-    }
-    document.addEventListener('pointerdown', onAnyPress, { capture: true, passive: true })
-
     // ---- finite pitch + event-driven render loop ----
     let last = performance.now()
     let lastLoopCallbackAt = last
@@ -1831,6 +1854,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         group.rotation.z = diceRotation.z
         pitchGroup.rotation.x = pitch + diceRotation.x + motionPitch
         renderer.render(scene, camera)
+        idleSnapshot.framePresented()
         needsRender = false
       }
 
@@ -1886,8 +1910,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         // Nothing re-armed: the loop is parked until something wakes it. Say so,
         // or a parked loop reads as "gated" forever off its last pass.
         window.__poplurGlobeSpin = { spinning: false, gate: 'parked', at: now }
+        idleSnapshot.park()
+        setMotionWorkDemanded(false)
         performanceRenderer?.setDemand(false)
       } else {
+        idleSnapshot.park()
+        setMotionWorkDemanded(false)
         performanceRenderer?.setDemand(false)
       }
     }
@@ -1895,9 +1923,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       const now = performance.now()
       if (!rendererEligible()) {
         cancelScheduledFrame()
+        setMotionWorkDemanded(false)
         performanceRenderer?.setDemand(false)
         return
       }
+      idleSnapshot.wake()
+      setMotionWorkDemanded(true)
       performanceRenderer?.setDemand(true)
       if (!rendererLeaseGranted) return
       // WebKit may discard a pending callback across app lifecycle changes.
@@ -1962,15 +1993,20 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       onActiveChange: (active, policy) => {
         rendererLeaseGranted = active
         canvas.dataset.rendererActive = String(active)
+        syncNavigatorMotionDemand()
         if (!active) {
           cancelScheduledFrame()
           return
         }
+        idleSnapshot.wake()
         applyNavigatorPolicy(policy)
         needsRender = true
         scheduleLoop()
       },
-      releaseInactiveResources: cancelScheduledFrame,
+      releaseInactiveResources: () => {
+        cancelScheduledFrame()
+        idleSnapshot.park()
+      },
     })
     syncRenderingVisibilityRef.current = visible => {
       performanceRenderer?.setVisible(visible)
@@ -1990,13 +2026,15 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       performanceRenderer?.dispose()
       performanceRenderer = null
       cancelScheduledFrame()
+      motionWorkDemanded = false
+      reportNavigatorMotionDemand(false, false)
       window.clearTimeout(flashPulseTimer)
       if (pendingTapTimer != null) clearTimeout(pendingTapTimer)
-      canvas.removeEventListener('pointerdown', onPointerDown)
-      canvas.removeEventListener('pointermove', onPointerMove)
-      canvas.removeEventListener('pointerup', onPointerUp)
-      canvas.removeEventListener('pointercancel', onPointerCancel)
-      canvas.removeEventListener('keydown', onKeyDown)
+      interactionSurface.removeEventListener('pointerdown', onPointerDown)
+      interactionSurface.removeEventListener('pointermove', onPointerMove)
+      interactionSurface.removeEventListener('pointerup', onPointerUp)
+      interactionSurface.removeEventListener('pointercancel', onPointerCancel)
+      interactionSurface.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('poplur-native-app-lifecycle', onNativeLifecycle)
       if (!isNativeShell()) {
@@ -2005,11 +2043,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       }
       window.removeEventListener('poplur-native-motion', onNativeMotion)
       window.removeEventListener('poplur-motion-tuning', onMotionTuning)
-      document.removeEventListener('pointerdown', onAnyPress, { capture: true })
       canvas.removeEventListener('webglcontextlost', onContextLost)
+      idleSnapshot.dispose()
       disposeModel(scene)
       releaseWebGL(renderer)
-      reportNavigatorMotionDemand(false)
       groupRef.current = null
       modelNodeRef.current = null
       loadedUrlRef.current = null
@@ -2183,15 +2220,16 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     <div
       data-cube-renderer={glFailed ? 'failed' : 'ready'}
       data-cube-model={loadedModel ?? undefined}
-      style={{ position: 'relative', width: size, height: size }}
+      tabIndex={0}
+      role="button"
+      aria-roledescription="tab navigator"
+      aria-label={`${TAB_LABEL[targetTab]} tab model — swipe or use arrow keys to change tabs, hold for menu`}
+      style={{ position: 'relative', width: size, height: size, touchAction: 'none', cursor: 'grab' }}
     >
       <canvas
         ref={canvasRef}
-        tabIndex={0}
-        role="button"
-        aria-roledescription="tab navigator"
-        style={{ width: size, height: size, touchAction: 'none', cursor: 'grab', visibility: glFailed ? 'hidden' : 'visible' }}
-        aria-label={`${TAB_LABEL[targetTab]} tab model — swipe or use arrow keys to change tabs, hold for menu`}
+        aria-hidden="true"
+        style={{ width: size, height: size, pointerEvents: 'none', visibility: glFailed ? 'hidden' : 'visible' }}
       />
       <span
         aria-live="polite"

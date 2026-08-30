@@ -1,7 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import styles from './PhoneScreen.module.css'
-import { OTHER_POPS } from './data'
-import { reachBetween } from './reach'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { packBase } from './assetPacks'
 import { playPop } from './pop'
@@ -17,6 +15,10 @@ import {
   resolveDMAutoCallPeer,
   type DMPhoneReturnState,
 } from './dmCallNavigation'
+import { accountSnapshot, onAccountChange } from './accountStore'
+import { useNearbyLocation } from './nearbyLocation'
+import { nativeFeedPostsSnapshot, onNativeFeedPosts } from './nativeFeedPosts'
+import { contactsFromRealtimePosts } from './webContacts'
 
 // The Poplur phone.
 //
@@ -62,16 +64,6 @@ const KEYS: Array<[key: string, left: number, top: number, w: number, h: number]
   ['5', 39.5, 50.9, 21.0, 7.0],
 ]
 
-interface NativeContact {
-  id: string
-  name: string
-  favourite: boolean
-  hasDM: boolean
-  inReach: boolean
-  distanceKm: number | null
-  detail: string
-}
-
 interface Contact {
   id: string
   handle: string
@@ -100,55 +92,6 @@ function km(value: number): string {
   return value >= 100 ? `${Math.round(value)}KM` : `${value.toFixed(1)}KM`
 }
 
-/** The web preview has no native bridge, so `requestPhoneContacts` never gets
- *  an answer. Rather than leave the handset empty and uncallable there, fall
- *  back to the world board — the same pops the map shows — run through the real
- *  reach model against your radius, so the web phone is browsable and you can
- *  place a call from it exactly as on device. Native never uses this: once the
- *  bridge answers even once, its list wins for the life of the screen. */
-function fillerContacts(reachKm: number): Contact[] {
-  return OTHER_POPS.map(pop => {
-    const reach = reachBetween(pop.coords as [number, number], pop.radiusKm, reachKm)
-    return {
-      id: pop.id,
-      handle: pop.user,
-      detail: reach.youCanCall ? `${km(reach.distanceKm)} away · in your radius`
-        : reach.theyCanCall ? `${km(reach.distanceKm)} away · can reach you`
-        : `${km(reach.distanceKm)} away · out of reach`,
-      favourite: false,
-      callable: reach.youCanCall,
-      distanceKm: reach.distanceKm,
-    }
-  }).sort((a, b) => {
-    if (a.callable !== b.callable) return a.callable ? -1 : 1
-    return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity)
-  })
-}
-
-/** Real Firestore people when the browser tab is signed in (dial-able uids),
- *  else the world-board filler. Firebase is imported lazily so it never loads
- *  inside the native app, where the bridge answers and this is never reached. */
-async function webOrFillerContacts(reachKm: number): Promise<Contact[]> {
-  try {
-    const fb = await import('./webFirebase')
-    if (fb.currentUid()) {
-      const { fetchWebContacts } = await import('./webContacts')
-      const real = await fetchWebContacts()
-      if (real.length > 0) {
-        return real.map(c => ({
-          id: c.id,
-          handle: c.handle,
-          detail: c.detail,
-          favourite: false,
-          callable: c.callable,
-          distanceKm: null,
-        }))
-      }
-    }
-  } catch { /* fall through to the world board */ }
-  return fillerContacts(reachKm)
-}
-
 export interface IncomingCall {
   callId: string
   callerId: string
@@ -175,7 +118,20 @@ export default function PhoneScreen({
   onDMCallReturn?: () => void
 }) {
   const [reachKm, setReachKm] = useState(() => radiusKm())
-  const [contacts, setContacts] = useState<Contact[]>([])
+  const [ownUid, setOwnUid] = useState(() => accountSnapshot().uid)
+  const location = useNearbyLocation()
+  const livePosts = useSyncExternalStore(
+    onNativeFeedPosts,
+    nativeFeedPostsSnapshot,
+    nativeFeedPostsSnapshot,
+  )
+  const contacts = useMemo<Contact[]>(() => {
+    if (location?.source !== 'device') return []
+    return contactsFromRealtimePosts(livePosts, ownUid, location, reachKm).map(contact => ({
+      ...contact,
+      favourite: false,
+    }))
+  }, [livePosts, location, ownUid, reachKm])
   const [index, setIndex] = useState(0)
   const [phoneThemeId, setPhoneThemeId] = useState(() => readSelectedPhoneTheme().id)
   const phoneThemeIdRef = useRef(phoneThemeId)
@@ -199,7 +155,6 @@ export default function PhoneScreen({
   useEffect(() => onRingtoneChange(() => setSelectedRingtone(getRingtone())), [])
   const bootTimer = useRef<number | null>(null)
   const themeTimer = useRef<number | null>(null)
-  const everNativeRef = useRef(false)
   const autoCallRef = useRef(autoCall)
   autoCallRef.current = autoCall
   const onDMCallReturnRef = useRef(onDMCallReturn)
@@ -212,6 +167,8 @@ export default function PhoneScreen({
     return () => window.removeEventListener(RADIUS_CHANGE_EVENT, sync)
   }, [])
 
+  useEffect(() => onAccountChange(account => setOwnUid(account.uid)), [])
+
   useEffect(() => {
     const onCallEnd = (event: MessageEvent) => {
       if (event.data?.type === 'poplurCallEnded') setCalling(null)
@@ -219,60 +176,6 @@ export default function PhoneScreen({
     window.addEventListener('message', onCallEnd)
     return () => window.removeEventListener('message', onCallEnd)
   }, [])
-
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data
-      if (!data || data.type !== 'poplurPhoneContacts') return
-      // The bridge answered — its list owns the phone from here on, even when
-      // it is empty (nobody in reach), which is a real answer, not a gap.
-      everNativeRef.current = true
-      const raw = data.contacts as NativeContact[] | undefined
-      if (!Array.isArray(raw)) return
-      setContacts(raw.map(c => ({
-        id: c.id,
-        handle: c.name,
-        detail: c.detail ?? (c.inReach && c.distanceKm != null ? `${km(c.distanceKm)} away` : 'on Poplur'),
-        favourite: c.favourite,
-        callable: c.inReach || c.hasDM || c.favourite,
-        distanceKm: c.distanceKm,
-      })))
-    }
-    window.addEventListener('message', onMessage)
-    postNativeEvent({ type: 'requestPhoneContacts', radiusKm: reachKm })
-    // No bridge (web preview) means no answer ever comes. On the signed-in web
-    // pull REAL people from Firestore (real uids you can actually dial);
-    // otherwise fall back to the world board so the phone stays browsable.
-    let cancelled = false
-    const fallback = window.setTimeout(() => {
-      if (everNativeRef.current) return
-      void webOrFillerContacts(reachKm).then(list => {
-        if (!cancelled && !everNativeRef.current) setContacts(list)
-      })
-    }, 600)
-    return () => {
-      cancelled = true
-      window.removeEventListener('message', onMessage)
-      window.clearTimeout(fallback)
-    }
-  }, [reachKm])
-
-  // When the browser tab signs in, swap the world-board filler for real,
-  // dial-able Firestore contacts without waiting for a remount.
-  useEffect(() => {
-    if (everNativeRef.current) return
-    let cancelled = false
-    let unsub: (() => void) | undefined
-    void import('./webFirebase').then(fb => {
-      if (cancelled) return
-      unsub = fb.onUser(() => {
-        void webOrFillerContacts(reachKm).then(list => {
-          if (!cancelled && !everNativeRef.current) setContacts(list)
-        })
-      })
-    })
-    return () => { cancelled = true; unsub?.() }
-  }, [reachKm])
 
   // Wake sequence: 16 frames of the colourway's own spritesheet, one every
   // 112ms — about 1.8s, the same beat the map iPod boots to. Theme changes use

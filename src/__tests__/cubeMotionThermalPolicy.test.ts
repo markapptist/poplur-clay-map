@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   advanceCubeMotionLease,
   CAMCORDER_AIMING_FPS,
+  cubeMotionDemandIsActive,
   cubeMotionFPS,
   cubeRendererCanWork,
   CUBE_MOTION_LEASE_MS,
@@ -43,6 +44,29 @@ describe('cube thermal motion policy', () => {
       .toBe(CAMCORDER_AIMING_FPS)
     expect(cubeMotionFPS({ aiming: true, performanceFPS: 15, eligible: true })).toBe(15)
     expect(cubeMotionFPS({ aiming: true, performanceFPS: 60, eligible: false })).toBe(0)
+  })
+
+  it('leases native motion only while eligible WebGL work is actually demanded', () => {
+    expect(cubeMotionDemandIsActive({
+      eligible: true,
+      rendererLeaseGranted: true,
+      workDemanded: true,
+    })).toBe(true)
+    expect(cubeMotionDemandIsActive({
+      eligible: true,
+      rendererLeaseGranted: true,
+      workDemanded: false,
+    })).toBe(false)
+    expect(cubeMotionDemandIsActive({
+      eligible: true,
+      rendererLeaseGranted: false,
+      workDemanded: true,
+    })).toBe(false)
+    expect(cubeMotionDemandIsActive({
+      eligible: false,
+      rendererLeaseGranted: true,
+      workDemanded: true,
+    })).toBe(false)
   })
 
   it('lets jitter animate only inside a bounded meaningful-motion lease', () => {

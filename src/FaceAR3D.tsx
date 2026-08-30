@@ -4,6 +4,7 @@ import type { Detection } from './mlDetect'
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { releaseWebGL } from './threeCleanup'
+import { faceAccessoryAnchor } from './faceARLandmarks'
 import styles from './FaceAROverlay.module.css'
 
 const THREE_D_FILTERS = new Set(['beauty', 'brighten', 'glow', 'sharpen', 'cool', 'vintage'])
@@ -347,9 +348,10 @@ export default function FaceAR3D({ detections, filter }: {
         if (!face) return
         const faceWidth = face.w * width
         const faceHeight = face.h * height
+        const anchor = faceAccessoryAnchor(face)
         accessory.position.set(
-          (face.x + face.w * 0.5) * width - width * 0.5,
-          height * 0.5 - (face.y + face.h * 0.5) * height,
+          anchor.x * width - width * 0.5,
+          height * 0.5 - anchor.y * height,
           0,
         )
         accessory.scale.set(faceWidth, faceHeight, Math.max(faceWidth, faceHeight))

@@ -8,15 +8,25 @@
 // This is the cheap guard against that whole bug class: every id the rail can
 // send must exist natively, and every grade must be translated.
 import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 // The rail's ids moved OUT of ARFilters.tsx and into the streamed catalog when
 // filters stopped being compiled in. This guard kept regexing the .tsx, found
 // zero ids, and reported PASS on an empty set — the exact silent-failure shape
 // it was written to catch. It reads the catalog now, and refuses to pass on an
 // empty parse.
-const WEB = '/Users/matrix/Developer/poplur-clay-map/src/arFilterCatalog.json'
-const IOS = '/Users/matrix/Developer/Poplur2025-iOS/Poplur2025/ARFilterManager.swift'
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+const WEB = resolve(root, 'src/arFilterCatalog.json')
+const CAMERA = resolve(root, 'src/Camera.tsx')
+const iosRoot = process.env.POPLUR_IOS_ROOT ?? '/Users/matrix/Developer/Poplur2025-iOS'
+const IOS = resolve(iosRoot, 'Poplur2025/ARFilterManager.swift')
+const CAMERA_LAYER = resolve(iosRoot, 'Poplur2025/WebHomeCameraLayer.swift')
+const CAMERA_CONTROLLER = resolve(iosRoot, 'Poplur2025/CameraKitController.swift')
 
 const ios = readFileSync(IOS, 'utf8')
+const cameraLayer = readFileSync(CAMERA_LAYER, 'utf8')
+const cameraController = readFileSync(CAMERA_CONTROLLER, 'utf8')
+const camera = readFileSync(CAMERA, 'utf8')
 
 const catalog = JSON.parse(readFileSync(WEB, 'utf8'))
 const webIDs = catalog.filters.map(f => f.id)
@@ -62,6 +72,29 @@ check('the grade applies without a detected face',
 // render entry points discard the frame on `.none` before consulting it.
 check('an unknown streamed id can still render',
   ios.includes('case streamed = "__streamed"'))
+
+// Vision owns the full landmark mesh. The transparent web overlay must receive
+// the eye/nose centres from that SAME pass instead of running a second detector
+// or guessing every accessory from the face rectangle.
+check('Vision eye and nose landmarks reach the web AR overlay',
+  ios.includes('struct FaceLandmarkTrack')
+  && /onFaceTrack\?\([\s\S]*observation\.map\(faceLandmarks\)/.test(ios)
+  && cameraLayer.includes('landmarks: ARFilterManager.FaceLandmarkTrack?')
+  && cameraLayer.includes('facePayload["landmarks"] = landmarkPayload'))
+
+// iOS stills bypass the filtered preview-frame lane, while Android's native
+// shutter sends a raw still back to the WebView. Both paths must bake the same
+// selected grade before the shared composer opens.
+check('iOS still captures bake the selected AR grade',
+  ios.includes('func applyActiveGrade(to image: CIImage)')
+  && cameraController.includes('applyingActiveARGrade(to: image)'))
+check('Android native stills bake the selected catalog grade',
+  camera.includes('const webGradeCss = ANDROID_SHELL')
+  && camera.includes('if (webGradeCss) context.filter = webGradeCss')
+  && camera.includes('if (anaglyphPx > 0) applyAnaglyphToCanvas(context, anaglyphPx)'))
+check('browser stills retain the selected grade and AR costume',
+  camera.includes("if (filterCss !== 'none') ctx.filter = filterCss")
+  && camera.includes('drawFaceAREffect(ctx, canvas.width, canvas.height, detections, arFilter'))
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed')
 process.exit(failures ? 1 : 0)

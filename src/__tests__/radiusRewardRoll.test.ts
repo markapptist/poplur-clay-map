@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { renderToStaticMarkup } from 'react-dom/server'
+import MapRandomTourButton from '../MapRandomTourButton'
 import {
   DAILY_RADIUS_ROLL_COOLDOWN_MS,
   RADIUS_REWARD_STORAGE_KEY,
@@ -90,6 +93,33 @@ describe('daily Radius reward roll', () => {
   it('limits the reward side button to the interactive Radius preview route', () => {
     expect(radiusRewardPreviewEnabled('?view=map&radiusPreview=1')).toBe(true)
     expect(radiusRewardPreviewEnabled('?view=map')).toBe(false)
+  })
+
+  it('keeps a distinct approved dice control on the normal Map rail', () => {
+    const onPress = vi.fn()
+    const button = MapRandomTourButton({ onPress }) as unknown as {
+      props: { onClick: () => void }
+    }
+    button.props.onClick()
+    expect(onPress).toHaveBeenCalledOnce()
+
+    const markup = renderToStaticMarkup(button as never)
+    expect(markup).toContain('data-map-random-tour-button=""')
+    expect(markup).toContain('aria-label="Tour four random landmarks"')
+    expect(markup).toContain(RADIUS_REWARD_DICE_SPRITE)
+
+    const home = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'utf8')
+    expect(home).toMatch(/!RADIUS_REWARD_PREVIEW_ENABLED[\s\S]*?<MapRandomTourButton[\s\S]*?sendMapAction\('randomTour'\)/)
+    expect(home).toMatch(/RADIUS_REWARD_PREVIEW_ENABLED[\s\S]*?<MapRewardRollButton/)
+  })
+
+  it('dispatches the normal dice to the existing bounded random tour', () => {
+    const mapApp = readFileSync(new URL('../MapApp.tsx', import.meta.url), 'utf8')
+    const clayMap = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    expect(mapApp).toMatch(/case 'randomTour':[\s\S]*?startRandomLandmarkTour\(\)/)
+    expect(mapApp).toMatch(/const startRandomLandmarkTour[\s\S]*?startExplicitTourLoop\(0, undefined, order\)/)
+    expect(clayMap).toContain('mapCamera.__startTour = startTour')
+    expect(clayMap).toContain('const mapBaseSideControlCount = 10')
   })
 
   it('accepts only bounded navigator event shapes', () => {

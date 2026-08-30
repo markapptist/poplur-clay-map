@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "renderer": "scripts/render-meshy-gamepiece-review.py",
+  "render": {
+    "size": 96,
+    "yaw": 38,
+    "pitch": 18
+  },
+  "icons": {
+    "big-ben": {
+      "glb": "landmarks/big-ben.glb",
+      "glbSha256": "5053483430f3dbede239cae676c6c5d4c4b23805e1e7bd61a8d0eefeb1380203",
+      "sprite": "sprites/world-landmarks/big-ben-glb-s96.png",
+      "spriteSha256": "b2473df9a59f648ca9cd9f01088ee401464014869c003c274292a019c9334c97"
+    },
+    "burj-khalifa": {
+      "glb": "landmarks/burj-khalifa.glb",
+      "glbSha256": "a5b4746e51f1a4fc76e92626bb41a7d150d62e7d89754010f49de8ce7da82d86",
+      "sprite": "sprites/world-landmarks/burj-khalifa-glb-s96.png",
+      "spriteSha256": "0008532e0b2b0dd3996a8fa3bfae9ccf82d6c2a550d6ca70217fbca35110f98d"
+    },
+    "christ-redeemer": {
+      "glb": "landmarks/christ-redeemer.glb",
+      "glbSha256": "5cf4687bcb1f9615f720e70aecc676c007aa28ed45c56699b0b17781ad686df2",
+      "sprite": "sprites/world-landmarks/christ-redeemer-glb-s96.png",
+      "spriteSha256": "654ae53f0b8f680805e70f4a56cb80fc23e9618d9e09817a835790a0fdecbd79"
+    },
+    "cn-tower": {
+      "glb": "landmarks/cn-tower.glb",
+      "glbSha256": "85dc5d5cff6580d320dc4c6f785632f9f35d018712911cc4b7820625dbe697ec",
+      "sprite": "sprites/world-landmarks/cn-tower-glb-s96.png",
+      "spriteSha256": "d7e7403e23951d76fb16720f4b064d93d1440837aad3cf69ab853e1d1508a936"
+    },
+    "colosseum": {
+      "glb": "landmarks/colosseum.glb",
+      "glbSha256": "b99b7e8c046e0247b06f5573a142e507ba55caff8eed890bd3205526f67a50a8",
+      "sprite": "sprites/world-landmarks/colosseum-glb-s96.png",
+      "spriteSha256": "2bee60e7d5194c0fd5bacb18af5a1a7aef434daa4cdbf94947d7d954160b83d2"
+    },
+    "eiffel": {
+      "glb": "landmarks/eiffel.glb",
+      "glbSha256": "2889fdd30b0e1318c2b046c592c1faf6bd6016e80984b96b6a618167dc4e7763",
+      "sprite": "sprites/world-landmarks/eiffel-glb-s96.png",
+      "spriteSha256": "3b0482e8cd2a2dcb1a7c0802ea2aa2104b3d24711e8d19e19b41ab145d65ce53"
+    },
+    "giza": {
+      "glb": "landmarks/giza.glb",
+      "glbSha256": "7b76aec50ec422e348e9a9a8577f9948df329385b0360dbac2910a429d672de2",
+      "sprite": "sprites/world-landmarks/giza-glb-s96.png",
+      "spriteSha256": "8c4e9a922e8d779eb51a5fd7e5a9f36ecf63b4cde7cb15188ca4bd18fb16b285"
+    },
+    "golden-gate": {
+      "glb": "landmarks/golden-gate.glb",
+      "glbSha256": "046f48a24c74c792083871c31028203f316807fb62d7697766e46ff7a1fbd52b",
+      "sprite": "sprites/world-landmarks/golden-gate-glb-s96.png",
+      "spriteSha256": "d73708225668b37978bb83f2e1585a03afbbe43bfa404b8f4db181c3beba20ad"
+    },
+    "space-needle": {
+      "glb": "landmarks/space-needle.glb",
+      "glbSha256": "ea881866e0800b8760353ce0050df19c37b9ca92f0be3e1ac77748086acdab0d",
+      "sprite": "sprites/world-landmarks/space-needle-glb-s96.png",
+      "spriteSha256": "0d2541ee68afa866efd5ef6d5e829341380d50ecfce0661992e4bf26a8671e77"
+    },
+    "statue-liberty": {
+      "glb": "landmarks/statue-liberty.glb",
+      "glbSha256": "8d5bfa18866eef75f20d265a982f6a1fe1cce236c2a6fedf511db6d60cd9834c",
+      "sprite": "sprites/world-landmarks/statue-liberty-glb-s96.png",
+      "spriteSha256": "a5597d7ae1ac071fafef194116bb845063a47498a3a52ffa76d149970c51b1ae"
+    },
+    "sydney-opera": {
+      "glb": "landmarks/sydney-opera.glb",
+      "glbSha256": "051107a87ad1983f42bed35524debf361c55a7c7a6eaeb18b907570ae463773a",
+      "sprite": "sprites/world-landmarks/sydney-opera-glb-s96.png",
+      "spriteSha256": "c0f1b1b31e738ce6cb461e7b312f6d320da4208448720da4567e5a349bcb0322"
+    },
+    "taj-mahal": {
+      "glb": "landmarks/taj-mahal.glb",
+      "glbSha256": "266b5864f8f513fdd84b851ee6b535ab43db789288138a2befe6c46ace059522",
+      "sprite": "sprites/world-landmarks/taj-mahal-glb-s96.png",
+      "spriteSha256": "660dbd168540caf2b6f0bd601b6e5bf46232dafedb7a60feb3182a508f520522"
+    }
+  }
+}

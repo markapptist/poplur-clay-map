@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeNativeFeedPosts } from '../nativeFeedPosts'
+import {
+  normalizeLiveFeedDocuments,
+  normalizeLiveFeedPost,
+  normalizeNativeFeedPosts,
+} from '../nativeFeedPosts'
 
 describe('native feed post boundary', () => {
   it('accepts bounded public media rows and sorts newest first', () => {
@@ -51,6 +55,7 @@ describe('native feed post boundary', () => {
       mediaURL: 'https://cdn.example/public.mp4',
       viewCount: 44,
       likeCount: 12,
+      downvoteCount: 2,
       commentCount: 3,
       shareCount: 2,
       locationVisibility: 'approximate',
@@ -60,12 +65,60 @@ describe('native feed post boundary', () => {
     expect(row).toMatchObject({
       viewCount: 44,
       likeCount: 12,
+      downvoteCount: 2,
       commentCount: 3,
       shareCount: 2,
       locationVisibility: 'approximate',
       originLatitude: 43.65,
       originLongitude: -79.38,
     })
+  })
+
+  it('keeps private-account posts in Feed but strips every retained origin', () => {
+    const row = normalizeLiveFeedPost('private-feed-post', {
+      userID: 'account-123',
+      username: 'private-person',
+      mediaURL: 'https://cdn.example/private.mp4',
+      audience: 'public',
+      status: 'published',
+      privateAccount: 'true',
+      locationVisibility: 'approximate',
+      latitude: 43.65,
+      longitude: -79.38,
+    })
+
+    expect(row).toMatchObject({
+      id: 'private-feed-post',
+      ownerId: 'account-123',
+      username: '@private-person',
+      locationVisibility: 'hidden',
+    })
+    expect(row?.originLatitude).toBeUndefined()
+    expect(row?.originLongitude).toBeUndefined()
+  })
+
+  it('rejects explicitly private or unpublished content at the database boundary', () => {
+    const base = { mediaURL: 'https://cdn.example/post.mp4' }
+    expect(normalizeLiveFeedPost('private-audience', { ...base, audience: 'private' })).toBeNull()
+    expect(normalizeLiveFeedPost('draft', { ...base, status: 'draft' })).toBeNull()
+  })
+
+  it('full-replaces add, change, delete, and wiped snapshots', () => {
+    const document = (id: string, data: Record<string, unknown>) => ({ id, data: () => data })
+    const base = {
+      userId: 'owner',
+      mediaURL: 'https://cdn.example/post.mp4',
+      channelId: 'food',
+      createdAt: { toMillis: () => 10 },
+    }
+
+    expect(normalizeLiveFeedDocuments([])).toEqual([])
+    expect(normalizeLiveFeedDocuments([document('post', base)])).toMatchObject([
+      { id: 'post', ownerId: 'owner', channelId: 'food', viewCount: undefined },
+    ])
+    expect(normalizeLiveFeedDocuments([document('post', { ...base, viewCount: 9 })]))
+      .toMatchObject([{ id: 'post', viewCount: 9 }])
+    expect(normalizeLiveFeedDocuments([])).toEqual([])
   })
 
   it('never admits coordinates for hidden or invalid origins', () => {
@@ -88,7 +141,7 @@ describe('native feed post boundary', () => {
     expect(rows[0]).toMatchObject({ locationVisibility: 'hidden' })
     expect(rows[0].originLatitude).toBeUndefined()
     expect(rows[0].originLongitude).toBeUndefined()
-    expect(rows[1]).toMatchObject({ locationVisibility: 'approximate' })
+    expect(rows[1]).toMatchObject({ locationVisibility: 'hidden' })
     expect(rows[1].originLatitude).toBeUndefined()
     expect(rows[1].originLongitude).toBeUndefined()
   })

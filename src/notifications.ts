@@ -22,6 +22,7 @@ import {
   type LoggedEngagement,
 } from './engagementLog'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { NOTIFICATION_INBOX_LIMIT } from './notificationInboxBridge'
 
 // like / view / comment are the engagement kinds. Notifications is where the
 // history of your content's engagement lives: the map and feed pop a notice for
@@ -196,7 +197,9 @@ export function nativeNotificationRow(value: unknown, now = Date.now()): Notific
  * the persisted inbox. The local engagement log is merged separately below. */
 export function replaceNativeNotifications(value: unknown, now = Date.now()): void {
   const rows = Array.isArray(value)
-    ? value.map(row => nativeNotificationRow(row, now)).filter((row): row is Notification => row != null)
+    ? value.slice(0, NOTIFICATION_INBOX_LIMIT)
+      .map(row => nativeNotificationRow(row, now))
+      .filter((row): row is Notification => row != null)
     : []
   const byId = new Map<string, Notification>()
   rows

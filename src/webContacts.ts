@@ -1,48 +1,71 @@
-// Real, callable people for the browser phone.
-//
-// On a phone the native address book (requestPhoneContacts) fills the reach
-// list with real uids. A plain browser has none of that, so the phone falls
-// back to the world board — but those are display-only pops with made-up ids,
-// so "calling" one reaches nobody. Once the browser tab is signed in, this
-// pulls REAL recent posters from Firestore: their uid is the actual account id,
-// so dialling them opens a `calls/` doc the real person's tab is watching.
-//
-// This is deliberately simpler than PoplurPhoneContacts (no favourites/DMs/
-// strict reach ranking yet) — enough to call a real person from the web. The
-// richer ranking can follow once the basic web↔web path is proven.
+// Realtime contact discovery derived from the app's one canonical public-post
+// snapshot. This module deliberately performs no Firestore query of its own:
+// nativeFeedPosts owns the single onSnapshot listener and replaces its complete
+// list on every add/change/delete, including a production database wipe.
 
-import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore'
-import { webDb, currentUid } from './webFirebase'
+import type { NativeFeedPost } from './nativeFeedPosts'
+import { haversineKm } from './reach'
 
 export interface WebContact {
   id: string
   handle: string
   detail: string
   callable: boolean
+  distanceKm: number
 }
 
-export async function fetchWebContacts(): Promise<WebContact[]> {
-  const uid = currentUid()
-  if (!uid) return []
-  const seen = new Map<string, WebContact>()
-  try {
-    const snap = await getDocs(
-      query(collection(webDb(), 'posts'), orderBy('createdAt', 'desc'), limit(120)),
+function validCoordinate(value: unknown, maximum: number): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= maximum
+}
+
+function distanceDetail(distanceKm: number): string {
+  if (distanceKm < 1) return `${Math.round(distanceKm * 1_000)} m away · in your radius`
+  return `${distanceKm < 10 ? distanceKm.toFixed(1) : Math.round(distanceKm)} km away · in your radius`
+}
+
+/**
+ * Select dial-able accounts whose public, approximate post origin is inside
+ * the viewer's current radius. Hidden/private/ghost origins never qualify,
+ * and coordinates are reduced to a distance before leaving this selector.
+ */
+export function contactsFromRealtimePosts(
+  posts: readonly NativeFeedPost[],
+  currentUid: string | null,
+  location: { lat: number; lng: number } | null,
+  radiusKm: number,
+): WebContact[] {
+  if (!currentUid || !location
+    || !validCoordinate(location.lat, 90)
+    || !validCoordinate(location.lng, 180)
+    || !Number.isFinite(radiusKm)
+    || radiusKm < 0) return []
+
+  const found = new Map<string, WebContact>()
+  for (const post of posts) {
+    const ownerId = post.ownerId?.trim()
+    if (!ownerId || ownerId === currentUid || post.locationVisibility !== 'approximate') continue
+    if (!validCoordinate(post.originLatitude, 90)
+      || !validCoordinate(post.originLongitude, 180)) continue
+
+    const distanceKm = haversineKm(
+      [location.lng, location.lat],
+      [post.originLongitude, post.originLatitude],
     )
-    snap.forEach(docSnap => {
-      const data = docSnap.data() as Record<string, unknown>
-      const owner = (data.userID as string) ?? (data.userId as string) ?? ''
-      if (!owner || owner === uid || seen.has(owner)) return
-      const name = (data.username as string) ?? owner.slice(0, 8)
-      seen.set(owner, {
-        id: owner,
-        handle: name.startsWith('@') ? name : `@${name}`,
-        detail: 'ON POPLUR · CALLABLE',
-        callable: true,
-      })
-    })
-  } catch (err) {
-    console.warn('[webContacts] query failed', err)
+    if (distanceKm > radiusKm) continue
+
+    const handle = post.username.startsWith('@') ? post.username : `@${post.username}`
+    const contact: WebContact = {
+      id: ownerId,
+      handle,
+      detail: distanceDetail(distanceKm),
+      callable: true,
+      distanceKm,
+    }
+    const previous = found.get(ownerId)
+    if (!previous || contact.distanceKm < previous.distanceKm) found.set(ownerId, contact)
   }
-  return [...seen.values()].slice(0, 40)
+
+  return [...found.values()].sort((a, b) => (
+    a.distanceKm - b.distanceKm || a.handle.localeCompare(b.handle)
+  )).slice(0, 40)
 }

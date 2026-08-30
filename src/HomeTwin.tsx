@@ -19,6 +19,7 @@ import MapNewsButton from './MapNewsButton'
 import MapRadioButton from './MapRadioButton'
 import MapRadioStatusLabel from './MapRadioStatusLabel'
 import { mapTourControlState } from './mapTourControl'
+import MapRandomTourButton from './MapRandomTourButton'
 import MapRewardRollButton from './MapRewardRollButton'
 import { readMapNewsOpenRequest } from './mapNewsBridge'
 import MapConquerButton from './MapConquerButton'
@@ -179,7 +180,12 @@ import {
   type IpodSection,
 } from './ipodNavigation'
 import { homeSurfaceIsVisible } from './mapThermalPolicy'
-import { reportTestPost, reportTestRadius } from './testActivity'
+import {
+  reportTestPost,
+  reportTestRadius,
+  visibleHomeTestActivityScreen,
+  type TestActivityScreen,
+} from './testActivity'
 
 
 /**
@@ -884,7 +890,8 @@ const CLAY_MAP_SRC = (() => {
   const weatherTestQuery = weatherTest === '1' ? '&weather-test=1' : ''
   const newsTestQuery = newsTest === '1' ? '&news-test=1' : ''
   const buildingDensityLabQuery = buildingDensityLab ? '&buildingDensityLab=1' : ''
-  const tourSpeedQuery = Number.isFinite(rawTourSpeed) && rawTourSpeed >= 0.1 && rawTourSpeed <= 5
+  const tourSpeedQuery = import.meta.env.DEV
+    && Number.isFinite(rawTourSpeed) && rawTourSpeed >= 0.1 && rawTourSpeed <= 5
     ? `&tour-speed=${encodeURIComponent(rawTourSpeed)}`
     : ''
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
@@ -950,7 +957,7 @@ const MAP_SETTLE_MS = (() => {
 // short native render lease. This is a transition budget, not an idle loop.
 const TAB_TRANSITION_LEASE_MS = 900
 
-export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'viewfinder' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'viewfinder' | 'roll' }) {
+export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'viewfinder' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; onVisibleScreenChange?: (screen: TestActivityScreen) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'viewfinder' | 'roll' }) {
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
@@ -3847,6 +3854,15 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
   // Camera's vertical pager: `step` counts arrow presses (up +1 / down -1);
   // parity picks the page, so both directions cycle viewfinder ⇄ roll.
   const [cameraStep, setCameraStep] = useState(initialCameraPage === 'roll' ? 1 : 0)
+  useEffect(() => {
+    onVisibleScreenChange?.(visibleHomeTestActivityScreen({
+      tab: activeTab,
+      holdOpen,
+      subscreen: cubeScreen,
+      cameraRoll: ((cameraStep % 2) + 2) % 2 === 1,
+      mapConquer: mapConquerGlanceOpen,
+    }))
+  }, [activeTab, cameraStep, cubeScreen, holdOpen, mapConquerGlanceOpen, onVisibleScreenChange])
   // The camera's own actions, so the cube and the hold menu can fire them.
   const cameraActionsRef = useRef<CameraActions | null>(null)
   // PHOTO/VIDEO is a capture mode. Selecting VIDEO puts the camcorder in your
@@ -4968,6 +4984,14 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
                 else startRadioForMap()
               }}
             />
+            {!RADIUS_REWARD_PREVIEW_ENABLED && (
+              <MapRandomTourButton
+                onPress={() => {
+                  playPop(0.25)
+                  sendMapAction('randomTour')
+                }}
+              />
+            )}
             {RADIUS_REWARD_PREVIEW_ENABLED && (
               <MapRewardRollButton
                 active={Boolean(radiusRewardDiceSignal)}
@@ -5047,7 +5071,7 @@ export default function HomeTwin({ onOpen, onTabChange, initialTab = 'map', init
             <label
               className={styles.nativeMapZoom}
               style={{
-                '--mapControlSpan': `${mapSideControlRailSpan(RADIUS_REWARD_PREVIEW_ENABLED ? 10 : 9)}px`,
+                '--mapControlSpan': `${mapSideControlRailSpan(10)}px`,
               } as React.CSSProperties}
               aria-label="Map zoom"
               data-poplur-native-hit-region

@@ -31,15 +31,19 @@ import {
   createSettledMapLayerVisibilityRetry,
   reconcileMapLayerVisibility,
 } from './mapBuildingCullScheduler'
+import { buildingFootprintBoundingRadiusMetres } from './mapBuildingFootprint'
 import {
-  buildingFootprintBoundingRadiusMetres,
-  buildingFootprintWithinPointDistance,
-  geographicPointDistanceMetres,
-} from './mapBuildingFootprint'
+  landmarkBuildingFootprintIsReplaced,
+  landmarkBuildingIdentityMatches,
+  type LandmarkFootprintCut,
+} from './landmarkBuildingReplacement'
 import {
   WORLD_LANDMARK_PRESENTATIONS,
+  WORLD_LANDMARK_ICON_IDS,
+  WORLD_LANDMARK_GLB_SPRITES,
   landmarkCameraFrame as resolveLandmarkCameraFrame,
   landmarkNearZoom,
+  worldLandmarkIconsVisible,
   type WorldLandmarkPresentation,
 } from './mapLandmarkCatalog'
 export {
@@ -642,21 +646,7 @@ function applyComposeSurfacePreview(
     ['case', withinPreview, takeoverTint('#FFD0E6'), buildingCaps3DColor(map)])
 }
 
-// Clay-style world monuments drawn as inline SVGs, pink/black like the theme.
-const SVG_EIFFEL = `<svg viewBox="0 0 60 100" xmlns="http://www.w3.org/2000/svg"><path d="M30 6 C33 30 40 55 52 88 L44 88 C38 70 34 62 30 58 C26 62 22 70 16 88 L8 88 C20 55 27 30 30 6 Z" fill="#F63B9A" stroke="#c92e7d" stroke-width="2" stroke-linejoin="round"/><path d="M14 66 Q30 74 46 66" fill="none" stroke="#c92e7d" stroke-width="3"/><path d="M20 44 Q30 49 40 44" fill="none" stroke="#c92e7d" stroke-width="3"/><rect x="6" y="86" width="48" height="8" rx="4" fill="#161116"/></svg>`
-const SVG_CN_TOWER = `<svg viewBox="0 0 40 110" xmlns="http://www.w3.org/2000/svg"><rect x="17" y="6" width="6" height="34" rx="3" fill="#F63B9A"/><ellipse cx="20" cy="46" rx="14" ry="8" fill="#161116"/><ellipse cx="20" cy="43" rx="14" ry="7" fill="#F63B9A"/><path d="M15 52 L14 96 L26 96 L25 52 Z" fill="#161116"/><rect x="10" y="94" width="20" height="8" rx="4" fill="#F63B9A"/></svg>`
-const SVG_BIG_BEN = `<svg viewBox="0 0 40 100" xmlns="http://www.w3.org/2000/svg"><rect x="10" y="20" width="20" height="70" rx="4" fill="#161116"/><circle cx="20" cy="38" r="8" fill="#FFF2F8" stroke="#F63B9A" stroke-width="3"/><path d="M20 34 v5 h4" stroke="#161116" stroke-width="2" fill="none"/><path d="M10 20 L20 4 L30 20 Z" fill="#F63B9A"/><rect x="8" y="86" width="24" height="8" rx="4" fill="#F63B9A"/></svg>`
-const SVG_PYRAMID = `<svg viewBox="0 0 90 70" xmlns="http://www.w3.org/2000/svg"><path d="M45 6 L86 62 L4 62 Z" fill="#e8a83f" stroke="#b8802f" stroke-width="3" stroke-linejoin="round"/><path d="M45 6 L60 62 L4 62 Z" fill="#f6c65f" opacity="0.85"/></svg>`
-const SVG_CHRIST = `<svg viewBox="0 0 70 90" xmlns="http://www.w3.org/2000/svg"><rect x="31" y="14" width="8" height="46" rx="4" fill="#FFF2F8"/><rect x="8" y="24" width="54" height="8" rx="4" fill="#FFF2F8"/><circle cx="35" cy="10" r="6" fill="#FFF2F8"/><path d="M28 60 L26 76 L44 76 L42 60 Z" fill="#F63B9A"/><rect x="20" y="74" width="30" height="8" rx="4" fill="#161116"/></svg>`
-const SVG_LIBERTY = `<svg viewBox="0 0 44 96" xmlns="http://www.w3.org/2000/svg"><rect x="34" y="4" width="5" height="22" rx="2.5" fill="#F63B9A" transform="rotate(18 36 15)"/><circle cx="40" cy="6" r="4" fill="#FF8AC6"/><path d="M22 18 L16 22 L18 16 L14 12 L20 12 L22 6 L24 12 L30 12 L26 16 L28 22 Z" fill="#4fd6b8"/><path d="M17 28 C15 48 15 62 13 78 L31 78 C29 62 29 48 27 28 Z" fill="#4fd6b8"/><rect x="8" y="76" width="28" height="9" rx="4" fill="#161116"/><rect x="12" y="84" width="20" height="8" rx="4" fill="#F63B9A"/></svg>`
-const SVG_TAJ = `<svg viewBox="0 0 90 78" xmlns="http://www.w3.org/2000/svg"><rect x="6" y="26" width="7" height="40" rx="3.5" fill="#FFF2F8"/><rect x="77" y="26" width="7" height="40" rx="3.5" fill="#FFF2F8"/><circle cx="9.5" cy="24" r="4" fill="#F63B9A"/><circle cx="80.5" cy="24" r="4" fill="#F63B9A"/><path d="M45 8 C56 18 60 26 60 34 L30 34 C30 26 34 18 45 8 Z" fill="#FFF2F8"/><circle cx="45" cy="9" r="3.5" fill="#F63B9A"/><rect x="22" y="34" width="46" height="30" rx="4" fill="#FFF2F8"/><path d="M45 42 C50 47 51 51 51 56 L39 56 C39 51 40 47 45 42 Z" fill="#F63B9A"/><rect x="14" y="62" width="62" height="9" rx="4" fill="#161116"/></svg>`
-const SVG_OPERA = `<svg viewBox="0 0 96 56" xmlns="http://www.w3.org/2000/svg"><path d="M10 44 C14 24 30 12 44 10 C36 22 32 32 30 44 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="2"/><path d="M34 44 C40 22 56 10 70 10 C60 22 54 32 52 44 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="2"/><path d="M56 44 C64 26 76 18 88 20 C78 28 72 36 70 44 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="2"/><rect x="4" y="42" width="88" height="9" rx="4.5" fill="#161116"/></svg>`
-const SVG_COLOSSEUM = `<svg viewBox="0 0 96 58" xmlns="http://www.w3.org/2000/svg"><path d="M8 46 C8 24 26 10 48 10 C70 10 88 24 88 46 L8 46 Z" fill="#e8a83f" stroke="#b8802f" stroke-width="3"/><g fill="#7a4f16"><circle cx="26" cy="30" r="4"/><circle cx="40" cy="26" r="4"/><circle cx="56" cy="26" r="4"/><circle cx="70" cy="30" r="4"/><circle cx="33" cy="40" r="4"/><circle cx="48" cy="38" r="4"/><circle cx="63" cy="40" r="4"/></g><rect x="4" y="44" width="88" height="9" rx="4.5" fill="#161116"/></svg>`
-const SVG_NEEDLE = `<svg viewBox="0 0 50 96" xmlns="http://www.w3.org/2000/svg"><rect x="22.5" y="4" width="5" height="16" rx="2.5" fill="#F63B9A"/><ellipse cx="25" cy="26" rx="20" ry="8" fill="#F63B9A"/><ellipse cx="25" cy="23" rx="20" ry="7" fill="#FF8AC6"/><path d="M20 34 L15 84 L20 84 L25 44 L30 84 L35 84 L30 34 Z" fill="#161116"/><rect x="10" y="82" width="30" height="9" rx="4.5" fill="#F63B9A"/></svg>`
-const SVG_TOKYO_TOWER = `<svg viewBox="0 0 60 100" xmlns="http://www.w3.org/2000/svg"><path d="M30 6 L48 88 L40 88 L30 34 L20 88 L12 88 Z" fill="#f25430" stroke="#c23a1c" stroke-width="2" stroke-linejoin="round"/><path d="M18 62 L42 62" stroke="#c23a1c" stroke-width="4"/><path d="M22 40 L38 40" stroke="#c23a1c" stroke-width="4"/><rect x="26" y="2" width="8" height="10" rx="4" fill="#FFF2F8"/><rect x="8" y="86" width="44" height="9" rx="4.5" fill="#161116"/></svg>`
-const SVG_GOLDEN_GATE = `<svg viewBox="0 0 100 62" xmlns="http://www.w3.org/2000/svg"><path d="M6 30 Q50 6 94 30" fill="none" stroke="#f25430" stroke-width="4" stroke-linecap="round"/><rect x="24" y="14" width="7" height="38" rx="3.5" fill="#f25430"/><rect x="69" y="14" width="7" height="38" rx="3.5" fill="#f25430"/><path d="M4 44 L96 44" stroke="#f25430" stroke-width="6" stroke-linecap="round"/><path d="M27 18 L27 44 M72 18 L72 44" stroke="#c23a1c" stroke-width="2"/><rect x="2" y="48" width="96" height="8" rx="4" fill="#161116"/></svg>`
-const SVG_BURJ = `<svg viewBox="0 0 40 110" xmlns="http://www.w3.org/2000/svg"><rect x="18" y="4" width="4" height="18" rx="2" fill="#FF8AC6"/><path d="M17 22 L15 44 L25 44 L23 22 Z" fill="#F63B9A"/><path d="M14 44 L12 70 L28 70 L26 44 Z" fill="#161116"/><path d="M11 70 L9 96 L31 96 L29 70 Z" fill="#F63B9A"/><rect x="6" y="94" width="28" height="9" rx="4.5" fill="#161116"/></svg>`
-
+// Clay-style world monuments use offline renders of their supplied GLBs.
 const SVG_PALM = `<svg viewBox="0 0 64 84" xmlns="http://www.w3.org/2000/svg"><path d="M32 34 C30 50 30 62 28 76 L38 76 C36 62 36 50 34 34 Z" fill="#8a5a2a"/><path d="M32 32 C20 20 10 18 2 24 C12 26 20 30 30 34 Z" fill="#3fae3f"/><path d="M32 32 C44 20 54 18 62 24 C52 26 44 30 34 34 Z" fill="#4fc44f"/><path d="M32 32 C26 18 18 12 8 12 C18 16 24 24 30 33 Z" fill="#4fc44f"/><path d="M32 32 C38 18 46 12 56 12 C46 16 40 24 34 33 Z" fill="#3fae3f"/><path d="M32 32 C30 18 32 10 38 4 C34 12 34 22 34 32 Z" fill="#4fc44f"/><ellipse cx="33" cy="78" rx="12" ry="4" fill="#161116" opacity="0.5"/></svg>`
 const SVG_TREE = `<svg viewBox="0 0 48 64" xmlns="http://www.w3.org/2000/svg"><rect x="21" y="38" width="6" height="18" rx="3" fill="#8a5a2a"/><circle cx="24" cy="24" r="17" fill="#3fae3f"/><circle cx="14" cy="30" r="10" fill="#4fc44f"/><circle cx="34" cy="30" r="10" fill="#4fc44f"/><circle cx="24" cy="16" r="9" fill="#5fd45f"/><ellipse cx="24" cy="58" rx="12" ry="3.5" fill="#161116" opacity="0.45"/></svg>`
 const SVG_BOAT = `<svg viewBox="0 0 72 60" xmlns="http://www.w3.org/2000/svg"><path d="M10 40 L62 40 L54 52 L18 52 Z" fill="#F63B9A" stroke="#c92e7d" stroke-width="2"/><rect x="34" y="8" width="4" height="32" rx="2" fill="#8a5a2a"/><path d="M38 10 C50 16 54 26 52 36 L38 36 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="2"/><path d="M32 14 C24 20 22 28 24 36 L32 36 Z" fill="#FF8AC6"/><circle cx="24" cy="46" r="2.5" fill="#161116"/><circle cx="36" cy="46" r="2.5" fill="#161116"/><circle cx="48" cy="46" r="2.5" fill="#161116"/></svg>`
@@ -694,26 +684,28 @@ const SVG_BOAT = `<svg viewBox="0 0 72 60" xmlns="http://www.w3.org/2000/svg"><p
  *  Ids were read off the live tiles (source `clay-streets`, source-layer
  *  `building`) and each landmark's tallest hit matches its real height to the
  *  metre: Eiffel 330, CN Tower 553, Burj 828, Great Pyramid 138.8. They are
- *  OSM way ids, so they are stable. Multi-part structures list every tier —
- *  the Burj's setbacks, the CN Tower's pod, the Colosseum's rings — because
- *  masking only the tallest leaves the rest standing inside the model.
+ *  OSM way ids, so they are stable. Root building ids are especially
+ *  important: tile parts may have their own feature id while preserving the
+ *  structure root in `building_id`, allowing every tier to be removed with
+ *  the landmark instead of leaving its low foundation behind.
  *
  *  The Golden Gate has no building feature at all (it is a bridge), so it has
  *  no entry and needs none. */
 const LANDMARK_BUILDING_IDS: number[] = [
-  137147715, 137153144, 137153142, 137153143, 137147712, 137153131, // burj-khalifa
+  446646206, 137147715, 137153144, 137153142, 137153143, 137147712, 137153131, // burj-khalifa
   32742038, 288273461, 288273460, 288273459, 288273458,             // cn-tower
   7969701,                                                          // rogers-centre / SkyDome
   5013364,                                                          // eiffel
-  229651145, 229651144, 229651143,                                  // statue-liberty
+  32965412, 229651147, 229651146, 229651145, 229651144, 229651143, 433053921, // statue-liberty
   123557148,                                                        // big-ben
   12903132,                                                         // space-needle
   1834828, 1834826, 1834818, 1834829, 1834825,                      // colosseum
-  383059866, 383059882, 383059880,                                  // taj-mahal
+  375257537, 383059866, 383059882, 383059880,                       // taj-mahal
   1447519482,                                                       // christ-redeemer
   9596872, 9596880, 9596879, 9596883,                               // sydney-opera
   4420397,                                                          // giza
 ]
+const LANDMARK_BUILDING_ID_SET = new Set(LANDMARK_BUILDING_IDS)
 
 /** Where the id list cannot reach: the OSM way ids above only exist on the
  *  DEV building source (`clay-streets`, the composite OSM tiles). Built
@@ -727,17 +719,20 @@ const LANDMARK_BUILDING_IDS: number[] = [
  *  footprint comes within `cutM` metres of the landmark point AND stands at
  *  least `cutMinH` metres tall is dropped, on whichever source is live.
  *  `distance` (unlike `within`, see above) accepts Polygon features. The
- *  height floor is what keeps attached neighbours standing — Big Ben's clock
- *  tower adjoins the Palace of Westminster, so a pure radius cut would drop
- *  the whole Palace; requiring ≥55m keeps the Palace (~30m) and cuts only the
- *  96m tower the model replaces. */
-const LANDMARK_FOOTPRINT_CUTS: { at: [number, number]; cutM: number; cutMinH: number }[] = [
+ *  broad height floor keeps attached neighbours standing — Big Ben's clock
+ *  tower adjoins the Palace of Westminster, so a pure wide-radius cut would
+ *  drop the whole Palace. A separate compact-core test removes only a modest
+ *  low plinth directly under each anchor; see
+ *  landmarkBuildingFootprintIsReplaced. */
+const LANDMARK_FOOTPRINT_CUTS: LandmarkFootprintCut[] = [
   { at: [55.2744, 25.1972], cutM: 260, cutMinH: 80 },  // burj-khalifa (Dubai Mall is low + far)
   { at: [-79.3871, 43.6426], cutM: 120, cutMinH: 100 }, // cn-tower (Rogers Centre dome 86m survives)
   { at: [-79.38918212, 43.64161058], cutM: 30, cutMinH: 80 }, // rogers-centre (inside its 86m Overture footprint)
   { at: [2.2945, 48.8584], cutM: 140, cutMinH: 50 },   // eiffel
   { at: [-122.3493, 47.6205], cutM: 90, cutMinH: 60 }, // space-needle (MoPOP stays)
-  { at: [-74.0445, 40.6892], cutM: 120, cutMinH: 20 }, // statue-liberty (museum on the island stays)
+  // Liberty's low 96m foundation is a separate 10m feature. The statue is
+  // isolated at the fort centre, so this audited core cannot touch its museum.
+  { at: [-74.0445, 40.6892], cutM: 120, cutMinH: 20, groundCoreCutM: 12 },
   { at: [-0.1246, 51.5007], cutM: 60, cutMinH: 55 },   // big-ben (Palace of Westminster stays)
   { at: [31.1342, 29.9792], cutM: 200, cutMinH: 60 },  // giza (Khafre is its own pyramid, 470m off)
   { at: [78.0421, 27.1751], cutM: 120, cutMinH: 30 },  // taj-mahal (flanking mosque ~20m stays)
@@ -751,6 +746,7 @@ function notALandmarkBuilding() {
   const featureHeight = ['coalesce', ['to-number', ['get', 'height'], 0], 0]
   return ['!', ['any',
     ['in', ['id'], ['literal', LANDMARK_BUILDING_IDS]],
+    ['in', ['to-number', ['get', 'building_id'], -1], ['literal', LANDMARK_BUILDING_IDS]],
     ...LANDMARK_FOOTPRINT_CUTS.map(c => ['all',
       ['<', ['distance', { type: 'Point', coordinates: c.at }], c.cutM],
       ['>=', featureHeight, c.cutMinH],
@@ -826,15 +822,21 @@ function renderedBuildingReplacedByLandmark(
   center: [number, number],
   heightM: number,
 ): boolean {
-  if (!BUILDING_DETAIL_USES_PROPERTY_ID
-    && typeof feature.id === 'number'
-    && LANDMARK_BUILDING_IDS.includes(feature.id)) return true
+  if (landmarkBuildingIdentityMatches(
+    feature.id,
+    feature.properties?.building_id,
+    LANDMARK_BUILDING_ID_SET,
+  )) return true
+  // Compute the footprint extent once per candidate; reusing it across the
+  // twelve landmark anchors keeps the close-view cull bounded on iPhone.
   const footprintRadiusM = buildingFootprintBoundingRadiusMetres(feature.geometry, center)
-  return LANDMARK_FOOTPRINT_CUTS.some(cut => heightM >= cut.cutMinH
-    // Cheap centre/extent rejection means almost every candidate avoids the
-    // exact segment walk; large or clipped footprints still get exact cover.
-    && geographicPointDistanceMetres(center, cut.at) <= cut.cutM + footprintRadiusM
-    && buildingFootprintWithinPointDistance(feature.geometry, cut.at, cut.cutM))
+  return LANDMARK_FOOTPRINT_CUTS.some(cut => landmarkBuildingFootprintIsReplaced(
+    feature.geometry,
+    center,
+    heightM,
+    cut,
+    footprintRadiusM,
+  ))
 }
 
 /** Bounding-box centre is inexpensive and stable for both Polygon variants;
@@ -915,14 +917,14 @@ const WORLD_LANDMARKS: Array<WorldLandmarkPresentation & {
   artDirection: LANDMARK_ART_DIRECTIONS[landmark.id],
   materialIdentity: LANDMARK_MATERIAL_IDENTITIES[landmark.id],
 }))
+const WORLD_LANDMARK_ICON_ID_SET = new Set(WORLD_LANDMARK_ICON_IDS)
 
 const TORONTO_LANDMARK_RENDERER_IDS = new Set(['cn-tower', 'rogers-centre'])
 const TORONTO_LANDMARK_RENDERERS = WORLD_LANDMARKS.filter(landmark =>
   TORONTO_LANDMARK_RENDERER_IDS.has(landmark.id))
 
-// Transparent baked views of the same authored landmark models. These replace
-// only the slider knob after the grounded object has genuinely rendered; they
-// do not add another WebGL context or keep a landmark renderer awake.
+// Existing zoom-slider thumbnails are a separate, already-shipped control
+// surface. World markers below use the fresh exact-GLB images instead.
 const LANDMARK_THUMB_SPRITES: Record<string, string> = {
   'big-ben': 'sprites/big-ben_y18_p10_s320.png',
   'burj-khalifa': 'sprites/burj-khalifa_y18_p10_s320.png',
@@ -938,14 +940,10 @@ const LANDMARK_THUMB_SPRITES: Record<string, string> = {
   'taj-mahal': 'sprites/taj-mahal_y18_p10_s320.png',
 }
 
-// Landmarks are discoveries at street level, not distant navigation pins.
-// Showing a large, screen-fixed sprite from city or globe zoom makes it look
-// as though it floats above the map.  The grounded custom layer is the only
-// presentation now, and it becomes eligible only once the camera is directly
-// over the site at building-reveal zoom.
-// A landmark is a destination, not background scenery.  Keep it hidden until
-// the camera is genuinely at its site; the former 1.25 km radius exposed a
-// cropped tower at the edge of nearby venues, which read as floating.
+// Close landmarks are grounded objects, never screen-facing sprites. The
+// dedicated world overview now has tiny location icons at the real coordinates
+// (not model-sized billboards); those disappear before regional/city zoom and
+// the GLB becomes eligible only once the camera is directly over its site.
 const LANDMARK_3D_REVEAL_KM = 0.3
 const CITY_TREES: { coords: [number, number]; width: number; palm?: boolean }[] = [
   { coords: [-79.4139, 43.6465], width: 34 },  // Trinity Bellwoods
@@ -1316,7 +1314,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     : new URLSearchParams(window.location.search)
   const radiusPreviewLaunch = launchParams.get('radiusReview') === '1'
   const buildingDensityLabLaunch = launchParams.get('buildingDensityLab') === '1'
-  const mapBaseSideControlCount = buildingDensityLabLaunch || radiusPreviewLaunch ? 10 : 9
+  // The normal rail includes the bounded random-landmark die; the Radius
+  // review route occupies that same slot with its preview-only reward die.
+  const mapBaseSideControlCount = 10
   const mapBaseSideControlSpan = mapSideControlRailSpan(mapBaseSideControlCount)
   // The colour picker is the final left-rail side button. The opposite zoom
   // rail spans the complete stack, including this control.
@@ -1383,6 +1383,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   const deferredSkyRef = useRef<SkyShade | null>(null)
   const deferredMapAppearanceRef = useRef(false)
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
+  const worldLandmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
   const landmarks3dRef = useRef<Map<string, NearLandmark3D>>(new Map())
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -2475,9 +2476,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       })
       ;[treeMarkersRef, boatMarkersRef, carMarkersRef].forEach(ref =>
         ref.current.forEach(mk => setZoomVisible(mk.getElement(), isCity)))
-      // Landmark GLBs are custom layers only. Screen-facing Mapbox markers
-      // are deliberately forbidden here: with a pitched camera they read as
-      // floating billboards, not objects placed on the ground.
+      worldLandmarkMarkersRef.current.forEach(mk => setZoomVisible(
+        mk.getElement(),
+        worldLandmarkIconsVisible(zoom),
+      ))
+      // Close landmark GLBs are custom layers only. The small location icons
+      // above exist solely in the flat world band; hiding them before any
+      // pitched regional/city view prevents them reading as floating models.
       // Drive every 3D landmark handle from THIS pass, not from twelve of
       // their own move/zoom subscribers — those cost a real ~600ms on
       // map-arrival at 24 listeners × ~60fps × 30s, and the gate rejected the
@@ -2551,6 +2556,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       __poplurCameraClaimed?: boolean
       __cinematic?: boolean
       __suppressNextMapClickUntil?: number
+      __startTour?: (stops?: number) => Promise<void>
+      __cancelAdaptiveCameraSettle?: () => void
     }
     mapCamera.__stopOrbit = stopOrbit
     // A search, tour or bridge-driven destination is just as intentional as a
@@ -3055,11 +3062,16 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // target pitch and therefore emits no second move/zoom event.
       threeDVisibilityRetry.request(enabled)
     }
-    const settleAdaptiveCamera = (pitch: number, bearing: number) => {
+    const cancelAdaptiveCameraSettle = () => {
       if (adaptiveCameraFrame != null) {
         window.cancelAnimationFrame(adaptiveCameraFrame)
         ownedRafs.delete(adaptiveCameraFrame)
+        adaptiveCameraFrame = null
       }
+    }
+    mapCamera.__cancelAdaptiveCameraSettle = cancelAdaptiveCameraSettle
+    const settleAdaptiveCamera = (pitch: number, bearing: number) => {
+      cancelAdaptiveCameraSettle()
       // `zoomend` is emitted while Mapbox may still be finishing symbol
       // placement. Scheduling the one-shot camera settle for the next paint
       // avoids mutating that placement pass (which can otherwise throw inside
@@ -3955,8 +3967,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // the map extrudes CN Tower's base as a squat prism and my 3D CN
           // Tower model stands INSIDE it — the user's video called this out
           // exactly ("the landmark should actually replace the building, not
-          // just hover on it"). Matched by OSM way id — see
-          // LANDMARK_BUILDING_IDS for why a geometric test cannot do this.
+          // just hover on it"). Candidate preprocessing matches both the OSM
+          // structure root and a cross-source geometric footprint before an
+          // id can enter this finite runtime filter.
           filter: initialBuildingFilter,
           // Geometry culling: no extrusions until the camera is close enough
           // to be looking at a neighbourhood, not a whole city. The clay
@@ -4329,11 +4342,44 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           .addTo(map)
       })
 
+      // ── World landmark location icons ──────────────────────────────────────
+      // Twelve fixed DOM markers show transparent renders baked from the exact
+      // supplied GLBs. They cost no WebGL context and no animation.
+      // They are visible only in the top-down world band, then hand off to the
+      // existing grounded GLB system before the map can pitch into 3D.
+      worldLandmarkMarkersRef.current.forEach(marker => marker.remove())
+      worldLandmarkMarkersRef.current = WORLD_LANDMARKS
+        .filter(mark => WORLD_LANDMARK_ICON_ID_SET.has(mark.id))
+        .map(mark => {
+          const sprite = WORLD_LANDMARK_GLB_SPRITES[mark.id]
+          if (!sprite) throw new Error(`Missing world landmark GLB sprite: ${mark.id}`)
+          const el = document.createElement('div')
+          el.className = styles.worldLandmarkIcon
+          el.dataset.poplurWorldLandmark = mark.id
+          el.dataset.poplurWorldLandmarkArt = 'glb-render'
+          el.setAttribute('role', 'img')
+          el.setAttribute('aria-label', `${mark.id.replace(/-/g, ' ')} landmark`)
+          const img = document.createElement('img')
+          img.src = `${import.meta.env.BASE_URL || './'}${sprite}`
+          img.alt = ''
+          img.draggable = false
+          img.decoding = 'async'
+          img.setAttribute('aria-hidden', 'true')
+          el.append(img)
+          setZoomVisible(el, worldLandmarkIconsVisible(map.getZoom()))
+          return new mapboxgl.Marker({
+            element: el,
+            anchor: 'center',
+            rotationAlignment: 'viewport',
+            pitchAlignment: 'viewport',
+          }).setLngLat(mark.coords).addTo(map)
+        })
+
       // ── Grounded 3D landmarks ──────────────────────────────────────────────
       // At street-level zoom directly around a site, render its GLB as a
       // mercator custom layer. Globe mode has no custom-layer support, which
       // is fine: landmarks deliberately remain absent until this close view.
-      // Twelve leases held at heavy:false, invisible and undemanded until the
+      // Thirteen handles held at heavy:false, invisible and undemanded until the
       // camera is close, cost nothing to hold and reconcile individually on
       // move/zoom — the same pattern that had been proven on Liberty alone.
       landmarks3dRef.current.forEach(h => h.dispose())
@@ -5027,6 +5073,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         }
       }
 
+      // The normal Home rail lives in the parent document. Expose the existing
+      // bounded random tour on this map instance so the validated bridge action
+      // can reach it in production without publishing a global debug hook.
+      mapCamera.__startTour = startTour
+
       if (import.meta.env.DEV) {
         const w = window as unknown as {
           __triggerPops?: () => void
@@ -5174,10 +5225,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         __claimCamera?: () => void
         __poplurCameraClaimed?: boolean
         __suppressNextMapClickUntil?: number
+        __startTour?: (stops?: number) => Promise<void>
+        __cancelAdaptiveCameraSettle?: () => void
       }
       delete mapCameraOnDispose.__claimCamera
       delete mapCameraOnDispose.__poplurCameraClaimed
       delete mapCameraOnDispose.__suppressNextMapClickUntil
+      delete mapCameraOnDispose.__startTour
+      delete mapCameraOnDispose.__cancelAdaptiveCameraSettle
       stopFlyerFrames?.()
       stopAdaptivePresentationPolicy?.()
       stopAdaptivePresentationPolicy = null
@@ -5204,7 +5259,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       popFrameStops.clear()
       landmarks3dRef.current.forEach(h => h.dispose())
       landmarks3dRef.current.clear()
-      ;[flyerMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef].forEach(ref => {
+      ;[flyerMarkersRef, worldLandmarkMarkersRef, treeMarkersRef, boatMarkersRef, carMarkersRef, pinMarkersRef].forEach(ref => {
         ref.current.forEach(mk => mk.remove())
         ref.current = []
       })

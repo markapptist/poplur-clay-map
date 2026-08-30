@@ -21,7 +21,7 @@ import {
   arFiltersNeedingSvg,
   applyAnaglyphToCanvas,
 } from './arFilterCatalog'
-import FaceAROverlay, { drawFaceAREffect } from './FaceAROverlay'
+import FaceAROverlay, { drawFaceAREffect, hasCaptureCostume } from './FaceAROverlay'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
 import PermissionAlert from './PermissionAlert'
 import CommerceSuggestionWindow from './CommerceSuggestionWindow'
@@ -279,6 +279,8 @@ export default function Camera({
     if (!next) cancelVoiceSpeech()
   }, [])
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
+  const facingRef = useRef(facing)
+  facingRef.current = facing
   const page: 'live' | 'roll' = ((step % 2) + 2) % 2 === 0 ? 'live' : 'roll'
   const [cameraPermission, setCameraPermission] = useState<'ask' | 'granted' | 'denied'>(() => {
     if (!NATIVE_SHELL) return 'granted'
@@ -380,6 +382,8 @@ export default function Camera({
 
   const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
+  const arFilterRef = useRef(arFilter)
+  arFilterRef.current = arFilter
   // On iOS the preview is a native layer behind a transparent WebView, so the
   // CSS chain below styles a <video> that is never rendered. The filter has to
   // be handed to the native pipeline instead — see WebHomeCameraLayer's
@@ -586,13 +590,66 @@ export default function Camera({
   // media back to this exact composer. Keeping the editor in the web layer
   // gives RN and iOS the same filters/channel flow as browser capture.
   useEffect(() => {
+    let live = true
+    const bakeNativeEffects = async (media: ComposerMedia): Promise<ComposerMedia> => {
+      const filter = arFilterRef.current
+      const entry = arFilterCatalog().filters.find(candidate => candidate.id === filter)
+      // iOS bakes its Core Image grade before emitting the capture. Android's
+      // bridged shutter returns the raw still, so reproduce the web viewfinder
+      // grade here before placing the ungraded costume on top.
+      const webGradeCss = ANDROID_SHELL && entry?.css && entry.css !== 'none'
+        ? entry.css
+        : null
+      const needsWebGrade = webGradeCss !== null
+      const needsCostume = hasCaptureCostume(filter)
+      if (media.kind !== 'photo' || (!needsWebGrade && !needsCostume)) return media
+      const faces = detectionsRef.current
+      try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const next = new Image()
+          next.onload = () => resolve(next)
+          next.onerror = () => reject(new Error('native capture image failed to load'))
+          next.src = media.src
+        })
+        if (!live || image.naturalWidth < 1 || image.naturalHeight < 1) return media
+        const canvas = document.createElement('canvas')
+        canvas.width = image.naturalWidth
+        canvas.height = image.naturalHeight
+        const context = canvas.getContext('2d')
+        if (!context) return media
+        if (webGradeCss) context.filter = webGradeCss
+        context.drawImage(image, 0, 0)
+        context.filter = 'none'
+        const anaglyphPx = needsWebGrade ? entry?.grade?.anaglyph ?? 0 : 0
+        if (anaglyphPx > 0) applyAnaglyphToCanvas(context, anaglyphPx)
+        if (needsCostume && faces.length > 0) {
+          drawFaceAREffect(
+            context,
+            canvas.width,
+            canvas.height,
+            faces,
+            filter,
+            facingRef.current === 'user',
+          )
+        }
+        return { ...media, src: canvas.toDataURL('image/jpeg', 0.9) }
+      } catch {
+        // A custom-scheme image can remain unreadable in a WebView. Keep the
+        // completed native capture usable rather than dropping the shutter.
+        return media
+      }
+    }
     const onNativeCapture = (event: Event) => {
       const media = (event as CustomEvent<ComposerMedia>).detail
       if (!media || (media.kind !== 'photo' && media.kind !== 'video') || !media.src) return
-      nativeRecordingRef.current = false
-      setRecStart(null)
-      const capture = addCapture(media)
-      setComposing({ kind: capture.kind, src: capture.src, length: capture.length })
+      const finish = (finished: ComposerMedia) => {
+        if (!live) return
+        nativeRecordingRef.current = false
+        setRecStart(null)
+        const capture = addCapture(finished)
+        setComposing({ kind: capture.kind, src: capture.src, length: capture.length })
+      }
+      void bakeNativeEffects(media).then(finish)
       // Put the torch out once the device hands the media back. This is THE
       // path on a native shell: capturePhoto returns early at the
       // `cameraShutter` post (there is no <video> to read), so the web-side
@@ -603,7 +660,10 @@ export default function Camera({
       flashOffRef.current()
     }
     window.addEventListener('poplur-native-capture', onNativeCapture)
-    return () => window.removeEventListener('poplur-native-capture', onNativeCapture)
+    return () => {
+      live = false
+      window.removeEventListener('poplur-native-capture', onNativeCapture)
+    }
   }, [])
 
   // ── the live stream ──────────────────────────────────────────────────────
