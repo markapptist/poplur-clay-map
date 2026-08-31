@@ -13,7 +13,12 @@ export default function MapRandomTourButton({ onPress }: { onPress: () => void }
       type="button"
       aria-label="Tour four random landmarks"
       data-map-random-tour-button=""
-      onClick={onPress}
+      onPointerDown={event => {
+        if (event.isPrimary && event.button === 0) onPress()
+      }}
+      onClick={event => {
+        if (event.detail === 0) onPress()
+      }}
     >
       <img
         src={`${import.meta.env.BASE_URL}${RADIUS_REWARD_DICE_SPRITE}`}

@@ -9,6 +9,16 @@ export interface RealtimeProfilePost {
   mediaType?: 'photo' | 'video'
 }
 
+/** A shareable pop is addressed by its immutable post id, never its channel.
+ * Returning null keeps legacy rows without an id from masquerading as a
+ * different post on the same channel. */
+export function profilePostShareUrl(
+  post: Pick<RealtimeProfilePost, 'id'>,
+): string | null {
+  const postId = post.id?.trim()
+  return postId ? `https://poplur.com/p/${encodeURIComponent(postId)}` : null
+}
+
 const CHANNEL_NUMBER: Record<string, number> = {
   food: 101, beauty: 103, sports: 104, modelling: 105, fashion: 106,
   music: 107, tech: 108, news: 109, french: 110, spanish: 111,
@@ -20,6 +30,25 @@ function channelLabel(value: string | undefined): string {
   if (!trimmed) return 'CH 101'
   if (/^ch\s+\d+$/i.test(trimmed)) return trimmed.toUpperCase()
   return `CH ${CHANNEL_NUMBER[trimmed.toLowerCase()] ?? 101}`
+}
+
+/** Resolve a visible handle back to one unambiguous Firebase account id.
+ * Handles are presentation; direct-message writes must always use the stable
+ * uid carried by the shared realtime post wire. Conflicting legacy rows fail
+ * closed instead of risking delivery to the wrong account. */
+export function profileRecipientUid(
+  rows: readonly Pick<NativeFeedPost, 'ownerId' | 'username'>[],
+  handle: string | null | undefined,
+): string | null {
+  const target = handle?.trim().replace(/^@/, '').toLowerCase()
+  if (!target) return null
+  const matches = new Set(
+    rows
+      .filter(row => row.username.trim().replace(/^@/, '').toLowerCase() === target)
+      .map(row => row.ownerId?.trim())
+      .filter((uid): uid is string => Boolean(uid)),
+  )
+  return matches.size === 1 ? [...matches][0] : null
 }
 
 function profilePost(value: NativeFeedPost): RealtimeProfilePost | null {
@@ -37,19 +66,26 @@ function profilePost(value: NativeFeedPost): RealtimeProfilePost | null {
 }
 
 /** Project the one shared realtime post snapshot into an own/visited profile.
- * Owner identity is stable by uid; visiting profiles use normalized handles.
- * Legacy ownerless bridge rows never leak into an authenticated own grid. */
+ * A visited profile uses its stable uid whenever the opener supplied one.
+ * Normalized handles are a legacy fallback only when no uid is available;
+ * they never override or broaden a uid lookup. */
 export function profilePostsFromRealtime(
   rows: readonly NativeFeedPost[],
   accountUid: string | null,
   viewUser: string | null,
+  viewUserId: string | null = null,
 ): RealtimeProfilePost[] {
-  const targetHandle = viewUser?.trim().replace(/^@/, '').toLowerCase()
+  const targetUid = viewUserId?.trim() || null
+  const targetHandle = targetUid
+    ? null
+    : viewUser?.trim().replace(/^@/, '').toLowerCase()
   const seen = new Set<string>()
   return rows
-    .filter(post => targetHandle
-      ? post.username.replace(/^@/, '').toLowerCase() === targetHandle
-      : Boolean(accountUid && post.ownerId === accountUid))
+    .filter(post => targetUid
+      ? post.ownerId?.trim() === targetUid
+      : targetHandle
+        ? post.username.replace(/^@/, '').toLowerCase() === targetHandle
+        : Boolean(accountUid && post.ownerId === accountUid))
     .flatMap(row => {
       const post = profilePost(row)
       if (!post || seen.has(post.id ?? post.video)) return []

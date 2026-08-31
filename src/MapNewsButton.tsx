@@ -27,6 +27,7 @@ export default function MapNewsButton({
       aria-pressed={active}
       loading={loading}
       data-map-news-button=""
+      activation="pointerdown"
       onActivate={onPress}
       overlay={!loading && count > 0 ? (
         <span className={styles.count} aria-hidden="true">{Math.min(count, 99)}</span>

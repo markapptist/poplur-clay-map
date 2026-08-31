@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback, memo } from 'react'
 import { onFrame } from './frameGovernor'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
+import { isIOSNativeShell } from './nativeBridge'
 
 const VERT = `attribute vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }`
@@ -172,24 +173,50 @@ export function shouldOwnShaderVideoResources({
   return active && intersecting && foreground && decoderGranted
 }
 
-/** Detach the source as well as pausing: WebKit may retain a paused decoder. */
-export function retireShaderVideoMedia(video: HTMLVideoElement): number {
-  const resumeAt = Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0
+/**
+ * Detach the source as well as pausing: WebKit may retain a paused decoder.
+ * Multiple React cleanups can converge on the same visibility transition, so
+ * make retirement idempotent. Repeated `load()` calls while momentum-scrolling
+ * are needless AVFoundation/compositor churn and used to erase the first saved
+ * playback position with the already-retired element's reset time.
+ */
+export function retireShaderVideoMedia(video: HTMLVideoElement): number | null {
   video.pause()
+  if (!video.hasAttribute('src')) return null
+  const resumeAt = Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0
   video.removeAttribute('src')
   video.load()
   return resumeAt
 }
 
-/** Release all driver allocations and make the canvas cheap while parked. */
+/**
+ * iOS WKWebView must not create the decorative WebGL control canvas. Destroying
+ * and recreating that context as cards crossed the News scroll viewport could
+ * drop the entire WK compositor surface, leaving only the native black host.
+ * The video itself stays inline and gets WebKit's stable native controls.
+ */
+export function shouldUseShaderVideoGL(ownsLiveResources: boolean, iosNativeShell: boolean): boolean {
+  return ownsLiveResources && !iosNativeShell
+}
+
+/**
+ * Release draw allocations and make the canvas cheap while parked. Do not call
+ * WEBGL_lose_context here: this function runs during ordinary scroll exits,
+ * and WebKit does not reliably restore a deliberately lost context on the same
+ * canvas. The component's terminal unmount owns that destructive step.
+ */
 export function releaseShaderVideoGL(ctx: ShaderGLContext, canvas: HTMLCanvasElement): void {
   ctx.gl.deleteBuffer(ctx.buf)
   ctx.gl.deleteShader(ctx.vs)
   ctx.gl.deleteShader(ctx.fs)
   ctx.gl.deleteProgram(ctx.prog)
-  ctx.gl.getExtension('WEBGL_lose_context')?.loseContext()
   canvas.width = 1
   canvas.height = 1
+}
+
+/** Permanently release a context only when its canvas is leaving the DOM. */
+export function loseShaderVideoContext(gl: WebGLRenderingContext): void {
+  gl.getExtension('WEBGL_lose_context')?.loseContext()
 }
 
 interface Props {
@@ -220,6 +247,7 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const timeRef = useRef<HTMLSpanElement>(null)
   const glCtx = useRef<ReturnType<typeof initGL>>(null)
+  const terminalGLRef = useRef<WebGLRenderingContext | null>(null)
   const releaseGLRef = useRef<(() => void) | null>(null)
   const decoderLeaseRef = useRef<PoplurResourceLease | null>(null)
   const ownerRef = useRef('')
@@ -239,6 +267,7 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
   const [leaseEpoch, setLeaseEpoch] = useState(0)
   const [ownershipRequested, setOwnershipRequested] = useState(false)
   const [playing, setPlaying] = useState(false)
+  const iosCompositorSafeVideo = isIOSNativeShell()
 
   const eligible = shouldOwnShaderVideoResources({
     active,
@@ -256,12 +285,16 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
     nativeAppActive,
     decoderGranted,
   })
+  const ownsShaderResources = shouldUseShaderVideoGL(ownsLiveResources, iosCompositorSafeVideo)
   const eligibleRef = useRef(eligible)
   eligibleRef.current = eligible
 
   const parkMediaNow = useCallback(() => {
     const video = videoRef.current
-    if (video) resumeAtRef.current = retireShaderVideoMedia(video)
+    if (video) {
+      const resumeAt = retireShaderVideoMedia(video)
+      if (resumeAt != null) resumeAtRef.current = resumeAt
+    }
     setPlaying(false)
   }, [])
 
@@ -445,13 +478,14 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || !ownsLiveResources) {
+    if (!canvas || !ownsShaderResources) {
       releaseGLNow()
       return
     }
     const ctx = initGL(canvas)
     glCtx.current = ctx
     if (!ctx) return
+    terminalGLRef.current = ctx.gl
 
     // Continuous WebGL work belongs to the frame governor, not a self-
     // rescheduling rAF chain: `ambient` lets this overlay drop rate with the
@@ -516,7 +550,7 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
       if (releaseGLRef.current === release) releaseGLRef.current = null
       release()
     }
-  }, [ownsLiveResources, releaseGLNow])
+  }, [ownsShaderResources, releaseGLNow])
 
   useEffect(() => () => {
     window.clearTimeout(hideTimer.current)
@@ -524,6 +558,9 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
     decoderLeaseRef.current?.release()
     decoderLeaseRef.current = null
     parkLiveResources()
+    const terminalGL = terminalGLRef.current
+    terminalGLRef.current = null
+    if (terminalGL) loseShaderVideoContext(terminalGL)
   }, [parkLiveResources])
 
   const revealControls = useCallback(() => {
@@ -576,9 +613,9 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
     <div
       ref={wrapRef}
       className={className}
-      onClick={handleClick}
-      onPointerMove={revealControls}
-      onPointerLeave={() => { showTarget.current = 0 }}
+      onClick={iosCompositorSafeVideo ? undefined : handleClick}
+      onPointerMove={iosCompositorSafeVideo ? undefined : revealControls}
+      onPointerLeave={iosCompositorSafeVideo ? undefined : () => { showTarget.current = 0 }}
       style={{ position: 'relative', cursor: 'pointer', overflow: 'hidden', borderRadius: 12 }}
     >
       <video
@@ -587,18 +624,21 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
         muted
         playsInline
         loop
+        controls={iosCompositorSafeVideo}
         preload="metadata"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         style={{ display: 'block', width: '100%', aspectRatio: '16/9', objectFit: 'cover', background: '#111' }}
       />
-      <canvas
-        ref={canvasRef}
-        style={{
-          position: 'absolute', inset: 0, width: '100%', height: '100%',
-          pointerEvents: 'none',
-        }}
-      />
+      {!iosCompositorSafeVideo && (
+        <canvas
+          ref={canvasRef}
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
       <span
         ref={timeRef}
         style={{

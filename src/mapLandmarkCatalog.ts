@@ -7,6 +7,10 @@ import {
 
 export interface WorldLandmarkPresentation {
   id: MaterializedLandmarkId
+  /** Optional custom-layer root for a tightly coupled nearby piece. The
+   * presentation keeps its own search/tour camera frame, but its GLB is added
+   * to the root landmark's single Three scene and WebGL renderer. */
+  rendererRootId?: MaterializedLandmarkId
   coords: [number, number]
   heightM: number
   frameSpanM: number
@@ -58,6 +62,54 @@ export const WORLD_LANDMARK_GLB_SPRITES: Readonly<
   'taj-mahal': 'sprites/world-landmarks/taj-mahal-glb-s96.png',
 }
 
+/** User-approved coloured Poplur game pieces. The source sheet, crop boxes,
+ * and output hashes are locked in `src/worldLandmarkPieceManifest.json`.
+ * Landmarks not represented in that sheet deliberately retain the exact-GLB
+ * render above until matching approved artwork exists. */
+export const WORLD_LANDMARK_USER_PIECE_IDS = [
+  'big-ben',
+  'cn-tower',
+  'eiffel',
+  'golden-gate',
+  'statue-liberty',
+  'sydney-opera',
+] as const satisfies readonly MaterializedLandmarkId[]
+
+/** World-scale landmark art: coloured pieces where supplied, faithful GLB
+ * renders elsewhere. These are static PNGs so the fully zoomed-out map does
+ * not need another renderer or decode the landmark models. */
+export const WORLD_LANDMARK_OVERVIEW_SPRITES: Readonly<
+  Partial<Record<MaterializedLandmarkId, string>>
+> = {
+  ...WORLD_LANDMARK_GLB_SPRITES,
+  'big-ben': 'sprites/world-landmarks/pieces/big-ben-piece-s96.png',
+  'cn-tower': 'sprites/world-landmarks/pieces/cn-tower-piece-s96.png',
+  eiffel: 'sprites/world-landmarks/pieces/eiffel-piece-s96.png',
+  'golden-gate': 'sprites/world-landmarks/pieces/golden-gate-piece-s96.png',
+  'statue-liberty': 'sprites/world-landmarks/pieces/statue-liberty-piece-s96.png',
+  'sydney-opera': 'sprites/world-landmarks/pieces/sydney-opera-piece-s96.png',
+}
+
+/** The zoom slider uses the same approved visual identity as the overview at
+ * a larger source resolution. The six unsupplied landmarks keep their
+ * existing 320px renders, avoiding invented art. */
+export const WORLD_LANDMARK_THUMB_SPRITES: Readonly<
+  Partial<Record<MaterializedLandmarkId, string>>
+> = {
+  'big-ben': 'sprites/world-landmarks/pieces/big-ben-piece-s320.png',
+  'burj-khalifa': 'sprites/burj-khalifa_y18_p10_s320.png',
+  'christ-redeemer': 'sprites/christ-redeemer_y18_p10_s320.png',
+  'cn-tower': 'sprites/world-landmarks/pieces/cn-tower-piece-s320.png',
+  colosseum: 'sprites/colosseum_y18_p10_s320.png',
+  eiffel: 'sprites/world-landmarks/pieces/eiffel-piece-s320.png',
+  giza: 'sprites/giza_y18_p10_s320.png',
+  'golden-gate': 'sprites/world-landmarks/pieces/golden-gate-piece-s320.png',
+  'space-needle': 'sprites/space-needle_y18_p10_s320.png',
+  'statue-liberty': 'sprites/world-landmarks/pieces/statue-liberty-piece-s320.png',
+  'sydney-opera': 'sprites/world-landmarks/pieces/sydney-opera-piece-s320.png',
+  'taj-mahal': 'sprites/taj-mahal_y18_p10_s320.png',
+}
+
 /**
  * Grounded presentation data for every shipped landmark GLB.
  *
@@ -75,6 +127,7 @@ export const WORLD_LANDMARK_PRESENTATIONS: readonly WorldLandmarkPresentation[] 
   },
   {
     id: 'rogers-centre', coords: [-79.38918212, 43.64161058], heightM: 60,
+    rendererRootId: 'cn-tower',
     frameSpanM: 553, color: 0xe4e6e8, yaw: 15.9, clearDepth: false, nearKm: 0.5,
     frameCenter: [-79.38834927, 43.64200635],
     framePitch: 42, frameZoom: 15.3, revealZoom: 15.0, frameBearing: 0,
@@ -95,12 +148,26 @@ export const WORLD_LANDMARK_PRESENTATIONS: readonly WorldLandmarkPresentation[] 
   { id: 'christ-redeemer', coords: [-43.2105, -22.9519], heightM: 38, frameSpanM: 38, color: 0xe1d8ca, yaw: 0, framePitch: 42, tourZoom: 18.75, tourOffset: [0, 60], frameBearing: 0 },
 ]
 
+/** Resolve the custom-layer owner without changing a landmark's public
+ * identity. Rogers Centre therefore remains independently searchable and
+ * frameable while CN Tower owns the one Toronto landmark renderer. */
+export function landmarkRendererRootId(id: MaterializedLandmarkId): MaterializedLandmarkId {
+  return WORLD_LANDMARK_PRESENTATIONS.find(candidate => candidate.id === id)?.rendererRootId ?? id
+}
+
+/** Return only the companion presentations owned by a renderer root. */
+export function landmarkRendererCompanions(
+  rootId: MaterializedLandmarkId,
+): readonly WorldLandmarkPresentation[] {
+  return WORLD_LANDMARK_PRESENTATIONS.filter(candidate => candidate.rendererRootId === rootId)
+}
+
 /** The twelve landmark-tour destinations shown on the world overview. Rogers
  * Centre remains a full close-range 3D landmark, but it is categorized as an
  * arena and sits only ~220m from CN Tower—far below one screen pixel at world
  * zoom—so a second icon would completely cover the CN landmark icon. */
 export const WORLD_LANDMARK_ICON_IDS = WORLD_LANDMARK_PRESENTATIONS
-  .filter(landmark => Boolean(WORLD_LANDMARK_GLB_SPRITES[landmark.id]))
+  .filter(landmark => Boolean(WORLD_LANDMARK_OVERVIEW_SPRITES[landmark.id]))
   .map(landmark => landmark.id)
 
 const LANDMARK_REFERENCE_HEIGHT_M = 330

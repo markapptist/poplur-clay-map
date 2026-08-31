@@ -48,6 +48,7 @@ import {
   type RadiusPreviewSurfacePaintProperty,
 } from './radiusPreviewMapPresentation'
 import {
+  LEGACY_RADIUS_REWARD_STORAGE_KEY,
   RADIUS_REWARD_OUTCOMES,
   RADIUS_REWARD_STORAGE_KEY,
   parseRadiusRewardClaim,
@@ -498,6 +499,7 @@ function readStoredRewardClaim(nowMs = Date.now()): {
 } {
   try {
     const raw = window.localStorage.getItem(RADIUS_REWARD_STORAGE_KEY)
+      ?? window.localStorage.getItem(LEGACY_RADIUS_REWARD_STORAGE_KEY)
     return { raw, outcome: parseRadiusRewardClaim(raw, nowMs) }
   } catch {
     return { raw: null, outcome: null }
@@ -1219,7 +1221,9 @@ export default function RadiusPreviewExperience() {
       if (!document.hidden) reconcileAndSchedule()
     }
     const onStorage = (event: StorageEvent) => {
-      if (event.key === RADIUS_REWARD_STORAGE_KEY || event.key === null) reconcileAndSchedule()
+      if (event.key === RADIUS_REWARD_STORAGE_KEY
+        || event.key === LEGACY_RADIUS_REWARD_STORAGE_KEY
+        || event.key === null) reconcileAndSchedule()
     }
     reconcileAndSchedule()
     window.addEventListener('focus', reconcileAndSchedule)

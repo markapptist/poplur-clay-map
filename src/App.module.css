@@ -1043,12 +1043,12 @@
   filter: drop-shadow(0 6px 14px rgba(60, 0, 30, 0.45));
 }
 
-/* In the real app the navigator cube belongs to the parent Home shell. Place
-   this existing (single-renderer) horizontal stepper exactly one shared chrome
-   gap above that cube; the standalone map keeps its landmark-centred position. */
+/* In the real app the navigator cube belongs to the parent Home shell. Keep
+   this existing (single-renderer) horizontal stepper close to that cube; the
+   standalone map keeps its landmark-centred position. */
 .popStepperAboveCube {
   --shell-cube-size: clamp(124px, 37vw, 176px);
-  --shell-control-gap: clamp(8px, calc((100vw - 480px) / 2.5), 440px);
+  --shell-control-gap: clamp(4px, calc((100vw - 480px) / 5), 220px);
   top: auto;
   bottom: calc(18px + var(--shell-cube-size) + var(--shell-control-gap));
 }

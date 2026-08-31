@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   claimReplaysBeforeQueuedActions,
   enqueueMapFallbackAction,
   nativeMapHandlesAction,
   type QueuedMapAction,
 } from '../nativeMapFallback'
+
+const dirname = path.dirname(fileURLToPath(import.meta.url))
 
 describe('native map fallback routing', () => {
   it('keeps only complete MapKit actions native', () => {
@@ -66,5 +71,22 @@ describe('native map fallback routing', () => {
       [oldClaim, freshClaim],
       [{ action: 'dropClaim', detail: { center: [-79.3, 43.7] } }],
     )).toEqual([oldClaim])
+  })
+
+  it('does not observe or rescan the document while the native map is hidden', () => {
+    const source = fs.readFileSync(path.resolve(dirname, '../HomeTwin.tsx'), 'utf8')
+    const effectStart = source.indexOf('// A transparent WKWebView is still a full-screen UIKit hit target.')
+    const effectEnd = source.indexOf('const [mapTourTopics', effectStart)
+    const effect = source.slice(effectStart, effectEnd)
+    const hiddenGuard = effect.indexOf('if (!mapVisible)')
+
+    expect(effectStart).toBeGreaterThan(-1)
+    expect(effectEnd).toBeGreaterThan(effectStart)
+    expect(hiddenGuard).toBeGreaterThan(-1)
+    expect(effect.slice(hiddenGuard, effect.indexOf('let settleTimer', hiddenGuard)))
+      .toContain('publishInactive()')
+    expect(hiddenGuard).toBeLessThan(effect.indexOf('new ResizeObserver'))
+    expect(hiddenGuard).toBeLessThan(effect.indexOf('new MutationObserver'))
+    expect(effect).not.toContain("nativeHitSignatureRef.current = ''")
   })
 })

@@ -59,6 +59,7 @@ const ENTRY_LABEL: Record<CreditEntry['kind'], string> = {
   'transfer-in': 'Received',
   'cash-out': 'Cash out',
   'casino-win': 'Casino win',
+  'map-reward': 'Map reward',
   'referral': 'Referral reward',
 }
 

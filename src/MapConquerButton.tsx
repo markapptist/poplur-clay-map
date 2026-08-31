@@ -16,6 +16,7 @@ export default function MapConquerButton({
       aria-controls="poplur-conquer-glance"
       aria-expanded={open}
       data-map-conquer-toggle=""
+      activation="pointerdown"
       onActivate={onPress}
     />
   )

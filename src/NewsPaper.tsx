@@ -13,6 +13,13 @@ import TabControlRail from './TabControlRail'
 import SideControlIconButton from './SideControlIcon'
 import { useControlSide } from './controlPlacement'
 import { openInPoplurBrowser } from './inAppBrowser'
+import PoplurStatusToast from './PoplurStatusToast'
+import {
+  handleNewsEntryKey,
+  newsEngagementDeliveryFailure,
+  type NewsEngagementAction,
+  type NewsEngagementDeliveryFailure,
+} from './newsEngagement'
 import {
   distanceKm,
   onNewsMessages,
@@ -404,6 +411,13 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   // the edition clock below rather than on a timer of its own.
   const [daylight, setDaylight] = useState(localDaylight)
   const [liked, setLiked] = useState<Set<string>>(() => new Set())
+  const [replyingTo, setReplyingTo] = useState<string | null>(null)
+  const [replyDraft, setReplyDraft] = useState('')
+  const [engagementFailure, setEngagementFailure] = useState<
+    (NewsEngagementDeliveryFailure & { noticeId: number }) | null
+  >(null)
+  const engagementFailureTimer = useRef<number | null>(null)
+  const engagementFailureSequence = useRef(0)
   const sentinel = useRef<HTMLDivElement>(null)
   const scrollHost = useRef<HTMLDivElement>(null)
   const pullInner = useRef<HTMLDivElement>(null)
@@ -458,6 +472,54 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
       else next.add(id)
       return next
     })
+  }
+
+  const beginReply = (entry: Entry) => {
+    playPop()
+    setReplyDraft('')
+    setReplyingTo(current => current === entry.id ? null : entry.id)
+  }
+
+  const showEngagementFailure = (action: NewsEngagementAction, entryId: string) => {
+    const failure = newsEngagementDeliveryFailure(action, entryId)
+    engagementFailureSequence.current += 1
+    setEngagementFailure({ ...failure, noticeId: engagementFailureSequence.current })
+    if (engagementFailureTimer.current !== null) {
+      window.clearTimeout(engagementFailureTimer.current)
+    }
+    engagementFailureTimer.current = window.setTimeout(() => {
+      setEngagementFailure(null)
+      engagementFailureTimer.current = null
+    }, 3_200)
+  }
+
+  useEffect(() => () => {
+    if (engagementFailureTimer.current !== null) {
+      window.clearTimeout(engagementFailureTimer.current)
+    }
+  }, [])
+
+  const submitReply = (entry: Entry) => {
+    const body = replyDraft.trim()
+    if (!body) return
+    playPop()
+    // Keep the draft open. No existing News contract can deliver this body to
+    // another device, so clearing it or incrementing the count would imply a
+    // successful post that never happened.
+    showEngagementFailure('reply', entry.id)
+  }
+
+  const repop = (entry: Entry) => {
+    playPop()
+    showEngagementFailure('repop', entry.id)
+  }
+
+  const focusLiveEventOnMap = (entry: Entry) => {
+    if (!entry.liveEvent) return
+    playPop()
+    window.dispatchEvent(new CustomEvent('poplur-news-focus-map', {
+      detail: { id: entry.liveEvent.id, title: entry.liveEvent.title, coords: entry.liveEvent.coords },
+    }))
   }
 
   // ── The hamburger: search, and the way to your profile ───────────────────
@@ -519,6 +581,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   stepBackRef.current = () => {
     if (menuOpen) { setMenuOpen(false); return true }
     if (detail) { setDetail(null); return true }
+    if (replyingTo) { setReplyingTo(null); setReplyDraft(''); return true }
     return false
   }
   useEffect(() => {
@@ -732,12 +795,15 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               onClick={event => {
                 // The engagement row and the plate have their own jobs; only a
                 // tap on the story itself opens it.
-                if ((event.target as HTMLElement).closest('button, a, figure')) return
+                if ((event.target as HTMLElement).closest('button, a, figure, form, input')) return
                 playPop()
                 setDetail(entry)
               }}
               onKeyDown={event => {
-                if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); playPop(); setDetail(entry) }
+                handleNewsEntryKey(event, () => {
+                  playPop()
+                  setDetail(entry)
+                })
               }}
             >
               <img className={styles.avatar} src={entry.avatar} alt="" draggable="false" />
@@ -760,31 +826,56 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 <p className={styles.body}>{entry.body}</p>
                 {entry.media?.length ? <EntryMedia media={entry.media} active={!detail} /> : null}
                 {(entry.kind === 'dispatch' || entry.kind === 'liveNews' || entry.mine) && snapshotFor(entry) && (
-                  <figure className={styles.plateSmall}>
-                    <img
-                      className={styles.plateImg}
-                      src={snapshotFor(entry)!}
-                      alt={entry.mine ? 'Map of the ground this pop claims' : 'Map of the area this dispatch covers'}
-                      loading="lazy"
-                    />
-                    <figcaption className={styles.plateCap}>
-                      {entry.mine
-                        ? `YOUR GROUND · ${entry.radiusKm} KM RADIUS`
-                        : entry.liveEvent
-                          ? `${entry.liveEvent.place.toUpperCase()} · VIEW ON THE NEWS TOUR`
+                  entry.liveEvent ? (
+                    <button
+                      type="button"
+                      className={`${styles.plateSmall} ${styles.plateButton}`}
+                      onClick={() => focusLiveEventOnMap(entry)}
+                      aria-label={`View ${entry.liveEvent.title} on the news tour`}
+                    >
+                      <img
+                        className={styles.plateImg}
+                        src={snapshotFor(entry)!}
+                        alt={`Map of ${entry.liveEvent.place}`}
+                        loading="lazy"
+                      />
+                      <span className={styles.plateCap}>
+                        {entry.liveEvent.place.toUpperCase()} · VIEW ON THE NEWS TOUR
+                      </span>
+                    </button>
+                  ) : (
+                    <figure className={styles.plateSmall}>
+                      <img
+                        className={styles.plateImg}
+                        src={snapshotFor(entry)!}
+                        alt={entry.mine ? 'Map of the ground this pop claims' : 'Map of the area this dispatch covers'}
+                        loading="lazy"
+                      />
+                      <figcaption className={styles.plateCap}>
+                        {entry.mine
+                          ? `YOUR GROUND · ${entry.radiusKm} KM RADIUS`
                           : `THE MAP · ${entry.distanceKm} KM OUT`}
-                    </figcaption>
-                  </figure>
+                      </figcaption>
+                    </figure>
+                  )
                 )}
                 <div className={styles.reach}>
                   <span className={styles.reachPip} aria-hidden="true" />
                   {entry.radiusKm} km radius · {entry.distanceKm} km from you
                 </div>
                 <div className={styles.actions}>
-                  <button className={styles.action} onClick={() => playPop()}>
+                  <button
+                    className={replyingTo === entry.id ? `${styles.action} ${styles.actionOn}` : styles.action}
+                    onClick={() => beginReply(entry)}
+                    aria-expanded={replyingTo === entry.id}
+                  >
                     <span aria-hidden="true">✎</span> {entry.replies}
                   </button>
-                  <button className={styles.action} onClick={() => playPop()}>
+                  <button
+                    className={styles.action}
+                    onClick={() => repop(entry)}
+                    aria-pressed={false}
+                  >
                     <span aria-hidden="true">⇄</span> {entry.repops}
                   </button>
                   <button
@@ -794,6 +885,28 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                     <span aria-hidden="true">♥</span> {entry.likes + (liked.has(entry.id) ? 1 : 0)}
                   </button>
                 </div>
+                {replyingTo === entry.id && (
+                  <form
+                    className={styles.replyComposer}
+                    aria-label={`Reply to ${entry.who}`}
+                    onClick={event => event.stopPropagation()}
+                    onSubmit={event => { event.preventDefault(); submitReply(entry) }}
+                  >
+                    <input
+                      autoFocus
+                      value={replyDraft}
+                      onChange={event => setReplyDraft(event.target.value)}
+                      placeholder={`Reply to ${entry.handle}`}
+                      maxLength={500}
+                      aria-label={`Write a reply to ${entry.who}`}
+                    />
+                    <button type="submit" disabled={!replyDraft.trim()}>POST</button>
+                    <button
+                      type="button"
+                      onClick={() => { playPop(); setReplyingTo(null); setReplyDraft('') }}
+                    >CANCEL</button>
+                  </form>
+                )}
               </div>
             </article>
           ))}
@@ -823,13 +936,23 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
             </div>
 
             <div className={styles.detailScroll}>
-              <button className={styles.detailWho} onClick={() => detail.liveEvent ? undefined : openProfileFor(detail.handle)}>
-                <img src={detail.avatar} alt="" draggable={false} />
-                <span>
-                  <b>{detail.who}{detail.verified && <VerifyBadge tier={detail.verified} />}</b>
-                  <i>{detail.liveEvent ? `${detail.liveEvent.sources.length} source${detail.liveEvent.sources.length === 1 ? '' : 's'} · ${detail.liveEvent.place}` : `${detail.handle} · view profile`}</i>
-                </span>
-              </button>
+              {detail.liveEvent ? (
+                <div className={`${styles.detailWho} ${styles.detailWhoStatic}`}>
+                  <img src={detail.avatar} alt="" draggable={false} />
+                  <span>
+                    <b>{detail.who}{detail.verified && <VerifyBadge tier={detail.verified} />}</b>
+                    <i>{detail.liveEvent.sources.length} source{detail.liveEvent.sources.length === 1 ? '' : 's'} · {detail.liveEvent.place}</i>
+                  </span>
+                </div>
+              ) : (
+                <button className={styles.detailWho} onClick={() => openProfileFor(detail.handle)}>
+                  <img src={detail.avatar} alt="" draggable={false} />
+                  <span>
+                    <b>{detail.who}{detail.verified && <VerifyBadge tier={detail.verified} />}</b>
+                    <i>{detail.handle} · view profile</i>
+                  </span>
+                </button>
+              )}
 
               <p className={styles.detailBody}>{detail.body}</p>
               {detail.media?.length ? <EntryMedia media={detail.media} large active /> : null}
@@ -884,9 +1007,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               {detail.liveEvent && (
                 <button
                   className={styles.detailMap}
-                  onClick={() => window.dispatchEvent(new CustomEvent('poplur-news-focus-map', {
-                    detail: { id: detail.liveEvent?.id, title: detail.liveEvent?.title, coords: detail.liveEvent?.coords },
-                  }))}
+                  onClick={() => focusLiveEventOnMap(detail)}
                 >
                   VIEW THIS STORY ON THE MAP
                 </button>
@@ -901,6 +1022,15 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
           </div>
         )
       })()}
+
+      {engagementFailure && (
+        <PoplurStatusToast
+          key={engagementFailure.noticeId}
+          title={engagementFailure.title}
+          detail={engagementFailure.detail}
+          tone="error"
+        />
+      )}
 
       <ScreenCoach
         id="news"

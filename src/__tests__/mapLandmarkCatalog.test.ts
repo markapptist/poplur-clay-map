@@ -6,7 +6,12 @@ import {
   WORLD_LANDMARK_PRESENTATIONS,
   WORLD_LANDMARK_ICON_IDS,
   WORLD_LANDMARK_GLB_SPRITES,
+  WORLD_LANDMARK_OVERVIEW_SPRITES,
+  WORLD_LANDMARK_THUMB_SPRITES,
+  WORLD_LANDMARK_USER_PIECE_IDS,
   landmarkCameraFrame,
+  landmarkRendererCompanions,
+  landmarkRendererRootId,
   landmarkRevealZoom,
   landmarkTourCameraFrame,
   worldLandmarkIconsVisible,
@@ -36,6 +41,15 @@ const EXPECTED_LANDMARKS = [
   'statue-liberty',
   'sydney-opera',
   'taj-mahal',
+] as const
+
+const EXPECTED_USER_PIECES = [
+  'big-ben',
+  'cn-tower',
+  'eiffel',
+  'golden-gate',
+  'statue-liberty',
+  'sydney-opera',
 ] as const
 
 interface GlbJson {
@@ -136,6 +150,23 @@ describe('grounded world-landmark catalog', () => {
     })
   })
 
+  it('groups SkyDome with CN Tower without losing its authored camera frame', () => {
+    const cn = WORLD_LANDMARK_PRESENTATIONS.find(item => item.id === 'cn-tower')
+    const rogers = WORLD_LANDMARK_PRESENTATIONS.find(item => item.id === 'rogers-centre')
+    expect(WORLD_LANDMARK_PRESENTATIONS.filter(item => !item.rendererRootId)).toHaveLength(12)
+    expect(cn?.rendererRootId).toBeUndefined()
+    expect(rogers?.rendererRootId).toBe('cn-tower')
+    expect(landmarkRendererRootId('rogers-centre')).toBe('cn-tower')
+    expect(landmarkRendererCompanions('cn-tower').map(item => item.id)).toEqual([
+      'rogers-centre',
+    ])
+    expect(landmarkCameraFrame('rogers-centre')).toMatchObject({
+      center: [-79.38834927, 43.64200635],
+      bearing: 0,
+      pitch: 42,
+    })
+  })
+
   it('shows lightweight landmark icons only in the flat world overview', () => {
     expect(WORLD_LANDMARK_ICON_IDS).toHaveLength(12)
     expect(WORLD_LANDMARK_ICON_IDS).not.toContain('rogers-centre')
@@ -149,7 +180,7 @@ describe('grounded world-landmark catalog', () => {
     expect(worldLandmarkIconsVisible(Number.NaN)).toBe(false)
   })
 
-  it('uses transparent images baked from the supplied GLBs for every world icon', () => {
+  it('retains transparent images baked from the supplied GLBs as the complete fallback set', () => {
     const manifest = JSON.parse(readFileSync(
       resolve(process.cwd(), 'src', 'worldLandmarkIconManifest.json'),
       'utf8',
@@ -196,8 +227,73 @@ describe('grounded world-landmark catalog', () => {
       'utf8',
     )
     expect(clayMapSource).toContain("const img = document.createElement('img')")
-    expect(clayMapSource).toContain('WORLD_LANDMARK_GLB_SPRITES[mark.id]')
+    expect(clayMapSource).toContain('WORLD_LANDMARK_OVERVIEW_SPRITES[mark.id]')
+    expect(clayMapSource).toContain("poplurWorldLandmarkArt = 'game-piece'")
     expect(clayMapSource).not.toContain('LANDMARK_WORLD_ICON_SVGS')
+  })
+
+  it('uses the approved coloured landmark pieces in the world overview and zoom slider', () => {
+    const manifest = JSON.parse(readFileSync(
+      resolve(process.cwd(), 'src', 'worldLandmarkPieceManifest.json'),
+      'utf8',
+    )) as {
+      source: string
+      sourceSha256: string
+      sourceSize: [number, number]
+      pieces: Record<string, {
+        crop: [number, number, number, number]
+        outputs: Record<'96' | '320', {
+          path: string
+          sha256: string
+          width: number
+          height: number
+        }>
+      }>
+    }
+
+    expect(WORLD_LANDMARK_USER_PIECE_IDS).toEqual(EXPECTED_USER_PIECES)
+    expect(Object.keys(manifest.pieces).sort()).toEqual([...EXPECTED_USER_PIECES].sort())
+    expect(manifest.sourceSize).toEqual([1183, 1329])
+
+    const source = readFileSync(resolve(process.cwd(), manifest.source))
+    expect(createHash('sha256').update(source).digest('hex')).toBe(manifest.sourceSha256)
+
+    for (const id of EXPECTED_USER_PIECES) {
+      const entry = manifest.pieces[id]
+      expect(entry, id).toBeTruthy()
+      expect(entry.crop, id).toHaveLength(4)
+      for (const size of ['96', '320'] as const) {
+        const output = entry.outputs[size]
+        const png = readFileSync(resolve(process.cwd(), 'public', output.path))
+        expect(createHash('sha256').update(png).digest('hex'), `${id}-${size}`).toBe(output.sha256)
+        expect(png.readUInt32BE(16), `${id}-${size}`).toBe(Number(size))
+        expect(png.readUInt32BE(20), `${id}-${size}`).toBe(Number(size))
+        expect(png[25], `${id}-${size}`).toBe(6)
+        expect(output.width, `${id}-${size}`).toBe(Number(size))
+        expect(output.height, `${id}-${size}`).toBe(Number(size))
+      }
+      expect(WORLD_LANDMARK_OVERVIEW_SPRITES[id]).toBe(entry.outputs['96'].path)
+      expect(WORLD_LANDMARK_THUMB_SPRITES[id]).toBe(entry.outputs['320'].path)
+    }
+
+    expect(Object.keys(WORLD_LANDMARK_OVERVIEW_SPRITES).sort()).toEqual(
+      [...WORLD_LANDMARK_ICON_IDS].sort(),
+    )
+    expect(Object.keys(WORLD_LANDMARK_THUMB_SPRITES).sort()).toEqual(
+      [...WORLD_LANDMARK_ICON_IDS].sort(),
+    )
+
+    for (const id of WORLD_LANDMARK_ICON_IDS) {
+      expect(WORLD_LANDMARK_OVERVIEW_SPRITES[id], id).toBeTruthy()
+      expect(WORLD_LANDMARK_THUMB_SPRITES[id], id).toBeTruthy()
+      if (!EXPECTED_USER_PIECES.includes(id as typeof EXPECTED_USER_PIECES[number])) {
+        expect(WORLD_LANDMARK_OVERVIEW_SPRITES[id], id).toBe(WORLD_LANDMARK_GLB_SPRITES[id])
+      }
+    }
+
+    const clayMapSource = readFileSync(resolve(process.cwd(), 'src', 'ClayMap.tsx'), 'utf8')
+    expect(clayMapSource).toContain('WORLD_LANDMARK_THUMB_SPRITES[landmarkThumbId]')
+    expect(clayMapSource).not.toContain('const LANDMARK_THUMB_SPRITES')
   })
 
   it.each(EXPECTED_LANDMARKS)('%s retains compact authored PBR textures', id => {

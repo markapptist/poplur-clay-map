@@ -5,6 +5,7 @@ import { playPop } from './pop'
 import { feedUrl } from './assetPacks'
 import { listCaptures, onCameraStore, isSelected, toggleSelected, selectedCount, setLibraryNewest } from './cameraStore'
 import PermissionAlert from './PermissionAlert'
+import { cameraRollDisplayItems } from './cameraRollPolicy'
 
 // Camera Roll — the camera's upper page (channel-up pushes the whole camera
 // up here; channel-down returns to the live viewfinder). A clay-dark grid of
@@ -38,6 +39,12 @@ interface NativeRollAssetResult {
   pixelWidth?: number
   pixelHeight?: number
   error?: string
+}
+
+interface NativeRollSelection {
+  kind?: 'photo' | 'video'
+  src?: string
+  length?: string
 }
 
 const MAX_ROLL_ASSET_EDGE = 3840
@@ -117,6 +124,12 @@ export default function CameraRoll({
   const [resolvingAssetId, setResolvingAssetId] = useState<string | null>(null)
   const activeRef = useRef(active)
   activeRef.current = active
+  const onPickRef = useRef(onPick)
+  onPickRef.current = onPick
+  const photoOnlyRef = useRef(photoOnly)
+  photoOnlyRef.current = photoOnly
+  const videoOnlyRef = useRef(videoOnly)
+  videoOnlyRef.current = videoOnly
   const pendingAssetRequests = useRef(new Map<string, {
     assetId: string
     fallback: () => void
@@ -164,7 +177,17 @@ export default function CameraRoll({
         pending.fallback()
       }
     }
+    const receiveNativeSelection = (event: Event) => {
+      if (!activeRef.current || !onPickRef.current) return
+      const detail = (event as CustomEvent<NativeRollSelection>).detail
+      if (!detail || typeof detail.src !== 'string') return
+      const kind = detail.kind === 'video' ? 'video' : 'photo'
+      if ((photoOnlyRef.current && kind !== 'photo') || (videoOnlyRef.current && kind !== 'video')) return
+      onPickRef.current({ kind, src: detail.src, length: detail.length })
+    }
+    window.addEventListener('poplur-native-camera-roll-selection', receiveNativeSelection)
     return () => {
+      window.removeEventListener('poplur-native-camera-roll-selection', receiveNativeSelection)
       delete w.poplurCameraRoll
       delete w.poplurCameraRollAsset
       for (const request of pendingAssetRequests.current.values()) {
@@ -184,10 +207,11 @@ export default function CameraRoll({
     if (forceAlert) return false
     try { return window.localStorage.getItem('poplur.rollPermission') === 'granted' } catch { return false }
   })
+  const requestedMediaKind = videoOnly ? 'video' : photoOnly ? 'photo' : 'all'
   const allow = () => {
     try { window.localStorage.setItem('poplur.rollPermission', 'granted') } catch { /* embedded */ }
     setGranted(true)
-    if (isNativeShell()) postNativeEvent({ type: nativeRequestType })
+    if (isNativeShell()) postNativeEvent({ type: nativeRequestType, mediaKind: requestedMediaKind })
   }
   const deny = () => { onDeny?.() }
   // Re-request on every open once granted, so the roll stays fresh. "Open" now
@@ -195,9 +219,11 @@ export default function CameraRoll({
   // off-page, and asking the device for its photo library while nobody is
   // looking at the roll is exactly the work this screen should not be doing.
   useEffect(() => {
-    if (!lite && active && granted && isNativeShell()) postNativeEvent({ type: nativeRequestType })
+    if (!lite && active && granted && isNativeShell()) {
+      postNativeEvent({ type: nativeRequestType, mediaKind: requestedMediaKind })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [granted, active, lite, nativeRequestType])
+  }, [granted, active, lite, nativeRequestType, requestedMediaKind])
 
   useEffect(() => {
     if (active) return
@@ -214,7 +240,8 @@ export default function CameraRoll({
   const captures = useSyncExternalStore(onCameraStore, listCaptures, listCaptures)
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
   const shot: RollItem[] = captures.map(c => ({ kind: c.kind, src: c.src, length: c.length, id: c.id }))
-  const items = [...shot, ...(nativeRoll ?? ROLL)]
+  const rollItems = cameraRollDisplayItems(nativeRoll, ROLL, isNativeShell())
+  const items = [...shot, ...rollItems]
     .filter(item => (!photoOnly || item.kind === 'photo') && (!videoOnly || item.kind === 'video'))
 
   const pickItem = (item: RollItem) => {

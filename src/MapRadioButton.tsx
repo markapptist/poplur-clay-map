@@ -13,6 +13,7 @@ export default function MapRadioButton({
       aria-label={active ? 'Turn off Poplur Radio on the map' : 'Turn on Poplur Radio on the map'}
       aria-pressed={active}
       data-map-radio-toggle=""
+      activation="pointerdown"
       onActivate={onPress}
     />
   )

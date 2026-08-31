@@ -175,6 +175,7 @@ function shouldUnlockFeedAudioOnMount(explicitNavigation: boolean): boolean {
 
 export interface ChannelPost {
   id: string
+  ownerId?: string
   user: string
   video: string
   poster?: string
@@ -219,6 +220,7 @@ export function feedPostsForChannel(
     .filter(post => post.channelId === channelId)
     .map(post => ({
       id: post.id,
+      ownerId: post.ownerId,
       user: post.username,
       video: post.mediaURL,
       poster: post.mediaType === 'photo' ? post.mediaURL : post.posterURL,
@@ -321,7 +323,7 @@ export default function FeedTwin({
   /** hold-menu hook: LIKE / COMMENT / CC act on the post that is playing */
   bindActions?: (fn: ((action: FeedAction) => void) | null) => void
   /** PROFILE opens the poster's profile, not yours */
-  onOpenProfile?: (user: string) => void
+  onOpenProfile?: (user: string, userId?: string) => void
   /** a full screen is replacing the feed (News, TV Guide): go quiet */
   suppressed?: boolean
   /** The cube is the universal back. The comment box is a layer over the feed
@@ -1635,7 +1637,7 @@ export default function FeedTwin({
         if (!current) return
         playPop()
         recordProfileVisitAfterView(radiusPostId(ch.id, current))
-        onOpenProfile?.(current.user)
+        onOpenProfile?.(current.user, current.ownerId)
       }
     })
     return () => bindActions(null)

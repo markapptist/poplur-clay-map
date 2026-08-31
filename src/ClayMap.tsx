@@ -40,8 +40,11 @@ import {
 import {
   WORLD_LANDMARK_PRESENTATIONS,
   WORLD_LANDMARK_ICON_IDS,
-  WORLD_LANDMARK_GLB_SPRITES,
+  WORLD_LANDMARK_OVERVIEW_SPRITES,
+  WORLD_LANDMARK_THUMB_SPRITES,
   landmarkCameraFrame as resolveLandmarkCameraFrame,
+  landmarkRendererCompanions,
+  landmarkRendererRootId,
   landmarkNearZoom,
   worldLandmarkIconsVisible,
   type WorldLandmarkPresentation,
@@ -74,6 +77,7 @@ import {
 import {
   LANDMARK_MATERIAL_IDENTITIES,
   type LandmarkMaterialIdentity,
+  type MaterializedLandmarkId,
 } from './landmarkMaterials'
 import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
@@ -923,23 +927,6 @@ const TORONTO_LANDMARK_RENDERER_IDS = new Set(['cn-tower', 'rogers-centre'])
 const TORONTO_LANDMARK_RENDERERS = WORLD_LANDMARKS.filter(landmark =>
   TORONTO_LANDMARK_RENDERER_IDS.has(landmark.id))
 
-// Existing zoom-slider thumbnails are a separate, already-shipped control
-// surface. World markers below use the fresh exact-GLB images instead.
-const LANDMARK_THUMB_SPRITES: Record<string, string> = {
-  'big-ben': 'sprites/big-ben_y18_p10_s320.png',
-  'burj-khalifa': 'sprites/burj-khalifa_y18_p10_s320.png',
-  'christ-redeemer': 'sprites/christ-redeemer_y18_p10_s320.png',
-  'cn-tower': 'sprites/cn-tower_y18_p10_s320.png',
-  colosseum: 'sprites/colosseum_y18_p10_s320.png',
-  eiffel: 'sprites/eiffel_y18_p10_s320.png',
-  giza: 'sprites/giza_y18_p10_s320.png',
-  'golden-gate': 'sprites/golden-gate_y12_p10_s320.png',
-  'space-needle': 'sprites/space-needle_y18_p10_s320.png',
-  'statue-liberty': 'sprites/statue-liberty_y18_p10_s320.png',
-  'sydney-opera': 'sprites/sydney-opera_y18_p10_s320.png',
-  'taj-mahal': 'sprites/taj-mahal_y18_p10_s320.png',
-}
-
 // Close landmarks are grounded objects, never screen-facing sprites. The
 // dedicated world overview now has tiny location icons at the real coordinates
 // (not model-sized billboards); those disappear before regional/city zoom and
@@ -1455,8 +1442,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   }, [radiusPreviewLaunch])
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
-  const [landmarkThumbId, setLandmarkThumbId] = useState<string | null>(null)
-  const landmarkThumbSprite = landmarkThumbId ? LANDMARK_THUMB_SPRITES[landmarkThumbId] : null
+  const [landmarkThumbId, setLandmarkThumbId] = useState<MaterializedLandmarkId | null>(null)
+  const landmarkThumbSprite = landmarkThumbId
+    ? WORLD_LANDMARK_THUMB_SPRITES[landmarkThumbId]
+    : null
   const activeZoomThumb = landmarkThumbSprite
     ? { id: `landmark-${landmarkThumbId}`, sprite: landmarkThumbSprite }
     : zoomStage
@@ -1876,7 +1865,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     let stopAdaptivePresentationPolicy: (() => void) | null = null
     let finishRendererParkOnIdle: (() => void) | null = null
     let stopClaimRoadPaint: (() => void) | null = null
-    let pendingLandmarkThumbId: string | null = null
+    let pendingLandmarkThumbId: MaterializedLandmarkId | null = null
+    // CN Tower owns the one Toronto custom layer, but the camera/search target
+    // can still be Rogers Centre. Keep that presentation identity separate
+    // from renderer ownership so each authored frame remains unchanged.
+    let activeTorontoPresentationId: MaterializedLandmarkId = 'cn-tower'
     let disposed = false
 
     const fallBackAfterWebGLFailure = (error: unknown) => {
@@ -2448,23 +2441,18 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     }
 
     const updateGroundedLandmarks = () => {
-      // CN Tower and Rogers Centre share each other's near-camera radius. If
-      // both demand equal-priority leases, the newer Rogers registration wins
-      // the emergency tier's sole light-renderer slot even during a CN tour.
-      // The authored CN and Rogers camera centres each sit closest to their
-      // intended subject, so mutually exclude only this overlapping pair.
-      // Every other city remains independent, and Toronto still consumes no
-      // more than one landmark renderer at a time on any performance tier.
+      // CN Tower and Rogers Centre are two presentations in one custom layer.
+      // The nearest authored subject still selects the camera/thumb identity,
+      // while the shared handle consumes exactly one renderer and one lease.
       const center = map.getCenter()
       const preferredTorontoId = preferredLandmarkRendererId(
         [center.lng, center.lat],
         TORONTO_LANDMARK_RENDERERS,
       )
-      landmarks3dRef.current.forEach((handle, id) => {
-        handle.update(
-          !TORONTO_LANDMARK_RENDERER_IDS.has(id) || id === preferredTorontoId,
-        )
-      })
+      if (preferredTorontoId && TORONTO_LANDMARK_RENDERER_IDS.has(preferredTorontoId)) {
+        activeTorontoPresentationId = preferredTorontoId as MaterializedLandmarkId
+      }
+      landmarks3dRef.current.forEach(handle => handle.update())
     }
 
     const updateLandmarks = () => {
@@ -2518,10 +2506,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const settleLandmarkThumb = () => {
       const pending = pendingLandmarkThumbId
       if (!pending || map.isMoving()) return
-      const handle = landmarks3dRef.current.get(pending)
+      const handle = landmarks3dRef.current.get(landmarkRendererRootId(pending))
       pendingLandmarkThumbId = null
       setLandmarkThumbId(
-        handle?.isActive() && handle.isRendered() && LANDMARK_THUMB_SPRITES[pending]
+        handle?.isActive() && handle.isRendered() && WORLD_LANDMARK_THUMB_SPRITES[pending]
           ? pending
           : null,
       )
@@ -3126,7 +3114,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // but use the ordinary browse eligibility for nearby generic detail.
         // The 10% sample and 5/5/3/1 ceilings keep the hero dominant without
         // flattening every surrounding building at a close destination.
-        const frame = activeLandmark ? resolveLandmarkCameraFrame(activeLandmark[0]) : null
+        const activePresentationId = activeLandmark?.[0] === 'cn-tower'
+          ? activeTorontoPresentationId
+          : activeLandmark?.[0]
+        const frame = activePresentationId
+          ? resolveLandmarkCameraFrame(activePresentationId)
+          : null
         const buildingPlan = mapBuildingDetailPlan({
           intent: 'browse',
           zoom: map.getZoom(),
@@ -4343,20 +4336,21 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       })
 
       // ── World landmark location icons ──────────────────────────────────────
-      // Twelve fixed DOM markers show transparent renders baked from the exact
-      // supplied GLBs. They cost no WebGL context and no animation.
+      // Twelve fixed DOM markers show coloured Poplur landmark pieces when
+      // approved art exists, with faithful GLB renders as the fallback. They
+      // cost no extra WebGL context and no animation.
       // They are visible only in the top-down world band, then hand off to the
       // existing grounded GLB system before the map can pitch into 3D.
       worldLandmarkMarkersRef.current.forEach(marker => marker.remove())
       worldLandmarkMarkersRef.current = WORLD_LANDMARKS
         .filter(mark => WORLD_LANDMARK_ICON_ID_SET.has(mark.id))
         .map(mark => {
-          const sprite = WORLD_LANDMARK_GLB_SPRITES[mark.id]
-          if (!sprite) throw new Error(`Missing world landmark GLB sprite: ${mark.id}`)
+          const sprite = WORLD_LANDMARK_OVERVIEW_SPRITES[mark.id]
+          if (!sprite) throw new Error(`Missing world landmark overview sprite: ${mark.id}`)
           const el = document.createElement('div')
           el.className = styles.worldLandmarkIcon
           el.dataset.poplurWorldLandmark = mark.id
-          el.dataset.poplurWorldLandmarkArt = 'glb-render'
+          el.dataset.poplurWorldLandmarkArt = 'game-piece'
           el.setAttribute('role', 'img')
           el.setAttribute('aria-label', `${mark.id.replace(/-/g, ' ')} landmark`)
           const img = document.createElement('img')
@@ -4369,7 +4363,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           setZoomVisible(el, worldLandmarkIconsVisible(map.getZoom()))
           return new mapboxgl.Marker({
             element: el,
-            anchor: 'center',
+            anchor: 'bottom',
             rotationAlignment: 'viewport',
             pitchAlignment: 'viewport',
           }).setLngLat(mark.coords).addTo(map)
@@ -4379,12 +4373,28 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // At street-level zoom directly around a site, render its GLB as a
       // mercator custom layer. Globe mode has no custom-layer support, which
       // is fine: landmarks deliberately remain absent until this close view.
-      // Thirteen handles held at heavy:false, invisible and undemanded until the
-      // camera is close, cost nothing to hold and reconcile individually on
-      // move/zoom — the same pattern that had been proven on Liberty alone.
+      // Twelve handles cover all thirteen close presentations: CN Tower owns
+      // Rogers Centre as a companion in the same Three scene/custom layer.
+      // Invisible handles remain undemanded until their close camera range.
       landmarks3dRef.current.forEach(h => h.dispose())
       landmarks3dRef.current.clear()
       for (const mark of WORLD_LANDMARKS) {
+        // Companion presentations keep their own search/tour frames but never
+        // allocate a second Mapbox custom layer or WebGL renderer.
+        if (mark.rendererRootId && mark.rendererRootId !== mark.id) continue
+        const companions = landmarkRendererCompanions(mark.id).map(companion => {
+          const materialized = WORLD_LANDMARKS.find(candidate => candidate.id === companion.id)
+          if (!materialized) throw new Error(`Missing landmark companion: ${companion.id}`)
+          return {
+            id: materialized.id,
+            coords: materialized.coords,
+            heightM: materialized.heightM,
+            color: materialized.color,
+            artDirection: materialized.artDirection,
+            materialIdentity: materialized.materialIdentity,
+            yaw: materialized.yaw,
+          }
+        })
         const h = installNearLandmark3D(map, {
           id: mark.id,
           coords: mark.coords,
@@ -4399,6 +4409,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // extrusion. They are bounded one-at-a-time hero objects, so they
           // preserve place identity without turning the whole district 3D.
           nearZoom: landmarkNearZoom(mark.id),
+          companions,
         }, {
           onModelRendered: () => {
             // A resumed/direct-close visit can finish decoding after the
@@ -4407,16 +4418,18 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             // instead of leaving the newly visible mesh in a stale top-down
             // frame until the user touches the map again.
             enforceHybridPitch()
-            if (!LANDMARK_THUMB_SPRITES[mark.id]) return
-            pendingLandmarkThumbId = mark.id
+            const presentationId = mark.id === 'cn-tower'
+              ? activeTorontoPresentationId
+              : mark.id
+            if (!WORLD_LANDMARK_THUMB_SPRITES[presentationId]) return
+            pendingLandmarkThumbId = presentationId
             settleLandmarkThumb()
           },
         })
         landmarks3dRef.current.set(mark.id, h)
       }
-      // Evaluate once after every handle exists (the app may already be near
-      // one on resume). Running the shared arbitration after the loop prevents
-      // the later Rogers registration from becoming the accidental winner.
+      // Evaluate once after every shared handle exists (the app may already be
+      // near one on resume) and resolve the correct Toronto presentation.
       updateGroundedLandmarks()
 
       // ── City props: clay trees, harbour boats, cars on the roads ───────────

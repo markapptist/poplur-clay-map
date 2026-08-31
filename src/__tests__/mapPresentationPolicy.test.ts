@@ -285,7 +285,8 @@ describe('subtle Map presentation policy', () => {
     expect(activeLandmarkBranch).toContain("intent: 'browse'")
     expect(activeLandmarkBranch).toContain('setThreeDLayerVisibility(buildingPlan.threeDimensional)')
     expect(activeLandmarkBranch).not.toContain('setThreeDLayerVisibility(false)')
-    expect(activeLandmarkBranch).toContain('resolveLandmarkCameraFrame(activeLandmark[0])')
+    expect(activeLandmarkBranch).toContain("activeLandmark?.[0] === 'cn-tower'")
+    expect(activeLandmarkBranch).toContain('resolveLandmarkCameraFrame(activePresentationId)')
     expect(activeLandmarkBranch).toContain('settleAdaptiveCamera(frame.pitch, frame.bearing ?? 0)')
   })
 

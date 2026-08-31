@@ -12,6 +12,42 @@ const CLAY = 0xef62a6
 const GOLD = 0xffc93d
 const DANGER = 0xe33f58
 
+/**
+ * Browser activation policy shared by the WebGL/flat and prism button shells.
+ *
+ * Normal clay controls act on primary pointer-down so a parent gesture surface
+ * cannot swallow the delayed click. The click generated after that pointer is
+ * deliberately ignored. Keyboard and assistive button activation arrives as a
+ * click with detail 0 and must still act exactly once. A few controls opt into
+ * click activation because their press unmounts the surface; those defer the
+ * pointer action to its detail > 0 click while using the same keyboard path.
+ */
+export function clayCornerActivationHandlers({
+  activateOnClick,
+  onPress,
+  onPulse,
+}: {
+  activateOnClick: boolean
+  onPress: () => void
+  onPulse?: () => void
+}) {
+  return {
+    onPointerDown(event: { isPrimary: boolean; button: number }) {
+      if (!event.isPrimary || event.button !== 0) return
+      onPulse?.()
+      if (!activateOnClick) onPress()
+    },
+    onClick(event: { detail: number }) {
+      if (event.detail === 0) {
+        onPulse?.()
+        onPress()
+      } else if (activateOnClick) {
+        onPress()
+      }
+    },
+  }
+}
+
 // Lightning bolt profile, centred.
 function boltShape(): THREE.Shape {
   const s = new THREE.Shape()
@@ -126,6 +162,14 @@ export default function ClayCornerButton({
   // which on a close button means an invisible way out of a full-screen
   // screen. Fall back to a flat glyph so the control is always SEEN.
   const [flat, setFlat] = useState(false)
+  const activationHandlers = clayCornerActivationHandlers({
+    activateOnClick,
+    onPress,
+    onPulse: () => {
+      pulse.current = 1
+      wakeRef.current?.()
+    },
+  })
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -443,7 +487,8 @@ export default function ClayCornerButton({
       <button
         type="button"
         aria-label={label}
-        onPointerDown={() => onPress()}
+        onPointerDown={activationHandlers.onPointerDown}
+        onClick={activationHandlers.onClick}
         style={{ position: 'relative', width: size, height: size, border: 0, padding: 0, background: 'transparent', cursor: 'pointer' }}
       >
         <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true"
@@ -511,20 +556,8 @@ export default function ClayCornerButton({
         type="button"
         aria-label={label}
         aria-pressed={kind === 'flash' || kind === 'heart' || kind === 'comments' || kind === 'live' || kind === 'play' || kind === 'search' ? active : undefined}
-        onPointerDown={() => {
-          pulse.current = 1
-          if (!activateOnClick) onPress()
-        }}
-        onKeyDown={event => {
-          // Click-only activation left the rail inaccessible to keyboard users
-          // (and to embedded assistive controls). Handle the standard button
-          // keys directly when an action is intentionally deferred to click.
-          if (!activateOnClick || (event.key !== 'Enter' && event.key !== ' ')) return
-          event.preventDefault()
-          pulse.current = 1
-          onPress()
-        }}
-        onClick={() => { if (activateOnClick) onPress() }}
+        onPointerDown={activationHandlers.onPointerDown}
+        onClick={activationHandlers.onClick}
         style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer', padding: 0 }}
       />
     </div>

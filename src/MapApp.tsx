@@ -3015,6 +3015,7 @@ export default function MapApp() {
           window.parent?.postMessage({
             type: 'poplur-map-open-profile',
             user: pin.user,
+            userId: pin.ownerId,
             popId: pin.id,
             name: pin.name,
           }, '*')

@@ -77,8 +77,14 @@ import {
   onNativeFeedPosts,
   requestNativeFeedPosts,
 } from './nativeFeedPosts'
-import { profilePostsFromRealtime } from './profileRealtimePosts'
+import {
+  profilePostShareUrl,
+  profilePostsFromRealtime,
+  profileRecipientUid,
+} from './profileRealtimePosts'
 import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
+import { createClientMessageId } from './dmContract'
+import { getLibraryNewest, onCameraStore } from './cameraStore'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -540,6 +546,7 @@ const PROFILE_SELFIE_FACE: Detection = {
 export default function ProfileTwin({
   bindArrows,
   viewUser = null,
+  viewUserId = null,
   onBackToOwn,
   bindGoBack,
   highlightPops = null,
@@ -548,6 +555,8 @@ export default function ProfileTwin({
   bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
   /** a handle when you opened someone else's profile from the feed */
   viewUser?: string | null
+  /** Stable Firebase uid when the opening post/pin already supplied it. */
+  viewUserId?: string | null
   onBackToOwn?: () => void
   /** Registers "close the top open layer" for the cube — the profile's own
    *  overlays answer the universal back control instead of carrying their
@@ -821,7 +830,12 @@ export default function ProfileTwin({
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
   const [captureSource, setCaptureSource] = useState<CaptureSource>('camera')
-  const [cameraRollThumb, setCameraRollThumb] = useState<{ kind: 'photo' | 'video'; src: string } | null>(null)
+  // Reuse the camera roll's shared newest-item store. The old private
+  // single-thumbnail request had no shell handler, leaving a blank
+  // spacer where the shortcut should be. Even before a thumbnail is available
+  // the button below renders the supplied camera-roll icon and opens the
+  // normal, permission-aware roll.
+  const cameraRollThumb = useSyncExternalStore(onCameraStore, getLibraryNewest, getLibraryNewest)
   const [savingPhoto, setSavingPhoto] = useState(false)
   const [selfieRecording, setSelfieRecording] = useState(false)
   const [selfieSecondsLeft, setSelfieSecondsLeft] = useState(SELFIE_DURATION_SECONDS)
@@ -850,7 +864,20 @@ export default function ProfileTwin({
   const [mailingUser, setMailingUser] = useState(false)
   const [mailText, setMailText] = useState('')
   const [shareNote, setShareNote] = useState<string | null>(null)
+  const [pendingProfileDM, setPendingProfileDM] = useState<{
+    clientMessageId: string
+    recipientName: string
+    source: 'profile' | 'share'
+  } | null>(null)
+  const shareNoteTimerRef = useRef(0)
+  const flashNote = useCallback((text: string) => {
+    window.clearTimeout(shareNoteTimerRef.current)
+    setShareNote(text)
+    shareNoteTimerRef.current = window.setTimeout(() => setShareNote(null), 2_100)
+  }, [])
   const viewerCovered = shareOpen || viewerCommentOpen || deletePromptPost != null || deletePending != null
+
+  useEffect(() => () => window.clearTimeout(shareNoteTimerRef.current), [])
 
   useEffect(() => onGateChange(() => setViewerMuted(isUserMuted())), [])
 
@@ -1068,30 +1095,16 @@ export default function ProfileTwin({
     }
   }, [probeDetachedProfilePhotos])
 
-  useEffect(() => {
-    if (!capturing || !isNativeShell()) return
-    const receiveCameraRollThumb = (event: Event) => {
-      const detail = (event as CustomEvent<{ kind: 'photo' | 'video'; src: string }>).detail
-      if (detail?.src && detail?.kind) {
-        setCameraRollThumb(detail)
-      }
-    }
-    window.addEventListener('poplur-camera-roll-thumb', receiveCameraRollThumb)
-    postNativeEvent({ type: 'requestMostRecentCameraRollItem' })
-    return () => {
-      window.removeEventListener('poplur-camera-roll-thumb', receiveCameraRollThumb)
-    }
-  }, [capturing])
-
   // Feed, Map and Profile now read one shared, lifecycle-owned Firestore posts
   // snapshot. A complete add/change/delete snapshot replaces the grid; a wipe
-  // therefore removes every tile without reload. Visiting profiles are filtered
-  // by the real handle, while the owner's grid uses stable account identity.
+  // therefore removes every tile without reload. Visiting profiles prefer the
+  // stable account uid supplied by the opening post/pin; their handle is only
+  // a legacy fallback when no uid exists.
   useEffect(() => {
-    setUploadedPosts(profilePostsFromRealtime(realtimePosts, accountUid, viewUser))
+    setUploadedPosts(profilePostsFromRealtime(realtimePosts, accountUid, viewUser, viewUserId))
     setUploadedPostsLoaded(true)
     setViewerIdx(null)
-  }, [accountUid, realtimePosts, viewUser])
+  }, [accountUid, realtimePosts, viewUser, viewUserId])
 
   const markTileReady = useCallback((key: string) => {
     setReadyTiles(current => (current.has(key) ? current : new Set(current).add(key)))
@@ -1914,16 +1927,17 @@ export default function ProfileTwin({
           <ARFilters active={selfieArFilter} onPick={setSelfieArFilter} onClose={() => setSelfieArOpen(false)} />
         )}
         <div className={styles.captureBar}>
-          {captureSource === 'camera' && cameraRollThumb && (
+          {captureSource === 'camera' && (
             <button
               className={styles.cameraRollThumb}
               onClick={() => { playPop(); setCaptureSource('library') }}
               aria-label="Switch to camera roll"
             >
-              <img src={cameraRollThumb.src} alt="Most recent" />
+              {cameraRollThumb
+                ? <img src={cameraRollThumb.src} alt="Most recent" />
+                : <SideControlIconImage icon="camera.camera_roll" displaySize={72} />}
             </button>
           )}
-          {captureSource === 'camera' && !cameraRollThumb && <div className={styles.captureSpacer} aria-hidden="true" />}
           {captureSource === 'camera' ? (
             // The cube (a camcorder now) is the record button — tap it to shoot
             // the ten-second selfie. This spot only reports the state.
@@ -1933,56 +1947,152 @@ export default function ProfileTwin({
               </span>
             </div>
           ) : <div className={styles.captureLibraryHint}>{savingPhoto ? 'SAVING SELFIE VIDEO' : 'TAP A VIDEO'}</div>}
-          {captureSource === 'camera' && cameraRollThumb && <div className={styles.captureSpacer} aria-hidden="true" />}
-          {captureSource === 'camera' && !cameraRollThumb && <div className={styles.captureSpacer} aria-hidden="true" />}
+          {captureSource === 'camera' && <div className={styles.captureSpacer} aria-hidden="true" />}
         </div>
       </div>
     )
     : null
 
   // ── Sharing the open post ────────────────────────────────────────────────
-  const postLink = (post: Post) => `https://poplur.app/p/${post.ch.replace(/\s+/g, '').toLowerCase()}`
+  const postLink = (post: Post) => profilePostShareUrl(post)
 
-  const flashNote = (text: string) => {
-    setShareNote(text)
-    window.setTimeout(() => setShareNote(null), 2100)
-  }
-
-  const dmFriend = (friend: typeof FRIENDS[number]) => {
-    playPop()
-    if (isNativeShell() && viewerPost) {
-      postNativeEvent({ type: 'sharePost', to: friend.handle, link: postLink(viewerPost) })
+  useEffect(() => {
+    if (!pendingProfileDM) return
+    const pending = pendingProfileDM
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail
+      if (detail?.clientMessageId !== pending.clientMessageId) return
+      if (detail.type === 'poplurDMSent') {
+        setPendingProfileDM(null)
+        if (pending.source === 'profile') {
+          setMailText('')
+          setMailingUser(false)
+        } else {
+          setShareOpen(false)
+        }
+        flashNote(`Sent to ${pending.recipientName}`)
+        return
+      }
+      if (detail.type === 'poplurDMSendFailed') {
+        setPendingProfileDM(null)
+        flashNote(`Could not send to ${pending.recipientName}`)
+      }
     }
-    setShareOpen(false)
-    flashNote(`Sent to ${friend.name}`)
+    window.addEventListener('poplur-dm-result', receive)
+    const timeout = window.setTimeout(() => {
+      setPendingProfileDM(current => current?.clientMessageId === pending.clientMessageId ? null : current)
+      flashNote(`Could not confirm delivery to ${pending.recipientName}`)
+    }, 12_000)
+    return () => {
+      window.removeEventListener('poplur-dm-result', receive)
+      window.clearTimeout(timeout)
+    }
+  }, [flashNote, pendingProfileDM])
+
+  const requestDirectMessage = (
+    recipientId: string | null,
+    text: string,
+    recipientName: string,
+    source: 'profile' | 'share',
+  ) => {
+    if (pendingProfileDM) return false
+    if (!recipientId) {
+      flashNote(`Messaging ${recipientName} is unavailable until their account is loaded`)
+      return false
+    }
+    if (!isNativeShell()) {
+      flashNote('Messaging is available in the Poplur app')
+      return false
+    }
+    const clientMessageId = createClientMessageId()
+    setPendingProfileDM({ clientMessageId, recipientName, source })
+    if (!postNativeEvent({ type: 'sendDM', otherId: recipientId, text, clientMessageId })) {
+      setPendingProfileDM(null)
+      flashNote(`Could not send to ${recipientName}`)
+      return false
+    }
+    return true
   }
 
-  const shareOutside = async () => {
+  const shareOutside = async (recipientHint?: string) => {
     playPop()
     if (!viewerPost) return
     const link = postLink(viewerPost)
+    if (!link) {
+      setShareOpen(false)
+      flashNote('This pop cannot be shared until its post ID is loaded')
+      return
+    }
     const payload = { title: 'Poplur', text: viewerPost.title, url: link }
     setShareOpen(false)
-    // The OS sheet when the platform has one; otherwise put it on the clipboard
-    // so there is always somewhere for the link to go.
+    // Native owns its OS share sheet. This is deliberately the ONLY Profile
+    // path that emits sharePost: selecting a Poplur friend must use sendDM and
+    // wait for its delivery acknowledgement.
+    if (isNativeShell() && postNativeEvent({
+      type: 'sharePost',
+      title: viewerPost.title,
+      user: 'Poplur',
+      postId: viewerPost.id,
+      link,
+    })) {
+      if (recipientHint) flashNote(`Choose ${recipientHint} in the share sheet`)
+      return
+    }
+    // The browser share sheet when available; otherwise copy only when a real
+    // clipboard writer exists. Optional-chaining used to report "Link copied"
+    // even when the clipboard API was absent.
     try {
       if (navigator.share) {
         await navigator.share(payload)
         return
       }
-      await navigator.clipboard?.writeText(link)
-      flashNote('Link copied')
-    } catch {
-      flashNote('Sharing cancelled')
+      if (typeof navigator.clipboard?.writeText !== 'function') {
+        throw new Error('share_unavailable')
+      }
+      await navigator.clipboard.writeText(link)
+      flashNote(recipientHint ? `Link copied — send it to ${recipientHint}` : 'Link copied')
+    } catch (error) {
+      const cancelled = Boolean(error && typeof error === 'object' && 'name' in error
+        && (error as { name?: unknown }).name === 'AbortError')
+      flashNote(cancelled ? 'Sharing cancelled' : 'Could not share this pop')
     }
+  }
+
+  const dmFriend = (friend: typeof FRIENDS[number]) => {
+    if (!viewerPost) return
+    const link = postLink(viewerPost)
+    if (!link) {
+      setShareOpen(false)
+      flashNote('This pop cannot be shared until its post ID is loaded')
+      return
+    }
+    const recipientId = profileRecipientUid(realtimePosts, friend.handle)
+    if (recipientId) {
+      playPop()
+      requestDirectMessage(
+        recipientId,
+        `${viewerPost.title}\n${link}`,
+        friend.name,
+        'share',
+      )
+      return
+    }
+    // A seeded/display-only handle is not an address. Give the user a real OS
+    // share route and say exactly what happened instead of claiming a DM sent.
+    void shareOutside(friend.name)
   }
 
   const copyLink = async () => {
     playPop()
     if (!viewerPost) return
+    const link = postLink(viewerPost)
     setShareOpen(false)
+    if (!link) {
+      flashNote('This pop cannot be copied until its post ID is loaded')
+      return
+    }
     try {
-      await navigator.clipboard.writeText(postLink(viewerPost))
+      await navigator.clipboard.writeText(link)
       flashNote('Link copied')
     } catch {
       flashNote('Could not copy the link')
@@ -2115,6 +2225,16 @@ export default function ProfileTwin({
     ? DEFAULT_PROFILE_THEME
     : selectedProfileTheme
   const shownName = viewUser ? viewUser.replace(/^@/, '') : username
+  const explicitRecipientId = viewUserId?.trim()
+  const visitingRecipientId = explicitRecipientId && explicitRecipientId.length <= 128
+    ? explicitRecipientId
+    : profileRecipientUid(realtimePosts, viewUser)
+  const sendProfileMessage = () => {
+    const text = mailText.trim()
+    if (!text || pendingProfileDM) return
+    playPop()
+    requestDirectMessage(visitingRecipientId, text, shownName, 'profile')
+  }
   const verificationTier: 'none' | 'confirmed' | 'verified' = viewUser
     ? (viewUser === '@poplur' ? 'none' : 'confirmed')
     : 'verified'
@@ -2696,9 +2816,9 @@ export default function ProfileTwin({
 
           {shareNote && (
             <PoplurStatusToast
-              title={/(cancelled|could not)/i.test(shareNote) ? 'Not completed' : 'Updated'}
+              title={/(cancelled|could not|unavailable|not confirm)/i.test(shareNote) ? 'Not completed' : 'Updated'}
               detail={shareNote}
-              tone={/(cancelled|could not)/i.test(shareNote) ? 'error' : 'success'}
+              tone={/(cancelled|could not|unavailable|not confirm)/i.test(shareNote) ? 'error' : 'success'}
             />
           )}
 
@@ -2717,13 +2837,11 @@ export default function ProfileTwin({
                   onChange={e => setMailText(e.target.value)}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && mailText.trim()) {
-                      playPop()
-                      if (isNativeShell()) postNativeEvent({ type: 'sendMessage', to: viewUser, body: mailText.trim() })
-                      setMailText('')
-                      setMailingUser(false)
-                      flashNote(`Sent to ${shownName}`)
+                      e.preventDefault()
+                      sendProfileMessage()
                     }
                   }}
+                  disabled={pendingProfileDM?.source === 'profile'}
                   autoFocus
                 />
                 <ClayCornerButton
@@ -2731,16 +2849,10 @@ export default function ProfileTwin({
                   label="Send message"
                   size={44}
                   activateOnClick
-                  onPress={() => {
-                    if (!mailText.trim()) return
-                    playPop()
-                    if (isNativeShell()) postNativeEvent({ type: 'sendMessage', to: viewUser, body: mailText.trim() })
-                    setMailText('')
-                    setMailingUser(false)
-                    flashNote(`Sent to ${shownName}`)
-                  }}
+                  onPress={sendProfileMessage}
                 />
               </div>
+              {pendingProfileDM?.source === 'profile' && <p className={styles.profileEmpty}>Sending…</p>}
             </div>
           </div>
         </div>

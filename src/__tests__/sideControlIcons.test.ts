@@ -1,5 +1,5 @@
 import { Children, createElement, type ReactElement, type ReactNode } from 'react'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { inflateSync } from 'node:zlib'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -9,6 +9,7 @@ vi.mock('../pop', () => ({ playPop: vi.fn() }))
 import CameraARButton from '../CameraARButton'
 import CameraScanButton from '../CameraScanButton'
 import ClayChannelArrows from '../ClayChannelArrows'
+import { clayCornerActivationHandlers } from '../ClayCornerButton'
 import {
   MAP_COLOR_CONTROL_GAP,
   channelControlImageSize,
@@ -19,6 +20,9 @@ import {
 import ConquerGlance from '../ConquerGlance'
 import MapConquerButton from '../MapConquerButton'
 import MapNewsButton from '../MapNewsButton'
+import MapRadioButton from '../MapRadioButton'
+import MapRandomTourButton from '../MapRandomTourButton'
+import MapRewardRollButton from '../MapRewardRollButton'
 import { mapNewsOpenMessage, readMapNewsOpenRequest } from '../mapNewsBridge'
 import PoplurChannelRail from '../PoplurChannelRail'
 import PostActionRail from '../PostActionRail'
@@ -43,6 +47,53 @@ const ALL_IDS = [...SIDE_CONTROL_ICON_IDS, ...WEATHER_ICON_IDS] as const
 const SIZES = [256, 512, 1024] as const satisfies readonly PoplurSideIconSize[]
 
 type LooseElement = ReactElement<Record<string, unknown>>
+
+type ButtonFactory = (effect: () => void) => LooseElement
+
+/** Resolve the small, hook-free side-control wrappers down to their real DOM
+ * button so the regression exercises the browser event path rather than only
+ * calling a wrapper prop directly. */
+function materializeButton(element: LooseElement): LooseElement {
+  let current = element
+  let depth = 0
+  while (typeof current.type === 'function') {
+    expect(depth++, 'side-control wrappers should remain shallow').toBeLessThan(5)
+    const wrapper = current.type as (props: Record<string, unknown>) => ReactElement
+    current = wrapper(current.props) as LooseElement
+  }
+  expect(current.type).toBe('button')
+  return current
+}
+
+function firePrimaryPointerDown(button: LooseElement) {
+  const onPointerDown = button.props.onPointerDown as ((event: { isPrimary: boolean; button: number }) => void) | undefined
+  onPointerDown?.({ isPrimary: true, button: 0 })
+}
+
+function firePointerClick(button: LooseElement) {
+  const onClick = button.props.onClick as ((event: { detail: number }) => void) | undefined
+  onClick?.({ detail: 1 })
+}
+
+function fireKeyboardClick(button: LooseElement) {
+  const onClick = button.props.onClick as ((event: { detail: number }) => void) | undefined
+  expect(onClick, 'every side control must preserve keyboard/assistive click activation').toBeTypeOf('function')
+  onClick?.({ detail: 0 })
+}
+
+function componentSource(name: string) {
+  return readFileSync(new URL(`../${name}`, import.meta.url), 'utf8')
+}
+
+function literalRailSource(source: string, label: string) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const opener = new RegExp(`<TabControlRail\\b[^>]*\\blabel="${escaped}"[^>]*>`).exec(source)
+  expect(opener, `${label} rail should be declared`).not.toBeNull()
+  const start = opener!.index
+  const end = source.indexOf('</TabControlRail>', start)
+  expect(end, `${label} rail should close`).toBeGreaterThan(start)
+  return source.slice(start, end + '</TabControlRail>'.length)
+}
 
 function assetFile(id: PoplurSideIconId, size: PoplurSideIconSize) {
   const path = sideIconAssetPath(id, size)
@@ -226,7 +277,10 @@ describe('replacement controls preserve state and activation contracts', () => {
       activation: 'pointerdown',
       onActivate: pointer,
     }) as LooseElement
-    ;(pointerButton.props.onPointerDown as (event: { isPrimary: boolean }) => void)({ isPrimary: true })
+    const pointerDown = pointerButton.props.onPointerDown as (event: { isPrimary: boolean; button: number }) => void
+    pointerDown({ isPrimary: true, button: 2 })
+    expect(pointer).not.toHaveBeenCalled()
+    pointerDown({ isPrimary: true, button: 0 })
     ;(pointerButton.props.onClick as (event: { detail: number }) => void)({ detail: 1 })
     expect(pointer).toHaveBeenCalledTimes(1)
     ;(pointerButton.props.onClick as (event: { detail: number }) => void)({ detail: 0 })
@@ -240,6 +294,31 @@ describe('replacement controls preserve state and activation contracts', () => {
     }) as LooseElement
     ;(disabledButton.props.onClick as (event: { detail: number }) => void)({ detail: 1 })
     expect(disabled).not.toHaveBeenCalled()
+  })
+
+  it('keeps ClayCornerButton touch and keyboard activation single-fire in both shells', () => {
+    for (const activateOnClick of [false, true]) {
+      const pointerEffect = vi.fn()
+      const pointerHandlers = clayCornerActivationHandlers({ activateOnClick, onPress: pointerEffect })
+      pointerHandlers.onPointerDown({ isPrimary: false, button: 0 })
+      expect(pointerEffect, 'secondary pointers never activate').not.toHaveBeenCalled()
+      pointerHandlers.onPointerDown({ isPrimary: true, button: 2 })
+      expect(pointerEffect, 'right-button pointers never activate').not.toHaveBeenCalled()
+      pointerHandlers.onPointerDown({ isPrimary: true, button: 0 })
+      expect(pointerEffect, `primary pointer timing with activateOnClick=${activateOnClick}`)
+        .toHaveBeenCalledTimes(activateOnClick ? 0 : 1)
+      pointerHandlers.onClick({ detail: 1 })
+      expect(pointerEffect, 'the pointer gesture activates exactly once').toHaveBeenCalledOnce()
+
+      const keyboardEffect = vi.fn()
+      const keyboardHandlers = clayCornerActivationHandlers({ activateOnClick, onPress: keyboardEffect })
+      keyboardHandlers.onClick({ detail: 0 })
+      expect(keyboardEffect, 'keyboard/assistive click activates exactly once').toHaveBeenCalledOnce()
+    }
+
+    const source = componentSource('ClayCornerButton.tsx')
+    expect(source.match(/onPointerDown=\{activationHandlers\.onPointerDown\}/g)).toHaveLength(2)
+    expect(source.match(/onClick=\{activationHandlers\.onClick\}/g)).toHaveLength(2)
   })
 
   it('propagates supplied selected-state metadata on the shared button shell', () => {
@@ -348,6 +427,59 @@ describe('replacement controls preserve state and activation contracts', () => {
       expect(handlers[index]).toHaveBeenCalledOnce()
     })
     expect(playPop).toHaveBeenCalledTimes(2)
+  })
+
+  it('activates every wrapped side command once by touch and once by keyboard', () => {
+    const cases: Array<{ label: string; immediate: boolean; create: ButtonFactory }> = [
+      {
+        label: 'Map radio',
+        immediate: true,
+        create: effect => MapRadioButton({ active: false, onPress: effect }) as LooseElement,
+      },
+      {
+        label: 'Map random-tour dice',
+        immediate: true,
+        create: effect => MapRandomTourButton({ onPress: effect }) as LooseElement,
+      },
+      {
+        label: 'Map reward dice',
+        immediate: true,
+        create: effect => MapRewardRollButton({ active: false, onPress: effect }) as LooseElement,
+      },
+      {
+        label: 'Map News',
+        immediate: true,
+        create: effect => MapNewsButton({ active: false, onPress: effect }) as LooseElement,
+      },
+      {
+        label: 'Map Conquer',
+        immediate: true,
+        create: effect => MapConquerButton({ open: false, onPress: effect }) as LooseElement,
+      },
+      {
+        label: 'Camera scan',
+        immediate: false,
+        create: effect => CameraScanButton({ active: false, onToggle: effect }) as LooseElement,
+      },
+      {
+        label: 'Camera AR',
+        immediate: false,
+        create: effect => CameraARButton({ active: false, onToggle: effect }) as LooseElement,
+      },
+    ]
+
+    for (const { label, immediate, create } of cases) {
+      const touchEffect = vi.fn()
+      const touchButton = materializeButton(create(touchEffect))
+      firePrimaryPointerDown(touchButton)
+      expect(touchEffect, `${label} primary pointer-down timing`).toHaveBeenCalledTimes(immediate ? 1 : 0)
+      firePointerClick(touchButton)
+      expect(touchEffect, `${label} touch activation`).toHaveBeenCalledOnce()
+
+      const keyboardEffect = vi.fn()
+      fireKeyboardClick(materializeButton(create(keyboardEffect)))
+      expect(keyboardEffect, `${label} keyboard activation`).toHaveBeenCalledOnce()
+    }
   })
 
   it('keeps the Map News button on Map and opens News only for an explicit story', () => {
@@ -506,6 +638,21 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(verticalMarkup).toContain('height="58"')
   })
 
+  it('keeps the embedded left/right pair at half the former cube gap', () => {
+    const css = readFileSync(new URL('../App.module.css', import.meta.url), 'utf8')
+    const embeddedStepper = css.slice(
+      css.indexOf('.popStepperAboveCube'),
+      css.indexOf('.popStepperNewsHidden'),
+    )
+
+    expect(embeddedStepper).toContain(
+      '--shell-control-gap: clamp(4px, calc((100vw - 480px) / 5), 220px);',
+    )
+    expect(embeddedStepper).toContain(
+      'bottom: calc(18px + var(--shell-cube-size) + var(--shell-control-gap));',
+    )
+  })
+
   it('keeps the opposite zoom rail on the exact 44px/12px map-control span', () => {
     expect(mapSideControlRailSpan(9)).toBe(492)
     expect(mapSideControlRailSpan(10)).toBe(548)
@@ -533,6 +680,248 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(nativeCss).toMatch(/\.nativeMapZoom\s*\{[\s\S]*?top:\s*var\(--poplur-map-control-top/)
     expect(clayMapCss).toMatch(/\.zoomWrap\s*\{[\s\S]*?top:\s*var\(--poplur-map-control-top/)
     expect(clayMapCss).toMatch(/\.colorCircle\s*\{[\s\S]*?top:\s*calc\(var\(--poplur-map-control-top/)
+  })
+})
+
+describe('screen side-button action smoke contract', () => {
+  const railContracts = [
+    {
+      file: 'HomeTwin.tsx',
+      label: 'Map controls',
+      actions: [
+        ['mute', /icon="map\.mute"[\s\S]*?setUserMuted\(next\)[\s\S]*?setLoadingMuted\(next\)/],
+        ['radio', /<MapRadioButton[\s\S]*?stopMapRadio\(\)[\s\S]*?startRadioForMap/],
+        ['daily reward dice', /<MapRewardRollButton[\s\S]*?announceRadiusRewardNavigator\(true\)/],
+        ['locate', /icon="map\.locate"[\s\S]*?sendMapAction\('locate'\)/],
+        ['search', /icon="map\.search"[\s\S]*?sendMapAction\('search'\)/],
+        ['landmark tour', /icon=\{landmarkTourControl\.icon\}[\s\S]*?sendMapAction\(landmarkTourControl\.action\)/],
+        ['news tour', /<MapNewsButton[\s\S]*?sendMapAction\('newsTour'\)/],
+        ['Conquer', /<MapConquerButton[\s\S]*?setMapConquerGlanceOpen\(open => !open\)/],
+        ['layers', /<MapLevelButton[\s\S]*?setMapPopLevel\(level\)[\s\S]*?sendMapAction\('setPopLevel'/],
+        ['weather', /data-weather-mode=\{mapWeatherDisplay\.mode\}[\s\S]*?sendMapAction\('weather'\)/],
+      ],
+    },
+    {
+      file: 'MapApp.tsx',
+      label: 'Map controls',
+      actions: [
+        ['mute', /icon="map\.mute"[\s\S]*?setUserMuted\(next\)[\s\S]*?setMuted\(next\)/],
+        ['radio', /<MapRadioButton[\s\S]*?stopMapRadio\(\)[\s\S]*?startRadioForMap/],
+        ['random-tour dice', /<MapRandomTourButton[\s\S]*?startRandomLandmarkTour\(\)/],
+        ['locate', /icon="map\.locate"[\s\S]*?__locateMe[\s\S]*?getCurrentPosition/],
+        ['search', /icon="map\.search"[\s\S]*?closeSearch\(\)[\s\S]*?openSearch\(\)/],
+        ['landmark tour', /icon=\{landmarkTourControl\.icon\}[\s\S]*?startExplicitTourLoop\(0\)[\s\S]*?resumeLandmarkTour\(\)[\s\S]*?pauseLandmarkTour\(\)/],
+        ['news tour', /<MapNewsButton[\s\S]*?stopTour\(\)[\s\S]*?startNewsTour\(\)/],
+        ['Conquer', /<MapConquerButton[\s\S]*?setMapConquerGlanceOpen\(open => !open\)/],
+        ['layers', /<MapLevelButton[\s\S]*?onPick=\{setPopLevel\}/],
+        ['weather', /data-weather-mode=\{weatherMode\}[\s\S]*?toggleWeather\(\)/],
+      ],
+    },
+    {
+      file: 'Camera.tsx',
+      label: 'Camera controls',
+      actions: [
+        ['flash', /icon="camera\.flash"[\s\S]*?setFlashEnabled\(!flashRef\.current\)/],
+        ['voice', /icon="camera\.mute"[\s\S]*?onActivate=\{toggleAiVoice\}/],
+        ['flip', /icon="camera\.flip_camera"[\s\S]*?onActivate=\{flipCamera\}/],
+        ['scan', /<CameraScanButton[\s\S]*?setDetectOn\(!detectOn\)/],
+        ['AR filters', /<CameraARButton[\s\S]*?setArOpen\(open => !open\)/],
+        ['camera roll', /aria-label="Open camera roll"[\s\S]*?event\.isPrimary\) openCameraRoll\(\)[\s\S]*?isKeyboardCameraRollClick\(event\.detail\)\) openCameraRoll\(\)/],
+      ],
+    },
+    {
+      file: 'NewsPaper.tsx',
+      label: 'News controls',
+      actions: [
+        ['menu', /icon="news\.menu"[\s\S]*?onActivate=\{openMenu\}/],
+        ['back to top', /aria-label="Back to the top of the paper"[\s\S]*?onClick=\{backToTop\}|onClick=\{backToTop\}[\s\S]*?aria-label="Back to the top of the paper"/],
+      ],
+    },
+    {
+      file: 'ProfileTwin.tsx',
+      label: 'Profile controls',
+      actions: [
+        ['notifications', /icon="profile\.alerts"[\s\S]*?toggleNotifs\(\)|toggleNotifs\(\)[\s\S]*?icon="profile\.alerts"/],
+        ['settings', /icon="profile\.settings"[\s\S]*?poplur-open-settings|poplur-open-settings[\s\S]*?icon="profile\.settings"/],
+        ['message visitor', /kind="mail"[\s\S]*?setMailingUser\(true\)/],
+        ['capture profile', /icon="profile\.camera"[\s\S]*?onClick=\{openCapture\}|onClick=\{openCapture\}[\s\S]*?icon="profile\.camera"/],
+      ],
+    },
+    {
+      file: 'PostActionRail.tsx',
+      label: null,
+      actions: [
+        ['mute', /icon="feed\.mute"[\s\S]*?onActivate=\{onToggleMute\}/],
+        ['share', /icon="feed\.share"[\s\S]*?onActivate=\{onShare\}/],
+        ['captions', /icon="feed\.captions"[\s\S]*?onActivate=\{onToggleCaptions\}/],
+        ['end comments', /icon="feed\.comments_collapse"[\s\S]*?onActivate=\{onToggleCommentsAtEnd\}/],
+        ['comment', /icon="feed\.comment"[\s\S]*?onActivate=\{onComment\}/],
+        ['like', /icon="feed\.like"[\s\S]*?onActivate=\{onLike\}/],
+        ['dislike', /icon="feed\.dislike"[\s\S]*?onActivate=\{onDislike\}/],
+        ['delete owned post', /icon="profile\.delete"[\s\S]*?onDelete\(\)/],
+      ],
+    },
+  ] satisfies Array<{
+    file: string
+    label: string | null
+    actions: Array<readonly [name: string, wiring: RegExp]>
+  }>
+
+  it('keeps the contract inventory in lockstep with every declared side rail', () => {
+    const discovered: string[] = []
+    const sourceDirectory = new URL('../', import.meta.url)
+    for (const entry of readdirSync(sourceDirectory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.tsx')) continue
+      const source = componentSource(entry.name)
+      for (const match of source.matchAll(/<TabControlRail\b[^>]*\blabel=(?:"([^"]+)"|\{([^}]+)\})[^>]*>/g)) {
+        discovered.push(`${entry.name}::${match[1] ?? match[2]}`)
+      }
+    }
+
+    const declared = railContracts.map(contract => (
+      `${contract.file}::${contract.label ?? 'label'}`
+    ))
+    expect(discovered.sort()).toEqual(declared.sort())
+  })
+
+  it('wires every declared rail action to a screen command or state edge', () => {
+    for (const contract of railContracts) {
+      const source = componentSource(contract.file)
+      const rail = contract.label == null ? source : literalRailSource(source, contract.label)
+      for (const [name, wiring] of contract.actions) {
+        expect(rail, `${contract.file} ${name} should have an observable action`).toMatch(wiring)
+      }
+    }
+  })
+
+  it('marks every immediate rail action for primary pointer-down activation', () => {
+    const immediate = [
+      ['HomeTwin.tsx', 'Map controls', /icon="map\.mute"[\s\S]*?activation="pointerdown"/],
+      ['MapApp.tsx', 'Map controls', /icon="map\.mute"[\s\S]*?activation="pointerdown"/],
+      ['Camera.tsx', 'Camera controls', /icon="camera\.flash"[\s\S]*?activation="pointerdown"/],
+      ['Camera.tsx', 'Camera controls', /icon="camera\.mute"[\s\S]*?activation="pointerdown"/],
+      ['Camera.tsx', 'Camera controls', /icon="camera\.flip_camera"[\s\S]*?activation="pointerdown"/],
+      ['PostActionRail.tsx', null, /icon="feed\.mute"[\s\S]*?activation="pointerdown"/],
+      ['PostActionRail.tsx', null, /icon="feed\.share"[\s\S]*?activation="pointerdown"/],
+      ['PostActionRail.tsx', null, /icon="feed\.comments_collapse"[\s\S]*?activation="pointerdown"/],
+      ['PostActionRail.tsx', null, /icon="feed\.comment"[\s\S]*?activation="pointerdown"/],
+      ['PostActionRail.tsx', null, /icon="feed\.like"[\s\S]*?activation="pointerdown"/],
+      ['PostActionRail.tsx', null, /icon="feed\.dislike"[\s\S]*?activation="pointerdown"/],
+    ] as const
+
+    for (const [file, label, declaration] of immediate) {
+      const source = componentSource(file)
+      const rail = label == null ? source : literalRailSource(source, label)
+      expect(rail, `${file} immediate action should fire before the synthetic click`).toMatch(declaration)
+    }
+  })
+
+  it('keeps named callbacks behind rail controls connected to observable work', () => {
+    const effects = [
+      ['Camera voice', 'Camera.tsx', /const toggleAiVoice[\s\S]*?writeCameraAiVoice\(next\)[\s\S]*?setAiVoice\(next\)[\s\S]*?postNativeEvent/],
+      ['Camera flip', 'Camera.tsx', /const flipCamera[\s\S]*?setFacing\([\s\S]*?postNativeEvent\(\{ type: 'cameraControl', control: 'flip'/],
+      ['Camera roll', 'Camera.tsx', /const openCameraRoll[\s\S]*?playPop\(\)[\s\S]*?onOpenRoll\?\.\(\)/],
+      ['News menu', 'NewsPaper.tsx', /const openMenu[\s\S]*?setMenuMounted\(true\)[\s\S]*?setMenuOpen\(true\)/],
+      ['News top', 'NewsPaper.tsx', /const backToTop[\s\S]*?scrollTo\(\{ top: 0, behavior: 'smooth' \}\)/],
+      ['Profile notifications', 'ProfileTwin.tsx', /const toggleNotifs[\s\S]*?poplur-open-notifications[\s\S]*?openNotifs\(\)/],
+      ['Profile capture', 'ProfileTwin.tsx', /const openCapture[\s\S]*?setFaceAsk\(true\)[\s\S]*?beginCapture\(\)/],
+    ] as const
+    for (const [name, file, effect] of effects) {
+      expect(componentSource(file), `${name} should change UI or cross a bridge`).toMatch(effect)
+    }
+  })
+
+  it('keeps both shared post-rail consumers connected to real screen effects', () => {
+    const consumers = [
+      {
+        screen: 'Feed',
+        file: 'FeedTwin.tsx',
+        wiring: [
+          /onToggleMute=\{toggleMute\}/,
+          /onShare=\{sharePost\}/,
+          /onToggleCaptions=\{toggleCaptions\}/,
+          /onToggleCommentsAtEnd=\{toggleCommentsAtEnd\}/,
+          /onComment=\{openComments\}/,
+          /onLike=\{likeCurrentPost\}/,
+          /onDislike=\{dislikeCurrentPost\}/,
+        ],
+        effects: [
+          /const toggleMute[\s\S]*?setUserMuted\(next\)[\s\S]*?setMuted\(next\)/,
+          /const sharePost[\s\S]*?postNativeEvent[\s\S]*?navigator\.clipboard\.writeText/,
+          /const toggleCaptions[\s\S]*?setCaptionsOn\(on => !on\)/,
+          /const toggleCommentsAtEnd[\s\S]*?setCommentsAtEnd\(next\)/,
+          /const openComments[\s\S]*?setCommentOpen\(true\)/,
+          /const reactToCurrentPost[\s\S]*?recordPostEngagement[\s\S]*?setRadiusReaction/,
+        ],
+      },
+      {
+        screen: 'Profile post viewer',
+        file: 'ProfileTwin.tsx',
+        wiring: [
+          /onToggleMute=\{toggleViewerMute\}/,
+          /onShare=\{\(\) => \{ playPop\(\); setShareOpen\(true\) \}\}/,
+          /onToggleCaptions=\{\(\) => \{ playPop\(\); setViewerCaptionsOn/,
+          /onToggleCommentsAtEnd=\{toggleViewerCommentsAtEnd\}/,
+          /onComment=\{\(\) => \{ playPop\(\); setViewerCommentOpen\(true\) \}\}/,
+          /onLike=\{\(\) => reactToViewerPost\('up'\)\}/,
+          /onDislike=\{\(\) => reactToViewerPost\('down'\)\}/,
+          /onDelete=\{canDeleteViewerPost[\s\S]*?setDeletePromptPost\(viewerPost\)/,
+        ],
+        effects: [
+          /const toggleViewerMute[\s\S]*?setViewerMuted\(next\)/,
+          /const toggleViewerCommentsAtEnd[\s\S]*?setViewerCommentsAtEnd\(next\)/,
+          /const reactToViewerPost[\s\S]*?recordPostEngagement[\s\S]*?flashNote/,
+        ],
+      },
+    ]
+
+    for (const consumer of consumers) {
+      const source = componentSource(consumer.file)
+      for (const wiring of consumer.wiring) {
+        expect(source, `${consumer.screen} should supply every shared rail callback`).toMatch(wiring)
+      }
+      for (const effect of consumer.effects) {
+        expect(source, `${consumer.screen} callbacks should do observable work`).toMatch(effect)
+      }
+    }
+  })
+
+  it('keeps standalone side controls on media, phone, iPod, Studio, and dialogs actionable', () => {
+    const contracts = [
+      ['TV Guide volume', 'TVGuide.tsx', /icon="media\.volume"[\s\S]*?setUserMuted\(next\)[\s\S]*?setMuted\(next\)/],
+      ['Radio volume', 'RadioScreen.tsx', /icon="media\.volume"[\s\S]*?setUserMuted\(next\)[\s\S]*?setMuted\(next\)/],
+      ['Radio previous', 'RadioScreen.tsx', /kind="seekBack"[\s\S]*?scan\(-1\)/],
+      ['Radio favourite', 'RadioScreen.tsx', /kind="heart"[\s\S]*?toggleFav\(tuned\.id\)/],
+      ['Radio play', 'RadioScreen.tsx', /kind="play"[\s\S]*?tune\(tuned\)/],
+      ['Radio share', 'RadioScreen.tsx', /kind="share"[\s\S]*?playPop\(\)/],
+      ['Radio next', 'RadioScreen.tsx', /kind="seekFwd"[\s\S]*?scan\(1\)/],
+      ['Phone previous colorway', 'PhoneScreen.tsx', /upLabel="Previous phone colorway"[\s\S]*?onUp=\{\(\) => cycleColorway\(-1\)\}|onUp=\{\(\) => cycleColorway\(-1\)\}[\s\S]*?upLabel="Previous phone colorway"/],
+      ['Phone next colorway', 'PhoneScreen.tsx', /downLabel="Next phone colorway"[\s\S]*?onDown=\{\(\) => cycleColorway\(1\)\}|onDown=\{\(\) => cycleColorway\(1\)\}[\s\S]*?downLabel="Next phone colorway"/],
+      ['iPod previous finish', 'MapIpod.tsx', /upLabel="Previous finish"[\s\S]*?onUp=\{\(\) => stepFinish\(-1\)\}/],
+      ['iPod next finish', 'MapIpod.tsx', /downLabel="Next finish"[\s\S]*?onDown=\{\(\) => stepFinish\(1\)\}/],
+      ['Studio library', 'StudioScreen.tsx', /aria-label="Open My Tracks in iPod"[\s\S]*?onOpenLibrary\('root'\)/],
+      ['Feed fullscreen pause', 'FeedTwin.tsx', /icon="media\.pause"[\s\S]*?onActivate=\{togglePlayback\}/],
+      ['Feed comment send', 'FeedTwin.tsx', /kind="send"[\s\S]*?onPress=\{sendComment\}/],
+      ['Profile visitor message', 'ProfileTwin.tsx', /kind="mail"[\s\S]*?setMailingUser\(true\)/],
+      ['Profile copy link', 'ProfileTwin.tsx', /kind="link"[\s\S]*?onPress=\{copyLink\}/],
+      ['Profile share out', 'ProfileTwin.tsx', /kind="share"[\s\S]*?onPress=\{shareOutside\}/],
+      ['Profile share cancel', 'ProfileTwin.tsx', /kind="close"[\s\S]*?setShareOpen\(false\)/],
+      ['Profile message send', 'ProfileTwin.tsx', /type: 'sendDM'[\s\S]*?const sendProfileMessage[\s\S]*?kind="send"[\s\S]*?activateOnClick[\s\S]*?onPress=\{sendProfileMessage\}/],
+    ] as const
+
+    for (const [name, file, action] of contracts) {
+      expect(componentSource(file), `${name} should retain its observable effect`).toMatch(action)
+    }
+
+    const declaredClayControls = contracts.filter(([, , pattern]) => (
+      pattern.source.includes('kind=')
+    )).length
+    const discoveredClayControls = readdirSync(new URL('../', import.meta.url), { withFileTypes: true })
+      .filter(entry => entry.isFile() && entry.name.endsWith('.tsx'))
+      .reduce((count, entry) => (
+        count + [...componentSource(entry.name).matchAll(/<ClayCornerButton\b/g)].length
+      ), 0)
+    expect(discoveredClayControls).toBe(declaredClayControls)
   })
 })
 

@@ -15,7 +15,12 @@ export default function MapRewardRollButton({
       aria-label={active ? 'View today\u2019s free Map reward roll' : 'Open free Map reward roll'}
       data-active={active ? 'true' : 'false'}
       data-map-reward-roll-button=""
-      onClick={onPress}
+      onPointerDown={event => {
+        if (event.isPrimary && event.button === 0) onPress()
+      }}
+      onClick={event => {
+        if (event.detail === 0) onPress()
+      }}
     >
       <img
         src={`${import.meta.env.BASE_URL}${RADIUS_REWARD_DICE_SPRITE}`}

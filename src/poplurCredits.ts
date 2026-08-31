@@ -4,9 +4,10 @@
 // join it, which is why this is its own ledger rather than a number hidden in
 // the avatar store.
 //
-// Radius is EARNED and decays (radiusLedger.ts). Credits are BOUGHT and are
-// spent once — the two must never be confused, so they stay separate ledgers
-// with separate words on screen.
+// Radius is EARNED and decays (radiusLedger.ts). Credits are a durable spend
+// unit: most are bought, while a few bounded app rewards (casino, referrals,
+// and the Map's daily die) are earned. Radius and Credits must never be
+// confused, so they stay separate ledgers with separate words on screen.
 
 export type CreditEntryKind =
   | 'welcome' | 'purchase' | 'refund' | 'avatar-cube'
@@ -17,6 +18,7 @@ export type CreditEntryKind =
   // so the history says where the credits came from — these are WON, and when
   // the server-side economy lands they become the mirror of a server grant.
   | 'casino-win'
+  | 'map-reward'
   | 'referral'
 
 export interface CreditEntry {
@@ -137,6 +139,34 @@ export function grantCredits(amount: number, note?: string): void {
 export function grantCasinoWin(amount: number, note?: string): void {
   if (!Number.isFinite(amount) || amount <= 0) return
   append('casino-win', amount, note)
+}
+
+/** Stable id for the Map's once-per-UTC-day free roll. Keeping the day in the
+    ledger entry makes the local mirror idempotent even if the animation or
+    bridge repeats its completion edge. */
+export function dailyMapRewardEntryId(day: string): string {
+  return `map-reward:${day}`
+}
+
+/** Grant one bounded Map reward for a UTC day. Returns false when that day was
+    already recorded or the input is invalid. The future server ledger can use
+    the same stable id as its idempotency key. */
+export function grantDailyMapReward(amount: number, day: string, note?: string): boolean {
+  if (!Number.isFinite(amount) || amount <= 0) return false
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false
+  const entries = ensureWelcome()
+  const id = dailyMapRewardEntryId(day)
+  if (entries.some(entry => entry.id === id)) return false
+  const entry: CreditEntry = {
+    id,
+    kind: 'map-reward',
+    delta: Math.floor(amount),
+    note: note ?? 'Daily Map reward',
+    at: Date.now(),
+  }
+  writeLedger([...entries, entry])
+  publish()
+  return true
 }
 
 export const REFERRAL_CREDIT_REWARD = 10

@@ -1,0 +1,143 @@
+{
+  "source": "scripts/landmark-art/source/user-landmark-gamepieces.png",
+  "sourceSha256": "52999ef23b99b3109e2d202147b97be2ad3319e5c8fc39a2f66461eba68075a7",
+  "sourceSize": [
+    1183,
+    1329
+  ],
+  "matte": "border-connected-near-black-largest-component-feather-0.8",
+  "pieces": {
+    "cn-tower": {
+      "crop": [
+        0,
+        32,
+        390,
+        733
+      ],
+      "outputs": {
+        "96": {
+          "path": "sprites/world-landmarks/pieces/cn-tower-piece-s96.png",
+          "sha256": "ff55316c3b60cb8ae72d8a497fb1a351ad6d773a7533dfec19e61c5123b4c609",
+          "width": 96,
+          "height": 96
+        },
+        "320": {
+          "path": "sprites/world-landmarks/pieces/cn-tower-piece-s320.png",
+          "sha256": "07ec544e33137574b88fbfb1477b41ee813cfad74db989b0b851f1d1334c5bd3",
+          "width": 320,
+          "height": 320
+        }
+      }
+    },
+    "eiffel": {
+      "crop": [
+        390,
+        32,
+        790,
+        733
+      ],
+      "outputs": {
+        "96": {
+          "path": "sprites/world-landmarks/pieces/eiffel-piece-s96.png",
+          "sha256": "b88e266329710dea57637eb90f4c54dbc1bcebe3567160efa1f74a6aee73dafc",
+          "width": 96,
+          "height": 96
+        },
+        "320": {
+          "path": "sprites/world-landmarks/pieces/eiffel-piece-s320.png",
+          "sha256": "3800f9d19627ac62b8f4970c48b9257bdf8bd86f59638946b9d3736aa5e98bff",
+          "width": 320,
+          "height": 320
+        }
+      }
+    },
+    "statue-liberty": {
+      "crop": [
+        790,
+        32,
+        1183,
+        733
+      ],
+      "outputs": {
+        "96": {
+          "path": "sprites/world-landmarks/pieces/statue-liberty-piece-s96.png",
+          "sha256": "5cf3861122b3a4b1cd96666991a444e466ed503233ff5b76744febc77ff202fd",
+          "width": 96,
+          "height": 96
+        },
+        "320": {
+          "path": "sprites/world-landmarks/pieces/statue-liberty-piece-s320.png",
+          "sha256": "cc516d5e492b3e57cc7d67e80d9dd0dd51d15d3f214a144387694522ce6286ff",
+          "width": 320,
+          "height": 320
+        }
+      }
+    },
+    "big-ben": {
+      "crop": [
+        0,
+        733,
+        380,
+        1329
+      ],
+      "outputs": {
+        "96": {
+          "path": "sprites/world-landmarks/pieces/big-ben-piece-s96.png",
+          "sha256": "94c25430f7b43d400aae57a037f2aa4aef316549f67a280383277d0086371b13",
+          "width": 96,
+          "height": 96
+        },
+        "320": {
+          "path": "sprites/world-landmarks/pieces/big-ben-piece-s320.png",
+          "sha256": "0e39da85da2865339edca88229d2604af9a7f726753c8bc37c0bc88a5abf20cb",
+          "width": 320,
+          "height": 320
+        }
+      }
+    },
+    "sydney-opera": {
+      "crop": [
+        380,
+        733,
+        780,
+        1329
+      ],
+      "outputs": {
+        "96": {
+          "path": "sprites/world-landmarks/pieces/sydney-opera-piece-s96.png",
+          "sha256": "e3b457322764663b82853fdeb9de434c08a95d3dba74b42095c4c4e478b06ec3",
+          "width": 96,
+          "height": 96
+        },
+        "320": {
+          "path": "sprites/world-landmarks/pieces/sydney-opera-piece-s320.png",
+          "sha256": "2ec4aac9354d3ab64377af664dc7a6cde96fd675d0341fbc9a747e6b0573ada3",
+          "width": 320,
+          "height": 320
+        }
+      }
+    },
+    "golden-gate": {
+      "crop": [
+        780,
+        733,
+        1183,
+        1329
+      ],
+      "outputs": {
+        "96": {
+          "path": "sprites/world-landmarks/pieces/golden-gate-piece-s96.png",
+          "sha256": "332d1f1e4b6d13b20fcc3590f3e8ec94a9f40e3666682e4a5c904ec39f31d964",
+          "width": 96,
+          "height": 96
+        },
+        "320": {
+          "path": "sprites/world-landmarks/pieces/golden-gate-piece-s320.png",
+          "sha256": "52a7bcf0965d78b12597fd7ac11c34d9181922385de93c72e62e039232de45f9",
+          "width": 320,
+          "height": 320
+        }
+      }
+    }
+  }
+}

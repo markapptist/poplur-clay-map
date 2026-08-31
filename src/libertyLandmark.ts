@@ -34,9 +34,10 @@ import { landmarkContactPlaneY, landmarkGroundOffsetY } from './landmarkGroundin
 // same size at every zoom is not the same object as a 3D model in the map that
 // stands where its building actually is. So one function per landmark became
 // one function driven by config, with a Liberty-specific wrapper kept for the
-// call sites that already named it. Twelve leases at heavy:false, invisible
-// and undemanded until the camera is close, cost nothing to hold and reconcile
-// individually on move/zoom (each has an early-out if wanted has not changed).
+// call sites that already named it. Twelve leases cover thirteen presentations:
+// tightly coupled sites can share one static scene/renderer. Invisible and
+// undemanded until the camera is close, they cost nothing to hold and reconcile
+// on move/zoom (each has an early-out if wanted has not changed).
 //
 // THERMAL. This layer used to end every render() with map.triggerRepaint(),
 // copied from Mapbox's three.js sample — which animates its model and therefore
@@ -62,7 +63,23 @@ import { landmarkContactPlaneY, landmarkGroundOffsetY } from './landmarkGroundin
 // PoplurPerformanceManager lease while it is showing, so a warm phone can drop
 // it back to the flat sprite instead of carrying a second scene forever.
 
-/** Config for one landmark's near-camera 3D swap. */
+/** A second landmark mesh that shares its root landmark's custom layer,
+ *  renderer, performance lease and render pass. This is intentionally a
+ *  presentation part rather than another NearLandmark3D handle: tightly
+ *  coupled sites such as CN Tower + Rogers Centre must appear together
+ *  without allocating a second WebGL renderer/context. */
+export interface NearLandmark3DCompanionConfig {
+  id: string
+  coords: [number, number]
+  heightM: number
+  glbUrl?: string
+  yaw?: number
+  color?: number
+  materialIdentity?: LandmarkMaterialIdentity
+  artDirection?: LandmarkArtDirection
+}
+
+/** Config for one landmark (or one tightly coupled group)'s near-camera 3D swap. */
 export interface NearLandmark3DConfig {
   /** Stable id used for the mapbox layer id, the lease id and diagnostics. */
   id: string
@@ -93,6 +110,9 @@ export interface NearLandmark3DConfig {
    *  of place without adding particles, a second renderer, or an animation
    *  loop. It is evaluated only while this near-camera model is visible. */
   artDirection?: LandmarkArtDirection
+  /** Nearby meshes that must be shown with this landmark. They are decoded
+   *  into the same Three scene and share this config's single custom layer. */
+  companions?: readonly NearLandmark3DCompanionConfig[]
 }
 
 export interface LandmarkArtDirection {
@@ -313,8 +333,23 @@ export function installNearLandmark3D(
   let disposed = false
 
   const base = import.meta.env.BASE_URL || './'
-  const glbUrl = cfg.glbUrl ?? `${base}landmarks/${cfg.id}.glb`
   const dracoPath = `${base}draco/`
+  const parts: ReadonlyArray<NearLandmark3DCompanionConfig & { primary: boolean }> = [
+    {
+      id: cfg.id,
+      coords: cfg.coords,
+      heightM: cfg.heightM,
+      glbUrl: cfg.glbUrl,
+      yaw: cfg.yaw,
+      color: cfg.color,
+      materialIdentity: cfg.materialIdentity,
+      artDirection: cfg.artDirection,
+      primary: true,
+    },
+    ...(cfg.companions ?? [])
+      .filter(part => part.id !== cfg.id)
+      .map(part => ({ ...part, primary: false })),
+  ]
 
   const origin = mapboxgl.MercatorCoordinate.fromLngLat(cfg.coords, 0)
   const transform = {
@@ -331,9 +366,20 @@ export function installNearLandmark3D(
   let cam: THREE.Camera | null = null
   let renderer: THREE.WebGLRenderer | null = null
   let model: THREE.Object3D | null = null
+  const models = new Map<string, THREE.Object3D>()
   let modelReady = false
   let modelRendered = false
   let popFrame: number | null = null
+  let loadGeneration = 0
+
+  const disposeModels = () => {
+    models.forEach(part => {
+      part.removeFromParent()
+      disposeLandmarkModel(part)
+    })
+    models.clear()
+    model = null
+  }
 
   const stopPop = () => {
     if (popFrame != null) window.cancelAnimationFrame(popFrame)
@@ -402,91 +448,118 @@ export function installNearLandmark3D(
         popFrame = window.requestAnimationFrame(frame)
       }
 
-      const loader = new GLTFLoader()
-      const draco = new DRACOLoader()
-      draco.setDecoderPath(dracoPath)
-      loader.setDRACOLoader(draco)
-      loader.load(
-        glbUrl,
-        g => {
-          draco.dispose()
-          if (!scene) { disposeLandmarkModel(g.scene); return }
-          const built = g.scene
-          // Meshy's supplied GLBs carry their own +90° X mesh-node rotation.
-          // Leave that conversion intact: Mapbox's layer transform turns its
-          // Three-Y height into Mapbox-Z and reverses the source vertical axis
-          // so the model's broad base, not its crown, meets the ground. A
-          // second root rotation either laid the mesh flat or stood it upside
-          // down.
-          built.rotation.x = 0
-          built.rotation.y = THREE.MathUtils.degToRad(cfg.yaw ?? 0)
-          // Preserve the complete authored glTF PBR graph when textures are
-          // present. Legacy textureless models retain their cream clay skin,
-          // allowing new real-world materials to ship landmark-by-landmark.
-          prepareLandmarkMaterials(
-            built,
-            cfg.color ?? 0xefe9df,
-            renderer?.capabilities.getMaxAnisotropy() ?? 1,
-            cfg.materialIdentity,
-          )
-          const box = new THREE.Box3().setFromObject(built)
-          const size = new THREE.Vector3()
-          box.getSize(size)
-          // After normalising the Meshy root, Three Y is the model's genuine
-          // height axis. It is converted to Mapbox Z during rendering.
-          const s = cfg.heightM / (size.y || 1)
-          built.scale.setScalar(s)
-          // Keep the model's local floor on the map plane. The shared layer
-          // transform carries Three Y into Mapbox Z after this placement.
-          built.position.y = landmarkGroundOffsetY(box.min.y, s)
-          // A subtle contact shadow on the actual map plane makes the base
-          // legible against the clay ground. It is model-space geometry, not
-          // a screen-fixed badge, so it stays at the landmark's coordinate.
-          // Keep the contact patch proportional after the model is scaled to
-          // real-world height. The old 0.5-unit ceiling happened to suit the
-          // normalised Meshy models, but collapsed a metre-authored stadium's
-          // shadow to a pinprick.
-          const footprintRadius = Math.max(0.1, Math.max(size.x, size.z) * 0.34)
-          const contact = new THREE.Mesh(
-            new THREE.CircleGeometry(footprintRadius, 40),
-            // A basic material deliberately ignores the bright landmark
-            // lights. Lambert shading turned the transparent contact patch
-            // white, which looked like another floating piece of geometry.
-            new THREE.MeshBasicMaterial({
-              color: cfg.artDirection?.contactColor ?? 0x3b2a34,
-              transparent: true,
-              opacity: cfg.artDirection?.contactOpacity ?? 0.24,
-              depthWrite: false,
-            }),
-          )
-          contact.name = 'landmark-ground-contact'
-          // The model's local ground is XZ. Rotate the default XY circle into
-          // that plane with its front face pointing up, then park it only two
-          // real centimetres above the mesh floor. The old model-space 0.002
-          // became a visible lift after a tall landmark's scale was applied.
-          contact.rotation.x = -Math.PI / 2
-          contact.position.y = landmarkContactPlaneY(box.min.y, s)
-          built.add(contact)
-          model = built
-          modelReady = true
-          modelRendered = false
-          scene.add(built)
-          // A compressed GLB may finish decoding after the camera's own
-          // flight lease has ended. Keep the map renderable briefly so this
-          // grounded frame and its arrival pop cannot be hidden behind a stale
-          // parked snapshot, without promoting an authored reveal to iPhone's
-          // 60fps direct-manipulation budget.
-          sustainManagedRendering(1200)
-          playArrivalPop(built, s, box.min.y)
-          opts.onModelReady?.()
-          map.triggerRepaint()
-        },
-        undefined,
-        err => {
-          draco.dispose()
-          console.warn(`[${cfg.id} glb]`, err)
-        },
-      )
+      // One custom layer may contain a tightly coupled landmark group. Every
+      // part is loaded into this same scene and renderer; no companion gets a
+      // second Mapbox layer, WebGL context, performance lease, or render loop.
+      const generation = ++loadGeneration
+      const activeScene = scene
+      const settledParts = new Set<string>()
+      let primaryScale = 1
+      let primaryGroundY = 0
+
+      const revealWhenSettled = () => {
+        if (
+          generation !== loadGeneration
+          || scene !== activeScene
+          || settledParts.size !== parts.length
+          || !model
+        ) return
+        models.forEach(part => { part.visible = true })
+        modelReady = true
+        modelRendered = false
+        // A compressed GLB group may finish decoding after the camera's own
+        // flight lease has ended. Keep the map renderable briefly so the
+        // complete grounded frame cannot remain behind a parked snapshot.
+        sustainManagedRendering(1200)
+        playArrivalPop(model, primaryScale, primaryGroundY)
+        opts.onModelReady?.()
+        map.triggerRepaint()
+      }
+
+      const settlePart = (id: string) => {
+        if (generation !== loadGeneration || scene !== activeScene) return
+        settledParts.add(id)
+        revealWhenSettled()
+      }
+
+      parts.forEach(part => {
+        const loader = new GLTFLoader()
+        const draco = new DRACOLoader()
+        draco.setDecoderPath(dracoPath)
+        loader.setDRACOLoader(draco)
+        loader.load(
+          part.glbUrl ?? `${base}landmarks/${part.id}.glb`,
+          g => {
+            draco.dispose()
+            if (generation !== loadGeneration || scene !== activeScene) {
+              disposeLandmarkModel(g.scene)
+              return
+            }
+            const built = g.scene
+            // Meshy's supplied GLBs carry their own +90° X mesh-node rotation.
+            // Leave that conversion intact: Mapbox's layer transform turns its
+            // Three-Y height into Mapbox-Z and reverses the source vertical axis
+            // so the model's broad base, not its crown, meets the ground.
+            built.rotation.x = 0
+            built.rotation.y = THREE.MathUtils.degToRad(part.yaw ?? 0)
+            prepareLandmarkMaterials(
+              built,
+              part.color ?? 0xefe9df,
+              renderer?.capabilities.getMaxAnisotropy() ?? 1,
+              part.materialIdentity,
+            )
+            const box = new THREE.Box3().setFromObject(built)
+            const size = new THREE.Vector3()
+            box.getSize(size)
+            const scale = part.heightM / (size.y || 1)
+            built.scale.setScalar(scale)
+
+            // The layer root is anchored at the primary landmark. Convert a
+            // companion's real coordinate into local metre offsets so Rogers
+            // Centre remains at its surveyed site next to CN Tower while both
+            // meshes share this one scene. Mapbox mercator Y grows southward,
+            // which is also the layer's local Z direction after rotateX.
+            const partOrigin = mapboxgl.MercatorCoordinate.fromLngLat(part.coords, 0)
+            built.position.x = (partOrigin.x - origin.x) / transform.scale
+            built.position.z = (partOrigin.y - origin.y) / transform.scale
+            built.position.y = landmarkGroundOffsetY(box.min.y, scale)
+
+            const footprintRadius = Math.max(0.1, Math.max(size.x, size.z) * 0.34)
+            const contact = new THREE.Mesh(
+              new THREE.CircleGeometry(footprintRadius, 40),
+              new THREE.MeshBasicMaterial({
+                color: part.artDirection?.contactColor ?? 0x3b2a34,
+                transparent: true,
+                opacity: part.artDirection?.contactOpacity ?? 0.24,
+                depthWrite: false,
+              }),
+            )
+            contact.name = `landmark-ground-contact-${part.id}`
+            contact.rotation.x = -Math.PI / 2
+            contact.position.y = landmarkContactPlaneY(box.min.y, scale)
+            built.add(contact)
+
+            // Keep the group hidden until every part has either decoded or
+            // failed. A fast CN decode must not flash a tower-only frame before
+            // the local SkyDome asset joins it a few milliseconds later.
+            built.visible = false
+            models.set(part.id, built)
+            activeScene.add(built)
+            if (part.primary) {
+              model = built
+              primaryScale = scale
+              primaryGroundY = box.min.y
+            }
+            settlePart(part.id)
+          },
+          undefined,
+          err => {
+            draco.dispose()
+            console.warn(`[${part.id} glb]`, err)
+            settlePart(part.id)
+          },
+        )
+      })
 
       // governor-ok: shares the map's context; the layer holds a PoplurPerformanceManager lease only while it is on the map, and draws only inside Mapbox's own render pass — it asks for no frames of its own
       renderer = new THREE.WebGLRenderer({
@@ -502,7 +575,8 @@ export function installNearLandmark3D(
     },
     onRemove() {
       stopPop()
-      if (model) { disposeLandmarkModel(model); model = null }
+      loadGeneration += 1
+      disposeModels()
       modelReady = false
       modelRendered = false
       scene = null
@@ -629,7 +703,8 @@ export function installNearLandmark3D(
     },
     releaseInactiveResources: () => {
       stopPop()
-      if (model) { disposeLandmarkModel(model); model = null }
+      loadGeneration += 1
+      disposeModels()
       modelReady = false
       modelRendered = false
     },

@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
-import MapRandomTourButton from '../MapRandomTourButton'
+import MapRewardRollButton from '../MapRewardRollButton'
+import {
+  creditBalance,
+  creditHistory,
+  dailyMapRewardEntryId,
+  grantDailyMapReward,
+} from '../poplurCredits'
 import {
   DAILY_RADIUS_ROLL_COOLDOWN_MS,
+  LEGACY_RADIUS_REWARD_STORAGE_KEY,
   RADIUS_REWARD_STORAGE_KEY,
   RADIUS_REWARD_OUTCOMES,
   parseRadiusRewardClaim,
@@ -58,7 +65,8 @@ describe('daily Radius reward roll', () => {
     const now = Date.UTC(2026, 7, 28, 12)
     const reward = RADIUS_REWARD_OUTCOMES[4]
     const stored = serializeRadiusRewardClaim(reward, now)
-    expect(RADIUS_REWARD_STORAGE_KEY).toContain('preview')
+    expect(RADIUS_REWARD_STORAGE_KEY).toBe('poplur.radius.reward.v1')
+    expect(LEGACY_RADIUS_REWARD_STORAGE_KEY).toBe('poplur.radius.reward.preview.v1')
     expect(parseRadiusRewardClaim(stored, now)).toEqual(reward)
     expect(parseRadiusRewardClaim(stored, Date.UTC(2026, 7, 29))).toBeNull()
   })
@@ -95,22 +103,68 @@ describe('daily Radius reward roll', () => {
     expect(radiusRewardPreviewEnabled('?view=map')).toBe(false)
   })
 
-  it('keeps a distinct approved dice control on the normal Map rail', () => {
+  it('uses the approved reward dice control on the normal Map rail', () => {
     const onPress = vi.fn()
-    const button = MapRandomTourButton({ onPress }) as unknown as {
-      props: { onClick: () => void }
+    const button = MapRewardRollButton({ active: false, onPress }) as unknown as {
+      props: { onPointerDown: (event: { isPrimary: boolean; button: number }) => void }
     }
-    button.props.onClick()
+    button.props.onPointerDown({ isPrimary: true, button: 0 })
     expect(onPress).toHaveBeenCalledOnce()
 
     const markup = renderToStaticMarkup(button as never)
-    expect(markup).toContain('data-map-random-tour-button=""')
-    expect(markup).toContain('aria-label="Tour four random landmarks"')
+    expect(markup).toContain('data-map-reward-roll-button=""')
+    expect(markup).toContain('aria-label="Open free Map reward roll"')
     expect(markup).toContain(RADIUS_REWARD_DICE_SPRITE)
 
     const home = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'utf8')
-    expect(home).toMatch(/!RADIUS_REWARD_PREVIEW_ENABLED[\s\S]*?<MapRandomTourButton[\s\S]*?sendMapAction\('randomTour'\)/)
-    expect(home).toMatch(/RADIUS_REWARD_PREVIEW_ENABLED[\s\S]*?<MapRewardRollButton/)
+    expect(home).not.toContain('MapRandomTourButton')
+    expect(home).toMatch(/<MapDailyRewardController enabled=\{!RADIUS_REWARD_PREVIEW_ENABLED\}/)
+    expect(home).toMatch(/<MapRewardRollButton[\s\S]*?announceRadiusRewardNavigator\(true\)/)
+  })
+
+  it('activates the reward dice on primary pointer-down without double-firing the pointer click', () => {
+    const onPress = vi.fn()
+    const button = MapRewardRollButton({ active: false, onPress }) as unknown as {
+      props: {
+        onPointerDown: (event: { isPrimary: boolean; button: number }) => void
+        onClick: (event: { detail: number }) => void
+      }
+    }
+
+    button.props.onPointerDown({ isPrimary: true, button: 2 })
+    expect(onPress).not.toHaveBeenCalled()
+    button.props.onPointerDown({ isPrimary: true, button: 0 })
+    expect(onPress).toHaveBeenCalledOnce()
+    button.props.onClick({ detail: 1 })
+    expect(onPress).toHaveBeenCalledOnce()
+    button.props.onClick({ detail: 0 })
+    expect(onPress).toHaveBeenCalledTimes(2)
+  })
+
+  it('grants a daily Map reward to the Credits ledger exactly once', () => {
+    const values = new Map<string, string>()
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+      dispatchEvent: vi.fn(),
+    })
+    vi.stubGlobal('CustomEvent', class {
+      constructor(public type: string, public init?: unknown) {}
+    })
+
+    try {
+      expect(dailyMapRewardEntryId('2026-08-30')).toBe('map-reward:2026-08-30')
+      expect(grantDailyMapReward(10, '2026-08-30', 'Daily die')).toBe(true)
+      expect(grantDailyMapReward(25, '2026-08-30', 'Repeated completion')).toBe(false)
+      expect(creditBalance()).toBe(40)
+      expect(creditHistory().filter(entry => entry.kind === 'map-reward')).toEqual([
+        expect.objectContaining({ id: 'map-reward:2026-08-30', delta: 10 }),
+      ])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('dispatches the normal dice to the existing bounded random tour', () => {

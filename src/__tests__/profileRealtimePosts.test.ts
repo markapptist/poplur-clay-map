@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { profilePostsFromRealtime } from '../profileRealtimePosts'
+import { profilePostShareUrl, profilePostsFromRealtime } from '../profileRealtimePosts'
 import type { NativeFeedPost } from '../nativeFeedPosts'
 
 function post(overrides: Partial<NativeFeedPost>): NativeFeedPost {
@@ -34,6 +34,23 @@ describe('realtime Profile post projection', () => {
       post({ id: 'two', ownerId: 'owner-b', username: '@different' }),
     ]
     expect(profilePostsFromRealtime(rows, null, 'same.handle').map(row => row.id)).toEqual(['one'])
+  })
+
+  it('uses a visited profile uid before a mutable or colliding handle', () => {
+    const rows = [
+      post({ id: 'uid-match', ownerId: 'uid-target', username: '@renamed' }),
+      post({ id: 'handle-collision', ownerId: 'uid-other', username: '@target' }),
+    ]
+    expect(profilePostsFromRealtime(rows, null, 'target', 'uid-target').map(row => row.id)).toEqual([
+      'uid-match',
+    ])
+    expect(profilePostsFromRealtime(rows, null, 'target', 'uid-missing')).toEqual([])
+  })
+
+  it('builds a unique canonical share URL from the immutable post id', () => {
+    expect(profilePostShareUrl({ id: 'post/a b' })).toBe('https://poplur.com/p/post%2Fa%20b')
+    expect(profilePostShareUrl({ id: 'post-two' })).toBe('https://poplur.com/p/post-two')
+    expect(profilePostShareUrl({})).toBeNull()
   })
 
   it('never promotes legacy ownerless bridge rows into the signed-in profile', () => {

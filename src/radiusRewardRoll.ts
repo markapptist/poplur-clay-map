@@ -1,14 +1,15 @@
 /**
- * Preview-only reward table for Poplur's Monopoly-inspired map roll.
+ * Bounded reward table for Poplur's Monopoly-inspired daily Map roll.
  *
  * The roll deliberately grants bonus Credits only. It never changes Radius,
- * map ownership, domination power, feed rank, or Hot Area multipliers. A live
- * release should have the server sign the outcome, enforce one free roll per
- * UTC day, and record the award in the normal Credits ledger.
+ * map ownership, domination power, feed rank, or Hot Area multipliers. The
+ * client mirror enforces one free roll per UTC day; the server will eventually
+ * sign the same outcome and stable daily ledger id.
  */
 
 export const DAILY_RADIUS_ROLL_COOLDOWN_MS = 24 * 60 * 60 * 1_000
-export const RADIUS_REWARD_STORAGE_KEY = 'poplur.radius.reward.preview.v1'
+export const RADIUS_REWARD_STORAGE_KEY = 'poplur.radius.reward.v1'
+export const LEGACY_RADIUS_REWARD_STORAGE_KEY = 'poplur.radius.reward.preview.v1'
 
 export interface RadiusRewardOutcome {
   face: 1 | 2 | 3 | 4 | 5 | 6
@@ -67,8 +68,8 @@ export function serializeRadiusRewardClaim(
 }
 
 /** Rebuild the award from the checked-in table instead of trusting a stored
- * Credit amount. The local record only protects this interactive preview; a
- * real balance must come from the authenticated server ledger. */
+ * Credit amount. The local record mirrors the eventual authenticated server
+ * ledger and deliberately stores only the face and day. */
 export function parseRadiusRewardClaim(raw: string | null, nowMs: number): RadiusRewardOutcome | null {
   if (!raw) return null
   try {

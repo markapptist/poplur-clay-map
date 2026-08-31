@@ -20,6 +20,7 @@ import {
   type RadioContentSource,
 } from './mapRadio'
 import { useNearbyLocation } from './nearbyLocation'
+import { shareRadioStation } from './radioShare'
 
 // POPLUR RADIO — the station deck.
 //
@@ -99,6 +100,8 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
   const [wave, setWave] = useState<Wave>('all')
   const [favourites, setFavourites] = useState<Set<string>>(() => new Set())
   const [muted, setMuted] = useState(isUserMuted)
+  const [controlNote, setControlNote] = useState<string | null>(null)
+  const controlNoteTimer = useRef<number | null>(null)
   // The set warms up before it plays. 'off' is the collapsing picture.
   const [boot, setBoot] = useState<'on' | 'off' | 'done'>('on')
   const locationKey = location ? `${location.lat.toFixed(3)},${location.lng.toFixed(3)}` : ''
@@ -198,6 +201,18 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  const showControlNote = (note: string) => {
+    setControlNote(note)
+    if (controlNoteTimer.current != null) window.clearTimeout(controlNoteTimer.current)
+    controlNoteTimer.current = window.setTimeout(() => {
+      setControlNote(null)
+      controlNoteTimer.current = null
+    }, 2400)
+  }
+  useEffect(() => () => {
+    if (controlNoteTimer.current != null) window.clearTimeout(controlNoteTimer.current)
+  }, [])
 
   // ── Long press = full screen ──────────────────────────────────────────────
   // The deck runs the full height of the stage, so the cube and the bottom row
@@ -306,9 +321,24 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
 
   // SCAN: step to the next station in range, like the seek key on a dash.
   const scan = (dir: 1 | -1) => {
-    if (!inBand.length) return
+    if (!inBand.length) {
+      playPop()
+      showControlNote(error ?? 'No stations are available in this band')
+      return
+    }
     const at = inBand.findIndex(s => s.url === tunedUrl)
     tune(inBand[((at + dir) % inBand.length + inBand.length) % inBand.length])
+  }
+
+  const requireTuned = (action: 'favourite' | 'play' | 'share'): LocalStation | null => {
+    if (tuned) return tuned
+    playPop()
+    showControlNote(`Pick a station before you ${action}`)
+    return null
+  }
+
+  const shareTunedStation = (station: LocalStation) => {
+    void shareRadioStation(station).then(showControlNote)
   }
 
   return (
@@ -522,14 +552,43 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
             <ClayCornerButton kind="seekBack" label="Previous station" size={46} onPress={() => scan(-1)} />
             <ClayCornerButton
               kind="heart"
-              label="Favourite"
+              label={tuned ? 'Favourite station' : 'Favourite unavailable until a station is tuned'}
               size={52}
               active={!!tuned && favourites.has(tuned.id)}
-              onPress={() => tuned && toggleFav(tuned.id)}
+              onPress={() => {
+                const station = requireTuned('favourite')
+                if (station) toggleFav(station.id)
+              }}
             />
-            <ClayCornerButton kind="play" label="Play" size={78} onPress={() => tuned && tune(tuned)} />
-            <ClayCornerButton kind="share" label="Share" size={52} onPress={() => playPop()} />
+            <ClayCornerButton
+              kind="play"
+              label={tuned ? `Play ${tuned.name}` : 'Play unavailable until a station is tuned'}
+              size={78}
+              onPress={() => {
+                if (tuned) tune(tuned)
+                else requireTuned('play')
+              }}
+            />
+            <ClayCornerButton
+              kind="share"
+              label={tuned ? `Share ${tuned.name}` : 'Share unavailable until a station is tuned'}
+              size={52}
+              onPress={() => {
+                const station = requireTuned('share')
+                if (!station) return
+                playPop()
+                shareTunedStation(station)
+              }}
+            />
             <ClayCornerButton kind="seekFwd" label="Next station" size={46} onPress={() => scan(1)} />
+          </div>
+          <div className={styles.dashHint} role="status" aria-live="polite">
+            {controlNote
+              ?? (!inBand.length
+                ? (error ?? 'No stations are available in this band')
+                : tuned
+                  ? `${tuned.name} is ready`
+                  : 'Pick a station to enable favourite, play and share')}
           </div>
         </div>
       </div>

@@ -94,7 +94,7 @@ export default function SideControlIconButton({
     if (!disabled) onActivate?.()
   }
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (activation === 'pointerdown' && event.isPrimary) activate()
+    if (activation === 'pointerdown' && event.isPrimary && event.button === 0) activate()
   }
   const handleClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
     // Keyboard-generated clicks have detail 0. Preserve keyboard activation

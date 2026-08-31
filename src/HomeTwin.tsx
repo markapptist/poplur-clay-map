@@ -19,8 +19,8 @@ import MapNewsButton from './MapNewsButton'
 import MapRadioButton from './MapRadioButton'
 import MapRadioStatusLabel from './MapRadioStatusLabel'
 import { mapTourControlState } from './mapTourControl'
-import MapRandomTourButton from './MapRandomTourButton'
 import MapRewardRollButton from './MapRewardRollButton'
+import MapDailyRewardController from './MapDailyRewardController'
 import { readMapNewsOpenRequest } from './mapNewsBridge'
 import MapConquerButton from './MapConquerButton'
 import WeatherMark from './WeatherMark'
@@ -967,7 +967,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const [radiusRewardDiceRollSignal, setRadiusRewardDiceRollSignal] = useState<RadiusRewardDiceRollSignal | null>(null)
   const radiusRewardDiceSessionRef = useRef<number | null>(null)
   useEffect(() => {
-    if (!RADIUS_REWARD_PREVIEW_ENABLED) return
     const onNavigatorSignal = (event: Event) => {
       const signal = radiusRewardNavigatorSignalFromEvent(event)
       if (!signal) return
@@ -979,7 +978,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     return () => window.removeEventListener(RADIUS_REWARD_NAVIGATOR_EVENT, onNavigatorSignal)
   }, [])
   useEffect(() => {
-    if (!RADIUS_REWARD_PREVIEW_ENABLED) return
     const onDiceRoll = (event: Event) => {
       const signal = radiusRewardDiceRollSignalFromEvent(event)
       if (!signal || signal.session !== radiusRewardDiceSessionRef.current) return
@@ -1475,6 +1473,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       const handle = (event as CustomEvent<{ handle?: string }>).detail?.handle ?? null
       setProfileOrigin(activeTabLiveRef.current)
       setViewingUser(handle)
+      setViewingUserId(null)
       setActiveTab('profile')
       setHoldOpen(false)
     }
@@ -1496,6 +1495,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setProfileOrigin(activeTabLiveRef.current)
       // Your notifications, never a visited profile's.
       setViewingUser(null)
+      setViewingUserId(null)
       setActiveTab('profile')
       setNotifOpenNonce(n => n + 1)
     }
@@ -1555,6 +1555,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       if (typeof threadId !== 'string' || !threadId || threadId.length > 200) return
       setProfileOrigin(activeTabLiveRef.current)
       setViewingUser(null)
+      setViewingUserId(null)
       setActiveTab('profile')
       setDMOpenRequest(current => ({ threadId, nonce: (current?.nonce ?? 0) + 1 }))
     }
@@ -2927,9 +2928,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       // your own pins that is your own grid, no visit.
       if (event.data.type === 'poplur-map-open-profile') {
         const who = typeof event.data.user === 'string' ? event.data.user : null
+        const userId = typeof event.data.userId === 'string' && event.data.userId.trim().length <= 128
+          ? event.data.userId.trim()
+          : null
         const popId = typeof event.data.popId === 'string' ? event.data.popId : null
         setProfileOrigin(tabForHoldRef.current)
         setViewingUser(who)
+        setViewingUserId(userId)
         if (popId) setProfilePopFlash(prev => ({ ids: [popId], seq: (prev?.seq ?? 0) + 1 }))
         setActiveTab('profile')
       }
@@ -3555,6 +3560,29 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     document.documentElement.classList.toggle('native-map-live', mapVisible)
     if (mapVisible) setMapPlace(previous => previous ?? 'Current area')
 
+    const inactivePayload = {
+      type: 'nativeMapPresentation',
+      active: false,
+      passthrough: false,
+      regions: [],
+    }
+    const publishInactive = () => {
+      const signature = JSON.stringify(inactivePayload)
+      if (signature === nativeHitSignatureRef.current) return
+      nativeHitSignatureRef.current = signature
+      postNativeEvent(inactivePayload)
+    }
+
+    // The native hit-region census reads layout across the whole HUD. Do not
+    // keep its document-wide observers alive after leaving Map: unrelated
+    // Feed/Profile mutations would otherwise wake a layout pass forever.
+    if (!mapVisible) {
+      publishInactive()
+      return () => {
+        document.documentElement.classList.remove('native-map-live')
+      }
+    }
+
     let settleTimer = 0
     let frame = 0
     const publishRegions = () => {
@@ -3633,8 +3661,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       mutationObserver?.disconnect()
       window.clearTimeout(settleTimer)
       if (frame) window.cancelAnimationFrame(frame)
-      nativeHitSignatureRef.current = ''
-      postNativeEvent({ type: 'nativeMapPresentation', active: false, passthrough: false, regions: [] })
+      publishInactive()
     }
   }, [activePermission, activeTab, committedTab, composerOpen, feedAdSlotOpen, holdOpen, incomingCall, mapOverlayOpen, nativeMapWebFallback, overlayOpen, subscreenFullscreen, surfaceVisible])
 
@@ -3963,7 +3990,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const [cameraFlashPulse, setCameraFlashPulse] = useState(0)
   useEffect(() => { if (activeTab !== 'post') setCameraStep(0) }, [activeTab])
   useEffect(() => {
-    if (activeTab !== 'profile') { setViewingUser(null); setProfileOrigin(null) }
+    if (activeTab !== 'profile') {
+      setViewingUser(null)
+      setViewingUserId(null)
+      setProfileOrigin(null)
+    }
   }, [activeTab])
 
   // Profile tab: the clay arrows browse an OPEN post (or flip the capture
@@ -4036,6 +4067,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
 
   // null = your own profile; a handle = that user's profile.
   const [viewingUser, setViewingUser] = useState<string | null>(null)
+  // Stable account identity carried by a real Feed post or Map pin. Legacy
+  // handle-only routes leave this null and Profile falls back to the shared
+  // realtime handle resolver.
+  const [viewingUserId, setViewingUserId] = useState<string | null>(null)
   // Where that profile was opened FROM, so closing it returns you there (the
   // feed you were watching) instead of dropping you on your own profile.
   const [profileOrigin, setProfileOrigin] = useState<CubeTab | null>(null)
@@ -4872,6 +4907,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       data-poplur-watchdog={chromeFaded ? 'off' : 'on'}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
+      <MapDailyRewardController enabled={!RADIUS_REWARD_PREVIEW_ENABLED} />
       {/* One brand owner for the entire home. Tabs and subscreens never mount
           their own wordmark, so changing surfaces cannot duplicate or replace
           the Poplur title. */}
@@ -4984,22 +5020,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 else startRadioForMap()
               }}
             />
-            {!RADIUS_REWARD_PREVIEW_ENABLED && (
-              <MapRandomTourButton
-                onPress={() => {
-                  playPop(0.25)
-                  sendMapAction('randomTour')
-                }}
-              />
-            )}
-            {RADIUS_REWARD_PREVIEW_ENABLED && (
-              <MapRewardRollButton
-                active={Boolean(radiusRewardDiceSignal)}
-                onPress={() => {
-                  if (!radiusRewardDiceSignal) announceRadiusRewardNavigator(true)
-                }}
-              />
-            )}
+            <MapRewardRollButton
+              active={Boolean(radiusRewardDiceSignal)}
+              onPress={() => {
+                playPop(0.25)
+                if (!radiusRewardDiceSignal) announceRadiusRewardNavigator(true)
+              }}
+            />
             <SideControlIconButton
               icon="map.locate"
               aria-label="Go to my location"
@@ -5139,9 +5166,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             frontMost={activeTab === 'feed' && committedTab === 'feed' && mainSurfaceVisible}
             onPlayerModeChange={setFeedFullscreen}
             autoPlayOnMount={feedAutoPlayOnMount}
-            onOpenProfile={user => {
+            onOpenProfile={(user, userId) => {
               setProfileOrigin(activeTab)
               setViewingUser(user)
+              setViewingUserId(userId?.trim() || null)
               setActiveTab('profile')
             }}
           />
@@ -5227,6 +5255,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             bindArrows={fn => { profileArrowsRef.current = fn }}
             bindGoBack={fn => { profileBackRef.current = fn }}
             viewUser={viewingUser}
+            viewUserId={viewingUserId}
             highlightPops={profilePopFlash}
             onPostCountChange={setProfilePostCount}
             onBackToOwn={() => {
@@ -5236,6 +5265,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               // changing tabs — the swipe's job, never the tap's.
               setProfileOrigin(null)
               setViewingUser(null)
+              setViewingUserId(null)
             }}
           />
         )}
@@ -5417,6 +5447,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 playPop()
                 setProfilePopFlash(prev => ({ ids: mapAreaPops.ids, seq: (prev?.seq ?? 0) + 1 }))
                 setViewingUser(null)
+                setViewingUserId(null)
                 setActiveTab('profile')
               }}
             >
