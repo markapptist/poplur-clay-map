@@ -19,13 +19,13 @@ describe('camera-roll side control', () => {
     expect(source).toContain("(arOpen ? 'pan-x' : 'none')")
   })
 
-  it('keeps the camera-roll wrapper neutral instead of drawing shaded chrome', () => {
+  it('uses the shared rail squircle without drawing shaded chrome', () => {
     const css = readFileSync(resolve(process.cwd(), 'src', 'ViewHarness.module.css'), 'utf8')
     const rule = css.match(/\.camRollBtn \{([\s\S]*?)\n\}/)?.[1] ?? ''
     const thumbnailRule = css.match(/\.camRollBtnThumb \{([\s\S]*?)\n\}/)?.[1] ?? ''
 
     expect(rule).toContain('border: 0;')
-    expect(rule).toContain('border-radius: 50%;')
+    expect(rule).toContain('border-radius: 15px;')
     expect(rule).toContain('background: transparent;')
     expect(rule).toContain('backdrop-filter: none;')
     expect(rule).toContain('box-shadow: none;')

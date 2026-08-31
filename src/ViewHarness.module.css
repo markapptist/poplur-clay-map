@@ -404,7 +404,9 @@
 .camRollBtn {
   appearance: none;
   border: 0;
-  border-radius: 50%;
+  /* Match the shared 44px rail-control squircle. A circular clip made the
+     newest-photo thumbnail look like an unrelated floating bubble. */
+  border-radius: 15px;
   padding: 0;
   background: transparent;
   backdrop-filter: none;

@@ -33,6 +33,13 @@ import {
   hidesPublicPostOrigin,
   onAccountPrivacyChange,
 } from './accountPrivacy'
+import {
+  CLAIM_RADIUS_STEP_KM,
+  clampClaimRadiusKm,
+  formatClaimRadiusKm,
+  preferredClaimRadiusKm,
+} from './claimRadius'
+import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -183,7 +190,10 @@ export default function PostComposer({
   const usedAIRef = useRef(usedAI)
   usedAIRef.current = usedAI
   const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
-  const [radiusKm, setRadiusKm] = useState(target?.radiusKm ?? 3)
+  const claimRadiusMaxKm = useClaimRadiusLimitKm()
+  const [radiusKm, setRadiusKm] = useState(() => target?.radiusKm === undefined
+    ? preferredClaimRadiusKm(claimRadiusMaxKm, 3)
+    : clampClaimRadiusKm(target.radiusKm, claimRadiusMaxKm))
   const [accountPrivacy, setAccountPrivacy] = useState(accountPrivacySnapshot)
   const locationVisibility: PostLocationVisibility = hidesPublicPostOrigin(accountPrivacy)
     ? 'hidden'
@@ -223,8 +233,12 @@ export default function PostComposer({
 
   useEffect(() => {
     if (!reviewMode || target?.radiusKm === undefined) return
-    setRadiusKm(target.radiusKm)
-  }, [reviewMode, target?.radiusKm])
+    setRadiusKm(clampClaimRadiusKm(target.radiusKm, claimRadiusMaxKm))
+  }, [claimRadiusMaxKm, reviewMode, target?.radiusKm])
+
+  useEffect(() => {
+    setRadiusKm(current => clampClaimRadiusKm(current, claimRadiusMaxKm))
+  }, [claimRadiusMaxKm])
 
   // The cube's back: one screen at a time, closing from the first. Matches
   // the Escape key exactly.
@@ -533,6 +547,9 @@ export default function PostComposer({
     setUploadPhaseState('preparing')
     const destination = caption.trim() ? 'feed' as const : 'tv' as const
     const audience = 'public' as const
+    // Re-check at the publish boundary. A stale draft or bridge message cannot
+    // bypass a limit that changed while the composer was open.
+    const publishedRadiusKm = clampClaimRadiusKm(radiusKm, claimRadiusMaxKm)
     const post: PublishedPost = {
       media,
       filterId,
@@ -545,7 +562,7 @@ export default function PostComposer({
       // A hidden-origin post remains visible in the feed/profile, but it must
       // not paint a public claim or hand its chosen map point to another UI.
       target: target && locationVisibility === 'approximate'
-        ? { ...target, radiusKm }
+        ? { ...target, radiusKm: publishedRadiusKm }
         : undefined,
       destination,
       postId: postIdRef.current,
@@ -607,7 +624,10 @@ export default function PostComposer({
           longitudeCell: target && locationVisibility === 'approximate'
             ? publicCoordinateCell(target.lng)
             : undefined,
-          radiusKm: target ? radiusKm : undefined,
+          // Always send an explicit value. Omitting radius on a camera-first
+          // post used to trigger positive native defaults, turning a valid
+          // zero-entitlement account into a claimed area off screen.
+          radiusKm: publishedRadiusKm,
           audience,
           locationVisibility,
           privateAccount: accountPrivacy.privateAccount,
@@ -627,7 +647,7 @@ export default function PostComposer({
             body: caption.trim(),
             lat: publicCoordinate(target.lat),
             lng: publicCoordinate(target.lng),
-            radiusKm,
+            radiusKm: publishedRadiusKm,
             media: [attachment],
           })
         }
@@ -947,12 +967,19 @@ export default function PostComposer({
           </p>
           {target && (
             <label className={styles.radiusRow}>
-              <span>Claim radius <b>{radiusKm.toFixed(1)} km</b></span>
+              <span>
+                Claim radius <b>{formatClaimRadiusKm(radiusKm)} km</b>
+                {claimRadiusMaxKm === 0 && <small>Post at 0 km; engagement earns radius.</small>}
+              </span>
               <input
-                type="range" min={0.5} max={25} step={0.5}
+                type="range"
+                min={claimRadiusMaxKm === 0 ? 0 : CLAIM_RADIUS_STEP_KM}
+                max={claimRadiusMaxKm}
+                step={CLAIM_RADIUS_STEP_KM}
                 value={radiusKm}
+                disabled={claimRadiusMaxKm === 0}
                 onChange={e => {
-                  const next = Number(e.target.value)
+                  const next = clampClaimRadiusKm(Number(e.target.value), claimRadiusMaxKm)
                   setRadiusKm(next)
                   onRadiusChange?.(next)
                 }}

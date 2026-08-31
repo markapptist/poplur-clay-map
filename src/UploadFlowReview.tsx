@@ -3,6 +3,13 @@ import PostComposer, { type ComposerTarget, type PostComposerStep } from './Post
 import UploadStatusView from './UploadStatusView'
 import { playPop } from './pop'
 import {
+  CLAIM_RADIUS_STEP_KM,
+  clampClaimRadiusKm,
+  formatClaimRadiusKm,
+  preferredClaimRadiusKm,
+} from './claimRadius'
+import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
+import {
   resolveUploadReviewRoute,
   screensForUploadFlow,
   type UploadFlowId,
@@ -45,6 +52,7 @@ function LocationRadiusPreview({
   onTargetChange,
   onContinue,
   flow,
+  maxRadiusKm,
 }: {
   radius: number
   target: ComposerTarget
@@ -52,10 +60,10 @@ function LocationRadiusPreview({
   onTargetChange: (target: ComposerTarget) => void
   onContinue: () => void
   flow: UploadFlowId
+  maxRadiusKm: number
 }) {
-  const RADIUS_MIN = .5
-  const RADIUS_MAX = 25
-  const RADIUS_STEP = .5
+  const RADIUS_MIN = maxRadiusKm === 0 ? 0 : CLAIM_RADIUS_STEP_KM
+  const RADIUS_MAX = maxRadiusKm
   const RADIUS_ORB_SIZE = 28
   const [radiusPalette, setRadiusPalette] = useState({
     face: '#F63B9A',
@@ -67,7 +75,10 @@ function LocationRadiusPreview({
   const initialTargetRef = useRef(target)
   const radiusRailRef = useRef<HTMLDivElement>(null)
   const draggingRadiusRef = useRef(false)
-  const radiusRatio = (radius - RADIUS_MIN) / (RADIUS_MAX - RADIUS_MIN)
+  const safeRadius = clampClaimRadiusKm(radius, maxRadiusKm)
+  const radiusRatio = RADIUS_MAX > RADIUS_MIN
+    ? (safeRadius - RADIUS_MIN) / (RADIUS_MAX - RADIUS_MIN)
+    : 0
 
   const updateTerrain = useCallback((nextRadius: number) => {
     mapFrameRef.current?.contentWindow?.postMessage({
@@ -77,24 +88,24 @@ function LocationRadiusPreview({
   }, [])
 
   const commitRadius = useCallback((rawRadius: number, withSound = true) => {
-    const stepped = RADIUS_MIN + Math.round((rawRadius - RADIUS_MIN) / RADIUS_STEP) * RADIUS_STEP
-    const nextRadius = Math.max(RADIUS_MIN, Math.min(RADIUS_MAX, stepped))
-    if (radius === nextRadius) return
+    const nextRadius = clampClaimRadiusKm(rawRadius, maxRadiusKm)
+    if (safeRadius === nextRadius) return
     if (withSound) playPop(.2)
     onRadiusChange(nextRadius)
-  }, [onRadiusChange, radius])
+  }, [maxRadiusKm, onRadiusChange, safeRadius])
 
   const setRadiusFromPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const rail = radiusRailRef.current
-    if (!rail) return
+    if (!rail || maxRadiusKm === 0) return
     const bounds = rail.getBoundingClientRect()
     const ratio = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
     commitRadius(RADIUS_MIN + ratio * (RADIUS_MAX - RADIUS_MIN))
-  }, [commitRadius])
+  }, [commitRadius, maxRadiusKm])
 
   useEffect(() => {
-    updateTerrain(radius)
-  }, [radius, updateTerrain])
+    if (radius !== safeRadius) onRadiusChange(safeRadius)
+    updateTerrain(safeRadius)
+  }, [onRadiusChange, radius, safeRadius, updateTerrain])
 
   useEffect(() => {
     const onMapMessage = (event: MessageEvent) => {
@@ -110,17 +121,18 @@ function LocationRadiusPreview({
         const lat = Number(event.data.lat)
         const lng = Number(event.data.lng)
         if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lng) || Math.abs(lng) > 180) return
-        onTargetChange({ lat, lng, radiusKm: radius, resume: true })
+        onTargetChange({ lat, lng, radiusKm: safeRadius, resume: true })
       }
     }
     window.addEventListener('message', onMapMessage)
     return () => window.removeEventListener('message', onMapMessage)
-  }, [onTargetChange, radius])
+  }, [onTargetChange, safeRadius])
 
   const handleRadiusKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     let nextRadius: number | null = null
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextRadius = radius - RADIUS_STEP
-    if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextRadius = radius + RADIUS_STEP
+    if (maxRadiusKm === 0) return
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextRadius = safeRadius - CLAIM_RADIUS_STEP_KM
+    if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextRadius = safeRadius + CLAIM_RADIUS_STEP_KM
     if (event.key === 'Home') nextRadius = RADIUS_MIN
     if (event.key === 'End') nextRadius = RADIUS_MAX
     if (nextRadius === null) return
@@ -136,7 +148,7 @@ function LocationRadiusPreview({
         ref={mapFrameRef}
         title="Angled 3D building map"
         src={`/?map=1&front=1&radiusReview=1&pickLat=${initialTargetRef.current.lat}&pickLng=${initialTargetRef.current.lng}`}
-        onLoad={() => updateTerrain(radius)}
+        onLoad={() => updateTerrain(safeRadius)}
       />
       <div className={styles.locationIntro}>
         <span>POST LOCATION</span>
@@ -154,18 +166,25 @@ function LocationRadiusPreview({
         } as React.CSSProperties}
       >
         <div className={styles.radiusPicker}>
-          <span><b>CLAIM RADIUS</b><strong>{radius.toFixed(1)} km</strong></span>
+          <span>
+            <b>CLAIM RADIUS</b>
+            <strong>{formatClaimRadiusKm(safeRadius)} km</strong>
+          </span>
           <div
             className={styles.radiusControl}
             role="slider"
-            tabIndex={0}
+            tabIndex={maxRadiusKm === 0 ? -1 : 0}
+            aria-disabled={maxRadiusKm === 0}
             aria-label="Claim radius"
             aria-valuemin={RADIUS_MIN}
             aria-valuemax={RADIUS_MAX}
-            aria-valuenow={radius}
-            aria-valuetext={`${radius.toFixed(1)} kilometres`}
+            aria-valuenow={safeRadius}
+            aria-valuetext={maxRadiusKm === 0
+              ? 'No claim radius available yet'
+              : `${formatClaimRadiusKm(safeRadius)} kilometres`}
             onKeyDown={handleRadiusKey}
             onPointerDown={event => {
+              if (maxRadiusKm === 0) return
               draggingRadiusRef.current = true
               event.currentTarget.setPointerCapture(event.pointerId)
               setRadiusFromPointer(event)
@@ -245,6 +264,7 @@ function NonComposerPreview({
   onTargetChange,
   onLocationContinue,
   onReset,
+  maxRadiusKm,
 }: {
   flow: UploadFlowId
   screen: UploadReviewScreenId
@@ -255,6 +275,7 @@ function NonComposerPreview({
   onTargetChange: (target: ComposerTarget) => void
   onLocationContinue: () => void
   onReset: () => void
+  maxRadiusKm: number
 }) {
   if (screen === 'capture') {
     const motionLab = motionLabOpen ? '&motion-lab=1' : ''
@@ -279,6 +300,7 @@ function NonComposerPreview({
         onTargetChange={onTargetChange}
         onContinue={onLocationContinue}
         flow={flow}
+        maxRadiusKm={maxRadiusKm}
       />
     )
   }
@@ -289,11 +311,15 @@ function NonComposerPreview({
 
 export default function UploadFlowReview() {
   const initial = useMemo(() => resolveUploadReviewRoute(window.location.search), [])
+  const claimRadiusMaxKm = useClaimRadiusLimitKm()
   const [flow, setFlow] = useState<UploadFlowId>(initial.flow)
   const [screen, setScreen] = useState<UploadReviewScreenId>(initial.screen)
   const [media, setMedia] = useState<UploadMediaKind>(initial.media)
   const [motionLabOpen, setMotionLabOpen] = useState(false)
-  const [radius, setRadius] = useState(SAMPLE_TARGET.radiusKm ?? 3.5)
+  const [radius, setRadius] = useState(() => preferredClaimRadiusKm(
+    claimRadiusMaxKm,
+    SAMPLE_TARGET.radiusKm ?? 3.5,
+  ))
   const [target, setTarget] = useState<ComposerTarget>(SAMPLE_TARGET)
   const [composerRouteStep, setComposerRouteStep] = useState<PostComposerStep>(
     composerStepForScreen(initial.screen) ?? 'edit',
@@ -314,12 +340,20 @@ export default function UploadFlowReview() {
     if (currentComposerStep) setComposerRouteStep(currentComposerStep)
   }, [currentComposerStep])
 
+  useEffect(() => {
+    setRadius(currentRadius => clampClaimRadiusKm(currentRadius, claimRadiusMaxKm))
+  }, [claimRadiusMaxKm])
+
+  const setAuthorizedRadius = useCallback((nextRadius: number) => {
+    setRadius(clampClaimRadiusKm(nextRadius, claimRadiusMaxKm))
+  }, [claimRadiusMaxKm])
+
   const chooseFlow = (next: UploadFlowId) => {
     const first = screensForUploadFlow(next)[0].id
     playPop(.18)
     setFlow(next)
     setScreen(first)
-    setRadius(SAMPLE_TARGET.radiusKm ?? 3.5)
+    setRadius(preferredClaimRadiusKm(claimRadiusMaxKm, SAMPLE_TARGET.radiusKm ?? 3.5))
     setTarget(SAMPLE_TARGET)
     setComposerRouteStep('edit')
   }
@@ -427,7 +461,7 @@ export default function UploadFlowReview() {
                 target={composerTarget}
                 media={media}
                 onStepChange={handleComposerStepChange}
-                onRadiusChange={setRadius}
+                onRadiusChange={setAuthorizedRadius}
                 onRequestLocation={() => setScreen('location')}
               />
             </div>
@@ -437,10 +471,11 @@ export default function UploadFlowReview() {
               motionLabOpen={motionLabOpen}
               radius={radius}
               target={{ ...target, radiusKm: radius }}
-              onRadiusChange={setRadius}
+              onRadiusChange={setAuthorizedRadius}
               onTargetChange={setTarget}
               onLocationContinue={() => setScreen(flow === 'map' ? 'capture' : 'publish')}
               onReset={() => setScreen(flow === 'map' ? 'location' : 'capture')}
+              maxRadiusKm={claimRadiusMaxKm}
             />}
           </div>
         </div>

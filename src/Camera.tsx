@@ -447,6 +447,19 @@ export default function Camera({
   // explicit MediaStream, but the native sensor always follows real surface
   // visibility and the OS thermal tripwire.
   const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing
+
+  // AR is scoped to one visit to the live viewfinder. Camera Roll, the post
+  // composer, the hold menu, and another tab are all real exits: returning
+  // from any of them must show the default lens instead of silently restoring
+  // the last filter. The native iOS controller independently clears its
+  // retained filter in WebHomeCameraModel.deactivateCamera(), covering the
+  // bridge window after this web surface has already stopped being current.
+  useEffect(() => {
+    if (liveSurfaceVisible) return
+    setArOpen(false)
+    setArFilter('none')
+  }, [liveSurfaceVisible])
+
   const captureLeaseRef = useRef<PoplurResourceLease | null>(null)
   const analysisLeaseRef = useRef<PoplurResourceLease | null>(null)
   const [captureGranted, setCaptureGranted] = useState(false)
@@ -824,7 +837,9 @@ export default function Camera({
           ? {
               ...recognized,
               name: recognized.name || viewer.name,
-              radiusKm: viewer.radiusKm > 0 ? viewer.radiusKm : recognized.radiusKm,
+              // Zero is a real signed-in account value, not a missing value.
+              // Falling back here made the selfie overlay disagree with Map.
+              radiusKm: viewer.radiusKm,
             }
           : recognized)
         : selfieFace ? viewer : null

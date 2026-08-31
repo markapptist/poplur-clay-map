@@ -1,3 +1,5 @@
+import { readAccountRadiusKm } from './accountRadius'
+
 export type RadiusEventKind = 'view' | 'replay' | 'like' | 'dislike' | 'comment' | 'profile' | 'inactive'
 
 export interface RadiusEvent {
@@ -15,9 +17,6 @@ interface OwnedPost {
   inactivityApplied?: boolean
 }
 
-// A published post establishes the account's starting claim. It is never
-// displayed before the account has actually published something.
-const BASE_RADIUS_KM = 41.8
 const EVENT_KEY = 'poplur.radius.events.v1'
 const OWNED_POST_KEY = 'poplur.radius.owned-posts.v1'
 const INACTIVITY_MS = 3_600_000
@@ -164,12 +163,10 @@ export function ownedPostCount(): number {
 }
 
 export function radiusKm(): number {
-  const owned = ownedPosts()
-  // A profile with no published posts owns no radius — never a seeded demo
-  // value. This also makes an empty profile and the Map's account total agree.
-  if (owned.length === 0) return 0
-  const delta = accountEvents(owned).reduce((sum, event) => sum + event.deltaKm, 0)
-  return Math.max(0, BASE_RADIUS_KM + delta)
+  // Retain the local event ledger for animation/history only. Territory is a
+  // Firestore-backed account fact published by MapApp, so every surface reads
+  // the same cache and a first local post can never manufacture 41.8 km.
+  return readAccountRadiusKm()
 }
 
 /**

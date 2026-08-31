@@ -108,6 +108,13 @@ import styles from './ClayMap.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import { dropNewsMessage, MESSAGE_MAX } from './newsMessages'
 import {
+  CLAIM_RADIUS_STEP_KM,
+  clampClaimRadiusKm,
+  formatClaimRadiusKm,
+  preferredClaimRadiusKm,
+} from './claimRadius'
+import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
+import {
   countryNameForCode,
   nearestCountryCode,
   transitionWorldCountryCode,
@@ -195,6 +202,10 @@ export interface ClayMapProps {
   ownProfilePhoto?: string | null
   /** Their looping selfie video, if one is recorded. */
   ownProfileSelfieVideo?: string | null
+  /** Firestore-backed sum of the signed-in user's live post radii. This is the
+   *  same number MapApp publishes to the HUD, so the drop picker cannot drift
+   *  from the account total shown around it. */
+  accountRadiusKm?: number
 }
 
 /** A pop standing on the map: whose it is, where, and how much it holds. */
@@ -1079,14 +1090,15 @@ export function updateComposeRadiusPreview(
 ) {
   const source = map.getSource(COMPOSE_RADIUS_SOURCE) as mapboxgl.GeoJSONSource | undefined
   if (!source) return
-  if (!center) {
+  const safeRadiusKm = Math.max(0, Number.isFinite(radiusKm) ? radiusKm : 0)
+  if (!center || safeRadiusKm === 0) {
     source.setData({ type: 'FeatureCollection', features: [] })
     applyComposeSurfacePreview(map, null, theme)
     return
   }
 
-  const radiusMeters = radiusKm * 1000
-  const polygon = ownershipTerrainPolygon([center.lng, center.lat], radiusKm, {
+  const radiusMeters = safeRadiusKm * 1000
+  const polygon = ownershipTerrainPolygon([center.lng, center.lat], safeRadiusKm, {
     kind: 'coverage',
   })
   const latRadius = radiusMeters / 110_540
@@ -1295,7 +1307,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -1545,7 +1557,23 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // forever. A ref is the whole reason the dismiss below can see the window.
   const composeOpenRef = useRef(false)
   composeOpenRef.current = composeAt !== null
-  const [composeRadiusKm, setComposeRadiusKm] = useState(2)
+  const claimRadiusMaxKm = useClaimRadiusLimitKm(accountRadiusKm)
+  const [composeRadiusKm, setComposeRadiusKm] = useState(() =>
+    preferredClaimRadiusKm(claimRadiusMaxKm),
+  )
+  const previousClaimRadiusMaxKmRef = useRef(claimRadiusMaxKm)
+  useEffect(() => {
+    const previousLimit = previousClaimRadiusMaxKmRef.current
+    previousClaimRadiusMaxKmRef.current = claimRadiusMaxKm
+    setComposeRadiusKm(current => {
+      // The first successful post unlocks the normal picker for the next drop,
+      // but never retroactively enlarges the zero-radius post just published.
+      if (previousLimit === 0 && claimRadiusMaxKm > 0 && !composeOpenRef.current) {
+        return preferredClaimRadiusKm(claimRadiusMaxKm)
+      }
+      return clampClaimRadiusKm(current, claimRadiusMaxKm)
+    })
+  }, [claimRadiusMaxKm])
   /** A hold has just opened the composer, so the click that same press also
    *  produces must not be read as an edge tap. */
   const holdFiredRef = useRef(false)
@@ -1559,11 +1587,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       if (event.data?.type !== 'poplur-radius-preview') return
       const next = Number(event.data.radiusKm)
       if (!Number.isFinite(next)) return
-      setComposeRadiusKm(Math.max(0.5, Math.min(25, next)))
+      setComposeRadiusKm(clampClaimRadiusKm(next, claimRadiusMaxKm))
     }
     window.addEventListener('message', onRadiusPreview)
     return () => window.removeEventListener('message', onRadiusPreview)
-  }, [radiusPreviewLaunch])
+  }, [claimRadiusMaxKm, radiusPreviewLaunch])
   // The words on the pop. Typed here, they make it a WRITTEN pop: it claims the
   // same ground and runs in The Poplur Times instead of the camera roll.
   const [composeMessage, setComposeMessage] = useState('')
@@ -5969,31 +5997,42 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                       ? focusedPostLocationStatus === 'waiting'
                         ? 'Getting your location…'
                         : 'Tap the map to select a spot'
-                      : `${composeRadiusKm * 2} km live coverage`}
+                      : claimRadiusMaxKm === 0
+                        ? '0 km available · engagement earns radius'
+                        : `${formatClaimRadiusKm(composeRadiusKm * 2)} km live coverage`}
                   </span>
                 </div>
                 <output className={styles.composeRadiusValue} aria-live="polite">
-                  <strong>{composeRadiusKm}</strong>
+                  <strong>{formatClaimRadiusKm(composeRadiusKm)}</strong>
                   <span>KM</span>
                 </output>
               </div>
               <input
                 id="poplur-claim-radius"
                 type="range"
-                min={0.5}
-                max={25}
-                step={0.5}
+                min={claimRadiusMaxKm === 0 ? 0 : CLAIM_RADIUS_STEP_KM}
+                max={claimRadiusMaxKm}
+                step={CLAIM_RADIUS_STEP_KM}
                 value={composeRadiusKm}
-                onInput={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
-                onChange={(e) => setComposeRadiusKm(parseFloat(e.currentTarget.value))}
+                disabled={claimRadiusMaxKm === 0}
+                onInput={(e) => setComposeRadiusKm(clampClaimRadiusKm(
+                  parseFloat(e.currentTarget.value),
+                  claimRadiusMaxKm,
+                ))}
+                onChange={(e) => setComposeRadiusKm(clampClaimRadiusKm(
+                  parseFloat(e.currentTarget.value),
+                  claimRadiusMaxKm,
+                ))}
                 onKeyDown={(e) => e.stopPropagation()}
                 className={styles.composeSlider}
                 aria-label="Claim radius"
-                aria-valuetext={`${composeRadiusKm} kilometres, ${composeRadiusKm * 2} kilometres across`}
+                aria-valuetext={claimRadiusMaxKm === 0
+                  ? '0 kilometres available'
+                  : `${formatClaimRadiusKm(composeRadiusKm)} kilometres, ${formatClaimRadiusKm(composeRadiusKm * 2)} kilometres across`}
               />
               <div className={styles.composeRadiusScale} aria-hidden="true">
-                <span>0.5 KM</span>
-                <span>25 KM</span>
+                <span>{claimRadiusMaxKm === 0 ? '0 KM' : `${formatClaimRadiusKm(CLAIM_RADIUS_STEP_KM)} KM`}</span>
+                <span>{formatClaimRadiusKm(claimRadiusMaxKm)} KM</span>
               </div>
             </section>
             {/* Say it in words. A written pop is a pop: it claims the same
@@ -6055,9 +6094,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                 onClick={() => {
                   const { lat, lng } = composeAt
                   const words = composeMessage.trim()
+                  const radiusKmAtDrop = clampClaimRadiusKm(composeRadiusKm, claimRadiusMaxKm)
                   playPop()
                   if (words) {
-                    const dropped = dropNewsMessage({ body: words, lat, lng, radiusKm: composeRadiusKm })
+                    const dropped = dropNewsMessage({ body: words, lat, lng, radiusKm: radiusKmAtDrop })
                     composeOpenRef.current = false
                     setComposeMessage('')
                     setComposeAt(null)
@@ -6071,7 +6111,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                   composeOpenRef.current = false
                   setComposeAt(null)
                   window.parent?.postMessage(
-                    { type: 'poplur-post-here', lat, lng, radiusKm: composeRadiusKm },
+                    { type: 'poplur-post-here', lat, lng, radiusKm: radiusKmAtDrop },
                     '*',
                   )
                 }}

@@ -110,7 +110,8 @@ import {
 } from './liveNews'
 import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
-import { accountRadiusTotalKm } from './mapAccountRadius'
+import { publishAccountRadiusKm } from './accountRadius'
+import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
 import { subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
@@ -145,7 +146,7 @@ import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGat
 import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
 import VolumeBars from './VolumeBars'
-import SideControlIconButton from './SideControlIcon'
+import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import MapLevelButton from './MapLevelButton'
 import MapConquerButton from './MapConquerButton'
 import MapRadioButton from './MapRadioButton'
@@ -156,7 +157,7 @@ import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
 import styles from './App.module.css'
-import surfaceStyles from './TransientPopupSurface.module.css'
+import dropStyles from './ClayMap.module.css'
 
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
@@ -544,13 +545,6 @@ function accountPostedClaims(pins: readonly LiveMapPostPin[]) {
     coords: pin.coords,
     radiusKm: Math.max(0, pin.radiusKm),
   }))
-}
-
-/** Account totals are calculated only from the same authoritative Firestore
- * snapshot that draws the Map. Clearing production content therefore clears
- * both the pins and the radius HUD in the same realtime update. */
-function accumulatedRadiusKm(pins: readonly LiveMapPostPin[]): number {
-  return accountRadiusTotalKm(accountPostedClaims(pins))
 }
 
 /** Stable local presence until the live audience service replaces it. Keeping
@@ -2789,6 +2783,10 @@ export default function MapApp() {
   const liveMapPostsRef = useRef(liveMapPosts)
   liveMapPostsRef.current = liveMapPosts
   const [liveMapPostsReady, setLiveMapPostsReady] = useState(false)
+  const [accountRadiusSnapshot, setAccountRadiusSnapshot] = useState({
+    radiusKm: 0,
+    postCount: 0,
+  })
   useEffect(() => onUser(user => setOwnUid(user?.uid ?? null)), [])
   useEffect(() => subscribeLiveMapPosts(
     pins => {
@@ -2798,6 +2796,21 @@ export default function MapApp() {
     () => setLiveMapPostsReady(true),
     ownUid,
   ), [ownUid])
+  useEffect(() => subscribeAccountRadiusPosts(
+    ownUid,
+    setAccountRadiusSnapshot,
+    () => setAccountRadiusSnapshot({ radiusKm: 0, postCount: 0 }),
+  ), [ownUid])
+  const accountRadiusKm = accountRadiusSnapshot.radiusKm
+  const accountPostCount = accountRadiusSnapshot.postCount
+  useEffect(() => {
+    const publishedRadiusKm = publishAccountRadiusKm(accountRadiusKm)
+    window.parent?.postMessage({
+      type: 'poplur-account-radius',
+      radiusKm: publishedRadiusKm,
+      postCount: accountPostCount,
+    }, '*')
+  }, [accountPostCount, accountRadiusKm])
   const [pinRadiusPulse, setPinRadiusPulse] = useState<{
     id: string
     deltaKm: number
@@ -2970,10 +2983,10 @@ export default function MapApp() {
     window.parent?.postMessage({
       type: 'poplur-map-context',
       scope: 'pop',
-      ownPostsTotal: ownPosts.length,
+      ownPostsTotal: accountPostCount,
       ownPostsArea: ownNearby.length,
       ownPostIds: ownNearby.map(claim => claim.id),
-      totalRadiusKm: accumulatedRadiusKm(liveMapPosts),
+      totalRadiusKm: accountRadiusKm,
       popRadiusKm: pin.radiusKm,
       onlineUsers: mapAreaOnline(pin.coords, ownNearby.length),
       popId: pin.id,
@@ -3022,7 +3035,7 @@ export default function MapApp() {
         },
       },
     })
-  }, [liveMapPosts])
+  }, [accountPostCount, accountRadiusKm, liveMapPosts])
 
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
@@ -3070,12 +3083,12 @@ export default function MapApp() {
       const atCurrent = !atWorld && !atPop
         && distanceMeters(center, navigationOriginRef.current) <= CURRENT_LOCATION_M
       const scope = atWorld ? 'world' : atPop ? 'pop' : atCurrent ? 'current' : 'area'
-      const count = atWorld ? ownPosts.length : ownArea.length
+      const count = atWorld ? accountPostCount : ownArea.length
       const ids = atWorld ? ownPosts.map(claim => claim.id) : ownArea.map(claim => claim.id)
       const onlineUsers = scope === 'world' || scope === 'current'
         ? MAP_GLOBAL_ONLINE
         : mapAreaOnline(center, ownArea.length)
-      const totalRadius = accumulatedRadiusKm(liveMapPosts)
+      const totalRadius = accountRadiusKm
       const popRadius = atPop ? nearestPin?.radiusKm : undefined
       const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2), onlineUsers].join('|')
       if (!force && signature === previous) return
@@ -3085,7 +3098,7 @@ export default function MapApp() {
       window.parent?.postMessage({
         type: 'poplur-map-context',
         scope,
-        ownPostsTotal: ownPosts.length,
+        ownPostsTotal: accountPostCount,
         ownPostsArea: ownArea.length,
         ownPostIds: ids,
         totalRadiusKm: totalRadius,
@@ -3097,7 +3110,7 @@ export default function MapApp() {
 
     const offSettle = onClaimsSettled(() => {
       report(true)
-      try { window.localStorage.setItem('poplur.totalRadiusKm', String(accumulatedRadiusKm(liveMapPosts))) } catch { /* private */ }
+      publishAccountRadiusKm(accountRadiusKm)
     })
     const onCameraSettle = () => report()
     map.on('moveend', onCameraSettle)
@@ -3108,7 +3121,7 @@ export default function MapApp() {
       map.off('zoomend', onCameraSettle)
       offSettle()
     }
-  }, [liveMapPosts, mapLive])
+  }, [accountPostCount, accountRadiusKm, liveMapPosts, mapLive])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
     // Readiness belongs exclusively to handleGlobeReady, which now follows a
@@ -3731,6 +3744,7 @@ export default function MapApp() {
         sky={sky}
         ownProfilePhoto={ownAvatar}
         ownProfileSelfieVideo={ownSelfieVideo}
+        accountRadiusKm={accountRadiusKm}
         weatherMode={weatherMode}
         weatherCloud={cloudBadge}
         weatherIcon={weatherIconMarkup}
@@ -3988,11 +4002,10 @@ export default function MapApp() {
       )}
 
       {searchOpen && (
-        <div className={`${styles.searchScrim} ${surfaceStyles.scrim}`} onClick={closeSearch}>
+        <div className={`${styles.searchScrim} ${dropStyles.composeDismissLayer}`} onClick={closeSearch}>
         <div
           ref={searchPanelRef}
-          className={`${styles.searchPanel} ${surfaceStyles.surface}${searchClosing ? ` ${styles.searchPanelOut}` : ''}`}
-          style={{ maxHeight: '64dvh' }}
+          className={`${dropStyles.composeBubble} ${styles.searchPanel}${searchClosing ? ` ${styles.searchPanelOut}` : ''}`}
           onClick={e => e.stopPropagation()}
           onKeyDown={handleSearchDialogKeyDown}
           role="dialog"
@@ -4000,75 +4013,131 @@ export default function MapApp() {
           aria-label="Search places"
           aria-busy={searching}
         >
-          <input
-            className={styles.searchInput}
-            style={{ paddingRight: 58 }}
-            value={searchText}
-            placeholder="Search places…"
-            aria-label="Search places"
-            autoFocus
-            onChange={e => { setSearchText(e.target.value); void runPlaceSearch(e.target.value) }}
-            onKeyDown={e => {
-              if (e.key !== 'Enter') return
-              e.preventDefault()
-              // Enter should take an exact landmark result, just as tapping
-              // its row does. Besides being the expected keyboard behaviour,
-              // this keeps a destination action above the map canvas.
-              const normalizedSearch = searchText.trim().toLocaleLowerCase()
-              const exactHit = searchHits.find(hit =>
-                hit.name.toLocaleLowerCase() === normalizedSearch,
-              )
-              if (exactHit) {
-                flyToPlace(exactHit.center, exactHit.name)
-                return
-              }
-              void runPlaceSearch(searchText)
-            }}
-          />
-          <button
-            type="button"
-            aria-label="Close place search"
-            onClick={() => { playPop(0.2); closeSearch() }}
-            className={`${styles.searchClose} ${surfaceStyles.close}`}
-          >
-            ×
-          </button>
-          {!searching && searchText.trim() === '' && (
-            <div className={styles.searchShortcuts}>
-              <div className={styles.searchShortcutTitle}>GO NOW</div>
-              <div className={styles.searchShortcutGrid}>
-                {SEARCH_SHORTCUTS.map(destination => (
-                  <button
-                    key={destination.id}
-                    type="button"
-                    className={`${styles.searchShortcut} ${surfaceStyles.secondary}`}
-                    onClick={() => flyToPlace(destination.coords, destination.name)}
-                  >
-                    <span>{displayPlaceName(destination.name)}</span>
-                    <small>{TOUR_KIND_LABEL[destination.kind]}</small>
-                  </button>
-                ))}
-              </div>
+          <header className={dropStyles.composeHeader}>
+            <span className={dropStyles.composeHeroIcon} aria-hidden="true">
+              <SideControlIconImage icon="map.search" displaySize={58} loading="eager" />
+            </span>
+            <div className={dropStyles.composeHeadingCopy}>
+              <span className={dropStyles.composeEyebrow}>MAP SEARCH</span>
+              <div className={dropStyles.composeTitle}>Search places</div>
+              <div className={dropStyles.composeSubtitle}>Go anywhere on the map</div>
             </div>
-          )}
-          {searching && <div className={styles.searchNote} role="status">searching…</div>}
-          {!searching && searchHits.map(hit => (
             <button
-              key={hit.name}
               type="button"
-              className={`${styles.searchHit} ${surfaceStyles.secondary}`}
-              onPointerDown={event => event.stopPropagation()}
-              onClick={event => {
-                event.stopPropagation()
-                flyToPlace(hit.center, hit.name)
-              }}
+              aria-label="Close place search"
+              onClick={() => { playPop(0.2); closeSearch() }}
+              className={dropStyles.composeClose}
             >
-              {hit.name}
+              <span aria-hidden="true">×</span>
             </button>
-          ))}
-          {!searching && !searchHits.length && searchText.trim() !== '' && (
-            <div className={styles.searchNote}>nothing found</div>
-          )}
+          </header>
+          <div className={`${dropStyles.composeBody} ${styles.searchBody}`}>
+            <section className={`${dropStyles.composeRadiusPanel} ${styles.searchFieldPanel}`}>
+              <div className={dropStyles.composeSectionHeader}>
+                <span className={dropStyles.composeSectionIcon} aria-hidden="true">
+                  <SideControlIconImage icon="map.search" displaySize={44} />
+                </span>
+                <label className={dropStyles.composeSectionCopy} htmlFor="poplur-map-search-input">
+                  <span className={dropStyles.composeSectionLabel}>Find a place</span>
+                  <span className={dropStyles.composeCoverage}>Landmarks, venues, addresses and cities</span>
+                </label>
+              </div>
+              <div className={styles.searchField}>
+                <input
+                  id="poplur-map-search-input"
+                  className={styles.searchInput}
+                  value={searchText}
+                  placeholder="Search places…"
+                  aria-label="Search places"
+                  autoFocus
+                  onChange={e => { setSearchText(e.target.value); void runPlaceSearch(e.target.value) }}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return
+                    e.preventDefault()
+                    // Enter should take an exact landmark result, just as tapping
+                    // its row does. Besides being the expected keyboard behaviour,
+                    // this keeps a destination action above the map canvas.
+                    const normalizedSearch = searchText.trim().toLocaleLowerCase()
+                    const exactHit = searchHits.find(hit =>
+                      hit.name.toLocaleLowerCase() === normalizedSearch,
+                    )
+                    if (exactHit) {
+                      flyToPlace(exactHit.center, exactHit.name)
+                      return
+                    }
+                    void runPlaceSearch(searchText)
+                  }}
+                />
+                {searchText && (
+                  <button
+                    type="button"
+                    className={styles.searchClear}
+                    aria-label="Clear place search"
+                    onClick={() => {
+                      playPop(0.15)
+                      setSearchText('')
+                      setSearchHits([])
+                      setSearching(false)
+                    }}
+                  >×</button>
+                )}
+              </div>
+            </section>
+            <section className={`${dropStyles.composeMessagePanel} ${styles.searchResultsPanel}`}>
+              <div className={dropStyles.composeSectionHeader}>
+                <span className={dropStyles.composeSectionIcon} aria-hidden="true">
+                  <SideControlIconImage icon="map.locate" displaySize={44} />
+                </span>
+                <div className={dropStyles.composeSectionCopy}>
+                  <span className={dropStyles.composeSectionLabel}>
+                    {searchText.trim() ? 'Search results' : 'Go now'}
+                  </span>
+                  <span className={dropStyles.composeCoverage} aria-live="polite">
+                    {searching
+                      ? 'Looking across the map…'
+                      : searchText.trim()
+                        ? `${searchHits.length} ${searchHits.length === 1 ? 'place' : 'places'} found`
+                        : 'Popular places ready for a quick trip'}
+                  </span>
+                </div>
+              </div>
+              {!searching && searchText.trim() === '' && (
+                <div className={styles.searchShortcuts}>
+                  <div className={styles.searchShortcutGrid}>
+                    {SEARCH_SHORTCUTS.map(destination => (
+                      <button
+                        key={destination.id}
+                        type="button"
+                        className={styles.searchShortcut}
+                        onClick={() => flyToPlace(destination.coords, destination.name)}
+                      >
+                        <span>{displayPlaceName(destination.name)}</span>
+                        <small>{TOUR_KIND_LABEL[destination.kind]}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {searching && <div className={styles.searchNote} role="status">searching…</div>}
+              {!searching && searchHits.map(hit => (
+                <button
+                  key={hit.name}
+                  type="button"
+                  className={styles.searchHit}
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation()
+                    flyToPlace(hit.center, hit.name)
+                  }}
+                >
+                  {hit.name}
+                </button>
+              ))}
+              {!searching && !searchHits.length && searchText.trim() !== '' && (
+                <div className={styles.searchNote}>nothing found</div>
+              )}
+            </section>
+          </div>
         </div>
         </div>
       )}

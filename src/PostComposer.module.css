@@ -541,10 +541,19 @@
   font-size: 12.5px; font-weight: 700; color: rgba(255, 255, 255, 0.8);
 }
 .radiusRow b { color: #7bffa0; }
+.radiusRow span { display: grid; gap: 3px; }
+.radiusRow small {
+  color: rgba(219, 248, 255, .68);
+  font: 750 10px/1.3 system-ui, sans-serif;
+}
 .radiusRow input {
   width: 100%;
   min-height: 44px;
   accent-color: #f63b9a;
+}
+.radiusRow input:disabled {
+  cursor: not-allowed;
+  opacity: .48;
 }
 
 .publishDisclosure {

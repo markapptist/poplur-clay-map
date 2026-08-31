@@ -21,6 +21,11 @@ const homeSource = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'ut
 const mapSource = readFileSync(new URL('../MapApp.tsx', import.meta.url), 'utf8')
 
 describe('Profile side-button bridge contracts', () => {
+  it('keeps the empty Media state free of backend terminology', () => {
+    expect(profileSource).toContain("mode === 'liked' ? 'No liked posts yet.' : 'No posts yet.'")
+    expect(profileSource).not.toContain('New Firestore posts will appear here live.')
+  })
+
   it('resolves a handle only when it belongs to one stable uid', () => {
     expect(profileRecipientUid([
       { username: '@City.Desk', ownerId: 'uid-city' },

@@ -170,6 +170,8 @@ import {
   reconcileRadiusInactivity,
   registerOwnedPost,
 } from './radiusLedger'
+import { clampClaimRadiusKm } from './claimRadius'
+import { publishAccountRadiusKm } from './accountRadius'
 import { poplurResourcePool } from './resourcePool'
 import { ownsMainSurface, ownsMapSurface } from './screenOwnership'
 import { applyNativeAccountPrivacy } from './accountPrivacy'
@@ -2706,11 +2708,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }
   }, [])
 
+  const authoritativeAccountRadiusKmRef = useRef(0)
   useEffect(() => {
     const onMapMessage = (event: MessageEvent) => {
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
       if (event.data.type === 'poplur-map-loading') {
+        authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(0)
         mapReadyRef.current = false
         setMapReady(false)
         setMapFailedVisible(false)
@@ -2721,6 +2725,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         applyMapWorldHover(null)
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
+      }
+      if (event.data.type === 'poplur-account-radius') {
+        const totalRadiusKm = Number(event.data.radiusKm)
+        if (Number.isFinite(totalRadiusKm)) {
+          authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(totalRadiusKm)
+        }
       }
       if (event.data.type === 'poplur-map-airport') {
         const id = typeof event.data.airportId === 'string'
@@ -2839,6 +2849,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         const ownPostsArea = Number(event.data.ownPostsArea)
         const onlineUsers = Number(event.data.onlineUsers)
         if (scope && Number.isFinite(totalRadiusKm) && Number.isFinite(onlineUsers)) {
+          authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(totalRadiusKm)
           const ownPostIds = Array.isArray(event.data.ownPostIds)
             ? (event.data.ownPostIds as unknown[]).filter((value): value is string => typeof value === 'string')
             : []
@@ -3027,10 +3038,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         setActiveTab('feed')
       }
       if (event.data.type === 'poplur-post-here') {
+        const requestedRadiusKm = Number(event.data.radiusKm)
         const spot = {
           lat: Number(event.data.lat),
           lng: Number(event.data.lng),
-          radiusKm: Number(event.data.radiusKm) || undefined,
+          radiusKm: clampClaimRadiusKm(
+            requestedRadiusKm,
+            authoritativeAccountRadiusKmRef.current,
+          ),
         }
         // Podcast chooses its ground deliberately. The existing map picker
         // reports a familiar `post-here` message, so consume it before the
@@ -5209,6 +5224,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             onPostTargetUsed={() => setPostTarget(null)}
             onPosted={post => {
               showPostVerifiedCube()
+              const accountRadiusKmAtPublish = authoritativeAccountRadiusKmRef.current
               const itemId = typeof crypto.randomUUID === 'function'
                 ? crypto.randomUUID()
                 : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`
@@ -5219,7 +5235,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               // the MAP, watching the new territory pop at that spot. The map
               // draws the claim; the tab switch shows it to you.
               if (!post.target) return
-              const radiusKmAtPost = post.target.radiusKm ?? 2
+              const radiusKmAtPost = clampClaimRadiusKm(
+                Number(post.target.radiusKm),
+                accountRadiusKmAtPublish,
+              )
               // Closed-beta desk telemetry gets only the coarse regional
               // bucket computed in testActivity; the target coordinates stay
               // inside the map and are never written to the dashboard.

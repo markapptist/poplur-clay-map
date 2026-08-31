@@ -2506,7 +2506,7 @@ export default function ProfileTwin({
             <div className={styles.grid}>
               {!posts.length && (
                 <div className={styles.profileEmpty}>
-                  {mode === 'liked' ? 'No liked posts yet.' : 'No posts yet. New Firestore posts will appear here live.'}
+                  {mode === 'liked' ? 'No liked posts yet.' : 'No posts yet.'}
                 </div>
               )}
               {posts.map((post, i) => (

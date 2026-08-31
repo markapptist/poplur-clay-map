@@ -748,115 +748,168 @@
 
 /* Level with the sound mark on the left. */
 
-.searchScrim {
-  position: absolute;
-  inset: 0;
+.searchScrim.searchScrim {
   z-index: 47;
 }
 
-/* comes down from the top and settles at centre; leaves the same way */
-.searchPanel {
-  position: absolute;
-  top: 44%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+/* Search borrows Pop Drop's molded shell instead of the generic glass popup. */
+.searchPanel.searchPanel {
+  top: 48%;
   z-index: 48;
-  width: min(86vw, 360px);
-  max-height: 64vh;
+  width: min(420px, calc(100vw - 132px));
+  min-width: 252px;
+  max-height: min(76dvh, 640px);
+  overflow-x: hidden;
   overflow-y: auto;
-  padding: 10px;
-  animation: searchDrop 0.32s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+  animation: searchDrop 0.26s cubic-bezier(.2, .9, .25, 1.18) both;
 }
 
 @keyframes searchDrop {
-  from { opacity: 0; transform: translate(-50%, -190%); }
-  to { opacity: 1; transform: translate(-50%, -50%); }
+  from { opacity: 0; transform: translate(-50%, -47%) scale(.88); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 
-.searchPanelOut { animation: searchLift 0.34s ease-in both; }
-
-.searchClose {
-  position: absolute;
-  z-index: 2;
-  top: 9px;
-  right: 9px;
-  font: 900 26px/1 system-ui, sans-serif;
-}
+.searchPanelOut.searchPanelOut { animation: searchLift 0.30s ease-in both; }
 
 @keyframes searchLift {
-  from { opacity: 1; transform: translate(-50%, -50%); }
-  to { opacity: 0; transform: translate(-50%, -190%); }
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -47%) scale(.88); }
+}
+
+.searchBody {
+  padding: 12px;
+}
+
+.searchFieldPanel,
+.searchResultsPanel {
+  margin-bottom: 12px;
+}
+
+.searchResultsPanel:last-child { margin-bottom: 0; }
+
+.searchField {
+  position: relative;
+  margin-top: 7px;
 }
 
 .searchInput {
   width: 100%;
-  height: 42px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 999px;
-  background: #fff;
-  font: 600 15px system-ui, -apple-system, sans-serif;
-  color: #140a04;
+  height: 52px;
+  padding: 0 49px 0 14px;
+  border: 2px solid #4e1536;
+  border-radius: 15px;
+  background: linear-gradient(180deg, #fffafd, #fbeaf3);
+  box-shadow: inset 0 3px 7px rgba(82, 17, 54, .14);
+  color: #4e1536;
   outline: none;
+  font: 850 15px/1 system-ui, -apple-system, sans-serif;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
 
-.searchHit {
-  width: 100%;
-  margin-top: 6px;
-  padding: 10px 12px;
-  color: #ffe7f4;
-  font: 600 13px/1.35 system-ui, -apple-system, sans-serif;
-  text-align: left;
+.searchInput::placeholder { color: #a77191; }
+
+.searchInput:focus {
+  border-color: #f23b98;
+  box-shadow: 0 0 0 3px rgba(102, 220, 243, .42), inset 0 3px 7px rgba(82, 17, 54, .12);
 }
 
-.searchPanel .searchHit { justify-content: flex-start; }
-
-.searchHit:active { background: rgba(246, 59, 154, 0.28); }
-
-.searchShortcuts {
-  padding: 12px 2px 2px;
+.searchClear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0 0 3px;
+  transform: translateY(-50%);
+  border: 2px solid #f8a0ce;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #ff65b3, #e72283);
+  box-shadow: 0 3px 0 #9f185c, inset 0 2px 1px rgba(255, 255, 255, .5);
+  color: #fff;
+  cursor: pointer;
+  font: 950 21px/1 system-ui, sans-serif;
+  text-shadow: 0 2px 0 rgba(91, 8, 50, .38);
 }
 
-.searchShortcutTitle {
-  padding: 0 6px 8px;
-  color: #7fe3ff;
-  font: 950 10px/1 system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.16em;
-}
+.searchClear:active { transform: translateY(calc(-50% + 2px)); box-shadow: 0 1px 0 #9f185c; }
+
+.searchShortcuts { padding-top: 7px; }
 
 .searchShortcutGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 9px;
 }
 
-.searchShortcut {
+.searchShortcut,
+.searchHit {
   display: grid;
   align-content: center;
-  justify-content: stretch;
+  width: 100%;
   min-height: 58px;
-  padding: 8px 10px;
-  color: #fff4fa;
-  font: 850 12px/1.15 system-ui, -apple-system, sans-serif;
+  padding: 9px 11px;
+  border: 2px solid #ef5ba8;
+  border-radius: 15px;
+  background: linear-gradient(180deg, #fffafd, #f8e3ef);
+  box-shadow: 0 4px 0 #a9276a, inset 0 2px 1px rgba(255, 255, 255, .8);
+  color: #4e1536;
+  cursor: pointer;
+  font: 900 12px/1.15 system-ui, -apple-system, sans-serif;
   text-align: left;
+  transition: transform .12s ease, box-shadow .12s ease;
 }
 
-.searchPanel .searchShortcut { display: grid; }
+.searchHit {
+  min-height: 50px;
+  margin-top: 9px;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.searchShortcut:active,
+.searchHit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #a9276a, inset 0 2px 1px rgba(255, 255, 255, .8);
+}
 
 .searchShortcut small {
   margin-top: 4px;
-  color: #ff80bf;
+  color: #d42a81;
   font-size: 9px;
-  font-weight: 900;
-  letter-spacing: 0.08em;
+  font-weight: 950;
+  letter-spacing: .08em;
   text-transform: uppercase;
 }
 
 .searchNote {
-  padding: 10px 4px 2px;
-  color: rgba(255, 231, 244, 0.6);
-  font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 1px;
+  padding: 11px 3px 2px;
+  color: #7d4666;
+  font: 800 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .6px;
+}
+
+@media (max-width: 430px), (max-height: 690px) {
+  .searchPanel.searchPanel {
+    top: 49%;
+    width: calc(100vw - 112px);
+    min-width: 0;
+    max-height: min(82dvh, 570px);
+  }
+
+  .searchBody { padding: 9px; }
+  .searchFieldPanel,
+  .searchResultsPanel { margin-bottom: 9px; }
+  .searchInput { height: 48px; }
+  .searchShortcutGrid { gap: 8px; }
+  .searchShortcut { min-height: 54px; padding: 8px 9px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .searchPanel.searchPanel,
+  .searchPanelOut.searchPanelOut { animation: none; }
+  .searchClear,
+  .searchShortcut,
+  .searchHit { transition: none; }
 }
 
 /* Small clay globe beside the sound mark: one press and you are looking at the
