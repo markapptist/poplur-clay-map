@@ -23,6 +23,7 @@ export default function PostActionRail({
   onComment,
   onLike,
   onDislike,
+  postActionsAvailable = true,
   onDelete,
   deletePending = false,
 }: {
@@ -38,6 +39,8 @@ export default function PostActionRail({
   onComment: () => void
   onLike: () => void
   onDislike: () => void
+  /** Share, comment, and radius reactions require a concrete post. */
+  postActionsAvailable?: boolean
   onDelete?: () => void
   deletePending?: boolean
 }) {
@@ -54,6 +57,7 @@ export default function PostActionRail({
         icon="feed.share"
         aria-label="Share post"
         activation="pointerdown"
+        disabled={!postActionsAvailable}
         onActivate={onShare}
       />
       <SideControlIconButton
@@ -73,18 +77,21 @@ export default function PostActionRail({
         icon="feed.comment"
         aria-label="Comment on this post"
         activation="pointerdown"
+        disabled={!postActionsAvailable}
         onActivate={onComment}
       />
       <SideControlIconButton
         icon="feed.like"
         aria-label="Increase this post's radius by one"
         activation="pointerdown"
+        disabled={!postActionsAvailable}
         onActivate={onLike}
       />
       <SideControlIconButton
         icon="feed.dislike"
         aria-label="Reduce this post's radius by one"
         activation="pointerdown"
+        disabled={!postActionsAvailable}
         onActivate={onDislike}
       />
       {onDelete && (

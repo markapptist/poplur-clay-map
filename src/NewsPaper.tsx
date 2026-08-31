@@ -3,6 +3,7 @@ import styles from './NewsPaper.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
+import { playCubeNavigationPop } from './cubeNavigationSound'
 import { feedUrl } from './assetPacks'
 import { requestProfileMode } from './profileMode'
 import { localDaylight } from './skyCycle'
@@ -516,7 +517,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
 
   const focusLiveEventOnMap = (entry: Entry) => {
     if (!entry.liveEvent) return
-    playPop()
+    playCubeNavigationPop()
     window.dispatchEvent(new CustomEvent('poplur-news-focus-map', {
       detail: { id: entry.liveEvent.id, title: entry.liveEvent.title, coords: entry.liveEvent.coords },
     }))
@@ -593,7 +594,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const openMenu = () => { playPop(); setMenuMounted(true); setMenuOpen(true) }
   const closeMenu = () => { playPop(); setMenuOpen(false) }
   const goToProfileMessages = () => {
-    playPop()
+    playCubeNavigationPop()
     setMenuOpen(false)
     // Park the requested page BEFORE the event: Profile is unmounted right now
     // and only mounts once the shell switches tabs, so a listener cannot catch
@@ -625,7 +626,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   })()
 
   const openProfileFor = (handle?: string) => {
-    playPop()
+    playCubeNavigationPop()
     setMenuOpen(false)
     setDetail(null)
     // Their profile, on Messages — the same hand-off the drawer's own Profile

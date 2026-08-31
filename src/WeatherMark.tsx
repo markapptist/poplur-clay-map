@@ -1,5 +1,6 @@
 import { SideControlIconImage } from './SideControlIcon'
 import { weatherIconIdForMode } from './sideControlIcons'
+import type { WeatherIconId } from './sideControlIcons'
 import type { WeatherMode } from './WeatherFX'
 import styles from './ClayMap.module.css'
 
@@ -10,11 +11,13 @@ import styles from './ClayMap.module.css'
  */
 export default function WeatherMark({
   mode,
+  iconId,
   icon: _icon,
   cloud: _cloud,
   compact = false,
 }: {
   mode: WeatherMode
+  iconId?: WeatherIconId
   icon: string
   cloud?: string | null
   compact?: boolean
@@ -22,7 +25,7 @@ export default function WeatherMark({
   return (
     <span className={`${styles.weatherVisual}${compact ? ` ${styles.weatherVisualCompact}` : ''}`}>
       <SideControlIconImage
-        icon={weatherIconIdForMode(mode)}
+        icon={iconId ?? weatherIconIdForMode(mode)}
         displaySize={compact ? 42 : 44}
         className={styles.weatherStaticImage}
       />

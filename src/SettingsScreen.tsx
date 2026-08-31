@@ -7,6 +7,7 @@ import {
 import styles from './SettingsScreen.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
+import { playCubeNavigationPop } from './cubeNavigationSound'
 import {
   RINGTONES, getRingtone, setRingtone, previewRingtone, onRingtoneChange,
   type RingtoneId,
@@ -220,13 +221,26 @@ export default function SettingsScreen({ bindBack }: {
     }
   }
 
-  const openPage = (next: Page) => { playPop(); setPage(next) }
+  const settingsCubeFace = (target: Page | null) => target === 'verify'
+    ? 'verify'
+    : target === 'profile' || target === 'app'
+      ? 'appearance'
+      : 'gear'
+  const openPage = (next: Page) => {
+    // Most Settings pages keep the gear. Claim sound ownership only when the
+    // destination really changes the persistent navigator object.
+    if (settingsCubeFace(page) !== settingsCubeFace(next)) playCubeNavigationPop()
+    else playPop()
+    setPage(next)
+  }
   // On a sub-page the cube walks back to the list; on the list it falls
   // through and closes Settings, which is what it already did. This replaced
   // the "‹ SETTINGS" button, so the pop it used to play moves here.
   stepBackRef.current = () => {
     if (page === null) return false
-    playPop()
+    // Home's persistent cube plays the one navigation pop after this handler
+    // reports success; the removed in-page back control no longer needs its
+    // own copy here.
     setPage(null)
     return true
   }

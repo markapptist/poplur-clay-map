@@ -1,6 +1,5 @@
 import { SideControlIconImage } from './SideControlIcon'
 import { SIDE_CONTROL_ICONS } from './sideControlIcons'
-import { playPop } from './pop'
 import { channelControlImageSize } from './channelControlSizing'
 import styles from './PoplurChannelRail.module.css'
 
@@ -24,10 +23,6 @@ export default function PoplurChannelRail({
 }) {
   const width = Math.round(size / 2)
   const imageSize = channelControlImageSize(size)
-  const activate = (handler: () => void) => {
-    playPop()
-    handler()
-  }
 
   return (
     <div
@@ -46,7 +41,7 @@ export default function PoplurChannelRail({
         data-poplur-channel-control="up"
         data-side-control-id="global.channel_up"
         aria-label={upLabel}
-        onClick={() => activate(onUp)}
+        onClick={onUp}
       >
         <SideControlIconImage icon="global.channel_up" displaySize={imageSize} loading="eager" />
       </button>
@@ -61,7 +56,7 @@ export default function PoplurChannelRail({
         data-poplur-channel-control="down"
         data-side-control-id="global.channel_down"
         aria-label={downLabel}
-        onClick={() => activate(onDown)}
+        onClick={onDown}
       >
         <SideControlIconImage icon="global.channel_down" displaySize={imageSize} loading="eager" />
       </button>

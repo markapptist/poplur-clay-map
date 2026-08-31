@@ -1,4 +1,9 @@
 import type { WeatherMode } from './WeatherFX'
+import {
+  isWeatherIconId,
+  weatherIconIdForMode,
+  type WeatherIconId,
+} from './sideControlIcons'
 
 // Clay-shaded weather glyphs shared by the map document and its parent Home
 // rail. Keeping them here prevents the embedded map and shell from drifting.
@@ -59,6 +64,7 @@ export type WeatherTemperatureUnit = 'C' | 'F'
 
 export interface WeatherPresentationSnapshot {
   mode: WeatherMode
+  iconId: WeatherIconId
   temperature: number | null
   unit: WeatherTemperatureUnit
 }
@@ -97,6 +103,7 @@ export function readWeatherPresentation(
   if (!value || typeof value !== 'object') return null
   const candidate = value as {
     mode?: unknown
+    iconId?: unknown
     temperature?: unknown
     unit?: unknown
   }
@@ -108,5 +115,8 @@ export function readWeatherPresentation(
   const unit = candidate.unit === 'C' || candidate.unit === 'F'
     ? candidate.unit
     : fallbackUnit
-  return { mode: candidate.mode, temperature, unit }
+  const iconId = isWeatherIconId(candidate.iconId)
+    ? candidate.iconId
+    : weatherIconIdForMode(candidate.mode)
+  return { mode: candidate.mode, iconId, temperature, unit }
 }

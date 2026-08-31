@@ -33,11 +33,11 @@ html, body, #root {
   --poplur-map-control-top: max(154px, calc(env(safe-area-inset-top, 0px) + 112px));
 }
 
-/* Give the controls a little more room beneath the bottom HUD on phones. The
-   desktop composition stays on its authored 154px guide. */
+/* Lift both Map control columns together on phones while retaining a safe
+   header/notch gap. The desktop composition stays on its authored 154px guide. */
 @media (max-width: 600px) {
   :root {
-    --poplur-map-control-top: max(104px, calc(env(safe-area-inset-top, 0px) + 62px));
+    --poplur-map-control-top: max(92px, calc(env(safe-area-inset-top, 0px) + 50px));
   }
 }
 

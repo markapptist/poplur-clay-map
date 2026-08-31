@@ -16,7 +16,8 @@ describe('production Feed realtime policy', () => {
   it('does not replace a missing or deleted post with bundled media or identity', () => {
     expect(source).toContain(': post?.video')
     expect(source).toContain(': post?.poster')
-    expect(source).toContain('{post && (\n          <PostActionRail')
+    expect(source).not.toContain('{post && (\n          <PostActionRail')
+    expect(source).toContain('postActionsAvailable={Boolean(post)}')
     expect(source).toContain('{post && (\n        <div className={`${styles.topBar}')
     expect(source).toContain('No posts in this channel')
   })

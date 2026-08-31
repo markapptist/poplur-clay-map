@@ -107,7 +107,9 @@ export default function PhoneScreen({
   bindBack,
   onDMCallReturn,
 }: {
-  onClose?: () => void
+  /** `navigationSoundOwned` is true when Home's persistent cube will play the
+      close pop after this synchronous back handler returns. */
+  onClose?: (navigationSoundOwned?: boolean) => void
   incomingCall?: IncomingCall | null
   onAcceptCall?: (call: IncomingCall) => void
   onDeclineCall?: (call: IncomingCall) => void
@@ -115,7 +117,7 @@ export default function PhoneScreen({
   /** Lets Home's persistent cube operate the Phone's own back key. */
   bindBack?: (fn: (() => boolean) | null) => void
   /** Only supplied when this Phone instance was opened from one exact DM. */
-  onDMCallReturn?: () => void
+  onDMCallReturn?: (navigationSoundOwned?: boolean) => void
 }) {
   const [reachKm, setReachKm] = useState(() => radiusKm())
   const [ownUid, setOwnUid] = useState(() => accountSnapshot().uid)
@@ -159,7 +161,11 @@ export default function PhoneScreen({
   autoCallRef.current = autoCall
   const onDMCallReturnRef = useRef(onDMCallReturn)
   onDMCallReturnRef.current = onDMCallReturn
+  const dmReturnNavigationSoundRef = useRef(false)
   const dmReturnStateRef = useRef<DMPhoneReturnState>(INITIAL_DM_PHONE_RETURN_STATE)
+  useEffect(() => {
+    dmReturnNavigationSoundRef.current = false
+  }, [autoCall?.id])
 
   useEffect(() => {
     const sync = () => setReachKm(radiusKm())
@@ -263,7 +269,11 @@ export default function PhoneScreen({
     if (!autoCallRef.current) return
     const transition = advanceDMPhoneReturn(dmReturnStateRef.current, snap.phase)
     dmReturnStateRef.current = transition.state
-    if (transition.shouldReturn) onDMCallReturnRef.current?.()
+    if (transition.shouldReturn) {
+      const navigationSoundOwned = dmReturnNavigationSoundRef.current
+      dmReturnNavigationSoundRef.current = false
+      onDMCallReturnRef.current?.(navigationSoundOwned)
+    }
   }), [])
 
   useEffect(() => {
@@ -307,9 +317,9 @@ export default function PhoneScreen({
   // Changing the handset's colourway IS changing its theme, so it buzzes the
   // same way an app-theme change does — the vibration that went missing when
   // this became the live phone. Native haptics ride the same phoneThemeEffects
-  // event the theme-change effect uses; navigator.vibrate covers the web.
+  // event the theme-change effect uses; navigator.vibrate covers the web. The
+  // surrounding clay arrow owns the tap's single audible pop.
   const cycleColorway = useCallback((delta: 1 | -1) => {
-    playPop()
     try { navigator.vibrate?.([52, 34, 52, 34, 82]) } catch { /* unsupported */ }
     postNativeEvent({ type: 'phoneThemeEffects' })
     const next = cyclePhoneTheme(phoneThemeIdRef.current, delta)
@@ -337,19 +347,31 @@ export default function PhoneScreen({
   }, [current])
 
   const back = useCallback((withSound = true) => {
+    const closesPhone = !liveCall || liveCall.phase === 'idle' || liveCall.phase === 'ended'
+      ? !calling && !incomingCall && menuPage === 'main'
+      : false
+    if (closesPhone) {
+      // A visible Phone control delegates the one pop to HoldMenu. A persistent
+      // cube back already has its pop waiting in Home, so only mark ownership.
+      onClose?.(!withSound)
+      return
+    }
+    if (incomingCall) {
+      // Home owns both the sound and ringing-cube transition for a decline.
+      onDeclineCall?.(incomingCall)
+      return
+    }
     if (withSound) playPop()
     if (liveCall && liveCall.phase !== 'idle' && liveCall.phase !== 'ended') {
+      dmReturnNavigationSoundRef.current = true
       hangupCall()
       setCalling(null)
       return
     }
     if (calling) {
+      dmReturnNavigationSoundRef.current = true
       hangupCall()
       setCalling(null)
-      return
-    }
-    if (incomingCall) {
-      onDeclineCall?.(incomingCall)
       return
     }
     if (menuPage !== 'main') {
@@ -357,7 +379,6 @@ export default function PhoneScreen({
       setMenuIndex(0)
       return
     }
-    onClose?.()
   }, [calling, incomingCall, liveCall, menuPage, onClose, onDeclineCall])
 
   useEffect(() => {
@@ -371,19 +392,21 @@ export default function PhoneScreen({
   const activateMenuItem = useCallback(() => {
     const item = PHONE_MENU_ITEMS[menuIndex]
     if (!item) return
-    playPop()
     if (item.id === 'exit') {
-      onClose?.()
+      onClose?.(false)
       return
     }
+    playPop()
     setMenuPage(item.id)
     setMenuIndex(0)
   }, [menuIndex, onClose])
 
   const press = useCallback((key: string) => {
     if (incomingCall) {
-      if (key === '5') { playPop(); onAcceptCall?.(incomingCall) }
-      else if (key === '*') { playPop(); onDeclineCall?.(incomingCall) }
+      // Home owns accept/decline and the ringing-cube handoff. Playing here as
+      // well made keypad 5/* emit once in Phone and once again in Home.
+      if (key === '5') onAcceptCall?.(incomingCall)
+      else if (key === '*') onDeclineCall?.(incomingCall)
       else playPop()
       return
     }
@@ -413,14 +436,23 @@ export default function PhoneScreen({
       return
     }
     if (liveCall?.phase === 'connected') {
-      if (key === '5') { playPop(); hangupCall() }
+      if (key === '5') {
+        playPop()
+        dmReturnNavigationSoundRef.current = true
+        hangupCall()
+      }
       else if (key === '1') { playPop(); toggleMute() }
       else if (key === '*') { back() }
       else playPop()
       return
     }
     if (liveCall?.phase === 'calling' || liveCall?.phase === 'connecting') {
-      if (key === '5') { playPop(); hangupCall(); setCalling(null) }
+      if (key === '5') {
+        playPop()
+        dmReturnNavigationSoundRef.current = true
+        hangupCall()
+        setCalling(null)
+      }
       else if (key === '*') back()
       else playPop()
       return

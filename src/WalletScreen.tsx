@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './WalletScreen.module.css'
 import { playPop } from './pop'
+import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import {
   CREDITS_PER_DOLLAR,
@@ -136,7 +137,7 @@ export default function WalletScreen({ bindBack }: {
     if (!to) { say('Who to?'); return }
     if (!Number.isFinite(amount) || amount <= 0) { say('Enter an amount.'); return }
     if (!transferCreditsOut(amount, `@${to}`)) { say('Not enough credits.'); return }
-    playPop()
+    playCubeNavigationPop()
     // The server executes transfers when the wallet backend lands; the shell
     // is told so a native ledger can mirror the movement today.
     if (isNativeShell()) postNativeEvent({ type: 'walletSendCredits', to, credits: amount })
@@ -150,7 +151,7 @@ export default function WalletScreen({ bindBack }: {
     const amount = Math.floor(Number(cashAmount))
     if (!Number.isFinite(amount) || amount <= 0) { say('Enter an amount.'); return }
     if (!cashOutCredits(amount)) { say('Not enough credits.'); return }
-    playPop()
+    playCubeNavigationPop()
     if (isNativeShell()) postNativeEvent({ type: 'walletCashOut', credits: amount })
     say(`Cashing out ${creditsToCad(amount)}`)
     setCashAmount('')
@@ -247,7 +248,7 @@ export default function WalletScreen({ bindBack }: {
 
         <div className={styles.actions}>
           <button type="button" onClick={buyCredits}>Buy</button>
-          <button type="button" onClick={() => { playPop(); setPage('send') }}>Send</button>
+          <button type="button" onClick={() => { playCubeNavigationPop(); setPage('send') }}>Send</button>
           <button
             type="button"
             onClick={() => {
@@ -257,7 +258,7 @@ export default function WalletScreen({ bindBack }: {
               say('Share your @handle to receive credits.')
             }}
           >Receive</button>
-          <button type="button" onClick={() => { playPop(); setPage('cashout') }}>Cash Out</button>
+          <button type="button" onClick={() => { playCubeNavigationPop(); setPage('cashout') }}>Cash Out</button>
         </div>
 
         {/* The cards the account holds, bought in the Store. */}

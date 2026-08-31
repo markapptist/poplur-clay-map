@@ -41,6 +41,7 @@ import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
+import { playCubeNavigationPop } from './cubeNavigationSound'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
 import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
@@ -1634,8 +1635,13 @@ export default function FeedTwin({
       if (action === 'profile') {
         // whoever posted the video you are watching
         const current = postRef.current
-        if (!current) return
-        playPop()
+        // Hold already claimed its wheel-preview return. With no post there is
+        // no final model destination, so acknowledge locally without leaving
+        // a navigation claim that could silence the next unrelated swap.
+        if (!current) { playPop(); return }
+        // A real destination changes Feed's TV to the selected profile model.
+        // Re-arm ownership after Hold's preview return and keep one pop total.
+        playCubeNavigationPop()
         recordProfileVisitAfterView(radiusPostId(ch.id, current))
         onOpenProfile?.(current.user, current.ownerId)
       }
@@ -1915,22 +1921,21 @@ export default function FeedTwin({
           information underneath the title. */}
       {!playerMode && (
       <>
-        {post && (
-          <PostActionRail
-            side={controlSide}
-            label="Feed controls"
-            muted={muted}
-            captionsOn={captionsOn}
-            commentsAtEnd={commentsAtEnd}
-            onToggleMute={toggleMute}
-            onShare={sharePost}
-            onToggleCaptions={toggleCaptions}
-            onToggleCommentsAtEnd={toggleCommentsAtEnd}
-            onComment={openComments}
-            onLike={likeCurrentPost}
-            onDislike={dislikeCurrentPost}
-          />
-        )}
+        <PostActionRail
+          side={controlSide}
+          label="Feed controls"
+          muted={muted}
+          captionsOn={captionsOn}
+          commentsAtEnd={commentsAtEnd}
+          postActionsAvailable={Boolean(post)}
+          onToggleMute={toggleMute}
+          onShare={sharePost}
+          onToggleCaptions={toggleCaptions}
+          onToggleCommentsAtEnd={toggleCommentsAtEnd}
+          onComment={openComments}
+          onLike={likeCurrentPost}
+          onDislike={dislikeCurrentPost}
+        />
         <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
           <img className={styles.chIcon} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
         </div>

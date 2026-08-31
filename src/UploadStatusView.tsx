@@ -1,14 +1,6 @@
-import { useEffect, useState } from 'react'
 import NotifConfetti from './NotifConfetti'
 import styles from './UploadStatusView.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
-
-const UPLOAD_LINES = [
-  'Teaching the globe where your pop lives…',
-  'Polishing the pixels. Very important work.',
-  'Negotiating with one dramatic cloud…',
-  'Giving your radius a tiny pep talk…',
-]
 
 export default function UploadStatusView({
   complete = false,
@@ -27,14 +19,6 @@ export default function UploadStatusView({
   note?: string | null
   onReset?: () => void
 }) {
-  const [line, setLine] = useState(0)
-
-  useEffect(() => {
-    if (complete) return
-    const timer = window.setInterval(() => setLine(current => (current + 1) % UPLOAD_LINES.length), 1800)
-    return () => window.clearInterval(timer)
-  }, [complete])
-
   const percent = progress === null ? null : Math.round(Math.max(0, Math.min(1, progress)) * 100)
 
   return (
@@ -51,7 +35,7 @@ export default function UploadStatusView({
           <span>UPLOAD IN PROGRESS</span>
         </div>
         <div className={styles.progressCard}>
-          <p key={line}>{UPLOAD_LINES[line]}</p>
+          <p>Your capture is safe while Poplur posts it.</p>
           <div className={styles.progressHeading}>
             <span>{phaseLabel}</span>
             <strong>{percent === null ? 'WORKING' : `${percent}%`}</strong>

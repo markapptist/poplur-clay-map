@@ -5,20 +5,10 @@ import { startWeatherAudio, stopWeatherAudio, playThunder } from './weatherAudio
 import { isGateMuted, onGateChange } from './audioGate'
 import { ambientAllowed, onAmbientSleepChange } from './frameGovernor'
 import { createWeatherLightningScheduler } from './weatherLightning'
+import type { WeatherMode } from './weatherCode'
 
-export type WeatherMode =
-  | 'clear' | 'cloudy' | 'rain' | 'thunder' | 'storm' | 'snow' | 'hail' | 'fog'
-
-export function modeForCode(code: number): WeatherMode {
-  if (code <= 1) return 'clear'
-  if (code === 45 || code === 48) return 'fog'
-  if (code <= 3) return 'cloudy'
-  // 96 / 99 are thunderstorm with hail; 95 is thunder + lightning
-  if (code === 96 || code === 99) return 'hail'
-  if (code >= 95) return 'storm'
-  if (code >= 71 && code <= 86) return 'snow'
-  return 'rain'
-}
+export { modeForCode } from './weatherCode'
+export type { WeatherMode } from './weatherCode'
 
 /** Modes that carry the drifting clay clouds overhead. */
 const CLOUDY_MODES: WeatherMode[] = ['cloudy', 'rain', 'thunder', 'storm', 'hail', 'fog']

@@ -37,6 +37,7 @@ import {
   WEATHER_ICONS,
   runtimeSideIconSources,
   sideIconAssetPath,
+  weatherIconIdForCode,
   weatherIconIdForCondition,
   weatherIconIdForMode,
   type PoplurSideIconId,
@@ -262,6 +263,26 @@ describe('weather icon normalization', () => {
     expect(weatherIconIdForCondition(null)).toBe('weather.cloudy')
     expect(weatherIconIdForMode('storm')).toBe('weather.thunderstorm')
   })
+
+  it('preserves WMO cloud detail and classifies rain showers correctly', () => {
+    expect(weatherIconIdForCode(0)).toBe('weather.clear_day')
+    expect(weatherIconIdForCode(1)).toBe('weather.partly_cloudy')
+    expect(weatherIconIdForCode(2)).toBe('weather.partly_cloudy')
+    expect(weatherIconIdForCode(3)).toBe('weather.overcast')
+    expect(weatherIconIdForCode(2)).not.toBe(weatherIconIdForCode(3))
+    expect(weatherIconIdForCode(45)).toBe('weather.fog')
+    expect(weatherIconIdForCode(51)).toBe('weather.rain_showers')
+    expect(weatherIconIdForCode(55)).toBe('weather.rain_showers')
+    expect(weatherIconIdForCode(61)).toBe('weather.rain_showers')
+    expect(weatherIconIdForCode(63)).toBe('weather.heavy_rain')
+    expect(weatherIconIdForCode(65)).toBe('weather.heavy_rain')
+    expect(weatherIconIdForCode(80)).toBe('weather.rain_showers')
+    expect(weatherIconIdForCode(81)).toBe('weather.rain_showers')
+    expect(weatherIconIdForCode(82)).toBe('weather.rain_showers')
+    expect(weatherIconIdForCode(85)).toBe('weather.snow')
+    expect(weatherIconIdForCode(95)).toBe('weather.thunderstorm')
+    expect(weatherIconIdForCode(96)).toBe('weather.hail')
+  })
 })
 
 describe('replacement controls preserve state and activation contracts', () => {
@@ -376,6 +397,47 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(controls[0].props['aria-pressed']).toBe(true)
     expect(controls[2].props['aria-pressed']).toBe(false)
     expect(controls[3].props['aria-pressed']).toBe(true)
+  })
+
+  it('keeps the Feed rail visible but disables post-only actions without a post', () => {
+    const handlers = Array.from({ length: 7 }, () => vi.fn())
+    const rail = PostActionRail({
+      side: 'left',
+      label: 'Feed controls',
+      muted: false,
+      captionsOn: false,
+      commentsAtEnd: false,
+      postActionsAvailable: false,
+      onToggleMute: handlers[0],
+      onShare: handlers[1],
+      onToggleCaptions: handlers[2],
+      onToggleCommentsAtEnd: handlers[3],
+      onComment: handlers[4],
+      onLike: handlers[5],
+      onDislike: handlers[6],
+    }) as LooseElement
+    const controls = Children.toArray(rail.props.children as ReactNode) as LooseElement[]
+
+    expect(controls).toHaveLength(7)
+    expect(controls.map(control => Boolean(control.props.disabled))).toEqual([
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+    ])
+    expect(renderToStaticMarkup(rail)).toContain('aria-label="Feed controls"')
+    expect(renderToStaticMarkup(rail).match(/disabled=""/g)).toHaveLength(4)
+    for (const index of [1, 4, 5, 6]) {
+      const button = materializeButton(controls[index])
+      firePrimaryPointerDown(button)
+      firePointerClick(button)
+      fireKeyboardClick(button)
+      expect(handlers[index], `${String(controls[index].props.icon)} stays inert without a post`)
+        .not.toHaveBeenCalled()
+    }
   })
 
   it('adds the supplied delete artwork only when an opened Profile post is deletable', () => {
@@ -576,10 +638,75 @@ describe('replacement controls preserve state and activation contracts', () => {
     const controls = (Children.toArray(rail.props.children as ReactNode) as LooseElement[])
       .filter(child => typeof child.props?.onClick === 'function')
     expect(controls).toHaveLength(2)
+    vi.mocked(playPop).mockClear()
     ;(controls[0].props.onClick as () => void)()
     ;(controls[1].props.onClick as () => void)()
     expect(onUp).toHaveBeenCalledOnce()
     expect(onDown).toHaveBeenCalledOnce()
+    expect(playPop).not.toHaveBeenCalled()
+
+    const home = componentSource('HomeTwin.tsx')
+    const channelOwner = home.slice(home.indexOf('const changeChannel'), home.indexOf('useEffect(() => {', home.indexOf('const changeChannel')))
+    expect(channelOwner).toContain('playPop()')
+    expect(channelOwner).toContain('claimCubeNavigationSound()')
+    expect(home).toContain('navigationSoundClaimed: cubeNavigationSoundClaimRef.current.claimed()')
+
+    const holdMenu = componentSource('HoldMenuTwin.tsx')
+    const pageWalker = holdMenu.slice(holdMenu.indexOf('bindArrows((dir:'), holdMenu.indexOf('return () => bindArrows(null)'))
+    expect(pageWalker).not.toContain('playPop()')
+  })
+
+  it('assigns one sound owner to nested cube-model navigation', () => {
+    const home = componentSource('HomeTwin.tsx')
+    const hold = componentSource('HoldMenuTwin.tsx')
+    const phone = componentSource('PhoneScreen.tsx')
+    const mail = componentSource('MailScreen.tsx')
+    const avatar = componentSource('AvatarScreen.tsx')
+    const settings = componentSource('SettingsScreen.tsx')
+    const ipod = componentSource('MapIpod.tsx')
+    const studio = componentSource('StudioScreen.tsx')
+    const profile = componentSource('ProfileTwin.tsx')
+    const composer = componentSource('PostComposer.tsx')
+
+    expect(home).toContain('cancelCubeScreenNavigationSoundRef.current()')
+    expect(home).toContain('if (!surfaceVisible) cancelCubeScreenNavigationSound()')
+    expect(home).toMatch(/const acceptIncomingCall[\s\S]*?playCubeNavigationPop\(\)/)
+    expect(home).toMatch(/const declineIncomingCall[\s\S]*?playCubeNavigationPop\(\)/)
+    expect(home).toMatch(/composerOpen && cameraActionsRef\.current\?\.composerBack\(\)[\s\S]*?playPop\(\)[\s\S]*?beginCubeScreenNavigationSound\(\)[\s\S]*?return/)
+    expect(hold).toMatch(/const playSubscreenNavigationPop[\s\S]*?markCubeNavigationPop\(\)/)
+    expect(hold).toContain('playSubscreenNavigationPop(false)')
+    const delegatedAction = hold.slice(hold.indexOf('if (item.action)'), hold.indexOf('// CREATE opens'))
+    expect(delegatedAction).not.toContain('playPop(')
+    expect(delegatedAction).toMatch(/item\.action === 'profile'[\s\S]*?markCubeNavigationPop\(\)[\s\S]*?else[\s\S]*?playSubscreenNavigationPop\(false\)/)
+    const feed = componentSource('FeedTwin.tsx')
+    expect(feed).toMatch(/if \(action === 'profile'\)[\s\S]*?const current = postRef\.current[\s\S]*?if \(!current\) \{ playPop\(\); return \}[\s\S]*?playCubeNavigationPop\(\)[\s\S]*?onOpenProfile/)
+    expect(hold).toMatch(/activeScreen\?\.screen === 'feed-tvguide'[\s\S]*?onCloseRef\.current\('dismiss'\)/)
+    expect(phone).toMatch(/if \(incomingCall\)[\s\S]*?if \(key === '5'\) onAcceptCall/)
+    expect(phone).not.toMatch(/if \(key === '5'\) \{ playPop\(\); onAcceptCall/)
+    expect(mail).toMatch(/const endAndReturnToChat[\s\S]*?playCubeNavigationPop\(\)/)
+    expect(avatar).toMatch(/const takeOff[\s\S]*?playPop\(\)[\s\S]*?wearAvatarCube\(null\)/)
+    expect(avatar).toMatch(/const remove[\s\S]*?playPop\(\)[\s\S]*?deleteAvatarCube/)
+    expect(settings).toMatch(/settingsCubeFace\(page\) !== settingsCubeFace\(next\)[\s\S]*?playCubeNavigationPop\(\)/)
+    expect(ipod).toMatch(/row\.go\?\.id === 'podcasts'\) playCubeNavigationPop\(\)[\s\S]*?else playPop\(\)/)
+    const phoneColorway = phone.slice(phone.indexOf('const cycleColorway'), phone.indexOf('const step =', phone.indexOf('const cycleColorway')))
+    expect(phoneColorway).not.toContain('playPop(')
+    const ipodFinish = ipod.slice(ipod.indexOf('const stepFinish'), ipod.indexOf('const pct', ipod.indexOf('const stepFinish')))
+    expect(ipodFinish).not.toContain('playPop(')
+    expect(hold).toMatch(/initialSection="podcasts"[\s\S]*?onClose=\{\(\) => \{[\s\S]*?playPop\(\)[\s\S]*?closePodcastIpod\(\)/)
+    const podcastOverlayClose = hold.slice(hold.indexOf('initialSection="podcasts"'), hold.indexOf('/>', hold.indexOf('initialSection="podcasts"')))
+    expect(podcastOverlayClose).not.toContain('playSubscreenNavigationPop')
+    expect(podcastOverlayClose).not.toContain('markCubeNavigationPop')
+    const studioLibrary = hold.slice(hold.indexOf('onOpenLibrary={(section)'), hold.indexOf('/>', hold.indexOf('onOpenLibrary={(section)')))
+    const podcastLibrary = studioLibrary.slice(studioLibrary.indexOf("if (section === 'podcasts')"), studioLibrary.indexOf('// Music'))
+    expect(podcastLibrary).not.toContain('subscreenNavigationPopRef.current = true')
+    expect(studioLibrary.slice(studioLibrary.indexOf('// Music'))).toContain('subscreenNavigationPopRef.current = true')
+    expect(studio).toMatch(/recording && mode === 'music'\) playCubeNavigationPop\(\)[\s\S]*?else playPop\(\)/)
+    expect(studio).toMatch(/const uploadTrack[\s\S]*?if \(!file\) return[\s\S]*?playCubeNavigationPop\(\)/)
+    expect(profile).toMatch(/const beginCapture[\s\S]*?playCubeNavigationPop\(\)/)
+    const profileArrowOwner = profile.slice(profile.indexOf('bindArrows(dir =>'), profile.indexOf('return () => bindArrows(null)', profile.indexOf('bindArrows(dir =>')))
+    expect(profileArrowOwner).not.toContain('playPop(')
+    const composerArrowOwner = composer.slice(composer.indexOf('bindArrows((dir:'), composer.indexOf('return () => bindArrows(null)', composer.indexOf('bindArrows((dir:')))
+    expect(composerArrowOwner).not.toContain('playPop(')
   })
 
   it('keeps every shared channel orientation on the common focus/press shell', () => {
@@ -675,7 +802,7 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(clayMapCss).toMatch(/\.colorCircle\s*\{[\s\S]*?left:\s*max\(12px,[\s\S]*?var\(--mapBaseControlSpan, 492px\)[\s\S]*?var\(--mapColorControlGap, 24px\)[\s\S]*?width:\s*44px;[\s\S]*?height:\s*44px;/)
     expect(nativeCss).toMatch(/\.nativeMapZoom\s*\{[\s\S]*?height:\s*var\(--mapControlSpan, 492px\)/)
     expect(globalCss).toMatch(/--poplur-map-control-top:\s*max\(154px,\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*112px\)\)/)
-    expect(globalCss).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*?--poplur-map-control-top:\s*max\(104px,\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*62px\)\)/)
+    expect(globalCss).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*?--poplur-map-control-top:\s*max\(92px,\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*50px\)\)/)
     expect(nativeCss).toMatch(/\.nativeMapChrome\s+:global\(\[data-poplur-control-rail\]\)\s*\{[\s\S]*?top:\s*var\(--poplur-map-control-top/)
     expect(nativeCss).toMatch(/\.nativeMapZoom\s*\{[\s\S]*?top:\s*var\(--poplur-map-control-top/)
     expect(clayMapCss).toMatch(/\.zoomWrap\s*\{[\s\S]*?top:\s*var\(--poplur-map-control-top/)

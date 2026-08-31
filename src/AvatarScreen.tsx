@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './AvatarScreen.module.css'
 import { playPop } from './pop'
+import { markCubeNavigationPop, playCubeNavigationPop } from './cubeNavigationSound'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import {
   AVATAR_CUBE_COST,
@@ -216,11 +217,11 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
         source: 'logo',
         thumb: await thumbnail(source),
       })
+      playCubeNavigationPop()
       showOnCube(glb)
       setMade(cube)
       setProgress(1)
       setStage('done')
-      playPop()
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'That cube could not be made.')
       setStage('style')
@@ -268,11 +269,11 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
         source: 'meshy',
         thumb: await thumbnail(source),
       })
+      playCubeNavigationPop()
       showOnCube(glb)
       setMade(cube)
       setProgress(1)
       setStage('done')
-      playPop()
     } catch (failure) {
       const cancelled = failure instanceof DOMException && failure.name === 'AbortError'
       refundCredits(AVATAR_CUBE_COST, cancelled ? 'Sculpt cancelled' : 'Sculpt failed')
@@ -296,7 +297,7 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
   }
 
   const wear = async (cube: AvatarCube) => {
-    playPop()
+    playCubeNavigationPop()
     wearAvatarCube(cube.id)
     setWorn(cube.id)
     // Hand the navigator back so it picks the worn cube up through the normal
@@ -313,6 +314,9 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
   }
 
   const takeOff = () => {
+    // Avatar's shelf keeps the printer navigator above worn/default state, so
+    // taking a cube off does not change the visible model until a later,
+    // separately sounded screen close.
     playPop()
     wearAvatarCube(null)
     setWorn(null)
@@ -326,6 +330,7 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
     playPop()
     const blob = await readCubeBlob(cube.id)
     if (!blob) { say('That cube’s model is missing.'); return }
+    markCubeNavigationPop()
     showOnCube(blob)
     say(`${cube.name} is in your hand — WEAR IT to keep it.`)
     setMade(cube)
@@ -333,6 +338,9 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
   }
 
   const remove = async (cube: AvatarCube) => {
+    // The Avatar shelf is holding its printer model, not the worn cube. Even a
+    // worn-item delete therefore keeps the current navigator unchanged; the
+    // eventual screen close owns the later Profile model handoff.
     playPop()
     await deleteAvatarCube(cube.id)
     say(`Deleted ${cube.name}.`)
@@ -349,8 +357,8 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
     say('Credits are bought in the app, on your account.')
   }
 
-  const startOver = () => {
-    playPop()
+  const startOver = (withSound = true) => {
+    if (withSound) playCubeNavigationPop()
     releasePreview()
     setSource(null)
     setMade(null)
@@ -364,7 +372,8 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
   // return to, and startOver would strand the job it is watching.
   stepBackRef.current = () => {
     if (stage === 'shelf' || stage === 'working') return false
-    startOver()
+    // Home plays the persistent-cube back pop after this handler succeeds.
+    startOver(false)
     return true
   }
   useEffect(() => {
@@ -531,7 +540,7 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
               </p>
             </section>
             <button className={styles.primary} onClick={() => void wear(made)}>WEAR IT</button>
-            <button className={styles.secondary} onClick={startOver}>KEEP, DON’T WEAR</button>
+            <button className={styles.secondary} onClick={() => startOver()}>KEEP, DON’T WEAR</button>
           </>
         )}
 

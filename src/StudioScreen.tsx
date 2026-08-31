@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './StudioScreen.module.css'
 import { playPop } from './pop'
+import { playCubeNavigationPop } from './cubeNavigationSound'
 import { modelSprite } from './modelSprite'
 import { requestAudioFocus, releaseAudioFocus, registerAudioOwner } from './audioFocus'
 import { setMusicPlayback } from './musicPlayback'
@@ -939,7 +940,10 @@ export default function StudioScreen({
 
   // Mic-stage record control: one button, record → finish → next stage.
   const micTap = () => {
-    playPop()
+    // Starting/stopping a Podcast take stays on the microphone cube. Only a
+    // finished Music take advances from mic -> mixer/style.
+    if (recording && mode === 'music') playCubeNavigationPop()
+    else playPop()
     if (recording) {
       stopCapture()
       setRecording(false)
@@ -956,7 +960,8 @@ export default function StudioScreen({
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    playPop()
+    // A valid upload leaves the microphone stage for the mixer/style face.
+    playCubeNavigationPop()
     stopCapture(true)
     setRecording(false)
     const url = URL.createObjectURL(file)
@@ -980,7 +985,6 @@ export default function StudioScreen({
       setPublishNote('Record your episode first, then choose where to drop it.')
       return
     }
-    playPop()
     beginPodcastMapPick({
       kind,
       title: name,
@@ -992,6 +996,7 @@ export default function StudioScreen({
     })
     // The map owns pin placement and communicates the final coordinates back
     // through HomeTwin. Close this fixed overlay before the focused map opens.
+    // HoldMenu owns this close/navigation pop.
     window.dispatchEvent(new CustomEvent('poplur-pick-podcast-location'))
     onClose()
   }
@@ -1073,7 +1078,7 @@ export default function StudioScreen({
               className={`${styles.choosePath} ${styles.chooseMusic}`}
               type="button"
               aria-label="Make music"
-              onClick={() => { playPop(); setMode('music'); setStage('mic') }}
+              onClick={() => { playCubeNavigationPop(); setMode('music'); setStage('mic') }}
             >
               <img
                 className={styles.chooseImage}
@@ -1093,7 +1098,7 @@ export default function StudioScreen({
               className={`${styles.choosePath} ${styles.choosePodcast}`}
               type="button"
               aria-label="Start a podcast"
-              onClick={() => { playPop(); setMode('podcast'); setStage('room') }}
+              onClick={() => { playCubeNavigationPop(); setMode('podcast'); setStage('room') }}
             >
               <img
                 className={styles.chooseImage}
@@ -1156,7 +1161,7 @@ export default function StudioScreen({
               </button>
             )}
             <button className={styles.micSkip} type="button" onClick={() => {
-              playPop()
+              playCubeNavigationPop()
               stopCapture(true)
               setRecording(false)
               setStage('style')
@@ -1374,7 +1379,10 @@ export default function StudioScreen({
                 <span><i aria-hidden="true" /> LIVE PODCAST</span>
                 <small>Choose an area</small>
               </button>
-              <button className={styles.roomRecorded} type="button" onClick={() => takeUrl ? pickPodcastArea('recorded') : setStage('podcast-record')}>
+              <button className={styles.roomRecorded} type="button" onClick={() => {
+                if (takeUrl) pickPodcastArea('recorded')
+                else { playPop(); setStage('podcast-record') }
+              }}>
                 <span>{takeUrl ? 'DROP EPISODE' : 'RECORD EPISODE'}</span>
                 <small>{takeUrl ? 'Choose an area' : 'Record in this room'}</small>
               </button>

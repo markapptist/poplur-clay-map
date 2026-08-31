@@ -15,6 +15,8 @@ export type AIGenerationResult = {
   kind: AIGenerationKind
   status: 'completed' | 'provider_pending'
   outputUrl: string | null
+  /** Response-only bytes for the newly generated image. Never persisted. */
+  inlineAsset: AIImageSource | null
   credits: number
 }
 
@@ -61,7 +63,17 @@ export function parseAIGenerationResponse(raw: unknown, expectedKind: AIGenerati
   const outputUrl = typeof record.outputUrl === 'string' && /^https:\/\//i.test(record.outputUrl)
     ? record.outputUrl
     : null
-  if (status === 'completed' && !outputUrl) {
+  const rawInline = record.inlineAsset
+  const inlineRecord = rawInline && typeof rawInline === 'object' ? rawInline as Record<string, unknown> : null
+  const inlineMimeType = inlineRecord?.mimeType
+  const inlineData = inlineRecord?.data
+  const inlineAsset: AIImageSource | null = (
+    (inlineMimeType === 'image/jpeg' || inlineMimeType === 'image/png' || inlineMimeType === 'image/webp')
+    && typeof inlineData === 'string'
+    && inlineData.length <= 12_000_000
+    && /^[A-Za-z0-9+/=]+$/.test(inlineData)
+  ) ? { mimeType: inlineMimeType, data: inlineData } : null
+  if (status === 'completed' && !outputUrl && !inlineAsset) {
     throw new AIGenerationError('Poplur AI finished without a usable media result.')
   }
   return {
@@ -69,6 +81,7 @@ export function parseAIGenerationResponse(raw: unknown, expectedKind: AIGenerati
     kind: expectedKind,
     status,
     outputUrl,
+    inlineAsset,
     credits: positiveInt(record.creditsCharged) + positiveInt(record.creditsReserved),
   }
 }
@@ -140,6 +153,24 @@ export async function prepareAIImageSource(src: string): Promise<AIImageSource> 
   }
 }
 
+/**
+ * Native post bridges accept app-owned capture URLs or inline media bytes, not
+ * an expiring provider URL. Download and re-encode the generated image before
+ * it becomes the selected post media so iOS, Android and React Native all
+ * receive the same bounded, transferable payload.
+ */
+export async function materializeAIGeneratedImage(src: string): Promise<string> {
+  if (!/^https:\/\//i.test(src)) {
+    throw new AIGenerationError('Poplur AI returned an unsafe media address.')
+  }
+  const image = await prepareAIImageSource(src)
+  return aiImageSourceDataURL(image)
+}
+
+export function aiImageSourceDataURL(image: AIImageSource): string {
+  return `data:${image.mimeType};base64,${image.data}`
+}
+
 async function nativeToken(signal: AbortSignal): Promise<string | null> {
   const existing = authToken()
   if (existing) return existing
@@ -166,22 +197,40 @@ async function nativeToken(signal: AbortSignal): Promise<string | null> {
   })
 }
 
+type WebAuthTokenSource = {
+  authStateReady: () => Promise<void>
+  currentUser: { getIdToken: () => Promise<string> } | null
+}
+
+/** Wait for Firebase to restore a persisted browser session before reading it. */
+export async function readyWebIdToken(
+  auth: WebAuthTokenSource,
+  signal: AbortSignal,
+): Promise<string | null> {
+  await auth.authStateReady()
+  if (signal.aborted) return null
+  return await auth.currentUser?.getIdToken() ?? null
+}
+
 async function firebaseIdToken(signal: AbortSignal): Promise<string | null> {
   const native = await nativeToken(signal)
   if (native || signal.aborted) return native
   try {
-    return await webAuth().currentUser?.getIdToken() ?? null
+    return await readyWebIdToken(webAuth(), signal)
   } catch {
     return null
   }
 }
 
-function messageForStatus(status: number, body: unknown): string {
-  const server = body && typeof body === 'object' ? body as { message?: unknown; code?: unknown } : null
+export function aiGenerationMessageForStatus(status: number, body: unknown): string {
+  const server = body && typeof body === 'object'
+    ? body as { message?: unknown; code?: unknown; error?: { message?: unknown; code?: unknown } }
+    : null
   if (status === 401) return 'Sign in to use Poplur AI.'
   if (status === 402) return 'You need more Poplur Credits to generate this.'
   if (status === 429) return 'Poplur AI is busy. Please try again in a moment.'
   if (typeof server?.message === 'string' && server.message) return server.message
+  if (typeof server?.error?.message === 'string' && server.error.message) return server.error.message
   return 'Poplur AI could not generate that right now.'
 }
 
@@ -222,7 +271,7 @@ export async function generateWithPoplurAI(options: {
     })
     let body: unknown = null
     try { body = await response.json() } catch { /* handled by the status below */ }
-    if (!response.ok) throw new AIGenerationError(messageForStatus(response.status, body), `http_${response.status}`)
+    if (!response.ok) throw new AIGenerationError(aiGenerationMessageForStatus(response.status, body), `http_${response.status}`)
     return parseAIGenerationResponse(body, kind)
   } catch (error) {
     if (error instanceof AIGenerationError) throw error

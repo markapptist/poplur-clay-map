@@ -116,6 +116,9 @@ export interface PendingEffectAsset {
 // capture. Module-level on purpose — the composer unmounts during the trip.
 export interface PendingMapPost {
   media: { kind: 'photo' | 'video'; src: string; length?: string }
+  /** Non-AI/manual-edit baseline retained separately so backing out of review
+   *  can truthfully restore "Keep original" after an AI version was chosen. */
+  originalMedia?: { kind: 'photo' | 'video'; src: string; length?: string }
   caption: string
   channelId: string
   filterId: string

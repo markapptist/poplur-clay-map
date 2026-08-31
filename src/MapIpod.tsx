@@ -12,6 +12,7 @@ import {
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
 import { isGateMuted } from './audioGate'
 import { playPop } from './pop'
+import { playCubeNavigationPop } from './cubeNavigationSound'
 import { HOME, haversineKm } from './reach'
 import { readSelectedProfileTheme, PROFILE_THEME_CHANGE_EVENT } from './profileThemes'
 import { postNativeEvent } from './nativeBridge'
@@ -610,14 +611,19 @@ export default function MapIpod({
   }
 
   const select = useCallback(() => {
-    playPop()
     if (frame.id === 'nowplaying') {
+      playPop()
       if (playingId) stopPlayback()
       else if (queue[trackIndex]) void play(queue[trackIndex])
       return
     }
     const row = rows[cursor]
-    if (!row) return
+    if (!row) { playPop(); return }
+    // Podcasts is the only iPod frame with a different navigator model. All
+    // playback, inert and ordinary folder selections keep the iPod and must
+    // not leave a broad sound claim behind.
+    if (row.go?.id === 'podcasts') playCubeNavigationPop()
+    else playPop()
     if (row.inert) { setStatus(`${row.label} is not on this iPod`); return }
 
     if (row.podcast) {
@@ -669,13 +675,17 @@ export default function MapIpod({
   }, [cursor, frame, pickups, play, playingId, progress, push, queue, rows, stopPlayback, trackIndex, unlocked])
 
   const back = useCallback(() => {
-    playPop()
     setStatus('')
     // MENU walks back up the stack it came down; at the root it leaves.
+    // HoldMenu owns the close pop at the root; inner stack steps still own
+    // their local pop here.
     if (stack.length <= 1) { onClose?.(); return }
+    const previousFrame = stack[stack.length - 2]
+    if (previousFrame && ipodSectionForFrame(frame.id) !== ipodSectionForFrame(previousFrame.id)) playCubeNavigationPop()
+    else playPop()
     setStack(list => list.slice(0, -1))
     setIndexes(list => list.slice(0, -1))
-  }, [onClose, stack.length])
+  }, [frame.id, onClose, stack])
 
   const playPause = useCallback(() => {
     playPop()
@@ -780,7 +790,7 @@ export default function MapIpod({
   }, [pod.id])
 
   const stepFinish = (delta: 1 | -1) => {
-    playPop()
+    // ClayChannelArrows owns the tap's single audible pop.
     const at = IPOD_SKINS.findIndex(s => s.id === pod.id)
     const next = IPOD_SKINS[(at + delta + IPOD_SKINS.length) % IPOD_SKINS.length]
     setFinish(next.id)

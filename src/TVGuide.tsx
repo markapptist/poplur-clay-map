@@ -248,8 +248,9 @@ export default function TVGuide({
   // Selection persists: the next press on that row tunes even if the user
   // spent time watching the PiP preview first.
   const tuneAndClose = (channel: TVGuideChannel) => {
-    playPop()
     onTune?.(channel.id)
+    // HoldMenu owns the one close/navigation pop. Keeping it here as well
+    // made a tuned row sound twice when the cube returned to Feed.
     onClose()
   }
 

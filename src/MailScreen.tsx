@@ -4,6 +4,7 @@ import styles from './MailScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
+import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isNativeShell } from './nativeBridge'
 import CameraARButton from './CameraARButton'
 import ARFilters from './ARFilters'
@@ -537,7 +538,7 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
   const onClick = () => {
     if (drag.current.axis === 'x') { drag.current.axis = null; return }
     if (open) { onOpenChange(null); return }
-    playPop()
+    playCubeNavigationPop()
     onOpenThread(thread)
   }
 
@@ -682,7 +683,10 @@ export function FaceTimeOverlay({
     playPop()
   }
   const endAndReturnToChat = useCallback(() => {
-    playPop()
+    // A user-owned end sounds now and owns the contact-card -> Mail swap.
+    // Remote/automatic call endings still call onEnd from the phase effect
+    // without this claim, so their visible return keeps its normal cube pop.
+    playCubeNavigationPop()
     hangupCall()
     onEnd()
   }, [onEnd])
@@ -1143,7 +1147,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
 
   const startFaceTime = useCallback((thread: Thread) => {
     if (!thread.otherId) return
-    playPop()
+    playCubeNavigationPop()
     setFaceTimeWith({ id: thread.id, name: thread.title })
     // FaceTime owns the media it displays: ask the shared peer connection for
     // video before the ringing screen appears, instead of opening a duplicate

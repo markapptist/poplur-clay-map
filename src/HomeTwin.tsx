@@ -25,6 +25,7 @@ import { readMapNewsOpenRequest } from './mapNewsBridge'
 import MapConquerButton from './MapConquerButton'
 import WeatherMark from './WeatherMark'
 import WeatherFX, { modeForCode } from './WeatherFX'
+import { weatherIconIdForCode } from './sideControlIcons'
 import { nativeMapWeatherVisible } from './nativeMapWeather'
 import { createNativeMapConquerSnapshot } from './nativeMapConquerSnapshot'
 import {
@@ -51,7 +52,13 @@ import {
   cubeTransition, holdPreviewMode, onTransitionChanged, screenTransition,
   type CubeTransition, type HoldPreviewMode, type ScreenTransition,
 } from './cubeTransitions'
-import { cubeSwapShouldPlaySound, isMapCubeReturnTransition } from './cubeSwapSoundPolicy'
+import {
+  createCubeNavigationSoundClaimTracker,
+  cubeSwapShouldPlaySound,
+  isMapCubeReturnTransition,
+  pendingCubeSwapSound,
+} from './cubeSwapSoundPolicy'
+import { CUBE_NAVIGATION_POP_EVENT, playCubeNavigationPop } from './cubeNavigationSound'
 import FeedTwin, { CHANNELS, type FeedAction } from './FeedTwin'
 import ProfileTwin from './ProfileTwin'
 import Camera, { MAX_RECORD_MS, type CameraActions } from './Camera'
@@ -1063,6 +1070,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   } | null>(null)
   const [mapWeatherDisplay, setMapWeatherDisplay] = useState<WeatherPresentationSnapshot>(() => ({
     mode: 'clear',
+    iconId: 'weather.clear_day',
     temperature: null,
     unit: weatherTemperatureUnit(),
   }))
@@ -1331,6 +1339,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   /** A direct cross-tab destination (such as an ad → Feed Browser). Unlike a
       swipe, it must win over the incoming tab's remembered page. */
   const forcedTabPageRef = useRef<{ tab: CubeTab; screen: string } | null>(null)
+  // Set after the sound tracker is created below. A horizontal tab gesture is
+  // explicitly unowned by any earlier same-model child action, so it cancels
+  // stale pending ownership before changing the tab.
+  const cancelCubeScreenNavigationSoundRef = useRef<() => void>(() => {})
   // ── Screen history: the cube's back step ──────────────────────────────────
   // Where the app is standing is one triple — which tab, which hold-menu page
   // on it, and whose profile if a visited one is up. Every change to that
@@ -1338,6 +1350,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // back: out of a page to what was under it, and back across a tab jump
   // (VIEW PROFILE from News returns to News rather than to the feed root).
   const switchTabByGesture = useCallback((tab: CubeTab) => {
+    cancelCubeScreenNavigationSoundRef.current()
     gestureSwitchRef.current = tab
     setActiveTab(tab)
   }, [])
@@ -1722,6 +1735,59 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       A ref because the comparison must not live inside a state updater. */
 
   const cubeScreenRef = useRef<string | null>(null)
+  // A channel/page gesture owns exactly one immediate pop. Its semantic screen
+  // report can arrive a render later, so carry a one-shot claim into the cube
+  // swap that gesture causes instead of globally debouncing rapid navigation.
+  const cubeNavigationSoundClaimRef = useRef(createCubeNavigationSoundClaimTracker())
+  const cubeNavigationSoundPendingTimerRef = useRef<number | null>(null)
+  const [cubeNavigationSoundClaim, setCubeNavigationSoundClaim] = useState(0)
+  const clearCubeNavigationSoundPendingTimer = useCallback(() => {
+    if (cubeNavigationSoundPendingTimerRef.current === null) return
+    window.clearTimeout(cubeNavigationSoundPendingTimerRef.current)
+    cubeNavigationSoundPendingTimerRef.current = null
+  }, [])
+  const claimCubeNavigationSound = useCallback(() => {
+    clearCubeNavigationSoundPendingTimer()
+    const tracker = cubeNavigationSoundClaimRef.current
+    tracker.cancelScreenNavigation()
+    const next = tracker.claim()
+    setCubeNavigationSoundClaim(next)
+  }, [clearCubeNavigationSoundPendingTimer])
+  const beginCubeScreenNavigationSound = useCallback(() => {
+    clearCubeNavigationSoundPendingTimer()
+    const next = cubeNavigationSoundClaimRef.current.beginScreenNavigation()
+    setCubeNavigationSoundClaim(next)
+    // Fail closed to normal cube audio if an armed control did not actually
+    // change a screen/model. This is ownership expiry, not audio debouncing:
+    // rapid real navigations each arm and settle their own independent claim.
+    cubeNavigationSoundPendingTimerRef.current = window.setTimeout(() => {
+      cubeNavigationSoundPendingTimerRef.current = null
+      cubeNavigationSoundClaimRef.current.cancelScreenNavigation()
+    }, 700)
+  }, [clearCubeNavigationSoundPendingTimer])
+  const cancelCubeScreenNavigationSound = useCallback(() => {
+    clearCubeNavigationSoundPendingTimer()
+    cubeNavigationSoundClaimRef.current.cancelScreenNavigation()
+  }, [clearCubeNavigationSoundPendingTimer])
+  cancelCubeScreenNavigationSoundRef.current = cancelCubeScreenNavigationSound
+  useEffect(() => {
+    const onNavigationPop = () => beginCubeScreenNavigationSound()
+    window.addEventListener(CUBE_NAVIGATION_POP_EVENT, onNavigationPop)
+    return () => window.removeEventListener(CUBE_NAVIGATION_POP_EVENT, onNavigationPop)
+  }, [beginCubeScreenNavigationSound])
+  useEffect(() => {
+    const cancelIfHidden = () => {
+      if (document.visibilityState === 'hidden') cancelCubeScreenNavigationSound()
+    }
+    const cancelOnPageHide = () => cancelCubeScreenNavigationSound()
+    document.addEventListener('visibilitychange', cancelIfHidden)
+    window.addEventListener('pagehide', cancelOnPageHide)
+    return () => {
+      document.removeEventListener('visibilitychange', cancelIfHidden)
+      window.removeEventListener('pagehide', cancelOnPageHide)
+    }
+  }, [cancelCubeScreenNavigationSound])
+  useEffect(() => () => clearCubeNavigationSoundPendingTimer(), [clearCubeNavigationSoundPendingTimer])
   // The Store is an iframe. HoldMenuTwin source-checks its message, then
   // publishes this local event so the card model can use the same cube-swap
   // path as every other nested page without trusting an arbitrary window.
@@ -1738,7 +1804,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   useEffect(() => {
     if (cubeScreen !== 'profile-store') setStoreCardCube(null)
   }, [cubeScreen])
-  const handleSubscreenChange = useCallback((open: boolean, screen?: string, _unmounting?: boolean) => {
+  const handleSubscreenChange = useCallback((
+    open: boolean,
+    screen?: string,
+    _unmounting?: boolean,
+    navigationSoundPlayed = false,
+  ) => {
     setOverlayOpen(open)
     // Resume bookkeeping — STICKY by design. Standing on a page records it,
     // for this session (the ref) and past an app kill (storage, written NOW:
@@ -1765,7 +1836,31 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // to another one". Opening rises (dir 1), closing settles back down.
     const next = open && screen ? screen : null
     const screenChanged = (cubeScreenRef.current ?? '') !== (next ?? '')
+    if (!screenChanged && navigationSoundPlayed) {
+      // Some nested destinations change the navigator object without changing
+      // the outer page (Studio's Podcast folder is the key case). The child's
+      // own trusted-gesture pop still owns that same-screen model handoff.
+      const tracker = cubeNavigationSoundClaimRef.current
+      clearCubeNavigationSoundPendingTimer()
+      tracker.cancelScreenNavigation()
+      setCubeNavigationSoundClaim(tracker.claim())
+    }
     if (screenChanged) {
+      const tracker = cubeNavigationSoundClaimRef.current
+      // A screen lifecycle report is not a sound owner by itself. Horizontal
+      // tab swipes therefore keep the one pop produced by their model swap.
+      // Only an explicitly sounded tile/close, or the pending report paired
+      // with a channel-arrow pop, suppresses that follow-up swap sound.
+      let nextClaim: number | null
+      if (navigationSoundPlayed) {
+        clearCubeNavigationSoundPendingTimer()
+        tracker.cancelScreenNavigation()
+        nextClaim = tracker.claim()
+      } else {
+        nextClaim = tracker.screenChanged()
+        if (nextClaim !== null) clearCubeNavigationSoundPendingTimer()
+      }
+      if (nextClaim !== null) setCubeNavigationSoundClaim(nextClaim)
       // Revoke the outgoing camera/decoder/analysis owner synchronously. The
       // transition event also lets isolated owners such as the Map iframe
       // dispose before this subscreen takes over.
@@ -1811,8 +1906,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // just before it unmounts. A `false` report also occurs when the raw wheel
     // first mounts and when it closes; silencing there paused the still-visible
     // Feed with no state edge that could resume it.
-    if (open) silenceAllAudio()
-  }, [])
+    if (open && screenChanged) silenceAllAudio()
+  }, [clearCubeNavigationSoundPendingTimer])
   const [popping, setPopping] = useState(false)
   // ── Cube model swap: the navigator POPS into its replacement ──────────────
   // A subscreen that hands the cube over to another object (the clay TV on TV
@@ -2279,6 +2374,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // leave visibilityState="visible" while backgrounded, and OR-ing the two
   // values kept the map iframe and WebGL context resident off-screen.
   const surfaceVisible = homeSurfaceIsVisible(iOSNativeShell, nativeAppActive, pageVisible)
+  useEffect(() => {
+    if (!surfaceVisible) cancelCubeScreenNavigationSound()
+  }, [cancelCubeScreenNavigationSound, surfaceVisible])
   mapFrontRef.current = activeTab === 'map' && committedTab === 'map' && surfaceVisible
     && activePermission === null
   // Has the map actually reached a usable frame since this iframe mounted?
@@ -2451,7 +2549,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   }, [])
 
   const acceptIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string; video?: boolean; context?: CallContext }) => {
-    playPop()
+    playCubeNavigationPop()
     stopRingtone()
     if (incomingCallTimer.current) {
       window.clearTimeout(incomingCallTimer.current)
@@ -2472,7 +2570,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   }, [])
 
   const declineIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string }) => {
-    playPop()
+    playCubeNavigationPop()
     stopRingtone()
     if (incomingCallTimer.current) {
       window.clearTimeout(incomingCallTimer.current)
@@ -2752,6 +2850,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         const presentation = readWeatherPresentation(event.data)
         if (presentation) {
           setMapWeatherDisplay(previous => previous.mode === presentation.mode
+            && previous.iconId === presentation.iconId
             && previous.temperature === presentation.temperature
             && previous.unit === presentation.unit
             ? previous
@@ -3525,15 +3624,17 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           const code = Number(json.current?.weather_code)
           if (!Number.isFinite(code)) return
           const mode = modeForCode(code)
+          const iconId = weatherIconIdForCode(code)
           const temperatureValue = Number(json.current?.temperature_2m)
           const temperature = Number.isFinite(temperatureValue)
             ? Math.round(temperatureValue)
             : null
           setMapWeatherDisplay(previous => previous.mode === mode
+            && previous.iconId === iconId
             && previous.temperature === temperature
             && previous.unit === displayUnit
             ? previous
-            : { mode, temperature, unit: displayUnit })
+            : { mode, iconId, temperature, unit: displayUnit })
           const kind = weatherCubeKind(mode)
           setMapWeatherSignal(previous => {
             if (!kind) return null
@@ -4162,7 +4263,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }
   }, [activeTab])
 
-  // (The pop lives in ClayChannelArrows itself now — every press pops.)
+  // `changeChannel` is the single sound owner for both the visible rail and a
+  // vertical cube swipe. Downstream page walkers and cube swaps stay silent for
+  // that same semantic navigation.
   //
   // The channel buttons are the app's SCREEN changer: they cycle the screens
   // belonging to the tab you are on — the tab's own live screen (the door),
@@ -4255,9 +4358,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   }
 
   const changeChannel = (dir: 1 | -1) => {
+    playPop()
     // Search/Weather is a modal inside the iframe. The parent-owned page wheel
     // cannot navigate behind it; the first cube/arrow gesture dismisses it.
     if (activeTab === 'map' && mapOverlayOpen) {
+      claimCubeNavigationSound()
       dismissMapOverlay()
       return
     }
@@ -4265,10 +4370,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // to that tour. Route before pushScreen so the same physical press cannot
     // also enter a page or posted-pop walk in Home.
     if (activeTab === 'map' && mapNewsTourOn) {
+      claimCubeNavigationSound()
       sendMapAction('cycleNews', { dir })
       return
     }
     if (activeTab === 'map' && mapTourOn) {
+      claimCubeNavigationSound()
       sendMapAction('cycleTourLandmark', { dir })
       return
     }
@@ -4277,8 +4384,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // so cycling screens behind it would be invisible. The camera's capture
     // preview flips filters; the profile's fullscreen post viewer browses
     // posts. Both report whether they took the press.
-    if (activeTab === 'post' && cameraActionsRef.current?.arrow(dir)) return
-    if (activeTab === 'profile' && profileArrowsRef.current?.(dir)) return
+    if (activeTab === 'post' && cameraActionsRef.current?.arrow(dir)) {
+      claimCubeNavigationSound()
+      return
+    }
+    if (activeTab === 'profile' && profileArrowsRef.current?.(dir)) {
+      claimCubeNavigationSound()
+      return
+    }
     // The camera's ring owns its arrows even while one of its ring subscreens
     // (CREATE / GAMES / STUDIO) is up — the wheel's own walker only knows the
     // page tiles plus its door, so handing it these presses collapsed the ring
@@ -4286,16 +4399,25 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // keeps the press only when the bare wheel (or a non-ring page) is up.
     if (activeTab === 'post'
       && (!holdOpen || (cubeScreen != null && CAMERA_STOP_BY_SCREEN[cubeScreen] != null))) {
+      claimCubeNavigationSound()
       stepCameraMode(dir)
       return
     }
     // With the hold menu mounted (a page is open, or the wheel is up) it owns
     // the cycle: it walks its own tab's pages and the door back out.
-    if (subscreenArrowsRef.current?.(dir)) return
+    if (subscreenArrowsRef.current) {
+      beginCubeScreenNavigationSound()
+      if (subscreenArrowsRef.current(dir)) return
+      cancelCubeScreenNavigationSound()
+    }
     // Standing on the camera itself, the arrows walk its capture ring rather
     // than stepping into the tab's page list. Selection only — the cube tap
     // below is still what fires the shutter or starts/stops a recording.
-    if (activeTab === 'post') { stepCameraMode(dir); return }
+    if (activeTab === 'post') {
+      claimCubeNavigationSound()
+      stepCameraMode(dir)
+      return
+    }
     // Standing on the tab's own screen with nothing mounted to answer — this
     // IS the door, so step into the tab's page list. The menu is not mounted
     // here at all, which is why the walk above cannot do it: opening the page
@@ -4303,6 +4425,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     const pages = tabPageScreens(activeTab)
     if (!pages.length) return
     const screen = dir === 1 ? pages[0] : pages[pages.length - 1]
+    beginCubeScreenNavigationSound()
     setResume(current => ({ screen, n: current.n + 1 }))
     setHoldOpen(true)
   }
@@ -4503,6 +4626,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     activeTab,
     previousEventSignal: previousCubeEventSignalRef.current,
     nextEventSignal: cubeEventSignal,
+    navigationSoundClaimed: cubeNavigationSoundClaimRef.current.claimed(),
   })
   useEffect(() => {
     if (mapCubeReturnTransition) cubeReturnSoundLatchRef.current = true
@@ -4685,18 +4809,34 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
 
   useEffect(() => {
     const alreadyApplied = requestedCubeModel === appliedCubeModel
+    const navigationTracker = cubeNavigationSoundClaimRef.current
+    if (!alreadyApplied && navigationTracker.screenNavigationPending()) {
+      // An explicitly sounded inner-page action has now produced its actual
+      // model handoff. Renew after any intermediate render consumed the first
+      // claim, then consume it for this swap only.
+      navigationTracker.screenChanged()
+      clearCubeNavigationSoundPendingTimer()
+    }
+    const navigationSoundClaimed = navigationTracker.consume()
     // Replace the pending destination before the equality check. Rapid swipes
     // collapse into the latest request instead of displaying every crossing.
     // Capture sound ownership NOW. Reading wheel state later, when a prepared
     // GLB finishes decoding, caused a duplicate notch pop if the wheel closed
     // first (and suppressed legitimate non-wheel swaps in the reverse race).
+    const existingPendingCubeSwap = pendingCubeSwap.current
+    const nextSwapWithSound = !navigationSoundClaimed
+      && (cubeSwapWithSound || cubeReturnSoundLatchRef.current)
     pendingCubeSwap.current = alreadyApplied ? null : {
       model: requestedCubeModel,
       // Keep the return sound latched across the exit-phase re-render. Without
       // this, the event signal's ref has already advanced by that render and a
       // focused wheel could silently overwrite the pending airplane→ambient
       // target just before its visible enter pop.
-      withSound: cubeSwapWithSound || cubeReturnSoundLatchRef.current,
+      withSound: pendingCubeSwapSound(
+        existingPendingCubeSwap,
+        requestedCubeModel,
+        nextSwapWithSound,
+      ),
     }
     if (alreadyApplied) {
       cubeReturnSoundLatchRef.current = false
@@ -4737,7 +4877,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }
     if (cubeSwapPhase !== 'idle') return
     setCubeSwapPhase('exit')
-  }, [requestedCubeModel, appliedCubeModel, cubeSwapPhase, beginCubeSwapEnter, cubeSwapWithSound])
+  }, [requestedCubeModel, appliedCubeModel, cubeSwapPhase, beginCubeSwapEnter, cubeSwapWithSound, cubeNavigationSoundClaim, clearCubeNavigationSoundPendingTimer])
 
   useEffect(() => {
     if (cubeSwapFallbackTimer.current) window.clearTimeout(cubeSwapFallbackTimer.current)
@@ -4813,6 +4953,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // reaching any screen behind the overlay.
     if (incomingFaceTime) {
       playPop()
+      beginCubeScreenNavigationSound()
       hangupCall()
       setIncomingFaceTime(null)
       return
@@ -4824,6 +4965,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // back action or an action on the tab underneath.
     if (faceTimeOpen) {
       playPop()
+      beginCubeScreenNavigationSound()
       hangupCall()
       return
     }
@@ -4835,15 +4977,31 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // cube's next tap runs the normal subscreen back below.
     if (cubeScreen === 'profile-messages' && mailThreadOpen) {
       playPop()
+      beginCubeScreenNavigationSound()
       window.dispatchEvent(new CustomEvent('poplur-mail-back'))
       return
     }
     // Back before anything else: if a subscreen or the hold menu is open, the
     // tap is the way out of it, not a favourite-action trigger.
-    if (goBackRef.current?.()) { playPop(); return }
+    if (goBackRef.current?.()) {
+      playPop()
+      // Nested page state and the cube model update in the same gesture. The
+      // child's semantic model event can land a render later, so keep pending
+      // ownership until that handoff instead of spending a one-shot claim on
+      // the immediate, still-unchanged Home render.
+      beginCubeScreenNavigationSound()
+      return
+    }
     // The capture preview is the same deal: with the composer up, the cube is
     // its back button (step back, then close) — never the shutter.
-    if (composerOpen && cameraActionsRef.current?.composerBack()) { playPop(); return }
+    if (composerOpen && cameraActionsRef.current?.composerBack()) {
+      playPop()
+      // Editing state is reported by the composer after this callback. Keep
+      // ownership through that delayed director-board → camera model handoff
+      // so the back gesture cannot echo when the new model is applied.
+      beginCubeScreenNavigationSound()
+      return
+    }
     // The Camera Roll is a PAGE of the camera rather than a modal, so it had
     // nothing here to answer for it and the cube fell through to the shutter —
     // pressing it while browsing your library took a photo of whatever the lens
@@ -5099,6 +5257,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             >
               <WeatherMark
                 mode={mapWeatherDisplay.mode}
+                iconId={mapWeatherDisplay.iconId}
                 icon={weatherIconForMode(mapWeatherDisplay.mode)}
                 compact
               />

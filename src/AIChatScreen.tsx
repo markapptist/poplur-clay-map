@@ -440,11 +440,11 @@ export default function AIChatScreen({
             type="button"
             className={styles.continuePost}
             onClick={() => {
-              playPop()
               const generated = [...messages].reverse().find(message => message.generated && message.attachment)
               window.dispatchEvent(new CustomEvent('poplur-ai-compose-finished', {
                 detail: generated?.attachment ? { media: { kind: 'photo', src: generated.attachment } } : undefined,
               }))
+              // HoldMenu owns the one close/navigation pop.
               onClose()
             }}
           >

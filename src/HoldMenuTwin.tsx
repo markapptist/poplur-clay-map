@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import styles from './HoldMenuTwin.module.css'
 import { playPop, primePopAudio } from './pop'
+import { markCubeNavigationPop } from './cubeNavigationSound'
 import type { CubeTab } from './CubeTab3D'
 import ClayCornerButton from './ClayCornerButton'
 import TVGuide from './TVGuide'
@@ -334,7 +335,12 @@ export default function HoldMenuTwin({
   /** true while a hold-menu screen (News, TV Guide, an RCL capture) covers the
       app. `unmounting` marks the close that comes from the menu itself leaving
       (a tab switch) rather than from the person closing the page. */
-  onSubscreenChange?: (open: boolean, screen?: string, unmounting?: boolean) => void
+  onSubscreenChange?: (
+    open: boolean,
+    screen?: string,
+    unmounting?: boolean,
+    navigationSoundPlayed?: boolean,
+  ) => void
   /** The wheel slot currently centered — before anything is pressed. Lets the
       shell preview a tile's own object on the live navigator cube while you
       are still scrolling toward it (see DIRECTIONS: an action tile with no
@@ -439,12 +445,37 @@ export default function HoldMenuTwin({
   // subscreen and appearing to ignore the second cube change.
   const activeScreenRef = useRef(activeScreen)
   activeScreenRef.current = activeScreen
-  const returnPhoneCallToDM = useCallback(() => {
+  // A page control may play its tactile pop before its screen ownership
+  // reaches HomeTwin. Carry that fact only as far as the corresponding
+  // active-screen report so the cube model swap does not play a second pop.
+  // Lifecycle-only reports (notably a horizontal tab swipe unmounting a
+  // resumed page) deliberately leave this false: that swap still owes its one
+  // audible pop.
+  const subscreenNavigationPopRef = useRef(false)
+  const playSubscreenNavigationPop = (modelChangeExpected = true) => {
+    subscreenNavigationPopRef.current = true
+    playPop()
+    // Tell Home in the same trusted gesture, before React can commit the
+    // destination. Waiting for this component's effect cleanup was too late
+    // under reduced motion: Home could already have queued an audible model
+    // swap. Actions that only touch the page underneath opt out below.
+    if (modelChangeExpected) markCubeNavigationPop()
+  }
+  const consumeSubscreenNavigationPop = () => {
+    const played = subscreenNavigationPopRef.current
+    subscreenNavigationPopRef.current = false
+    return played
+  }
+  const returnPhoneCallToDM = useCallback((navigationSoundOwned = false) => {
     const threadId = dmPhoneReturnThreadId(autoCall)
     if (!threadId) return
     const mailTile = (TAB_MENUS.profile ?? []).find(item =>
       item.screen === 'profile-messages' && item.native)
     if (!mailTile) return
+    if (navigationSoundOwned) {
+      subscreenNavigationPopRef.current = true
+      markCubeNavigationPop()
+    }
     setDMReturnThreadId(threadId)
     setAutoCall(null)
     activeScreenRef.current = mailTile
@@ -471,6 +502,8 @@ export default function HoldMenuTwin({
   // not unbind and rebind whenever a caller passes a fresh inline closure.
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const onSubscreenChangeRef = useRef(onSubscreenChange)
+  onSubscreenChangeRef.current = onSubscreenChange
   const onClearPageRef = useRef(onClearPage)
   onClearPageRef.current = onClearPage
   /** The wheel is up OVER an open page. Long-pressing the cube on a page asks
@@ -494,12 +527,25 @@ export default function HoldMenuTwin({
   // The feed keeps playing behind these screens otherwise — you would hear it
   // over the paper. Tell the home so it can silence what it is covering.
   useEffect(() => {
-    onSubscreenChange?.(Boolean(activeScreen), activeScreen?.screen)
-    // The third argument marks this close as the MENU LEAVING (a tab switch
-    // unmounting it), not the person closing the page — HomeTwin's last-page
-    // resume keeps its record through the former and drops it on the latter.
-    return () => onSubscreenChange?.(false, undefined, true)
+    onSubscreenChange?.(
+      Boolean(activeScreen),
+      activeScreen?.screen,
+      false,
+      consumeSubscreenNavigationPop(),
+    )
   }, [activeScreen, onSubscreenChange])
+  useEffect(() => () => {
+    // Report a lifecycle close only when the menu itself unmounts. The old
+    // dependency cleanup emitted a false close between page A and page B,
+    // briefly asking the cube to return home before applying page B.
+    // `unmounting` preserves the existing tab-switch/resume bookkeeping.
+    onSubscreenChangeRef.current?.(
+      false,
+      undefined,
+      true,
+      consumeSubscreenNavigationPop(),
+    )
+  }, [])
 
   // Report the centered wheel slot so the shell can preview its object on
   // the navigator cube before anything is committed — an action tile (like
@@ -575,6 +621,20 @@ export default function HoldMenuTwin({
       // state left, so this next tap leaves Studio for Camera rather than ever
       // falling through to a shutter/action behind the overlay.
       if (activeScreen?.screen === 'camera-studio') {
+        // HomeTwin plays the cube-tap pop after this handler answers. Mark the
+        // resulting close so the cube's return model does not echo it.
+        subscreenNavigationPopRef.current = true
+        activeScreenRef.current = null
+        setActiveScreen(null)
+        onClearPageRef.current?.()
+        onCloseRef.current('dismiss')
+        return true
+      }
+      // TV Guide labels the persistent TV/cube as its back control. It has no
+      // nested native handler, so explicitly return to Feed here instead of
+      // letting Home fall through to the Feed suggestion action.
+      if (activeScreen?.screen === 'feed-tvguide') {
+        subscreenNavigationPopRef.current = true
         activeScreenRef.current = null
         setActiveScreen(null)
         onClearPageRef.current?.()
@@ -637,7 +697,6 @@ export default function HoldMenuTwin({
       const here = hereInPages < 0 ? 0 : hereInPages + 1
       const nextIdx = ((here + dir) % total + total) % total
       if (nextIdx === 0) {
-        playPop()
         activeScreenRef.current = null
         // Same door `home` tiles open in activateItem: clear the tab's
         // remembered page so it does not resume this subscreen, then dismiss.
@@ -648,7 +707,6 @@ export default function HoldMenuTwin({
       }
       const next = pages[nextIdx - 1]
       if (!next) return false
-      playPop()
       activeScreenRef.current = next
       setActiveScreen(next)
       // Keep the wheel behind in step, so backing out of the subscreen leaves
@@ -852,7 +910,7 @@ export default function HoldMenuTwin({
     // page. Everything else leaves the record standing — pages are places
     // the tab lives, not layers passing through.
     if (item.home) {
-      playPop()
+      playSubscreenNavigationPop()
       onClearPage?.()
       setActiveScreen(null)
       onClose('home')
@@ -861,7 +919,17 @@ export default function HoldMenuTwin({
     // PROFILE happens on the screen behind the menu — it was never really a
     // sub-screen. Feed engagement lives in the visible clay rail.
     if (item.action) {
-      playPop()
+      if (item.action === 'profile') {
+        // Feed owns PROFILE feedback because the action is delivered only
+        // after this wheel has closed. Silently claim the wheel-preview return
+        // now so it cannot pop before Feed re-arms the final destination.
+        markCubeNavigationPop()
+      } else {
+        // PHOTO / VIDEO are completed by Home without another sound owner.
+        // Carry this one pop through the Hold unmount report so the preview's
+        // final model handoff cannot echo it.
+        playSubscreenNavigationPop(false)
+      }
       onAction?.(item.action)
       onClose('action')
       return
@@ -874,7 +942,7 @@ export default function HoldMenuTwin({
     // DIRECTIONS / TOUR happen on the map behind
     // the menu. Closing is part of the action — you need to see what it did.
     if (item.mapAction) {
-      playPop()
+      playSubscreenNavigationPop(false)
       onMapAction?.(item.mapAction)
       onClose('action')
       return
@@ -882,7 +950,7 @@ export default function HoldMenuTwin({
     // NOTIFICATIONS fires an app event and dismisses — the result (the
     // notifications subscreen) is owned by another component.
     if (item.event) {
-      playPop()
+      playSubscreenNavigationPop()
       window.dispatchEvent(new CustomEvent('poplur-open-notifications'))
       onClose('action')
       return
@@ -891,11 +959,14 @@ export default function HoldMenuTwin({
     // while this tile click is still a trusted gesture so iOS can play the
     // mechanical reel sounds when the opening shuffle begins.
     if (item.screen === 'feed-casino') primeCasinoAudio()
-    playPop()
+    playSubscreenNavigationPop()
     // Notify Home before mounting the destination. Parent and child updates
     // are batched into one commit, so the outgoing heavy tab is removed rather
     // than coexisting for a passive-effect frame with this subscreen.
-    onSubscreenChange?.(true, item.screen)
+    onSubscreenChange?.(true, item.screen, false, true)
+    // The synchronous report above handed this exact sound to HomeTwin. The
+    // passive active-screen report must not lend it to a later navigation.
+    subscreenNavigationPopRef.current = false
     setActiveScreen(item)
   }
 
@@ -1105,7 +1176,7 @@ export default function HoldMenuTwin({
           <MapShowMe
             selected={mapTourTopics ?? defaultMapTourTopics()}
             onChange={topics => onMapTourTopicsChange?.(topics)}
-            onClose={() => { playPop(); onClose() }}
+            onClose={() => { playSubscreenNavigationPop(); onClose() }}
           />
         </div>
       )
@@ -1114,13 +1185,13 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Notifications">
           <NotificationsScreen
-            onClose={() => { playPop(); onClose() }}
+            onClose={() => { playSubscreenNavigationPop(); onClose() }}
             // The profile owns the highlight a notification leads to (a lit
             // grid tile, a lit message row), so the row is handed BACK to it
             // rather than navigated from here. Same window-event route the
             // bell uses to open this screen in the first place.
             onOpenNotification={n => {
-              playPop()
+              playSubscreenNavigationPop()
               window.dispatchEvent(new CustomEvent('poplur-open-notification', { detail: n }))
               onClose()
             }}
@@ -1133,8 +1204,12 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur phone">
           <PhoneScreen
-            onClose={() => {
-              playPop()
+            onClose={(navigationSoundOwned = false) => {
+              if (navigationSoundOwned) {
+                subscreenNavigationPopRef.current = true
+                markCubeNavigationPop()
+              }
+              else playSubscreenNavigationPop()
               if (autoCall?.threadId) returnPhoneCallToDM()
               else { setAutoCall(null); onClose() }
             }}
@@ -1152,12 +1227,16 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Mail">
           <MailScreen
-            onClose={() => { playPop(); onClose() }}
+            onClose={() => { playSubscreenNavigationPop(); onClose() }}
             initialThreadId={dmReturnThreadId ?? initialDMThreadId}
             onCallViaPhone={(id, name, threadId) => {
               const phoneTile = items.find(it => it.screen === 'profile-phone')
               if (phoneTile) {
                 setAutoCall(createDMPhoneCallRoute(id, name, threadId))
+                // Mail already played the trusted-gesture pop. Carry that
+                // ownership into the Mail -> Phone model handoff.
+                subscreenNavigationPopRef.current = true
+                markCubeNavigationPop()
                 activeScreenRef.current = phoneTile
                 setActiveScreen(phoneTile)
               }
@@ -1169,14 +1248,14 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'map-ipod') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur iPod">
-          <MapIpod onClose={() => { playPop(); onClose() }} />
+          <MapIpod onClose={() => { playSubscreenNavigationPop(); onClose() }} />
         </div>
       )
     }
     if (activeScreen.native && activeScreen.screen === 'map-radio') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Radio">
-          <RadioScreen onClose={() => { playPop(); onClose() }} />
+          <RadioScreen onClose={() => { playSubscreenNavigationPop(); onClose() }} />
         </div>
       )
     }
@@ -1184,7 +1263,7 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Times">
           <NewsPaper
-            onClose={() => { playPop(); onClose() }}
+            onClose={() => { playSubscreenNavigationPop(); onClose() }}
             bindBack={bindNativeBack}
             initialEventId={initialNewsEventId}
           />
@@ -1204,7 +1283,7 @@ export default function HoldMenuTwin({
           <TVGuide
             currentChannelId={currentFeedChannelId}
             onTune={onTuneFeedChannel}
-            onClose={onClose}
+            onClose={() => { playSubscreenNavigationPop(); onClose() }}
           />
         </div>
       )
@@ -1213,7 +1292,7 @@ export default function HoldMenuTwin({
       return (
         <div className={`${styles.subscreenStage} ${styles.gameStage}`} role="dialog" aria-label="Games">
           <React.Suspense fallback={<div role="status" aria-live="polite">Loading games…</div>}>
-            <GamesScreen onClose={() => { playPop(); onClose() }} />
+            <GamesScreen onClose={() => { playSubscreenNavigationPop(); onClose() }} />
           </React.Suspense>
         </div>
       )
@@ -1221,7 +1300,7 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'feed-casino') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Casino">
-          <CasinoScreen onClose={() => { playPop(); onClose() }} />
+          <CasinoScreen onClose={() => { playSubscreenNavigationPop(); onClose() }} />
         </div>
       )
     }
@@ -1229,10 +1308,14 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Studio">
           <StudioScreen
-            onClose={() => { playPop(); onClose() }}
+            onClose={() => { playSubscreenNavigationPop(); onClose() }}
             bindBack={bindNativeBack}
             onOpenLibrary={(section) => {
-              playPop()
+              // Studio's library buttons already play their one immediate
+              // pop. Publish ownership at the actual section handoff; claiming
+              // earlier against the unchanged Studio model let the later
+              // Podcasts folder swap sound a second time.
+              markCubeNavigationPop()
               if (section === 'podcasts') {
                 // The folder belongs to Podcast, so it lands on that iPod
                 // frame directly. Studio stays mounted beneath it: closing
@@ -1242,12 +1325,26 @@ export default function HoldMenuTwin({
               }
               // Music keeps the existing general iPod hand-off; the new
               // Podcast shortcut must not reroute its older folder controls.
+              // This branch changes activeScreen, so its passive lifecycle
+              // report consumes the local ownership flag. Podcasts stays on
+              // Studio and must not leave that flag armed for a later swipe.
+              subscreenNavigationPopRef.current = true
               setActiveScreen({ icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true })
             }}
           />
           {podcastIpodOpen && (
             <div className={styles.subscreenStage} role="dialog" aria-label="Podcast library">
-              <MapIpod initialSection="podcasts" onClose={closePodcastIpod} />
+              <MapIpod
+                initialSection="podcasts"
+                onClose={() => {
+                  // At iPod root the Podcasts folder override has already
+                  // cleared, so revealing the still-mounted Studio mic does
+                  // not change the model. Keep this acknowledgement local;
+                  // a pending navigation claim could silence a later action.
+                  playPop()
+                  closePodcastIpod()
+                }}
+              />
             </div>
           )}
         </div>
@@ -1256,7 +1353,7 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'profile-stats') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Stats">
-          <StatsScreen onClose={() => { playPop(); onClose() }} />
+          <StatsScreen onClose={() => { playSubscreenNavigationPop(); onClose() }} />
         </div>
       )
     }
@@ -1279,7 +1376,7 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'profile-avatar') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Avatar cube">
-          <AvatarScreen onClose={() => { playPop(); onClose() }} bindBack={bindNativeBack} />
+          <AvatarScreen onClose={() => { playSubscreenNavigationPop(); onClose() }} bindBack={bindNativeBack} />
         </div>
       )
     }
@@ -1314,7 +1411,7 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'camera-ai-chat') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur AI chat">
-          <AIChatScreen onClose={() => { playPop(); onClose() }} bindBack={bindNativeBack} />
+          <AIChatScreen onClose={() => { playSubscreenNavigationPop(); onClose() }} bindBack={bindNativeBack} />
         </div>
       )
     }

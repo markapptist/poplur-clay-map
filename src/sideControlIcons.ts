@@ -164,6 +164,32 @@ export function weatherIconIdForCondition(value: unknown): WeatherIconId {
   return mappedPath ? WEATHER_512_PATH_TO_ID.get(mappedPath) ?? 'weather.cloudy' : 'weather.cloudy'
 }
 
+export function isWeatherIconId(value: unknown): value is WeatherIconId {
+  return typeof value === 'string'
+    && WEATHER_ICON_IDS.includes(value as WeatherIconId)
+}
+
+/**
+ * Preserve Open-Meteo's WMO detail for artwork without expanding the bounded
+ * WeatherMode used by particles, audio, and contextual cube behavior.
+ */
+export function weatherIconIdForCode(value: unknown): WeatherIconId {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'weather.cloudy'
+  const code = Math.round(value)
+  if (code === 0) return 'weather.clear_day'
+  if (code === 1 || code === 2) return 'weather.partly_cloudy'
+  if (code === 3) return 'weather.overcast'
+  if (code === 45 || code === 48) return 'weather.fog'
+  if (code === 56 || code === 57 || code === 66 || code === 67) return 'weather.wintry_mix'
+  if ((code >= 51 && code <= 55) || code === 61) return 'weather.rain_showers'
+  if (code === 63 || code === 65) return 'weather.heavy_rain'
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'weather.snow'
+  if (code >= 80 && code <= 82) return 'weather.rain_showers'
+  if (code === 95) return 'weather.thunderstorm'
+  if (code === 96 || code === 99) return 'weather.hail'
+  return 'weather.cloudy'
+}
+
 /** Adapter for Poplur's existing bounded WeatherMode presentation state. */
 export function weatherIconIdForMode(mode: string): WeatherIconId {
   switch (mode) {

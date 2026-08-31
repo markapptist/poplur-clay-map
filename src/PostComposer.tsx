@@ -5,7 +5,13 @@ import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
 import { channelUrl } from './assetPacks'
 import { playPop } from './pop'
-import { generateWithPoplurAI, prepareAIImageSource } from './aiGeneration'
+import { playCubeNavigationPop } from './cubeNavigationSound'
+import {
+  aiImageSourceDataURL,
+  generateWithPoplurAI,
+  materializeAIGeneratedImage,
+  prepareAIImageSource,
+} from './aiGeneration'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { setPendingMapPost, type PendingMapPost } from './cameraStore'
 import { dropNewsMessage, type NewsMediaAttachment } from './newsMessages'
@@ -18,7 +24,6 @@ import VFXStudio, {
 } from './VFXStudio'
 import ComposerAIChat from './ComposerAIChat'
 import UploadStatusView from './UploadStatusView'
-import BoundedPopupVideo from './BoundedPopupVideo'
 import {
   createClientPostId,
   POST_RIGHTS_VERSION,
@@ -33,18 +38,14 @@ import {
   hidesPublicPostOrigin,
   onAccountPrivacyChange,
 } from './accountPrivacy'
-import {
-  CLAIM_RADIUS_STEP_KM,
-  clampClaimRadiusKm,
-  formatClaimRadiusKm,
-  preferredClaimRadiusKm,
-} from './claimRadius'
+import { clampClaimRadiusKm, formatClaimRadiusKm, preferredClaimRadiusKm } from './claimRadius'
 import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
 //
-//   edit (filter + nested video tools) → VFX Studio → finish creation → publish
+//   choose version (original or AI) → location → review → publish
+//   Filters, video tools and VFX stay available as one optional edit-tools trip.
 //
 // It is reached from all three entry points, exactly like the native flow:
 //   • the camera, after a photo/video capture
@@ -95,9 +96,9 @@ export type PostComposerStep = 'edit' | 'effects' | 'finish' | 'channel'
 
 function previousComposerStep(step: PostComposerStep): PostComposerStep | null {
   switch (step) {
-    case 'edit': return null
+    case 'edit': return 'finish'
     case 'effects': return 'edit'
-    case 'finish': return 'effects'
+    case 'finish': return null
     case 'channel': return 'finish'
   }
 }
@@ -133,7 +134,6 @@ export default function PostComposer({
   initialStep,
   reviewMode = false,
   onStepChange,
-  onRadiusChange,
   onRequestLocation,
 }: {
   media: ComposerMedia
@@ -158,14 +158,11 @@ export default function PostComposer({
   /** Keeps the review workbench route and its real composer interaction in
    * lockstep. Production callers do not need to observe internal stages. */
   onStepChange?: (step: PostComposerStep) => void
-  /** Lets a host that owns the location draft keep radius changes made on the
-   * final review screen. Production callers can continue to leave it local. */
-  onRadiusChange?: (radiusKm: number) => void
   /** Review surfaces can own navigation to the canonical location stage
    * without dispatching production HomeTwin events. */
   onRequestLocation?: () => void
 }) {
-  const [step, setStep] = useState<PostComposerStep>(draft ? 'channel' : initialStep ?? 'edit')
+  const [step, setStep] = useState<PostComposerStep>(draft ? 'channel' : initialStep ?? 'finish')
   const [filterId, setFilterId] = useState(draft?.filterId ?? 'none')
   const [effectId, setEffectId] = useState<VFXEffectId>((draft?.effectId as VFXEffectId | undefined) ?? 'none')
   const [effectTiming, setEffectTiming] = useState<VFXCueTiming>(draft?.effectTiming ?? {
@@ -175,21 +172,27 @@ export default function PostComposer({
   })
   const [effectAsset, setEffectAsset] = useState<VFXCustomAsset | null>(draft?.effectAsset ?? null)
   const [caption, setCaption] = useState(draft?.caption ?? '')
-  // The editor hands back a NEW clip (trimmed, scored), which then stands in
-  // for the capture everywhere below — preview, bake-for-upload, the draft
-  // stashed for the map trip. Held separately from the prop so backing out of
-  // the editor leaves the original untouched.
-  const [editedMedia, setEditedMedia] = useState<ComposerMedia | null>(null)
-  const media = editedMedia ?? incomingMedia
+  // Keep the non-AI/manual-edit baseline separate from an accepted AI image.
+  // Otherwise Back → "Keep original" can mislabel and upload the AI pixels.
+  const [baselineMedia, setBaselineMedia] = useState<ComposerMedia>(
+    () => draft?.originalMedia ?? incomingMedia,
+  )
+  const [selectedAIMedia, setSelectedAIMedia] = useState<ComposerMedia | null>(
+    () => draft?.usedAI ? incomingMedia : null,
+  )
+  const media = selectedAIMedia ?? baselineMedia
   const [editorOpen, setEditorOpen] = useState(false)
   const [aiPrompt, setAiPrompt] = useState(draft?.aiPrompt ?? '')
   const [aiStatus, setAiStatus] = useState<string | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [aiCandidate, setAiCandidate] = useState<string | null>(null)
   const [aiGenerating, setAiGenerating] = useState(false)
   const aiRequestRef = useRef<AbortController | null>(null)
   const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
   const usedAIRef = useRef(usedAI)
   usedAIRef.current = usedAI
   const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
+  const [channelPickerOpen, setChannelPickerOpen] = useState(false)
   const claimRadiusMaxKm = useClaimRadiusLimitKm()
   const [radiusKm, setRadiusKm] = useState(() => target?.radiusKm === undefined
     ? preferredClaimRadiusKm(claimRadiusMaxKm, 3)
@@ -281,17 +284,21 @@ export default function PostComposer({
     onStepChange?.(next)
   }, [onStepChange, retirePreview])
 
-  const parkDraftForLocation = React.useCallback(() => {
+  const parkDraftForLocation = React.useCallback((
+    selectedMedia: ComposerMedia = media,
+    selectedUsedAI = usedAIRef.current,
+  ) => {
     retirePreview()
     setPendingMapPost({
-      media,
+      media: selectedMedia,
+      originalMedia: baselineMedia,
       caption,
       channelId,
       filterId,
       effectId,
       effectTiming,
       effectAsset: effectAsset ?? undefined,
-      usedAI: usedAIRef.current,
+      usedAI: selectedUsedAI,
       rightsAttested,
       aiPrompt,
     })
@@ -300,18 +307,21 @@ export default function PostComposer({
     // starts the one location-picker detour for the parked draft.
     window.dispatchEvent(new CustomEvent('poplur-pick-spot'))
     onClose()
-  }, [aiPrompt, caption, channelId, effectAsset, effectId, effectTiming, filterId, media, onClose, retirePreview, rightsAttested])
+  }, [aiPrompt, baselineMedia, caption, channelId, effectAsset, effectId, effectTiming, filterId, media, onClose, retirePreview, rightsAttested])
 
-  const continueAfterFinish = React.useCallback(() => {
+  const continueAfterFinish = React.useCallback((
+    selectedMedia: ComposerMedia = media,
+    selectedUsedAI = usedAIRef.current,
+  ) => {
     // Camera-first must choose ground before the final form. Previously it
     // entered `channel` once without a target, left for the map, then mounted
     // the same form a second time after the return.
     if (!target && !reviewMode) {
-      parkDraftForLocation()
+      parkDraftForLocation(selectedMedia, selectedUsedAI)
       return
     }
     goToStep('channel')
-  }, [goToStep, parkDraftForLocation, reviewMode, target])
+  }, [goToStep, media, parkDraftForLocation, reviewMode, target])
 
   const requestLocation = React.useCallback(() => {
     if (reviewMode && onRequestLocation) {
@@ -325,12 +335,31 @@ export default function PostComposer({
     const finishAIHandoff = (event: Event) => {
       const generated = (event as CustomEvent<{ media?: ComposerMedia }>).detail?.media
       if (generated?.kind === 'photo' && /^https:\/\//i.test(generated.src)) {
-        setEditedMedia(generated)
-        setPreviewStill(null)
+        setAiGenerating(true)
+        setAiError(null)
+        setAiStatus('Preparing your AI version for upload…')
+        void materializeAIGeneratedImage(generated.src).then(src => {
+          const selectedMedia: ComposerMedia = { kind: 'photo', src }
+          setSelectedAIMedia(selectedMedia)
+          usedAIRef.current = true
+          setUsedAI(true)
+          setAiStatus(null)
+          continueAfterFinish(selectedMedia, true)
+        }).catch(error => {
+          setAiStatus(null)
+          setAiError(error instanceof Error ? error.message : 'That AI image could not be prepared for upload.')
+        }).finally(() => setAiGenerating(false))
+        return
       }
-      usedAIRef.current = true
-      setUsedAI(true)
-      continueAfterFinish()
+      if (generated?.kind === 'photo' && /^data:image\/(?:jpeg|png|webp);base64,/i.test(generated.src)) {
+        setSelectedAIMedia(generated)
+        usedAIRef.current = true
+        setUsedAI(true)
+        continueAfterFinish(generated, true)
+        return
+      }
+      setAiStatus(null)
+      setAiError('Poplur AI did not return an uploadable image. Your original is still safe.')
     }
     window.addEventListener('poplur-ai-compose-finished', finishAIHandoff)
     return () => window.removeEventListener('poplur-ai-compose-finished', finishAIHandoff)
@@ -358,7 +387,7 @@ export default function PostComposer({
 
   useEffect(() => {
     setPreviewStill(null)
-  }, [media.kind, media.src])
+  }, [baselineMedia.kind, baselineMedia.src])
 
   // Tell the shell when an actual editing step is up (Filters, VFX Studio) so
   // the cube can wear the director board while you work — the same
@@ -503,7 +532,6 @@ export default function PostComposer({
   useEffect(() => {
     if (!bindArrows) return
     bindArrows((dir: 1 | -1) => {
-      playPop()
       if (stepRef.current === 'channel') {
         setChannelId(current => {
           const i = CHANNELS.findIndex(c => c.id === current)
@@ -511,6 +539,7 @@ export default function PostComposer({
         })
         return
       }
+      if (stepRef.current !== 'edit') return
       setFilterId(current => {
         const i = AR_FILTERS.findIndex(f => f.id === current)
         return AR_FILTERS[((i + dir) % AR_FILTERS.length + AR_FILTERS.length) % AR_FILTERS.length].id
@@ -689,6 +718,8 @@ export default function PostComposer({
           ? 'READY TO POST'
           : 'CHANNEL'
   const filterPreviewSrc = media.kind === 'photo' ? media.src : previewStill
+  const visibleAICandidate = aiCandidate ?? selectedAIMedia?.src ?? null
+  const videoAIFrameReady = baselineMedia.kind !== 'video' || Boolean(previewStill)
 
   const preview = (
     <div className={styles.preview}>
@@ -758,12 +789,12 @@ export default function PostComposer({
   }
 
   return (
-    <div className={`${styles.stage}${reviewMode ? ` ${styles.reviewStage}` : ''}`} role="dialog" aria-label="Post composer" aria-busy={publishing}>
+    <div className={`${styles.stage}${reviewMode ? ` ${styles.reviewStage}` : ''}`} role="dialog" aria-modal="true" aria-label="Post composer" aria-busy={publishing}>
       {/* No header, no ‹, no ✕ — the cube is the back button here, like every
           subscreen. The capture IS the screen. */}
       {preview}
 
-      {!editorOpen && !publishing && (
+      {!editorOpen && !publishing && (step === 'edit' || step === 'effects') && (
         <div className={styles.composerChrome} aria-hidden="true">
           <img src="logo_icon.png" alt="" />
           <span>{composerStepLabel}</span>
@@ -791,11 +822,14 @@ export default function PostComposer({
             // all read `length`, and leaving the original there would label a
             // 4s trim as the 30s take it came from.
             const seconds = Math.max(0, Math.round(edit.trimEnd - edit.trimStart))
-            setEditedMedia({
+            setBaselineMedia({
               kind: 'video',
               src: edit.src,
               length: `0:${String(seconds).padStart(2, '0')}`,
             })
+            setSelectedAIMedia(null)
+            usedAIRef.current = false
+            setUsedAI(false)
             setEditorOpen(false)
             if (edit.unbaked) {
               setUploadNote('This device could not render the edit, so the original clip was kept.')
@@ -820,10 +854,15 @@ export default function PostComposer({
           )}
           <button
             className={styles.nextFab}
-            onClick={() => { playPop(); goToStep('effects') }}
-            aria-label="Continue to VFX Studio"
+            onClick={() => { playCubeNavigationPop(); goToStep('finish') }}
+            aria-label="Return to choose your version"
             title="Next"
           ><span aria-hidden="true">›</span></button>
+          <button
+            type="button"
+            className={styles.effectsFab}
+            onClick={() => { playPop(); goToStep('effects') }}
+          >VFX</button>
           <div className={styles.filterBrowser}>
             <span
               key={filterId}
@@ -882,38 +921,40 @@ export default function PostComposer({
           onChange={effect => { playPop(); setEffectId(effect) }}
           onTimingChange={setEffectTiming}
           onCustomAssetChange={setEffectAsset}
-          onContinue={() => { playPop(); goToStep('finish') }}
+          onContinue={() => { playCubeNavigationPop(); goToStep('finish') }}
         />
       )}
 
-      {/* ── 3. Finish creation. One decision screen owns both exits: keep the
-             edit or ask Poplur AI. The old choice page duplicated these same
-             actions immediately before this chat. ───────────────────────── */}
+      {/* ── Choose a version. This is the default screen after capture; manual
+             filters, trim and VFX are an optional detour rather than gates. ── */}
       {step === 'finish' && (
         <ComposerAIChat
-          media={media}
+          media={baselineMedia}
           poster={previewStill}
+          mediaFilter={filterCss === 'none' ? undefined : filterCss}
           prompt={aiPrompt}
           status={aiStatus}
+          error={aiError}
+          candidate={visibleAICandidate}
+          aiSourceReady={videoAIFrameReady}
           generating={aiGenerating}
           onPromptChange={setAiPrompt}
           onGenerate={() => {
-            playPop()
-            if (reviewMode) {
-              usedAIRef.current = true
-              setUsedAI(true)
-              continueAfterFinish()
+            if (!videoAIFrameReady) {
+              setAiStatus('Preparing a frame from your recording…')
               return
             }
+            playPop()
             const controller = new AbortController()
+            aiRequestRef.current?.abort()
             aiRequestRef.current = controller
+            setAiCandidate(null)
+            setAiError(null)
             setAiGenerating(true)
-            setAiStatus(media.kind === 'photo'
+            setAiStatus(baselineMedia.kind === 'photo'
               ? 'Preparing your capture for AI editing…'
-              : previewStill
-                ? 'Preparing a frame from your recording for AI editing…'
-                : 'Creating your AI image from your direction…')
-            const sourceAsset = media.kind === 'photo' ? media.src : previewStill
+              : 'Preparing a frame from your recording for AI editing…')
+            const sourceAsset = baselineMedia.kind === 'photo' ? baselineMedia.src : previewStill
             const source = sourceAsset
               ? prepareAIImageSource(sourceAsset)
               : Promise.resolve(undefined)
@@ -921,22 +962,26 @@ export default function PostComposer({
               prompt: aiPrompt || 'Create an original Poplur social post with an energetic editorial mood.',
               channelId,
               sourceImage,
-              metadata: { surface: 'post_composer', requestedFrom: media.kind },
+              metadata: { surface: 'post_composer', requestedFrom: baselineMedia.kind },
               signal: controller.signal,
             })).then(result => {
-              if (result.status !== 'completed' || !result.outputUrl) {
-                setAiStatus('Your AI job is still processing. You can use this edit now or try AI again shortly.')
+              if (result.status !== 'completed' || (!result.inlineAsset && !result.outputUrl)) {
+                setAiStatus(null)
+                setAiError('Your AI preview is still processing. Keep the original or try again shortly.')
                 return
               }
-              setEditedMedia({ kind: 'photo', src: result.outputUrl })
-              setPreviewStill(null)
-              usedAIRef.current = true
-              setUsedAI(true)
-              setAiStatus(null)
-              continueAfterFinish()
+              setAiStatus('Preparing your AI preview for upload…')
+              const transferable = result.inlineAsset
+                ? Promise.resolve(aiImageSourceDataURL(result.inlineAsset))
+                : materializeAIGeneratedImage(result.outputUrl as string)
+              return transferable.then(candidate => {
+                setAiCandidate(candidate)
+                setAiStatus('Your AI version is ready. Compare and choose.')
+              })
             }).catch(error => {
               if (controller.signal.aborted) return
-              setAiStatus(error instanceof Error ? error.message : 'Poplur AI could not generate that right now.')
+              setAiStatus(null)
+              setAiError(error instanceof Error ? error.message : 'Poplur AI could not generate that right now.')
             }).finally(() => {
               if (aiRequestRef.current !== controller) return
               aiRequestRef.current = null
@@ -945,9 +990,29 @@ export default function PostComposer({
           }}
           onUseOriginal={() => {
             playPop()
+            setAiCandidate(null)
+            setAiError(null)
+            setAiStatus(null)
             usedAIRef.current = false
             setUsedAI(false)
-            continueAfterFinish()
+            setSelectedAIMedia(null)
+            continueAfterFinish(baselineMedia, false)
+          }}
+          onUseCandidate={() => {
+            if (!visibleAICandidate) return
+            playPop()
+            const selectedMedia: ComposerMedia = { kind: 'photo', src: visibleAICandidate }
+            setSelectedAIMedia(selectedMedia)
+            setAiCandidate(null)
+            usedAIRef.current = true
+            setUsedAI(true)
+            setAiError(null)
+            setAiStatus(null)
+            continueAfterFinish(selectedMedia, true)
+          }}
+          onEditTools={() => {
+            playCubeNavigationPop()
+            goToStep('edit')
           }}
         />
       )}
@@ -955,51 +1020,77 @@ export default function PostComposer({
       {/* ── 4. review and publish (+ radius at a coordinate) ───────────────── */}
       {step === 'channel' && (
         <div className={`${styles.panel} ${styles.channelPanel}`}>
-          <span className={styles.panelLabel}>CAPTION</span>
-          <input
-            className={styles.caption}
-            value={caption}
-            placeholder="Add a caption…"
-            onChange={e => setCaption(e.target.value)}
-          />
-          <p className={styles.destinationHint}>
-            {caption.trim() ? '→ Posting to News Feed' : '→ Posting to TV'}
-          </p>
-          {target && (
-            <label className={styles.radiusRow}>
+          <header className={styles.publishHeader}>
+            <img src="logo_icon.png" alt="" />
+            <span><b>READY TO POST</b><strong>One last check</strong><small>{usedAI ? 'AI version selected' : 'Original version selected'}</small></span>
+          </header>
+
+          <label className={styles.fieldLabel}>
+            <span>CAPTION <small>OPTIONAL</small></span>
+            <textarea
+              className={styles.caption}
+              value={caption}
+              rows={2}
+              maxLength={500}
+              placeholder="Say something about this pop…"
+              onChange={e => setCaption(e.target.value)}
+            />
+          </label>
+
+          <section className={styles.postSummary} aria-label="Post summary">
+            <button
+              type="button"
+              className={styles.summaryRow}
+              aria-expanded={channelPickerOpen}
+              onClick={() => { playPop(.16); setChannelPickerOpen(open => !open) }}
+            >
+              <img src={channelUrl(`${CHANNELS.find(c => c.id === channelId)?.icon ?? CHANNELS[0]?.icon}.png`)} alt="" />
+              <span><b>CHANNEL</b><strong>CH {CHANNELS.find(c => c.id === channelId)?.number} · {CHANNELS.find(c => c.id === channelId)?.name}</strong></span>
+              <em>{channelPickerOpen ? 'Done' : 'Change'}</em>
+            </button>
+            {channelPickerOpen && (
+              <div className={styles.channels} aria-label="Choose a channel">
+                {CHANNELS.map(c => (
+                  <button
+                    type="button"
+                    key={c.id}
+                    className={c.id === channelId ? `${styles.chan} ${styles.chanOn}` : styles.chan}
+                    onClick={() => { playPop(); setChannelId(c.id); setChannelPickerOpen(false) }}
+                    aria-pressed={c.id === channelId}
+                  >
+                    <img className={styles.chanIcon} src={channelUrl(`${c.icon}.png`)} alt="" />
+                    <span><b>CH {c.number}</b><small>{c.name}</small></span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <button
+              type="button"
+              className={styles.summaryRow}
+              onClick={() => { playPop(); requestLocation() }}
+            >
+              <img src="sprites/poplur_pin_lite_y0_p0_s256.png" alt="" />
               <span>
-                Claim radius <b>{formatClaimRadiusKm(radiusKm)} km</b>
-                {claimRadiusMaxKm === 0 && <small>Post at 0 km; engagement earns radius.</small>}
+                <b>LOCATION</b>
+                <strong>{target ? `Selected spot · ${formatClaimRadiusKm(radiusKm)} km` : 'Choose a map spot'}</strong>
+                {target && claimRadiusMaxKm === 0 && <small>No claim radius yet; this post stays at 0 km.</small>}
               </span>
-              <input
-                type="range"
-                min={claimRadiusMaxKm === 0 ? 0 : CLAIM_RADIUS_STEP_KM}
-                max={claimRadiusMaxKm}
-                step={CLAIM_RADIUS_STEP_KM}
-                value={radiusKm}
-                disabled={claimRadiusMaxKm === 0}
-                onChange={e => {
-                  const next = clampClaimRadiusKm(Number(e.target.value), claimRadiusMaxKm)
-                  setRadiusKm(next)
-                  onRadiusChange?.(next)
-                }}
-              />
-            </label>
-          )}
-          <div className={styles.publishDisclosure} aria-label="Post visibility">
-            <span><b>Audience</b><strong>Everyone</strong></span>
-            <span>
-              <b>Map origin</b>
-              <strong>{locationVisibility === 'hidden' ? 'Hidden' : 'Approximate area'}</strong>
-            </span>
-            <small>
-              {accountPrivacy.privateAccount
-                ? 'Private Account hides where this post came from. The post and profile stay visible.'
-                : accountPrivacy.ghostMode
-                  ? 'Ghost Mode hides the map origin for all your posts while it is on.'
-                  : 'Only a coarse map area is public. Your exact chosen point is never shown.'}
-            </small>
-          </div>
+              <em>{target ? 'Change' : 'Choose'}</em>
+            </button>
+
+            <div className={styles.summaryRow} aria-label="Post visibility">
+              <span className={styles.summaryGlyph} aria-hidden="true">◉</span>
+              <span>
+                <b>VISIBLE TO EVERYONE</b>
+                <strong>{locationVisibility === 'hidden' ? 'Map origin hidden' : 'Approximate map area'}</strong>
+                <small>{accountPrivacy.privateAccount || accountPrivacy.ghostMode
+                  ? 'Your account setting hides where this post came from.'
+                  : 'Your exact chosen point is never shown.'}</small>
+              </span>
+            </div>
+          </section>
+
           <label className={styles.rightsRow}>
             <input
               type="checkbox"
@@ -1009,73 +1100,9 @@ export default function PostComposer({
                 if (event.target.checked) setPublishError(null)
               }}
             />
-            <span>I have permission to share this media and any music in it.</span>
+            <span><b>I can share this</b><small>I have permission for this media and any music.</small></span>
           </label>
-          <span className={styles.panelLabel}>CHANNEL</span>
-          <div className={styles.channels}>
-            {CHANNELS.map(c => (
-              <button
-                key={c.id}
-                className={c.id === channelId ? `${styles.chan} ${styles.chanOn}` : styles.chan}
-                onClick={() => { playPop(); setChannelId(c.id) }}
-                aria-pressed={c.id === channelId}
-              >
-                <img className={styles.chanIcon} src={channelUrl(`${c.icon}.png`)} alt="" />
-                <span className={styles.chanNum}>CH {c.number}</span>
-                <span className={styles.chanName}>{c.name}</span>
-              </button>
-            ))}
-          </div>
-          <section className={target ? styles.readyPreview : styles.channelContentPreview} aria-label="Post preview">
-            <div className={styles.channelPreviewMedia}>
-              {media.kind === 'video' ? (
-                <BoundedPopupVideo
-                  src={media.src}
-                  poster={previewStill ?? undefined}
-                  alt="Post preview"
-                  disablePictureInPicture
-                />
-              ) : (
-                <img src={media.src} alt="Post preview" />
-              )}
-              <span>CH {CHANNELS.find(c => c.id === channelId)?.number}</span>
-              <strong>{caption || 'Your pop preview'}</strong>
-            </div>
-            {target && (
-              <div className={styles.confirmedMiniMap} aria-label="Confirmed post location">
-                <i /><i /><i /><i /><i />
-                <img src="sprites/poplur_pin_lite_y0_p0_s256.png" alt="Confirmed location" />
-                <span><b>CONFIRMED LOCATION</b><small>Selected map point</small></span>
-              </div>
-            )}
-          </section>
-          {target && (
-            <button
-              type="button"
-              className={`${styles.secondary} ${styles.spotButton}`}
-              onClick={() => { playPop(); requestLocation() }}
-            >
-              <img src="sprites/poplur_pin_lite_y0_p0_s256.png" alt="" />
-              <span>Change location</span>
-            </button>
-          )}
-          {!target && (
-            /* Camera→map: the May '26 CaptureFlow direction the web home lost.
-               The draft (media + choices) is stashed module-side, the map tab
-               opens, and the spot the user taps comes back as a normal
-               poplur-post-here target — the composer then resumes right here
-               with everything kept. */
-            <button
-              className={`${styles.secondary} ${styles.spotButton}`}
-              onClick={() => {
-                playPop()
-                requestLocation()
-              }}
-            >
-              <img src="sprites/poplur_pin_lite_y0_p0_s256.png" alt="" />
-              <span>Pick a spot on the map</span>
-            </button>
-          )}
+
           {/* A pop IS ground. Posting without a spot was the one path that let
               a post exist with no place attached — it uploaded to "wherever you
               happen to be", which is not a decision the user made and is not
@@ -1095,7 +1122,7 @@ export default function PostComposer({
               ? 'Uploading…'
               : publishError?.retryable
                 ? 'Retry upload'
-                : target ? 'Post to this spot' : 'Pick a spot to post'}
+                : target ? `Post to ${caption.trim() ? 'News Feed' : 'TV'}` : 'Choose a spot to post'}
           </button>
           {publishError && !publishing && (
             <div className={styles.publishError} role="alert">
@@ -1105,9 +1132,7 @@ export default function PostComposer({
             </div>
           )}
           {!target && !publishing && (
-            <p className={styles.needSpot}>
-              Location required before posting.
-            </p>
+            <p className={styles.needSpot}>Choose a location before posting.</p>
           )}
           {!rightsAttested && !publishing && target && (
             <p className={styles.needSpot}>Confirm media rights before posting.</p>

@@ -224,14 +224,12 @@ function ComposerReview({
   target,
   media,
   onStepChange,
-  onRadiusChange,
   onRequestLocation,
 }: {
   step: PostComposerStep
   target?: ComposerTarget
   media: UploadMediaKind
   onStepChange: (step: PostComposerStep) => void
-  onRadiusChange: (radius: number) => void
   onRequestLocation: () => void
 }) {
   return (
@@ -242,7 +240,6 @@ function ComposerReview({
       reviewMode
       onClose={() => {}}
       onStepChange={onStepChange}
-      onRadiusChange={onRadiusChange}
       onRequestLocation={onRequestLocation}
     />
   )
@@ -461,7 +458,6 @@ export default function UploadFlowReview() {
                 target={composerTarget}
                 media={media}
                 onStepChange={handleComposerStepChange}
-                onRadiusChange={setAuthorizedRadius}
                 onRequestLocation={() => setScreen('location')}
               />
             </div>

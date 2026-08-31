@@ -1021,3 +1021,161 @@
 .confirmedMiniMap small { font: 800 8px/1 ui-monospace,monospace; }
 
 .channelPanel:has(.readyPreview) .channelPreviewMedia { height: 92px; }
+
+/* ── Simplified choose/review path ─────────────────────────────────────────
+   Manual VFX remains available, but the main arrow returns to the two honest
+   choices: original or AI. Keep this smaller action visually subordinate. */
+.effectsFab {
+  position: absolute;
+  z-index: 12;
+  right: 78px;
+  bottom: calc(18px + var(--cube-size, 176px) + 175px + env(safe-area-inset-bottom));
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid rgba(141, 233, 255, .58);
+  border-radius: 8px;
+  color: #dcfaff;
+  background: linear-gradient(155deg, rgba(42, 47, 52, .96), rgba(9, 11, 13, .98));
+  box-shadow: 0 6px 0 #07090b, 0 12px 22px rgba(0, 0, 0, .46), inset 0 2px rgba(255, 255, 255, .11);
+  font: 950 11px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: .8px;
+}
+
+.effectsFab:active { transform: translateY(3px); box-shadow: 0 3px 0 #07090b; }
+
+.channelPanel {
+  gap: 12px;
+  padding: max(22px, env(safe-area-inset-top)) 14px var(--composer-home-clearance);
+  border-top: 0;
+  background:
+    radial-gradient(circle at 50% 2%, rgba(255, 22, 141, .18), transparent 30%),
+    linear-gradient(180deg, rgba(22, 10, 18, .9), rgba(6, 5, 7, .98));
+  box-shadow: none;
+}
+
+.publishHeader {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 3px solid #ff168d;
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .12), transparent 27%),
+    linear-gradient(165deg, #29262a, #0c0a0d 70%);
+  box-shadow: 0 6px 0 #700035, 0 14px 28px rgba(0, 0, 0, .42), inset 0 2px rgba(255, 255, 255, .25);
+}
+
+.publishHeader > img { width: 48px; height: 48px; object-fit: contain; filter: drop-shadow(0 5px 8px rgba(0, 0, 0, .45)); }
+.publishHeader > span { min-width: 0; display: grid; gap: 3px; }
+.publishHeader b { color: #ff82bd; font: 950 9px/1 ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: 1px; }
+.publishHeader strong { font: 950 21px/1 system-ui, sans-serif; }
+.publishHeader small { color: rgba(255, 239, 247, .68); font: 750 11px/1 system-ui, sans-serif; }
+
+.fieldLabel { display: grid; gap: 7px; }
+.fieldLabel > span { color: #ff7dbb; font: 950 9px/1 ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: 1px; }
+.fieldLabel > span small { padding: 3px 5px; border-radius: 999px; color: #d9faff; background: rgba(141, 233, 255, .13); font-size: 7px; }
+.channelPanel .caption {
+  min-height: 70px;
+  resize: vertical;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 139, 195, .62);
+  border-radius: 14px;
+  background: #130d12;
+  box-shadow: inset 0 4px 9px rgba(0, 0, 0, .68);
+  font: 750 14px/1.35 system-ui, sans-serif;
+}
+
+.postSummary {
+  display: grid;
+  overflow: hidden;
+  border: 2px solid rgba(255, 57, 153, .72);
+  border-radius: 20px;
+  background: linear-gradient(155deg, rgba(42, 21, 35, .95), rgba(10, 8, 11, .98));
+  box-shadow: 0 6px 0 #4c0025, inset 0 1px rgba(255, 255, 255, .12);
+}
+
+.summaryRow {
+  min-width: 0;
+  min-height: 66px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 137, 193, .22);
+  color: #fff;
+  background: transparent;
+  text-align: left;
+}
+
+.summaryRow:last-child { border-bottom: 0; }
+.summaryRow > img { width: 40px; height: 40px; object-fit: contain; filter: drop-shadow(0 4px 5px rgba(0, 0, 0, .45)); }
+.summaryRow > span:not(.summaryGlyph) { min-width: 0; display: grid; gap: 4px; }
+.summaryRow b { color: #ff7dbb; font: 950 8px/1 ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: .9px; }
+.summaryRow strong { font: 900 13px/1.15 system-ui, sans-serif; }
+.summaryRow small { color: rgba(255, 238, 247, .64); font: 750 10px/1.25 system-ui, sans-serif; }
+.summaryRow em { color: #8de9ff; font: 900 10px/1 system-ui, sans-serif; font-style: normal; }
+.summaryGlyph { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: #b6f5ff; background: #142b31; box-shadow: inset 0 2px rgba(255, 255, 255, .12); }
+.summaryRow:where(button):active { background: rgba(255, 22, 141, .08); }
+
+.channelPanel .channels {
+  max-height: 176px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 8px;
+  overflow-y: auto;
+  border-bottom: 1px solid rgba(255, 137, 193, .22);
+  background: rgba(5, 4, 6, .55);
+}
+
+.channelPanel .chan {
+  width: auto;
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 174, 213, .22);
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(155deg, #29262b, #100e11);
+  text-align: left;
+  box-shadow: 0 3px 0 #060506, inset 0 1px rgba(255, 255, 255, .09);
+}
+.channelPanel .chanOn { border-color: #ff5ca8; background: linear-gradient(155deg, #7c1b52, #2a0b20); box-shadow: 0 3px 0 #4b0024, 0 0 12px rgba(255, 22, 141, .28); }
+.channelPanel .chanIcon { width: 36px; height: 36px; }
+.channelPanel .chan > span { min-width: 0; display: grid; gap: 3px; }
+.channelPanel .chan b { color: #a6f6ba; font: 950 8px/1 ui-monospace, monospace; }
+.channelPanel .chan small { overflow: hidden; color: #fff; font: 850 10px/1 system-ui, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+
+.channelPanel .rightsRow {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 151, 201, .48);
+  border-radius: 15px;
+  color: #fff;
+  background: linear-gradient(155deg, #271421, #0d0a0d);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .09);
+}
+.channelPanel .rightsRow input { width: 21px; height: 21px; margin: 0; }
+.channelPanel .rightsRow > span { display: grid; gap: 4px; }
+.channelPanel .rightsRow b { font: 900 13px/1 system-ui, sans-serif; }
+.channelPanel .rightsRow small { color: rgba(255, 239, 247, .66); font: 750 10px/1.2 system-ui, sans-serif; }
+.channelPanel > .primary { min-height: 58px; border: 2px solid #ff9ccb; border-radius: 18px; font-size: 16px; box-shadow: 0 7px 0 #700035, 0 14px 26px rgba(77, 0, 38, .4), inset 0 2px rgba(255, 255, 255, .48); }
+
+@media (max-height: 700px) {
+  .editFab,
+  .effectsFab,
+  .nextFab { bottom: calc(18px + var(--cube-size, 124px) + 170px + env(safe-area-inset-bottom)); }
+  .channelPanel { gap: 9px; }
+  .publishHeader { padding-block: 8px; }
+}

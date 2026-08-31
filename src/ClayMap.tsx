@@ -4,7 +4,7 @@ import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainMan
 import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { SideControlIconImage } from './SideControlIcon'
-import { weatherIconIdForMode } from './sideControlIcons'
+import { weatherIconIdForMode, type WeatherIconId } from './sideControlIcons'
 import {
   MAP_BROWSE_3D_BEARING,
   MAP_BROWSE_3D_ENTER_ZOOM,
@@ -153,6 +153,8 @@ export interface ClayMapProps {
    *  minute cadence; `key` equality decides whether a re-apply happens. */
   sky?: SkyShade
   weatherMode?: WeatherMode
+  /** Semantic artwork choice from the raw WMO code; effects remain mode-bound. */
+  weatherIconId?: WeatherIconId
   /** inline SVG for the current conditions, shown above the zoom rail */
   weatherIcon?: string
   /** Transparent sprite rendered from the real Poplur cloud.glb. */
@@ -169,6 +171,7 @@ export interface ClayMapProps {
     high: number
     low: number
     icon: string
+    iconId?: WeatherIconId
     mode: WeatherMode
   }>
   /** Distinguishes a forecast still in flight from a failed/empty response so
@@ -246,7 +249,10 @@ export interface PopPin {
   mine: boolean
 }
 
-function weatherConditionLabel(mode: WeatherMode) {
+function weatherConditionLabel(mode: WeatherMode, iconId?: WeatherIconId) {
+  if (iconId === 'weather.overcast') return 'Overcast'
+  if (iconId === 'weather.partly_cloudy') return 'Partly cloudy'
+  if (iconId === 'weather.cloudy') return 'Cloudy'
   switch (mode) {
     case 'clear': return 'Sunny now'
     case 'cloudy': return 'Partly cloudy'
@@ -260,11 +266,15 @@ function weatherConditionLabel(mode: WeatherMode) {
   }
 }
 
-function WeatherSticker({ mode, className = '' }: { mode: WeatherMode; className?: string }) {
+function WeatherSticker({ mode, iconId, className = '' }: {
+  mode: WeatherMode
+  iconId?: WeatherIconId
+  className?: string
+}) {
   return (
     <span className={`${styles.weatherSticker} ${className}`} aria-hidden="true">
       <SideControlIconImage
-        icon={weatherIconIdForMode(mode)}
+        icon={iconId ?? weatherIconIdForMode(mode)}
         displaySize={96}
         className={`${styles.weatherStickerImage} ${styles.weatherStaticImage}`}
         loading="lazy"
@@ -1307,7 +1317,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -6259,7 +6269,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
               <span className={styles.weatherCondition}>
                 {weatherForecastStatus === 'loading'
                   ? 'Getting your forecast…'
-                  : weatherForecastStatus === 'error' ? 'Conditions unavailable' : weatherConditionLabel(weatherMode)}
+                  : weatherForecastStatus === 'error' ? 'Conditions unavailable' : weatherConditionLabel(weatherMode, weatherIconId)}
               </span>
               <span className={styles.weatherRange}>
                 {weatherToday
@@ -6268,7 +6278,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
               </span>
             </div>
             {weatherForecastStatus === 'ready' ? (
-              <WeatherSticker mode={weatherMode} className={styles.weatherHeroSticker} />
+              <WeatherSticker mode={weatherMode} iconId={weatherIconId} className={styles.weatherHeroSticker} />
             ) : (
               <span className={styles.weatherHeroStatus} aria-hidden="true">
                 {weatherForecastStatus === 'loading' ? '…' : '!'}
@@ -6285,7 +6295,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                 {weatherForecast.slice(0, 5).map(day => (
                   <article key={day.date}>
                     <strong>{new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(`${day.date}T12:00:00`))}</strong>
-                    <WeatherSticker mode={day.mode} className={styles.weatherDayIcon} />
+                    <WeatherSticker mode={day.mode} iconId={day.iconId} className={styles.weatherDayIcon} />
                     <span>{Math.round(day.high)}°</span>
                     <i>{Math.round(day.low)}°</i>
                   </article>

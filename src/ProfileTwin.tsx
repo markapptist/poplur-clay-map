@@ -8,6 +8,7 @@ import { usePullToRefresh } from './usePullToRefresh'
 import { OTHER_POPS } from './data'
 import { feedUrl } from './assetPacks'
 import { playPop } from './pop'
+import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import ClayCornerButton from './ClayCornerButton'
@@ -1370,7 +1371,8 @@ export default function ProfileTwin({
       if (capturingRef.current) {
         const next: CaptureSource = captureSourceRef.current === 'camera' ? 'library' : 'camera'
         setCaptureSource(next)
-        playPop()
+        // Home's shared channel owner already played for this bound-arrow
+        // gesture; the child only applies the selected capture source.
         return true
       }
       if (viewerIdxRef.current != null) {
@@ -1667,7 +1669,9 @@ export default function ProfileTwin({
 
   const beginCapture = () => {
     if (capturing) return
-    playPop()
+    // The profile camera replaces the profile navigator until capture closes;
+    // this trusted-gesture pop owns that model handoff.
+    playCubeNavigationPop()
     // Poplur's own alert asks, and fires the platform call from its Allow
     // button — which is the user gesture iOS requires.
     askForMotion()

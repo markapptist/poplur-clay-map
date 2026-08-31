@@ -52,6 +52,7 @@ import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaimGroup, onClaimsSettled } from './mapClaims'
 import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
 import WeatherMark from './WeatherMark'
+import { weatherIconIdForCode, weatherIconIdForMode } from './sideControlIcons'
 import {
   MAP_BROWSE_3D_BEARING,
   MAP_BROWSE_3D_MAX_PITCH,
@@ -3676,16 +3677,22 @@ export default function MapApp() {
   }, [flyToCenter, liveMapPosts])
 
   const weatherMode: WeatherMode = weatherOverride ?? (weather ? modeForCode(weather.code) : 'clear')
+  const weatherIconId = weatherOverride
+    ? weatherIconIdForMode(weatherOverride)
+    : weather
+      ? weatherIconIdForCode(weather.code)
+      : weatherIconIdForMode(weatherMode)
   const weatherTemperatureText = formatWeatherTemperature(weather?.temp ?? null)
   useEffect(() => {
     if (!TOKEN || window.parent === window) return
     window.parent.postMessage({
       type: 'poplur-map-weather',
       mode: weatherMode,
+      iconId: weatherIconId,
       temperature: weather?.temp ?? null,
       unit: weatherUnit,
     }, '*')
-  }, [weather?.temp, weatherMode, weatherUnit])
+  }, [weather?.temp, weatherIconId, weatherMode, weatherUnit])
 
   if (!TOKEN) {
     return (
@@ -3746,6 +3753,7 @@ export default function MapApp() {
         ownProfileSelfieVideo={ownSelfieVideo}
         accountRadiusKm={accountRadiusKm}
         weatherMode={weatherMode}
+        weatherIconId={weatherIconId}
         weatherCloud={cloudBadge}
         weatherIcon={weatherIconMarkup}
         weatherOpen={weatherOpen}
@@ -3758,6 +3766,7 @@ export default function MapApp() {
           high: day.high,
           low: day.low,
           icon: weatherIconForMode(modeForCode(day.code)),
+          iconId: weatherIconIdForCode(day.code),
           mode: modeForCode(day.code),
         }))}
         introDestinations={INTRO_LANDMARKS}
@@ -3940,7 +3949,7 @@ export default function MapApp() {
           aria-expanded={weatherOpen}
           onClick={() => { playPop(0.25); toggleWeather() }}
         >
-          <WeatherMark mode={weatherMode} icon={weatherIconMarkup} cloud={cloudBadge} compact />
+          <WeatherMark mode={weatherMode} iconId={weatherIconId} icon={weatherIconMarkup} cloud={cloudBadge} compact />
           {weatherTemperatureText && (
             <span className={styles.mapWeatherTemperature} aria-hidden="true">
               {weatherTemperatureText}
