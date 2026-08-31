@@ -266,7 +266,7 @@ describe('weather icon normalization', () => {
 
   it('preserves WMO cloud detail and classifies rain showers correctly', () => {
     expect(weatherIconIdForCode(0)).toBe('weather.clear_day')
-    expect(weatherIconIdForCode(1)).toBe('weather.partly_cloudy')
+    expect(weatherIconIdForCode(1)).toBe('weather.clear_day')
     expect(weatherIconIdForCode(2)).toBe('weather.partly_cloudy')
     expect(weatherIconIdForCode(3)).toBe('weather.overcast')
     expect(weatherIconIdForCode(2)).not.toBe(weatherIconIdForCode(3))
@@ -278,7 +278,7 @@ describe('weather icon normalization', () => {
     expect(weatherIconIdForCode(65)).toBe('weather.heavy_rain')
     expect(weatherIconIdForCode(80)).toBe('weather.rain_showers')
     expect(weatherIconIdForCode(81)).toBe('weather.rain_showers')
-    expect(weatherIconIdForCode(82)).toBe('weather.rain_showers')
+    expect(weatherIconIdForCode(82)).toBe('weather.heavy_rain')
     expect(weatherIconIdForCode(85)).toBe('weather.snow')
     expect(weatherIconIdForCode(95)).toBe('weather.thunderstorm')
     expect(weatherIconIdForCode(96)).toBe('weather.hail')

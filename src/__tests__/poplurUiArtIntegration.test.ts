@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const source = (name: string) => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8')
@@ -27,5 +27,24 @@ describe('supplied Poplur UI art integration', () => {
     expect(weather).toContain('WEATHER UPDATE')
     expect(`${weather}\n${status}`).not.toContain('Rain in 12 min')
     expect(`${weather}\n${status}`).not.toContain('Reaching more people')
+  })
+
+  it('uses only the supplied semantic weather asset registry', () => {
+    const weatherMark = source('WeatherMark.tsx')
+    const weatherSources = [
+      source('MapApp.tsx'),
+      source('HomeTwin.tsx'),
+      source('ClayMap.tsx'),
+      weatherMark,
+      source('weatherPresentation.ts'),
+    ].join('\n')
+
+    expect(weatherMark).toContain('SideControlIconImage')
+    expect(weatherMark).toContain('weatherIconIdForMode')
+    expect(weatherSources).not.toContain('weatherIconForMode')
+    expect(weatherSources).not.toContain('cloudBadge')
+    expect(weatherSources).not.toContain('weatherCloud')
+    expect(weatherSources).not.toContain('poplur-weather-glyphs')
+    expect(existsSync(new URL('../../public/weather/poplur-weather-glyphs.png', import.meta.url))).toBe(false)
   })
 })

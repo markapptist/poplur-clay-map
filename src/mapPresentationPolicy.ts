@@ -41,8 +41,8 @@ export const MAP_BUILDING_DETAIL_BUDGET_REDUCED = 5
 /** Real thermal pressure reduces geometry without flattening the close camera. */
 export const MAP_BUILDING_DETAIL_BUDGET_LOW_POWER = 3
 export const MAP_BUILDING_DETAIL_BUDGET_EMERGENCY = 1
-/** One stable hash bucket out of ten retains a distributed 10% sample. */
-export const MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR = 1
+/** Seven stable hash buckets out of ten retain a distributed 70% sample. */
+export const MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR = 7
 export const MAP_BUILDING_DETAIL_SAMPLE_DIVISOR = 10
 
 /**
@@ -249,7 +249,7 @@ export interface MapBuildingDetailCandidate {
   heightM: number
 }
 
-/** Stable per-id sampling distributes the retained 10% instead of creating a
+/** Stable per-id sampling distributes the retained 70% instead of creating a
  * dense 3D island at the exact camera centre. Selection does not depend on
  * vector-tile arrival order, so the same footprint keeps the same treatment. */
 function mapBuildingDetailSampled(id: string | number): boolean {

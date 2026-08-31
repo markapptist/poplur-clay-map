@@ -56,7 +56,6 @@ export default function ComposerAIChat({
       data-ai-state={generating ? 'generating' : candidate ? 'candidate' : error ? 'error' : 'choose'}
     >
       <header className={styles.header}>
-        <span className={styles.mark} aria-hidden="true">P</span>
         <span className={styles.heading}>
           <small>CHOOSE YOUR VERSION</small>
           <strong id="poplur-ai-title">Create your pop</strong>
@@ -135,7 +134,6 @@ export default function ComposerAIChat({
               disabled={!prompt.trim() || generating || !aiSourceReady}
               onClick={onGenerate}
             >
-              <span aria-hidden="true">✦</span>
               {generating
                 ? 'Creating your preview…'
                 : !aiSourceReady

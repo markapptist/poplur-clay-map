@@ -155,10 +155,6 @@ export interface ClayMapProps {
   weatherMode?: WeatherMode
   /** Semantic artwork choice from the raw WMO code; effects remain mode-bound. */
   weatherIconId?: WeatherIconId
-  /** inline SVG for the current conditions, shown above the zoom rail */
-  weatherIcon?: string
-  /** Transparent sprite rendered from the real Poplur cloud.glb. */
-  weatherCloud?: string | null
   /** The side-rail weather control owns this state; the map owns the panel. */
   weatherOpen: boolean
   onWeatherOpenChange: (open: boolean) => void
@@ -170,7 +166,6 @@ export interface ClayMapProps {
     date: string
     high: number
     low: number
-    icon: string
     iconId?: WeatherIconId
     mode: WeatherMode
   }>
@@ -255,7 +250,7 @@ function weatherConditionLabel(mode: WeatherMode, iconId?: WeatherIconId) {
   if (iconId === 'weather.cloudy') return 'Cloudy'
   switch (mode) {
     case 'clear': return 'Sunny now'
-    case 'cloudy': return 'Partly cloudy'
+    case 'cloudy': return 'Cloudy'
     case 'rain': return 'Rain moving through'
     case 'thunder':
     case 'storm': return 'Storm watch'
@@ -286,7 +281,7 @@ function WeatherSticker({ mode, iconId, className = '' }: {
 // One cross-platform renderer: Mercator and top-down at world/region scale,
 // then a shallow isometric board at local scale. Roads and land stay flat;
 // close browsing replaces the footprint sheet with a stable, count-bounded
-// 10% sample of true 3D buildings while independent landmark models pop up.
+// 70% sample of true 3D buildings while independent landmark models pop up.
 export const MAP_2D = false
 const SHARED_ADAPTIVE_MAP = true
 // The dormant generic extrusion layer becomes eligible only after the close-
@@ -1317,7 +1312,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherIcon, weatherCloud, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -2853,7 +2848,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     // ── Camera policy: world 2D, local isometric landmark board ──────────────
     // The world remains calm, top-down and north-up. At local scale the flat
     // land/road sheet tilts once into a restrained 2.5D board. Inside the
-    // close-detail band, a stable distributed 10% sample of ordinary buildings
+    // close-detail band, a stable distributed 70% sample of ordinary buildings
     // pops up (with a hard count ceiling) while the rest disappear instead of
     // becoming a flat roof field. Landmarks remain independently governed hero
     // pieces, and Street View retains the same finite generic-building batch.
@@ -3150,7 +3145,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       if (preserveLandmarkCamera(Boolean(activeLandmark), performanceMode)) {
         // Preserve the authored landmark angle while its custom model pops up,
         // but use the ordinary browse eligibility for nearby generic detail.
-        // The 10% sample and 5/5/3/1 ceilings keep the hero dominant without
+        // The 70% sample and 5/5/3/1 ceilings keep the hero dominant without
         // flattening every surrounding building at a close destination.
         const activePresentationId = activeLandmark?.[0] === 'cn-tower'
           ? activeTorontoPresentationId
@@ -3943,8 +3938,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
 
       if (!REALISTIC_MAP && !MAP_2D) {
         // Keep every footprint as the inexpensive mid-zoom city sheet, then
-        // replace that sheet at close detail with a stable distributed 10%
-        // sample of true extrusion geometry. The other ~90% are visually
+        // replace that sheet at close detail with a stable distributed 70%
+        // sample of true extrusion geometry. The other ~30% are visually
         // absent—not flattened—so the isometric view reads as a sparse Poplur
         // board rather than a dense roof field. Overture carries height,
         // num_floors×3.2m, or nothing, in that order of preference.

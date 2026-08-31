@@ -71,7 +71,6 @@ import TopChrome from './TopChrome'
 import ClayChannelArrows from './ClayChannelArrows'
 import { responsiveChannelControlSize } from './channelControlSizing'
 import WeatherFX, { modeForCode } from './WeatherFX'
-import { modelSprite } from './modelSprite'
 import type { WeatherMode } from './WeatherFX'
 import {
   WEATHER_TEST_MODES,
@@ -79,7 +78,6 @@ import {
 } from './weatherTestHarness'
 import {
   formatWeatherTemperature,
-  weatherIconForMode,
   weatherTemperatureUnit,
 } from './weatherPresentation'
 // The map host and radio share one mixer so speech can lead while the station
@@ -2303,18 +2301,6 @@ export default function MapApp() {
   // Whether the tour is running. The hold menu's tile has to read STOP TOUR
   // for as long as it is, so the map owns the truth and reports it upward —
   // the menu can't infer it from a tile it tapped once.
-  // The cloudy badge wears the real clay cloud — the same cloud.glb that drifts
-  // overhead in WeatherFX, rendered once to a sprite. The drawn SVG stands in
-  // only until it resolves, so the badge is never empty.
-  const [cloudBadge, setCloudBadge] = useState<string | null>(null)
-  useEffect(() => {
-    let alive = true
-    modelSprite('cloud.glb', { yaw: -18, pitch: 12, size: 256 })
-      .then(url => { if (alive) setCloudBadge(url) })
-      .catch(() => { /* the SVG keeps the badge */ })
-    return () => { alive = false }
-  }, [])
-
   // Untouched means static. This diagnostic is intentionally readable from a
   // device/WebView test so a long-idle run can assert the policy directly
   // instead of inferring it from a warm phone after the fact. The looping 3D
@@ -3702,9 +3688,6 @@ export default function MapApp() {
     )
   }
 
-  const weatherIconMarkup = cloudBadge && (weatherMode === 'cloudy' || weatherMode === 'fog')
-    ? `<img src="${cloudBadge}" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain" />`
-    : weatherIconForMode(weatherMode)
   const tourLandmarkPosition = tourOn && tourMode === 'landmarks'
     ? TOUR_LANDMARKS.findIndex(destination => destination.id === lastTourDestinationRef.current)
     : -1
@@ -3754,8 +3737,6 @@ export default function MapApp() {
         accountRadiusKm={accountRadiusKm}
         weatherMode={weatherMode}
         weatherIconId={weatherIconId}
-        weatherCloud={cloudBadge}
-        weatherIcon={weatherIconMarkup}
         weatherOpen={weatherOpen}
         onWeatherOpenChange={setWeatherOpen}
         controlsObscured={searchOpen || weatherOpen}
@@ -3765,7 +3746,6 @@ export default function MapApp() {
           date: day.date,
           high: day.high,
           low: day.low,
-          icon: weatherIconForMode(modeForCode(day.code)),
           iconId: weatherIconIdForCode(day.code),
           mode: modeForCode(day.code),
         }))}
@@ -3949,7 +3929,7 @@ export default function MapApp() {
           aria-expanded={weatherOpen}
           onClick={() => { playPop(0.25); toggleWeather() }}
         >
-          <WeatherMark mode={weatherMode} iconId={weatherIconId} icon={weatherIconMarkup} cloud={cloudBadge} compact />
+          <WeatherMark mode={weatherMode} iconId={weatherIconId} compact />
           {weatherTemperatureText && (
             <span className={styles.mapWeatherTemperature} aria-hidden="true">
               {weatherTemperatureText}

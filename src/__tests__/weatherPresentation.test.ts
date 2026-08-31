@@ -1,19 +1,21 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { modeForCode } from '../weatherCode'
 import {
   formatWeatherTemperature,
   isWeatherMode,
   readWeatherPresentation,
-  weatherIconForMode,
 } from '../weatherPresentation'
 
 describe('weather presentation', () => {
-  it('provides mode-specific clay icon markup', () => {
-    expect(weatherIconForMode('clear')).toContain('wSun')
-    expect(weatherIconForMode('rain')).toContain('wDrop')
-    expect(weatherIconForMode('storm')).toContain('wBolt')
-    expect(weatherIconForMode('snow')).toContain('wIce')
-    expect(weatherIconForMode('clear')).not.toBe(weatherIconForMode('rain'))
+  it('contains no inline or generated weather artwork', () => {
+    const presentationSource = readFileSync(
+      new URL('../weatherPresentation.ts', import.meta.url),
+      'utf8',
+    )
+    expect(presentationSource).not.toContain('<svg')
+    expect(presentationSource).not.toContain('weatherIconForMode')
+    expect(presentationSource).not.toContain('wSun')
   })
 
   it('validates modes and formats a compact temperature reading', () => {

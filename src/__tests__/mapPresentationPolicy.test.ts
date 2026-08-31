@@ -365,7 +365,7 @@ describe('subtle Map presentation policy', () => {
     const selected = nearestMapBuildingDetailIds(nearby, 'FULL')
     expect(MAP_BUILDING_DETAIL_MAX).toBe(MAP_BUILDING_DENSITY_LAB_MAX)
     expect(MAP_BUILDING_DETAIL_BUDGET_FULL).toBe(MAP_BUILDING_DENSITY_LAB_DEFAULT)
-    expect(MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR).toBe(1)
+    expect(MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR).toBe(7)
     expect(MAP_BUILDING_DETAIL_SAMPLE_DIVISOR).toBe(10)
     expect(selected.length).toBeGreaterThan(0)
     expect(selected.length).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
@@ -462,7 +462,7 @@ describe('subtle Map presentation policy', () => {
     expect(MAP_BUILDING_DETAIL_BUDGET_REDUCED).toBeLessThanOrEqual(MAP_BUILDING_DETAIL_MAX)
   })
 
-  it('retains a stable distributed 8-12% before applying the thermal cap', () => {
+  it('retains a stable distributed 68-72% before applying the thermal cap', () => {
     const candidates = Array.from({ length: 10_000 }, (_, index) => ({
       id: `distributed-${index}`,
       distanceM: index,
@@ -479,8 +479,8 @@ describe('subtle Map presentation policy', () => {
         < MAP_BUILDING_DETAIL_SAMPLE_NUMERATOR
     }).length
 
-    expect(uncappedModeCount / candidates.length).toBeGreaterThan(0.08)
-    expect(uncappedModeCount / candidates.length).toBeLessThan(0.12)
+    expect(uncappedModeCount / candidates.length).toBeGreaterThan(0.68)
+    expect(uncappedModeCount / candidates.length).toBeLessThan(0.72)
     expect(nearestMapBuildingDetailIds(candidates, 'REDUCED'))
       .toHaveLength(MAP_BUILDING_DETAIL_BUDGET_REDUCED)
   })

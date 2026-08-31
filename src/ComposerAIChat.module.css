@@ -27,10 +27,7 @@
 
 .header {
   min-width: 0;
-  display: grid;
-  grid-template-columns: 50px minmax(0, 1fr);
-  align-items: center;
-  gap: 11px;
+  display: block;
   padding: 11px 13px;
   border: 3px solid var(--pink);
   border-radius: 23px;
@@ -42,20 +39,6 @@
     0 14px 28px rgba(0, 0, 0, .42),
     inset 0 2px rgba(255, 255, 255, .28),
     inset 0 -5px 9px rgba(0, 0, 0, .48);
-}
-
-.mark {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  border: 2px solid #ff9dca;
-  border-radius: 14px;
-  color: #fff;
-  background: radial-gradient(circle at 32% 21%, #ff9dca, #f42f90 57%, #9b084c);
-  box-shadow: 0 4px 0 #65002f, inset 0 3px 4px rgba(255, 255, 255, .42);
-  font: 950 25px/1 system-ui, sans-serif;
-  text-shadow: 0 2px 2px #720038;
 }
 
 .heading { min-width: 0; display: grid; gap: 3px; }
@@ -114,8 +97,7 @@
 }
 
 .originalAction > span:first-child,
-.primary > span,
-.generate > span {
+.primary > span {
   width: 30px;
   height: 30px;
   display: grid;
@@ -176,7 +158,6 @@
 
 .generate,
 .primary { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 0 15px; font: 950 15px/1 system-ui, sans-serif; }
-.generate > span { background: #1b1219; box-shadow: inset 0 2px rgba(255, 255, 255, .17), 0 3px 0 #63002f; }
 
 .status,
 .error { margin: 0; padding: 10px 11px; border-radius: 12px; font: 800 12px/1.35 system-ui, sans-serif; }

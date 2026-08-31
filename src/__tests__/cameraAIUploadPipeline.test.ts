@@ -58,6 +58,18 @@ describe('camera AI upload pipeline contract', () => {
     expect(composer).toContain('setAiCandidate(null)')
   })
 
+  it('uses plain-text AI controls without decorative or imitation logo marks', () => {
+    const chat = source('ComposerAIChat.tsx')
+    const css = source('ComposerAIChat.module.css')
+
+    expect(chat).toContain('Generate AI preview')
+    expect(chat).toContain('EDIT WITH POPLUR AI')
+    expect(chat).not.toContain('className={styles.mark}')
+    expect(chat).not.toContain('aria-hidden="true">✦</span>')
+    expect(css).not.toContain('.mark {')
+    expect(css).not.toContain('.generate > span')
+  })
+
   it('keeps filters and VFX optional instead of making them upload gates', () => {
     const composer = source('PostComposer.tsx')
     const chat = source('ComposerAIChat.tsx')

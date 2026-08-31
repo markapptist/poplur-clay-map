@@ -31,7 +31,6 @@ import { createNativeMapConquerSnapshot } from './nativeMapConquerSnapshot'
 import {
   formatWeatherTemperature,
   readWeatherPresentation,
-  weatherIconForMode,
   weatherTemperatureUnit,
   type WeatherPresentationSnapshot,
 } from './weatherPresentation'
@@ -5258,7 +5257,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               <WeatherMark
                 mode={mapWeatherDisplay.mode}
                 iconId={mapWeatherDisplay.iconId}
-                icon={weatherIconForMode(mapWeatherDisplay.mode)}
                 compact
               />
               {mapWeatherTemperatureText && (

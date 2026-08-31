@@ -12,14 +12,10 @@ import styles from './ClayMap.module.css'
 export default function WeatherMark({
   mode,
   iconId,
-  icon: _icon,
-  cloud: _cloud,
   compact = false,
 }: {
   mode: WeatherMode
   iconId?: WeatherIconId
-  icon: string
-  cloud?: string | null
   compact?: boolean
 }) {
   return (
