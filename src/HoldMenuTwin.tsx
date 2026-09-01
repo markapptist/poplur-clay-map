@@ -25,7 +25,6 @@ import WalletScreen from './WalletScreen'
 import AppsScreen from './AppsScreen'
 import PoplurBrowserScreen from './PoplurBrowserScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
-import { packBase } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
 import { CAMERA_HOLD_MENU_ITEMS } from './cameraNavigation'
 import { isRetiredNavigationScreen } from './retiredNavigationRoutes'
@@ -207,6 +206,15 @@ function rclSubscreenUrl(item: Item): string {
   const route = item.preview
     ? `.claude/artifacts/rough-copy-preview.html?surface=iphone&screen=${encodeURIComponent(item.screen)}`
     : `.claude/artifacts/poplur-subscreen-twins.html?embed=${encodeURIComponent(item.screen)}&rcl=1`
+  // Real subscreens ship inside the app bundle and must always stay on the
+  // current origin. Port 8945 is an optional artifact workbench, not a
+  // runtime dependency for STORE (or any other embedded app screen).
+  if (!item.preview) {
+    return new URL(
+      `./subscreens/index.html?embed=${encodeURIComponent(item.screen)}&rcl=1`,
+      window.location.href,
+    ).href
+  }
   if (window.location.protocol === 'file:') {
     return new URL(`../../${route}`, window.location.href).href
   }
@@ -216,12 +224,6 @@ function rclSubscreenUrl(item: Item): string {
   // of the bundled dist — there is no artifact server to ask, so use the copy
   // that ships with the bundle (.codex/sync-subscreen-twins.mjs puts it
   // there). Dev keeps pointing at :8945 so Rough Copy edits show immediately.
-  if (!item.preview) {
-    return new URL(
-      `${packBase('subscreens', 'subscreens')}/index.html?embed=${encodeURIComponent(item.screen)}&rcl=1`,
-      window.location.href,
-    ).href
-  }
   return `${window.location.origin}/${route}`
 }
 
@@ -766,15 +768,20 @@ export default function HoldMenuTwin({
   }).current
   useEffect(() => {
     subscreenDepthRef.current = 0
-    const onDepth = (event: MessageEvent) => {
+    const onSubscreenMessage = (event: MessageEvent) => {
       const data = event.data
       if (!data || typeof data !== 'object') return
-      if (data.type !== 'poplurSubscreenDepth') return
       if (event.source !== subscreenFrameRef.current?.contentWindow) return
+      if (data.type === 'poplurSubscreenReady') {
+        setEmbedLoaded(true)
+        setEmbedMissing(false)
+        return
+      }
+      if (data.type !== 'poplurSubscreenDepth') return
       subscreenDepthRef.current = Number(data.depth) || 0
     }
-    window.addEventListener('message', onDepth)
-    return () => window.removeEventListener('message', onDepth)
+    window.addEventListener('message', onSubscreenMessage)
+    return () => window.removeEventListener('message', onSubscreenMessage)
   }, [activeScreen])
   useEffect(() => {
     if (!activeScreen || activeScreen.native) return
@@ -1434,7 +1441,11 @@ export default function HoldMenuTwin({
           className={styles.subscreenFrame}
           src={rclSubscreenUrl(activeScreen)}
           title={`${activeScreen.title} Rough Copy`}
-          onLoad={() => setEmbedLoaded(true)}
+          onLoad={() => {
+            // Rough Copy previews cannot send our bundled readiness handshake.
+            // Real subscreens report ready only after their app has mounted.
+            if (activeScreen.preview) setEmbedLoaded(true)
+          }}
         />
         {!embedLoaded && embedMissing && (
           // Still nothing after a long wait. Say so plainly rather than leaving

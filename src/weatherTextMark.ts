@@ -1,4 +1,4 @@
-import type { WeatherIconId } from './sideControlIcons'
+import { weatherIconIdForMode, type WeatherIconId } from './sideControlIcons'
 import type { WeatherMode } from './WeatherFX'
 
 const WEATHER_TEXT_BY_ICON: Record<WeatherIconId, string> = {
@@ -19,20 +19,20 @@ const WEATHER_TEXT_BY_ICON: Record<WeatherIconId, string> = {
 }
 
 /**
- * The tracked fog artwork predates the rejected weather sheet and is the one
- * explicitly approved exception to the text-only Map weather treatment.
+ * Resolve every live condition to its provided, tracked Poplur weather asset.
+ * A richer WMO-derived condition wins; the bounded mode is the safe fallback
+ * whenever that detail is unavailable.
  */
 export function approvedWeatherAssetId(
   mode: WeatherMode,
-  _iconId?: WeatherIconId,
-): WeatherIconId | null {
-  return mode === 'fog' ? 'weather.fog' : null
+  iconId?: WeatherIconId,
+): WeatherIconId {
+  return iconId ?? weatherIconIdForMode(mode)
 }
 
 /**
- * Asset-free condition mark used when no approved, provenance-safe weather
- * artwork is available. Keeping the provider's semantic condition as text is
- * preferable to substituting an unknown or generated illustration.
+ * Short semantic condition code retained for data attributes and diagnostics.
+ * It is never rendered as a visual substitute for the provided artwork.
  */
 export function weatherTextMark(mode: WeatherMode, iconId?: WeatherIconId): string {
   if (iconId) return WEATHER_TEXT_BY_ICON[iconId]

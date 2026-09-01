@@ -3124,6 +3124,17 @@ function phoneKey(key, left, top, width, height, label = key) {
 
 update();
 
+// The bundled parent keeps its loading veil until the actual twin has mounted.
+// iframe `load` alone is insufficient on WKWebView because it can also fire for
+// an error document or before the screen renderer has completed.
+if (window.parent !== window) {
+  try {
+    window.parent.postMessage({ type: 'poplurSubscreenReady' }, '*');
+  } catch {
+    // Standalone artifact previews have no parent contract.
+  }
+}
+
 // --- Rest with the chrome (19 Aug heat order) ------------------------------
 // The app's HUD ghosts after 10 seconds untouched, and (same order) the home
 // globe's turn now parks on that beat too. These twins ran their decoration

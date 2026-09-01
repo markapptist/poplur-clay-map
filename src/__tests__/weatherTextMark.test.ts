@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { approvedWeatherAssetId, weatherTextMark } from '../weatherTextMark'
 
 describe('Map weather presentation selection', () => {
-  it('keeps cloudy families semantically distinct without rendering artwork', () => {
+  it('keeps cloudy families semantically distinct', () => {
     expect(weatherTextMark('cloudy', 'weather.partly_cloudy')).toBe('PART')
     expect(weatherTextMark('cloudy', 'weather.cloudy')).toBe('CLOUD')
     expect(weatherTextMark('cloudy', 'weather.overcast')).toBe('OVRC')
@@ -16,10 +16,11 @@ describe('Map weather presentation selection', () => {
     expect(weatherTextMark('fog')).toBe('FOG')
   })
 
-  it('restores only the approved committed fog asset', () => {
+  it('maps every condition to its provided committed asset', () => {
     expect(approvedWeatherAssetId('fog')).toBe('weather.fog')
-    expect(approvedWeatherAssetId('cloudy', 'weather.fog')).toBeNull()
-    expect(approvedWeatherAssetId('cloudy', 'weather.cloudy')).toBeNull()
-    expect(approvedWeatherAssetId('rain', 'weather.heavy_rain')).toBeNull()
+    expect(approvedWeatherAssetId('cloudy', 'weather.partly_cloudy')).toBe('weather.partly_cloudy')
+    expect(approvedWeatherAssetId('cloudy', 'weather.cloudy')).toBe('weather.cloudy')
+    expect(approvedWeatherAssetId('rain', 'weather.heavy_rain')).toBe('weather.heavy_rain')
+    expect(approvedWeatherAssetId('clear')).toBe('weather.clear_day')
   })
 })

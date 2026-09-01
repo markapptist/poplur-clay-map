@@ -29,7 +29,7 @@ describe('supplied Poplur UI art integration', () => {
     expect(`${weather}\n${status}`).not.toContain('Reaching more people')
   })
 
-  it('uses the restored committed fog asset without reviving the rejected weather sheet', () => {
+  it('uses only provided tracked assets for every weather condition', () => {
     const weatherMark = source('WeatherMark.tsx')
     const weatherTextMark = source('weatherTextMark.ts')
     const clayMap = source('ClayMap.tsx')
@@ -44,8 +44,8 @@ describe('supplied Poplur UI art integration', () => {
     expect(weatherMark).toContain('approvedWeatherAssetId(mode, iconId)')
     expect(weatherMark).toContain('icon={approvedAsset}')
     expect(weatherMark).toContain('styles.weatherVisualProvidedAsset')
-    expect(weatherMark).not.toContain('weatherIconIdForMode')
-    expect(weatherTextMark).toContain("? 'weather.fog' : null")
+    expect(weatherMark).not.toContain('<span className={styles.weatherTextMark}>')
+    expect(weatherTextMark).toContain('iconId ?? weatherIconIdForMode(mode)')
     expect(weatherTextMark).toContain("'weather.cloudy': 'CLOUD'")
     expect(weatherTextMark).toContain("'weather.partly_cloudy': 'PART'")
     const sticker = clayMap.slice(
@@ -55,7 +55,7 @@ describe('supplied Poplur UI art integration', () => {
     expect(sticker).toContain('approvedWeatherAssetId(mode, iconId)')
     expect(sticker).toContain('icon={approvedAsset}')
     expect(sticker).toContain('styles.weatherStickerProvidedAsset')
-    expect(sticker).not.toContain('weatherIconIdForMode')
+    expect(sticker).not.toContain('<span className={styles.weatherStickerText}>')
     expect(weatherSources).not.toContain('weatherIconForMode')
     expect(weatherSources).not.toContain('cloudBadge')
     expect(weatherSources).not.toContain('weatherCloud')
@@ -63,29 +63,28 @@ describe('supplied Poplur UI art integration', () => {
     expect(existsSync(new URL('../../public/weather/poplur-weather-glyphs.png', import.meta.url))).toBe(false)
   })
 
-  it('renders the approved fog artwork without a molded badge background', () => {
+  it('renders every weather asset without a molded badge background', () => {
     const css = source('ClayMap.module.css')
-    const assetShell = css.slice(
-      css.indexOf('.weatherStickerProvidedAsset'),
-      css.indexOf('.weatherHeroSticker'),
-    )
+    const stickerShell = css.slice(css.indexOf('.weatherSticker {'), css.indexOf('.weatherProvidedAsset'))
+    const visualShell = css.slice(css.indexOf('.weatherVisual {'), css.indexOf('.weatherVisualCompact'))
 
-    expect(assetShell).toContain('.weatherVisualProvidedAsset')
-    expect(assetShell).toContain('overflow: visible')
-    expect(assetShell).toContain('border: 0')
-    expect(assetShell).toContain('background: transparent')
-    expect(assetShell).toContain('box-shadow: none')
+    for (const shell of [stickerShell, visualShell]) {
+      expect(shell).toContain('overflow: visible')
+      expect(shell).toContain('border: 0')
+      expect(shell).toContain('background: transparent')
+      expect(shell).toContain('box-shadow: none')
+    }
   })
 
-  it('keeps condition text and temperature as the truthful fallback outside fog', () => {
+  it('keeps semantic condition data and temperature without a visible text fallback', () => {
     const home = source('HomeTwin.tsx')
     const map = source('MapApp.tsx')
     const css = source('ClayMap.module.css')
 
     expect(`${home}\n${map}`).toContain('<WeatherMark')
     expect(`${home}\n${map}`).toContain('formatWeatherTemperature')
-    expect(css).toContain('.weatherTextMark')
-    expect(css).toContain('.weatherStickerText')
+    expect(css).not.toContain('.weatherTextMark')
+    expect(css).not.toContain('.weatherStickerText')
     expect(css).toContain('.weatherProvidedAsset')
   })
 })

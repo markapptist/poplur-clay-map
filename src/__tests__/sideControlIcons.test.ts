@@ -649,11 +649,25 @@ describe('replacement controls preserve state and activation contracts', () => {
     const channelOwner = home.slice(home.indexOf('const changeChannel'), home.indexOf('useEffect(() => {', home.indexOf('const changeChannel')))
     expect(channelOwner).toContain('playPop()')
     expect(channelOwner).toContain('claimCubeNavigationSound()')
+    expect(channelOwner.indexOf('profileArrowsRef.current')).toBeLessThan(channelOwner.indexOf('pushScreen(dir)'))
+    expect(channelOwner.indexOf('subscreenArrowsRef.current')).toBeLessThan(channelOwner.indexOf('pushScreen(dir)'))
     expect(home).toContain('navigationSoundClaimed: cubeNavigationSoundClaimRef.current.claimed()')
 
     const holdMenu = componentSource('HoldMenuTwin.tsx')
     const pageWalker = holdMenu.slice(holdMenu.indexOf('bindArrows((dir:'), holdMenu.indexOf('return () => bindArrows(null)'))
     expect(pageWalker).not.toContain('playPop()')
+
+    const storeRoute = holdMenu.slice(holdMenu.indexOf('function rclSubscreenUrl'), holdMenu.indexOf('// Placeholder for icons'))
+    expect(storeRoute.indexOf("if (!item.preview)")).toBeLessThan(storeRoute.indexOf('const localHost'))
+    expect(storeRoute).toContain("./subscreens/index.html?embed=")
+    expect(storeRoute).not.toContain("packBase('subscreens', 'subscreens')")
+    expect(holdMenu).toContain("data.type === 'poplurSubscreenReady'")
+    expect(holdMenu).toContain('if (activeScreen.preview) setEmbedLoaded(true)')
+    const subscreenRuntime = readFileSync(
+      new URL('../../public/subscreens/poplur-subscreen-twins.js', import.meta.url),
+      'utf8',
+    )
+    expect(subscreenRuntime).toContain("window.parent.postMessage({ type: 'poplurSubscreenReady' }, '*')")
   })
 
   it('assigns one sound owner to nested cube-model navigation', () => {

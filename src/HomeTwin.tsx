@@ -4384,7 +4384,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       sendMapAction('cycleTourLandmark', { dir })
       return
     }
-    pushScreen(dir)
     // A transient layer INSIDE the tab answers first — it covers the screen,
     // so cycling screens behind it would be invisible. The camera's capture
     // preview flips filters; the profile's fullscreen post viewer browses
@@ -4423,6 +4422,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       stepCameraMode(dir)
       return
     }
+    // Only a tab-level page change needs the parent's 300 ms push animation.
+    // Nested Profile/Hold surfaces above already answered synchronously; doing
+    // this first made Stats appear to ignore the arrow for over a second.
+    pushScreen(dir)
     // Standing on the tab's own screen with nothing mounted to answer — this
     // IS the door, so step into the tab's page list. The menu is not mounted
     // here at all, which is why the walk above cannot do it: opening the page

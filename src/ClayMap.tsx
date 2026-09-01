@@ -278,21 +278,17 @@ function WeatherSticker({ mode, iconId, className = '' }: {
   const label = weatherTextMark(mode, iconId)
   return (
     <span
-      className={`${styles.weatherSticker}${approvedAsset ? ` ${styles.weatherStickerProvidedAsset}` : ''} ${className}`}
+      className={`${styles.weatherSticker} ${styles.weatherStickerProvidedAsset} ${className}`}
       data-weather-text-mark={label}
-      data-weather-provided-asset={approvedAsset ?? undefined}
+      data-weather-provided-asset={approvedAsset}
       aria-hidden="true"
     >
-      {approvedAsset ? (
-        <SideControlIconImage
-          icon={approvedAsset}
-          displaySize={96}
-          className={styles.weatherProvidedAsset}
-          loading="lazy"
-        />
-      ) : (
-        <span className={styles.weatherStickerText}>{label}</span>
-      )}
+      <SideControlIconImage
+        icon={approvedAsset}
+        displaySize={96}
+        className={styles.weatherProvidedAsset}
+        loading="lazy"
+      />
     </span>
   )
 }
