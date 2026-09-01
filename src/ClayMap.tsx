@@ -1529,6 +1529,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   const stopOrbitRef = useRef<() => void>(() => {})
   const streetViewRef = useRef(streetView)
   const nativeLocationRef = useRef<[number, number] | null>(requestedPickCenter)
+  // Where YOU are, as state rather than only a ref, so the map can stand a pin
+  // on it. The ring the selection draws is a highlight, not a marker — without
+  // this, current location was the one point on the board with nothing on it.
+  const [currentLocationPoint, setCurrentLocationPoint] = useState<[number, number] | null>(requestedPickCenter)
   const [focusedPostLocationStatus, setFocusedPostLocationStatus] = useState<
     'waiting' | 'ready' | 'unavailable'
   >(focusedPostLaunch
@@ -1865,6 +1869,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const center = readBridgeLocation(value)
       if (!center) return
       nativeLocationRef.current = center
+      setCurrentLocationPoint(center)
       onCurrentLocationChangeRef.current?.(center)
       if (focusedPostLaunch
         && !focusedPostManualSelectionRef.current
@@ -3762,6 +3767,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             pos => {
               landingCenter = [pos.coords.longitude, pos.coords.latitude]
               nativeLocationRef.current = landingCenter
+              setCurrentLocationPoint(landingCenter)
               onCurrentLocationChangeRef.current?.(landingCenter)
               // The direct 2D launch may already have painted its cached fallback
               // before Core Location answers. Recenter once, without animating
@@ -5717,6 +5723,48 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       try { updateReachRing(map, null, 0) } catch { /* map torn down */ }
     }
   }, [accountRadiusKm, mapEpoch, mapRef, radiusPreviewLaunch])
+
+  // The pin standing where YOU are. Same clay pin the board uses for a pop, so
+  // your own ground reads in the map's own language instead of a bare dot, and
+  // it wears your profile face when you have one. Not pressable: it marks a
+  // place, it does not open a post.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapEpoch === 0 || radiusPreviewLaunch || !currentLocationPoint) return
+    let dropped = false
+    let marker: mapboxgl.Marker | null = null
+    void pinWithFace({ avatar: ownProfilePhoto, color: takeoverTint(PALETTE.pinkHot), mode: '3d' })
+      .then(src => {
+        if (dropped || mapRef.current !== map) return
+        const root = document.createElement('div')
+        root.className = styles.popPinMarker
+        // Distinct from the selection highlight, which also marks current
+        // location — two markers sharing one id made them indistinguishable.
+        root.dataset.mapPointId = 'current:you'
+        root.dataset.mapPointKind = 'you'
+        root.style.pointerEvents = 'none'
+        const shell = document.createElement('div')
+        shell.className = styles.popPin
+        const img = document.createElement('img')
+        img.src = src
+        img.alt = ''
+        img.draggable = false
+        shell.appendChild(img)
+        root.appendChild(shell)
+        const label = document.createElement('span')
+        label.className = styles.dominationTerritoryLabel
+        label.textContent = 'YOU'
+        root.appendChild(label)
+        marker = new mapboxgl.Marker({ element: root, anchor: 'bottom' })
+          .setLngLat(currentLocationPoint)
+          .addTo(map)
+      })
+      .catch(() => { /* sprite unavailable: the map simply has no you-pin */ })
+    return () => {
+      dropped = true
+      marker?.remove()
+    }
+  }, [currentLocationPoint, mapEpoch, mapRef, ownProfilePhoto, radiusPreviewLaunch])
 
   // One universal selected-point marker. It deliberately does not depend on
   // the viewport pin budget or landmark zoom band, so an arrow can identify a

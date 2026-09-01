@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore'
 import { isNativeShell, isRNWebShellRoute, postNativeEvent } from './nativeBridge'
 import { webDb } from './webFirebase'
+import { pinColorId, type PinColorId } from './pinColors'
 
 const LIVE_FEED_POST_LIMIT = 160
 const MAX_RADIUS_METERS = 40_075_000
@@ -36,6 +37,9 @@ export interface NativeFeedPost {
   locationVisibility: 'approximate' | 'hidden'
   originLatitude?: number
   originLongitude?: number
+  /** The poster's chosen clay pin model, carried so a native-delivered post
+   *  stands up the same pin the web does. */
+  pinColor?: PinColorId
   syntheticJourney?: 'first-user-v1'
 }
 
@@ -170,6 +174,7 @@ function normalizeFeedPost(
     locationVisibility: hasSafeOrigin ? 'approximate' : 'hidden',
     originLatitude: hasSafeOrigin ? originLatitude : undefined,
     originLongitude: hasSafeOrigin ? originLongitude : undefined,
+    pinColor: pinColorId(row.pinColor) ?? undefined,
     syntheticJourney,
   }
 }

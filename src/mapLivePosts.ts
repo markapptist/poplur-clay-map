@@ -168,14 +168,25 @@ export function normalizeLiveMapPost(
   }
 }
 
-/** Project the bounded RN emulator snapshot into the same real Map pin model.
- * Only explicitly tagged first-user rows can cross this synthetic-only path. */
+/**
+ * Project posts delivered by the NATIVE bridge into the same Map pin model.
+ *
+ * Inside a native shell this is the only source that works: webFirebase is
+ * documented as "only ever used when there is NO native bridge", so the Map's
+ * own Firestore listener returns nothing on a phone and the board comes up
+ * empty while the Feed — which already reads the bridge — is full.
+ *
+ * `syntheticOnly` keeps the bounded RN emulator route exactly as it was: there,
+ * only explicitly tagged first-user rows may cross.
+ */
 export function nativeFeedPostsToMapPins(
   posts: readonly NativeFeedPost[],
   ownUid: string | null,
+  options: { syntheticOnly?: boolean } = { syntheticOnly: true },
 ): LiveMapPostPin[] {
+  const syntheticOnly = options.syntheticOnly !== false
   return posts.flatMap(post => {
-    if (post.syntheticJourney !== 'first-user-v1') return []
+    if (syntheticOnly && post.syntheticJourney !== 'first-user-v1') return []
     const pin = normalizeLiveMapPost(post.id, {
       userID: post.ownerId,
       username: post.username,
@@ -197,7 +208,8 @@ export function nativeFeedPostsToMapPins(
       audience: 'public',
       status: 'published',
       syntheticJourney: post.syntheticJourney,
-    }, ownUid, { allowSyntheticOnboarding: true })
+      pinColor: post.pinColor,
+    }, ownUid, { allowSyntheticOnboarding: syntheticOnly })
     return pin ? [pin] : []
   })
 }

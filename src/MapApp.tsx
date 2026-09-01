@@ -116,7 +116,7 @@ import { moonPhase } from './celestial'
 import { publishAccountRadiusKm } from './accountRadius'
 import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
 import { liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
-import { normalizeNativeFeedPosts } from './nativeFeedPosts'
+import { nativeFeedPostsSnapshot, normalizeNativeFeedPosts, onNativeFeedPosts } from './nativeFeedPosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
 import { worldCountryZoomActive, type WorldCountryUpdate } from './mapCountrySignal'
@@ -2899,6 +2899,23 @@ export default function MapApp() {
       }
       window.addEventListener('message', receiveSyntheticPosts)
       return () => window.removeEventListener('message', receiveSyntheticPosts)
+    }
+    // Inside a native shell the phone owns the data. webFirebase says so in its
+    // own header — it is "only ever used when there is NO native bridge" — so
+    // the Map's Firestore listener returns nothing on device and the board came
+    // up with zero pins while the Feed, which already reads the bridge, was
+    // full. Take the same delivered posts the Feed takes.
+    if (isNativeShell()) {
+      const applyNativePosts = () => {
+        setLiveMapPosts(nativeFeedPostsToMapPins(
+          nativeFeedPostsSnapshot(),
+          ownUid,
+          { syntheticOnly: false },
+        ))
+        setLiveMapPostsReady(true)
+      }
+      applyNativePosts()
+      return onNativeFeedPosts(applyNativePosts)
     }
     return subscribeLiveMapPosts(
       pins => {
