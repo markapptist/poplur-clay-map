@@ -1985,9 +1985,6 @@ export default function FeedTwin({
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />
-        <div className={styles.channelBrandIcon} aria-label={`${ch.name} channel`}>
-          <img className={styles.chIcon} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
-        </div>
         {post && (
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
