@@ -1,26 +1,18 @@
-/* The full channel dial, down the right edge.
-   Sized from the count rather than a fixed pitch: fifteen 44px tiles do not
-   fit a phone, so the tile is the largest that lets the whole set show at
-   once — showing them all is the reason this rail exists.
-
-   It shares the zoom slider's column exactly: same 44px track, same right
-   inset, same top. Fifteen tiles cannot also be the rail's 44px tall — that
-   is 660px of tile in a 616px band — so the tile is the largest that keeps
-   the whole set inside the slider's own span. */
+/* The full channel dial, down the right edge. It is the exact mirror of the feed's own control rail on the left: same
+   44px track, same top edge, same height, same icon size. Fifteen tiles at
+   that size is 660px, which is precisely the rail's height — so the two
+   columns start and end on the same pixel and read as one pair. */
 .rail {
   position: absolute;
-  /* Anchored, not centred: the outer channel arrows now sit in the bottom
-     right, and a centred column of fifteen ran underneath them. This band is
-     the space between the wordmark and that row. */
-  top: 62px;
-  right: 12px;
+  top: 154px;
+  /* Mirrors the left rail's centre line (34px in from its edge). */
+  right: 19px;
   z-index: 46;
   display: grid;
   grid-auto-flow: row;
-  grid-auto-rows: 40px;
-  grid-template-columns: 44px;
-  gap: 1px;
-  justify-items: center;
+  grid-auto-rows: 30px;
+  grid-template-columns: 30px;
+  gap: 4px;
   pointer-events: auto;
   transition: opacity 0.24s ease;
 }
@@ -31,25 +23,27 @@
 }
 
 .tile {
+  /* The channel artwork already carries its own clay tile, exactly like the
+     side-control icons opposite. Drawing a second frame around it shrank the
+     art to 32px and broke the one thing that had to match. No border, no
+     background, no padding — just the icon at the rail's own size. */
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
   padding: 0;
-  border: 2px solid rgba(255, 255, 255, 0.14);
-  border-radius: 13px;
-  background: linear-gradient(180deg, rgba(38, 14, 33, 0.82), rgba(14, 8, 19, 0.82));
-  box-shadow: 0 2px 0 rgba(80, 8, 50, 0.55), 0 5px 12px rgba(0, 0, 0, 0.4);
+  border: none;
+  background: none;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   /* Unselected channels sit back so the lit one reads first. */
-  opacity: 0.62;
-  transition: transform 0.12s ease, opacity 0.16s ease, border-color 0.16s ease;
+  opacity: 0.55;
+  transition: transform 0.12s ease, opacity 0.16s ease, filter 0.16s ease;
 }
 
 .tile img {
-  width: 29px;
-  height: 29px;
+  width: 30px;
+  height: 30px;
   display: block;
   object-fit: contain;
 }
@@ -58,21 +52,17 @@
   transform: scale(0.9);
 }
 
-/* Where you are. Colour alone would not carry it, so the lit tile is also
-   brighter, larger and ringed. */
+/* Where you are. Colour alone would not carry it, so the lit tile is fully
+   opaque and haloed rather than merely tinted. */
 .tileOn {
   opacity: 1;
-  border-color: rgba(255, 75, 167, 0.92);
-  background: linear-gradient(180deg, rgba(96, 20, 66, 0.94), rgba(30, 10, 28, 0.94));
-  box-shadow:
-    0 2px 0 rgba(120, 10, 70, 0.8),
-    0 0 14px rgba(255, 75, 167, 0.55),
-    inset 0 1px rgba(255, 255, 255, 0.22);
-  transform: scale(1.1);
+  filter:
+    drop-shadow(0 0 7px rgba(255, 75, 167, 0.95))
+    drop-shadow(0 0 14px rgba(255, 75, 167, 0.55));
 }
 
 .tileOn:active {
-  transform: scale(1);
+  transform: scale(0.94);
 }
 
 @media (prefers-reduced-motion: reduce) {

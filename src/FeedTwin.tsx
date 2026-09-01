@@ -38,6 +38,7 @@ import ClayCornerButton from './ClayCornerButton'
 import SideControlIconButton from './SideControlIcon'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
+import FeedChannelStep from './FeedChannelStep'
 import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -1936,7 +1937,6 @@ export default function FeedTwin({
           />
         )}
         <div className={styles.staticIdentity}>
-          <img className={styles.staticLogo} src={channelUrl(`${ch.icon}.png`)} alt="" draggable={false} />
           <span className={styles.staticCh}>CH {ch.number}</span>
           <span className={styles.staticCat}>{ch.name.toUpperCase()}</span>
         </div>
@@ -1959,6 +1959,15 @@ export default function FeedTwin({
         {/* Every channel at once, down the right edge. Hidden in player mode
             for the same reason the rest of the chrome is: a long press asked
             for the screen. */}
+        <FeedChannelStep
+          side={controlSide}
+          channelNumber={ch.number}
+          postActionsAvailable={Boolean(post)}
+          onChannelUp={() => change(-1)}
+          onChannelDown={() => change(1)}
+          onPostPrevious={() => handleEdgeTap('left')}
+          onPostNext={() => handleEdgeTap('right')}
+        />
         <FeedChannelRail
           activeIndex={index}
           onPick={goToChannel}
@@ -1975,13 +1984,6 @@ export default function FeedTwin({
           onShare={sharePost}
           onToggleCaptions={toggleCaptions}
           onComment={toggleComments}
-          channelNumber={ch.number}
-          onChannelUp={() => change(-1)}
-          onChannelDown={() => change(1)}
-          onPostPrevious={() => handleEdgeTap('left')}
-          onPostNext={() => handleEdgeTap('right')}
-          channelIconUrl={channelUrl(`${ch.icon}.png`)}
-          channelName={ch.name}
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />

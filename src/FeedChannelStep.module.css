@@ -1,0 +1,36 @@
+/* Sits directly under the 44px control rail. 34px is the channel dial's tile
+   size on the other edge, and this many of them is exactly the height that
+   lands both columns on the same bottom pixel. */
+.group {
+  position: absolute;
+  top: calc(max(154px, env(safe-area-inset-top, 0px) + 112px) + 336px);
+  z-index: 46;
+  display: grid;
+  grid-auto-flow: row;
+  grid-auto-rows: 30px;
+  grid-template-columns: 30px;
+  gap: 5px;
+  justify-items: center;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.groupLeft { left: max(19px, calc(env(safe-area-inset-left, 0px) + 7px)); }
+.groupRight { right: max(19px, calc(env(safe-area-inset-right, 0px) + 7px)); }
+
+.group > * {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+}
+
+
+.number {
+  display: grid;
+  place-items: center;
+  color: #7cff9b;
+  font: 900 13px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  text-shadow: 0 2px 0 rgba(5, 20, 10, .55);
+  pointer-events: none;
+}

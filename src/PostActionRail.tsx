@@ -1,4 +1,3 @@
-import sideStyles from './SideControlIcon.module.css'
 import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
 import type { ControlSide } from './controlPlacement'
@@ -23,13 +22,6 @@ export default function PostActionRail({
   onComment,
   onLike,
   onDislike,
-  channelNumber,
-  onChannelUp,
-  onChannelDown,
-  onPostPrevious,
-  onPostNext,
-  channelIconUrl,
-  channelName,
   postActionsAvailable = true,
   onDelete,
   deletePending = false,
@@ -46,16 +38,6 @@ export default function PostActionRail({
   onComment: () => void
   onLike: () => void
   onDislike: () => void
-  /** Feed only: step the TV's own channel, in the rail beside the screen it
-   *  changes. Absent on a profile post, which has no channel to step. */
-  channelNumber?: number
-  onChannelUp?: () => void
-  onChannelDown?: () => void
-  /** Feed only: walk the other people posting on this channel. */
-  onPostPrevious?: () => void
-  onPostNext?: () => void
-  channelIconUrl?: string
-  channelName?: string
   /** Share, comment, and radius reactions require a concrete post. */
   postActionsAvailable?: boolean
   onDelete?: () => void
@@ -108,63 +90,6 @@ export default function PostActionRail({
         disabled={!postActionsAvailable}
         onActivate={onDislike}
       />
-      {channelIconUrl && (
-        // The channel you are on, wearing the same tile as every other side
-        // control so the rail reads as one column rather than a column with an
-        // ornament in it. It reports; the arrows beneath it do the changing.
-        <span
-          className={sideStyles.button}
-          role="img"
-          aria-label={channelName ? `Channel ${channelNumber} ${channelName}` : `Channel ${channelNumber}`}
-          data-feed-channel-badge=""
-        >
-          <img className={sideStyles.image} src={channelIconUrl} alt="" draggable={false} />
-        </span>
-      )}
-      {channelNumber != null && onChannelUp && onChannelDown && (
-        <SideControlIconButton
-          icon="global.channel_up"
-          aria-label="Channel up"
-          activation="pointerdown"
-          onActivate={onChannelUp}
-        />
-      )}
-      {channelNumber != null && (
-        // The channel's only counter, sitting between the arrows that move it.
-        <span className={styles.channelNumber} aria-hidden="true">{channelNumber}</span>
-      )}
-      {channelNumber != null && onChannelUp && onChannelDown && (
-        <SideControlIconButton
-          icon="global.channel_down"
-          aria-label="Channel down"
-          activation="pointerdown"
-          onActivate={onChannelDown}
-        />
-      )}
-      {onPostPrevious && onPostNext && (
-        // The same two arrows turned on their side: up/down changes the
-        // channel, left/right walks the people posting on it. The rail is a
-        // strict 44px icon grid, so these are side buttons like everything
-        // else in it rather than a wider clay cluster it would crush.
-        <SideControlIconButton
-          icon="global.channel_up"
-          aria-label="Previous post"
-          activation="pointerdown"
-          disabled={!postActionsAvailable}
-          imageStyle={{ transform: 'rotate(-90deg)' }}
-          onActivate={onPostPrevious}
-        />
-      )}
-      {onPostPrevious && onPostNext && (
-        <SideControlIconButton
-          icon="global.channel_down"
-          aria-label="Next post"
-          activation="pointerdown"
-          disabled={!postActionsAvailable}
-          imageStyle={{ transform: 'rotate(-90deg)' }}
-          onActivate={onPostNext}
-        />
-      )}
       {onDelete && (
         <span className={deletePending ? styles.deletePending : undefined} aria-busy={deletePending || undefined}>
           <SideControlIconButton
