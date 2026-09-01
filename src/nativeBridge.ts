@@ -6,6 +6,69 @@ type NativeWindow = Window & typeof globalThis & {
   }
 }
 
+const RN_WEB_SHELL_PARENT_ORIGIN = 'http://127.0.0.1:8081'
+
+/** Exact, localhost-only isolated RN harness route. Only this route replaces
+ * canonical Firestore subscriptions with the emulator runner's projections. */
+export function isRNWebShellRoute(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.location.origin === 'http://127.0.0.1:5173'
+    && new URLSearchParams(window.location.search).get('rnWebShell') === '1'
+}
+
+/** Exact, localhost-only transport route for a shared-backend recorded test.
+ * It installs the RN parent bridge but deliberately does not identify as the
+ * isolated shell, so Feed/Map keep their canonical Firestore listeners. */
+export function isRNWebBridgeRoute(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.location.origin === 'http://127.0.0.1:5173'
+    && new URLSearchParams(window.location.search).get('rnWebBridge') === '1'
+}
+
+function isRNWebParentBridgeRoute(): boolean {
+  return isRNWebShellRoute() || isRNWebBridgeRoute()
+}
+
+function installRNWebParentBridge(): void {
+  try {
+    if (typeof window === 'undefined'
+      || window.parent === window
+      || !isRNWebParentBridgeRoute()
+      || new URL(document.referrer).origin !== RN_WEB_SHELL_PARENT_ORIGIN) return
+
+    const nativeWindow = window as NativeWindow
+    nativeWindow.PoplurNative = {
+      onEvent(json) {
+        window.parent.postMessage({ type: 'poplur-rn-shell-event', data: json }, RN_WEB_SHELL_PARENT_ORIGIN)
+      },
+    }
+    window.addEventListener('message', event => {
+      if (event.origin !== RN_WEB_SHELL_PARENT_ORIGIN || event.source !== window.parent) return
+      const message = event.data as {
+        type?: unknown
+        kind?: unknown
+        detail?: unknown
+        eventName?: unknown
+      } | null
+      if (!message || message.type !== 'poplur-rn-shell-dispatch') return
+      if (message.kind === 'message') {
+        const detail = message.detail as { type?: unknown } | null
+        if (detail?.type === 'poplur-location') {
+          ;(window as typeof window & { __poplurNativeLocation?: unknown }).__poplurNativeLocation = detail
+        }
+        window.postMessage(message.detail, window.location.origin)
+        return
+      }
+      if (typeof message.eventName !== 'string' || !message.eventName.startsWith('poplur-')) return
+      window.dispatchEvent(new CustomEvent(message.eventName, { detail: message.detail }))
+    })
+  } catch {
+    // The RN web harness is optional and must never affect normal startup.
+  }
+}
+
+installRNWebParentBridge()
+
 // Native's managed-WebView scheduler deliberately stops script-created rAF
 // loops once the current interaction lease expires. A finite camera operation
 // (Mapbox ease/fly, for example) may legitimately outlive that short input

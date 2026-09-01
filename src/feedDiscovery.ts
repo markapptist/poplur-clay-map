@@ -24,13 +24,15 @@ export interface FeedDiscoveryPost {
   channelId: string
   radiusMeters?: number
   distanceMeters?: number
+  originLatitude?: number
+  originLongitude?: number
   createdAtMillis?: number
   viewCount?: number
   likeCount?: number
   commentCount?: number
   shareCount?: number
-  /** Hidden origins are deliberately ineligible for Local. Ranking a private
-   *  origin as nearby would disclose the very fact the privacy switch hides. */
+  /** Hidden origins are deliberately ineligible for Feed discovery. Delivery
+   *  cannot prove earned reach without disclosing the origin privacy hides. */
   locationVisibility?: 'approximate' | 'hidden'
 }
 
@@ -237,20 +239,52 @@ function score(
   return Math.log1p(radiusKm) * 30 + fresh * 10 + affinity * 2
 }
 
-/** Ranks a bounded in-memory candidate list. Local is privacy-fail-closed:
- *  only posts carrying an approximate public origin and a computed distance
- *  participate. Hidden or legacy-unknown origins never reveal nearness. */
+/**
+ * Feed delivery is earned reach: a public approximate post reaches a viewer
+ * only while the viewer is inside the radius stored on that post. Missing
+ * location, hidden origin, and zero/malformed radius all fail closed.
+ *
+ * Map intentionally does not use this predicate. It is the global territory
+ * board; its camera footprint selects which claims and close-up pins are shown.
+ */
+export function feedPostReachesViewer(
+  post: Pick<FeedDiscoveryPost,
+    'radiusMeters' | 'locationVisibility' | 'originLatitude' | 'originLongitude'>,
+  viewerCoords: readonly [number, number] | null | undefined,
+): boolean {
+  if (post.locationVisibility !== 'approximate' || !viewerCoords) return false
+  const radiusMeters = post.radiusMeters
+  const originLatitude = post.originLatitude
+  const originLongitude = post.originLongitude
+  const viewerLongitude = viewerCoords[0]
+  const viewerLatitude = viewerCoords[1]
+  if (typeof radiusMeters !== 'number' || !Number.isFinite(radiusMeters) || radiusMeters <= 0
+    || typeof originLatitude !== 'number' || !Number.isFinite(originLatitude) || Math.abs(originLatitude) > 90
+    || typeof originLongitude !== 'number' || !Number.isFinite(originLongitude) || Math.abs(originLongitude) > 180
+    || !Number.isFinite(viewerLatitude) || Math.abs(viewerLatitude) > 90
+    || !Number.isFinite(viewerLongitude) || Math.abs(viewerLongitude) > 180) return false
+  return distanceMetersBetween(
+    [viewerLongitude, viewerLatitude],
+    [originLongitude, originLatitude],
+  ) <= radiusMeters
+}
+
+/** Ranks a bounded in-memory candidate list. Every discovery mode is
+ *  privacy/reach-fail-closed: all require an approximate public origin whose
+ *  stored radius reaches the viewer. Local additionally requires the computed
+ *  distance it uses for ordering. Trending changes rank, never delivery. */
 export function rankFeedPosts<T extends FeedDiscoveryPost>(
   posts: readonly T[],
   state: FeedDiscoverySnapshot = snapshot,
   now = Date.now(),
+  viewerCoords: readonly [number, number] | null = null,
 ): T[] {
   const hidden = new Set(state.hiddenPostIds)
   const candidates = posts.filter(post => {
     if (hidden.has(post.id)) return false
+    if (!feedPostReachesViewer(post, viewerCoords)) return false
     if (state.mode !== 'local') return true
-    return post.locationVisibility === 'approximate'
-      && Number.isFinite(post.distanceMeters)
+    return Number.isFinite(post.distanceMeters)
   })
   return candidates.slice().sort((a, b) => {
     if (a.id === state.focusedPostId && b.id !== state.focusedPostId) return -1
@@ -304,8 +338,8 @@ export function searchDiscovery(
 }
 
 export function distanceMetersBetween(
-  a: [number, number],
-  b: [number, number],
+  a: readonly [number, number],
+  b: readonly [number, number],
 ): number {
   const toRadians = (degrees: number) => degrees * Math.PI / 180
   const latitudeDelta = toRadians(b[1] - a[1])

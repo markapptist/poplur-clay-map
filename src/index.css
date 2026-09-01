@@ -37,7 +37,7 @@ html, body, #root {
    header/notch gap. The desktop composition stays on its authored 154px guide. */
 @media (max-width: 600px) {
   :root {
-    --poplur-map-control-top: max(92px, calc(env(safe-area-inset-top, 0px) + 50px));
+    --poplur-map-control-top: max(62px, calc(env(safe-area-inset-top, 0px) + 12px));
   }
 }
 

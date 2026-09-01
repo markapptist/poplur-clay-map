@@ -130,6 +130,8 @@ export interface PendingMapPost {
    *  user's attestation and AI direction with the same draft on the return. */
   rightsAttested?: boolean
   aiPrompt?: string
+  /** The poster's chosen pin model colour, kept across the location detour. */
+  pinColor?: 'red' | 'purple' | 'blue' | 'green' | 'orange' | null
 }
 
 let pendingMapPost: PendingMapPost | null = null

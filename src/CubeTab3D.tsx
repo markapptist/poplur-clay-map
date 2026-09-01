@@ -173,6 +173,10 @@ const CAMCORDER_MOTION_GAIN = 1.15
 /** …and it arrives while you are still moving. The parallax spring's weight is
     the whole point on a clay cube and completely wrong on a viewfinder. */
 const CAMCORDER_MOTION_SMOOTHING = 62
+/** Native Core Motion is a renewable lease, not a one-way switch. If WebKit is
+    frozen or its final inactive edge is lost, iOS can stop the sensors after
+    three missed renewals instead of sampling an untouched phone overnight. */
+const NAVIGATOR_MOTION_DEMAND_HEARTBEAT_MS = 2_000
 function reportNavigatorMotionDemand(active: boolean, aiming: boolean): void {
   if (!isNativeShell()) return
   postNativeEvent({ type: 'navigatorMotionDemandChanged', active, aiming })
@@ -863,6 +867,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     let motionWorkDemanded = false
     let reportedMotionActive: boolean | null = null
     let reportedMotionAiming: boolean | null = null
+    let navigatorMotionDemandHeartbeat = 0
     let performanceRenderer: ReturnType<typeof PoplurPerformanceManager.registerRenderer> | null = null
     let pitch = showFoodFaceRef.current ? HALF_PI : 0
     let pitchVelocity = 0
@@ -994,6 +999,22 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         wider camcorder envelope ended up unreachable. */
     const isAiming = () => loadedUrlRef.current === CAMCORDER_MODEL
     const isFrontOnly = () => !!loadedUrlRef.current && FRONT_ONLY_MODELS.has(loadedUrlRef.current)
+    const clearNavigatorMotionDemandHeartbeat = () => {
+      if (!navigatorMotionDemandHeartbeat) return
+      window.clearInterval(navigatorMotionDemandHeartbeat)
+      navigatorMotionDemandHeartbeat = 0
+    }
+    const syncNavigatorMotionDemandHeartbeat = (active: boolean) => {
+      if (!active) {
+        clearNavigatorMotionDemandHeartbeat()
+        return
+      }
+      if (navigatorMotionDemandHeartbeat) return
+      navigatorMotionDemandHeartbeat = window.setInterval(() => {
+        if (reportedMotionActive !== true) return
+        reportNavigatorMotionDemand(true, reportedMotionAiming === true)
+      }, NAVIGATOR_MOTION_DEMAND_HEARTBEAT_MS)
+    }
     const syncNavigatorMotionDemand = () => {
       const active = cubeMotionDemandIsActive({
         eligible: rendererEligible(),
@@ -1001,10 +1022,12 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         workDemanded: motionWorkDemanded,
       })
       const aiming = isAiming()
-      if (active === reportedMotionActive && aiming === reportedMotionAiming) return
-      reportedMotionActive = active
-      reportedMotionAiming = aiming
-      reportNavigatorMotionDemand(active, aiming)
+      if (active !== reportedMotionActive || aiming !== reportedMotionAiming) {
+        reportedMotionActive = active
+        reportedMotionAiming = aiming
+        reportNavigatorMotionDemand(active, aiming)
+      }
+      syncNavigatorMotionDemandHeartbeat(active)
     }
     const setMotionWorkDemanded = (demanded: boolean) => {
       if (motionWorkDemanded === demanded) return
@@ -2027,6 +2050,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       performanceRenderer = null
       cancelScheduledFrame()
       motionWorkDemanded = false
+      clearNavigatorMotionDemandHeartbeat()
       reportNavigatorMotionDemand(false, false)
       window.clearTimeout(flashPulseTimer)
       if (pendingTapTimer != null) clearTimeout(pendingTapTimer)

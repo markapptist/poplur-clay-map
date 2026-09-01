@@ -2089,6 +2089,15 @@ header.weatherTitleBar {
 .popPinMine { transform: translateY(6px) scale(1.16); }
 .popPinMine:active { transform: translateY(6px) scale(1.02); }
 
+/* Testing affordance: a pop whose radius does not reach this viewer. The real
+   pin at reduced presence — colour and face stay readable, but the ghost takes
+   no pointer, so it marks WHERE and WHOSE without granting the open. */
+.popPinGhosted {
+  opacity: 0.38;
+  pointer-events: none;
+}
+.popPinGhosted .popPin { cursor: default; }
+
 /* The owner's static profile face floats above every owned pin. */
 .popPinSelfie {
   position: absolute;

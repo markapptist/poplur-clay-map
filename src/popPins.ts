@@ -1,4 +1,5 @@
 import { modelSprite } from './modelSprite'
+import { pinModelFor, type PinColorId } from './pinColors'
 
 // ── The pop pin: a Poplur pin wearing the poster's face ─────────────────────
 //
@@ -26,11 +27,14 @@ import { modelSprite } from './modelSprite'
 
 export const PIN_SPRITE_SIZE = 256
 
-/** The pin model, framed for a map tier. Prerendered — see the note above. */
-export function pinSprite(mode: '2d' | '3d'): Promise<string> {
+/** The pin model, framed for a map tier. Prerendered — see the note above.
+ *  `pinColor` swaps in one of the supplied coloured pin models; the default
+ *  remains the original pink pin. */
+export function pinSprite(mode: '2d' | '3d', pinColor: PinColorId | null = null): Promise<string> {
+  const model = pinModelFor(pinColor)
   return mode === '3d'
-    ? modelSprite('poplur_pin_lite.glb', { yaw: 20, pitch: 14, size: PIN_SPRITE_SIZE })
-    : modelSprite('poplur_pin_lite.glb', { yaw: 0, pitch: 0, size: PIN_SPRITE_SIZE })
+    ? modelSprite(model, { yaw: 20, pitch: 14, size: PIN_SPRITE_SIZE })
+    : modelSprite(model, { yaw: 0, pitch: 0, size: PIN_SPRITE_SIZE })
 }
 
 /**
@@ -143,6 +147,8 @@ export interface PinFace {
   /** The pop's takeover colour — the rim around the face ties the pin to the
    *  ground it holds, which is how you read two overlapping claims apart. */
   color: string
+  /** The poster's chosen pin model colour; null keeps the original pink pin. */
+  pinColor?: PinColorId | null
   mode: '2d' | '3d'
 }
 
@@ -153,15 +159,15 @@ export interface PinFace {
  * screenful of pops from the same person is one composite, not thirty.
  */
 export function pinWithFace(face: PinFace): Promise<string> {
-  const key = `${face.mode}|${face.avatar ?? 'none'}|${face.color}`
-  const job = composed.get(key) ?? compose(face).catch(() => pinSprite(face.mode))
+  const key = `${face.mode}|${face.avatar ?? 'none'}|${face.color}|${face.pinColor ?? 'pink'}`
+  const job = composed.get(key) ?? compose(face).catch(() => pinSprite(face.mode, face.pinColor ?? null))
   touch(key, job)
   return job
 }
 
 async function compose(face: PinFace): Promise<string> {
   const size = PIN_SPRITE_SIZE
-  const base = await pinSprite(face.mode)
+  const base = await pinSprite(face.mode, face.pinColor ?? null)
   const pin = await loadImage(base)
 
   const canvas = document.createElement('canvas')

@@ -86,6 +86,42 @@ describe('programmatic Map camera motion', () => {
     )).toEqual({ kind: 'translate', zoom: 15.45 })
   })
 
+  it('holds a birds-eye survey at its overview zoom while cycling points', () => {
+    // Plain point, far away: normally a dive to the framed target.
+    expect(mapPointCycleCameraPlan({
+      currentZoom: 3,
+      targetZoom: 17.6,
+      distanceMeters: 2_000_000,
+      requiresTargetFraming: false,
+      holdWideOverview: true,
+    })).toEqual({ kind: 'translate', zoom: 3 })
+    // Authored landmark/radius frames must not override the held overview.
+    expect(mapPointCycleCameraPlan({
+      currentZoom: 1,
+      targetZoom: 15.45,
+      distanceMeters: 5_000_000,
+      requiresTargetFraming: true,
+      holdWideOverview: true,
+    })).toEqual({ kind: 'translate', zoom: 1 })
+    // Without the hold the same wide camera still dives as before.
+    expect(mapPointCycleCameraPlan({
+      currentZoom: 3,
+      targetZoom: 17.6,
+      distanceMeters: 2_000_000,
+      requiresTargetFraming: false,
+    })).toEqual({ kind: 'translate', zoom: 17.6 })
+  })
+
+  it('wires the birds-eye hold to the map min-zoom end stop', () => {
+    const flight = mapAppSource.slice(
+      mapAppSource.indexOf('const flyToCenter = useCallback'),
+      mapAppSource.indexOf('const flyToPop = useCallback'),
+    )
+    expect(flight).toContain('const atWorldOverview = worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)')
+    expect(flight).toContain('holdWideOverview: atWorldOverview')
+    expect(flight).toContain("...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {})")
+  })
+
   it('gives larger takeover radii a wider bounded destination frame', () => {
     const small = mapPointRadiusFrameZoom(0.5, 43.65, 390)
     const large = mapPointRadiusFrameZoom(20, 43.65, 390)

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   advanceCubeMotionLease,
@@ -10,6 +11,22 @@ import {
 } from '../cubeMotionThermalPolicy'
 
 describe('cube thermal motion policy', () => {
+  it('renews native motion only while demanded and gives current iOS messages a stale-demand TTL', () => {
+    const cubeSource = readFileSync(new URL('../CubeTab3D.tsx', import.meta.url), 'utf8')
+    const iosSource = readFileSync(
+      new URL('../../../Poplur2025-iOS/Poplur2025/PostLoginHomeWebView.swift', import.meta.url),
+      'utf8',
+    )
+
+    expect(cubeSource).toContain('NAVIGATOR_MOTION_DEMAND_HEARTBEAT_MS = 2_000')
+    expect(cubeSource).toContain('syncNavigatorMotionDemandHeartbeat(active)')
+    expect(cubeSource).toContain('clearNavigatorMotionDemandHeartbeat()')
+    expect(iosSource).toContain('navigatorMotionDemandLeaseTTL: TimeInterval = 6')
+    expect(iosSource).toContain('if explicitActive == true')
+    expect(iosSource).toContain('renewNavigatorMotionDemandExpiry()')
+    expect(iosSource).toContain('cancelNavigatorMotionDemandExpiry()')
+  })
+
   it('stops all Cube work when the surface is covered or backgrounded', () => {
     expect(cubeRendererCanWork({
       surfaceVisible: false,

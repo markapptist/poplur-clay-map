@@ -107,6 +107,7 @@ interface Post {
   video: string
   poster?: string
   mediaType?: 'photo' | 'video'
+  syntheticPostId?: string
 }
 
 // Production profile media is Firestore-authoritative. A wiped database must
@@ -2569,6 +2570,8 @@ export default function ProfileTwin({
                 <button
                   key={postTileKey(post, i)}
                   className={mode === 'media' && litTiles?.has(i) ? `${styles.tile} ${styles.tileLit}` : styles.tile}
+                  data-synthetic-post-surface={post.syntheticPostId ? 'profile' : undefined}
+                  data-synthetic-post-id={post.syntheticPostId}
                   onClick={() => { playPop(); setViewerIdx(i) }}
                 >
                   {/* the post's own first frame… */}

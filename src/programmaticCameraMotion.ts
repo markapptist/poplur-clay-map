@@ -74,20 +74,28 @@ function clamp(value: number, min: number, max: number): number {
  * A point-arrow press is one relocation, never a staged flight. A nearby pin
  * can retain the scale the person chose. Long-distance points and anything
  * with an authored/extent frame land at that bounded target zoom so the new
- * subject is not clipped by the previous subject's close crop.
+ * subject is not clipped by the previous subject's close crop. A camera parked
+ * at the far end of the zoom rail is a deliberate birds-eye survey: arrow
+ * presses relocate that survey, so the overview zoom is held and only the
+ * centre moves — including onto authored landmark/radius frames.
  */
 export function mapPointCycleCameraPlan({
   currentZoom,
   targetZoom,
   distanceMeters,
   requiresTargetFraming,
+  holdWideOverview = false,
 }: {
   currentZoom: number
   targetZoom: number
   distanceMeters: number
   requiresTargetFraming: boolean
+  holdWideOverview?: boolean
 }): ProgrammaticCameraPlan {
   const safeCurrent = finiteZoom(currentZoom, CLOSE_PROGRAMMATIC_CAMERA_MIN_ZOOM - 1)
+  if (holdWideOverview) {
+    return { kind: 'translate', zoom: safeCurrent }
+  }
   const safeTarget = clamp(
     finiteZoom(targetZoom, CLOSE_PROGRAMMATIC_CAMERA_MIN_ZOOM),
     MAP_POINT_MIN_TARGET_ZOOM,

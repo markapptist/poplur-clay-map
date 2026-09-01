@@ -101,6 +101,7 @@ import {
   cancelManagedRenderingWake,
   isIOSNativeShell,
   isNativeShell,
+  isRNWebShellRoute,
   postNativeEvent,
   wakeManagedRendering,
 } from './nativeBridge'
@@ -904,9 +905,10 @@ const CLAY_MAP_SRC = (() => {
     : ''
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
   const managedLocationQuery = managedLocation ? '&managedLocation=1' : ''
+  const rnWebShellQuery = isRNWebShellRoute() ? '&rnWebShell=1' : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}`
 })()
 
 function clockMapNight(): boolean {
@@ -2120,6 +2122,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
+  const [mapSyntheticPostId, setMapSyntheticPostId] = useState<string | null>(null)
   const [mapConquerSnapshot, setMapConquerSnapshot] = useState<MapConquerSnapshot | null>(null)
   const [mapConquerGlanceOpen, setMapConquerGlanceOpen] = useState(false)
   const mapFrontRef = useRef(initialTab === 'map')
@@ -2823,9 +2826,41 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
         setMapPointLabelActive(false)
+        setMapSyntheticPostId(null)
+      }
+      if (event.data.type === 'poplur-map-synthetic-post-visible'
+        && isRNWebShellRoute()
+        && event.origin === window.location.origin) {
+        const postId = typeof event.data.postId === 'string'
+          ? event.data.postId.trim().slice(0, 128)
+          : ''
+        if (postId) {
+          setMapSyntheticPostId(current => event.data.visible === true
+            ? postId
+            : current === postId ? null : current)
+        }
       }
       if (event.data.type === 'poplur-map-point-focus') {
         setMapPointLabelActive(event.data.active === true)
+      }
+      // Arrow-cycling the map points. When the focused point is a pin, the
+      // RADIUS card reads THAT post's radius — the same contract as the
+      // poplur-map-pop flight below; landmarks and the current-location stop
+      // hand the card back to the accumulated number.
+      if (event.data.type === 'poplur-map-point') {
+        if (event.data.kind === 'pin' && typeof event.data.radiusKm === 'number'
+          && Number.isFinite(event.data.radiusKm)) {
+          setMapPopRadiusKm(event.data.radiusKm)
+          setMapWorldTotalKm(null)
+          setMapHudContext(previous => previous
+            ? { ...previous, scope: 'pop', popRadiusKm: event.data.radiusKm }
+            : previous)
+        } else if (event.data.kind === 'landmark' || event.data.kind === 'current') {
+          setMapPopRadiusKm(null)
+          setMapHudContext(previous => previous && previous.scope === 'pop'
+            ? { ...previous, scope: 'area' }
+            : previous)
+        }
       }
       if (event.data.type === 'poplur-account-radius') {
         const totalRadiusKm = Number(event.data.radiusKm)
@@ -3399,6 +3434,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       }, '*',
     )
   }, [ownPhoto, ownSelfieVideo, ownUid, mapReady])
+  useEffect(() => {
+    if (!mapReady || !isRNWebShellRoute()) return
+    mapFrameRef.current?.contentWindow?.postMessage({
+      type: 'poplur-native-map-posts',
+      posts: interceptingFeedPosts,
+      ownUid,
+    }, window.location.origin)
+  }, [interceptingFeedPosts, mapReady, ownUid])
   // A subscreen asking for the whole screen (the radio's long press). Kept as
   // shell state for the same reason feedFullscreen is: the chrome layer sits
   // ABOVE the subscreen stage, so a subscreen can neither cover it nor hide it
@@ -5109,6 +5152,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             key={`poplur-map-${mapReloadNonce}`}
             ref={mapFrameRef}
             data-poplur-screen="map"
+            data-synthetic-post-surface={mapSyntheticPostId ? 'map' : undefined}
+            data-synthetic-post-id={mapSyntheticPostId ?? undefined}
             className={activeTab === 'map' ? styles.mapLayer : `${styles.mapLayer} ${styles.mapLayerIdle}`}
             src={mapPickSpotLaunch
               ? `${CLAY_MAP_SRC}&pickSpot=1${

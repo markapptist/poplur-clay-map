@@ -31,5 +31,8 @@ export function mapPinRenderKey(pin: PopPin): string {
     media: pin.media ?? null,
     world: pin.world ?? false,
     mine: pin.mine ?? false,
+    ghost: pin.ghost ?? false,
+    pinColor: pin.pinColor ?? null,
+    syntheticPostId: pin.syntheticPostId ?? null,
   })
 }

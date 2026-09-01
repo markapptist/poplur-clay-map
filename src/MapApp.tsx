@@ -115,7 +115,8 @@ import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
 import { publishAccountRadiusKm } from './accountRadius'
 import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
-import { subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
+import { liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
+import { normalizeNativeFeedPosts } from './nativeFeedPosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
 import { worldCountryZoomActive, type WorldCountryUpdate } from './mapCountrySignal'
@@ -149,7 +150,7 @@ import {
   announceMapTour, getRadioPlaybackState, isMapRadioActive, isRadioBackgroundEnabled,
   nowPlayingStation, startRadioForMap, stopMapRadio, subscribeRadioPlayback, tuneLiveRadio,
 } from './mapRadio'
-import { isNativeShell, postNativeEvent, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
+import { isNativeShell, isRNWebShellRoute, postNativeEvent, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
@@ -602,6 +603,7 @@ function nativeLocationFrom(value: unknown): NativeLocation | null {
 
 export default function MapApp() {
   const controlSide = useControlSide()
+  const rnWebShellRoute = isRNWebShellRoute()
   // This component is loaded only for the internal map route. Keeping it
   // separate from App means Home/Hold/Feed/Profile do not arm Map polling,
   // weather, news, audio, or camera controllers before returning their view.
@@ -1737,6 +1739,7 @@ export default function MapApp() {
     const currentBearing = map.getBearing()
     const authoredMotion = motionMode !== 'default'
     const currentCenter = map.getCenter()
+    const atWorldOverview = worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)
     const cameraPlan = motionMode === 'map-point-cycle'
       ? mapPointCycleCameraPlan({
         currentZoom,
@@ -1746,6 +1749,7 @@ export default function MapApp() {
           targetCenter,
         ),
         requiresTargetFraming: Boolean(landmarkFrame),
+        holdWideOverview: atWorldOverview,
       })
       : programmaticCameraPlanForMode(currentZoom, targetZoom, motionMode)
 
@@ -1779,7 +1783,9 @@ export default function MapApp() {
           zoom: cameraPlan.zoom,
           pitch: destinationPose.pitch,
           bearing: destinationPose.bearing,
-          ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
+          // The authored offset is pixel framing for the hero close-up; a
+          // held birds-eye survey centres the subject instead.
+          ...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {}),
           duration: 0,
           essential: true,
         })
@@ -2861,7 +2867,7 @@ export default function MapApp() {
   // The visible control is numbered 1 → 2 → 3. Launch with all three layers
   // present so the first map frame explains the shared domination system.
   const [popLevel, setPopLevel] = useState<PopLevel>('all')
-  const [ownUid, setOwnUid] = useState<string | null>(() => currentUid())
+  const [ownUid, setOwnUid] = useState<string | null>(() => rnWebShellRoute ? null : currentUid())
   const [liveMapPosts, setLiveMapPosts] = useState<LiveMapPostPin[]>([])
   const liveMapPostsRef = useRef(liveMapPosts)
   liveMapPostsRef.current = liveMapPosts
@@ -2870,20 +2876,55 @@ export default function MapApp() {
     radiusKm: 0,
     postCount: 0,
   })
-  useEffect(() => onUser(user => setOwnUid(user?.uid ?? null)), [])
-  useEffect(() => subscribeLiveMapPosts(
-    pins => {
-      setLiveMapPosts(pins)
-      setLiveMapPostsReady(true)
-    },
-    () => setLiveMapPostsReady(true),
-    ownUid,
-  ), [ownUid])
-  useEffect(() => subscribeAccountRadiusPosts(
-    ownUid,
-    setAccountRadiusSnapshot,
-    () => setAccountRadiusSnapshot({ radiusKm: 0, postCount: 0 }),
-  ), [ownUid])
+  useEffect(() => {
+    if (rnWebShellRoute) return undefined
+    return onUser(user => setOwnUid(user?.uid ?? null))
+  }, [rnWebShellRoute])
+  useEffect(() => {
+    if (rnWebShellRoute) {
+      const receiveSyntheticPosts = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin || event.source !== window.parent) return
+        const payload = event.data as { type?: unknown; posts?: unknown[]; ownUid?: unknown } | null
+        if (!payload || payload.type !== 'poplur-native-map-posts') return
+        const nextUid = typeof payload.ownUid === 'string' && payload.ownUid.trim()
+          ? payload.ownUid.trim().slice(0, 128)
+          : null
+        const posts = normalizeNativeFeedPosts(
+          { posts: payload.posts },
+          { allowSyntheticOnboarding: true },
+        )
+        setOwnUid(nextUid)
+        setLiveMapPosts(nativeFeedPostsToMapPins(posts, nextUid))
+        setLiveMapPostsReady(true)
+      }
+      window.addEventListener('message', receiveSyntheticPosts)
+      return () => window.removeEventListener('message', receiveSyntheticPosts)
+    }
+    return subscribeLiveMapPosts(
+      pins => {
+        setLiveMapPosts(pins)
+        setLiveMapPostsReady(true)
+      },
+      () => setLiveMapPostsReady(true),
+      ownUid,
+    )
+  }, [ownUid, rnWebShellRoute])
+  useEffect(() => {
+    if (!rnWebShellRoute) return
+    const mine = liveMapPosts.filter(pin => pin.mine)
+    setAccountRadiusSnapshot({
+      radiusKm: mine.reduce((sum, pin) => sum + pin.radiusKm, 0),
+      postCount: mine.length,
+    })
+  }, [liveMapPosts, rnWebShellRoute])
+  useEffect(() => {
+    if (rnWebShellRoute) return undefined
+    return subscribeAccountRadiusPosts(
+      ownUid,
+      setAccountRadiusSnapshot,
+      () => setAccountRadiusSnapshot({ radiusKm: 0, postCount: 0 }),
+    )
+  }, [ownUid, rnWebShellRoute])
   const accountRadiusKm = accountRadiusSnapshot.radiusKm
   const accountPostCount = accountRadiusSnapshot.postCount
   useEffect(() => {
@@ -3017,6 +3058,12 @@ export default function MapApp() {
   const [myColor, setMyColor] = useState(() => takeoverTint(PALETTE.pinkHot))
   useEffect(() => onTakeoverColor(() => setMyColor(takeoverTint(PALETTE.pinkHot))), [])
   const mapPins = useMemo(() => {
+    // Interception is the same math Feed delivery runs: a post is in sight
+    // only while its stored radius reaches the viewer. Mirror Feed's viewer
+    // resolution exactly — the shared native fix when one exists, the
+    // deterministic Toronto preview origin in a browser, fail-closed native.
+    const reachViewer: [number, number] | null = currentLocation
+      ?? (isNativeShell() ? null : [-79.3811, 43.6487])
     return liveMapPosts
       .filter(pin => popLevel === 'all'
         || (popLevel === 'mine' ? pin.mine : !pin.mine))
@@ -3028,8 +3075,9 @@ export default function MapApp() {
           ? { src: ownSelfieVideo, poster: ownAvatar ?? pin.avatar ?? undefined }
           : undefined,
         radiusDeltaKm: pinRadiusPulse?.id === pin.id ? pinRadiusPulse.deltaKm : undefined,
+        ghost: liveMapPinGhost(pin, reachViewer),
       }))
-  }, [liveMapPosts, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
+  }, [currentLocation, liveMapPosts, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
 
   // One route powers the horizontal arrows at every zoom. It comes from the
   // authoritative data, not the handful of DOM markers ClayMap keeps mounted
@@ -4348,6 +4396,9 @@ export default function MapApp() {
           upLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}
           downLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}
           onUp={() => {
+            // Every arrow press answers with a pop, like every other clay
+            // control — pressed is pressed, whether or not a step follows.
+            playPop(0.25)
             // These arrows already live in this map document. Invoke the news
             // step synchronously instead of round-tripping through a same-page
             // postMessage whose delivery can trail a camera/idle transition.
@@ -4359,6 +4410,7 @@ export default function MapApp() {
             }, '*')
           }}
           onDown={() => {
+            playPop(0.25)
             if (tourMode === 'news') { stepNewsTour(1); return }
             window.postMessage({
               type: 'poplur-map-action',

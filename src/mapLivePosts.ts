@@ -9,6 +9,9 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import type { PopPin } from './ClayMap'
+import { feedPostReachesViewer } from './feedDiscovery'
+import { pinColorId } from './pinColors'
+import type { NativeFeedPost } from './nativeFeedPosts'
 import { webDb } from './webFirebase'
 
 const LIVE_MAP_POST_LIMIT = 160
@@ -52,12 +55,16 @@ function timestampMs(value: unknown): number {
   return Math.max(0, finite(value) ?? 0)
 }
 
-function safeRemoteURL(value: unknown): string | null {
+function safeRemoteURL(value: unknown, allowSyntheticOnboarding = false): string | null {
   const raw = text(value, 2_048)
   if (!raw) return null
   try {
     const parsed = new URL(raw)
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : null
+    if (parsed.username || parsed.password) return null
+    if (parsed.protocol === 'https:') return parsed.toString()
+    return allowSyntheticOnboarding && parsed.origin === 'http://127.0.0.1:9199'
+      ? parsed.toString()
+      : null
   } catch {
     return null
   }
@@ -88,6 +95,7 @@ export function normalizeLiveMapPost(
   id: string,
   row: DocumentData,
   ownUid: string | null = null,
+  options: { allowSyntheticOnboarding?: boolean } = {},
 ): LiveMapPostPin | null {
   if (!id || !explicitPublished(row) || row.locationVisibility !== 'approximate'
     || row.privateAccount === true || row.ghostMode === true) return null
@@ -106,10 +114,15 @@ export function normalizeLiveMapPost(
     ? (handleSource.startsWith('@') ? handleSource : `@${handleSource}`)
     : `@${ownerId.slice(0, 8)}`
   const name = text(row.place ?? row.locationName, 80) || user
-  const mediaURL = safeRemoteURL(row.playbackURL ?? row.mediaURL)
-  const posterURL = safeRemoteURL(row.posterURL)
+  const syntheticJourney = options.allowSyntheticOnboarding === true
+    && row.syntheticJourney === 'first-user-v1'
+    ? 'first-user-v1' as const
+    : undefined
+  const mediaURL = safeRemoteURL(row.playbackURL ?? row.mediaURL, Boolean(syntheticJourney))
+  const posterURL = safeRemoteURL(row.posterURL, Boolean(syntheticJourney))
   const avatar = safeRemoteURL(
     row.profilePictureURL ?? row.avatarURL ?? row.avatarUrl ?? row.photoURL,
+    Boolean(syntheticJourney),
   )
   const declaredType = text(row.mediaType, 16).toLowerCase()
   const looksLikeImage = mediaURL != null
@@ -148,9 +161,76 @@ export function normalizeLiveMapPost(
     media,
     world: false,
     mine,
+    pinColor: pinColorId(row.pinColor) ?? undefined,
     source: 'firestore',
     createdAtMs,
+    syntheticPostId: syntheticJourney ? id : undefined,
   }
+}
+
+/** Project the bounded RN emulator snapshot into the same real Map pin model.
+ * Only explicitly tagged first-user rows can cross this synthetic-only path. */
+export function nativeFeedPostsToMapPins(
+  posts: readonly NativeFeedPost[],
+  ownUid: string | null,
+): LiveMapPostPin[] {
+  return posts.flatMap(post => {
+    if (post.syntheticJourney !== 'first-user-v1') return []
+    const pin = normalizeLiveMapPost(post.id, {
+      userID: post.ownerId,
+      username: post.username,
+      mediaURL: post.mediaURL,
+      mediaType: post.mediaType,
+      posterURL: post.posterURL,
+      caption: post.caption,
+      channelId: post.channelId,
+      radiusMeters: post.radiusMeters,
+      createdAtMillis: post.createdAtMillis,
+      viewCount: post.viewCount,
+      likeCount: post.likeCount,
+      downvoteCount: post.downvoteCount,
+      commentCount: post.commentCount,
+      shareCount: post.shareCount,
+      locationVisibility: post.locationVisibility,
+      latitude: post.originLatitude,
+      longitude: post.originLongitude,
+      audience: 'public',
+      status: 'published',
+      syntheticJourney: post.syntheticJourney,
+    }, ownUid, { allowSyntheticOnboarding: true })
+    return pin ? [pin] : []
+  })
+}
+
+/**
+ * The same earned-reach math Feed delivery uses (feedPostReachesViewer),
+ * projected onto a Map pin. Map and Feed must agree on interception: a post
+ * whose radius reaches the viewer is in sight on both surfaces; one that
+ * does not reaches the viewer on neither.
+ */
+export function liveMapPinReachesViewer(
+  pin: Pick<LiveMapPostPin, 'coords' | 'radiusKm'>,
+  viewerCoords: readonly [number, number] | null,
+): boolean {
+  return feedPostReachesViewer({
+    radiusMeters: pin.radiusKm * 1_000,
+    locationVisibility: 'approximate',
+    originLatitude: pin.coords[1],
+    originLongitude: pin.coords[0],
+  }, viewerCoords)
+}
+
+/**
+ * Testing affordance: while the radius system is under test, an out-of-reach
+ * pin stays on the board as a dotted outline with no fill instead of
+ * disappearing outright, so interception can be judged by eye against Feed.
+ * Your own pops are never ghosted — you always see your own pins.
+ */
+export function liveMapPinGhost(
+  pin: Pick<LiveMapPostPin, 'coords' | 'radiusKm' | 'mine'>,
+  viewerCoords: readonly [number, number] | null,
+): boolean {
+  return pin.mine !== true && !liveMapPinReachesViewer(pin, viewerCoords)
 }
 
 /** Normalize one complete Firestore query snapshot. Replacing Map state with

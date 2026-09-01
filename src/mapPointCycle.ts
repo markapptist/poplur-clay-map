@@ -79,7 +79,11 @@ export function buildMapPointCycle({
     const key = `pin:${pin.id}`
     if (keys.has(key)) continue
     keys.add(key)
-    const radiusKm = pin.mine && Number.isFinite(pin.radiusKm) && pin.radiusKm >= 0
+    // Every pop's radius, not just your own: the number is already public on
+    // the post document, and the radius readout is how interception gets
+    // judged against the pin while the system is under test. Zero stays a
+    // real, displayed value — it is the honest reading for a fresh post.
+    const radiusKm = Number.isFinite(pin.radiusKm) && pin.radiusKm >= 0
       ? pin.radiusKm
       : null
     points.push({

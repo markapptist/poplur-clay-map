@@ -8,7 +8,7 @@ import {
   type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { isNativeShell, isRNWebShellRoute, postNativeEvent } from './nativeBridge'
 import { webDb } from './webFirebase'
 
 const LIVE_FEED_POST_LIMIT = 160
@@ -36,6 +36,7 @@ export interface NativeFeedPost {
   locationVisibility: 'approximate' | 'hidden'
   originLatitude?: number
   originLongitude?: number
+  syntheticJourney?: 'first-user-v1'
 }
 
 type NativeFeedDetail = { posts?: unknown[] }
@@ -51,11 +52,15 @@ let unsubscribeRealtime: Unsubscribe | null = null
 let nativeFallbackListening = false
 const listeners = new Set<() => void>()
 
-function safeRemoteURL(value: unknown): string | null {
+function safeRemoteURL(value: unknown, allowSyntheticOnboarding = false): string | null {
   if (typeof value !== 'string' || value.length > 2_048) return null
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null
+    if (url.username || url.password) return null
+    if (url.protocol === 'https:') return url.toString()
+    return allowSyntheticOnboarding && url.origin === 'http://127.0.0.1:9199'
+      ? url.toString()
+      : null
   } catch {
     return null
   }
@@ -103,13 +108,20 @@ function enabledFlag(value: unknown): boolean {
     || (typeof value === 'string' && value.trim().toLowerCase() === 'true')
 }
 
-function normalizeFeedPost(idValue: unknown, row: Record<string, unknown>): NativeFeedPost | null {
+function normalizeFeedPost(
+  idValue: unknown,
+  row: Record<string, unknown>,
+  allowSyntheticOnboarding = false,
+): NativeFeedPost | null {
   const id = boundedText(idValue, 128)
   if (!id || !isPublished(row)) return null
 
-  const mediaURL = safeRemoteURL(row.playbackURL ?? row.mediaURL)
+  const syntheticJourney = allowSyntheticOnboarding && row.syntheticJourney === 'first-user-v1'
+    ? 'first-user-v1' as const
+    : undefined
+  const mediaURL = safeRemoteURL(row.playbackURL ?? row.mediaURL, Boolean(syntheticJourney))
   if (!mediaURL) return null
-  const posterURL = safeRemoteURL(row.posterURL) ?? undefined
+  const posterURL = safeRemoteURL(row.posterURL, Boolean(syntheticJourney)) ?? undefined
   const ownerId = boundedText(row.ownerId ?? row.userID ?? row.userId, 128)
   const usernameValue = boundedText(row.username ?? row.handle ?? row.displayName, 40)
     ?? (ownerId ? ownerId.slice(0, 8) : 'Poplur user')
@@ -158,17 +170,21 @@ function normalizeFeedPost(idValue: unknown, row: Record<string, unknown>): Nati
     locationVisibility: hasSafeOrigin ? 'approximate' : 'hidden',
     originLatitude: hasSafeOrigin ? originLatitude : undefined,
     originLongitude: hasSafeOrigin ? originLongitude : undefined,
+    syntheticJourney,
   }
 }
 
 /** Compatibility boundary for the native one-shot fallback. It uses the same
  * publication and privacy policy as the canonical Firestore listener. */
-export function normalizeNativeFeedPosts(detail: NativeFeedDetail): NativeFeedPost[] {
+export function normalizeNativeFeedPosts(
+  detail: NativeFeedDetail,
+  options: { allowSyntheticOnboarding?: boolean } = {},
+): NativeFeedPost[] {
   if (!Array.isArray(detail.posts)) return []
   return detail.posts.slice(0, LIVE_FEED_POST_LIMIT).flatMap(raw => {
     if (!raw || typeof raw !== 'object') return []
     const row = raw as Record<string, unknown>
-    const post = normalizeFeedPost(row.id, row)
+    const post = normalizeFeedPost(row.id, row, options.allowSyntheticOnboarding === true)
     return post ? [post] : []
   }).sort((a, b) => b.createdAtMillis - a.createdAtMillis || a.id.localeCompare(b.id))
 }
@@ -217,6 +233,7 @@ function receiveNativePosts(event: Event): void {
   if (realtimeState !== 'fallback') return
   publish(normalizeNativeFeedPosts(
     (event as CustomEvent<NativeFeedDetail>).detail ?? {},
+    { allowSyntheticOnboarding: isRNWebShellRoute() },
   ))
 }
 
@@ -231,6 +248,12 @@ function requestNativeFallback(): void {
 
 function startRealtimeFeed(): void {
   if (unsubscribeRealtime || realtimeState === 'connecting' || realtimeState === 'live') return
+  if (isRNWebShellRoute()) {
+    realtimeState = 'fallback'
+    publish([])
+    requestNativeFallback()
+    return
+  }
   realtimeState = 'connecting'
   try {
     unsubscribeRealtime = subscribeLiveFeedPosts(posts => {

@@ -7,6 +7,7 @@ export interface RealtimeProfilePost {
   video: string
   poster?: string
   mediaType?: 'photo' | 'video'
+  syntheticPostId?: string
 }
 
 /** A shareable pop is addressed by its immutable post id, never its channel.
@@ -53,15 +54,26 @@ export function profileRecipientUid(
 
 function profilePost(value: NativeFeedPost): RealtimeProfilePost | null {
   const media = value.mediaURL?.trim()
-  if (!media || !/^https:\/\//i.test(media)) return null
+  const synthetic = value.syntheticJourney === 'first-user-v1'
+  const isSyntheticURL = (raw: string | undefined): boolean => synthetic && (() => {
+    try {
+      const url = new URL(raw ?? '')
+      return !url.username && !url.password && url.origin === 'http://127.0.0.1:9199'
+    } catch {
+      return false
+    }
+  })()
+  const syntheticMedia = isSyntheticURL(media)
+  if (!media || (!/^https:\/\//i.test(media) && !syntheticMedia)) return null
   const poster = value.posterURL?.trim()
   return {
     id: value.id?.trim() || media,
     ch: channelLabel(value.channelId),
     title: value.caption?.trim() || 'Your pop',
     video: media,
-    poster: poster && /^https:\/\//i.test(poster) ? poster : undefined,
+    poster: poster && (/^https:\/\//i.test(poster) || isSyntheticURL(poster)) ? poster : undefined,
     mediaType: value.mediaType,
+    syntheticPostId: synthetic ? value.id : undefined,
   }
 }
 

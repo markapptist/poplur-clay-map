@@ -1119,6 +1119,27 @@
 .summaryRow small { color: rgba(255, 238, 247, .64); font: 750 10px/1.25 system-ui, sans-serif; }
 .summaryRow em { color: #8de9ff; font: 900 10px/1 system-ui, sans-serif; font-style: normal; }
 .summaryGlyph { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: #b6f5ff; background: #142b31; box-shadow: inset 0 2px rgba(255, 255, 255, .12); }
+
+/* Pin colour swatches: clay dots for the five supplied pin models plus the
+   original pink. The ring is the selection — colour alone can't carry it. */
+.pinSwatches { display: flex; gap: 8px; padding: 4px 0 2px; }
+.pinSwatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, .35);
+  padding: 0;
+  cursor: pointer;
+  box-shadow: inset 0 2px rgba(255, 255, 255, .35), 0 2px 3px rgba(0, 0, 0, .35);
+  transition: transform .12s ease;
+}
+.pinSwatch:active { transform: scale(.9); }
+.pinSwatchOn {
+  border-color: #fff;
+  outline: 2px solid rgba(0, 0, 0, .45);
+  transform: scale(1.12);
+}
+
 .summaryRow:where(button):active { background: rgba(255, 22, 141, .08); }
 
 .channelPanel .channels {

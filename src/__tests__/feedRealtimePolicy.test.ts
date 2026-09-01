@@ -22,8 +22,13 @@ describe('production Feed realtime policy', () => {
     expect(source).toContain('No posts in this channel')
   })
 
-  it('lets a Map handoff reorder only a post still present in Firestore', () => {
-    expect(source).toContain('const focusedPost = candidates.find(post => post.id === focusedId)')
+  it('lets a Map handoff reorder only an eligible post still present in Firestore', () => {
+    expect(source).toContain('const focusedPost = ranked.find(post => post.id === focusedId)')
+    expect(source).not.toContain('const focusedPost = candidates.find(post => post.id === focusedId)')
     expect(source).not.toContain('const focusedPost: ChannelPost = {')
+  })
+
+  it('exposes the visible Firestore post id for shared-backend proof', () => {
+    expect(source).toContain('data-feed-post-id={post?.id}')
   })
 })

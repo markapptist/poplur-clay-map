@@ -32,17 +32,19 @@ describe('unified Map point cycle', () => {
     ])
   })
 
-  it('reveals radius only for an owned pin', () => {
+  it('reveals every pin radius, zero included — the number is public post data', () => {
     const route = buildMapPointCycle({
       currentLocation: [0, 0],
       pins: [
         { id: 'mine', name: 'Mine', coords: [1, 1], mine: true, radiusKm: 7.5 },
         { id: 'other', name: 'Other', coords: [2, 2], mine: false, radiusKm: 88 },
+        { id: 'fresh', name: 'Fresh', coords: [3, 3], mine: false, radiusKm: 0 },
       ],
       landmarks,
     })
     expect(route.find(point => point.key === 'pin:mine')?.radiusKm).toBe(7.5)
-    expect(route.find(point => point.key === 'pin:other')?.radiusKm).toBeNull()
+    expect(route.find(point => point.key === 'pin:other')?.radiusKm).toBe(88)
+    expect(route.find(point => point.key === 'pin:fresh')?.radiusKm).toBe(0)
     expect(route.find(point => point.kind === 'current')?.radiusKm).toBeNull()
     expect(route.find(point => point.kind === 'landmark')?.radiusKm).toBeNull()
   })

@@ -283,12 +283,12 @@ function rankedPostsFor(
     ...post,
     channelId: channel.id,
     radiusMeters: (post.reachKm ?? 0) * 1_000,
-  })), discovery)
+  })), discovery, Date.now(), viewer)
   if (!focusedContent || focusedContent.channelId !== channel.id) return ranked
   // A Map handoff may reorder a post already present in the authoritative
-  // snapshot, but it cannot resurrect a post deleted after the handoff.
+  // snapshot, but it cannot resurrect a deleted or out-of-reach post.
   const focusedId = canonicalFeedPostId(focusedContent.id)
-  const focusedPost = candidates.find(post => post.id === focusedId)
+  const focusedPost = ranked.find(post => post.id === focusedId)
   return focusedPost
     ? [focusedPost, ...ranked.filter(post => post.id !== focusedPost.id)]
     : ranked
@@ -1760,6 +1760,7 @@ export default function FeedTwin({
       ref={feedRootRef}
       className={styles.feed}
       data-poplur-screen="feed"
+      data-feed-post-id={post?.id}
       onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
+import { syncAmbientMediaPlayback } from './ambientMediaPlayback'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { SideControlIconImage } from './SideControlIcon'
 import type { WeatherIconId } from './sideControlIcons'
@@ -58,6 +59,7 @@ export {
 import { installMapIdleSnapshot, type MapIdleSnapshotController } from './mapIdleSnapshot'
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
+import type { PinColorId } from './pinColors'
 import type { POI, MapTheme } from './data'
 import { mapPinRenderKey } from './mapPinRenderKey'
 import type { MapCyclePoint } from './mapPointCycle'
@@ -250,6 +252,13 @@ export interface PopPin {
   /** A brief, signed radius change shown directly on this pin. */
   radiusDeltaKm?: number
   mine: boolean
+  /** Testing affordance: this post's radius does not reach the viewer, so the
+   *  pin renders translucent (ghosted) and cannot be opened. */
+  ghost?: boolean
+  /** The poster's chosen pin model colour; absent keeps the original pink. */
+  pinColor?: PinColorId
+  /** Exact emulator post id used only by the first-user Test Center proof. */
+  syntheticPostId?: string
 }
 
 function weatherConditionLabel(mode: WeatherMode, iconId?: WeatherIconId) {
@@ -1161,6 +1170,113 @@ export function updateComposeRadiusPreview(
   )
 }
 
+/** Parse a location payload from any bridge shape — the shells' postMessage
+ *  body, a CustomEvent detail, or the cached __poplurNativeLocation value. */
+function readBridgeLocation(value: unknown): [number, number] | null {
+  if (!value || typeof value !== 'object') return null
+  const payload = value as { latitude?: unknown; longitude?: unknown; detail?: unknown }
+  if (payload.detail && typeof payload.detail === 'object') return readBridgeLocation(payload.detail)
+  const latitude = Number(payload.latitude)
+  const longitude = Number(payload.longitude)
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null
+  return [longitude, latitude]
+}
+
+// ── Reach ring: how far YOUR total radius reaches from where you stand ──────
+// Reach is not territory: claims paint ground a post owns, while reach is the
+// interception boundary (see reach.ts) — so it draws as a dashed ring, never a
+// fill. It stands on the same validated live fix as the you-are-here pin and
+// is sized by the account's Firestore-backed total, so a growing radius gets a
+// visible edge on the map.
+const REACH_RING_SOURCE = 'poplur-reach-ring'
+const REACH_RING_GLOW = 'poplur-reach-ring-glow'
+const REACH_RING_LINE = 'poplur-reach-ring-line'
+
+/** Great-circle ring. The account total is allowed to grow to Earth scale,
+ *  where the flat-circle approximation the compose preview uses collapses;
+ *  walk the spherical destination formula instead, unwrapping longitudes so
+ *  the line stays continuous across the antimeridian. */
+function reachRingFeature(center: [number, number], radiusKm: number): GeoJSON.Feature<GeoJSON.LineString> {
+  const steps = 128
+  // Cap just short of the antipode: at half the circumference the ring is a
+  // point on the far side of the planet and the geometry degenerates.
+  const angular = Math.min(radiusKm, 6371 * Math.PI * 0.995) / 6371
+  const latRad = (center[1] * Math.PI) / 180
+  const lngRad = (center[0] * Math.PI) / 180
+  const coordinates: [number, number][] = []
+  let prevLng: number | null = null
+  for (let i = 0; i <= steps; i += 1) {
+    const bearing = (i / steps) * Math.PI * 2
+    const sinLat = Math.sin(latRad) * Math.cos(angular)
+      + Math.cos(latRad) * Math.sin(angular) * Math.cos(bearing)
+    const pointLat = Math.asin(Math.max(-1, Math.min(1, sinLat)))
+    const pointLng = lngRad + Math.atan2(
+      Math.sin(bearing) * Math.sin(angular) * Math.cos(latRad),
+      Math.cos(angular) - Math.sin(latRad) * sinLat,
+    )
+    let lngDeg = (pointLng * 180) / Math.PI
+    if (prevLng != null) {
+      while (lngDeg - prevLng > 180) lngDeg -= 360
+      while (lngDeg - prevLng < -180) lngDeg += 360
+    }
+    prevLng = lngDeg
+    coordinates.push([lngDeg, (pointLat * 180) / Math.PI])
+  }
+  return { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } }
+}
+
+export function installReachRing(map: mapboxgl.Map) {
+  if (!map.getSource(REACH_RING_SOURCE)) {
+    map.addSource(REACH_RING_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+  }
+  // No beforeId: unlike a claim, reach crosses water — the ring rides above
+  // the whole clay world so the boundary stays legible over oceans.
+  if (!map.getLayer(REACH_RING_GLOW)) {
+    map.addLayer({
+      id: REACH_RING_GLOW,
+      type: 'line',
+      source: REACH_RING_SOURCE,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#ffffff', 'line-width': 9, 'line-opacity': 0.26, 'line-blur': 4 },
+    })
+  }
+  if (!map.getLayer(REACH_RING_LINE)) {
+    map.addLayer({
+      id: REACH_RING_LINE,
+      type: 'line',
+      source: REACH_RING_SOURCE,
+      // No round line-cap here: Mapbox draws dash segments with the layer cap,
+      // and round caps melt a fine dash pattern into a solid line.
+      layout: { 'line-join': 'round' },
+      paint: {
+        'line-color': takeoverTint('#E04791'),
+        'line-width': 3,
+        'line-opacity': 0.9,
+        'line-dasharray': [2.4, 1.6],
+      },
+    })
+  }
+}
+
+export function updateReachRing(map: mapboxgl.Map, center: [number, number] | null, radiusKm: number) {
+  // Reinstall-if-missing so a style swap cannot silently drop the ring.
+  installReachRing(map)
+  const source = map.getSource(REACH_RING_SOURCE) as mapboxgl.GeoJSONSource | undefined
+  if (!source) return
+  const safeRadiusKm = Math.max(0, Number.isFinite(radiusKm) ? radiusKm : 0)
+  if (!center || safeRadiusKm === 0) {
+    source.setData({ type: 'FeatureCollection', features: [] })
+    return
+  }
+  source.setData({ type: 'FeatureCollection', features: [reachRingFeature(center, safeRadiusKm)] })
+  // Follow the colour knob live, same as claims and the compose preview.
+  map.setPaintProperty(REACH_RING_LINE, 'line-color', takeoverTint('#E04791'))
+}
+
 // Clay flyers: airplanes cruise low over the surface, satellites orbit high.
 const SVG_PLANE = `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><path d="M20 3 C22.5 3 24 6 24 10 L24 16 L37 24 L37 28 L24 23 L24 31 L29 35 L29 38 L20 35.5 L11 38 L11 35 L16 31 L16 23 L3 28 L3 24 L16 16 L16 10 C16 6 17.5 3 20 3 Z" fill="#FFF2F8" stroke="#d8ccd4" stroke-width="1.5"/><circle cx="20" cy="10" r="2.5" fill="#F63B9A"/></svg>`
 const SVG_SATELLITE = `<svg viewBox="0 0 56 32" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="10" width="16" height="12" rx="2" fill="#F63B9A"/><path d="M4 12 h12 M4 16 h12 M4 20 h12" stroke="#c92e7d" stroke-width="1.5"/><rect x="38" y="10" width="16" height="12" rx="2" fill="#F63B9A"/><path d="M40 12 h12 M40 16 h12 M40 20 h12" stroke="#c92e7d" stroke-width="1.5"/><rect x="20" y="8" width="16" height="16" rx="4" fill="#161116"/><circle cx="28" cy="16" r="4" fill="#FF8AC6"/><rect x="26" y="2" width="4" height="6" rx="2" fill="#FFF2F8"/></svg>`
@@ -1700,18 +1816,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   }, [composeScreenPoint, focusedPostLaunch, mapRef, radiusPreviewLaunch])
 
   useEffect(() => {
-    const readLocation = (value: unknown): [number, number] | null => {
-      if (!value || typeof value !== 'object') return null
-      const payload = value as { latitude?: unknown; longitude?: unknown; detail?: unknown }
-      if (payload.detail && typeof payload.detail === 'object') return readLocation(payload.detail)
-      const latitude = Number(payload.latitude)
-      const longitude = Number(payload.longitude)
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
-      if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null
-      return [longitude, latitude]
-    }
     const apply = (value: unknown) => {
-      const center = readLocation(value)
+      const center = readBridgeLocation(value)
       if (!center) return
       nativeLocationRef.current = center
       onCurrentLocationChangeRef.current?.(center)
@@ -4810,6 +4916,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // route beneath towers.
       installRouteLayers(map)
       installComposeRadiusPreview(map)
+      installReachRing(map)
       if (prototypeComposer) {
         // Drop a pop by HOLDING the ground you want it on. It used to be a
         // plain tap, which left the map with no tap of its own — and the map
@@ -5409,6 +5516,19 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     let marker: mapboxgl.Marker | null = null
     let cancelled = false
     let selfieVideo: HTMLVideoElement | null = null
+    let ambientSleeping = false
+    const syncSelfiePlayback = () => {
+      if (!selfieVideo) return
+      syncAmbientMediaPlayback(
+        selfieVideo,
+        !cancelled && !ambientSleeping && document.visibilityState === 'visible',
+      )
+    }
+    const stopAmbientSelfiePlayback = onAmbientSleepChange(sleeping => {
+      ambientSleeping = sleeping
+      syncSelfiePlayback()
+    })
+    document.addEventListener('visibilitychange', syncSelfiePlayback)
     const usableVideo = ownProfileSelfieVideo && (
       ownProfileSelfieVideo.startsWith('data:video/')
       || /^https:\/\//i.test(ownProfileSelfieVideo)
@@ -5420,7 +5540,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       || /^https:\/\//i.test(ownProfilePhoto)
       || /^poplur-clay:\/\//i.test(ownProfilePhoto)
     ) ? ownProfilePhoto : null
+    let buildStarted = false
+    let queuedCoords: [number, number] | null = null
     const build = (coords: [number, number]) => {
+      // The sprite composite is async: a second fix arriving before it lands
+      // must move the pending pin, not compose a second marker.
+      if (buildStarted) { queuedCoords = coords; return }
+      buildStarted = true
       void pinWithFace({ avatar: null, color: takeoverFace, mode: '3d' })
         .then(src => {
           if (cancelled || mapRef.current !== map) return
@@ -5446,11 +5572,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             selfieVideo.muted = true
             selfieVideo.loop = true
             selfieVideo.playsInline = true
-            selfieVideo.autoplay = true
+            selfieVideo.autoplay = false
             selfieVideo.preload = 'metadata'
             selfieVideo.setAttribute('aria-hidden', 'true')
             markerRoot.appendChild(selfieVideo)
-            void selfieVideo.play().catch(() => { /* stored native URL resumes in its shell */ })
+            syncSelfiePlayback()
           } else if (usablePhoto) {
             const face = document.createElement('img')
             face.className = styles.popPinSelfie
@@ -5460,22 +5586,39 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             markerRoot.appendChild(face)
           }
           marker = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
-            .setLngLat(coords)
+            .setLngLat(queuedCoords ?? coords)
             .addTo(map)
+          queuedCoords = null
         })
     }
     const currentCoords = nativeLocationRef.current
     if (currentCoords) build(currentCoords)
-    const onLocation = () => {
-      const next = nativeLocationRef.current
+    const applyFix = (next: [number, number] | null) => {
       if (!next) return
       if (marker) marker.setLngLat(next)
       else build(next)
     }
+    const onLocation = () => applyFix(nativeLocationRef.current)
+    // The native shells deliver the fix into this iframe as a postMessage —
+    // their 'poplur-location' CustomEvents fire in the PARENT document only.
+    // Listening just for the CustomEvent meant a fix arriving after mount
+    // (CoreLocation always answers async) never stood the pin up on device.
+    // Read the payload itself rather than the ref: the sibling effect that
+    // fills nativeLocationRef can re-subscribe behind this one in call order.
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'poplur-location') return
+      applyFix(readBridgeLocation(event.data) ?? nativeLocationRef.current)
+    }
     window.addEventListener('poplur-location', onLocation)
+    window.addEventListener('poplur-native-location', onLocation)
+    window.addEventListener('message', onMessage)
     return () => {
       cancelled = true
+      stopAmbientSelfiePlayback()
+      document.removeEventListener('visibilitychange', syncSelfiePlayback)
       window.removeEventListener('poplur-location', onLocation)
+      window.removeEventListener('poplur-native-location', onLocation)
+      window.removeEventListener('message', onMessage)
       if (selfieVideo) {
         selfieVideo.pause()
         selfieVideo.removeAttribute('src')
@@ -5485,6 +5628,50 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       marker = null
     }
   }, [mapEpoch, mapRef, radiusPreviewLaunch, ownProfilePhoto, ownProfileSelfieVideo, takeoverFace])
+
+  // ── Reach ring data: the account total, standing on the live fix ──────────
+  // Same anchor contract as the you-are-here pin above — only a validated live
+  // GPS point centres it, and the shells deliver that point as a postMessage
+  // into this iframe, so the message listener is load-bearing on device. Zero
+  // radius draws nothing: the ring exists to give a GROWING total its edge.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapEpoch === 0) return
+    if (radiusPreviewLaunch) return
+    const paint = (coords?: [number, number] | null) => {
+      try {
+        updateReachRing(map, coords ?? nativeLocationRef.current, accountRadiusKm ?? 0)
+      } catch { /* style mid-swap; the next fix repaints */ }
+    }
+    paint()
+    const onLocation = () => paint()
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'poplur-location') return
+      paint(readBridgeLocation(event.data) ?? nativeLocationRef.current)
+    }
+    const offColor = onTakeoverColor(() => paint())
+    window.addEventListener('poplur-location', onLocation)
+    window.addEventListener('poplur-native-location', onLocation)
+    window.addEventListener('message', onMessage)
+    if (import.meta.env.DEV) {
+      // Browser workbench has no live GPS and usually no account radius; the
+      // probe paints the ring on demand: __poplurPreviewReachRing(25).
+      const w = window as unknown as { __poplurPreviewReachRing?: (km?: number) => void }
+      w.__poplurPreviewReachRing = (km = 25) => {
+        try { updateReachRing(map, nativeLocationRef.current ?? HOME_CENTER, km) } catch { /* not ready */ }
+      }
+    }
+    return () => {
+      offColor()
+      window.removeEventListener('poplur-location', onLocation)
+      window.removeEventListener('poplur-native-location', onLocation)
+      window.removeEventListener('message', onMessage)
+      if (import.meta.env.DEV) {
+        delete (window as unknown as { __poplurPreviewReachRing?: unknown }).__poplurPreviewReachRing
+      }
+      try { updateReachRing(map, null, 0) } catch { /* map torn down */ }
+    }
+  }, [accountRadiusKm, mapEpoch, mapRef, radiusPreviewLaunch])
 
   // One universal selected-point marker. It deliberately does not depend on
   // the viewport pin budget or landmark zoom band, so an arrow can identify a
@@ -5569,8 +5756,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // Your own pops sort with the rest — on a shared board the question is
       // who leads here, and pinning yours to the top would answer a different
       // one.
+      // Ghosts never displace a pin the viewer has actually earned sight of:
+      // the capped board keeps every in-reach pop ahead of the dotted outlines.
       inView.sort((a, c) =>
-        dominanceFameScore(c.radiusKm, c.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
+        (a.ghost === true ? 1 : 0) - (c.ghost === true ? 1 : 0)
+        || dominanceFameScore(c.radiusKm, c.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
         || (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0)
         || c.radiusKm - a.radiusKm)
       return inView.slice(0, maxLive)
@@ -5595,6 +5785,15 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     // exact per-frame churn this LOD exists to avoid.
     const livePins = new Map<string, mapboxgl.Marker>()
 
+    const publishSyntheticPostVisibility = (pin: PopPin, visible: boolean) => {
+      if (!pin.syntheticPostId || window.parent === window) return
+      window.parent.postMessage({
+        type: 'poplur-map-synthetic-post-visible',
+        postId: pin.syntheticPostId,
+        visible,
+      }, window.location.origin)
+    }
+
     const buildMarker = (pin: PopPin, src: string): mapboxgl.Marker => {
       // Mapbox owns the marker root's inline transform and rewrites it while
       // the camera moves. Keep that positioning transform off the button
@@ -5606,13 +5805,27 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       markerRoot.dataset.mapPointId = `pin:${pin.id}`
       markerRoot.dataset.mapPointKind = 'pin'
       markerRoot.dataset.mapPointMine = pin.mine ? 'true' : 'false'
+      if (pin.syntheticPostId) {
+        markerRoot.dataset.syntheticPostSurface = 'map'
+        markerRoot.dataset.syntheticPostId = pin.syntheticPostId
+      }
       markerRoot.style.setProperty('--dominationColor', pin.color)
+      if (pin.ghost) {
+        // Out of the viewer's radius: the real pin, ghosted. Translucency shows
+        // WHERE and WHOSE without granting the press — opening a ghost would
+        // deliver content the radius has not earned, so it takes no pointer.
+        markerRoot.dataset.mapPointGhost = 'true'
+        markerRoot.classList.add(styles.popPinGhosted)
+      }
       const el = document.createElement('button')
       el.className = styles.popPin
       el.type = 'button'
-      el.setAttribute('aria-label', pin.mine
-        ? `Your pop at ${pin.name}, ${pin.radiusKm} km`
-        : `${pin.user} holds ${pin.name}, ${pin.radiusKm} km`)
+      el.setAttribute('aria-label', pin.ghost
+        ? `${pin.user ?? 'A pop'} at ${pin.name} — outside your radius`
+        : pin.mine
+          ? `Your pop at ${pin.name}, ${pin.radiusKm} km`
+          : `${pin.user} holds ${pin.name}, ${pin.radiusKm} km`)
+      if (pin.ghost) el.setAttribute('aria-disabled', 'true')
       const img = document.createElement('img')
       img.src = src
       img.alt = ''
@@ -5647,7 +5860,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // Your own pops get a quiet marker of ownership so a crowded board
       // still answers "which of these are mine" without reading faces.
       if (pin.mine) el.classList.add(styles.popPinMine)
-      el.addEventListener('click', event => {
+      if (!pin.ghost) el.addEventListener('click', event => {
         // A search/tour selection owns the map during its camera flight. A
         // delayed pointer event must not open the pin now under the old touch
         // position and replace the landmark that was just selected.
@@ -5662,9 +5875,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         onPinOpenRef.current?.(pin)
       })
       // The pin stands ON its coordinate, so the tip is the anchor.
-      return new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
+      const marker = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
         .setLngLat(pin.coords)
         .addTo(map)
+      publishSyntheticPostVisibility(pin, true)
+      return marker
     }
 
     let syncing = false
@@ -5676,7 +5891,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // Mapbox a transform write every frame, which is what made the old
       // display:none cull insufficient once the board went global.
       for (const [id, marker] of livePins) {
-        if (!wanted.has(id)) { marker.remove(); livePins.delete(id) }
+        if (!wanted.has(id)) {
+          const pin = list.find(candidate => candidate.id === id)
+          marker.remove()
+          livePins.delete(id)
+          if (pin) publishSyntheticPostVisibility(pin, false)
+        }
       }
       const missing = want.filter(p => !livePins.has(p.id))
       if (!missing.length) return
@@ -5684,7 +5904,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       void Promise.all(missing.map(pin =>
         // Your profile media belongs above your pin as the video preview, not
         // composited into its face. Other people retain their static identity.
-        pinWithFace({ avatar: pin.mine ? null : pin.avatar, color: pin.color, mode: tier })
+        pinWithFace({ avatar: pin.mine ? null : pin.avatar, color: pin.color, pinColor: pin.pinColor ?? null, mode: tier })
           .then(src => ({ pin, src }))
           .catch(() => null),
       )).then(built => {
@@ -5714,6 +5934,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       map.off('moveend', syncPins)
       map.off('zoomend', syncPins)
       livePins.forEach(m => m.remove())
+      list.forEach(pin => publishSyntheticPostVisibility(pin, false))
       livePins.clear()
       pinMarkersRef.current = []
     }

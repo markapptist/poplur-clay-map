@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import type mapboxgl from 'mapbox-gl'
+import { syncAmbientMediaPlayback } from '../ambientMediaPlayback'
 import { installMapIdleSnapshot } from '../mapIdleSnapshot'
 
 type Listener = (event?: unknown) => void
@@ -148,5 +150,34 @@ describe('map idle snapshot', () => {
     controller.dispose()
     expect(map.listeners.get('movestart')?.size ?? 0).toBe(0)
     expect(map.listeners.get('render')?.size ?? 0).toBe(0)
+  })
+
+  it('parks decorative marker media during ambient sleep and resumes it on wake', async () => {
+    const play = vi.fn().mockResolvedValue(undefined)
+    const pause = vi.fn()
+    const media = { play, pause }
+
+    syncAmbientMediaPlayback(media, true)
+    expect(play).toHaveBeenCalledTimes(1)
+    expect(pause).not.toHaveBeenCalled()
+
+    syncAmbientMediaPlayback(media, false)
+    expect(pause).toHaveBeenCalledTimes(1)
+
+    play.mockRejectedValueOnce(new Error('native URL not restored yet'))
+    expect(() => syncAmbientMediaPlayback(media, true)).not.toThrow()
+    await Promise.resolve()
+    expect(play).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the current-location selfie decoder on the Map ambient lifecycle', () => {
+    const clayMap = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+
+    expect(clayMap).toContain('const stopAmbientSelfiePlayback = onAmbientSleepChange')
+    expect(clayMap).toContain("document.addEventListener('visibilitychange', syncSelfiePlayback)")
+    expect(clayMap).toContain('selfieVideo.autoplay = false')
+    expect(clayMap).toContain('syncAmbientMediaPlayback(')
+    expect(clayMap).toContain('stopAmbientSelfiePlayback()')
+    expect(clayMap).toContain("document.removeEventListener('visibilitychange', syncSelfiePlayback)")
   })
 })

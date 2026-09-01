@@ -33,6 +33,7 @@ import {
   validatePublishPrivacy,
   type PostLocationVisibility,
 } from './publishing'
+import { PIN_COLOR_IDS, PIN_COLOR_SWATCH, type PinColorId } from './pinColors'
 import {
   accountPrivacySnapshot,
   hidesPublicPostOrigin,
@@ -90,6 +91,8 @@ export interface PublishedPost {
   postId: string
   audience: 'public'
   locationVisibility: PostLocationVisibility
+  /** The poster's chosen pin model colour; null keeps the original pink pin. */
+  pinColor: PinColorId | null
 }
 
 export type PostComposerStep = 'edit' | 'effects' | 'finish' | 'channel'
@@ -192,6 +195,7 @@ export default function PostComposer({
   const usedAIRef = useRef(usedAI)
   usedAIRef.current = usedAI
   const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
+  const [pinColor, setPinColor] = useState<PinColorId | null>(draft?.pinColor ?? null)
   const [channelPickerOpen, setChannelPickerOpen] = useState(false)
   const claimRadiusMaxKm = useClaimRadiusLimitKm()
   const [radiusKm, setRadiusKm] = useState(() => target?.radiusKm === undefined
@@ -301,13 +305,14 @@ export default function PostComposer({
       usedAI: selectedUsedAI,
       rightsAttested,
       aiPrompt,
+      pinColor,
     })
     // CustomEvent, NOT postMessage: HomeTwin's message handler accepts only
     // messages from the map iframe. This same-document signal deliberately
     // starts the one location-picker detour for the parked draft.
     window.dispatchEvent(new CustomEvent('poplur-pick-spot'))
     onClose()
-  }, [aiPrompt, baselineMedia, caption, channelId, effectAsset, effectId, effectTiming, filterId, media, onClose, retirePreview, rightsAttested])
+  }, [aiPrompt, baselineMedia, caption, channelId, effectAsset, effectId, effectTiming, filterId, media, onClose, pinColor, retirePreview, rightsAttested])
 
   const continueAfterFinish = React.useCallback((
     selectedMedia: ComposerMedia = media,
@@ -597,6 +602,7 @@ export default function PostComposer({
       postId: postIdRef.current,
       audience,
       locationVisibility,
+      pinColor,
     }
     try {
       // The app shell owns the account, Firebase Storage and the posts write
@@ -664,6 +670,7 @@ export default function PostComposer({
           rightsAttested: true,
           rightsAttestationVersion: POST_RIGHTS_VERSION,
           destination,
+          pinColor: pinColor ?? undefined,
         })
         await uploadResult
         if (caption.trim() && target && locationVisibility === 'approximate') {
@@ -1078,6 +1085,37 @@ export default function PostComposer({
               </span>
               <em>{target ? 'Change' : 'Choose'}</em>
             </button>
+
+            <div className={styles.summaryRow} aria-label="Pin colour">
+              <span className={styles.summaryGlyph} aria-hidden="true">📍</span>
+              <span>
+                <b>PIN COLOUR</b>
+                <span className={styles.pinSwatches} role="radiogroup" aria-label="Choose a pin colour">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={pinColor === null}
+                    aria-label="Pink (original)"
+                    className={pinColor === null ? `${styles.pinSwatch} ${styles.pinSwatchOn}` : styles.pinSwatch}
+                    style={{ background: '#FF4BA1' }}
+                    onClick={() => { playPop(.16); setPinColor(null) }}
+                  />
+                  {PIN_COLOR_IDS.map(id => (
+                    <button
+                      type="button"
+                      role="radio"
+                      key={id}
+                      aria-checked={pinColor === id}
+                      aria-label={id}
+                      className={pinColor === id ? `${styles.pinSwatch} ${styles.pinSwatchOn}` : styles.pinSwatch}
+                      style={{ background: PIN_COLOR_SWATCH[id] }}
+                      onClick={() => { playPop(.16); setPinColor(id) }}
+                    />
+                  ))}
+                </span>
+                <small>The clay pin your post stands up on the map.</small>
+              </span>
+            </div>
 
             <div className={styles.summaryRow} aria-label="Post visibility">
               <span className={styles.summaryGlyph} aria-hidden="true">◉</span>

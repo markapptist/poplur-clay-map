@@ -816,7 +816,7 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(clayMapCss).toMatch(/\.colorCircle\s*\{[\s\S]*?left:\s*max\(12px,[\s\S]*?var\(--mapBaseControlSpan, 492px\)[\s\S]*?var\(--mapColorControlGap, 24px\)[\s\S]*?width:\s*44px;[\s\S]*?height:\s*44px;/)
     expect(nativeCss).toMatch(/\.nativeMapZoom\s*\{[\s\S]*?height:\s*var\(--mapControlSpan, 492px\)/)
     expect(globalCss).toMatch(/--poplur-map-control-top:\s*max\(154px,\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*112px\)\)/)
-    expect(globalCss).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*?--poplur-map-control-top:\s*max\(92px,\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*50px\)\)/)
+    expect(globalCss).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*?--poplur-map-control-top:\s*max\(62px,\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*12px\)\)/)
     expect(nativeCss).toMatch(/\.nativeMapChrome\s+:global\(\[data-poplur-control-rail\]\)\s*\{[\s\S]*?top:\s*var\(--poplur-map-control-top/)
     expect(nativeCss).toMatch(/\.nativeMapZoom\s*\{[\s\S]*?top:\s*var\(--poplur-map-control-top/)
     expect(clayMapCss).toMatch(/\.zoomWrap\s*\{[\s\S]*?top:\s*var\(--poplur-map-control-top/)
