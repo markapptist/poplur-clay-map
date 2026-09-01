@@ -4,15 +4,17 @@
    once — showing them all is the reason this rail exists. */
 .rail {
   position: absolute;
-  top: 50%;
-  right: 10px;
+  /* Anchored, not centred: the outer channel arrows now sit in the bottom
+     right, and a centred column of fifteen ran underneath them. This band is
+     the space between the wordmark and that row. */
+  top: 88px;
+  right: 8px;
   z-index: 46;
   display: grid;
   grid-auto-flow: row;
-  grid-auto-rows: 34px;
-  grid-template-columns: 34px;
-  gap: 6px;
-  transform: translateY(-50%);
+  grid-auto-rows: 35px;
+  grid-template-columns: 35px;
+  gap: 4px;
   pointer-events: auto;
   transition: opacity 0.24s ease;
 }
@@ -25,11 +27,11 @@
 .tile {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 35px;
+  height: 35px;
   padding: 0;
   border: 2px solid rgba(255, 255, 255, 0.14);
-  border-radius: 11px;
+  border-radius: 13px;
   background: linear-gradient(180deg, rgba(38, 14, 33, 0.82), rgba(14, 8, 19, 0.82));
   box-shadow: 0 2px 0 rgba(80, 8, 50, 0.55), 0 5px 12px rgba(0, 0, 0, 0.4);
   cursor: pointer;
@@ -40,8 +42,8 @@
 }
 
 .tile img {
-  width: 24px;
-  height: 24px;
+  width: 25px;
+  height: 25px;
   display: block;
   object-fit: contain;
 }
