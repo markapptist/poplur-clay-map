@@ -360,7 +360,12 @@ export default function FeedTwin({
   const frontMostRef = useRef(frontMost)
   frontMostRef.current = frontMost
   const [commentOpen, setCommentOpen] = useState(false)
+  const commentOpenRef = useRef(commentOpen)
+  commentOpenRef.current = commentOpen
+  const closeCommentsRef = useRef<(() => void) | null>(null)
   const [commentClosing, setCommentClosing] = useState(false)
+  const commentClosingRef = useRef(commentClosing)
+  commentClosingRef.current = commentClosing
   const [shareNote, setShareNote] = useState<string | null>(null)
   const shareNoteTimerRef = useRef<number | null>(null)
   const [radiusReaction, setRadiusReaction] = useState<{ direction: 'up' | 'down'; amount: number } | null>(null)
@@ -1554,6 +1559,18 @@ export default function FeedTwin({
     setCommentOpen(true)
   }, [clearCommentRoll])
 
+  // One comments control. Reading, adding and dismissing were three separate
+  // affordances on the rail for one idea; the window you open to read is the
+  // same window you type into, so the button that opens it is the button that
+  // closes it.
+  const toggleComments = useCallback(() => {
+    if (commentOpenRef.current) {
+      if (!commentClosingRef.current) closeCommentsRef.current?.()
+      return
+    }
+    openComments()
+  }, [openComments])
+
   const toggleCommentsAtEnd = useCallback(() => {
     playPop()
     // Keep the preference, ref and visible roll on one deterministic edge.
@@ -1665,6 +1682,7 @@ export default function FeedTwin({
       setCommentClosing(false)
     }, 360)
   }
+  closeCommentsRef.current = closeComments
 
   // Hand the cube a back handler while the comment box is up, and take it away
   // when it is not — so on the feed proper the cube still runs your pinned
@@ -1935,13 +1953,19 @@ export default function FeedTwin({
           label="Feed controls"
           muted={muted}
           captionsOn={captionsOn}
-          commentsAtEnd={commentsAtEnd}
+          commentsOpen={commentOpen}
           postActionsAvailable={Boolean(post)}
           onToggleMute={toggleMute}
           onShare={sharePost}
           onToggleCaptions={toggleCaptions}
-          onToggleCommentsAtEnd={toggleCommentsAtEnd}
-          onComment={openComments}
+          onComment={toggleComments}
+          channelNumber={ch.number}
+          onChannelUp={() => change(-1)}
+          onChannelDown={() => change(1)}
+          onPostPrevious={() => handleEdgeTap('left')}
+          onPostNext={() => handleEdgeTap('right')}
+          channelIconUrl={channelUrl(`${ch.icon}.png`)}
+          channelName={ch.name}
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />

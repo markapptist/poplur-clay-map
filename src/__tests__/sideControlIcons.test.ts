@@ -363,28 +363,26 @@ describe('replacement controls preserve state and activation contracts', () => {
     }
   })
 
-  it('keeps all seven Feed callbacks attached to their original semantic slots', () => {
-    const handlers = Array.from({ length: 7 }, () => vi.fn())
+  it('keeps every Feed callback attached to its original semantic slot', () => {
+    const handlers = Array.from({ length: 6 }, () => vi.fn())
     const rail = PostActionRail({
       side: 'left',
       label: 'Feed controls',
       muted: true,
       captionsOn: false,
-      commentsAtEnd: true,
+      commentsOpen: true,
       onToggleMute: handlers[0],
       onShare: handlers[1],
       onToggleCaptions: handlers[2],
-      onToggleCommentsAtEnd: handlers[3],
-      onComment: handlers[4],
-      onLike: handlers[5],
-      onDislike: handlers[6],
+      onComment: handlers[3],
+      onLike: handlers[4],
+      onDislike: handlers[5],
     }) as LooseElement
     const controls = Children.toArray(rail.props.children as ReactNode) as LooseElement[]
     expect(controls.map(control => control.props.icon)).toEqual([
       'feed.mute',
       'feed.share',
       'feed.captions',
-      'feed.comments_collapse',
       'feed.comment',
       'feed.like',
       'feed.dislike',
@@ -396,33 +394,34 @@ describe('replacement controls preserve state and activation contracts', () => {
     })
     expect(controls[0].props['aria-pressed']).toBe(true)
     expect(controls[2].props['aria-pressed']).toBe(false)
+    // The one comments button reports whether the window is up.
     expect(controls[3].props['aria-pressed']).toBe(true)
   })
 
   it('keeps the Feed rail visible but disables post-only actions without a post', () => {
-    const handlers = Array.from({ length: 7 }, () => vi.fn())
+    const handlers = Array.from({ length: 6 }, () => vi.fn())
     const rail = PostActionRail({
       side: 'left',
       label: 'Feed controls',
       muted: false,
       captionsOn: false,
-      commentsAtEnd: false,
+      commentsOpen: false,
       postActionsAvailable: false,
       onToggleMute: handlers[0],
       onShare: handlers[1],
       onToggleCaptions: handlers[2],
-      onToggleCommentsAtEnd: handlers[3],
-      onComment: handlers[4],
-      onLike: handlers[5],
-      onDislike: handlers[6],
+      onComment: handlers[3],
+      onLike: handlers[4],
+      onDislike: handlers[5],
     }) as LooseElement
     const controls = Children.toArray(rail.props.children as ReactNode) as LooseElement[]
 
-    expect(controls).toHaveLength(7)
+    expect(controls).toHaveLength(6)
+    // mute, share, captions, comments, like, dislike — the comments control is
+    // now post-gated too, since the window it opens belongs to a post.
     expect(controls.map(control => Boolean(control.props.disabled))).toEqual([
       false,
       true,
-      false,
       false,
       true,
       true,
@@ -430,7 +429,7 @@ describe('replacement controls preserve state and activation contracts', () => {
     ])
     expect(renderToStaticMarkup(rail)).toContain('aria-label="Feed controls"')
     expect(renderToStaticMarkup(rail).match(/disabled=""/g)).toHaveLength(4)
-    for (const index of [1, 4, 5, 6]) {
+    for (const index of [1, 3, 4, 5]) {
       const button = materializeButton(controls[index])
       firePrimaryPointerDown(button)
       firePointerClick(button)
@@ -446,11 +445,10 @@ describe('replacement controls preserve state and activation contracts', () => {
       label: 'Profile post controls',
       muted: true,
       captionsOn: false,
-      commentsAtEnd: false,
+      commentsOpen: false,
       onToggleMute: vi.fn(),
       onShare: vi.fn(),
       onToggleCaptions: vi.fn(),
-      onToggleCommentsAtEnd: vi.fn(),
       onComment: vi.fn(),
       onLike: vi.fn(),
       onDislike: vi.fn(),
@@ -911,7 +909,6 @@ describe('screen side-button action smoke contract', () => {
         ['mute', /icon="feed\.mute"[\s\S]*?onActivate=\{onToggleMute\}/],
         ['share', /icon="feed\.share"[\s\S]*?onActivate=\{onShare\}/],
         ['captions', /icon="feed\.captions"[\s\S]*?onActivate=\{onToggleCaptions\}/],
-        ['end comments', /icon="feed\.comments_collapse"[\s\S]*?onActivate=\{onToggleCommentsAtEnd\}/],
         ['comment', /icon="feed\.comment"[\s\S]*?onActivate=\{onComment\}/],
         ['like', /icon="feed\.like"[\s\S]*?onActivate=\{onLike\}/],
         ['dislike', /icon="feed\.dislike"[\s\S]*?onActivate=\{onDislike\}/],
@@ -963,7 +960,6 @@ describe('screen side-button action smoke contract', () => {
       ['ProfileTwin.tsx', 'Profile selfie controls', /icon="profile\.camera"[\s\S]*?activation="pointerdown"/],
       ['PostActionRail.tsx', null, /icon="feed\.mute"[\s\S]*?activation="pointerdown"/],
       ['PostActionRail.tsx', null, /icon="feed\.share"[\s\S]*?activation="pointerdown"/],
-      ['PostActionRail.tsx', null, /icon="feed\.comments_collapse"[\s\S]*?activation="pointerdown"/],
       ['PostActionRail.tsx', null, /icon="feed\.comment"[\s\S]*?activation="pointerdown"/],
       ['PostActionRail.tsx', null, /icon="feed\.like"[\s\S]*?activation="pointerdown"/],
       ['PostActionRail.tsx', null, /icon="feed\.dislike"[\s\S]*?activation="pointerdown"/],
@@ -1000,8 +996,7 @@ describe('screen side-button action smoke contract', () => {
           /onToggleMute=\{toggleMute\}/,
           /onShare=\{sharePost\}/,
           /onToggleCaptions=\{toggleCaptions\}/,
-          /onToggleCommentsAtEnd=\{toggleCommentsAtEnd\}/,
-          /onComment=\{openComments\}/,
+          /onComment=\{toggleComments\}/,
           /onLike=\{likeCurrentPost\}/,
           /onDislike=\{dislikeCurrentPost\}/,
         ],
@@ -1021,8 +1016,7 @@ describe('screen side-button action smoke contract', () => {
           /onToggleMute=\{toggleViewerMute\}/,
           /onShare=\{\(\) => \{ playPop\(\); setShareOpen\(true\) \}\}/,
           /onToggleCaptions=\{\(\) => \{ playPop\(\); setViewerCaptionsOn/,
-          /onToggleCommentsAtEnd=\{toggleViewerCommentsAtEnd\}/,
-          /onComment=\{\(\) => \{ playPop\(\); setViewerCommentOpen\(true\) \}\}/,
+          /onComment=\{\(\) => \{ playPop\(\); setViewerCommentOpen\(open => !open\) \}\}/,
           /onLike=\{\(\) => reactToViewerPost\('up'\)\}/,
           /onDislike=\{\(\) => reactToViewerPost\('down'\)\}/,
           /onDelete=\{canDeleteViewerPost[\s\S]*?setDeletePromptPost\(viewerPost\)/,

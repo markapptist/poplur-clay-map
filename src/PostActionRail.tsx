@@ -1,3 +1,5 @@
+import ClayChannelArrows from './ClayChannelArrows'
+import sideStyles from './SideControlIcon.module.css'
 import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
 import type { ControlSide } from './controlPlacement'
@@ -15,14 +17,20 @@ export default function PostActionRail({
   label,
   muted,
   captionsOn,
-  commentsAtEnd,
+  commentsOpen,
   onToggleMute,
   onShare,
   onToggleCaptions,
-  onToggleCommentsAtEnd,
   onComment,
   onLike,
   onDislike,
+  channelNumber,
+  onChannelUp,
+  onChannelDown,
+  onPostPrevious,
+  onPostNext,
+  channelIconUrl,
+  channelName,
   postActionsAvailable = true,
   onDelete,
   deletePending = false,
@@ -31,14 +39,24 @@ export default function PostActionRail({
   label: string
   muted: boolean
   captionsOn: boolean
-  commentsAtEnd: boolean
+  /** The comments window is up, so the one comments button now closes it. */
+  commentsOpen: boolean
   onToggleMute: () => void
   onShare: () => void
   onToggleCaptions: () => void
-  onToggleCommentsAtEnd: () => void
   onComment: () => void
   onLike: () => void
   onDislike: () => void
+  /** Feed only: step the TV's own channel, in the rail beside the screen it
+   *  changes. Absent on a profile post, which has no channel to step. */
+  channelNumber?: number
+  onChannelUp?: () => void
+  onChannelDown?: () => void
+  /** Feed only: walk the other people posting on this channel. */
+  onPostPrevious?: () => void
+  onPostNext?: () => void
+  channelIconUrl?: string
+  channelName?: string
   /** Share, comment, and radius reactions require a concrete post. */
   postActionsAvailable?: boolean
   onDelete?: () => void
@@ -66,16 +84,13 @@ export default function PostActionRail({
         aria-pressed={captionsOn}
         onActivate={onToggleCaptions}
       />
-      <SideControlIconButton
-        icon="feed.comments_collapse"
-        aria-pressed={commentsAtEnd}
-        aria-label={commentsAtEnd ? 'Hide end-of-video comments' : 'Show end-of-video comments'}
-        activation="pointerdown"
-        onActivate={onToggleCommentsAtEnd}
-      />
+      {/* One comments control. Showing, hiding and adding were three buttons
+          for one idea — and the window you open to read is the same window you
+          type into, so opening and closing belong on the same button. */}
       <SideControlIconButton
         icon="feed.comment"
-        aria-label="Comment on this post"
+        aria-pressed={commentsOpen}
+        aria-label={commentsOpen ? 'Hide comments' : 'Show comments and add one'}
         activation="pointerdown"
         disabled={!postActionsAvailable}
         onActivate={onComment}
@@ -94,6 +109,48 @@ export default function PostActionRail({
         disabled={!postActionsAvailable}
         onActivate={onDislike}
       />
+      {channelIconUrl && (
+        // The channel you are on, wearing the same tile as every other side
+        // control so the rail reads as one column rather than a column with an
+        // ornament in it. It reports; the arrows beneath it do the changing.
+        <span
+          className={sideStyles.button}
+          role="img"
+          aria-label={channelName ? `Channel ${channelNumber} ${channelName}` : `Channel ${channelNumber}`}
+          data-feed-channel-badge=""
+        >
+          <img className={sideStyles.image} src={channelIconUrl} alt="" draggable={false} />
+        </span>
+      )}
+      {channelNumber != null && onChannelUp && onChannelDown && (
+        <div className={styles.channelStep} data-feed-channel-step="">
+          <ClayChannelArrows
+            number={channelNumber}
+            size={112}
+            onUp={onChannelUp}
+            onDown={onChannelDown}
+            upLabel="Channel up"
+            downLabel="Channel down"
+          />
+        </div>
+      )}
+      {onPostPrevious && onPostNext && (
+        <div className={styles.postStep} data-feed-post-step="">
+          {/* The same arrows laid on their side: up/down changes the channel,
+              left/right walks the people posting on it. One artwork, one
+              language, two axes — which is how the map already reads. */}
+          <ClayChannelArrows
+            orientation="horizontal"
+            number={0}
+            label=""
+            size={112}
+            onUp={onPostPrevious}
+            onDown={onPostNext}
+            upLabel="Previous post"
+            downLabel="Next post"
+          />
+        </div>
+      )}
       {onDelete && (
         <span className={deletePending ? styles.deletePending : undefined} aria-busy={deletePending || undefined}>
           <SideControlIconButton

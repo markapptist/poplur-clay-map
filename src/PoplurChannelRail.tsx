@@ -12,6 +12,7 @@ export default function PoplurChannelRail({
   upLabel = SIDE_CONTROL_ICONS['global.channel_up'].accessibilityLabel,
   downLabel = SIDE_CONTROL_ICONS['global.channel_down'].accessibilityLabel,
   size = 176,
+  showNumber = true,
 }: {
   number: number
   label?: string
@@ -20,6 +21,7 @@ export default function PoplurChannelRail({
   upLabel?: string
   downLabel?: string
   size?: number
+  showNumber?: boolean
 }) {
   const width = Math.round(size / 2)
   const imageSize = channelControlImageSize(size)
@@ -46,9 +48,15 @@ export default function PoplurChannelRail({
         <SideControlIconImage icon="global.channel_up" displaySize={imageSize} loading="eager" />
       </button>
 
-      <span className={styles.number}>
-        {label ?? number}
-      </span>
+      {/* The number belongs to whatever these arrows are actually stepping.
+          On the feed that is the channel, and the channel now counts itself on
+          the feed's own rail — two numbers for one channel read as two
+          different things. `showNumber={false}` leaves the arrows unlabelled. */}
+      {showNumber && (
+        <span className={styles.number}>
+          {label ?? number}
+        </span>
+      )}
 
       <button
         type="button"

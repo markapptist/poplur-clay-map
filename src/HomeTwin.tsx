@@ -5569,6 +5569,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                   : undefined}
             upLabel={activeTab === 'map' && mapTourOn ? 'Previous landmark' : 'Channel up'}
             downLabel={activeTab === 'map' && mapTourOn ? 'Next landmark' : 'Channel down'}
+            // On the feed the channel counts itself, on the feed's own rail
+            // beside the screen it belongs to. Two numbers for one channel read
+            // as two different counters; the map and camera keep theirs.
+            showNumber={activeTab !== 'feed'}
             onUp={() => changeChannel(-1)}
             onDown={() => changeChannel(1)}
           />

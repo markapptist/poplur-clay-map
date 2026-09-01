@@ -2742,12 +2742,11 @@ export default function ProfileTwin({
             label="Profile post controls"
             muted={viewerMuted}
             captionsOn={viewerCaptionsOn}
-            commentsAtEnd={viewerCommentsAtEnd}
+            commentsOpen={viewerCommentOpen}
             onToggleMute={toggleViewerMute}
             onShare={() => { playPop(); setShareOpen(true) }}
             onToggleCaptions={() => { playPop(); setViewerCaptionsOn(value => !value) }}
-            onToggleCommentsAtEnd={toggleViewerCommentsAtEnd}
-            onComment={() => { playPop(); setViewerCommentOpen(true) }}
+            onComment={() => { playPop(); setViewerCommentOpen(open => !open) }}
             onLike={() => reactToViewerPost('up')}
             onDislike={() => reactToViewerPost('down')}
             onDelete={canDeleteViewerPost ? () => { playPop(); setDeletePromptPost(viewerPost) } : undefined}

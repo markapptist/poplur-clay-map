@@ -41,3 +41,17 @@
 @media (prefers-reduced-motion: reduce) {
   .deletePending { animation: none; }
 }
+
+/* The channel stepper sits at the foot of the rail, under the reactions: the
+   post's own controls first, then the dial that changes what you are looking
+   at. Its number is the channel's only counter now. No margin of its own —
+   the rail's single gap is what keeps every control evenly spaced. */
+.channelStep {
+  display: flex;
+  justify-content: center;
+}
+
+.postStep {
+  display: flex;
+  justify-content: center;
+}
