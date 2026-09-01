@@ -14,7 +14,11 @@ import { fileURLToPath } from 'node:url'
 // in-bundle fallback path. Baking the base in makes that resolution correct
 // from the first tick, which is the precondition for shipping the packs out
 // of the bundle at all (see PUBLISHED_PACK_DIRS below).
-const MANIFEST: { baseUrl?: string, localPaths?: Record<string, string> } = (() => {
+const MANIFEST: {
+  baseUrl?: string
+  localPaths?: Record<string, string>
+  packs?: Array<{ id?: string, digest?: string, version?: number }>
+} = (() => {
   try {
     const manifestPath = fileURLToPath(new URL('./public/asset-manifest.json', import.meta.url))
     return JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -24,6 +28,17 @@ const MANIFEST: { baseUrl?: string, localPaths?: Record<string, string> } = (() 
 })()
 
 const ASSET_PACK_BASE: string = typeof MANIFEST.baseUrl === 'string' ? MANIFEST.baseUrl : ''
+
+// The store iframe navigates straight to the pack's index.html, outside the
+// fetch/cache seam that stamps `?v=` per file, and the bucket serves every
+// object `immutable, max-age=31536000`. Baking the pack's digest gives that
+// navigation a URL that changes on each publish, so a republished store can
+// actually reach a device that cached the previous one.
+const SUBSCREENS_PACK = Array.isArray(MANIFEST.packs)
+  ? MANIFEST.packs.find(pack => pack?.id === 'subscreens')
+  : undefined
+const SUBSCREENS_PACK_REV: string =
+  SUBSCREENS_PACK?.digest ?? (SUBSCREENS_PACK ? String(SUBSCREENS_PACK.version ?? '') : '')
 
 // Packs pinned to their bundled path because they are built but NOT uploaded.
 // These must stay IN the build — they are the only copy — while every other
@@ -123,7 +138,10 @@ export default defineConfig(({ command }) => ({
   plugins: [react(), boundedPublicAssets()],
   // Read by assetPacks.packBase() so a pack path is right on the first tick,
   // before the fetched manifest exists.
-  define: { __POPLUR_ASSET_BASE__: JSON.stringify(ASSET_PACK_BASE) },
+  define: {
+    __POPLUR_ASSET_BASE__: JSON.stringify(ASSET_PACK_BASE),
+    __POPLUR_SUBSCREENS_REV__: JSON.stringify(SUBSCREENS_PACK_REV),
+  },
   // NOTE: no COOP/COEP here on purpose. The Arcade's emulator core is pinned to
   // a SINGLE-THREADED mGBA build precisely so this app never needs cross-origin
   // isolation — turning it on would force a CORP/CORS opt-in on Mapbox, Firebase

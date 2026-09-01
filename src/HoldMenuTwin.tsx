@@ -25,6 +25,7 @@ import WalletScreen from './WalletScreen'
 import AppsScreen from './AppsScreen'
 import PoplurBrowserScreen from './PoplurBrowserScreen'
 import { defaultMapTourTopics, type MapTourTopic } from './mapTourPreferences'
+import { packBase, subscreensPackRev } from './assetPacks'
 import { boostFrames, onFrame } from './frameGovernor'
 import { CAMERA_HOLD_MENU_ITEMS } from './cameraNavigation'
 import { isRetiredNavigationScreen } from './retiredNavigationRoutes'
@@ -206,12 +207,19 @@ function rclSubscreenUrl(item: Item): string {
   const route = item.preview
     ? `.claude/artifacts/rough-copy-preview.html?surface=iphone&screen=${encodeURIComponent(item.screen)}`
     : `.claude/artifacts/poplur-subscreen-twins.html?embed=${encodeURIComponent(item.screen)}&rcl=1`
-  // Real subscreens ship inside the app bundle and must always stay on the
-  // current origin. Port 8945 is an optional artifact workbench, not a
-  // runtime dependency for STORE (or any other embedded app screen).
+  // Real subscreens are PACK content: the build drops public/subscreens/
+  // whenever the manifest names a published base, so on a device the bundle
+  // does not carry these files and a same-origin src dies in the scheme
+  // handler with fileDoesNotExist — a blank white STORE. Resolve through the
+  // same pack seam as the store's assets (packBase falls back to the bundled
+  // copy only in fully-local mode, where it genuinely exists). The rev makes
+  // each publish a fresh URL under the bucket's immutable year-long
+  // Cache-Control; port 8945 remains a workbench for previews only, never a
+  // runtime dependency for STORE.
   if (!item.preview) {
+    const rev = subscreensPackRev()
     return new URL(
-      `./subscreens/index.html?embed=${encodeURIComponent(item.screen)}&rcl=1`,
+      `${packBase('subscreens', 'subscreens')}/index.html?embed=${encodeURIComponent(item.screen)}&rcl=1${rev ? `&v=${encodeURIComponent(rev)}` : ''}`,
       window.location.href,
     ).href
   }

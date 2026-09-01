@@ -659,8 +659,14 @@ describe('replacement controls preserve state and activation contracts', () => {
 
     const storeRoute = holdMenu.slice(holdMenu.indexOf('function rclSubscreenUrl'), holdMenu.indexOf('// Placeholder for icons'))
     expect(storeRoute.indexOf("if (!item.preview)")).toBeLessThan(storeRoute.indexOf('const localHost'))
-    expect(storeRoute).toContain("./subscreens/index.html?embed=")
-    expect(storeRoute).not.toContain("packBase('subscreens', 'subscreens')")
+    // STORE must resolve through the pack seam: the build drops
+    // public/subscreens/ whenever the manifest names a published base, so a
+    // same-origin `./subscreens/...` src 404s on device (blank white STORE —
+    // this exact regression shipped on 2026-09-01). packBase still hands back
+    // the bundled path in fully-local mode, so local-only builds keep working.
+    expect(storeRoute).toContain("packBase('subscreens', 'subscreens')")
+    expect(storeRoute).toContain('subscreensPackRev()')
+    expect(storeRoute).not.toContain("'./subscreens/index.html")
     expect(holdMenu).toContain("data.type === 'poplurSubscreenReady'")
     expect(holdMenu).toContain('if (activeScreen.preview) setEmbedLoaded(true)')
     const subscreenRuntime = readFileSync(

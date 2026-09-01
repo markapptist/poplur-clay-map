@@ -55,6 +55,11 @@ declare const __POPLUR_ASSET_BASE__: string | undefined
 const BUILT_IN_PACK_BASE =
   typeof __POPLUR_ASSET_BASE__ === 'string' ? __POPLUR_ASSET_BASE__ : ''
 
+/** Injected by vite.config from the manifest's subscreens pack entry. */
+declare const __POPLUR_SUBSCREENS_REV__: string | undefined
+const BUILT_IN_SUBSCREENS_REV =
+  typeof __POPLUR_SUBSCREENS_REV__ === 'string' ? __POPLUR_SUBSCREENS_REV__ : ''
+
 let manifest: AssetManifest | null = null
 const states = new Map<string, PackState>()
 const inflight = new Map<string, Promise<boolean>>()
@@ -157,6 +162,21 @@ export function packBase(packId: string, fallback: string): string {
   const base = manifest?.baseUrl || BUILT_IN_PACK_BASE
   if (base) return `${base}/${packId}`
   return fallback
+}
+
+/**
+ * Cache-busting rev for the subscreens pack's directly-navigated pages (the
+ * store iframe), on the same first-tick contract as packBase: the fetched
+ * manifest wins, the build-time value covers callers that resolve before any
+ * fetch lands. Pack objects are served `immutable, max-age=31536000`, so a
+ * navigation URL without a per-publish rev could pin a year-stale store.
+ * Empty when no pack entry exists (fully-local mode), where the bundled copy
+ * is the pack and needs no busting.
+ */
+export function subscreensPackRev(): string {
+  const pack = manifest?.packs.find(candidate => candidate.id === 'subscreens')
+  if (pack) return pack.digest ?? String(pack.version)
+  return BUILT_IN_SUBSCREENS_REV
 }
 
 export function feedUrl(file: string): string {
