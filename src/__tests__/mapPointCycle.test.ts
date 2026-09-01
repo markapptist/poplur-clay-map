@@ -135,7 +135,15 @@ describe('unified Map point cycle', () => {
     expect(homeTwinSource).toContain("event.data.type === 'poplur-map-point-focus'")
     expect(homeTwinSource).toContain('setMapPointLabelActive(event.data.active === true)')
     expect(homeTwinSource).toMatch(/!mapPointLabelActive && \(\s*<span key=\{mapPlace\} className=\{styles\.mapTitleText\}>/)
-    expect(homeTwinSource).toContain('!mapPointLabelActive && !mapTourOn && mapAreaPops')
+    // The area count now lives INSIDE the place card rather than beside it, so
+    // prove containment instead of matching the old flat guard: everything the
+    // card carries is hidden by the one !mapPointLabelActive gate above.
+    const homeCard = homeTwinSource.slice(
+      homeTwinSource.indexOf('<span key={mapPlace} className={styles.mapTitleText}>'),
+      homeTwinSource.indexOf('</span>', homeTwinSource.indexOf('<span key={mapPlace}')),
+    )
+    expect(homeCard).toContain('!mapTourOn && mapAreaPops')
+    expect(homeCard).toContain('className={styles.mapAreaPops}')
     expect(homeTwinSource).toContain('<MapRadioStatusLabel className={styles.mapRadioLabel} />')
   })
 

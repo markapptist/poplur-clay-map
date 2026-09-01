@@ -789,28 +789,49 @@
   overflow: hidden;
 }
 
+/* The place line wears the SAME card as a focused map point (see
+   .mapPointCard in App.module.css). Both answer one question — "what am I
+   looking at" — and the two used different voices only because they were
+   built in different documents: outlined blue floating text here, a clay card
+   inside the map. One of them had to win, and the card is the one that stays
+   legible over bright terrain, which is the whole reason the outline existed. */
 .mapTitleText {
-  max-width: 100%;
+  display: grid;
+  justify-items: center;
+  max-width: min(310px, 100%);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.24;
+  padding: 8px 16px 9px;
+  border: 2px solid rgba(255, 75, 167, .82);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(35, 13, 31, .94), rgba(13, 8, 18, .94));
+  box-shadow:
+    0 3px 0 rgba(105, 11, 65, .8),
+    0 10px 24px rgba(0, 0, 0, .48),
+    inset 0 1px rgba(255, 255, 255, .18);
+  color: #fff7fb;
+  font: 950 15px/1.18 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   text-align: center;
-  /* Same outlined blue as the radius numbers and the clock, so hoisting it
-     out of the iframe changed nothing about how it reads. */
-  color: #7fe3ff;
-  -webkit-text-fill-color: #7fe3ff;
-  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.92);
-  paint-order: stroke fill;
-  filter:
-    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
-    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
   animation: mapTitleIn 0.6s ease-out both;
 }
+
+.mapTitleKind {
+  color: #ff8ac6;
+  font: 900 9px/1.1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  font-style: normal;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.mapTitleName {
+  max-width: 100%;
+  overflow: hidden;
+  font: 950 15px/1.18 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 
 .mapRadioLabel {
   max-width: 100%;
@@ -844,27 +865,21 @@
    the same outlined-blue voice. A real button (the title layer around it is
    pointer-events: none), keyed per pop so it replays its entrance. */
 .mapAreaPops {
+  /* A line INSIDE the place card, in the same cyan voice the focused point's
+     card uses for its radius — not a second floating label under it. It kept
+     the old outlined-blue treatment only because it used to sit beside an
+     outlined-blue place line, and that line is now a card. */
   pointer-events: auto;
-  margin-top: 2px;
-  padding: 2px 6px;
+  margin-top: 3px;
+  padding: 0;
   border: none;
   background: none;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.24;
-  white-space: nowrap;
   color: #7fe3ff;
-  -webkit-text-fill-color: #7fe3ff;
-  -webkit-text-stroke: 2px rgba(5, 2, 9, 0.92);
-  paint-order: stroke fill;
-  filter:
-    drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
-    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
-  animation: mapTitleIn 0.6s ease-out both;
+  font: 950 11px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: .04em;
+  white-space: nowrap;
 }
 
 .mapAreaPops:active {

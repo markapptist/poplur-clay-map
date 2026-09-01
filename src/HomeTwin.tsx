@@ -5677,35 +5677,38 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           aria-live="polite"
         >
           {!mapPointLabelActive && (
-            <span key={mapPlace} className={styles.mapTitleText}>{mapPlace}</span>
+            <span key={mapPlace} className={styles.mapTitleText}>
+              {/* The eyebrow is what makes this the same object as the focused
+                  point's card rather than a lookalike: type first, name second,
+                  and the area count as a sub-line inside the same card. */}
+              <em className={styles.mapTitleKind}>{mapAreaPops?.overall ? 'WORLD' : 'AREA'}</em>
+              <strong className={styles.mapTitleName}>{mapPlace}</strong>
+              {!mapTourOn && mapAreaPops && (
+                <button
+                  type="button"
+                  data-poplur-native-hit-region
+                  key={`area-${mapAreaPops.overall ? 'world' : 'local'}-${mapAreaPops.count}-${mapAreaPops.ids[0] ?? ''}`}
+                  className={styles.mapAreaPops}
+                  disabled={mapAreaPops.ids.length === 0}
+                  onClick={() => {
+                    if (!mapAreaPops.ids.length) return
+                    playPop()
+                    setProfilePopFlash(prev => ({ ids: mapAreaPops.ids, seq: (prev?.seq ?? 0) + 1 }))
+                    setViewingUser(null)
+                    setViewingUserId(null)
+                    setActiveTab('profile')
+                  }}
+                >
+                  {mapAreaPops.overall
+                    ? `${mapAreaPops.count} pops posted overall`
+                    : mapAreaPops.count === 1
+                      ? '1 pop posted in this area'
+                      : `${mapAreaPops.count} pops posted in this area`}
+                </button>
+              )}
+            </span>
           )}
           <MapRadioStatusLabel className={styles.mapRadioLabel} />
-          {/* Your pops standing in this area — same outlined-blue voice as the
-              place line, one size down. A tap opens the profile with exactly
-              these pops lit up. */}
-          {!mapPointLabelActive && !mapTourOn && mapAreaPops && (
-            <button
-              type="button"
-              data-poplur-native-hit-region
-              key={`area-${mapAreaPops.overall ? 'world' : 'local'}-${mapAreaPops.count}-${mapAreaPops.ids[0] ?? ''}`}
-              className={styles.mapAreaPops}
-              disabled={mapAreaPops.ids.length === 0}
-              onClick={() => {
-                if (!mapAreaPops.ids.length) return
-                playPop()
-                setProfilePopFlash(prev => ({ ids: mapAreaPops.ids, seq: (prev?.seq ?? 0) + 1 }))
-                setViewingUser(null)
-                setViewingUserId(null)
-                setActiveTab('profile')
-              }}
-            >
-              {mapAreaPops.overall
-                ? `${mapAreaPops.count} pops posted overall`
-                : mapAreaPops.count === 1
-                  ? '1 pop posted in this area'
-                  : `${mapAreaPops.count} pops posted in this area`}
-            </button>
-          )}
         </div>
       )}
 
