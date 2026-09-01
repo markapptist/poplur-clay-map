@@ -4210,7 +4210,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setCameraCaptureMode(action)
       return
     }
-    if (action === 'detect' || action === 'ar') {
+    // AR used to route here too. The filters are a permanent rail on the
+    // camera now, so there is no open/close command left to deliver.
+    if (action === 'detect') {
       cameraActionsRef.current?.[action]()
       return
     }

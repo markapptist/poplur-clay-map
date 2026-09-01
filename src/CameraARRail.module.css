@@ -1,0 +1,46 @@
+/* One filter per button. The shared rail (TabControlRail.module.css) already
+   owns the 44px box, the column geometry and the selected clay bed, so this
+   file only says how a filter's own artwork sits inside that box. */
+
+.filter {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 15px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  /* The catalog thumbnails are photographs; keep them from being dragged out
+     of the app as images while the user is scrubbing the column. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 15px;
+  transition: transform 140ms cubic-bezier(.2, .8, .2, 1), border-radius 140ms;
+}
+
+/* Selected: shrink the artwork so the rail's pink clay bed reads as a frame
+   around it. Same cue the other rails use for an active control, without
+   inventing a second selected look for this one column. */
+.filter[aria-pressed='true'] .thumb {
+  transform: scale(0.82);
+  border-radius: 12px;
+}
+
+.filter:active .thumb { transform: scale(0.9); }
+.filter[aria-pressed='true']:active .thumb { transform: scale(0.78); }
+
+.filter:focus-visible {
+  outline: 2px solid rgba(255, 221, 239, 0.9);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thumb { transition: none; }
+}

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
 import CameraScanButton from './CameraScanButton'
-import CameraARButton from './CameraARButton'
 import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
 import styles from './ViewHarness.module.css'
@@ -12,7 +11,7 @@ import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLi
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
-import ARFilters, { AR_FILTERS } from './ARFilters'
+import CameraARRail from './CameraARRail'
 import { isKeyboardCameraRollClick } from './cameraControlActivation'
 import {
   arFilterCatalog,
@@ -162,8 +161,6 @@ export interface CameraActions {
   video: () => void
   /** ML detection on ⇄ off */
   detect: () => void
-  /** open (or close) the AR filter rail */
-  ar: () => void
   /** open the Camera Roll from its hold-menu tile */
   roll: () => void
   /** The clay channel arrows, offered to the post composer first; otherwise
@@ -380,7 +377,6 @@ export default function Camera({
     setCommerceCard(null)
   }, [])
 
-  const [arOpen, setArOpen] = useState(false)
   const [arFilter, setArFilter] = useState('none')
   const arFilterRef = useRef(arFilter)
   arFilterRef.current = arFilter
@@ -456,7 +452,6 @@ export default function Camera({
   // bridge window after this web surface has already stopped being current.
   useEffect(() => {
     if (liveSurfaceVisible) return
-    setArOpen(false)
     setArFilter('none')
   }, [liveSurfaceVisible])
 
@@ -1134,13 +1129,6 @@ export default function Camera({
   })
   const gesturePointsRef = useRef(new Map<number, { x: number; y: number }>())
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null)
-  const cameraLongPressTimerRef = useRef<number | null>(null)
-  const cancelCameraLongPress = useCallback(() => {
-    if (cameraLongPressTimerRef.current == null) return
-    window.clearTimeout(cameraLongPressTimerRef.current)
-    cameraLongPressTimerRef.current = null
-  }, [])
-  useEffect(() => cancelCameraLongPress, [cancelCameraLongPress])
   const pointerDistance = () => {
     const points = [...gesturePointsRef.current.values()]
     return points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
@@ -1154,39 +1142,25 @@ export default function Camera({
       gestureRef.current.startX = event.clientX
       gestureRef.current.startY = event.clientY
       gestureRef.current.consumed = false
-      cancelCameraLongPress()
-      cameraLongPressTimerRef.current = window.setTimeout(() => {
-        cameraLongPressTimerRef.current = null
-        if (gesturePointsRef.current.size !== 1) return
-        gestureRef.current.consumed = true
-        gestureRef.current.lastTapAt = 0
-        playPop()
-        setArOpen(open => !open)
-      }, 520)
     } else if (gesturePointsRef.current.size === 2) {
-      cancelCameraLongPress()
       pinchRef.current = { distance: Math.max(1, pointerDistance()), zoom: zoomRef.current }
       gestureRef.current.consumed = true
     }
     event.currentTarget.setPointerCapture?.(event.pointerId)
-  }, [cancelCameraLongPress])
+  }, [])
   const onCameraPointerMove = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (!gesturePointsRef.current.has(event.pointerId)) return
     event.preventDefault()
     gesturePointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-    if (Math.hypot(event.clientX - gestureRef.current.startX, event.clientY - gestureRef.current.startY) > 14) {
-      cancelCameraLongPress()
-    }
     if (gesturePointsRef.current.size === 2 && pinchRef.current) {
       applyZoomValue(pinchRef.current.zoom * (pointerDistance() / pinchRef.current.distance))
       gestureRef.current.consumed = true
     }
-  }, [applyZoomValue, cancelCameraLongPress])
+  }, [applyZoomValue])
   const onCameraPointerUp = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const gesture = gestureRef.current
     if (!gesturePointsRef.current.has(event.pointerId)) return
     event.preventDefault()
-    cancelCameraLongPress()
     const wasSinglePointer = gesturePointsRef.current.size === 1
     gesturePointsRef.current.delete(event.pointerId)
     if (gesturePointsRef.current.size < 2) pinchRef.current = null
@@ -1228,12 +1202,11 @@ export default function Camera({
     gesture.lastTapAt = now
     gesture.lastTapX = event.clientX
     gesture.lastTapY = event.clientY
-  }, [cancelCameraLongPress, flipCamera, nativeCameraBudget, resumeNativePreview, setFlashEnabled])
+  }, [flipCamera, nativeCameraBudget, resumeNativePreview, setFlashEnabled])
   const onCameraPointerCancel = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    cancelCameraLongPress()
     gesturePointsRef.current.delete(event.pointerId)
     if (gesturePointsRef.current.size < 2) pinchRef.current = null
-  }, [cancelCameraLongPress])
+  }, [])
 
   // ── take a picture ───────────────────────────────────────────────────────
   const capturePhoto = useCallback(() => {
@@ -1506,7 +1479,6 @@ export default function Camera({
         // Native synchronization is owned by liveDetectionActive above, which
         // refuses to activate ML on roll/composer pages.
       },
-      ar: () => setArOpen(v => !v),
       roll: () => onOpenRoll?.(),
       // The capture preview owns the arrows while it is up (filter flipping).
       // Anywhere else on the camera they belong to the shell, which cycles the
@@ -1655,11 +1627,14 @@ export default function Camera({
       onPointerMove={real ? onCameraPointerMove : undefined}
       onPointerUp={real ? onCameraPointerUp : undefined}
       onPointerCancel={real ? onCameraPointerCancel : undefined}
-      // The camera normally owns the gesture surface for pinch/tap. While the
-      // AR rail is open its native horizontal scroller must remain eligible
-      // for compositor panning; an ancestor touch-action:none would disable it
-      // even though the rail itself declares pan-x.
-      style={{ touchAction: real ? (arOpen ? 'pan-x' : 'none') : undefined }}
+      // The camera owns the gesture surface for pinch/tap, but the AR filter
+      // rail beside it is a scroller and the catalog is longer than the column.
+      // touch-action is resolved up the ancestor chain, so a bare `none` here
+      // would disable that scroller even though the rail itself declares pan-y.
+      // Nothing else in this subtree scrolls, so allowing the axis costs the
+      // camera nothing: a vertical drag on the viewfinder still reaches the
+      // pointer handlers because there is nothing else for it to pan.
+      style={{ touchAction: real ? 'pan-y' : undefined }}
     >
       {!NATIVE_CAMERA_PREVIEW && real && (
         <>
@@ -1798,11 +1773,6 @@ export default function Camera({
           size={44}
           onToggle={() => setDetectOn(!detectOn)}
         />
-        <CameraARButton
-          active={arOpen}
-          size={44}
-          onToggle={() => setArOpen(open => !open)}
-        />
         {/* Camera roll, promoted from a floating bottom-left button into this
             rail so it reads as one of the camera's own controls instead of a
             stray tile. Shows the latest shot from this session as its own
@@ -1864,6 +1834,19 @@ export default function Camera({
           )}
         </button>
       </TabControlRail>
+      {/* AR filters, standing opposite the camera's own controls and starting
+          at the same top. Photo and video both: the filter grades the live
+          preview either way, so there is no mode in which the column is wrong.
+          It follows the control-side preference rather than being pinned right,
+          so moving the camera controls to the right moves these to the left and
+          the two rails never stack on the same edge. */}
+      {real && (
+        <CameraARRail
+          side={controlSide === 'left' ? 'right' : 'left'}
+          active={arFilter}
+          onPick={setArFilter}
+        />
+      )}
       {/* ONE persistent AI line. Keep the latest real reading between the
           deliberately sparse native analysis samples; before the first one,
           say that AI is scanning instead of leaving a mysterious blank. */}
@@ -1919,9 +1902,6 @@ export default function Camera({
             onClose={dismissCommerce}
           />
         </div>
-      )}
-      {real && arOpen && (
-        <ARFilters active={arFilter} onPick={setArFilter} onClose={() => setArOpen(false)} />
       )}
 
       {/* Lens presets, riding just above the cube: 0.5× (iOS ultra-wide),

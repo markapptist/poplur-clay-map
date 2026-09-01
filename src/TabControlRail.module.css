@@ -44,3 +44,28 @@
 
 .left { left: max(12px, env(safe-area-inset-left, 0px)); }
 .right { right: max(12px, env(safe-area-inset-right, 0px)); }
+
+/* A rail that can outgrow the column scrolls instead of running off the bottom
+   of the screen. The reserved 210px is the capture chrome the rail must clear:
+   the zoom presets sit 150px up from the safe area and the shutter sits under
+   them. `dvh`, not `vh` — on mobile Safari the URL bar makes vh taller than the
+   visible viewport, which would hide the last filters behind the shutter. */
+.scroll {
+  max-height: calc(
+    100dvh
+    - max(154px, calc(env(safe-area-inset-top, 0px) + 112px))
+    - 210px
+  );
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The camera surface sets touch-action on its container to keep pinch/tap
+     for itself; this axis is re-allowed there so this scroller can pan. */
+  touch-action: pan-y;
+  scrollbar-width: none;
+  /* The selected clay bed is drawn OUTSIDE a 44px child's box. Without the
+     gutter the pink frame is clipped flat on whichever edge is scrolling. */
+  padding: 3px 0;
+  scroll-padding: 3px 0;
+}
+
+.scroll::-webkit-scrollbar { display: none; }
