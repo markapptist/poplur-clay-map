@@ -3,9 +3,11 @@ import {
   BREAKING_NEWS_CUBE_MODEL,
   BROWSER_CUBE_MODEL,
   FEED_TV_CUBE_MODEL,
+  FOG_CUBE_MODEL,
   HAIL_CUBE_MODEL,
   HOME_CUBE_MODEL,
   SNOW_CUBE_MODEL,
+  WIND_CUBE_MODEL,
   isBreakingNewsCubeEvent,
   mapContextCubeModel,
   readMapNewsCubeEvent,
@@ -27,6 +29,24 @@ describe('context cube models', () => {
     expect(weatherCubeModel(weatherCubeKind('hail'))).toBe(HAIL_CUBE_MODEL)
     expect(weatherCubeKind('storm')).toBe('thunder')
     expect(weatherCubeKind('clear')).toBeNull()
+  })
+
+  it('uses the supplied fog cloud for fog, above any wind reading', () => {
+    expect(weatherCubeKind('fog')).toBe('fog')
+    expect(weatherCubeKind('fog', true)).toBe('fog')
+    expect(weatherCubeModel('fog')).toBe(FOG_CUBE_MODEL)
+  })
+
+  it('shows the supplied wind cloud only for windy dry modes', () => {
+    expect(weatherCubeKind('clear', true)).toBe('wind')
+    expect(weatherCubeKind('cloudy', true)).toBe('wind')
+    expect(weatherCubeModel('wind')).toBe(WIND_CUBE_MODEL)
+    // Precipitation cubes outrank the wind cloud.
+    expect(weatherCubeKind('rain', true)).toBe('rain')
+    expect(weatherCubeKind('storm', true)).toBe('thunder')
+    // Calm dry weather still shows no weather cube at all.
+    expect(weatherCubeKind('clear', false)).toBeNull()
+    expect(weatherCubeKind('cloudy')).toBeNull()
   })
 
   it('lets an active breaking-news stop outrank ambient weather', () => {

@@ -26,6 +26,7 @@ import MapConquerButton from './MapConquerButton'
 import WeatherMark from './WeatherMark'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import { weatherIconIdForCode } from './sideControlIcons'
+import { windyFromSpeed } from './weatherCode'
 import { nativeMapWeatherVisible } from './nativeMapWeather'
 import { createNativeMapConquerSnapshot } from './nativeMapConquerSnapshot'
 import {
@@ -1074,6 +1075,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     iconId: 'weather.clear_day',
     temperature: null,
     unit: weatherTemperatureUnit(),
+    windy: false,
   }))
   const [nativeMapCoordinate, setNativeMapCoordinate] = useState<{
     latitude: number
@@ -2899,9 +2901,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             && previous.iconId === presentation.iconId
             && previous.temperature === presentation.temperature
             && previous.unit === presentation.unit
+            && previous.windy === presentation.windy
             ? previous
             : presentation)
-          const kind = weatherCubeKind(presentation.mode)
+          const kind = weatherCubeKind(presentation.mode, presentation.windy)
           setMapWeatherSignal(previous => {
             if (!kind) return null
             return previous?.kind === kind
@@ -3674,7 +3677,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       const displayUnit = weatherTemperatureUnit()
       const unit = displayUnit === 'F' ? 'fahrenheit' : 'celsius'
       const { latitude, longitude } = nativeMapCoordinate
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&temperature_unit=${unit}&timezone=auto`
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,wind_speed_10m&temperature_unit=${unit}&timezone=auto`
       void fetch(url, { cache: 'no-store', signal: controller.signal })
         .then(response => {
           if (!response.ok) throw new Error(`Weather request failed: ${response.status}`)
@@ -3684,7 +3687,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           const code = Number(json.current?.weather_code)
           if (!Number.isFinite(code)) return
           const mode = modeForCode(code)
-          const iconId = weatherIconIdForCode(code)
+          // Same dry-modes-only wind rule as the map document's broadcast.
+          const windy = windyFromSpeed(Number(json.current?.wind_speed_10m))
+            && (mode === 'clear' || mode === 'cloudy')
+          const iconId = windy ? 'weather.wind' : weatherIconIdForCode(code)
           const temperatureValue = Number(json.current?.temperature_2m)
           const temperature = Number.isFinite(temperatureValue)
             ? Math.round(temperatureValue)
@@ -3693,9 +3699,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             && previous.iconId === iconId
             && previous.temperature === temperature
             && previous.unit === displayUnit
+            && previous.windy === windy
             ? previous
-            : { mode, iconId, temperature, unit: displayUnit })
-          const kind = weatherCubeKind(mode)
+            : { mode, iconId, temperature, unit: displayUnit, windy })
+          const kind = weatherCubeKind(mode, windy)
           setMapWeatherSignal(previous => {
             if (!kind) return null
             return previous?.kind === kind

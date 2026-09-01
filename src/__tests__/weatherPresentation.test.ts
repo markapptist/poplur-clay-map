@@ -32,20 +32,30 @@ describe('weather presentation', () => {
       iconId: 'weather.heavy_rain',
       temperature: 22,
       unit: 'C',
+      windy: false,
     })
     expect(readWeatherPresentation({ mode: 'snow', temperature: -4, unit: 'F' })).toEqual({
       mode: 'snow',
       iconId: 'weather.snow',
       temperature: -4,
       unit: 'F',
+      windy: false,
     })
     expect(readWeatherPresentation({ mode: 'fog' }, 'F')).toEqual({
       mode: 'fog',
       iconId: 'weather.fog',
       temperature: null,
       unit: 'F',
+      windy: false,
     })
     expect(readWeatherPresentation({ mode: 'wind', temperature: 18, unit: 'C' })).toBeNull()
+    // Wind rides beside the bounded mode as a flag, never as a mode itself.
+    expect(readWeatherPresentation({
+      mode: 'clear', iconId: 'weather.wind', temperature: 12, unit: 'C', windy: true,
+    })).toEqual({
+      mode: 'clear', iconId: 'weather.wind', temperature: 12, unit: 'C', windy: true,
+    })
+    expect(readWeatherPresentation({ mode: 'clear', windy: 'yes' })?.windy).toBe(false)
   })
 
   it('keeps a valid semantic icon and safely falls back for old messages', () => {
@@ -54,17 +64,20 @@ describe('weather presentation', () => {
       iconId: 'weather.overcast',
       temperature: 8,
       unit: 'C',
+      windy: false,
     })).toEqual({
       mode: 'cloudy',
       iconId: 'weather.overcast',
       temperature: 8,
       unit: 'C',
+      windy: false,
     })
     expect(readWeatherPresentation({ mode: 'cloudy', iconId: 'weather.not-real' }, 'C')).toEqual({
       mode: 'cloudy',
       iconId: 'weather.cloudy',
       temperature: null,
       unit: 'C',
+      windy: false,
     })
   })
 

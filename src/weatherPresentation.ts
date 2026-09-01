@@ -20,6 +20,8 @@ export interface WeatherPresentationSnapshot {
   iconId: WeatherIconId
   temperature: number | null
   unit: WeatherTemperatureUnit
+  /** Wind rides beside the bounded mode: a speed reading, not a WMO code. */
+  windy: boolean
 }
 
 export function weatherTemperatureUnit(): WeatherTemperatureUnit {
@@ -59,6 +61,7 @@ export function readWeatherPresentation(
     iconId?: unknown
     temperature?: unknown
     unit?: unknown
+    windy?: unknown
   }
   if (!isWeatherMode(candidate.mode)) return null
   const temperature = typeof candidate.temperature === 'number'
@@ -71,5 +74,5 @@ export function readWeatherPresentation(
   const iconId = isWeatherIconId(candidate.iconId)
     ? candidate.iconId
     : weatherIconIdForMode(candidate.mode)
-  return { mode: candidate.mode, iconId, temperature, unit }
+  return { mode: candidate.mode, iconId, temperature, unit, windy: candidate.windy === true }
 }

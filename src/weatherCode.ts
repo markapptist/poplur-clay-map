@@ -17,3 +17,13 @@ export function modeForCode(code: number): WeatherMode {
   if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'snow'
   return 'rain'
 }
+
+/** Sustained wind at/above ~20 mph is the common "windy" advisory bar. */
+export const WINDY_WIND_SPEED_KMH = 32
+
+/** Wind is Open-Meteo's wind_speed_10m (km/h), a reading beside the WMO code. */
+export function windyFromSpeed(windSpeedKmh: unknown): boolean {
+  return typeof windSpeedKmh === 'number'
+    && Number.isFinite(windSpeedKmh)
+    && windSpeedKmh >= WINDY_WIND_SPEED_KMH
+}

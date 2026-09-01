@@ -53,6 +53,7 @@ import { setClaimGroup, onClaimsSettled } from './mapClaims'
 import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
 import WeatherMark from './WeatherMark'
 import { weatherIconIdForCode, weatherIconIdForMode } from './sideControlIcons'
+import { windyFromSpeed } from './weatherCode'
 import {
   MAP_BROWSE_3D_BEARING,
   MAP_BROWSE_3D_MAX_PITCH,
@@ -688,7 +689,7 @@ export default function MapApp() {
   // Theme switching lives in the app's Profile → Settings; the prototype
   // ships the default clay skin with the infrastructure in place.
   const [theme] = useState(MAP_THEMES[0])
-  const [weather, setWeather] = useState<{ temp: number; code: number } | null>(null)
+  const [weather, setWeather] = useState<{ temp: number; code: number; wind: number } | null>(null)
   const [weatherForecast, setWeatherForecast] = useState<Array<{ date: string; high: number; low: number; code: number }>>([])
   const [weatherForecastStatus, setWeatherForecastStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   // The weather response replaces this astronomical offline fallback. The
@@ -1561,7 +1562,7 @@ export default function MapApp() {
     const refresh = () => {
       controller?.abort()
       controller = new AbortController()
-      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,moon_phase&forecast_days=5&temperature_unit=${unit}&timezone=auto`, {
+      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,moon_phase&forecast_days=5&temperature_unit=${unit}&timezone=auto`, {
         cache: 'no-store',
         signal: controller.signal,
       })
@@ -1576,7 +1577,13 @@ export default function MapApp() {
             throw new Error('Weather response is missing current conditions')
           }
           confirmed = true
-          setWeather({ temp: Math.round(temperature), code: currentCode })
+          // wind_speed_10m stays km/h whatever the temperature unit is.
+          const windSpeed = Number(json.current?.wind_speed_10m)
+          setWeather({
+            temp: Math.round(temperature),
+            code: currentCode,
+            wind: Number.isFinite(windSpeed) ? windSpeed : 0,
+          })
           const apiMoon = moonModelFromWeatherPhase(json.daily?.moon_phase?.[0])
           if (apiMoon) setMoonModel(apiMoon)
           const dates = Array.isArray(json.daily?.time) ? json.daily.time : []
@@ -1592,7 +1599,7 @@ export default function MapApp() {
         .catch(error => {
           if ((error as { name?: string } | null)?.name === 'AbortError') return
           if (!confirmed) {
-            setWeather(current => current ?? { temp: weatherUnit === 'F' ? 72 : 22, code: 1 })
+            setWeather(current => current ?? { temp: weatherUnit === 'F' ? 72 : 22, code: 1, wind: 0 })
             setWeatherForecast(current => current.length ? current : [])
             setWeatherForecastStatus(current => current === 'ready' ? current : 'error')
           }
@@ -3836,10 +3843,15 @@ export default function MapApp() {
   }, [flyToCenter, liveMapPosts])
 
   const weatherMode: WeatherMode = weatherOverride ?? (weather ? modeForCode(weather.code) : 'clear')
+  // Wind decorates only the dry modes; a harness override silences it so the
+  // picked condition is exactly what renders.
+  const weatherWindy = !weatherOverride
+    && windyFromSpeed(weather?.wind)
+    && (weatherMode === 'clear' || weatherMode === 'cloudy')
   const weatherIconId = weatherOverride
     ? weatherIconIdForMode(weatherOverride)
     : weather
-      ? weatherIconIdForCode(weather.code)
+      ? weatherWindy ? 'weather.wind' : weatherIconIdForCode(weather.code)
       : weatherIconIdForMode(weatherMode)
   const weatherTemperatureText = formatWeatherTemperature(weather?.temp ?? null)
   useEffect(() => {
@@ -3850,8 +3862,9 @@ export default function MapApp() {
       iconId: weatherIconId,
       temperature: weather?.temp ?? null,
       unit: weatherUnit,
+      windy: weatherWindy,
     }, '*')
-  }, [weather?.temp, weatherIconId, weatherMode, weatherUnit])
+  }, [weather?.temp, weatherIconId, weatherMode, weatherUnit, weatherWindy])
 
   if (!TOKEN) {
     return (

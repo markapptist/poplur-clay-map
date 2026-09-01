@@ -11,8 +11,10 @@ export const RAIN_CUBE_MODEL = 'poplur_cube_rain_cloud.glb'
 export const THUNDER_CUBE_MODEL = 'poplur_cube_thunder_cloud.glb'
 export const SNOW_CUBE_MODEL = 'poplur_cube_snow_cloud.glb'
 export const HAIL_CUBE_MODEL = 'poplur_cube_hail_cloud.glb'
+export const FOG_CUBE_MODEL = 'poplur_cube_fog_cloud.glb'
+export const WIND_CUBE_MODEL = 'poplur_cube_wind_cloud.glb'
 
-export type WeatherCubeKind = 'rain' | 'thunder' | 'snow' | 'hail'
+export type WeatherCubeKind = 'rain' | 'thunder' | 'snow' | 'hail' | 'fog' | 'wind'
 export type MapNewsCubeStatus = 'breaking' | 'live' | 'developing' | 'top'
 
 export interface MapNewsCubeEvent {
@@ -40,10 +42,13 @@ export function readMapNewsCubeEvent(value: unknown): MapNewsCubeEvent | null {
   return { id, status }
 }
 
-export function weatherCubeKind(mode: unknown): WeatherCubeKind | null {
-  if (mode === 'rain' || mode === 'snow' || mode === 'hail') return mode
+export function weatherCubeKind(mode: unknown, windy = false): WeatherCubeKind | null {
+  if (mode === 'rain' || mode === 'snow' || mode === 'hail' || mode === 'fog') return mode
   // Open-Meteo's thunder codes normalize to both thunder and storm.
   if (mode === 'thunder' || mode === 'storm') return 'thunder'
+  // Wind is a speed reading, not a WMO code, so it only decorates the dry
+  // modes: any precipitation or fog cube outranks the wind cloud.
+  if (windy && (mode === 'clear' || mode === 'cloudy')) return 'wind'
   return null
 }
 
@@ -53,6 +58,8 @@ export function weatherCubeModel(kind: WeatherCubeKind | null | undefined): stri
     case 'thunder': return THUNDER_CUBE_MODEL
     case 'snow': return SNOW_CUBE_MODEL
     case 'hail': return HAIL_CUBE_MODEL
+    case 'fog': return FOG_CUBE_MODEL
+    case 'wind': return WIND_CUBE_MODEL
     default: return null
   }
 }
