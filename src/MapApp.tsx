@@ -3349,7 +3349,12 @@ export default function MapApp() {
         ? MAP_GLOBAL_ONLINE
         : mapAreaOnline(center, ownArea.length)
       const totalRadius = accountRadiusKm
-      const popRadius = atPop && nearestPin?.mine ? nearestPin.radiusKm : undefined
+      // Every pop's radius, not just your own. The camera settles a beat after
+      // an arrow step, and this report is what the shell trusts last — leaving
+      // it own-pins-only sent popRadiusKm undefined for somebody else's pin,
+      // which the shell reads as "no pop subject" and wipes the radius the
+      // arrow just put on the card. The number is public post data either way.
+      const popRadius = atPop ? nearestPin?.radiusKm : undefined
       const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2), onlineUsers].join('|')
       if (!force && signature === previous) return
       previous = signature

@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
 const composeStart = source.indexOf('const COMPOSE_RADIUS_SOURCE')
-const composeEnd = source.indexOf('// Clay flyers:', composeStart)
+// End at the first declaration AFTER the compose-radius block rather than at a
+// far-away comment. The old '// Clay flyers:' marker left every feature added
+// in between inside the slice, so an unrelated reach ring — which is entitled
+// to draw a line layer — failed a rule that only ever governed the composer's
+// own takeover paint.
+const composeEnd = source.indexOf('function readBridgeLocation', composeStart)
 const composeSource = source.slice(composeStart, composeEnd)
 
 describe('map composer ownership paint', () => {

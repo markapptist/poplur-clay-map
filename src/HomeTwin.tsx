@@ -2852,11 +2852,19 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           && Number.isFinite(event.data.radiusKm)) {
           setMapPopRadiusKm(event.data.radiusKm)
           setMapWorldTotalKm(null)
+          // Traversal is a stated intent, not an inference from where the
+          // camera happens to sit. The map's own settle reporter reads scope
+          // from the camera, so a pop framed at globe distance still reports
+          // `world` and would hand the card back the account total moments
+          // after you asked for this pin. Holding the traversed radius apart
+          // keeps the card on the pin you chose until you choose another.
+          setTraversedPinRadiusKm(event.data.radiusKm)
           setMapHudContext(previous => previous
             ? { ...previous, scope: 'pop', popRadiusKm: event.data.radiusKm }
             : previous)
         } else if (event.data.kind === 'landmark' || event.data.kind === 'current') {
           setMapPopRadiusKm(null)
+          setTraversedPinRadiusKm(null)
           setMapHudContext(previous => previous && previous.scope === 'pop'
             ? { ...previous, scope: 'area' }
             : previous)
@@ -4260,6 +4268,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const [mapPopRadiusKm, setMapPopRadiusKm] = useState<number | null>(null)
   /** Sum of every pop's radius whenever no individual map pop is the subject. */
   const [mapWorldTotalKm, setMapWorldTotalKm] = useState<number | null>(null)
+  /** The pin an explicit map-point traversal landed on, held apart from the
+   *  camera-derived scope so a later world/area report cannot silently
+   *  replace the radius the user just asked to see. */
+  const [traversedPinRadiusKm, setTraversedPinRadiusKm] = useState<number | null>(null)
   // What the RADIUS card is actually reporting, in km. Three cases, in order:
   //   a recognised user in the camera — their reach
   //   travelling the map            — the CURRENT POP's takeover
@@ -4268,6 +4280,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // disagree about which radius is on screen.
   const shownRadiusKm = seenUser
     ? seenUser.radiusKm
+    : activeTab === 'map' && traversedPinRadiusKm != null
+      ? traversedPinRadiusKm
     : activeTab === 'map' && mapWorldTotalKm != null
       ? mapWorldTotalKm
       // The scanner: on the camera, each ML find adds the radius that object
@@ -4285,7 +4299,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               ? newsReachKm
             : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : earnedRadiusKm)
 
-  const mapHasPopSubject = activeTab === 'map' && mapHudContext?.scope === 'pop'
+  const mapHasPopSubject = activeTab === 'map'
+    && (traversedPinRadiusKm != null || mapHudContext?.scope === 'pop')
   const mapHasAccumulatedRadius = activeTab === 'map' && mapHudContext != null && !mapHasPopSubject
   const onlineAudience = activeTab === 'map'
     ? (mapHudContext?.onlineUsers ?? SPOOFED_ONLINE_AUDIENCE)
@@ -4305,6 +4320,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   useEffect(() => {
     if (activeTab !== 'map') {
       setMapPopRadiusKm(null)
+      setTraversedPinRadiusKm(null)
       setMapWorldTotalKm(null)
       setMapHudContext(null)
       setMapAreaPops(null)

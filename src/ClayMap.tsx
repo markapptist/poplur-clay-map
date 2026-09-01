@@ -1593,13 +1593,58 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   }, [radiusPreviewLaunch])
   const lastNotchRef = useRef<number | null>(null)
   const zoomStage = stageForZoom(zoomValue)
-  const [landmarkThumbId, setLandmarkThumbId] = useState<MaterializedLandmarkId | null>(null)
-  const landmarkThumbSprite = landmarkThumbId
-    ? WORLD_LANDMARK_THUMB_SPRITES[landmarkThumbId]
+  // Traversing to a point makes the zoom knob WEAR that point: the landmark's
+  // own clay piece, or the pop's pin (its chosen colour, the owner's face).
+  // The knob is the one control already showing "what you are looking at", so
+  // arriving somewhere and leaving it on a generic globe/cloud/airplane reads
+  // as though the traversal never landed. Falls back to the zoom band when
+  // nothing is focused, or while a pin's sprite is still compositing.
+  const [pointThumbSprite, setPointThumbSprite] = useState<string | null>(null)
+  const focusedThumbKey = focusedMapPoint?.kind === 'landmark' || focusedMapPoint?.kind === 'pin'
+    ? focusedMapPoint.key
     : null
-  const activeZoomThumb = landmarkThumbSprite
-    ? { id: `landmark-${landmarkThumbId}`, sprite: landmarkThumbSprite }
-    : zoomStage
+  useEffect(() => {
+    if (!focusedMapPoint || focusedMapPoint.kind === 'current') {
+      setPointThumbSprite(null)
+      return
+    }
+    if (focusedMapPoint.kind === 'landmark') {
+      setPointThumbSprite(
+        WORLD_LANDMARK_THUMB_SPRITES[focusedMapPoint.id as MaterializedLandmarkId] ?? null,
+      )
+      return
+    }
+    const pin = (pins ?? []).find(candidate => candidate.id === focusedMapPoint.id)
+    if (!pin) {
+      setPointThumbSprite(null)
+      return
+    }
+    let live = true
+    // Same cached composite the marker uses, so wearing a pin on the knob
+    // costs a cache hit rather than a second sprite pipeline.
+    void pinWithFace({
+      avatar: pin.mine ? null : pin.avatar,
+      color: pin.color,
+      pinColor: pin.pinColor ?? null,
+      mode: '3d',
+    }).then(src => { if (live) setPointThumbSprite(src) })
+      .catch(() => { if (live) setPointThumbSprite(null) })
+    return () => { live = false }
+  }, [focusedThumbKey, focusedMapPoint, pins])
+  // The incidental arrival system below stays exactly as it was: panning onto
+  // a landmark reveals its piece only once the 3D handle has actually
+  // rendered. An explicit traversal is a different intent — you asked to go
+  // there — so it wears the point immediately and outranks that gate.
+  const [landmarkThumbId, setLandmarkThumbId] = useState<MaterializedLandmarkId | null>(null)
+  const incidentalLandmarkSprite = landmarkThumbId
+    ? WORLD_LANDMARK_THUMB_SPRITES[landmarkThumbId] ?? null
+    : null
+  const activeZoomThumb = pointThumbSprite && focusedMapPoint
+    ? { id: `point-${focusedMapPoint.key}`, sprite: pointThumbSprite }
+    : incidentalLandmarkSprite
+      ? { id: `landmark-${landmarkThumbId}`, sprite: incidentalLandmarkSprite }
+      : zoomStage
+  const landmarkThumbSprite = pointThumbSprite ?? incidentalLandmarkSprite
   // Fill percentage aligned to the CENTER of the native thumb: a range thumb
   // only travels (track − thumb) px, so a raw value-percentage mask leads the
   // knob by up to half the thumb width — the barber fill visibly ran PAST the
