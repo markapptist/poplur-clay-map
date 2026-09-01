@@ -60,10 +60,14 @@ import {
   subtleLandmarkPitch,
 } from './mapPresentationPolicy'
 import {
+  mapPointCycleCameraPlan,
+  mapPointCycleDestinationPose,
+  mapPointRadiusFrameZoom,
   programmaticCameraBlurAllowed,
   programmaticCameraPoseMatches,
   programmaticCameraPlan,
   programmaticCameraPlanForMode,
+  type MapPointCameraSubject,
   type ProgrammaticCameraMode,
 } from './programmaticCameraMotion'
 import ClayNav from './ClayNav'
@@ -115,6 +119,11 @@ import { subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
 import { worldCountryZoomActive, type WorldCountryUpdate } from './mapCountrySignal'
+import {
+  buildMapPointCycle,
+  stepMapPointCycle,
+  type MapCyclePoint,
+} from './mapPointCycle'
 
 /** Static places still drive landmark/search tours, but they are not posts.
  * The production Map deliberately passes this empty list into ClayMap so a
@@ -341,6 +350,15 @@ const TOUR_AIRPORTS = TOUR_DESTINATIONS
 
 const INTRO_LANDMARKS = TOUR_DESTINATIONS.filter(destination => destination.kind === 'landmark')
 const TOUR_LANDMARKS = INTRO_LANDMARKS
+/** Every grounded landmark is one arrow stop. Rogers Centre shares CN Tower's
+ * renderer but remains an independently framed place at close zoom. */
+const MAP_POINT_LANDMARKS = TOUR_DESTINATIONS
+  .filter(destination => Boolean(landmarkCameraFrame(destination.id)))
+  .map(destination => ({
+    id: destination.id,
+    name: displayPlaceName(destination.name),
+    coords: destination.coords,
+  }))
 
 const SEARCH_SHORTCUT_IDS = [
   'cn-tower',
@@ -853,6 +871,18 @@ export default function MapApp() {
   // Routing must follow the user/launch location, not the AI tour camera. The
   // camera may be visiting another continent when an address is entered.
   const [navigationOrigin, setNavigationOrigin] = useState<[number, number]>(DEFAULT_NAV_ORIGIN)
+  // Unlike navigationOrigin, this is never seeded from Toronto or an intro
+  // landing on the user's biggest claim. It is a real native/browser fix and
+  // therefore safe to expose as the Current location stop in the point cycle.
+  const [currentLocation, setCurrentLocation] = useState<[number, number] | null>(null)
+  const acceptCurrentLocation = useCallback((center: [number, number]) => {
+    if (!Number.isFinite(center[0]) || Math.abs(center[0]) > 180
+      || !Number.isFinite(center[1]) || Math.abs(center[1]) > 90) return
+    setCurrentLocation(current => current?.[0] === center[0] && current?.[1] === center[1]
+      ? current
+      : center)
+    setNavigationOrigin(center)
+  }, [])
   // Mirror for callbacks that outlive renders (the engagement chips' anchor).
   const navigationOriginRef = useRef<[number, number]>(DEFAULT_NAV_ORIGIN)
   useEffect(() => { navigationOriginRef.current = navigationOrigin }, [navigationOrigin])
@@ -1039,7 +1069,7 @@ export default function MapApp() {
       const location = nativeLocationFrom(value)
       if (!location) return
       w.__poplurNativeLocation = location
-      setNavigationOrigin([location.longitude, location.latitude])
+      acceptCurrentLocation([location.longitude, location.latitude])
     }
     const onLocation = (event: Event) => applyLocation((event as CustomEvent).detail)
     const onMessage = (event: MessageEvent) => {
@@ -1054,7 +1084,7 @@ export default function MapApp() {
       window.removeEventListener('poplur-native-location', onLocation)
       window.removeEventListener('message', onMessage)
     }
-  }, [])
+  }, [acceptCurrentLocation])
 
   const runPlaceSearch = useCallback(async (query: string) => {
     const q = query.trim()
@@ -1670,6 +1700,7 @@ export default function MapApp() {
     landmarkFrame?: LandmarkCameraFrame | null,
     motionMode: ProgrammaticCameraMode = 'default',
     onArrival?: () => void,
+    pointSubject?: MapPointCameraSubject,
   ) => {
     const map = mapRef.current
     if (!map) return false
@@ -1701,8 +1732,73 @@ export default function MapApp() {
       ? 82
       : subtleLandmarkPitch(landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH)
     const targetBearing = landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING
+    const currentZoom = map.getZoom()
+    const currentPitch = map.getPitch()
+    const currentBearing = map.getBearing()
     const authoredMotion = motionMode !== 'default'
-    const cameraPlan = programmaticCameraPlanForMode(map.getZoom(), targetZoom, motionMode)
+    const currentCenter = map.getCenter()
+    const cameraPlan = motionMode === 'map-point-cycle'
+      ? mapPointCycleCameraPlan({
+        currentZoom,
+        targetZoom,
+        distanceMeters: distanceMeters(
+          [currentCenter.lng, currentCenter.lat],
+          targetCenter,
+        ),
+        requiresTargetFraming: Boolean(landmarkFrame),
+      })
+      : programmaticCameraPlanForMode(currentZoom, targetZoom, motionMode)
+
+    if (motionMode === 'map-point-cycle' && cameraPlan.kind === 'translate') {
+      // Arrow browsing is selection, not a replay of the cinematic tour. Put
+      // the next point under the camera in one frame: no flatten, pull-back,
+      // or second reveal move. Zoom is the nearby-preserved or subject-framed
+      // destination chosen above. Close pins regain the shallow isometric
+      // board after a world view; landmarks use their authored hero angle. A
+      // zero-duration ease (rather than jumpTo) keeps Mapbox's support for an
+      // authored landmark offset.
+      const destinationPose = mapPointCycleDestinationPose({
+        finalZoom: cameraPlan.zoom,
+        currentZoom,
+        currentPitch,
+        currentBearing,
+        targetPitch,
+        targetBearing,
+        subject: pointSubject ?? 'pin',
+        streetView,
+      })
+      mapCamera.__suppressNextMapClickUntil = Date.now() + 500
+      wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
+      map.setMinPitch(0)
+      // A world frame leaves Mapbox's pitch ceiling at zero. Raise it without
+      // moving the camera before the single atomic destination ease.
+      map.setMaxPitch(Math.max(destinationPose.maxPitch, currentPitch, destinationPose.pitch))
+      try {
+        map.easeTo({
+          center: targetCenter,
+          zoom: cameraPlan.zoom,
+          pitch: destinationPose.pitch,
+          bearing: destinationPose.bearing,
+          ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
+          duration: 0,
+          essential: true,
+        })
+      } catch {
+        if (ownsFlight()) {
+          mapCamera.__tripping = false
+          mapCamera.__cinematic = false
+        }
+        return false
+      }
+      if (ownsFlight()) {
+        map.setMaxPitch(destinationPose.maxPitch)
+        mapCamera.__tripping = false
+        mapCamera.__cinematic = false
+        onArrival?.()
+      }
+      return true
+    }
+
     // The authored tour crosses flat and stops just below the 3D threshold.
     // Only the destination reveal requests close tiles/extrusions/GLB work;
     // doing that work during the tail of the world crossing rendered the same
@@ -2155,7 +2251,7 @@ export default function MapApp() {
     navigator.geolocation.getCurrentPosition(
       position => {
         const center: [number, number] = [position.coords.longitude, position.coords.latitude]
-        setNavigationOrigin(center)
+        acceptCurrentLocation(center)
         setCurrentPlace('Current location')
         setTourLine('Current location selected - checking nearby 3D buildings.')
         flyToCenter(center, 4600)
@@ -2165,7 +2261,7 @@ export default function MapApp() {
       },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 15000 },
     )
-  }, [clearTourTimers, flyToCenter])
+  }, [acceptCurrentLocation, clearTourTimers, flyToCenter])
 
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -2935,6 +3031,135 @@ export default function MapApp() {
       }))
   }, [liveMapPosts, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
 
+  // One route powers the horizontal arrows at every zoom. It comes from the
+  // authoritative data, not the handful of DOM markers ClayMap keeps mounted
+  // near the viewport for thermal safety.
+  const mapPointRoute = useMemo(() => buildMapPointCycle({
+    currentLocation,
+    pins: mapPins,
+    landmarks: MAP_POINT_LANDMARKS,
+  }), [currentLocation, mapPins])
+  const mapPointRouteRef = useRef(mapPointRoute)
+  mapPointRouteRef.current = mapPointRoute
+  const focusedMapPointKeyRef = useRef<string | null>(null)
+  const [focusedMapPoint, setFocusedMapPoint] = useState<MapCyclePoint | null>(null)
+  const [mapPointPosition, setMapPointPosition] = useState<{ n: number; of: number } | null>(null)
+  const mapPointLabelActive = Boolean(focusedMapPoint && !tourOn)
+
+  // HomeTwin owns the embedded map's blue place/status label, while this
+  // route owns the molded point card. Keep the shell explicitly informed so
+  // it can hide only the duplicate place/area copy while the card is visible.
+  useEffect(() => {
+    if (!isEmbedded) return
+    window.parent.postMessage({
+      type: 'poplur-map-point-focus',
+      active: mapPointLabelActive,
+      key: mapPointLabelActive ? focusedMapPoint?.key ?? null : null,
+    }, '*')
+  }, [focusedMapPoint?.key, isEmbedded, mapPointLabelActive])
+
+  useEffect(() => () => {
+    if (!isEmbedded) return
+    window.parent.postMessage({
+      type: 'poplur-map-point-focus',
+      active: false,
+      key: null,
+    }, '*')
+  }, [isEmbedded])
+
+  useEffect(() => {
+    const key = focusedMapPointKeyRef.current
+    if (!key) return
+    const index = mapPointRoute.findIndex(point => point.key === key)
+    if (index < 0) {
+      focusedMapPointKeyRef.current = null
+      setFocusedMapPoint(null)
+      setMapPointPosition(null)
+      return
+    }
+    const next = mapPointRoute[index]
+    setFocusedMapPoint(current => current
+      && current.key === next.key
+      && current.name === next.name
+      && current.coords[0] === next.coords[0]
+      && current.coords[1] === next.coords[1]
+      && current.radiusKm === next.radiusKm
+      ? current
+      : next)
+    setMapPointPosition({ n: index + 1, of: mapPointRoute.length })
+  }, [mapPointRoute])
+
+  const cycleMapPoint = useCallback((direction: -1 | 1) => {
+    const route = mapPointRouteRef.current
+    const step = stepMapPointCycle(route, focusedMapPointKeyRef.current, direction)
+    if (!step) return
+    const { point, index, total } = step
+    focusedMapPointKeyRef.current = point.key
+    setFocusedMapPoint(point)
+    setMapPointPosition({ n: index + 1, of: total })
+    setCurrentPlace(displayPlaceName(point.name))
+    setArrivedAtPlace(true)
+    setTourLine(`${point.kind === 'landmark' ? 'Landmark' : point.kind === 'current' ? 'Current location' : point.mine ? 'Your pin' : 'Pin'} ${index + 1} of ${total}`)
+    closeSearchImmediately()
+    clearPopups('suggestion')
+    clearPopups('mapContent')
+    stopTour()
+
+    const pin = point.kind === 'pin'
+      ? mapPins.find(candidate => candidate.id === point.id)
+      : undefined
+    if (pin) {
+      const ownPosts = accountPostedClaims(liveMapPosts)
+      const nearby = ownPosts.filter(claim => distanceMeters(claim.coords, pin.coords) <= POPS_NEARBY_M)
+      setAreaPops({ count: nearby.length, ids: nearby.map(claim => claim.id) })
+    } else {
+      setAreaPops(null)
+    }
+
+    // The selected takeover is visible only for the signed-in person's own
+    // pin. Every other stop explicitly clears stale radius paint.
+    const map = mapRef.current
+    if (map) {
+      try {
+        installComposeRadiusPreview(map)
+        const ownRadius = point.kind === 'pin' && point.mine && point.radiusKm != null
+        updateComposeRadiusPreview(
+          map,
+          ownRadius ? new mapboxgl.LngLat(point.coords[0], point.coords[1]) : null,
+          ownRadius ? point.radiusKm ?? 0 : 0,
+          theme,
+          { fit: false },
+        )
+      } catch { /* style can reload between an arrow press and this update */ }
+    }
+
+    const radiusViewport = map
+      ? Math.min(map.getContainer().clientWidth, map.getContainer().clientHeight)
+      : 0
+    const frame: LandmarkCameraFrame | null = point.kind === 'landmark'
+      ? landmarkTourCameraFrame(point.id)
+      : point.kind === 'pin' && point.radiusKm != null && point.radiusKm > 0 && map
+        ? {
+          zoom: mapPointRadiusFrameZoom(point.radiusKm, point.coords[1], radiusViewport),
+          pitch: map.getPitch(),
+        }
+        : null
+    flyToCenter(point.coords, TOUR_FLIGHT_MS, frame, 'map-point-cycle', undefined, point.kind)
+    try {
+      window.parent?.postMessage({
+        type: 'poplur-map-point',
+        key: point.key,
+        id: point.id,
+        kind: point.kind,
+        name: point.name,
+        index,
+        total,
+        radiusKm: point.radiusKm,
+        mine: point.mine,
+      }, '*')
+    } catch { /* standalone route has no separate shell consumer */ }
+  }, [closeSearchImmediately, flyToCenter, liveMapPosts, mapPins, stopTour, theme])
+
   // A delete or privacy change removes a post from the snapshot. Its marker
   // and claim disappear through mapPins/setClaimGroup; dismiss any open card
   // and stale selection in the same React update so hidden content cannot
@@ -3076,7 +3301,7 @@ export default function MapApp() {
         ? MAP_GLOBAL_ONLINE
         : mapAreaOnline(center, ownArea.length)
       const totalRadius = accountRadiusKm
-      const popRadius = atPop ? nearestPin?.radiusKm : undefined
+      const popRadius = atPop && nearestPin?.mine ? nearestPin.radiusKm : undefined
       const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2), onlineUsers].join('|')
       if (!force && signature === previous) return
       previous = signature
@@ -3242,51 +3467,6 @@ export default function MapApp() {
   // Hold-menu actions arrive from the home page as messages: the on-map
   // Directions/Street View/Locate buttons moved there to declutter the map.
   const [directionsSignal, setDirectionsSignal] = useState(0)
-  const popCycleRef = useRef(-1)
-  // Where the walk currently stands, shown between the on-map arrows exactly as
-  // the channel number sits between the vertical pair. Without it the two
-  // chevrons frame an empty gap and give no sense of how far the route runs.
-  const [popPosition, setPopPosition] = useState<{ n: number; of: number } | null>(null)
-
-  /**
-   * The pops the channel arrows walk, for the level currently on screen.
-   *
-   * The route is the same realtime Firestore snapshot used by the visible
-   * pins and claims. Deleting a post removes it from traversal on that same
-   * snapshot, so arrows can never fly toward a wiped fixture.
-   *
-   * Read through the ref, not the state: this is called from the message
-   * listener, which is installed once and would otherwise capture the level
-   * that happened to be current at mount.
-   */
-  const traversalPops = useCallback((): Array<{
-    id: string; name: string; coords: [number, number]; radiusKm: number; channel: string; mine: boolean
-  }> => {
-    const mine = liveMapPosts.filter(pin => pin.mine).map(pin => ({
-      id: pin.id,
-      name: pin.name,
-      coords: pin.coords,
-      radiusKm: pin.radiusKm,
-      channel: pin.channel ?? 'live',
-      mine: true,
-    }))
-    const theirs = liveMapPosts.filter(pin => !pin.mine).map(pin => ({
-      id: pin.id,
-      name: pin.name,
-      coords: pin.coords,
-      radiusKm: pin.radiusKm,
-      channel: pin.channel ?? 'live',
-      mine: false,
-    }))
-    if (popLevelRef.current === 'mine') return mine
-    if (popLevelRef.current === 'others') return theirs
-    return [...mine, ...theirs]
-  }, [liveMapPosts])
-
-  // Changing the level changes the list the arrows index into, so a position
-  // held over from the old list points at a different pop (or past the end of
-  // a shorter one). Start the new layer from its beginning.
-  useEffect(() => { popCycleRef.current = -1 }, [popLevel])
 
   // ── Engagement travels the camera ─────────────────────────────────────────
   //
@@ -3348,21 +3528,27 @@ export default function MapApp() {
       // sits at a different index, and on "Other pops" it is not in POIS at
       // all — indexOf would return -1 and send the next press to the end of
       // the list.
-      const route = traversalPops()
-      popCycleRef.current = route.findIndex(p => p.id === poi.id)
-      // Arriving by tap, tour or engagement moves the walk too — the readout
-      // has to follow the camera, not just the arrows.
-      if (popCycleRef.current >= 0) setPopPosition({ n: popCycleRef.current + 1, of: route.length })
-      const nearby = popsNearby(poi, route)
+      const route = mapPointRouteRef.current
+      const routeIndex = route.findIndex(point => point.kind === 'pin' && point.id === poi.id)
+      // Arriving by engagement moves the unified walk too — the next arrow
+      // continues from what the camera is actually showing.
+      if (routeIndex >= 0) {
+        const point = route[routeIndex]
+        focusedMapPointKeyRef.current = point.key
+        setFocusedMapPoint(point)
+        setMapPointPosition({ n: routeIndex + 1, of: route.length })
+      }
+      const visiblePins = mapPinsRef.current
+      const nearby = popsNearby(poi, visiblePins)
       setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
       try {
         window.parent?.postMessage(
           {
             type: 'poplur-map-pop',
-            index: popCycleRef.current,
+            index: routeIndex,
             total: route.length,
             name: poi.name,
-            radiusKm: poi.radiusKm,
+            radiusKm: poi.mine ? poi.radiusKm : null,
             // How many of YOUR pops stand in this area — the shell renders the
             // count under the place title and routes a tap to the profile.
             nearby: nearby.length,
@@ -3386,7 +3572,7 @@ export default function MapApp() {
         updateComposeRadiusPreview(live, new mapboxgl.LngLat(coords[0], coords[1]), radiusKm, theme, { fit: false })
       } catch { /* style not ready yet; the next arrival draws it */ }
     }, TRIP_TOTAL_MS)
-  }, [flyToPop, liveMapPosts, theme, traversalPops])
+  }, [flyToPop, liveMapPosts, theme])
   engagementTraverseRef.current = traverseToEngagement
   useEffect(() => {
     const onAction = (event: MessageEvent) => {
@@ -3546,95 +3732,19 @@ export default function MapApp() {
           stepNewsTour(event.data.dir === -1 ? -1 : 1)
           break
         }
+        case 'cycleMapPoint':
+        // Backward-compatible aliases keep an older native/Home bundle useful
+        // while every visible Map arrow now resolves through the same route.
         case 'cycleTourLandmark':
         case 'cyclePop': {
-          const dir = event.data.dir === -1 ? -1 : 1
-          // The shell's persistent side arrows use an explicit landmark
-          // action. Treat that intent as fail-closed: even if cross-frame tour
-          // state changes between pointerdown and message delivery, it must
-          // never fall through into posted-pop traversal.
-          const landmarkIntent = event.data.action === 'cycleTourLandmark'
-            || (tourOnRef.current && tourModeRef.current === 'landmarks')
-          if (landmarkIntent && TOUR_LANDMARKS.length) {
-            const current = TOUR_LANDMARKS.findIndex(destination =>
-              destination.id === lastTourDestinationRef.current,
-            )
-            const base = current >= 0 ? current : dir > 0 ? -1 : 0
-            const nextLandmark = ((base + dir) % TOUR_LANDMARKS.length + TOUR_LANDMARKS.length) % TOUR_LANDMARKS.length
-            // One arrow means one landmark. Keep TOUR armed at the destination
-            // so the next arrow press continues from exactly what is visible.
-            startExplicitTourLoop(0, TOUR_LANDMARKS[nextLandmark])
-            break
-          }
-          if (landmarkIntent) break
-          // Channel arrows on the map: fly pop-to-pop with the tour camera
-          // (curved zoom-out-then-in), pausing the ambient tour.
-          //
-          // WHICH pops the arrows walk is the LEVEL currently on screen. This
-          // used to be POIS unconditionally — your own pops — so on "Other
-          // pops" the map drew everyone else's ground while the arrows flew you
-          // to claims that were not even rendered, and on ALL two thirds of the
-          // board was unreachable. The route now matches the layer, which is
-          // the whole point of having a level control.
-          stopTour()
-          const route = traversalPops()
-          if (!route.length) break
-          const next = ((popCycleRef.current + dir) % route.length + route.length) % route.length
-          popCycleRef.current = next
-          const poi = route[next]
-          if (poi) {
-            setTourLine(`Pop ${next + 1} of ${route.length}: ${poi.name}`)
-            setPopPosition({ n: next + 1, of: route.length })
-            const nearby = popsNearby(poi, route)
-            setAreaPops({ count: nearby.length, ids: nearby.map(p => p.id) })
-            // Traversal only moves the camera and updates context. The person
-            // can tap the visible post marker to open that exact post.
-            flyToPop(poi.coords as [number, number])
-            // Tell the shell WHICH pop this is. The channel arrows used to count
-            // POST_COUNT (128) locally while the map flew through POIS, so the
-            // number between the arrows described a different list from the one
-            // the camera was visiting. The map owns the list, so the map owns
-            // the number.
-            // Show the pop's TAKEOVER — the ground it holds — using the same
-            // radius preview the composer draws, so arriving at a post looks
-            // like arriving at its claim rather than just a camera move.
-            const map = mapRef.current
-            if (map) {
-              try {
-                installComposeRadiusPreview(map)
-                const [lng, lat] = poi.coords as [number, number]
-                // fit:false — the trip owns the camera. Framing the claim here
-                // is a flyTo under the hood and would cancel the flight.
-                updateComposeRadiusPreview(map, new mapboxgl.LngLat(lng, lat), poi.radiusKm, theme, { fit: false })
-              } catch { /* style not ready yet; the next cycle draws it */ }
-            }
-            try {
-              window.parent?.postMessage(
-                {
-                  type: 'poplur-map-pop',
-                  index: next,
-                  total: route.length,
-                  name: poi.name,
-                  // The HUD's RADIUS card shows THIS pop's takeover while you
-                  // travel, not the signed-in user's own reach.
-                  radiusKm: poi.radiusKm,
-                  // How many of YOUR pops stand in this area — the shell
-                  // renders the count under the place title and routes a tap
-                  // to the profile.
-                  nearby: nearby.length,
-                  nearbyIds: nearby.map(p => p.id),
-                },
-                '*',
-              )
-            } catch { /* no parent frame in the standalone map route */ }
-          }
+          cycleMapPoint(event.data.dir === -1 ? -1 : 1)
           break
         }
       }
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [applyRadiusDelta, closeSearchImmediately, flyToCenter, flyToPop, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, pauseLandmarkTour, resumeLandmarkTour, startExplicitTourLoop, startNewsTour, startRandomLandmarkTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
+  }, [applyRadiusDelta, closeSearchImmediately, cycleMapPoint, flyToCenter, flyToPop, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, pauseLandmarkTour, resumeLandmarkTour, startNewsTour, startRandomLandmarkTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()
@@ -3688,9 +3798,6 @@ export default function MapApp() {
     )
   }
 
-  const tourLandmarkPosition = tourOn && tourMode === 'landmarks'
-    ? TOUR_LANDMARKS.findIndex(destination => destination.id === lastTourDestinationRef.current)
-    : -1
   const newsTourPosition = tourOn && tourMode === 'news'
     ? newsTourIndexRef.current
     : -1
@@ -3727,6 +3834,8 @@ export default function MapApp() {
         onConquerSnapshot={isEmbedded ? undefined : setMapConquerSnapshot}
         onWorldCountryChange={handleWorldCountryChange}
         onPinOpen={openClickedMapPinContent}
+        focusedMapPoint={tourOn ? null : focusedMapPoint}
+        onCurrentLocationChange={acceptCurrentLocation}
         selectedId={selectedId}
         onSelectPoi={handleSelectPoi}
         mapRef={mapRef}
@@ -4143,21 +4252,23 @@ export default function MapApp() {
           :5199 map artifact) keeps drawing its own. */}
       {!isEmbedded && (
         <div className={styles.headerStack}>
-          <div className={styles.aiTicker} aria-live="polite" ref={tickerRef}>
-            <span
-              key={currentPlace}
-              className={tickerOverflow > 0 ? styles.tickerScroll : undefined}
-              style={{ '--tickerShift': `-${tickerOverflow}px` } as React.CSSProperties}
-            >
-              {currentPlace}
-            </span>
-          </div>
+          {!mapPointLabelActive && (
+            <div className={styles.aiTicker} aria-live="polite" ref={tickerRef}>
+              <span
+                key={currentPlace}
+                className={tickerOverflow > 0 ? styles.tickerScroll : undefined}
+                style={{ '--tickerShift': `-${tickerOverflow}px` } as React.CSSProperties}
+              >
+                {currentPlace}
+              </span>
+            </div>
+          )}
           <MapRadioStatusLabel className={styles.mapRadioLabel} />
           {/* Your pops standing in this area, in the same outlined-blue voice
               as the place line above it. Standalone has no profile to open, so
               the line is informational here; the embedded shell owns the
               clickable version (see HomeTwin). */}
-          {!tourOn && areaPops && (
+          {!mapPointLabelActive && !tourOn && areaPops && (
             <div className={styles.areaPops} key={`area-${areaPops.count}-${areaPops.ids[0] ?? ''}`}>
               {areaPops.overall
                 ? `${areaPops.count} pops posted overall`
@@ -4169,24 +4280,58 @@ export default function MapApp() {
         </div>
       )}
 
+      {mapPointLabelActive && focusedMapPoint && (
+        <aside
+          key={focusedMapPoint.key}
+          className={styles.mapPointCard}
+          data-map-point-card=""
+          data-map-point-id={focusedMapPoint.key}
+          data-map-point-kind={focusedMapPoint.kind}
+          data-map-point-radius-visible={focusedMapPoint.radiusKm != null ? 'true' : 'false'}
+          aria-live="polite"
+        >
+          <span className={styles.mapPointCardType}>
+            {focusedMapPoint.kind === 'landmark'
+              ? 'LANDMARK'
+              : focusedMapPoint.kind === 'current'
+                ? 'CURRENT LOCATION'
+                : focusedMapPoint.mine ? 'YOUR PIN' : 'PIN'}
+          </span>
+          <strong data-map-point-name="">{focusedMapPoint.name}</strong>
+          {focusedMapPoint.radiusKm != null && (
+            <span
+              className={styles.mapPointCardRadius}
+              data-map-point-radius-km={focusedMapPoint.radiusKm}
+            >
+              {Number.isInteger(focusedMapPoint.radiusKm)
+                ? focusedMapPoint.radiusKm
+                : focusedMapPoint.radiusKm.toFixed(1)} KM RADIUS
+            </span>
+          )}
+        </aside>
+      )}
+
       {/* Locate + Street View moved into the HOLD MENU (declutter): they now
           arrive as poplur-map-action messages — see the listener effect. */}
 
-      {/* Pop traversal, ON the map and under the pin.
-          These controls move the camera to a post without opening anything;
-          its marker remains the deliberate, exact content action.
+      {/* Map-point traversal, ON the map and under the pin.
+          These controls move the camera to a point without opening anything;
+          its source marker remains the deliberate, exact content action.
 
           Same clay component as the channel buttons, laid on its side -- they
           ARE those buttons, not a lookalike, which is why a new orientation was
           added there rather than a second arrow widget invented here.
 
-          They post an explicit news or landmark action while that finite tour
-          is active, and the normal cyclePop action otherwise. Keeping those
-          intents distinct means a cross-frame timing change can never turn a
-          tour press into a posted-pop traversal. */}
+          They post an explicit news action while that finite tour is active,
+          and the unified point action otherwise. Keeping those intents
+          distinct means a cross-frame timing change can never turn a news-tour
+          press into a manual map-point step. */}
       <div
         className={`${styles.popStepper}${isEmbedded ? ` ${styles.popStepperAboveCube}` : ''}${activeNewsStop ? ` ${styles.popStepperNewsHidden}` : ''}`}
         data-map-tour-step=""
+        data-map-point-stepper=""
+        data-map-point-index={mapPointPosition?.n ?? 0}
+        data-map-point-total={mapPointRoute.length}
         aria-hidden={activeNewsStop ? true : undefined}
       >
         <ClayChannelArrows
@@ -4194,14 +4339,14 @@ export default function MapApp() {
           size={channelControlSize}
           number={newsTourPosition >= 0
             ? newsTourPosition + 1
-            : tourLandmarkPosition >= 0 ? tourLandmarkPosition + 1 : popPosition ? popPosition.n : 0}
+            : mapPointPosition?.n ?? 0}
           label={newsTourPosition >= 0
             ? `${newsTourPosition + 1}/${newsTourDisplayCount}`
-            : tourLandmarkPosition >= 0
-            ? `${tourLandmarkPosition + 1}/${TOUR_LANDMARKS.length}`
-            : popPosition ? `${popPosition.n}/${popPosition.of}` : ''}
-          upLabel={tourMode === 'news' ? 'Previous news story' : tourOn ? 'Previous landmark' : 'Previous pop'}
-          downLabel={tourMode === 'news' ? 'Next news story' : tourOn ? 'Next landmark' : 'Next pop'}
+            : mapPointPosition
+              ? `${mapPointPosition.n}/${mapPointPosition.of}`
+              : `0/${mapPointRoute.length}`}
+          upLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}
+          downLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}
           onUp={() => {
             // These arrows already live in this map document. Invoke the news
             // step synchronously instead of round-tripping through a same-page
@@ -4209,7 +4354,7 @@ export default function MapApp() {
             if (tourMode === 'news') { stepNewsTour(-1); return }
             window.postMessage({
               type: 'poplur-map-action',
-              action: tourOn ? 'cycleTourLandmark' : 'cyclePop',
+              action: 'cycleMapPoint',
               dir: -1,
             }, '*')
           }}
@@ -4217,7 +4362,7 @@ export default function MapApp() {
             if (tourMode === 'news') { stepNewsTour(1); return }
             window.postMessage({
               type: 'poplur-map-action',
-              action: tourOn ? 'cycleTourLandmark' : 'cyclePop',
+              action: 'cycleMapPoint',
               dir: 1,
             }, '*')
           }}

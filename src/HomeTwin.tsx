@@ -2822,6 +2822,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         applyMapWorldHover(null)
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
+        setMapPointLabelActive(false)
+      }
+      if (event.data.type === 'poplur-map-point-focus') {
+        setMapPointLabelActive(event.data.active === true)
       }
       if (event.data.type === 'poplur-account-radius') {
         const totalRadiusKm = Number(event.data.radiusKm)
@@ -2894,6 +2898,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         applyMapWorldHover(null)
         setMapNewsTourOn(false)
         setMapNewsEvent(null)
+        setMapPointLabelActive(false)
         scheduleMapRetry()
       }
       if (event.data.type === 'poplur-map-night') {
@@ -3467,6 +3472,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // The map's status title, drawn by the shell so it can never collide with
   // home chrome during a tab change.
   const [mapPlace, setMapPlace] = useState<string | null>(null)
+  const [mapPointLabelActive, setMapPointLabelActive] = useState(false)
   const [mapHudContext, setMapHudContext] = useState<MapHudContext | null>(null)
   // "N pops in this area" under the title — the map counts on every pop
   // arrival (it owns the pop list); a tap opens the profile with these pops
@@ -5606,12 +5612,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           className={`${styles.mapTitle} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
           aria-live="polite"
         >
-          <span key={mapPlace} className={styles.mapTitleText}>{mapPlace}</span>
+          {!mapPointLabelActive && (
+            <span key={mapPlace} className={styles.mapTitleText}>{mapPlace}</span>
+          )}
           <MapRadioStatusLabel className={styles.mapRadioLabel} />
           {/* Your pops standing in this area — same outlined-blue voice as the
               place line, one size down. A tap opens the profile with exactly
               these pops lit up. */}
-          {!mapTourOn && mapAreaPops && (
+          {!mapPointLabelActive && !mapTourOn && mapAreaPops && (
             <button
               type="button"
               data-poplur-native-hit-region
@@ -5743,8 +5751,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               // why this defaults to 0).
               doubleTapWindowMs={incomingCall ? 260 : 0}
               onHold={() => {
-                playPop()
                 if (activeTab === 'map' && mapOverlayOpen) {
+                  playPop()
                   dismissMapOverlay()
                   return
                 }
@@ -5755,10 +5763,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 // page you were on, which is why holding the cube on Chat used
                 // to leave you looking at the live camera.
                 if (holdOpen) {
+                  playPop()
                   setWheelOverNonce(n => n + 1)
                   return
                 }
                 // Nothing open: the wheel is the whole menu, over the live tab.
+                // This gesture owns the audible pop; claim the resulting cube
+                // transition so opening Hold cannot add a second one.
+                playCubeNavigationPop()
                 setResume(current => ({ screen: null, n: current.n + 1 }))
                 setHoldOpen(true)
               }}

@@ -1281,77 +1281,18 @@
     radial-gradient(circle at 50% 0%, rgba(255, 98, 176, 0.28), transparent 34%),
     #080410;
   overflow: hidden;
+  isolation: isolate;
 }
 
-.captureTop {
+.capture::after {
+  content: "";
   position: absolute;
-  /* Keep the shared Home logo above the title and camera-source hint instead
-     of stacking all three labels in the same strip. */
-  top: max(76px, calc(env(safe-area-inset-top) + 54px));
-  left: 18px;
-  right: 18px;
-  z-index: 3;
-  display: grid;
-  grid-template-columns: 52px 1fr 52px;
-  align-items: center;
-  justify-items: center;
-  gap: 12px;
-}
-
-.captureHead {
-  text-align: center;
-  color: #ffe9f4;
-  font: 900 16px/1 "Arial Rounded MT Bold", ui-rounded, "SF Pro Rounded", "Avenir Next", system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.4px;
-  /* clay text — matches the pre-login headings */
-  text-shadow:
-    0 -1.5px 0 rgba(255, 255, 255, 0.32),
-    0 2px 0 #b8547a,
-    0 4px 0 rgba(120, 12, 62, 0.6),
-    0 7px 12px rgba(0, 0, 0, 0.72);
-}
-
-.captureHead small {
-  display: block;
-  margin-top: 7px;
-  color: rgba(255, 233, 244, 0.7);
-  font: 800 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.08em;
-  text-shadow: 0 2px 5px #000;
-}
-
-.captureTool {
-  border: none;
-  color: #fff3f9;
-  background: linear-gradient(160deg, #ff9fce 0%, #ee4e98 42%, #c11f6e 100%);
-  box-shadow:
-    inset 0 3px 0 rgba(255, 255, 255, 0.7),
-    inset 0 -6px 7px rgba(88, 6, 47, 0.5),
-    0 9px 17px rgba(0, 0, 0, 0.45),
-    0 2px 3px rgba(120, 10, 60, 0.55);
-  text-shadow: 0 -1px 0 rgba(255, 255, 255, 0.4), 0 2px 0 #8a1550;
-  cursor: pointer;
-}
-
-.captureTool {
-  width: 52px;
-  height: 44px;
-  border-radius: 17px;
-  display: grid;
-  place-items: center;
-  font: 900 24px/1 system-ui, sans-serif;
-  text-shadow: 0 2px 0 #731342;
-}
-
-.captureTool:active { transform: translateY(2px) scale(0.97); }
-
-.captureToolOn {
-  color: #4c2500;
-  background: linear-gradient(145deg, #fff4a7, #e7a637);
-  box-shadow:
-    inset 1px 2px 0 rgba(255, 255, 255, 0.78),
-    inset -2px -3px 0 rgba(116, 67, 0, 0.34),
-    0 0 18px rgba(255, 204, 55, 0.68);
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(4, 2, 8, .42), transparent 20%, transparent 68%, rgba(4, 2, 8, .58)),
+    radial-gradient(ellipse at center, transparent 40%, rgba(6, 1, 9, .2) 100%);
 }
 
 /* the live feed fills the whole screen; slight overscale hides the
@@ -1370,7 +1311,10 @@
 
 .profileRoll {
   position: absolute;
-  inset: 132px 0 138px;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 62px);
+  right: 0;
+  bottom: calc(max(18px, env(safe-area-inset-bottom, 0px)) + var(--cube-size, 176px) + 14px);
+  left: 0;
   z-index: 1;
   overflow: hidden;
 }
@@ -1381,50 +1325,117 @@
   padding-bottom: 8px;
 }
 
-.vfRing {
+.selfieGuide {
   position: absolute;
-  inset: 132px 26px 148px;
-  border: 3px solid rgba(255, 220, 240, 0.72);
-  border-radius: 31px;
+  top: 48%;
+  left: 50%;
+  z-index: 9;
+  width: min(66vw, 274px, 44vh);
+  aspect-ratio: 1;
+  border: 2px solid rgba(255, 225, 242, .54);
+  border-radius: 31%;
+  transform: translate(-50%, -50%);
   box-shadow:
-    inset 0 0 0 2px rgba(93, 5, 48, 0.28),
-    0 0 0 3px rgba(255, 76, 160, 0.16),
-    0 12px 36px rgba(0, 0, 0, 0.3);
+    inset 0 0 0 1px rgba(89, 10, 51, .28),
+    0 0 0 3px rgba(246, 59, 154, .14),
+    0 14px 34px rgba(0, 0, 0, .24);
   pointer-events: none;
-  z-index: 2;
 }
 
-/* The AR rail and camera flip live next to the viewfinder rather than in the
-   capture bar. That leaves the cube as the shutter and keeps filters within a
-   single thumb reach. */
-.captureSideRail {
+.selfieGuide::before,
+.selfieGuide::after,
+.selfieGuide span {
+  content: "";
   position: absolute;
-  z-index: 28;
-  top: max(148px, calc(env(safe-area-inset-top, 0px) + 92px));
-  right: 14px;
-  display: grid;
-  gap: 12px;
+  left: 50%;
+  border: 1.5px solid rgba(255, 237, 247, .5);
+  transform: translateX(-50%);
 }
 
-.captureFlip {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 1px;
-  border: 1px solid rgba(255, 210, 238, 0.62);
-  border-radius: 13px;
-  color: #fff;
-  background: linear-gradient(145deg, #ff9fce, #e8358d 58%, #8d124d);
-  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.56), 0 4px 0 rgba(75, 4, 38, 0.58), 0 8px 14px rgba(0, 0, 0, 0.34);
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+.selfieGuide::before {
+  top: 23%;
+  width: 30%;
+  aspect-ratio: 1;
+  border-radius: 50%;
 }
 
-.captureFlip:active { transform: translateY(2px) scale(0.96); }
-.captureFlip svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.captureFlip span { font: 900 7px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; }
+.selfieGuide::after {
+  bottom: 17%;
+  width: 56%;
+  height: 29%;
+  border-bottom: 0;
+  border-radius: 50% 50% 0 0;
+}
+
+.selfieGuide span {
+  bottom: -10px;
+  width: 34px;
+  height: 3px;
+  border: 0;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #67dff3, #ff66b0);
+  box-shadow: 0 0 11px rgba(246, 59, 154, .74);
+}
+
+.captureStatus {
+  position: absolute;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 10px);
+  left: 50%;
+  z-index: 30;
+  min-width: min(220px, calc(100vw - 132px));
+  max-width: calc(100vw - 116px);
+  padding: 7px 13px 8px;
+  border: 1px solid rgba(255, 126, 187, .72);
+  border-radius: 17px;
+  color: #fff6fb;
+  text-align: center;
+  background:
+    radial-gradient(circle at 28% 0%, rgba(255, 255, 255, .18), transparent 42%),
+    rgba(17, 5, 14, .78);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .18),
+    0 7px 18px rgba(0, 0, 0, .34),
+    0 0 16px rgba(246, 59, 154, .14);
+  backdrop-filter: blur(11px) saturate(1.2);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.captureStatus strong,
+.captureStatus span { display: block; }
+
+.captureStatus strong {
+  color: #ff77b9;
+  font: 950 11px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: .12em;
+  text-shadow: 0 1px 0 #54112f, 0 0 9px rgba(246, 59, 154, .48);
+}
+
+.captureStatus span {
+  margin-top: 4px;
+  font: 900 8px/1.1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: .06em;
+  color: rgba(255, 241, 248, .88);
+}
+
+.capture :global([data-poplur-control-rail]) {
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 72px);
+}
+
+.captureRollButton { overflow: hidden; }
+
+.captureRollThumb {
+  position: absolute;
+  inset: 3px;
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 227, 243, .78);
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: inset 0 0 0 1px rgba(66, 3, 33, .25), 0 3px 7px rgba(0, 0, 0, .42);
+  pointer-events: none;
+}
 
 .camFallback {
   position: absolute;
@@ -1441,91 +1452,42 @@
 .camFallback span { font-size: 46px; }
 .camFallback p { font-size: 13px; line-height: 1.4; padding: 0 24px; }
 
-.captureBar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  /* The Home cube owns the bottom centre and is the camera's back control.
-     Lift the shutter above that stable row instead of layering two controls. */
-  bottom: calc(max(18px, env(safe-area-inset-bottom)) + var(--cube-size, 176px) + 12px);
-  display: grid;
-  grid-template-columns: 88px 112px 88px;
-  align-items: end;
-  justify-content: center;
-  gap: clamp(12px, 3.2vw, 24px);
-  z-index: 2;
-  pointer-events: none;
+@media (max-height: 680px) {
+  .captureStatus {
+    top: calc(var(--header-title-top, 20px) + var(--header-title-height, 32px) + 6px);
+    padding-block: 5px 6px;
+  }
+
+  .capture :global([data-poplur-control-rail]) {
+    top: calc(var(--header-title-top, 20px) + var(--header-title-height, 32px) + 58px);
+  }
+
+  .selfieGuide {
+    top: 45%;
+    width: min(58vw, 224px, 40vh);
+  }
+
+  .profileRoll {
+    top: calc(var(--header-title-top, 20px) + var(--header-title-height, 32px) + 52px);
+  }
 }
 
-.captureAction {
-  width: 88px;
-  min-height: 104px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  filter: drop-shadow(0 10px 10px rgba(24, 2, 15, 0.46));
-  pointer-events: auto;
-}
+@media (orientation: landscape) and (max-height: 520px) {
+  .captureStatus {
+    left: 50%;
+    min-width: 190px;
+  }
 
-.captureActionPrimary {
-  width: 112px;
-  min-height: 130px;
-}
+  .selfieGuide {
+    top: 53%;
+    width: min(34vw, 210px, 56vh);
+  }
 
-.captureLibraryHint {
-  width: 112px;
-  min-height: 104px;
-  display: grid;
-  place-items: center;
-  color: #ffe9f4;
-  font: 900 10px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.08em;
-  text-align: center;
-  text-shadow: 0 2px 5px #000;
-  pointer-events: auto;
-}
-
-.captureActionLabel {
-  margin-top: -2px;
-  color: #ffe9f4;
-  font: 900 11px/1 "Arial Rounded MT Bold", ui-rounded, "SF Pro Rounded", "Avenir Next", system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.35px;
-  text-shadow:
-    0 -1px 0 rgba(255, 255, 255, 0.3),
-    0 2px 0 #8d174f,
-    0 5px 10px rgba(0, 0, 0, 0.72);
-  pointer-events: none;
-}
-
-.cameraRollThumb {
-  width: 88px;
-  height: 104px;
-  border: 0;
-  background: none;
-  padding: 0;
-  cursor: pointer;
-  border-radius: 6px;
-  overflow: hidden;
-  pointer-events: auto;
-  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
-  transition: transform 80ms ease;
-}
-
-.cameraRollThumb:active {
-  transform: scale(0.95);
-}
-
-.cameraRollThumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.captureSpacer {
-  width: 88px;
-  height: 104px;
+  .profileRoll {
+    right: calc(max(12px, env(safe-area-inset-right, 0px)) + 58px);
+    bottom: 10px;
+    left: calc(max(12px, env(safe-area-inset-left, 0px)) + 58px);
+  }
 }
 
 .flash {
@@ -2004,11 +1966,15 @@
 }
 
 /* A front-camera selfie plays back the way you saw it while recording. The
-   stored file stays unmirrored (true to how others see you); only the display
-   flips. Applied to the <video>, which mirrors its poster frame too, so the
-   still and the moving image can never disagree — the exact mismatch that made
-   the avatar appear to flip whenever the poster showed. */
+   stored file stays source-oriented; both the moving layer and its still
+   fallback receive this one presentation transform. */
 .selfieMirrored { transform: scaleX(-1); }
+
+/* WKWebView may omit an accelerated <video> layer from an OS screenshot. Keep
+   the identically-oriented poster directly beneath it so that handoff is
+   visually lossless instead of exposing the page background or a reversed
+   fallback frame. */
+.selfiePosterUnderlay { z-index: 1; }
 
 /* The confetti falls INSIDE the sheet, behind its content: the title and the
    rows keep their own stacking so nothing lands on top of text you are

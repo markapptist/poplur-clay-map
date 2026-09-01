@@ -1,11 +1,61 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   createCubeNavigationSoundClaimTracker,
   cubeSwapShouldPlaySound,
   pendingCubeSwapSound,
 } from '../cubeSwapSoundPolicy'
+import { createFeedLikeActivationGate } from '../feedLikeActivation'
 
 describe('cube swap sound policy', () => {
+  it('emits one Like pop for pointerdown plus its compatibility click', () => {
+    let now = 1_000
+    let pops = 0
+    const gate = createFeedLikeActivationGate(320, () => now)
+    const like = (postId = 'channel:post') => {
+      if (gate.shouldAccept(postId)) pops += 1
+    }
+
+    like() // primary pointerdown
+    now += 1
+    like() // synthesized WKWebView compatibility click
+    expect(pops).toBe(1)
+
+    now += 320
+    like() // a later deliberate Like remains audible
+    now += 1
+    like('channel:next') // a new post is never swallowed
+    expect(pops).toBe(3)
+
+    const feedSource = readFileSync(new URL('../FeedTwin.tsx', import.meta.url), 'utf8')
+    expect(feedSource).toContain('likeActivationGateRef.current.shouldAccept(id)')
+    expect(feedSource).toContain("const dislikeCurrentPost = useCallback(() => reactToCurrentPost('down')")
+  })
+
+  it('keeps first Hold-menu open at one pop while claiming its cube transition', () => {
+    const tracker = createCubeNavigationSoundClaimTracker()
+    let pops = 1 // playCubeNavigationPop owns the opening gesture.
+
+    tracker.beginScreenNavigation()
+    tracker.screenChanged()
+    if (cubeSwapShouldPlaySound({
+      wheelFocused: false,
+      activeTab: 'profile',
+      previousEventSignal: 'none',
+      nextEventSignal: 'none',
+      navigationSoundClaimed: tracker.consume(),
+    })) pops += 1
+    expect(pops).toBe(1)
+
+    const homeSource = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'utf8')
+    const holdHandler = homeSource.slice(
+      homeSource.indexOf('onHold={() => {'),
+      homeSource.indexOf('            />', homeSource.indexOf('onHold={() => {')),
+    )
+    expect(holdHandler).toContain('playCubeNavigationPop()')
+    expect(holdHandler).toContain('setHoldOpen(true)')
+  })
+
   it('keeps each navigation claim one-shot and re-arms with a new version', () => {
     const tracker = createCubeNavigationSoundClaimTracker()
     expect(tracker.claimed()).toBe(false)

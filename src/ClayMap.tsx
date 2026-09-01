@@ -4,7 +4,8 @@ import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainMan
 import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { SideControlIconImage } from './SideControlIcon'
-import { weatherIconIdForMode, type WeatherIconId } from './sideControlIcons'
+import type { WeatherIconId } from './sideControlIcons'
+import { approvedWeatherAssetId, weatherTextMark } from './weatherTextMark'
 import {
   MAP_BROWSE_3D_BEARING,
   MAP_BROWSE_3D_ENTER_ZOOM,
@@ -59,6 +60,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { POI, MapTheme } from './data'
 import { mapPinRenderKey } from './mapPinRenderKey'
+import type { MapCyclePoint } from './mapPointCycle'
 import { modelSprite } from './modelSprite'
 import {
   MAP_COLOR_CONTROL_GAP,
@@ -194,6 +196,12 @@ export interface ClayMapProps {
   onWorldCountryChange?: (country: WorldCountryUpdate) => void
   /** A pin was tapped: go to that poster's profile, with this pop's post lit. */
   onPinOpen?: (pin: PopPin) => void
+  /** One data-backed focus that remains visible even when the underlying pin
+   * is outside the DOM marker budget or a landmark changes representation. */
+  focusedMapPoint?: MapCyclePoint | null
+  /** Publishes only validated native/browser fixes; intro targets and fallback
+   * cities never become a Current location cycle stop. */
+  onCurrentLocationChange?: (coords: [number, number]) => void
   /** The signed-in user's profile photo, used by the persistent self-location
    *  pin. Sourced from the shell (App.tsx); the iframe cannot read the shell's
    *  localStorage on its own. */
@@ -266,14 +274,25 @@ function WeatherSticker({ mode, iconId, className = '' }: {
   iconId?: WeatherIconId
   className?: string
 }) {
+  const approvedAsset = approvedWeatherAssetId(mode, iconId)
+  const label = weatherTextMark(mode, iconId)
   return (
-    <span className={`${styles.weatherSticker} ${className}`} aria-hidden="true">
-      <SideControlIconImage
-        icon={iconId ?? weatherIconIdForMode(mode)}
-        displaySize={96}
-        className={`${styles.weatherStickerImage} ${styles.weatherStaticImage}`}
-        loading="lazy"
-      />
+    <span
+      className={`${styles.weatherSticker}${approvedAsset ? ` ${styles.weatherStickerProvidedAsset}` : ''} ${className}`}
+      data-weather-text-mark={label}
+      data-weather-provided-asset={approvedAsset ?? undefined}
+      aria-hidden="true"
+    >
+      {approvedAsset ? (
+        <SideControlIconImage
+          icon={approvedAsset}
+          displaySize={96}
+          className={styles.weatherProvidedAsset}
+          loading="lazy"
+        />
+      ) : (
+        <span className={styles.weatherStickerText}>{label}</span>
+      )}
     </span>
   )
 }
@@ -1312,7 +1331,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, focusedMapPoint = null, onCurrentLocationChange, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -1377,6 +1396,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // freeze whatever callback identity existed at that moment.
   const onPinOpenRef = useRef(onPinOpen)
   onPinOpenRef.current = onPinOpen
+  const onCurrentLocationChangeRef = useRef(onCurrentLocationChange)
+  onCurrentLocationChangeRef.current = onCurrentLocationChange
   const skyRef = useRef(sky)
   skyRef.current = sky
   // A retained idle frame means the Mapbox renderer must stay truly still.
@@ -1388,6 +1409,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   const deferredMapAppearanceRef = useRef(false)
   const flyerMarkersRef = useRef<mapboxgl.Marker[]>([])
   const worldLandmarkMarkersRef = useRef<mapboxgl.Marker[]>([])
+  const mapPointHighlightMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const landmarks3dRef = useRef<Map<string, NearLandmark3D>>(new Map())
   const treeMarkersRef = useRef<mapboxgl.Marker[]>([])
   const boatMarkersRef = useRef<mapboxgl.Marker[]>([])
@@ -1696,6 +1718,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const center = readLocation(value)
       if (!center) return
       nativeLocationRef.current = center
+      onCurrentLocationChangeRef.current?.(center)
       if (focusedPostLaunch
         && !focusedPostManualSelectionRef.current
         && !focusedPostResolvedLocationRef.current) {
@@ -3591,6 +3614,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           navigator.geolocation.getCurrentPosition(
             pos => {
               landingCenter = [pos.coords.longitude, pos.coords.latitude]
+              nativeLocationRef.current = landingCenter
+              onCurrentLocationChangeRef.current?.(landingCenter)
               // The direct 2D launch may already have painted its cached fallback
               // before Core Location answers. Recenter once, without animating
               // through another set of intermediate tiles.
@@ -4384,6 +4409,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           el.className = styles.worldLandmarkIcon
           el.dataset.poplurWorldLandmark = mark.id
           el.dataset.poplurWorldLandmarkArt = 'game-piece'
+          el.dataset.mapPointId = `landmark:${mark.id}`
+          el.dataset.mapPointKind = 'landmark'
           el.setAttribute('role', 'img')
           el.setAttribute('aria-label', `${mark.id.replace(/-/g, ' ')} landmark`)
           const img = document.createElement('img')
@@ -4904,9 +4931,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           const dir = lane <= MAP_TAP_LANE ? -1 : lane >= 1 - MAP_TAP_LANE ? 1 : 0
           if (!dir) return
           // Straight to this document's own map-action handler (App.tsx),
-          // which owns which pops the walk visits and answers the shell with
+          // which owns which map points the walk visits and answers the shell with
           // the index it landed on.
-          window.postMessage({ type: 'poplur-map-action', action: 'cyclePop', dir }, '*')
+          window.postMessage({ type: 'poplur-map-action', action: 'cycleMapPoint', dir }, '*')
         })
       }
       // Keep the composer bubble pinned to its ground point as the camera moves.
@@ -5227,6 +5254,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
               focusedPostResolvedLocationRef.current = true
               setFocusedPostLocationStatus('ready')
               nativeLocationRef.current = located
+              onCurrentLocationChangeRef.current?.(located)
               positionFocusedPostComposer(located)
             },
             () => {
@@ -5375,10 +5403,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     return () => window.cancelAnimationFrame(raf)
   }, [composeAt?.lng, composeAt?.lat, composeRadiusKm, mapEpoch, mapRef, radiusPreviewLaunch, takeoverFace, theme])
 
-  // Persistent "you are here" marker: your profile face standing on your live
-  // GPS point. Reads photo/video from the props the shell forwards over
-  // postMessage (the iframe cannot read the shell's own localStorage, so it
-  // must be told).
+  // Persistent "you are here" marker: the Poplur pin always stands on the
+  // validated live GPS point. Profile media enriches it when available, but a
+  // new account without a selfie still needs a visible current-location stop.
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -5397,13 +5424,16 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       || /^https:\/\//i.test(ownProfilePhoto)
       || /^poplur-clay:\/\//i.test(ownProfilePhoto)
     ) ? ownProfilePhoto : null
-    if (!usablePhoto && !usableVideo) return
     const build = (coords: [number, number]) => {
-      void pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: '3d' })
+      void pinWithFace({ avatar: null, color: takeoverFace, mode: '3d' })
         .then(src => {
           if (cancelled || mapRef.current !== map) return
           const markerRoot = document.createElement('div')
           markerRoot.className = styles.popPinMarker
+          markerRoot.dataset.mapPointId = 'current:location'
+          markerRoot.dataset.mapPointKind = 'current'
+          markerRoot.setAttribute('role', 'img')
+          markerRoot.setAttribute('aria-label', 'Current location')
           const pin = document.createElement('div')
           pin.className = `${styles.popPin} ${styles.popPinMine}`
           const pinImage = document.createElement('img')
@@ -5458,7 +5488,45 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       marker?.remove()
       marker = null
     }
-  }, [mapEpoch, mapRef, radiusPreviewLaunch, ownProfilePhoto, ownProfileSelfieVideo])
+  }, [mapEpoch, mapRef, radiusPreviewLaunch, ownProfilePhoto, ownProfileSelfieVideo, takeoverFace])
+
+  // One universal selected-point marker. It deliberately does not depend on
+  // the viewport pin budget or landmark zoom band, so an arrow can identify a
+  // world pin, a close GLB, or current location with the same visual contract.
+  useEffect(() => {
+    const map = mapRef.current
+    mapPointHighlightMarkerRef.current?.remove()
+    mapPointHighlightMarkerRef.current = null
+    if (!map || mapEpoch === 0 || radiusPreviewLaunch || !focusedMapPoint) return
+
+    const root = document.createElement('div')
+    root.className = styles.mapPointHighlight
+    root.dataset.mapPointHighlight = focusedMapPoint.key
+    root.dataset.mapPointId = focusedMapPoint.key
+    root.dataset.mapPointKind = focusedMapPoint.kind
+    root.dataset.mapPointActive = 'true'
+    root.setAttribute('role', 'img')
+    root.setAttribute('aria-current', 'location')
+    root.setAttribute('aria-label', `Selected ${focusedMapPoint.name}`)
+    const halo = document.createElement('span')
+    halo.className = styles.mapPointHighlightHalo
+    halo.setAttribute('aria-hidden', 'true')
+    const dot = document.createElement('span')
+    dot.className = styles.mapPointHighlightDot
+    dot.setAttribute('aria-hidden', 'true')
+    root.append(halo, dot)
+    const marker = new mapboxgl.Marker({
+      element: root,
+      anchor: 'center',
+      rotationAlignment: 'viewport',
+      pitchAlignment: 'viewport',
+    }).setLngLat(focusedMapPoint.coords).addTo(map)
+    mapPointHighlightMarkerRef.current = marker
+    return () => {
+      marker.remove()
+      if (mapPointHighlightMarkerRef.current === marker) mapPointHighlightMarkerRef.current = null
+    }
+  }, [focusedMapPoint, mapEpoch, mapRef, radiusPreviewLaunch])
 
   // Add / update POI markers whenever pois, selection, or the map instance changes
   useEffect(() => {
@@ -5539,6 +5607,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const markerRoot = document.createElement('div')
       markerRoot.className = `${styles.popPinMarker} ${styles.popPinMarkerReveal}`
       markerRoot.dataset.dominationOwner = pin.ownerId ?? pin.user ?? 'self'
+      markerRoot.dataset.mapPointId = `pin:${pin.id}`
+      markerRoot.dataset.mapPointKind = 'pin'
+      markerRoot.dataset.mapPointMine = pin.mine ? 'true' : 'false'
       markerRoot.style.setProperty('--dominationColor', pin.color)
       const el = document.createElement('button')
       el.className = styles.popPin

@@ -3,6 +3,11 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   CLOSE_PROGRAMMATIC_CAMERA_MIN_ZOOM,
+  MAP_POINT_MAX_TARGET_ZOOM,
+  MAP_POINT_RADIUS_MAX_ZOOM,
+  mapPointCycleCameraPlan,
+  mapPointCycleDestinationPose,
+  mapPointRadiusFrameZoom,
   programmaticCameraBlurAllowed,
   programmaticCameraPoseMatches,
   programmaticCameraPlan,
@@ -52,6 +57,97 @@ describe('programmatic Map camera motion', () => {
     }
   })
 
+  it('keeps nearby point cycling at scale but directly frames distant and authored subjects', () => {
+    expect(mapPointCycleCameraPlan({
+      currentZoom: 17.2,
+      targetZoom: 17.6,
+      distanceMeters: 800,
+      requiresTargetFraming: false,
+    })).toEqual({
+      kind: 'translate',
+      zoom: 17.2,
+    })
+    expect(mapPointCycleCameraPlan({
+      currentZoom: 17.2,
+      targetZoom: 14.65,
+      distanceMeters: 800,
+      requiresTargetFraming: true,
+    })).toEqual({ kind: 'translate', zoom: 14.65 })
+    expect(mapPointCycleCameraPlan({
+      currentZoom: 19.2,
+      targetZoom: 17.6,
+      distanceMeters: 2_000_000,
+      requiresTargetFraming: false,
+    })).toEqual({ kind: 'translate', zoom: 17.6 })
+    expect(programmaticCameraPlanForMode(
+      CLOSE_PROGRAMMATIC_CAMERA_MIN_ZOOM - 0.1,
+      15.45,
+      'map-point-cycle',
+    )).toEqual({ kind: 'translate', zoom: 15.45 })
+  })
+
+  it('gives larger takeover radii a wider bounded destination frame', () => {
+    const small = mapPointRadiusFrameZoom(0.5, 43.65, 390)
+    const large = mapPointRadiusFrameZoom(20, 43.65, 390)
+    expect(small).toBeLessThanOrEqual(MAP_POINT_RADIUS_MAX_ZOOM)
+    expect(large).toBeLessThan(small)
+    expect(mapPointRadiusFrameZoom(0.01, 0, 10_000)).toBe(MAP_POINT_RADIUS_MAX_ZOOM)
+    expect(mapPointCycleCameraPlan({
+      currentZoom: 21,
+      targetZoom: 100,
+      distanceMeters: Number.POSITIVE_INFINITY,
+      requiresTargetFraming: true,
+    }).zoom).toBe(MAP_POINT_MAX_TARGET_ZOOM)
+  })
+
+  it('restores a pitched close frame after point traversal from a flat overview', () => {
+    expect(mapPointCycleDestinationPose({
+      finalZoom: 17.6,
+      currentZoom: 3,
+      currentPitch: 0,
+      currentBearing: 0,
+      targetPitch: 28,
+      targetBearing: 0,
+      subject: 'pin',
+      streetView: false,
+    })).toEqual({ pitch: 28, bearing: 0, maxPitch: 36 })
+
+    expect(mapPointCycleDestinationPose({
+      finalZoom: 14.65,
+      currentZoom: 3,
+      currentPitch: 0,
+      currentBearing: 0,
+      targetPitch: 42,
+      targetBearing: 22,
+      subject: 'landmark',
+      streetView: false,
+    })).toEqual({ pitch: 42, bearing: 22, maxPitch: 42 })
+  })
+
+  it('retains an existing local isometric pose but keeps wide destination frames flat', () => {
+    expect(mapPointCycleDestinationPose({
+      finalZoom: 17.2,
+      currentZoom: 17.4,
+      currentPitch: 34,
+      currentBearing: 51,
+      targetPitch: 28,
+      targetBearing: 0,
+      subject: 'current',
+      streetView: false,
+    })).toEqual({ pitch: 34, bearing: 51, maxPitch: 36 })
+
+    expect(mapPointCycleDestinationPose({
+      finalZoom: 11.8,
+      currentZoom: 17.4,
+      currentPitch: 34,
+      currentBearing: 51,
+      targetPitch: 28,
+      targetBearing: 0,
+      subject: 'pin',
+      streetView: false,
+    })).toEqual({ pitch: 0, bearing: 0, maxPitch: 0 })
+  })
+
   it('keeps non-landmark authored moves on the existing adaptive path', () => {
     expect(programmaticCameraPlanForMode(15.4, 17.6, 'authored')).toEqual({
       kind: 'translate',
@@ -91,6 +187,32 @@ describe('programmatic Map camera motion', () => {
     expect(claimsCamera).toBeGreaterThanOrEqual(0)
     expect(cancelsAdaptive).toBeGreaterThan(claimsCamera)
     expect(stopsPrevious).toBeGreaterThan(cancelsAdaptive)
+  })
+
+  it('moves a close point-cycle selection once into its resolved subject pose', () => {
+    const flight = mapAppSource.slice(
+      mapAppSource.indexOf('const flyToCenter = useCallback'),
+      mapAppSource.indexOf('const flyToPop = useCallback'),
+    )
+    const directPointMove = flight.slice(
+      flight.indexOf("motionMode === 'map-point-cycle'"),
+      flight.indexOf('// The authored tour crosses flat'),
+    )
+    expect(flight.indexOf('cancelStagedCameraFlight()')).toBeLessThan(
+      flight.indexOf("motionMode === 'map-point-cycle'"),
+    )
+    expect(flight.indexOf('map.stop()')).toBeLessThan(
+      flight.indexOf("motionMode === 'map-point-cycle'"),
+    )
+    expect(directPointMove).toContain("cameraPlan.kind === 'translate'")
+    expect(directPointMove).toContain('if (ownsFlight())')
+    expect(directPointMove.match(/map\.easeTo\(\{/g)).toHaveLength(1)
+    expect(directPointMove).toContain('zoom: cameraPlan.zoom')
+    expect(directPointMove).toContain('pitch: destinationPose.pitch')
+    expect(directPointMove).toContain('bearing: destinationPose.bearing')
+    expect(directPointMove).toContain('map.setMaxPitch(Math.max(destinationPose.maxPitch')
+    expect(directPointMove).toContain('duration: 0')
+    expect(directPointMove).not.toContain('map.flyTo({')
   })
 
   it('recovers a lost arrival with its authored offset and bounds Mapbox-readiness retries', () => {

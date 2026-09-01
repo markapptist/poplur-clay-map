@@ -1,8 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { profileRecipientUid } from '../profileRealtimePosts'
+import { normalizeLiveMapPost } from '../mapLivePosts'
+import { normalizeLiveFeedPost } from '../nativeFeedPosts'
+import { profilePostsFromRealtime, profileRecipientUid } from '../profileRealtimePosts'
 
 const profileSource = readFileSync(new URL('../ProfileTwin.tsx', import.meta.url), 'utf8')
+const profileCss = readFileSync(new URL('../ProfileTwin.module.css', import.meta.url), 'utf8')
+const profileCaptureSource = profileSource.slice(
+  profileSource.indexOf('const captureSurface ='),
+  profileSource.indexOf('// ── Sharing the open post'),
+)
 const cameraRollSource = readFileSync(new URL('../CameraRoll.tsx', import.meta.url), 'utf8')
 const rnSource = readFileSync(
   new URL('../../../Poplur2025-ReactNative/src/screens/PostLoginHomeWebScreen.tsx', import.meta.url),
@@ -89,10 +96,98 @@ describe('Profile side-button bridge contracts', () => {
     )
   })
 
+  it('projects one canonical post from Map through Feed into Profile after uid hydration', () => {
+    const canonicalPost = {
+      userID: 'uid-map-profile',
+      mediaURL: 'https://cdn.poplur.test/posts/same-post.jpg',
+      mediaType: 'photo',
+      username: 'map.profile',
+      channelId: 'live',
+      audience: 'public',
+      status: 'published',
+      locationVisibility: 'approximate',
+      latitude: 43.6532,
+      longitude: -79.3832,
+      radius: 1_250,
+      createdAtMillis: 123_456,
+    }
+
+    const mapPin = normalizeLiveMapPost('same-post', canonicalPost)
+    expect(mapPin).toMatchObject({
+      id: 'firestore:same-post',
+      ownerId: 'uid-map-profile',
+      coords: [-79.3832, 43.6532],
+      radiusKm: 1.25,
+    })
+
+    const feedPost = normalizeLiveFeedPost('same-post', canonicalPost)
+    expect(feedPost).toMatchObject({
+      id: 'same-post',
+      ownerId: 'uid-map-profile',
+      locationVisibility: 'approximate',
+    })
+    expect(feedPost).not.toBeNull()
+    expect(profilePostsFromRealtime([feedPost!], null, null)).toEqual([])
+    expect(profilePostsFromRealtime([feedPost!], 'uid-map-profile', null)).toEqual([
+      expect.objectContaining({
+        id: 'same-post',
+        video: 'https://cdn.poplur.test/posts/same-post.jpg',
+        mediaType: 'photo',
+      }),
+    ])
+  })
+
+  it('carries authenticated profile identity across every native shell', () => {
+    expect(iosSource).toContain('payload["uid"] = uid')
+    expect(androidSource).toContain('put("uid", user.uid)')
+    expect(rnSource).toContain('const uid = auth.currentUser?.uid?.trim()')
+    expect(rnSource).toContain('...(uid ? { uid } : {})')
+    expect(rnSource).toMatch(
+      /const sendProfileToWeb = async[\s\S]*?const uid = auth\.currentUser[\s\S]*?try \{[\s\S]*?await getCurrentProfile\(\)/,
+    )
+    expect(rnSource).toMatch(
+      /catch \(error\)[\s\S]*?dispatchProfileToWeb\(\{ \.\.\.\(uid \? \{ uid \} : \{\}\), business: false \}\)/,
+    )
+  })
+
+  it('carries stable post ownership across every native feed fallback', () => {
+    expect(iosSource).toMatch(
+      /data\["userID"\][\s\S]*?data\["userId"\][\s\S]*?data\["ownerId"\][\s\S]*?row\["ownerId"\] = ownerID/,
+    )
+    expect(androidSource).toMatch(
+      /document\.getString\("userID"\)[\s\S]*?document\.getString\("userId"\)[\s\S]*?document\.getString\("ownerId"\)[\s\S]*?put\("ownerId", ownerId\)/,
+    )
+    expect(rnSource).toMatch(
+      /textValue\(data\.userID, 128\)[\s\S]*?textValue\(data\.userId, 128\)[\s\S]*?textValue\(data\.ownerId, 128\)[\s\S]*?row\.ownerId = ownerId/,
+    )
+  })
+
   it('keeps an actionable camera-roll shortcut without a native thumbnail reply', () => {
     expect(profileSource).not.toContain('requestMostRecentCameraRollItem')
-    expect(profileSource).toMatch(/aria-label="Switch to camera roll"[\s\S]*?icon="camera\.camera_roll"/)
-    expect(profileSource).toContain('setCaptureSource(\'library\')')
+    expect(profileCaptureSource).toContain('icon="camera.camera_roll"')
+    expect(profileCaptureSource).toContain('aria-label="Switch to camera roll"')
+    expect(profileCaptureSource).toContain('onActivate={openProfileCameraRoll}')
+  })
+
+  it('uses the current shared capture rail instead of the legacy selfie chrome', () => {
+    expect(profileCaptureSource).toContain('data-profile-selfie-capture')
+    expect(profileCaptureSource).toContain('data-profile-selfie-guide')
+    expect(profileCaptureSource).toContain('data-profile-selfie-status')
+    expect(profileCaptureSource).toContain('<TabControlRail side={controlSide} label="Profile selfie controls">')
+    expect(profileCaptureSource).toContain('<CameraARButton')
+    expect(profileCaptureSource).toContain('icon="camera.flip_camera"')
+    expect(profileCaptureSource).toContain('icon="camera.camera_roll"')
+    expect(profileCaptureSource).toContain('icon="profile.camera"')
+    expect(profileCaptureSource).not.toContain('styles.captureSideRail')
+    expect(profileCaptureSource).not.toContain('styles.captureFlip')
+    expect(profileCaptureSource).not.toContain('styles.captureBar')
+    expect(profileCaptureSource).not.toContain('styles.cameraRollThumb')
+    expect(profileCaptureSource).not.toContain('<svg')
+    expect(profileCss).not.toMatch(/\.captureSideRail\s*\{/)
+    expect(profileCss).not.toMatch(/\.captureFlip\s*\{/)
+    expect(profileCss).not.toMatch(/\.captureBar\s*\{/)
+    expect(profileCss).toContain('var(--header-title-top')
+    expect(profileCss).toContain('env(safe-area-inset-bottom')
   })
 
   it('keeps Profile camera-roll selection on real native media across shells', () => {

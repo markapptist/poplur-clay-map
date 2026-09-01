@@ -47,7 +47,7 @@ import {
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurPerformanceSnapshot } from './poplurPerformanceManager'
 import TabControlRail from './TabControlRail'
-import { SideControlIconImage } from './SideControlIcon'
+import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
 import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
@@ -1870,12 +1870,38 @@ export default function ProfileTwin({
 
   const selfieArFilterCss = arFilterCatalog().filters.find(filter => filter.id === selfieArFilter)?.css ?? 'none'
 
+  const openProfileCameraRoll = () => {
+    playPop()
+    setSelfieArOpen(false)
+    setCaptureSource('library')
+  }
+
+  const returnToProfileCamera = () => {
+    playPop()
+    setCaptureSource('camera')
+  }
+
+  const captureStatus = captureSource === 'library'
+    ? (savingPhoto ? 'SAVING SELFIE VIDEO' : 'CHOOSE A 10 SECOND VIDEO')
+    : selfieRecording
+      ? `RECORDING · ${selfieSecondsLeft}S LEFT`
+      : savingPhoto
+        ? 'SAVING SELFIE'
+        : 'TAP THE CUBE TO RECORD · 10 SEC'
+
   // Keep capture inside the Home stacking tree. Portalling it to <body> put it
   // above the shared cube/arrows regardless of their z-index, so the camera
   // lost the app's universal navigation controls.
   const captureSurface = capturing
     ? (
-      <div className={styles.capture} role="dialog" aria-modal="true" aria-label="Record profile selfie video">
+      <div
+        className={styles.capture}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Record profile selfie video"
+        data-profile-selfie-capture
+        data-profile-selfie-source={captureSource}
+      >
         {captureSource === 'library' ? (
           <div className={styles.profileRoll}>
             <CameraRoll
@@ -1909,50 +1935,57 @@ export default function ProfileTwin({
             allow3D={false}
           />
         )}
-        {captureSource === 'camera' && <div className={styles.vfRing} />}
-        {captureSource === 'camera' && (
-          <div className={styles.captureSideRail}>
-            <CameraARButton active={selfieArOpen} size={42} onToggle={() => setSelfieArOpen(open => !open)} />
-            <button
-              type="button"
-              className={styles.captureFlip}
-              aria-label="Switch selfie camera"
-              onClick={() => {
-                playPop()
-                setFacingMode(mode => mode === 'user' ? 'environment' : 'user')
-              }}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h9l-2.4-2.4M17 17H8l2.4 2.4M18 7a7 7 0 010 10M6 17a7 7 0 010-10" /></svg>
-              <span>FLIP</span>
-            </button>
+        {captureSource === 'camera' && !camError && (
+          <div className={styles.selfieGuide} data-profile-selfie-guide aria-hidden="true">
+            <span />
           </div>
         )}
+        <div className={styles.captureStatus} data-profile-selfie-status role="status" aria-live="polite">
+          <strong>{captureSource === 'camera' ? 'PROFILE SELFIE' : 'SELFIE VIDEOS'}</strong>
+          <span>{captureStatus}</span>
+        </div>
+        <TabControlRail side={controlSide} label="Profile selfie controls">
+          {captureSource === 'camera' ? (
+            <>
+              <CameraARButton active={selfieArOpen} size={42} onToggle={() => setSelfieArOpen(open => !open)} />
+              <SideControlIconButton
+                icon="camera.flip_camera"
+                aria-label="Switch selfie camera"
+                activation="pointerdown"
+                onActivate={() => {
+                  playPop()
+                  setFacingMode(mode => mode === 'user' ? 'environment' : 'user')
+                }}
+              />
+              <SideControlIconButton
+                icon="camera.camera_roll"
+                className={styles.captureRollButton}
+                aria-label="Switch to camera roll"
+                activation="pointerdown"
+                onActivate={openProfileCameraRoll}
+                overlay={cameraRollThumb ? (
+                  <img
+                    className={styles.captureRollThumb}
+                    src={cameraRollThumb.src}
+                    alt=""
+                    aria-hidden="true"
+                    draggable="false"
+                  />
+                ) : undefined}
+              />
+            </>
+          ) : (
+            <SideControlIconButton
+              icon="profile.camera"
+              aria-label="Return to selfie camera"
+              activation="pointerdown"
+              onActivate={returnToProfileCamera}
+            />
+          )}
+        </TabControlRail>
         {captureSource === 'camera' && selfieArOpen && (
           <ARFilters active={selfieArFilter} onPick={setSelfieArFilter} onClose={() => setSelfieArOpen(false)} />
         )}
-        <div className={styles.captureBar}>
-          {captureSource === 'camera' && (
-            <button
-              className={styles.cameraRollThumb}
-              onClick={() => { playPop(); setCaptureSource('library') }}
-              aria-label="Switch to camera roll"
-            >
-              {cameraRollThumb
-                ? <img src={cameraRollThumb.src} alt="Most recent" />
-                : <SideControlIconImage icon="camera.camera_roll" displaySize={72} />}
-            </button>
-          )}
-          {captureSource === 'camera' ? (
-            // The cube (a camcorder now) is the record button — tap it to shoot
-            // the ten-second selfie. This spot only reports the state.
-            <div className={`${styles.captureAction} ${styles.captureActionPrimary}`}>
-              <span className={styles.captureActionLabel}>
-                {selfieRecording ? `${selfieSecondsLeft}s left` : savingPhoto ? 'Saving selfie' : 'Tap the cube to record'}
-              </span>
-            </div>
-          ) : <div className={styles.captureLibraryHint}>{savingPhoto ? 'SAVING SELFIE VIDEO' : 'TAP A VIDEO'}</div>}
-          {captureSource === 'camera' && <div className={styles.captureSpacer} aria-hidden="true" />}
-        </div>
       </div>
     )
     : null
@@ -2219,6 +2252,13 @@ export default function ProfileTwin({
   // Someone else's profile: their handle, their picture, and none of your own
   // controls (you cannot set another person's photo or read their bell).
   const visiting = Boolean(viewUser)
+  // The stored selfie video and its poster both contain source-orientation
+  // pixels. Mirror the complete own-profile presentation, not just the live
+  // video layer, so WebKit's still fallback and OS screenshots cannot reverse
+  // the portrait when the accelerated video layer is parked.
+  const ownProfileMediaClassName = selfieVideo
+    ? `${styles.photo} ${styles.selfieMirrored}`
+    : styles.photo
   const canDeleteViewerPost = Boolean(
     viewerPost?.id
     && !visiting
@@ -2354,44 +2394,56 @@ export default function ProfileTwin({
             // A profile is intentionally empty until its owner records or
             // selects a ten-second selfie. Static heads/buildings must never
             // stand in for a real profile video.
-            selfieVideo && selfiePlaybackActive ? (
-              <video
-                key={selfieVideo}
-                ref={selfieVideoRef}
-                className={`${styles.photo} ${styles.selfieMirrored}`}
-                src={selfieVideo}
-                poster={renderedPhotoSource ?? undefined}
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="auto"
-                onStalled={resumeSelfie}
-                aria-label="Profile selfie video"
-              />
-            ) : renderedPhotoSource ? (
-              <img
-                key={renderedPhotoSource}
-                className={styles.photo}
-                src={renderedPhotoSource}
-                alt=""
-                draggable="false"
-                onError={() => {
-                  // This source already passed the off-screen decode probe. A
-                  // transient WebKit render/cache eviction should request a
-                  // fresh source, not erase the last-good portrait meanwhile.
-                  if (photo?.startsWith('data:')) {
-                    console.warn('[ProfileTwin] photo data URI failed to load — this should not happen')
-                  } else if (photo) {
-                    retryProfilePhoto()
-                  }
-                }}
-              />
-            ) : (
-              <div className={styles.noPhoto} aria-label="No profile photo set">
-                <span className={styles.noPhotoText}>NO PROFILE<br />PHOTO SET</span>
-              </div>
-            )
+            <>
+              {selfieVideo && selfiePlaybackActive && renderedPhotoSource && (
+                <img
+                  key={`${renderedPhotoSource}:underlay`}
+                  className={`${styles.photo} ${styles.selfieMirrored} ${styles.selfiePosterUnderlay}`}
+                  src={renderedPhotoSource}
+                  alt=""
+                  aria-hidden="true"
+                  draggable="false"
+                />
+              )}
+              {selfieVideo && selfiePlaybackActive ? (
+                <video
+                  key={selfieVideo}
+                  ref={selfieVideoRef}
+                  className={ownProfileMediaClassName}
+                  src={selfieVideo}
+                  poster={renderedPhotoSource ?? undefined}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  preload="auto"
+                  onStalled={resumeSelfie}
+                  aria-label="Profile selfie video"
+                />
+              ) : renderedPhotoSource ? (
+                <img
+                  key={renderedPhotoSource}
+                  className={ownProfileMediaClassName}
+                  src={renderedPhotoSource}
+                  alt=""
+                  draggable="false"
+                  onError={() => {
+                    // This source already passed the off-screen decode probe. A
+                    // transient WebKit render/cache eviction should request a
+                    // fresh source, not erase the last-good portrait meanwhile.
+                    if (photo?.startsWith('data:')) {
+                      console.warn('[ProfileTwin] photo data URI failed to load — this should not happen')
+                    } else if (photo) {
+                      retryProfilePhoto()
+                    }
+                  }}
+                />
+              ) : (
+                <div className={styles.noPhoto} aria-label="No profile photo set">
+                  <span className={styles.noPhotoText}>NO PROFILE<br />PHOTO SET</span>
+                </div>
+              )}
+            </>
           )}
 
         </div>

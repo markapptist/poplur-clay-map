@@ -1081,6 +1081,54 @@
 }
 .smartCardLink:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(110, 4, 54, 0.55); }
 
+/* The arrow-selected point: compact enough to leave the world visible, but
+   explicit about why this camera destination is highlighted. Radius is a
+   conditional third line and is rendered only for the user's own pin. */
+.mapPointCard {
+  position: absolute;
+  left: 50%;
+  top: max(128px, calc(env(safe-area-inset-top, 0px) + 92px));
+  z-index: 33;
+  display: grid;
+  justify-items: center;
+  max-width: min(310px, calc(100% - 124px));
+  padding: 8px 16px 9px;
+  transform: translateX(-50%);
+  border: 2px solid rgba(255, 75, 167, .82);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(35, 13, 31, .94), rgba(13, 8, 18, .94));
+  box-shadow:
+    0 3px 0 rgba(105, 11, 65, .8),
+    0 10px 24px rgba(0, 0, 0, .48),
+    inset 0 1px rgba(255, 255, 255, .18);
+  color: #fff7fb;
+  text-align: center;
+  pointer-events: none;
+  animation: smartCardIn .45s cubic-bezier(.22, 1.32, .42, 1) both;
+}
+
+.mapPointCardType {
+  color: #ff8ac6;
+  font: 900 9px/1.1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: .14em;
+}
+
+.mapPointCard strong {
+  max-width: 100%;
+  overflow: hidden;
+  font: 950 15px/1.18 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapPointCardRadius {
+  margin-top: 3px;
+  color: #7fe3ff;
+  font: 950 11px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: .06em;
+  text-shadow: 0 0 8px rgba(74, 196, 255, .58);
+}
+
 /* Pop traversal arrows, sitting under the pin the camera has centred.
    Centred horizontally and pushed below the middle so they clear the pop's
    avatar and pin without reaching the bottom chrome. pointer-events is on the

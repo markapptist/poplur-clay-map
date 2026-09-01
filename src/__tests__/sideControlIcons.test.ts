@@ -866,6 +866,16 @@ describe('screen side-button action smoke contract', () => {
     },
     {
       file: 'ProfileTwin.tsx',
+      label: 'Profile selfie controls',
+      actions: [
+        ['AR filters', /<CameraARButton[\s\S]*?setSelfieArOpen\(open => !open\)/],
+        ['flip camera', /icon="camera\.flip_camera"[\s\S]*?setFacingMode\(mode => mode === 'user'/],
+        ['camera roll', /icon="camera\.camera_roll"[\s\S]*?onActivate=\{openProfileCameraRoll\}/],
+        ['return to camera', /icon="profile\.camera"[\s\S]*?onActivate=\{returnToProfileCamera\}/],
+      ],
+    },
+    {
+      file: 'ProfileTwin.tsx',
       label: 'Profile controls',
       actions: [
         ['notifications', /icon="profile\.alerts"[\s\S]*?toggleNotifs\(\)|toggleNotifs\(\)[\s\S]*?icon="profile\.alerts"/],
@@ -928,6 +938,9 @@ describe('screen side-button action smoke contract', () => {
       ['Camera.tsx', 'Camera controls', /icon="camera\.flash"[\s\S]*?activation="pointerdown"/],
       ['Camera.tsx', 'Camera controls', /icon="camera\.mute"[\s\S]*?activation="pointerdown"/],
       ['Camera.tsx', 'Camera controls', /icon="camera\.flip_camera"[\s\S]*?activation="pointerdown"/],
+      ['ProfileTwin.tsx', 'Profile selfie controls', /icon="camera\.flip_camera"[\s\S]*?activation="pointerdown"/],
+      ['ProfileTwin.tsx', 'Profile selfie controls', /icon="camera\.camera_roll"[\s\S]*?activation="pointerdown"/],
+      ['ProfileTwin.tsx', 'Profile selfie controls', /icon="profile\.camera"[\s\S]*?activation="pointerdown"/],
       ['PostActionRail.tsx', null, /icon="feed\.mute"[\s\S]*?activation="pointerdown"/],
       ['PostActionRail.tsx', null, /icon="feed\.share"[\s\S]*?activation="pointerdown"/],
       ['PostActionRail.tsx', null, /icon="feed\.comments_collapse"[\s\S]*?activation="pointerdown"/],
@@ -1049,6 +1062,21 @@ describe('screen side-button action smoke contract', () => {
         count + [...componentSource(entry.name).matchAll(/<ClayCornerButton\b/g)].length
       ), 0)
     expect(discoveredClayControls).toBe(declaredClayControls)
+  })
+})
+
+describe('Map takeover colour synchronization', () => {
+  it('uses one selected palette for the live pin, owned posts, zoom rail, and conquered land', () => {
+    const clayMap = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const mapApp = readFileSync(new URL('../MapApp.tsx', import.meta.url), 'utf8')
+
+    expect(clayMap).toContain("pinWithFace({ avatar: null, color: takeoverFace, mode: '3d' })")
+    expect(clayMap).not.toContain("pinWithFace({ avatar: null, color: takeoverTint('#E04791'), mode: '3d' })")
+    expect(clayMap).toMatch(/ownProfileSelfieVideo, takeoverFace\]\)/)
+    expect(clayMap).toMatch(/'--zoomFillA': takeoverTint\('#ffe1f1'\)[\s\S]*?'--zoomFillB': takeoverTint\('#ff86c4'\)[\s\S]*?'--zoomFillC': takeoverTint\('#f53c99'\)/)
+    expect(clayMap).toContain('applyClaimsPalette(map)')
+    expect(clayMap).toContain('setTakeoverColor(swatch.color)')
+    expect(mapApp).toContain('color: pin.mine ? myColor : pin.color')
   })
 })
 

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   nativeProfilePhotoCandidates,
@@ -7,6 +8,9 @@ import {
   refreshedProfilePhotoSource,
   usableProfilePhoto,
 } from '../profilePhoto'
+
+const profileSource = readFileSync(new URL('../ProfileTwin.tsx', import.meta.url), 'utf8')
+const profileCss = readFileSync(new URL('../ProfileTwin.module.css', import.meta.url), 'utf8')
 
 describe('profile photo reload sources', () => {
   it('busts a stale URL cache without discarding existing signed parameters', () => {
@@ -89,5 +93,45 @@ describe('profile photo reload sources', () => {
     expect(nextProfilePhotoReloadRevision(1_000, 1_000)).toBe(1_001)
     // A fresh component starts at zero but still cannot repeat the old URL.
     expect(nextProfilePhotoReloadRevision(0, 2_000)).toBe(2_000)
+  })
+
+  it('mirrors only the front capture preview and keeps the AR overlay aligned', () => {
+    const capture = profileSource.slice(
+      profileSource.indexOf('const captureSurface ='),
+      profileSource.indexOf('// ── Sharing the open post'),
+    )
+    expect(capture).toContain(
+      "className={facingMode === 'user' ? styles.video : `${styles.video} ${styles.videoBack}`}",
+    )
+    expect(capture).toContain("mirrored={facingMode === 'user'}")
+
+    const frontPreviewRule = profileCss.match(/\.video\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    const backPreviewRule = profileCss.match(/\.videoBack\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    expect(frontPreviewRule).toContain('scaleX(-1)')
+    expect(backPreviewRule).not.toContain('scaleX(-1)')
+  })
+
+  it('keeps active selfie video, poster underlay, and parked fallback in one orientation', () => {
+    const portrait = profileSource.slice(
+      profileSource.indexOf('const ownProfileMediaClassName'),
+      profileSource.indexOf('<h1 className={styles.username}>'),
+    )
+    expect(portrait).toContain(
+      'const ownProfileMediaClassName = selfieVideo\n    ? `${styles.photo} ${styles.selfieMirrored}`\n    : styles.photo',
+    )
+    expect(portrait.match(/className=\{ownProfileMediaClassName\}/g)).toHaveLength(2)
+    expect(portrait).toContain('styles.selfiePosterUnderlay')
+    expect(portrait).toContain('styles.selfieMirrored')
+    expect(profileCss.match(/\.selfieMirrored\s*\{([\s\S]*?)\}/)?.[1]).toContain('scaleX(-1)')
+  })
+
+  it('captures the poster in source orientation without applying a second mirror', () => {
+    const posterCapture = profileSource.slice(
+      profileSource.indexOf('const captureSelfiePoster ='),
+      profileSource.indexOf('const previewVideo ='),
+    )
+    expect(posterCapture).toContain('context.drawImage(video, sx, sy, sourceEdge, sourceEdge, 0, 0, edge, edge)')
+    expect(posterCapture).not.toContain('context.scale(-1')
+    expect(posterCapture).not.toContain('context.translate(')
   })
 })

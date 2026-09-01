@@ -42,6 +42,7 @@ import { useControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
+import { createFeedLikeActivationGate } from './feedLikeActivation'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
 import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
 import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
@@ -364,6 +365,7 @@ export default function FeedTwin({
   const shareNoteTimerRef = useRef<number | null>(null)
   const [radiusReaction, setRadiusReaction] = useState<{ direction: 'up' | 'down'; amount: number } | null>(null)
   const radiusReactionTimerRef = useRef<number | null>(null)
+  const likeActivationGateRef = useRef(createFeedLikeActivationGate())
   // End-of-clip comments: the roll runs when the video finishes, then leaves.
   // Deliberately NOT the comment window — that one autofocuses its input and
   // would throw the keyboard up over a post you are only watching.
@@ -1536,7 +1538,13 @@ export default function FeedTwin({
     radiusReactionTimerRef.current = window.setTimeout(() => setRadiusReaction(null), 720)
   }, [ch.id])
 
-  const likeCurrentPost = useCallback(() => reactToCurrentPost('up'), [reactToCurrentPost])
+  const likeCurrentPost = useCallback(() => {
+    const current = postRef.current
+    if (!current) return
+    const id = radiusPostId(ch.id, current)
+    if (!likeActivationGateRef.current.shouldAccept(id)) return
+    reactToCurrentPost('up')
+  }, [ch.id, reactToCurrentPost])
   const dislikeCurrentPost = useCallback(() => reactToCurrentPost('down'), [reactToCurrentPost])
 
   const openComments = useCallback(() => {
