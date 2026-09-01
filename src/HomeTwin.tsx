@@ -3442,8 +3442,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       }, '*',
     )
   }, [ownPhoto, ownSelfieVideo, ownUid, mapReady])
+  // Hand the phone's posts across to the Map. Swift delivers them with
+  // evaluateJavaScript, which lands in THIS document only — the Map is a nested
+  // iframe that never sees that event, which is why the board stood empty on
+  // device while the Feed beside it was full.
   useEffect(() => {
-    if (!mapReady || !isRNWebShellRoute()) return
+    if (!mapReady || !(isRNWebShellRoute() || isNativeShell())) return
     mapFrameRef.current?.contentWindow?.postMessage({
       type: 'poplur-native-map-posts',
       posts: interceptingFeedPosts,

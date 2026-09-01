@@ -116,7 +116,7 @@ import { moonPhase } from './celestial'
 import { publishAccountRadiusKm } from './accountRadius'
 import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
 import { liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
-import { nativeFeedPostsSnapshot, normalizeNativeFeedPosts, onNativeFeedPosts } from './nativeFeedPosts'
+import { normalizeNativeFeedPosts } from './nativeFeedPosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
 import { worldCountryZoomActive, type WorldCountryUpdate } from './mapCountrySignal'
@@ -2868,6 +2868,9 @@ export default function MapApp() {
   // present so the first map frame explains the shared domination system.
   const [popLevel, setPopLevel] = useState<PopLevel>('all')
   const [ownUid, setOwnUid] = useState<string | null>(() => rnWebShellRoute ? null : currentUid())
+  // Resolved once: inside a native shell the Map is fed by the shell, not by
+  // its own Firestore client (see the forwarded-posts listener below).
+  const nativeShell = isNativeShell()
   const [liveMapPosts, setLiveMapPosts] = useState<LiveMapPostPin[]>([])
   const liveMapPostsRef = useRef(liveMapPosts)
   liveMapPostsRef.current = liveMapPosts
@@ -2881,8 +2884,13 @@ export default function MapApp() {
     return onUser(user => setOwnUid(user?.uid ?? null))
   }, [rnWebShellRoute])
   useEffect(() => {
-    if (rnWebShellRoute) {
-      const receiveSyntheticPosts = (event: MessageEvent) => {
+    // The shell forwards the posts the phone delivered to it. This is the ONLY
+    // way the Map can get them on a device: Swift dispatches its event with
+    // evaluateJavaScript, which runs in the MAIN frame, and the Map is a nested
+    // iframe with its own document — so reading the native store here would
+    // always find it empty. The shell has the posts; it hands them across.
+    if (rnWebShellRoute || nativeShell) {
+      const receiveForwardedPosts = (event: MessageEvent) => {
         if (event.origin !== window.location.origin || event.source !== window.parent) return
         const payload = event.data as { type?: unknown; posts?: unknown[]; ownUid?: unknown } | null
         if (!payload || payload.type !== 'poplur-native-map-posts') return
@@ -2891,31 +2899,16 @@ export default function MapApp() {
           : null
         const posts = normalizeNativeFeedPosts(
           { posts: payload.posts },
-          { allowSyntheticOnboarding: true },
+          // The bounded emulator proof still admits only its tagged rows; a real
+          // device is carrying real posts and must not be filtered to nothing.
+          { allowSyntheticOnboarding: rnWebShellRoute },
         )
         setOwnUid(nextUid)
-        setLiveMapPosts(nativeFeedPostsToMapPins(posts, nextUid))
+        setLiveMapPosts(nativeFeedPostsToMapPins(posts, nextUid, { syntheticOnly: rnWebShellRoute }))
         setLiveMapPostsReady(true)
       }
-      window.addEventListener('message', receiveSyntheticPosts)
-      return () => window.removeEventListener('message', receiveSyntheticPosts)
-    }
-    // Inside a native shell the phone owns the data. webFirebase says so in its
-    // own header — it is "only ever used when there is NO native bridge" — so
-    // the Map's Firestore listener returns nothing on device and the board came
-    // up with zero pins while the Feed, which already reads the bridge, was
-    // full. Take the same delivered posts the Feed takes.
-    if (isNativeShell()) {
-      const applyNativePosts = () => {
-        setLiveMapPosts(nativeFeedPostsToMapPins(
-          nativeFeedPostsSnapshot(),
-          ownUid,
-          { syntheticOnly: false },
-        ))
-        setLiveMapPostsReady(true)
-      }
-      applyNativePosts()
-      return onNativeFeedPosts(applyNativePosts)
+      window.addEventListener('message', receiveForwardedPosts)
+      return () => window.removeEventListener('message', receiveForwardedPosts)
     }
     return subscribeLiveMapPosts(
       pins => {
@@ -2925,7 +2918,7 @@ export default function MapApp() {
       () => setLiveMapPostsReady(true),
       ownUid,
     )
-  }, [ownUid, rnWebShellRoute])
+  }, [nativeShell, ownUid, rnWebShellRoute])
   useEffect(() => {
     if (!rnWebShellRoute) return
     const mine = liveMapPosts.filter(pin => pin.mine)
