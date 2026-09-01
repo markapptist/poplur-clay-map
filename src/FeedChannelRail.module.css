@@ -5,8 +5,6 @@
 .rail {
   position: absolute;
   top: 154px;
-  /* Mirrors the left rail's centre line (34px in from its edge). */
-  right: 19px;
   z-index: 46;
   display: grid;
   grid-auto-flow: row;
@@ -68,3 +66,7 @@
 @media (prefers-reduced-motion: reduce) {
   .tile, .rail { transition: none; }
 }
+
+/* Mirrors the control rail's centre line from whichever edge it hangs on. */
+.railLeft { left: 19px; }
+.railRight { right: 19px; }

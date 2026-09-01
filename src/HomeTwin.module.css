@@ -313,12 +313,6 @@
 
 /* ── LEFT slot: clay channel up/down arrows, hugging the cube's left gap ── */
 .chanSlot {
-  /* Right-hand track. The feed's own channel controls now live in the left
-     rail, and the outer arrows sitting directly beside them read as one
-     crowded cluster of near-identical chevrons. Swapping the two side tracks
-     puts a whole cube between them again. */
-  grid-column: 3;
-  grid-row: 1;
   display: flex;
   /* The row is exactly one cube tall, so the level switch canNOT be a second
      item in this box — stacking it here pushed the channel arrows out of the
@@ -346,9 +340,6 @@
 
 /* ── RIGHT slot: the feed's RADIUS ◆ ⇄ TRENDING ↑ animated label ── */
 .statStack {
-  /* Left-hand track — see .chanSlot. */
-  grid-column: 1;
-  grid-row: 1;
   position: relative;
   width: min(100%, 112px);
   min-width: 0;

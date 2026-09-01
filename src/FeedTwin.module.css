@@ -1144,3 +1144,48 @@
     text-align: left;
   }
 }
+
+/* The live channel's own mark. Sits under the wordmark, and drops below the
+   poster's line when a post is on so it never sits over who is speaking. */
+.liveFlag {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 10px);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: liveFlash 1.15s ease-in-out infinite;
+}
+
+/* Under the user information line when there is content behind it. */
+.liveFlagUnderInfo {
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 74px);
+}
+
+.liveDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff2d55;
+  box-shadow: 0 0 8px rgba(255, 45, 85, 0.9);
+}
+
+.liveWord {
+  color: #ff2d55;
+  font: 900 13px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.2em;
+  text-shadow: 0 2px 0 rgba(40, 0, 12, 0.6);
+}
+
+@keyframes liveFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.28; }
+}
+
+/* A flashing badge is decoration, not information, when motion is unwanted. */
+@media (prefers-reduced-motion: reduce) {
+  .liveFlag { animation: none; }
+}

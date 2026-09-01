@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { CHANNELS } from './FeedTwin'
+import type { ControlSide } from './controlPlacement'
 import { channelUrl } from './assetPacks'
 import styles from './FeedChannelRail.module.css'
 
@@ -18,10 +19,14 @@ import styles from './FeedChannelRail.module.css'
 export default function FeedChannelRail({
   activeIndex,
   onPick,
+  side,
   hidden = false,
 }: {
   activeIndex: number
   onPick: (index: number) => void
+  /** Which edge the dial hangs on. It takes the edge the control rail is NOT
+   *  on, so the two columns always face each other. */
+  side: ControlSide
   hidden?: boolean
 }) {
   // Hold and drag to scrub, the way the hold menu does: the channel under your
@@ -50,7 +55,7 @@ export default function FeedChannelRail({
   return (
     <div
       ref={railRef}
-      className={hidden ? `${styles.rail} ${styles.railHidden}` : styles.rail}
+      className={`${styles.rail} ${side === 'right' ? styles.railRight : styles.railLeft}${hidden ? ` ${styles.railHidden}` : ''}`}
       role="tablist"
       aria-label="Channels"
       aria-hidden={hidden || undefined}

@@ -40,7 +40,7 @@ import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
 import FeedChannelStep from './FeedChannelStep'
 import PostActionRail from './PostActionRail'
-import { useControlSide } from './controlPlacement'
+import { useControlSide, type ControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, playPopAmbient } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
@@ -354,6 +354,10 @@ export default function FeedTwin({
   focusedContent?: MapFeedHandoffRequest | null
 } = {}) {
   const controlSide = useControlSide()
+  // The feed mirrors the app's control side. The channel dial is a long column
+  // and belongs under the hand that is NOT holding the reactions, so the two
+  // face each other rather than stacking on one edge.
+  const feedRailSide: ControlSide = controlSide === 'left' ? 'right' : 'left'
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
   const [muted, setMuted] = useState(isUserMuted)
@@ -1960,7 +1964,7 @@ export default function FeedTwin({
             for the same reason the rest of the chrome is: a long press asked
             for the screen. */}
         <FeedChannelStep
-          side={controlSide}
+          side={feedRailSide}
           channelNumber={ch.number}
           postActionsAvailable={Boolean(post)}
           onChannelUp={() => change(-1)}
@@ -1971,10 +1975,11 @@ export default function FeedTwin({
         <FeedChannelRail
           activeIndex={index}
           onPick={goToChannel}
+          side={controlSide}
           hidden={playerMode}
         />
         <PostActionRail
-          side={controlSide}
+          side={feedRailSide}
           label="Feed controls"
           muted={muted}
           captionsOn={captionsOn}
@@ -1987,6 +1992,20 @@ export default function FeedTwin({
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />
+        {ch.id === 'live' && (
+          // The live channel says so, under the wordmark — and under the
+          // poster's line when there is content, so it never covers who is on.
+          // It flashes because "live" is a state, not a label: a static badge
+          // reads the same whether or not anything is happening.
+          <div
+            className={post ? `${styles.liveFlag} ${styles.liveFlagUnderInfo}` : styles.liveFlag}
+            role="status"
+            aria-label="Live channel"
+          >
+            <span className={styles.liveDot} aria-hidden="true" />
+            <span className={styles.liveWord} aria-hidden="true">LIVE</span>
+          </div>
+        )}
         {post && (
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
