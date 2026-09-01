@@ -37,6 +37,7 @@ const deferToOwner = (owner: AudioOwner | null): boolean =>
 import ClayCornerButton from './ClayCornerButton'
 import SideControlIconButton from './SideControlIcon'
 import PoplurStatusToast from './PoplurStatusToast'
+import FeedChannelRail from './FeedChannelRail'
 import PostActionRail from './PostActionRail'
 import { useControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -697,9 +698,12 @@ export default function FeedTwin({
   }, [])
 
 
-  const change = useCallback((dir: 1 | -1) => {
-    const next = Math.max(0, Math.min(CHANNELS.length - 1, index + dir))
-    if (next === index) return
+  // One channel move, whether it came from a neighbouring step or a direct
+  // pick off the channel rail. Both must retire the playing video, release the
+  // audio focus and record the skip — a jump that skipped that bookkeeping left
+  // the previous channel's clip decoding behind the new one.
+  const goToChannel = useCallback((next: number) => {
+    if (next === index || next < 0 || next > CHANNELS.length - 1) return
     const currentPosts = rankedPostsFor(
       ch,
       publishedPosts,
@@ -718,6 +722,10 @@ export default function FeedTwin({
     if (onIndexChange) onIndexChange(next)
     else setOwnIndex(next)
   }, [ch, focusedContent, index, onIndexChange, publishedPosts])
+
+  const change = useCallback((dir: 1 | -1) => {
+    goToChannel(Math.max(0, Math.min(CHANNELS.length - 1, index + dir)))
+  }, [goToChannel, index])
 
   const toggleMute = () => {
     const next = !muted
@@ -1948,6 +1956,14 @@ export default function FeedTwin({
           information underneath the title. */}
       {!playerMode && (
       <>
+        {/* Every channel at once, down the right edge. Hidden in player mode
+            for the same reason the rest of the chrome is: a long press asked
+            for the screen. */}
+        <FeedChannelRail
+          activeIndex={index}
+          onPick={goToChannel}
+          hidden={playerMode}
+        />
         <PostActionRail
           side={controlSide}
           label="Feed controls"

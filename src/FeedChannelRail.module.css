@@ -1,0 +1,72 @@
+/* The full channel dial, down the right edge.
+   Sized from the count rather than a fixed pitch: fifteen 44px tiles do not
+   fit a phone, so the tile is the largest that lets the whole set show at
+   once — showing them all is the reason this rail exists. */
+.rail {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  z-index: 46;
+  display: grid;
+  grid-auto-flow: row;
+  grid-auto-rows: 34px;
+  grid-template-columns: 34px;
+  gap: 6px;
+  transform: translateY(-50%);
+  pointer-events: auto;
+  transition: opacity 0.24s ease;
+}
+
+.railHidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tile {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(38, 14, 33, 0.82), rgba(14, 8, 19, 0.82));
+  box-shadow: 0 2px 0 rgba(80, 8, 50, 0.55), 0 5px 12px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  /* Unselected channels sit back so the lit one reads first. */
+  opacity: 0.62;
+  transition: transform 0.12s ease, opacity 0.16s ease, border-color 0.16s ease;
+}
+
+.tile img {
+  width: 24px;
+  height: 24px;
+  display: block;
+  object-fit: contain;
+}
+
+.tile:active {
+  transform: scale(0.9);
+}
+
+/* Where you are. Colour alone would not carry it, so the lit tile is also
+   brighter, larger and ringed. */
+.tileOn {
+  opacity: 1;
+  border-color: rgba(255, 75, 167, 0.92);
+  background: linear-gradient(180deg, rgba(96, 20, 66, 0.94), rgba(30, 10, 28, 0.94));
+  box-shadow:
+    0 2px 0 rgba(120, 10, 70, 0.8),
+    0 0 14px rgba(255, 75, 167, 0.55),
+    inset 0 1px rgba(255, 255, 255, 0.22);
+  transform: scale(1.1);
+}
+
+.tileOn:active {
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile, .rail { transition: none; }
+}

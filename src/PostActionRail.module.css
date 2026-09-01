@@ -42,16 +42,13 @@
   .deletePending { animation: none; }
 }
 
-/* The channel stepper sits at the foot of the rail, under the reactions: the
-   post's own controls first, then the dial that changes what you are looking
-   at. Its number is the channel's only counter now. No margin of its own —
-   the rail's single gap is what keeps every control evenly spaced. */
-.channelStep {
-  display: flex;
-  justify-content: center;
-}
-
-.postStep {
-  display: flex;
-  justify-content: center;
+/* The channel's number, between the arrows that change it. Sized by the rail's
+   own 44px cell like every other control, so the column stays even. */
+.channelNumber {
+  display: grid;
+  place-items: center;
+  color: #7cff9b;
+  font: 900 15px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  text-shadow: 0 2px 0 rgba(5, 20, 10, .55);
+  pointer-events: none;
 }

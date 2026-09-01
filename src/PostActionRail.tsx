@@ -1,4 +1,3 @@
-import ClayChannelArrows from './ClayChannelArrows'
 import sideStyles from './SideControlIcon.module.css'
 import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
@@ -123,33 +122,48 @@ export default function PostActionRail({
         </span>
       )}
       {channelNumber != null && onChannelUp && onChannelDown && (
-        <div className={styles.channelStep} data-feed-channel-step="">
-          <ClayChannelArrows
-            number={channelNumber}
-            size={112}
-            onUp={onChannelUp}
-            onDown={onChannelDown}
-            upLabel="Channel up"
-            downLabel="Channel down"
-          />
-        </div>
+        <SideControlIconButton
+          icon="global.channel_up"
+          aria-label="Channel up"
+          activation="pointerdown"
+          onActivate={onChannelUp}
+        />
+      )}
+      {channelNumber != null && (
+        // The channel's only counter, sitting between the arrows that move it.
+        <span className={styles.channelNumber} aria-hidden="true">{channelNumber}</span>
+      )}
+      {channelNumber != null && onChannelUp && onChannelDown && (
+        <SideControlIconButton
+          icon="global.channel_down"
+          aria-label="Channel down"
+          activation="pointerdown"
+          onActivate={onChannelDown}
+        />
       )}
       {onPostPrevious && onPostNext && (
-        <div className={styles.postStep} data-feed-post-step="">
-          {/* The same arrows laid on their side: up/down changes the channel,
-              left/right walks the people posting on it. One artwork, one
-              language, two axes — which is how the map already reads. */}
-          <ClayChannelArrows
-            orientation="horizontal"
-            number={0}
-            label=""
-            size={112}
-            onUp={onPostPrevious}
-            onDown={onPostNext}
-            upLabel="Previous post"
-            downLabel="Next post"
-          />
-        </div>
+        // The same two arrows turned on their side: up/down changes the
+        // channel, left/right walks the people posting on it. The rail is a
+        // strict 44px icon grid, so these are side buttons like everything
+        // else in it rather than a wider clay cluster it would crush.
+        <SideControlIconButton
+          icon="global.channel_up"
+          aria-label="Previous post"
+          activation="pointerdown"
+          disabled={!postActionsAvailable}
+          imageStyle={{ transform: 'rotate(-90deg)' }}
+          onActivate={onPostPrevious}
+        />
+      )}
+      {onPostPrevious && onPostNext && (
+        <SideControlIconButton
+          icon="global.channel_down"
+          aria-label="Next post"
+          activation="pointerdown"
+          disabled={!postActionsAvailable}
+          imageStyle={{ transform: 'rotate(-90deg)' }}
+          onActivate={onPostNext}
+        />
       )}
       {onDelete && (
         <span className={deletePending ? styles.deletePending : undefined} aria-busy={deletePending || undefined}>
