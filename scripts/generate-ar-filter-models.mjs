@@ -60,11 +60,11 @@ const DESIGNS = {
     scale: 1.1, offset: [0, 0.48, 0],
   },
   'dino-hood': {
-    prompt: 'A cute green dinosaur hoodie hood with rounded eyes on top and a row of soft spikes down the back, worn open like a hat, stylised, clean low-poly, no background',
+    prompt: 'ONLY a hollow green dinosaur hoodie hood, an empty open hood with nothing inside it, no head, no face, no person, no body, no neck, no bust: a soft green fabric hood with two round cartoon eyes on top and a row of soft spikes down the back, open at the front, floating on its own, stylised, clean low-poly, no background',
     scale: 1.25, offset: [0, 0.35, 0],
   },
   'puppy-love': {
-    prompt: 'A pair of floppy golden-brown puppy ears on a thin headband with a small black puppy nose, cute and stylised, clean low-poly, no background',
+    prompt: 'ONLY a thin headband with two floppy golden-brown puppy ears attached, and nothing else: no dog head, no face, no eyes, no muzzle, no body, no person; an empty headband accessory floating on its own, the ears hanging down either side, cute and stylised, clean low-poly, no background',
     scale: 1.15, offset: [0, 0.25, 0],
   },
   'butterfly-dream': {
