@@ -37,16 +37,18 @@ describe('context cube models', () => {
     expect(weatherCubeModel('fog')).toBe(FOG_CUBE_MODEL)
   })
 
-  it('shows the supplied wind cloud only for windy dry modes', () => {
-    expect(weatherCubeKind('clear', true)).toBe('wind')
-    expect(weatherCubeKind('cloudy', true)).toBe('wind')
-    expect(weatherCubeModel('wind')).toBe(WIND_CUBE_MODEL)
-    // Precipitation cubes outrank the wind cloud.
-    expect(weatherCubeKind('rain', true)).toBe('rain')
-    expect(weatherCubeKind('storm', true)).toBe('thunder')
-    // Calm dry weather still shows no weather cube at all.
+  it('never takes the cube for wind, however hard it blows', () => {
+    // Wind sits above the advisory bar for hours, so a wind cube was a cube
+    // that never changed back. Only falling weather takes the navigator now.
+    expect(weatherCubeKind('clear', true)).toBeNull()
+    expect(weatherCubeKind('cloudy', true)).toBeNull()
     expect(weatherCubeKind('clear', false)).toBeNull()
     expect(weatherCubeKind('cloudy')).toBeNull()
+    // Precipitation is unaffected, windy or not.
+    expect(weatherCubeKind('rain', true)).toBe('rain')
+    expect(weatherCubeKind('storm', true)).toBe('thunder')
+    // The supplied wind artwork is still addressable if it is ever wanted.
+    expect(weatherCubeModel('wind')).toBe(WIND_CUBE_MODEL)
   })
 
   it('lets an active breaking-news stop outrank ambient weather', () => {

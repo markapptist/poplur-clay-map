@@ -42,13 +42,15 @@ export function readMapNewsCubeEvent(value: unknown): MapNewsCubeEvent | null {
   return { id, status }
 }
 
-export function weatherCubeKind(mode: unknown, windy = false): WeatherCubeKind | null {
+export function weatherCubeKind(mode: unknown, _windy = false): WeatherCubeKind | null {
   if (mode === 'rain' || mode === 'snow' || mode === 'hail' || mode === 'fog') return mode
   // Open-Meteo's thunder codes normalize to both thunder and storm.
   if (mode === 'thunder' || mode === 'storm') return 'thunder'
-  // Wind is a speed reading, not a WMO code, so it only decorates the dry
-  // modes: any precipitation or fog cube outranks the wind cloud.
-  if (windy && (mode === 'clear' || mode === 'cloudy')) return 'wind'
+  // Wind no longer takes the cube. It is a speed reading rather than a
+  // condition, and it sits above the advisory bar for hours at a time — so on
+  // a clear day the navigator quietly became a cloud and stayed one, which
+  // reads as a stuck cube rather than as weather. The cube now changes only
+  // when something is actually falling out of the sky.
   return null
 }
 
