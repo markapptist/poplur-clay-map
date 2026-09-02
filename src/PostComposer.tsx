@@ -4,6 +4,7 @@ import { awaitNativeUpload, NativeUploadError, type UploadPhase } from './native
 import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
 import { channelUrl } from './assetPacks'
+import { demoUploadDataUrl, randomDemoUploadPick } from './demoFeedMedia'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import {
@@ -500,7 +501,7 @@ export default function PostComposer({
    *  Photos are re-drawn through the CSS filter here; video keeps its filter id
    *  so the shell can apply it during export (the browser cannot re-encode a
    *  clip cheaply, and native already has PostCaptureMediaProcessor for it). */
-  const renderForUpload = (): Promise<string> => new Promise(resolve => {
+  const bakeCapture = (): Promise<string> => new Promise(resolve => {
     if (media.kind !== 'photo' || filterCss === 'none') return resolve(media.src)
     const img = new Image()
     img.onload = () => {
@@ -516,6 +517,24 @@ export default function PostComposer({
     img.onerror = () => resolve(media.src)
     img.src = media.src
   })
+
+  /** What actually gets uploaded. While the live-simulation switch is on this
+   *  is a creative drawn at random from the demo pool instead of the capture —
+   *  a test run should fill the feed and map with the product's own content
+   *  rather than publishing whatever the tester happened to point the camera
+   *  at. The switch off, or a pool asset that will not load, and the real
+   *  capture goes up untouched. */
+  const renderForUpload = async (): Promise<string> => {
+    const pick = randomDemoUploadPick(media.kind)
+    if (pick) {
+      const substituted = await demoUploadDataUrl(pick)
+      if (substituted) {
+        setUploadNote(`Test run: uploading ${pick.sourceId} from the demo pool instead of your capture.`)
+        return substituted
+      }
+    }
+    return bakeCapture()
+  }
 
   /** Blob URLs (recordings) cannot cross the native bridge — read the bytes. */
   const asTransferable = async (src: string): Promise<string> => {

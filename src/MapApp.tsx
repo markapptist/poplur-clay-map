@@ -116,7 +116,7 @@ import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
 import { publishAccountRadiusKm } from './accountRadius'
 import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
-import { liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
+import { distinctOwnerColor, liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
 import { otherOwnerPinColor, type PinColorId } from './pinColors'
 import { normalizeNativeFeedPosts } from './nativeFeedPosts'
 import { currentUid, onUser } from './webFirebase'
@@ -3091,7 +3091,13 @@ export default function MapApp() {
         || (popLevel === 'mine' ? pin.mine : !pin.mine))
       .map(pin => ({
         ...pin,
-        color: pin.mine ? myColor : pin.color,
+        // Someone else's pin never wears YOUR colour. The identity colour the
+        // document arrives with is chosen from a fixed palette that includes
+        // the default takeover pink, so this re-picks against the viewer's
+        // current colour — and it re-runs when that colour changes, because
+        // recolouring your own territory must not make a stranger's pins look
+        // like yours.
+        color: pin.mine ? myColor : distinctOwnerColor(pin.ownerId ?? pin.id, myColor),
         avatar: pin.mine ? (ownAvatar ?? pin.avatar) : pin.avatar,
         selfieVideo: pin.mine && ownSelfieVideo
           ? { src: ownSelfieVideo, poster: ownAvatar ?? pin.avatar ?? undefined }

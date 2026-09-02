@@ -18,6 +18,59 @@ const LIVE_MAP_POST_LIMIT = 160
 const MAX_RADIUS_METERS = 40_075_000
 const OWNER_COLORS = ['#FF4BA1', '#4FD6B8', '#FFD24B', '#A97BFF', '#5FB0FF', '#FF8A3D', '#7CE04F'] as const
 
+function rgb(hex: string): [number, number, number] {
+  const clean = hex.replace('#', '')
+  const full = clean.length === 3 ? clean.replace(/./g, c => c + c) : clean
+  const n = Number.parseInt(full.slice(0, 6), 16)
+  return Number.isFinite(n) ? [(n >> 16) & 255, (n >> 8) & 255, n & 255] : [0, 0, 0]
+}
+
+/** Straight RGB distance. Enough to answer the only question here — "would a
+ *  glance confuse these two pins?" — without a colour-science dependency. */
+function colorDistance(a: string, b: string): number {
+  const [r1, g1, b1] = rgb(a)
+  const [r2, g2, b2] = rgb(b)
+  return Math.hypot(r1 - r2, g1 - g2, b1 - b2)
+}
+
+/** Below this, two pins read as the same colour on a busy map. */
+const OWNER_COLOR_MIN_DISTANCE = 110
+
+/**
+ * The colour another user's pin wears, guaranteed to be tellable apart from
+ * YOURS.
+ *
+ * The map's first question is "which of these are mine?", and the palette's
+ * own first entry is #FF4BA1 — the same hot pink as the default takeover
+ * colour. So roughly one owner in seven was handed the viewer's exact colour
+ * and their pins became indistinguishable from the viewer's own. The takeover
+ * colour is also user-settable, so the clash cannot be fixed by reordering the
+ * palette: whatever is picked, someone can choose it.
+ *
+ * Keyed by owner id, so a given person keeps one stable colour rather than
+ * flickering between renders — and when their natural colour is too close to
+ * the viewer's, the walk lands on the next palette entry that is far enough
+ * away, which is still deterministic for that owner.
+ */
+export function distinctOwnerColor(ownerId: string, viewerColor: string | null | undefined): string {
+  let hash = 2166136261
+  for (let index = 0; index < ownerId.length; index += 1) {
+    hash ^= ownerId.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  const start = Math.abs(hash) % OWNER_COLORS.length
+  if (!viewerColor) return OWNER_COLORS[start]
+  for (let step = 0; step < OWNER_COLORS.length; step += 1) {
+    const candidate = OWNER_COLORS[(start + step) % OWNER_COLORS.length]
+    if (colorDistance(candidate, viewerColor) >= OWNER_COLOR_MIN_DISTANCE) return candidate
+  }
+  // Every palette entry sits near the viewer's colour (they chose something
+  // central). Take the furthest one rather than silently matching them.
+  return [...OWNER_COLORS].sort(
+    (a, b) => colorDistance(b, viewerColor) - colorDistance(a, viewerColor),
+  )[0]
+}
+
 export interface LiveMapPostPin extends PopPin {
   source: 'firestore'
   createdAtMs: number

@@ -44,8 +44,21 @@ export default function PostActionRail({
   deletePending?: boolean
 }) {
   return (
-    <TabControlRail side={side} label={label}>
+    // Fill, because this rail is one of the feed's PAIRED columns: it has to
+    // reach the same bottom line as the channel dial opposite. The reserve is
+    // the channel stepper's own block, which sits under this rail in the same
+    // column — five dial-sized controls with 5px between them, plus the gap
+    // above. Written in terms of --poplur-feed-dial, not a number: the stepper
+    // grows with the dial, so a literal here would misreserve the moment the
+    // column changed height.
+    <TabControlRail
+      side={side}
+      label={label}
+      fill
+      fillReserveBelow="calc(4 * var(--poplur-feed-ctl) + var(--poplur-feed-number) + 5 * var(--poplur-feed-gap))"
+    >
       <SideControlIconButton
+        fluid
         icon="feed.mute"
         aria-label={muted ? 'Unmute feed video' : 'Mute feed video'}
         aria-pressed={muted}
@@ -53,6 +66,7 @@ export default function PostActionRail({
         onActivate={onToggleMute}
       />
       <SideControlIconButton
+        fluid
         icon="feed.share"
         aria-label="Share post"
         activation="pointerdown"
@@ -60,6 +74,7 @@ export default function PostActionRail({
         onActivate={onShare}
       />
       <SideControlIconButton
+        fluid
         icon="feed.captions"
         aria-label={captionsOn ? 'Turn closed captions off' : 'Turn closed captions on'}
         aria-pressed={captionsOn}
@@ -69,6 +84,7 @@ export default function PostActionRail({
           for one idea — and the window you open to read is the same window you
           type into, so opening and closing belong on the same button. */}
       <SideControlIconButton
+        fluid
         icon="feed.comment"
         aria-pressed={commentsOpen}
         aria-label={commentsOpen ? 'Hide comments' : 'Show comments and add one'}
@@ -77,6 +93,7 @@ export default function PostActionRail({
         onActivate={onComment}
       />
       <SideControlIconButton
+        fluid
         icon="feed.like"
         aria-label="Increase this post's radius by one"
         activation="pointerdown"
@@ -84,6 +101,7 @@ export default function PostActionRail({
         onActivate={onLike}
       />
       <SideControlIconButton
+        fluid
         icon="feed.dislike"
         aria-label="Reduce this post's radius by one"
         activation="pointerdown"
@@ -93,6 +111,7 @@ export default function PostActionRail({
       {onDelete && (
         <span className={deletePending ? styles.deletePending : undefined} aria-busy={deletePending || undefined}>
           <SideControlIconButton
+            fluid
             icon="profile.delete"
             aria-label={deletePending ? 'Deleting this post' : 'Delete this post'}
             disabled={deletePending}

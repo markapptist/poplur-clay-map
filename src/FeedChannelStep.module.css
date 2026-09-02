@@ -1,15 +1,18 @@
-/* Sits directly under the 44px control rail. 34px is the channel dial's tile
-   size on the other edge, and this many of them is exactly the height that
-   lands both columns on the same bottom pixel. */
+/* The bottom of the action rail's column. It used to hang off a fixed offset
+   from the top — rail height + gap, written as one number — so it only landed
+   correctly while the rail above it was exactly six 44px buttons. The rail now
+   sizes itself from the room it has, so this anchors to the home chrome
+   instead and the rail fills whatever is left above it. Both columns end on
+   the clearance line at any height. */
 .group {
   position: absolute;
-  top: calc(max(154px, env(safe-area-inset-top, 0px) + 112px) + 336px);
+  bottom: var(--poplur-home-clearance);
   z-index: 46;
   display: grid;
   grid-auto-flow: row;
-  grid-auto-rows: 30px;
-  grid-template-columns: 30px;
-  gap: 5px;
+  grid-auto-rows: var(--poplur-feed-ctl);
+  grid-template-columns: var(--poplur-feed-ctl);
+  gap: var(--poplur-feed-gap);
   justify-items: center;
   align-items: center;
   pointer-events: auto;
@@ -19,14 +22,18 @@
 .groupRight { right: max(19px, calc(env(safe-area-inset-right, 0px) + 7px)); }
 
 .group > * {
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-  min-height: 30px;
+  width: var(--poplur-feed-ctl);
+  height: var(--poplur-feed-ctl);
+  min-width: 0;
+  min-height: 0;
 }
 
 
 .number {
+  /* A readout, not a control: it takes a label's worth of column so the four
+     arrows around it can be as large as the room allows. */
+  height: var(--poplur-feed-number);
+  min-height: 0;
   display: grid;
   place-items: center;
   color: #7cff9b;

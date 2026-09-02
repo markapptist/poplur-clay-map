@@ -1,4 +1,70 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Where a screen's side columns are allowed to live.
+ *
+ * Every side rail starts at the same top and must stop above the bottom home
+ * chrome — the cube navigator and the stat card. Those two numbers were copied
+ * per-file as literals, which is how the feed's columns ended up sized for one
+ * viewport: correct on a phone, leaving a fifth of the column empty on anything
+ * taller. Declared once here so a rail can size ITSELF from the room it
+ * actually has instead of a number someone measured on one device.
+ *
+ * The clearance mirrors .bottomRow in HomeTwin.module.css: it sits 18px up,
+ * is one cube tall, and needs a gap so a rail's last control does not touch it.
+ */
+:root {
+  --poplur-rail-top: max(154px, calc(env(safe-area-inset-top, 0px) + 112px));
+  --poplur-home-clearance: calc(
+    18px + var(--cube-size, clamp(124px, 37vw, 176px)) + 14px
+    + env(safe-area-inset-bottom, 0px)
+  );
+
+  /* The room one of the feed's side columns has, top to home chrome. */
+  --poplur-feed-column: calc(
+    100dvh - var(--poplur-rail-top) - var(--poplur-home-clearance)
+  );
+
+  /* The feed's SMALL control: one channel tile on the dial, and one arrow on
+   * the stepper opposite. These two have always been a matched pair — the
+   * stepper was literally sized "the channel dial's tile size on the other
+   * edge" — but as a hardcoded number, so the moment the dial started sizing
+   * itself from the column the stepper stayed frozen and the pair broke.
+   * One value now drives both, derived from the dial: fifteen tiles and the
+   * fourteen 4px gaps between them, floored at today's size and capped so a
+   * tall window cannot turn either into a stack of panels.
+   */
+  --poplur-feed-dial: clamp(
+    30px,
+    calc((var(--poplur-feed-column) - 14 * 3px) / 15),
+    56px
+  );
+
+  /* The feed's RIGHT column is one stack of eleven controls — six post actions
+   * and the five-control channel stepper under them — so it gets ONE size.
+   * They were three sizes before (44 action, 30 stepper, and whatever the
+   * stepper's hardcoded offset implied), which is what made the arrows read as
+   * an afterthought bolted under the buttons rather than part of the same
+   * column.
+   *
+   * Ten CONTROLS, not eleven: the channel number between the arrows is a
+   * readout, not a button, so it takes a 22px label slot instead of a full
+   * control's worth of column. Gaps are 6px rather than 12 for the same
+   * reason — at eleven of them, 12px gaps were spending 120px of the column on
+   * air while the controls they separated stayed small. Floored at today's
+   * action size so a phone never shrinks, capped so a tall window does not turn
+   * them into slabs.
+   */
+  --poplur-feed-gap: 6px;
+  --poplur-feed-number: 22px;
+  --poplur-feed-ctl: clamp(
+    44px,
+    calc(
+      (var(--poplur-feed-column) - var(--poplur-feed-number)
+        - 10 * var(--poplur-feed-gap)) / 10
+    ),
+    64px
+  );
+}
 /* The document's own colour is the app's backdrop, never the browser default.
    These had no background-color, so WebKit painted WHITE in every gap where the
    app's own layers did not cover the viewport — between screen swaps, during a

@@ -21,6 +21,7 @@ export function SideControlIconImage({
   className,
   loading = 'lazy',
   style,
+  fluid = false,
 }: {
   icon: PoplurSideIconId
   displaySize?: number
@@ -29,6 +30,11 @@ export function SideControlIconImage({
   className?: string
   loading?: 'eager' | 'lazy'
   style?: CSSProperties
+  /** Let the STYLESHEET size this icon instead of pinning it in pixels here.
+   *  A rail that divides the room it has between its controls cannot know the
+   *  result in JS, and an inline width/height would win over the rule that
+   *  does. `displaySize` still picks the source resolution to request. */
+  fluid?: boolean
 }) {
   const responsive = sourceSize == null ? runtimeSideIconSources(icon) : null
   return (
@@ -45,7 +51,7 @@ export function SideControlIconImage({
       draggable={false}
       decoding="async"
       loading={loading}
-      style={{ width: displaySize, height: displaySize, ...style }}
+      style={fluid ? style : { width: displaySize, height: displaySize, ...style }}
     />
   )
 }
@@ -64,6 +70,8 @@ export interface SideControlIconButtonProps extends Omit<
   loading?: boolean
   overlay?: ReactNode
   forcePressed?: boolean
+  /** Hand this control's size to the stylesheet — see SideControlIconImage. */
+  fluid?: boolean
 }
 
 /**
@@ -80,6 +88,7 @@ export default function SideControlIconButton({
   loading = false,
   overlay,
   forcePressed = false,
+  fluid = false,
   className,
   disabled,
   type = 'button',
@@ -120,6 +129,7 @@ export default function SideControlIconButton({
         displaySize={imageSize}
         className={imageClassName}
         style={imageStyle}
+        fluid={fluid}
       />
       {overlay}
       {loading && <span className={styles.loader} aria-hidden="true" />}

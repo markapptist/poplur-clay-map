@@ -69,3 +69,46 @@
 }
 
 .scroll::-webkit-scrollbar { display: none; }
+
+/* Fill: the rail reaches down to the home chrome and divides that room between
+   its controls, rather than stacking 44px boxes and stopping wherever it runs
+   out. Two reasons this is opt-in and not the default: a screen with a handful
+   of controls would blow them up to fill a tall display, and only the feed's
+   rail is half of a PAIR that has to land on the same bottom line as the
+   column opposite it.
+
+   The cap matters. Without it a tall desktop window makes a six-button rail
+   into six 100px slabs. 56px also keeps this rail in proportion with the
+   dial-sized controls below it — the feed's two control sizes were 44 and 30,
+   and holding near that ratio is what stops the column reading as two
+   unrelated sets of buttons. */
+.fill {
+  bottom: calc(
+    var(--poplur-home-clearance) + var(--rail-reserve-below, 0px)
+  );
+  /* The 44px floor is the point. On a phone the column is ALREADY shorter than
+     its controls need — 154px down to the home chrome cannot hold this rail,
+     the stepper under it, and the fifteen-channel dial opposite at their
+     current sizes. Sizing purely by `1fr` there would shrink every button to
+     make the arithmetic work, which is the opposite of the ask. The floor means
+     this rail never gets smaller than it is today, and grows only where there
+     is genuinely room. */
+  grid-auto-rows: var(--poplur-feed-ctl);
+  gap: var(--poplur-feed-gap);
+  align-content: start;
+  width: var(--poplur-feed-ctl);
+}
+
+.fill > * {
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  width: var(--poplur-feed-ctl);
+  height: var(--poplur-feed-ctl);
+  justify-self: center;
+}
+
+/* The artwork follows the button. These controls pass `fluid`, so no inline
+   width/height competes with this rule. */
+.fill > * img { width: 100%; height: 100%; object-fit: contain; }
