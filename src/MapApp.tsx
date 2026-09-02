@@ -113,6 +113,7 @@ import {
   type LiveNewsEvent,
 } from './liveNews'
 import { localSunriseToNoon, skyShadeAt } from './skyCycle'
+import { mapDaypart, type MapDaypart } from './contextCubeModels'
 import { moonPhase } from './celestial'
 import { publishAccountRadiusKm } from './accountRadius'
 import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
@@ -496,16 +497,24 @@ function currentSkyShade() {
   return skyShadeAt()
 }
 
-/** Match currentSkyShade's deterministic preview semantics: map-night=0 is
- * fixed noon and map-night=1 is fixed midnight, neither is morning. */
+/** True under the deterministic sky previews: map-night=0 is fixed noon,
+ * map-night=1 is fixed midnight, and day-cycle=1 sweeps between the two on
+ * its own clock. None of them is a real local hour, so the shell's navigator
+ * keeps the globe there (a forced midnight still reports night and wears the
+ * moon); only production's untouched clock earns the sun. */
+function forcedSkyPreview(): boolean {
+  if (typeof window === 'undefined') return false
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('day-cycle') === '1') return true
+  const forced = params.get('map-night')
+  return forced === '1' || forced === '0'
+}
+
+/** Match currentSkyShade's deterministic preview semantics: neither fixed
+ * noon nor fixed midnight is morning. Kept for one release so an older shell
+ * that only reads `morning` still gets its sun. */
 function currentMorningNavigator() {
-  if (typeof window !== 'undefined') {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('day-cycle') === '1') return false
-    const forced = params.get('map-night')
-    if (forced === '1' || forced === '0') return false
-  }
-  return localSunriseToNoon()
+  return !forcedSkyPreview() && localSunriseToNoon()
 }
 
 type MapMoonModel = 'full' | 'crescent'
@@ -762,6 +771,8 @@ export default function MapApp() {
   // This state rides the sky's existing minute cadence below rather than
   // adding another clock loop to the home screen.
   const [morningNavigator, setMorningNavigator] = useState(currentMorningNavigator)
+  // Fixed for the life of the document: the preview switches are URL params.
+  const [forcedPreview] = useState(forcedSkyPreview)
   // Tour narration stays separate from the visible status. The map header only
   // says where the camera is — the station readout left with the radio.
   const [tourLine, setTourLine] = useState<string | null>(null)
@@ -788,6 +799,10 @@ export default function MapApp() {
     }
   }, [isEmbedded, mapConquerBoardOpen])
   const nightMode = sky.lightPreset === 'night'
+  // The shell's Map navigator follows this sky in three parts — sun by day,
+  // moon by night, globe through dawn and dusk — and reads it from here
+  // rather than from its own clock, so the two documents agree to the minute.
+  const mapDaypartNow: MapDaypart = forcedPreview ? 'twilight' : mapDaypart(sky.lightPreset)
   const dayTime = !nightMode
   // Search and weather live inside this iframe, while the visible map tool
   // rails live in HomeTwin's parent document. A child z-index can never cover
@@ -810,11 +825,13 @@ export default function MapApp() {
       window.parent.postMessage({
         type: 'poplur-map-night',
         night: nightMode,
+        daypart: mapDaypartNow,
+        // Kept for one release: an older shell only reads `morning`.
         morning: morningNavigator,
         moon: moonModel,
       }, '*')
     }
-  }, [isEmbedded, moonModel, morningNavigator, nightMode])
+  }, [isEmbedded, mapDaypartNow, moonModel, morningNavigator, nightMode])
   // The title stays EMPTY until the camera has actually arrived somewhere.
   //
   // `currentPlace` seeds to a city name and the reverse geocode re-fires on

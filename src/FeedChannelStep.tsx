@@ -42,7 +42,8 @@ export default function FeedChannelStep({
         icon="global.channel_up"
         aria-label="Channel up"
         activation="pointerdown"
-        imageSize={30}
+        fluid
+        imageStyle={{ width: '100%', height: '100%', objectFit: 'contain' }}
         onActivate={onChannelUp}
       />
       <span className={styles.number} aria-hidden="true">{channelNumber}</span>
@@ -50,7 +51,8 @@ export default function FeedChannelStep({
         icon="global.channel_down"
         aria-label="Channel down"
         activation="pointerdown"
-        imageSize={30}
+        fluid
+        imageStyle={{ width: '100%', height: '100%', objectFit: 'contain' }}
         onActivate={onChannelDown}
       />
       {/* The same two arrows turned on their side: up/down changes the
@@ -60,8 +62,8 @@ export default function FeedChannelStep({
         aria-label="Previous post"
         activation="pointerdown"
         disabled={!postActionsAvailable}
-        imageSize={30}
-        imageStyle={{ transform: 'rotate(-90deg)' }}
+        fluid
+        imageStyle={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'rotate(-90deg)' }}
         onActivate={onPostPrevious}
       />
       <SideControlIconButton
@@ -69,8 +71,8 @@ export default function FeedChannelStep({
         aria-label="Next post"
         activation="pointerdown"
         disabled={!postActionsAvailable}
-        imageSize={30}
-        imageStyle={{ transform: 'rotate(-90deg)' }}
+        fluid
+        imageStyle={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'rotate(-90deg)' }}
         onActivate={onPostNext}
       />
     </div>

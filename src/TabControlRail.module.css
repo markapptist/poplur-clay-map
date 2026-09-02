@@ -83,6 +83,11 @@
    and holding near that ratio is what stops the column reading as two
    unrelated sets of buttons. */
 .fill {
+  /* The track must widen with the container, or the base rule's 44px track
+     leaves every control centred 7-8px left of the column's own centre —
+     visibly off the stepper beneath, which centres on the full control. */
+  grid-template-columns: var(--poplur-feed-ctl);
+  justify-content: center;
   bottom: calc(
     var(--poplur-home-clearance) + var(--rail-reserve-below, 0px)
   );

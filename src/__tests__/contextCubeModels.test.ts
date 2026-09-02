@@ -7,9 +7,12 @@ import {
   HAIL_CUBE_MODEL,
   HOME_CUBE_MODEL,
   SNOW_CUBE_MODEL,
+  WEATHER_CUBE_DISPLAY_MS,
   WIND_CUBE_MODEL,
   isBreakingNewsCubeEvent,
   mapContextCubeModel,
+  mapDaypart,
+  mapDaypartCubeModel,
   readMapNewsCubeEvent,
   weatherCubeKind,
   weatherCubeModel,
@@ -74,5 +77,25 @@ describe('context cube models', () => {
     })).toEqual({ id: 'breaking-42', status: 'breaking' })
     expect(readMapNewsCubeEvent({ active: false, id: null, status: null })).toBeNull()
     expect(readMapNewsCubeEvent({ active: true, id: 'x', status: 'invented' })).toBeNull()
+  })
+
+  it("folds the sky's four light presets into the three dayparts the cube wears", () => {
+    expect(mapDaypart('day')).toBe('day')
+    expect(mapDaypart('night')).toBe('night')
+    expect(mapDaypart('dawn')).toBe('twilight')
+    expect(mapDaypart('dusk')).toBe('twilight')
+  })
+
+  it('wears the sun by day, the phase-matched moon by night, the globe between', () => {
+    expect(mapDaypartCubeModel('day', 'full')).toBe('poplur_sun_lite.glb')
+    expect(mapDaypartCubeModel('night', 'full')).toBe('poplur_moon_full_lite.glb')
+    expect(mapDaypartCubeModel('night', 'crescent')).toBe('poplur_moon_crescent_lite.glb')
+    expect(mapDaypartCubeModel('twilight', 'full')).toBe('poplur-globe-lite.glb')
+  })
+
+  it('shows a weather cube as a brief announcement, not a mode', () => {
+    expect(Number.isFinite(WEATHER_CUBE_DISPLAY_MS)).toBe(true)
+    expect(WEATHER_CUBE_DISPLAY_MS).toBeGreaterThan(0)
+    expect(WEATHER_CUBE_DISPLAY_MS).toBeLessThan(5_200)
   })
 })

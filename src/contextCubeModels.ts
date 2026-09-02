@@ -74,3 +74,47 @@ export function mapContextCubeModel(
   if (breakingNewsActive) return BREAKING_NEWS_CUBE_MODEL
   return weatherCubeModel(weatherKind)
 }
+
+/**
+ * The Map navigator's own objects. All four are the shipped mobile-sized
+ * "lite" assets at bundle root. They are chosen by the map's sky rather than
+ * by a second clock, so the cube and the map palette never disagree about
+ * the hour, and each change flows through the ordinary one-shot POP swap.
+ */
+export const MAP_GLOBE_CUBE_MODEL = 'poplur-globe-lite.glb'
+export const MAP_SUN_CUBE_MODEL = 'poplur_sun_lite.glb'
+export const MAP_MOON_FULL_CUBE_MODEL = 'poplur_moon_full_lite.glb'
+export const MAP_MOON_CRESCENT_CUBE_MODEL = 'poplur_moon_crescent_lite.glb'
+
+/**
+ * How long a weather cube holds the navigator. A weather cube is an
+ * announcement, not a mode: it pops in when a condition begins and then hands
+ * the cube back to the day's object, while the temperature chip carries on
+ * reporting the weather for as long as it lasts. A steady rain that kept the
+ * cloud for hours read as a stuck cube, not as weather.
+ */
+export const WEATHER_CUBE_DISPLAY_MS = 4_000
+
+export type MapDaypart = 'day' | 'night' | 'twilight'
+export type MapSkyLightPreset = 'dawn' | 'day' | 'dusk' | 'night'
+
+/** Fold the sky's four light presets into the three the cube can wear. Dawn
+ * and dusk are twilight: neither the sun nor the moon owns that sky, so the
+ * globe does. */
+export function mapDaypart(lightPreset: MapSkyLightPreset): MapDaypart {
+  if (lightPreset === 'day') return 'day'
+  if (lightPreset === 'night') return 'night'
+  return 'twilight'
+}
+
+/** The sun by day, the phase-matched moon by night, the globe in between. */
+export function mapDaypartCubeModel(
+  daypart: MapDaypart,
+  moon: 'full' | 'crescent',
+): string {
+  if (daypart === 'day') return MAP_SUN_CUBE_MODEL
+  if (daypart === 'night') {
+    return moon === 'full' ? MAP_MOON_FULL_CUBE_MODEL : MAP_MOON_CRESCENT_CUBE_MODEL
+  }
+  return MAP_GLOBE_CUBE_MODEL
+}

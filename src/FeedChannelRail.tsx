@@ -1,20 +1,22 @@
-import { useRef } from 'react'
+import { useMemo } from 'react'
 import { CHANNELS } from './FeedTwin'
 import type { ControlSide } from './controlPlacement'
 import { channelUrl } from './assetPacks'
+import ClayWheel from './ClayWheel'
 import styles from './FeedChannelRail.module.css'
 
 /**
- * Every channel, down the right edge, as its own button.
+ * The feed's channel dial: every channel on one edge of the screen.
  *
- * The up/down arrows on the left walk neighbours; this is the whole dial at
- * once, so a viewer eight channels away is one press rather than eight. The
- * channel you are on is lit, because a picker that does not say where you
- * already are makes you count.
- *
- * It is deliberately NOT the 44px TabControlRail: fifteen channels at that
- * pitch is taller than a phone. These tiles are sized so the full set fits
- * without scrolling, which is the entire point of showing them all.
+ * It is a clay wheel — the same one the hold menu spins — rather than a
+ * column of tiles. A column had to choose between fitting all fifteen (32px
+ * artwork you could not read) and scrolling (the lit channel wandering off
+ * screen). The wheel keeps the live channel lit in the notch with its
+ * neighbours curving away above and below, so what comes before and after is
+ * always in view and every visible tile is large. The notch IS the channel:
+ * scrubbing changes channel as each tile arrives, the way the hold menu lights
+ * each tile, and the up/down stepper on the other edge still walks one at a
+ * time.
  */
 export default function FeedChannelRail({
   activeIndex,
@@ -24,79 +26,60 @@ export default function FeedChannelRail({
 }: {
   activeIndex: number
   onPick: (index: number) => void
-  /** Which edge the dial hangs on. It takes the edge the control rail is NOT
-   *  on, so the two columns always face each other. */
   side: ControlSide
   hidden?: boolean
 }) {
-  // Hold and drag to scrub, the way the hold menu does: the channel under your
-  // thumb is the channel you get, so flipping to a distant one is one gesture
-  // rather than one press per channel. A plain tap still lands on its own tile.
-  const railRef = useRef<HTMLDivElement>(null)
-  const scrubbing = useRef(false)
-  const lastPicked = useRef(activeIndex)
-
-  const pickAt = (clientY: number) => {
-    const rail = railRef.current
-    if (!rail) return
-    const tiles = [...rail.querySelectorAll('[data-feed-channel-tile]')]
-    let closest = -1
-    let best = Number.POSITIVE_INFINITY
-    tiles.forEach((tile, index) => {
-      const box = tile.getBoundingClientRect()
-      const distance = Math.abs(clientY - (box.top + box.height / 2))
-      if (distance < best) { best = distance; closest = index }
-    })
-    if (closest < 0 || closest === lastPicked.current) return
-    lastPicked.current = closest
-    onPick(closest)
-  }
+  const items = useMemo(() => CHANNELS.map(channel => ({
+    id: channel.id,
+    label: channel.name,
+    render: () => (
+      <img
+        className={styles.art}
+        src={channelUrl(`${channel.icon}.png`)}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        decoding="async"
+      />
+    ),
+  })), [])
+  const selectedId = CHANNELS[activeIndex]?.id ?? CHANNELS[0]?.id ?? ''
 
   return (
     <div
-      ref={railRef}
       className={`${styles.rail} ${side === 'right' ? styles.railRight : styles.railLeft}${hidden ? ` ${styles.railHidden}` : ''}`}
-      role="tablist"
-      aria-label="Channels"
-      aria-hidden={hidden || undefined}
       data-feed-channel-rail=""
-      onPointerDown={event => {
-        if (!event.isPrimary || event.button !== 0) return
-        scrubbing.current = true
-        lastPicked.current = activeIndex
-        event.currentTarget.setPointerCapture(event.pointerId)
-        pickAt(event.clientY)
-      }}
-      onPointerMove={event => {
-        if (!scrubbing.current) return
-        pickAt(event.clientY)
-      }}
-      onPointerUp={event => {
-        scrubbing.current = false
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId)
-        }
-      }}
-      onPointerCancel={() => { scrubbing.current = false }}
+      // The feed beneath owns vertical swipes (channel change) and horizontal
+      // edge taps (post change). The wheel takes its own pointer first, then
+      // this stops the gesture reaching the feed so a scrub is one thing.
+      onPointerDown={event => event.stopPropagation()}
+      onClick={event => event.stopPropagation()}
+      // A trackpad wheel over the dial scrubs it; the feed's own channel pager
+      // must not also see that wheel and step a second time.
+      onWheel={event => event.stopPropagation()}
     >
-      {CHANNELS.map((channel, index) => {
-        const active = index === activeIndex
-        return (
-          <button
-            key={channel.id}
-            type="button"
-            role="tab"
-            className={active ? `${styles.tile} ${styles.tileOn}` : styles.tile}
-            aria-selected={active}
-            aria-label={`Channel ${channel.number} ${channel.name}`}
-            data-feed-channel-tile={channel.id}
-            tabIndex={hidden ? -1 : 0}
-            onClick={() => onPick(index)}
-          >
-            <img src={channelUrl(`${channel.icon}.png`)} alt="" draggable={false} />
-          </button>
-        )
-      })}
+      <ClayWheel
+        items={items}
+        selectedId={selectedId}
+        onSelect={id => {
+          const index = CHANNELS.findIndex(channel => channel.id === id)
+          if (index >= 0 && index !== activeIndex) onPick(index)
+        }}
+        ariaLabel="Channels"
+        side={side}
+        tileSize={52}
+        slotSpacing={64}
+        visibleRadius={3.4}
+        // Shallow bow, unclipped: the outer tiles curl a few px past the
+        // column instead of being cut off inside it, and the column itself
+        // stays one tile wide so the edge-tap lane beside it is still a lane.
+        arcDepth={6}
+        clip={false}
+        flipY
+        showLabels
+        // goToChannel already pops; a second detent from the wheel doubled it.
+        notchSound={false}
+      />
     </div>
   )
 }

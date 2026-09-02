@@ -94,6 +94,7 @@ import {
 } from './mapDominance'
 import { createMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
+import { mapDaypart } from './contextCubeModels'
 import { takeoverTint, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
 import {
   fetchRoute,
@@ -2383,7 +2384,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       applyTheme(map, theme, night)
       document.documentElement.dataset.poplurMapTime = night ? 'night' : 'day'
       if (window.parent !== window) {
-        window.parent.postMessage({ type: 'poplur-map-night', night, morning }, '*')
+        window.parent.postMessage({
+          type: 'poplur-map-night',
+          night,
+          daypart: mapDaypart(shade.lightPreset),
+          morning,
+        }, '*')
       }
       return shade.key
     }

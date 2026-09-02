@@ -1,0 +1,70 @@
+/* A vertical clay wheel for a control rail: the same curved arc the hold
+   menu uses, sized for a column that stands beside a viewfinder or feed.
+   The stage is positioned by its owner; the wheel fills it. */
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.wheel {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+}
+.wheel:active { cursor: grabbing; }
+
+.tile {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  will-change: transform, opacity;
+  transition: opacity 120ms linear;
+  -webkit-tap-highlight-color: transparent;
+}
+.tile:focus-visible { outline: 2px solid #ff8ac6; outline-offset: 4px; border-radius: 14px; }
+
+.iconBox,
+.iconBoxOn {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 22%;
+  background: rgba(12, 6, 12, 0.55);
+}
+.iconBox {
+  border: 1.5px solid rgba(255, 255, 255, 0.42);
+}
+.iconBoxOn {
+  border: 2.5px solid #fff2f8;
+  filter:
+    drop-shadow(0 2px 0 rgba(91, 10, 48, 0.96))
+    drop-shadow(0 8px 12px rgba(0, 0, 0, 0.78))
+    drop-shadow(0 0 13px rgba(255, 20, 140, 0.92));
+}
+
+.label {
+  max-width: 76px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: rgba(255, 242, 248, 0.92);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.8);
+}

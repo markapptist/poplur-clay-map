@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { packBase } from './assetPacks'
+import { arFilterCatalog, type ARFilterModel } from './arFilterCatalog'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { Detection } from './mlDetect'
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
@@ -9,7 +12,11 @@ import styles from './FaceAROverlay.module.css'
 
 const THREE_D_FILTERS = new Set(['beauty', 'brighten', 'glow', 'sharpen', 'cool', 'vintage'])
 
-export const hasFaceAR3D = (filter: string) => THREE_D_FILTERS.has(filter)
+/** A filter has a 3D part when it is one of the code-built six, or when the
+ *  published catalog names a Meshy model for it — otherwise a new filter's
+ *  model would never mount. */
+export const hasFaceAR3D = (filter: string) =>
+  THREE_D_FILTERS.has(filter) || Boolean(arFilterCatalog().filters.find(f => f.id === filter)?.model)
 
 const isFace = (detection: Detection) => !detection.whole && (
   detection.id === 'face'
@@ -257,6 +264,54 @@ function createAccessory(filter: string) {
   return root
 }
 
+/**
+ * Load a filter's GLB and normalize it to the face units the procedural
+ * accessories are drawn in: centred, longest side = `scale` face widths,
+ * then nudged by `offset`. FaceAR3D's frame loop scales the parent group by
+ * the live face box, so a model fitted here lands where the code-built one did.
+ */
+const modelCache = new Map<string, Promise<THREE.Group | null>>()
+function loadAccessoryModel(filter: string): Promise<THREE.Group | null> {
+  const entry = arFilterCatalog().filters.find(f => f.id === filter)
+  const model: ARFilterModel | undefined = entry?.model
+  if (!model) return Promise.resolve(null)
+  const url = `${packBase('ar-filters', 'ar-filters')}/${model.file}`
+  // The cached root bakes in scale/offset, so two filters sharing a file with
+  // different fits must not share an entry.
+  const cacheKey = `${url}|${model.scale ?? 1}|${(model.offset ?? [0, 0, 0]).join(',')}`
+  let pending = modelCache.get(cacheKey)
+  if (!pending) {
+    pending = new GLTFLoader().loadAsync(url).then(gltf => {
+      const root = new THREE.Group()
+      const mesh = gltf.scene
+      const box = new THREE.Box3().setFromObject(mesh)
+      const size = new THREE.Vector3()
+      const center = new THREE.Vector3()
+      box.getSize(size)
+      box.getCenter(center)
+      const longest = Math.max(size.x, size.y, size.z) || 1
+      // Last line of defence for the fit: the streamed catalog is validated at
+      // the network boundary, the bundled one is a bare cast, so clamp here.
+      const fit = Number.isFinite(model.scale) && (model.scale as number) > 0 && (model.scale as number) < 10 ? model.scale as number : 1
+      const scale = fit / longest
+      mesh.position.sub(center).multiplyScalar(scale)
+      mesh.scale.setScalar(scale)
+      const raw = Array.isArray(model.offset) && model.offset.length === 3 ? model.offset : [0, 0, 0]
+      const [ox, oy, oz] = raw.map(v => (Number.isFinite(v) && Math.abs(v) < 5 ? v : 0)) as [number, number, number]
+      root.position.set(ox, oy, oz)
+      root.add(mesh)
+      return root
+    }).catch(() => {
+      // A pack that has not arrived yet is a normal state; forget the miss so
+      // the next mount tries again instead of staying procedural all session.
+      modelCache.delete(cacheKey)
+      return null
+    })
+    modelCache.set(cacheKey, pending)
+  }
+  return pending
+}
+
 function disposeScene(root: THREE.Object3D) {
   const geometries = new Set<THREE.BufferGeometry>()
   const materials = new Set<THREE.Material>()
@@ -267,7 +322,15 @@ function disposeScene(root: THREE.Object3D) {
     list.forEach(entry => materials.add(entry))
   })
   geometries.forEach(entry => entry.dispose())
-  materials.forEach(entry => entry.dispose())
+  materials.forEach(entry => {
+    // A GLB's PBR maps live on the material; dispose() alone leaves them on
+    // the GPU, and a filter change swaps whole models.
+    for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap'] as const) {
+      const texture = (entry as unknown as Record<string, unknown>)[key]
+      if (texture instanceof THREE.Texture) texture.dispose()
+    }
+    entry.dispose()
+  })
 }
 
 export default function FaceAR3D({ detections, filter }: {
@@ -311,6 +374,18 @@ export default function FaceAR3D({ detections, filter }: {
 
     const accessories = [createAccessory(filter), createAccessory(filter)]
     accessories.forEach(accessory => scene.add(accessory))
+    // The 3D part is a Meshy-generated GLB when the catalog names one. The
+    // procedural accessory above stays on screen while it loads, and stays
+    // for good if the model is absent or fails — a pack that has not arrived
+    // is a normal state, not a blank rail.
+    void loadAccessoryModel(filter).then(fitted => {
+      if (disposed || !fitted) return
+      accessories.forEach(accessory => {
+        disposeScene(accessory)
+        accessory.clear()
+        accessory.add(fitted.clone())
+      })
+    })
 
     let width = 0
     let height = 0

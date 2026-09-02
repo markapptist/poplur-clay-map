@@ -41,6 +41,17 @@ export interface ARFilterEntry {
   css: string
   /** Core Image grade for the native iOS viewfinder. Absent for `none`. */
   grade?: ARFilterGrade
+  /** The filter's 3D part as a Meshy-generated GLB in the ar-filters pack.
+   *  `scale` is the model's longest side in face widths; `offset` is in face
+   *  units, +y up, applied after centering. Absent → FaceAR3D's procedural
+   *  accessory, so a filter is never blank while its model is missing. */
+  model?: ARFilterModel
+}
+
+export interface ARFilterModel {
+  file: string
+  scale?: number
+  offset?: [number, number, number]
 }
 
 export interface ARFilterCatalog {
@@ -104,6 +115,12 @@ export function isARFilterCatalog(value: unknown): value is ARFilterCatalog {
       || typeof f.thumbnail !== 'string' || f.thumbnail.trim() === ''
       || ids.has(f.id)) return false
     ids.add(f.id)
+    // A model row that cannot name its file must not reach the loader.
+    if (f.model !== undefined && (!f.model || typeof f.model !== 'object'
+      || typeof f.model.file !== 'string' || f.model.file.trim() === ''
+      || (f.model.scale !== undefined && !(Number.isFinite(f.model.scale) && f.model.scale > 0 && f.model.scale < 10))
+      || (f.model.offset !== undefined && !(Array.isArray(f.model.offset) && f.model.offset.length === 3
+        && f.model.offset.every(v => Number.isFinite(v) && Math.abs(v) < 5))))) return false
     return f.id === 'none'
       ? (f.grade === undefined || isARFilterGrade(f.grade))
       : isARFilterGrade(f.grade)

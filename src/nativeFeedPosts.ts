@@ -263,7 +263,13 @@ function requestNativeFallback(): void {
 
 function startRealtimeFeed(): void {
   if (unsubscribeRealtime || realtimeState === 'connecting' || realtimeState === 'live') return
-  if (isRNWebShellRoute()) {
+  // Inside a native shell the shell's forward is the authority: it holds the
+  // signed-in Firestore session and now streams a live listener. Racing it
+  // against the page's own unauthenticated client meant that whenever that
+  // client happened to connect, every forward was dropped as "delayed" and
+  // requestFeedPosts was never even posted — the Map, which is fed ONLY by the
+  // forward on device, stayed empty.
+  if (isRNWebShellRoute() || isNativeShell()) {
     realtimeState = 'fallback'
     publish([])
     requestNativeFallback()

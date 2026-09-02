@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import TabControlRail from './TabControlRail'
+import { useEffect, useState } from 'react'
+import ClayWheel from './ClayWheel'
 import type { ControlSide } from './controlPlacement'
-import { playPop } from './pop'
 import { AR_FILTERS } from './ARFilters'
 import {
   arFilterThumbnailUrl,
@@ -21,9 +20,13 @@ import styles from './CameraARRail.module.css'
  * pick WHILE framing, so it belongs beside the frame like every other camera
  * control rather than on top of it.
  *
- * Activation is on CLICK, deliberately, while the opposite rail's buttons fire
- * on pointerdown: this column scrolls, and a pointerdown activation would swap
- * the filter the instant you touched it to scroll past it.
+ * The column is a clay wheel, the same one the hold menu spins: the live
+ * filter sits lit in the notch with its neighbours curving away above and
+ * below, so you always see what comes before and after the one you are on.
+ * A scrolling column of sixteen thumbnails either shrank them past reading or
+ * hid the live one off-screen; the wheel keeps every visible tile large and
+ * the lit one centred. The notch IS the pick — scrubbing applies each filter
+ * as it arrives, the way the hold menu lights each tile.
  */
 export default function CameraARRail({
   side,
@@ -35,7 +38,6 @@ export default function CameraARRail({
   onPick: (id: string) => void
 }) {
   const [, setCatalogRevision] = useState(0)
-  const activeRef = useRef<HTMLButtonElement | null>(null)
 
   // The published catalog can carry more filters than the bundled fallback.
   // Fetched when the camera opens rather than at app start — the rail is
@@ -47,51 +49,53 @@ export default function CameraARRail({
     return () => { live = false; stop() }
   }, [])
 
-  // Keep the live filter visible in the column: the catalog is longer than the
-  // screen, so a filter restored from a previous session (or picked with the
-  // keyboard) can sit well outside the scrolled view.
-  useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [active])
+  const items = AR_FILTERS.map(filter => ({
+    id: filter.id,
+    label: filter.label,
+    // The thumbnail already carries this filter's authored grade and costume,
+    // so it is never re-filtered here — doing that doubles the look and puts
+    // a GPU effect on every visible tile.
+    render: () => (
+      <img
+        className={styles.thumb}
+        src={arFilterThumbnailUrl(filter.thumbnail)}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        loading="lazy"
+        decoding="async"
+      />
+    ),
+  }))
 
   return (
-    <TabControlRail side={side} label="AR filters" scroll>
-      {AR_FILTERS.map(filter => {
-        const on = filter.id === active
-        return (
-          <button
-            key={filter.id}
-            ref={on ? activeRef : undefined}
-            type="button"
-            className={styles.filter}
-            aria-pressed={on}
-            aria-label={filter.label}
-            title={filter.label}
-            // The camera owns pinch and tap-to-focus on the surface beneath.
-            // Without this, choosing a filter also refocuses the shot.
-            onPointerDown={event => event.stopPropagation()}
-            onClick={event => {
-              event.stopPropagation()
-              if (on) return
-              playPop()
-              onPick(filter.id)
-            }}
-          >
-            {/* The thumbnail already carries this filter's authored grade and
-                costume, so it is never re-filtered here — doing that doubles
-                the look and puts a GPU effect on every visible button. */}
-            <img
-              className={styles.thumb}
-              src={arFilterThumbnailUrl(filter.thumbnail)}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              loading="lazy"
-              decoding="async"
-            />
-          </button>
-        )
-      })}
-    </TabControlRail>
+    // Not inside the 44px control rail any more: nested there the wheel was
+    // stacked under the rail's other controls and sat high on the screen. It
+    // is its own column now, spanning the same band as the feed's channel
+    // dial, so both wheels centre on the same line of the screen.
+    <div
+      className={`${styles.rail} ${side === 'right' ? styles.railRight : styles.railLeft}`}
+      data-camera-ar-rail=""
+    >
+      {/* The camera owns pinch and tap-to-focus on the surface beneath. The
+          wheel handles its own pointer first (bubbling), then this stops the
+          gesture reaching the viewfinder so a scrub never refocuses the shot. */}
+      <div
+        className={styles.wheelBox}
+        onPointerDown={event => event.stopPropagation()}
+        onClick={event => event.stopPropagation()}
+      >
+        <ClayWheel
+          items={items}
+          selectedId={active}
+          onSelect={id => { if (id !== active) onPick(id) }}
+          ariaLabel="AR filters"
+          side={side}
+          tileSize={46}
+          flipY
+          showLabels
+        />
+      </div>
+    </div>
   )
 }

@@ -1,88 +1,30 @@
-/* The full channel dial, the mirror of the feed's control rail on the other
-   edge: same top, same bottom, one pair of columns.
- *
- * The tiles are SIZED FROM THE COLUMN, not fixed. They used to be 30px, chosen
- * so fifteen of them came to exactly the height the rail had on a phone — which
- * meant that on anything taller the dial stopped a fifth of the way up the
- * screen with the room below it empty, and on a shorter one it ran under the
- * home chrome. The column now spans top to home clearance and `1fr` rows divide
- * it, so fifteen channels always land on the clearance line and the artwork is
- * as large as that allows.
- */
+/* The channel dial's window: one column on the rail edge, from the rail's
+   top to the home chrome's clearance line, the same span the tile column
+   used. The wheel inside it is sized by ClayWheel; this only positions and
+   hides. */
 .rail {
   position: absolute;
   top: var(--poplur-rail-top);
   bottom: var(--poplur-home-clearance);
+  /* One tile wide. The bow is unclipped and shallow, so it shows past this
+     column without the column itself covering the edge-tap lane beside it. */
+  width: 62px;
   z-index: 46;
-  display: grid;
-  grid-auto-flow: row;
-  /* One shared value with the stepper opposite (see --poplur-feed-dial): the
-     two are a matched pair and must never drift apart again. */
-  grid-auto-rows: var(--poplur-feed-dial);
-  /* Wide enough for the biggest tile the cap allows; each tile centres in it,
-     so the dial's centre line holds however large the artwork gets. */
-  grid-template-columns: var(--poplur-feed-dial);
-  justify-items: center;
-  align-items: center;
-  gap: 3px;
   pointer-events: auto;
-  transition: opacity 0.24s ease;
+  transition: opacity 160ms ease;
 }
-
+.railLeft { left: max(0px, calc(env(safe-area-inset-left, 0px) - 8px)); }
+.railRight { right: max(0px, calc(env(safe-area-inset-right, 0px) - 8px)); }
 .railHidden {
   opacity: 0;
   pointer-events: none;
 }
 
-.tile {
-  /* The channel artwork already carries its own clay tile, exactly like the
-     side-control icons opposite. Drawing a second frame around it shrank the
-     art to 32px and broke the one thing that had to match. No border, no
-     background, no padding — just the icon at the rail's own size. */
-  display: grid;
-  place-items: center;
-  /* Square, driven by the row height the grid hands out. Capped so a tall
-     desktop window does not turn the dial into a column of panels. */
-  width: var(--poplur-feed-dial);
-  height: var(--poplur-feed-dial);
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  /* Unselected channels sit back so the lit one reads first. */
-  opacity: 0.55;
-  transition: transform 0.12s ease, opacity 0.16s ease, filter 0.16s ease;
-}
-
-.tile img {
+/* The channel's own artwork fills its tile; ClayWheel draws the clay box. */
+.art {
   width: 100%;
   height: 100%;
-  display: block;
   object-fit: contain;
+  display: block;
+  -webkit-user-drag: none;
 }
-
-.tile:active {
-  transform: scale(0.9);
-}
-
-/* Where you are. Colour alone would not carry it, so the lit tile is fully
-   opaque and haloed rather than merely tinted. */
-.tileOn {
-  opacity: 1;
-  filter:
-    drop-shadow(0 0 7px rgba(255, 75, 167, 0.95))
-    drop-shadow(0 0 14px rgba(255, 75, 167, 0.55));
-}
-
-.tileOn:active {
-  transform: scale(0.94);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tile, .rail { transition: none; }
-}
-
-/* Mirrors the control rail's centre line from whichever edge it hangs on. */
-.railLeft { left: max(6px, calc(env(safe-area-inset-left, 0px) - 6px)); }
-.railRight { right: max(6px, calc(env(safe-area-inset-right, 0px) - 6px)); }

@@ -44,3 +44,26 @@
 @media (prefers-reduced-motion: reduce) {
   .thumb { transition: none; }
 }
+
+/* Five wheel slots tall, one tile wide: a fixed window the wheel spins
+   inside rather than a column that grows with the catalog. */
+/* The AR dial's own column. It used to be a fixed-height child of the 44px
+   control rail, which stacked it under the rail's other buttons and left it
+   sitting high on the screen. It spans the same band as the feed's channel
+   dial now, so both wheels centre on the same line. */
+.rail {
+  position: absolute;
+  top: var(--poplur-rail-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)));
+  bottom: var(--poplur-home-clearance, 120px);
+  width: 96px;
+  z-index: 46;
+  pointer-events: auto;
+}
+.railLeft { left: max(0px, calc(env(safe-area-inset-left, 0px) - 8px)); }
+.railRight { right: max(0px, calc(env(safe-area-inset-right, 0px) - 8px)); }
+
+/* Fills that column, so ClayWheel's own centre line is the column's centre. */
+.wheelBox {
+  width: 100%;
+  height: 100%;
+}

@@ -40,10 +40,16 @@ import {
   BROWSER_CUBE_MODEL,
   FEED_TV_CUBE_MODEL,
   HOME_CUBE_MODEL,
+  MAP_GLOBE_CUBE_MODEL,
+  WEATHER_CUBE_DISPLAY_MS,
   isBreakingNewsCubeEvent,
   mapContextCubeModel,
+  // Aliased: `mapDaypart` is the Home shell's state name below.
+  mapDaypart as daypartOfLightPreset,
+  mapDaypartCubeModel,
   readMapNewsCubeEvent,
   weatherCubeKind,
+  type MapDaypart,
   type MapNewsCubeEvent,
   type WeatherCubeKind,
 } from './contextCubeModels'
@@ -160,7 +166,7 @@ import { contentPostId, dropAt } from './postedContent'
 import { onProfileGenderChange, profileHeadModel } from './profileGender'
 import { POIS, type PopLevel } from './data'
 import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
-import { localSunriseToNoon, skyShadeAt } from './skyCycle'
+import { skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
 import { packBase } from './assetPacks'
 import { normalizeInAppBrowserURL, POPLUR_OPEN_FEED_BROWSER_EVENT } from './inAppBrowser'
@@ -218,17 +224,11 @@ const CHROME_IDLE_MS = 30_000
 
 // The flash camera the profile wears while you are taking your picture.
 const PROFILE_CAMERA_MODEL = 'poplur_camera_kodak.glb'
-const MAP_GLOBE_MODEL = 'poplur-globe-lite.glb'
-// Sunrise through 11:59 local time wears the shipped lightweight sun. It uses
-// the same seasonal sunrise calculation as the map sky and the ordinary
-// one-shot POP swap, so there is no second renderer or animation loop.
-const MAP_MORNING_MODEL = 'poplur_sun_lite.glb'
-// At night the Map navigator uses one of the existing mobile-sized moon
-// assets, selected from the weather API's moon phase. Changing this URL flows
-// through the normal one-shot cube POP swap; it does not add another renderer
-// or an idle animation.
-const MAP_NIGHT_MODEL = 'poplur_moon_crescent_lite.glb'
-const MAP_FULL_MOON_MODEL = 'poplur_moon_full_lite.glb'
+// The Map navigator's globe, sun and moons live in contextCubeModels.ts with
+// the daypart rule that chooses between them (mapDaypartCubeModel). Only the
+// globe is still named here: it is also the literal world-zoom object the
+// map's globe/water hover reaches for, whatever the time of day.
+const MAP_GLOBE_MODEL = MAP_GLOBE_CUBE_MODEL
 // The male head constant lives in profileGender.ts now (MALE_HEAD_MODEL),
 // beside the female head it is chosen against.
 const STATION_CONSOLE_MODEL = 'games/poplurstation/console.glb'
@@ -333,14 +333,13 @@ function writeLastScreen(tab: CubeTab, screen: string | null) {
     frame. */
 function tabNavigatorModel(
   tab: CubeTab,
-  mapNight = false,
+  mapDaypart: MapDaypart = 'twilight',
   mapMoon: 'full' | 'crescent' = 'crescent',
-  mapMorning = false,
 ): string {
-  if (tab === 'map') {
-    if (mapNight) return mapMoon === 'full' ? MAP_FULL_MOON_MODEL : MAP_NIGHT_MODEL
-    return mapMorning ? MAP_MORNING_MODEL : MAP_GLOBE_MODEL
-  }
+  // Map wears the sky's time of day: the sun by day, the phase-matched moon
+  // at night, and the globe through dawn and dusk. Each change flows through
+  // the normal one-shot cube POP swap; there is no second renderer or loop.
+  if (tab === 'map') return mapDaypartCubeModel(mapDaypart, mapMoon)
   // Feed is the Poplur TV surface. Keep the supplied lightweight TV in the
   // navigator for the whole channel session; contextual food/music states may
   // temporarily override it, then restore this exact model.
@@ -548,9 +547,8 @@ function subscreenNavigatorModel(screen: string | null): string | undefined {
 function holdFocusNavigatorModel(
   focus: HoldMenuFocus,
   tab: CubeTab,
-  mapNight: boolean,
+  mapDaypart: MapDaypart,
   mapMoon: 'full' | 'crescent',
-  mapMorning: boolean,
   wornCube: string | null,
 ): string | undefined {
   if (focus.action === 'photo') return PROFILE_CAMERA_MODEL
@@ -562,7 +560,7 @@ function holdFocusNavigatorModel(
   if (focus.mapAction === 'directions') return 'poplur_cube_directions_arrow.glb'
   if (focus.home) {
     return wornNavigatorModel(tab, null, wornCube)
-      ?? tabNavigatorModel(tab, mapNight, mapMoon, mapMorning)
+      ?? tabNavigatorModel(tab, mapDaypart, mapMoon)
   }
   return subscreenNavigatorModel(focus.screen ?? null)
 }
@@ -912,26 +910,22 @@ const CLAY_MAP_SRC = (() => {
     : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}`
 })()
 
-function clockMapNight(): boolean {
-  if (typeof window !== 'undefined') {
-    const forced = new URLSearchParams(window.location.search).get('map-night')
-    if (forced === '1') return true
-    if (forced === '0') return false
-  }
-  return skyShadeAt().lightPreset === 'night'
-}
-
-/** The explicit day/night browser preview represents noon or midnight. Do not
- * let the real device clock put a morning sun into that deterministic noon
- * preview; production (no override) follows the seasonal local sunrise. */
-function clockMapMorning(): boolean {
+/** The Map navigator's time of day from this document's own clock, used
+ * until the embedded map reports its sky (and as the only source for the
+ * native renderer, which has no iframe report). The explicit browser preview
+ * is deterministic: map-night=1 is fixed midnight and wears the moon;
+ * map-night=0 is fixed noon and day-cycle=1 sweeps the sky on its own clock,
+ * and neither is a real local hour, so they keep the globe rather than let
+ * the device clock put a sun into them. Production (no override) follows the
+ * seasonal local sky. */
+function clockMapDaypart(): MapDaypart {
   if (typeof window !== 'undefined') {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('day-cycle') === '1') return false
     const forced = params.get('map-night')
-    if (forced === '1' || forced === '0') return false
+    if (forced === '1') return 'night'
+    if (forced === '0' || params.get('day-cycle') === '1') return 'twilight'
   }
-  return localSunriseToNoon()
+  return daypartOfLightPreset(skyShadeAt().lightPreset)
 }
 
 // iOS experiment: keep this Home document and its approved clay HUD, but let
@@ -972,7 +966,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
-  const [mapNight, setMapNight] = useState(clockMapNight)
+  const [mapDaypart, setMapDaypart] = useState<MapDaypart>(clockMapDaypart)
   const [mapMoon, setMapMoon] = useState<'full' | 'crescent'>(() => moonPhase(new Date()).model)
   const [radiusRewardDiceSignal, setRadiusRewardDiceSignal] = useState<RadiusRewardNavigatorSignal | null>(null)
   const [radiusRewardDiceRollSignal, setRadiusRewardDiceRollSignal] = useState<RadiusRewardDiceRollSignal | null>(null)
@@ -1044,15 +1038,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }, AIRPORT_CUBE_DISPLAY_MS)
     return () => window.clearTimeout(timer)
   }, [mapAirportSignal])
-  const [mapMorning, setMapMorning] = useState(clockMapMorning)
   // The embedded map reports the same state below. Refresh once when a tab
   // change reaches Map; only the native renderer, which has no iframe report,
   // needs a minute clock while Map is actually visible.
   useEffect(() => {
-    const sync = () => {
-      setMapNight(clockMapNight())
-      setMapMorning(clockMapMorning())
-    }
+    const sync = () => setMapDaypart(clockMapDaypart())
     sync()
     if (!NATIVE_ADAPTIVE_MAP || activeTab !== 'map') return
     const interval = window.setInterval(sync, 60_000)
@@ -1070,6 +1060,22 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     kind: WeatherCubeKind
     changedAt: number
   } | null>(null)
+  // A weather cube is an announcement, not a mode. The condition the map last
+  // announced is remembered here so a steady rain keeps its temperature chip
+  // yet borrows the navigator only once, when the rain starts; the cube then
+  // returns to the day's object and does not speak again until the kind
+  // itself changes. A map reload clears it so a fresh load announces anew.
+  const announcedWeatherCubeKindRef = useRef<WeatherCubeKind | null>(null)
+  // One condition change gets one bounded weather moment, the same shape as
+  // the airport crossing above.
+  useEffect(() => {
+    if (!mapWeatherSignal) return
+    const signal = mapWeatherSignal
+    const timer = window.setTimeout(() => {
+      setMapWeatherSignal(current => current?.changedAt === signal.changedAt ? null : current)
+    }, WEATHER_CUBE_DISPLAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [mapWeatherSignal])
   const [mapWeatherDisplay, setMapWeatherDisplay] = useState<WeatherPresentationSnapshot>(() => ({
     mode: 'clear',
     iconId: 'weather.clear_day',
@@ -1924,7 +1930,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // cube is actually wearing. They differ only for the length of the swap, and
   // the model changes at the expanded peak so the handoff reads as one
   // continuous clay pop rather than a disappearance and reappearance.
-  const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab, mapNight, mapMoon, mapMorning))
+  const [appliedCubeModel, setAppliedCubeModel] = useState<string>(() => tabNavigatorModel(initialTab, mapDaypart, mapMoon))
   const [readyCubeModel, setReadyCubeModel] = useState<string | null>(null)
   // Which swap the navigator uses, chosen in Settings > Cube change. Read live
   // so flipping it there is felt on the very next tab swipe. This setting had
@@ -2823,6 +2829,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         setMapPainted(false)
         setMapOverlayOpen(false)
         setMapWeatherSignal(null)
+        announcedWeatherCubeKindRef.current = null
         setMapAirportSignal(null)
         applyMapWorldHover(null)
         setMapNewsTourOn(false)
@@ -2905,12 +2912,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             ? previous
             : presentation)
           const kind = weatherCubeKind(presentation.mode, presentation.windy)
-          setMapWeatherSignal(previous => {
-            if (!kind) return null
-            return previous?.kind === kind
-              ? previous
-              : { kind, changedAt: Date.now() }
-          })
+          // Announce only a change of condition; the same rain reported
+          // again every refresh must not re-borrow the cube.
+          if (kind !== announcedWeatherCubeKindRef.current) {
+            announcedWeatherCubeKindRef.current = kind
+            setMapWeatherSignal(kind ? { kind, changedAt: Date.now() } : null)
+          }
         }
       }
       if (event.data.type === 'poplur-map-conquer') {
@@ -2948,10 +2955,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         scheduleMapRetry()
       }
       if (event.data.type === 'poplur-map-night') {
-        setMapNight(Boolean(event.data.night))
-        if (typeof event.data.morning === 'boolean') {
-          setMapMorning(event.data.morning)
-        }
+        // The map's sky is the source of truth for the navigator's time of
+        // day. `daypart` arrived with the three-part cube; an older map
+        // bundle only says `morning`, so that flag still stands in for the
+        // sun and everything else that is not night keeps the globe.
+        const daypart = event.data.daypart
+        setMapDaypart(event.data.night
+          ? 'night'
+          : daypart === 'day' || daypart === 'night' || daypart === 'twilight'
+            ? daypart
+            : event.data.morning ? 'day' : 'twilight')
         if (event.data.moon === 'full' || event.data.moon === 'crescent') {
           setMapMoon(event.data.moon)
         }
@@ -3703,12 +3716,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             ? previous
             : { mode, iconId, temperature, unit: displayUnit, windy })
           const kind = weatherCubeKind(mode, windy)
-          setMapWeatherSignal(previous => {
-            if (!kind) return null
-            return previous?.kind === kind
-              ? previous
-              : { kind, changedAt: Date.now() }
-          })
+          // Announce only a change of condition; the same rain reported
+          // again every refresh must not re-borrow the cube.
+          if (kind !== announcedWeatherCubeKindRef.current) {
+            announcedWeatherCubeKindRef.current = kind
+            setMapWeatherSignal(kind ? { kind, changedAt: Date.now() } : null)
+          }
         })
         .catch(error => {
           if ((error as { name?: string } | null)?.name === 'AbortError') return
@@ -4717,9 +4730,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     ? holdFocusNavigatorModel(
         wheelFocus,
         activeTab,
-        mapNight,
+        mapDaypart,
         mapMoon,
-        mapMorning,
         wornCube,
       )
     : undefined
@@ -4817,7 +4829,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       // The lens is kept as its own constant but is not used as PHOTO's face
       // any more — the user asked PHOTO to read as "take the picture" rather
       // than "line up the shot".
-      ?? tabNavigatorModel(activeTab, mapNight, mapMoon, mapMorning))
+      ?? tabNavigatorModel(activeTab, mapDaypart, mapMoon))
 
   // Keep one likely destination decoded but detached. The tab ring's forward
   // neighbour matches a left swipe (Camera -> Feed); the model that was just
@@ -4828,8 +4840,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const cubePreparationModel = requestedCubeModel !== readyCubeModel
     ? requestedCubeModel
     : cubeScreen
-      ? tabNavigatorModel(activeTab, mapNight, mapMoon, mapMorning)
-      : tabNavigatorModel(TAB_ORDER[nextTabIndex], mapNight, mapMoon, mapMorning)
+      ? tabNavigatorModel(activeTab, mapDaypart, mapMoon)
+      : tabNavigatorModel(TAB_ORDER[nextTabIndex], mapDaypart, mapMoon)
 
   const beginCubeSwapEnter = useCallback((withSound: boolean) => {
     if (cubeModelReadyTimer.current) window.clearTimeout(cubeModelReadyTimer.current)
