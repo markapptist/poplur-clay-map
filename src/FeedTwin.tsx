@@ -370,7 +370,11 @@ export default function FeedTwin({
   // The feed mirrors the app's control side. The channel dial is a long column
   // and belongs under the hand that is NOT holding the reactions, so the two
   // face each other rather than stacking on one edge.
-  const feedRailSide: ControlSide = controlSide === 'left' ? 'right' : 'left'
+  // The action rail and stepper ride the control side; the channel dial takes
+  // the OTHER edge. With the default control side of `left` that puts the dial
+  // on the right. (The name predates the swap: this is the side of the feed's
+  // buttons, and the dial is derived as its opposite where it is rendered.)
+  const feedRailSide: ControlSide = controlSide
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
   const [muted, setMuted] = useState(isUserMuted)
@@ -824,8 +828,9 @@ export default function FeedTwin({
         if (e.key === 'ArrowRight') { e.preventDefault(); seekBy(10) }
         return
       }
-      if (e.key === 'ArrowUp') { e.preventDefault(); change(-1) }
-      if (e.key === 'ArrowDown') { e.preventDefault(); change(1) }
+      // Same direction as the stepper and the dial: up is the higher channel.
+      if (e.key === 'ArrowUp') { e.preventDefault(); change(1) }
+      if (e.key === 'ArrowDown') { e.preventDefault(); change(-1) }
       if (e.key === 'ArrowLeft') { e.preventDefault(); changeContent(-1) }
       if (e.key === 'ArrowRight') { e.preventDefault(); changeContent(1) }
     }
@@ -1980,22 +1985,31 @@ export default function FeedTwin({
           information underneath the title. */}
       {!playerMode && (
       <>
-        {/* Every channel at once, down the right edge. Hidden in player mode
-            for the same reason the rest of the chrome is: a long press asked
-            for the screen. */}
+        {/* The feed's two columns. The channel dial takes the CONTROL side —
+            the edge the user has put every other screen's controls on — and
+            the post actions with the stepper take the opposite edge. That is
+            the reverse of how they started; the dial is the feed's primary
+            control (it is the whole reason the screen has two columns), so it
+            belongs where the thumb already goes. Hidden in player mode for the
+            same reason the rest of the chrome is: a long press asked for the
+            screen.
+
+            Channel UP goes to the HIGHER number, like a television: the dial
+            opposite runs upward (101 at the bottom), so up on the stepper and
+            up on the dial are the same direction. */}
         <FeedChannelStep
           side={feedRailSide}
           channelNumber={ch.number}
           postActionsAvailable={Boolean(post)}
-          onChannelUp={() => change(-1)}
-          onChannelDown={() => change(1)}
+          onChannelUp={() => change(1)}
+          onChannelDown={() => change(-1)}
           onPostPrevious={() => handleEdgeTap('left')}
           onPostNext={() => handleEdgeTap('right')}
         />
         <FeedChannelRail
           activeIndex={index}
           onPick={goToChannel}
-          side={controlSide}
+          side={controlSide === 'left' ? 'right' : 'left'}
           hidden={playerMode}
         />
         <PostActionRail

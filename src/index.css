@@ -24,20 +24,16 @@
     100dvh - var(--poplur-rail-top) - var(--poplur-home-clearance)
   );
 
-  /* The feed's SMALL control: one channel tile on the dial, and one arrow on
-   * the stepper opposite. These two have always been a matched pair — the
-   * stepper was literally sized "the channel dial's tile size on the other
-   * edge" — but as a hardcoded number, so the moment the dial started sizing
-   * itself from the column the stepper stayed frozen and the pair broke.
-   * One value now drives both, derived from the dial: fifteen tiles and the
-   * fourteen 4px gaps between them, floored at today's size and capped so a
-   * tall window cannot turn either into a stack of panels.
+  /* One channel tile on the dial.
+   *
+   * It used to divide the column by fifteen so the whole dial fitted without
+   * scrolling, which pinned the artwork at ~32px on a phone — small enough
+   * that the channel you were picking was hard to read. The dial scrolls now,
+   * so the tile is sized for legibility instead of for the count: floored at
+   * the 44px touch target, tracking the viewport width, capped so a tall
+   * window does not turn it into a column of panels.
    */
-  --poplur-feed-dial: clamp(
-    30px,
-    calc((var(--poplur-feed-column) - 14 * 3px) / 15),
-    56px
-  );
+  --poplur-feed-dial: clamp(44px, 13vw, 56px);
 
   /* The feed's RIGHT column is one stack of eleven controls — six post actions
    * and the five-control channel stepper under them — so it gets ONE size.
@@ -50,11 +46,27 @@
    * readout, not a button, so it takes a 22px label slot instead of a full
    * control's worth of column. Gaps are 6px rather than 12 for the same
    * reason — at eleven of them, 12px gaps were spending 120px of the column on
-   * air while the controls they separated stayed small. Floored at today's
-   * action size so a phone never shrinks, capped so a tall window does not turn
-   * them into slabs.
+   * air while the controls they separated stayed small. Floored at the 44px
+   * action size so a phone never shrinks it below a touch target, capped so a
+   * tall window does not turn them into slabs.
    */
-  --poplur-feed-gap: 6px;
+  /* The gap is what YIELDS when the column is short.
+   *
+   * At 44px the ten controls plus the 22px readout already come to 462px, so on
+   * a 375x812 phone — 487px of column — six-pixel gaps overrun the space by 29
+   * and the stepper's top arrow ran into the dislike button above it. Something
+   * has to give at that height, and it must not be the 44px touch target: air
+   * between controls is worth less than the controls being pressable. This
+   * spends whatever the column has left on gaps and no more, so it relaxes back
+   * to the full 6px the moment there is room (a column of 522px or taller).
+   */
+  --poplur-feed-gap: clamp(
+    2px,
+    calc(
+      (var(--poplur-feed-column) - var(--poplur-feed-number) - 10 * 44px) / 10
+    ),
+    6px
+  );
   --poplur-feed-number: 22px;
   --poplur-feed-ctl: clamp(
     44px,

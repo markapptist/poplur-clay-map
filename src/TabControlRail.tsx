@@ -8,10 +8,16 @@ export default function TabControlRail({
   scroll = false,
   fill = false,
   fillReserveBelow,
+  anchor = 'top',
   children,
 }: {
   side: ControlSide
   label: string
+  /** Where the rail hangs. `top` starts under the header like every other
+   *  screen's controls. `center` sits on the screen's vertical midline — the
+   *  camera's, where the thumb rests mid-screen while framing and a column
+   *  starting at the top puts its lowest control a stretch away. */
+  anchor?: 'top' | 'center'
   /** Let the rail scroll when it carries more controls than the screen fits.
    *  A screen's own controls are a short fixed set and never need this; the
    *  camera's AR filters are a published catalog that can outgrow the column. */
@@ -30,7 +36,7 @@ export default function TabControlRail({
 }) {
   return (
     <div
-      className={`${styles.rail} ${side === 'right' ? styles.right : styles.left}${scroll ? ` ${styles.scroll}` : ''}${fill ? ` ${styles.fill}` : ''}`}
+      className={`${styles.rail} ${side === 'right' ? styles.right : styles.left}${scroll ? ` ${styles.scroll}` : ''}${fill ? ` ${styles.fill}` : ''}${anchor === 'center' ? ` ${styles.center}` : ''}`}
       style={fill && fillReserveBelow
         ? ({ '--rail-reserve-below': fillReserveBelow } as CSSProperties)
         : undefined}

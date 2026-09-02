@@ -74,6 +74,14 @@
   z-index: 2;
   background: #050407;
   pointer-events: none;
+  /* Hosts MapBootCover — the splash screen's clay progress bar and lines —
+     so a booting map is never a bare dark rectangle for the length of the
+     watchdog. Sits at the splash's own 68% line, not dead centre. */
+  display: grid;
+  place-items: center;
+  align-content: center;
+  padding-top: 36vh;
+  overflow: hidden;
 }
 
 .mapBootLifted {

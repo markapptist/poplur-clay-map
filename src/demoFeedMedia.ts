@@ -209,7 +209,23 @@ export const DEMO_PHOTOS: readonly DemoPhoto[] = [
  * post. Add the file, add its name here, and it goes live.
  */
 export const DEMO_PHOTO_FILES_AVAILABLE: ReadonlySet<string> = new Set<string>([
-  // e.g. 'poplur-sports.jpg'
+  'poplur-sports.jpg',
+  'poplur-gym.jpg',
+  'poplur-clothes.jpg',
+  'poplur-fashion.jpg',
+  'poplur-music.jpg',
+  'poplur-news.jpg',
+  'poplur-nature.jpg',
+  'poplur-tech.jpg',
+  'poplur-cars.jpg',
+  'poplur-kids.jpg',
+  'poplur-shopping.jpg',
+  'poplur-women.jpg',
+  'poplur-comedy.jpg',
+  'poplur-french.jpg',
+  'poplur-spanish.jpg',
+  'poplur-selfies.jpg',
+  'poplur-food.jpg',
 ])
 
 export function availableDemoPhotos(): DemoPhoto[] {
@@ -341,7 +357,10 @@ export function demoUploadPool(kind: 'photo' | 'video'): DemoUploadPick[] {
     }))
   }
   const curated = availableDemoPhotos().map(photo => ({
-    kind: 'photo' as const, url: feedUrl(photo.file), sourceId: photo.id,
+    // Same `photos/` prefix the Feed's own card rows use. Without it this
+    // resolved a card to the pack root, where the file does not exist, and an
+    // upload stand-in 404'd while the identical card rendered fine in the Feed.
+    kind: 'photo' as const, url: feedUrl(`photos/${photo.file}`), sourceId: photo.id,
   }))
   if (curated.length) return curated
   // Guards the gap between cataloguing a still and its file landing: with no

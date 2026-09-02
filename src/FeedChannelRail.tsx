@@ -16,7 +16,8 @@ import styles from './FeedChannelRail.module.css'
  * always in view and every visible tile is large. The notch IS the channel:
  * scrubbing changes channel as each tile arrives, the way the hold menu lights
  * each tile, and the up/down stepper on the other edge still walks one at a
- * time.
+ * time. The dial runs upward — 101 at the bottom — so its up, the stepper's up
+ * and ArrowUp are one direction: a higher channel.
  */
 export default function FeedChannelRail({
   activeIndex,
@@ -75,7 +76,9 @@ export default function FeedChannelRail({
         // stays one tile wide so the edge-tap lane beside it is still a lane.
         arcDepth={6}
         clip={false}
-        flipY
+        // Not flipped: the list runs UPWARD, 101 at the bottom, so up on the
+        // dial, up on the stepper opposite and ArrowUp all mean the same thing
+        // — a higher channel, the way a television counts.
         showLabels
         // goToChannel already pops; a second detent from the wheel doubled it.
         notchSound={false}

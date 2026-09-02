@@ -3,14 +3,22 @@
    correctly while the rail above it was exactly six 44px buttons. The rail now
    sizes itself from the room it has, so this anchors to the home chrome
    instead and the rail fills whatever is left above it. Both columns end on
-   the clearance line at any height. */
+   the clearance line at any height, on the rail's own centre line. */
 .group {
   position: absolute;
   bottom: var(--poplur-home-clearance);
   z-index: 46;
   display: grid;
   grid-auto-flow: row;
-  grid-auto-rows: var(--poplur-feed-ctl);
+  /* Explicit rows, not grid-auto-rows: the number is a readout and is budgeted
+     at --poplur-feed-number in the tile-size formula, so it must not take a
+     full tile row here or the column outgrows the space that formula reserved. */
+  grid-template-rows:
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-number)
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-ctl);
   grid-template-columns: var(--poplur-feed-ctl);
   gap: var(--poplur-feed-gap);
   justify-items: center;
@@ -18,8 +26,11 @@
   pointer-events: auto;
 }
 
-.groupLeft { left: max(19px, calc(env(safe-area-inset-left, 0px) + 7px)); }
-.groupRight { right: max(19px, calc(env(safe-area-inset-right, 0px) + 7px)); }
+/* Same inset as TabControlRail's .left/.right: the two columns are one
+   vertical line, so they must share a centre. An inset of their own was
+   correct only while these tiles were narrower than the rail's 44px. */
+.groupLeft { left: max(12px, env(safe-area-inset-left, 0px)); }
+.groupRight { right: max(12px, env(safe-area-inset-right, 0px)); }
 
 .group > * {
   width: var(--poplur-feed-ctl);

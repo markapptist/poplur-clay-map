@@ -45,6 +45,14 @@
 .left { left: max(12px, env(safe-area-inset-left, 0px)); }
 .right { right: max(12px, env(safe-area-inset-right, 0px)); }
 
+/* Mid-height anchor (the camera). The rail's own height stays content-sized;
+   only its resting point moves from "under the header" to the vertical centre
+   of the screen, so the column is equally reachable above and below the thumb. */
+.center {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 /* A rail that can outgrow the column scrolls instead of running off the bottom
    of the screen. The reserved 210px is the capture chrome the rail must clear:
    the zoom presets sit 150px up from the safe area and the shutter sits under

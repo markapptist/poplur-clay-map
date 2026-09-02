@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   DEMO_CREATIVES,
   DEMO_PHOTOS,
+  DEMO_PHOTO_FILES_AVAILABLE,
   availableDemoPhotos,
   blendedDemoPostsForChannel,
   demoFeedEnabled,
@@ -122,16 +123,25 @@ describe('photo card mapping', () => {
     expect(DEMO_PHOTOS.find(p => p.category === 'WOMEN')?.likeCount).toBe(8_300)
   })
 
-  it('shows no photo rows until a card file is actually present', () => {
-    expect(availableDemoPhotos()).toEqual([])
-    expect(demoPhotosForChannel({ id: 'sports', user: '@pitchside', caption: 'x' })).toEqual([])
+  // All seventeen card files have now been delivered into the feed pack. The
+  // invariant under test is not the count but the gate itself: a card reaches
+  // the Feed only by being listed in DEMO_PHOTO_FILES_AVAILABLE, so a future
+  // catalogue entry whose file has not landed still renders nothing.
+  it('serves only cards whose file is listed as present', () => {
+    expect(availableDemoPhotos().map(photo => photo.file).sort())
+      .toEqual([...DEMO_PHOTO_FILES_AVAILABLE].sort())
+    expect(availableDemoPhotos().every(photo => DEMO_PHOTO_FILES_AVAILABLE.has(photo.file)))
+      .toBe(true)
+    expect(demoPhotosForChannel({ id: 'sports', user: '@pitchside', caption: 'x' }))
+      .not.toEqual([])
   })
 
-  it('falls back to videos alone while no card file exists', () => {
+  it('blends the delivered cards in with the video creatives', () => {
     const blended = blendedDemoPostsForChannel(
       { id: 'food', user: '@sauceboss', caption: 'x' },
       { photos: 50, videos: 50, ads: 0 },
     )
-    expect(blended.every(post => post.mediaType === 'video')).toBe(true)
+    expect(blended.some(post => post.mediaType === 'video')).toBe(true)
+    expect(blended.some(post => post.mediaType !== 'video')).toBe(true)
   })
 })

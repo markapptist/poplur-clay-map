@@ -38,7 +38,10 @@ export interface MapPopContent {
   channel?: string
   caption?: string
   radiusKm: number
-  media: {
+  /** Optional: a pop whose media record has not resolved is still a real claim
+   *  on the map with a place, a poster and a radius. It opens and says so
+   *  rather than silently refusing the tap. */
+  media?: {
     kind: 'image' | 'video'
     src: string
     poster?: string
@@ -312,10 +315,10 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
               statusKind="pop"
               place={`${item.content.user ?? 'YOUR POP'} · ${item.content.channel?.toUpperCase() ?? 'POP'}`}
               title={item.content.name}
-              summary={item.content.caption ?? item.content.media.alt}
+              summary={item.content.caption ?? item.content.media?.alt ?? 'No media on this pop yet.'}
               summaryLabel="FROM THE MAP"
               meta={`${item.content.radiusKm.toFixed(1)} km radius`}
-              media={{ ...item.content.media, alt: item.content.media.alt }}
+              media={item.content.media}
               onClose={() => {
                 playPop()
                 dismissPopup(item.id)

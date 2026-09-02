@@ -85,6 +85,7 @@ import {
 } from './landmarkMaterials'
 import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
+import { spreadOverlappingPins } from './pinSpread'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer } from './mapClaims'
 import { ownershipTerrainPolygon } from './ownershipTerrain'
 import {
@@ -5987,6 +5988,26 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     }
 
     let syncing = false
+    // Pops sharing one landmark project onto the same few pixels, so one marker
+    // covers the other and the covered pop cannot be tapped at all. Fan them
+    // apart in screen space; the coordinate itself is untouched (see
+    // pinSpread.ts). Runs with the sync, on settle only — projecting the board
+    // every frame is the per-frame cost the LOD above exists to avoid.
+    const applyPinSpread = () => {
+      if (dropped || mapRef.current !== map) return
+      const seats = spreadOverlappingPins([...livePins.keys()].flatMap(id => {
+        const pin = list.find(candidate => candidate.id === id)
+        if (!pin) return []
+        const point = map.project(pin.coords)
+        return [{ id, x: point.x, y: point.y }]
+      }))
+      for (const [id, marker] of livePins) {
+        const seat = seats.get(id)
+        // A pin that no longer shares its ground goes back to standing on it.
+        marker.setOffset(seat ?? [0, 0])
+      }
+    }
+
     const syncPins = () => {
       if (dropped || mapRef.current !== map || syncing) return
       const want = visiblePins()
@@ -6003,7 +6024,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         }
       }
       const missing = want.filter(p => !livePins.has(p.id))
-      if (!missing.length) return
+      if (!missing.length) { applyPinSpread(); return }
       syncing = true
       void Promise.all(missing.map(pin =>
         // Your profile media belongs above your pin as the video preview, not
@@ -6022,8 +6043,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           livePins.set(entry.pin.id, buildMarker(entry.pin, entry.src))
         })
         pinMarkersRef.current = [...livePins.values()]
+        applyPinSpread()
       })
       pinMarkersRef.current = [...livePins.values()]
+      applyPinSpread()
     }
 
     syncPins()

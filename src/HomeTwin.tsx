@@ -1,4 +1,5 @@
 import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import MapBootCover from './MapBootCover'
 import { createPortal } from 'react-dom'
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
@@ -5269,7 +5270,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               mapPainted ? styles.mapBootLifted : '',
               activeTab === 'map' ? '' : styles.mapLayerIdle,
             ].filter(Boolean).join(' ')}
-          />
+          >
+            {/* Only while actually booting: once lifted the cover is invisible
+                and the bar's compositor animations should not keep running
+                under a live map. */}
+            {!mapPainted && activeTab === 'map' && <MapBootCover />}
+          </div>
         </>
       )}
 

@@ -156,6 +156,16 @@ export interface NearLandmark3D {
  *  the Liberty-specific name before the generalisation. */
 export type LibertyLandmark = NearLandmark3D
 
+/** Whether a coordinate projects inside the map's canvas, in CSS pixels. */
+function landmarkInView(
+  map: { project(lngLat: [number, number]): { x: number; y: number }; getContainer(): HTMLElement },
+  coords: [number, number],
+): boolean {
+  const point = map.project(coords)
+  const box = map.getContainer()
+  return point.x >= 0 && point.y >= 0 && point.x <= box.clientWidth && point.y <= box.clientHeight
+}
+
 function distanceKm(a: [number, number], b: [number, number]): number {
   const R = 6371
   const dLat = ((b[1] - a[1]) * Math.PI) / 180
@@ -746,7 +756,23 @@ export function installNearLandmark3D(
       return
     }
     const zoom = map.getZoom()
-    const near = distanceKm([c.lng, c.lat], cfg.coords) <= nearKm
+    const centreKm = distanceKm([c.lng, c.lat], cfg.coords)
+    // "Near" was measured from the map CENTRE alone, which is right for a
+    // top-down camera and wrong for a bird's-eye one. Pitched, the centre is
+    // a point on the ground well ahead of the camera, so a landmark standing
+    // plainly in the lower half of the view can be several kilometres from
+    // that centre — past nearKm — and the mesh was swapped for its flat
+    // sprite while the user was looking straight at it. That flat billboard,
+    // full-size in a 3D scene, is what reads as "missing textures".
+    //
+    // So a landmark that is ON SCREEN also counts as near, within a bounded
+    // reach (3× nearKm). The bound is deliberate: at a low pitch the viewport
+    // stretches to the horizon, and treating everything in it as near would
+    // wake every mesh in a region — the thermal cost this LOD exists to
+    // avoid. One projection per landmark, only in the band where it can
+    // change the answer.
+    const near = centreKm <= nearKm
+      || (centreKm <= nearKm * 3 && landmarkInView(map, cfg.coords))
     const next = near && zoom >= nearZoom
     if (next === wanted) return
     wanted = next

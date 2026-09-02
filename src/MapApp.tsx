@@ -3195,6 +3195,25 @@ export default function MapApp() {
     setMapPointPosition({ n: index + 1, of: mapPointRoute.length })
   }, [mapPointRoute])
 
+  // On arrival the map stands on point 1 — your own location — rather than on
+  // nothing. It used to open reading "0/18": no point focused, no highlight,
+  // and the first arrow press landed on a stranger's pop instead of on you.
+  // The route already puts `current:location` first whenever a fix exists,
+  // so this is a focus, not a camera move: the intro has just landed the
+  // camera there, and the knob lights on the spot the camera is looking at.
+  // Once only, and never over a focus the user (or a deep link) made first.
+  const arrivalFocusedRef = useRef(false)
+  useEffect(() => {
+    if (arrivalFocusedRef.current || !mapLive || focusedPostPicker) return
+    const first = mapPointRoute[0]
+    if (!first || first.kind !== 'current') return
+    arrivalFocusedRef.current = true
+    if (focusedMapPointKeyRef.current) return
+    focusedMapPointKeyRef.current = first.key
+    setFocusedMapPoint(first)
+    setMapPointPosition({ n: 1, of: mapPointRoute.length })
+  }, [focusedPostPicker, mapLive, mapPointRoute])
+
   const cycleMapPoint = useCallback((direction: -1 | 1) => {
     const route = mapPointRouteRef.current
     const step = stepMapPointCycle(route, focusedMapPointKeyRef.current, direction)
@@ -3281,8 +3300,13 @@ export default function MapApp() {
   }, [liveMapPosts])
 
   const openClickedMapPinContent = useCallback((pin: PopPin) => {
-    // Never substitute an ad or cube for a post whose media record is missing.
-    if (!pin.media) return
+    // A pin you can see and press must answer the press. This used to bail when
+    // the media record was missing, so a real claim — with a place, a poster,
+    // a channel and a radius — read as a dead pin: nothing opened, nothing
+    // said why. The original rule still holds and is the reason the popup
+    // takes `media` as OPTIONAL: never substitute an ad or a cube for a post
+    // whose media is missing. Showing the pop without media honours that;
+    // swallowing the tap did not.
     // Destination actions own the camera through their landing settle. This is
     // a second guard at the consumer boundary, so a late Mapbox marker event
     // cannot cover the landmark even if it bypasses the marker's DOM handler.
@@ -3317,11 +3341,16 @@ export default function MapApp() {
         name: pin.name,
         user: pin.user,
         channel: pin.channel,
-        caption: pin.media.alt,
+        caption: pin.media?.alt,
         radiusKm: pin.radiusKm,
         media: pin.media,
       },
-      onActivate: () => {
+      // Only a pop that HAS media can be shown in the feed. Forwarding one
+      // without it would publish a row whose mediaURL is empty, which the feed
+      // then drops on the native path while the map still shows the pin — the
+      // exact mismatch that makes a post look present and broken at once.
+      // Without this the card simply does not offer the action.
+      onActivate: pin.media ? () => {
         window.parent?.postMessage({
           type: 'poplur-map-open-feed-content',
           content: {
@@ -3339,7 +3368,7 @@ export default function MapApp() {
             originLongitude: Math.round(pin.coords[0] * 1_000) / 1_000,
           },
         }, '*')
-      },
+      } : undefined,
       action: {
         label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
         onActivate: () => {
