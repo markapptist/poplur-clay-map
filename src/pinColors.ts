@@ -32,3 +32,27 @@ export const PIN_COLOR_SWATCH: Record<PinColorId, string> = {
   green: '#4FD6B8',
   orange: '#FF8A3D',
 }
+
+/**
+ * A pin colour for somebody else's pop that is never one of yours.
+ *
+ * Whose pop it is has to be readable at a glance on a shared board, and the
+ * pin IS that answer. Seeded by owner rather than truly random so one person
+ * keeps one colour across the map and across a reload — a colour that
+ * reshuffles every render tells you nothing about who is who.
+ */
+export function otherOwnerPinColor(
+  ownerSeed: string,
+  mine: ReadonlySet<PinColorId | 'default'>,
+): PinColorId {
+  const pool = PIN_COLOR_IDS.filter(id => !mine.has(id))
+  // If you somehow hold every colour, your own pins still read as yours: they
+  // wear your takeover tint and your face, and theirs do not.
+  const choices = pool.length > 0 ? pool : PIN_COLOR_IDS
+  let hash = 2166136261
+  for (let index = 0; index < ownerSeed.length; index += 1) {
+    hash ^= ownerSeed.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return choices[Math.abs(hash) % choices.length]
+}

@@ -117,6 +117,7 @@ import { moonPhase } from './celestial'
 import { publishAccountRadiusKm } from './accountRadius'
 import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
 import { liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
+import { otherOwnerPinColor, type PinColorId } from './pinColors'
 import { normalizeNativeFeedPosts } from './nativeFeedPosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
@@ -3075,6 +3076,10 @@ export default function MapApp() {
   const [myColor, setMyColor] = useState(() => takeoverTint(PALETTE.pinkHot))
   useEffect(() => onTakeoverColor(() => setMyColor(takeoverTint(PALETTE.pinkHot))), [])
   const mapPins = useMemo(() => {
+    // Every colour you are already using, so nobody else can be handed one.
+    const myPinColours = new Set<PinColorId | 'default'>(
+      liveMapPosts.filter(pin => pin.mine).map(pin => pin.pinColor ?? 'default'),
+    )
     // Interception is the same math Feed delivery runs: a post is in sight
     // only while its stored radius reaches the viewer. Mirror Feed's viewer
     // resolution exactly — the shared native fix when one exists, the
@@ -3093,6 +3098,14 @@ export default function MapApp() {
           : undefined,
         radiusDeltaKm: pinRadiusPulse?.id === pin.id ? pinRadiusPulse.deltaKm : undefined,
         ghost: liveMapPinGhost(pin, reachViewer),
+        // Somebody else's pop never wears a colour of yours. Their own choice
+        // stands unless it happens to be one you are already using, in which
+        // case the board would stop answering "which of these are mine".
+        pinColor: pin.mine
+          ? pin.pinColor
+          : (pin.pinColor && !myPinColours.has(pin.pinColor))
+            ? pin.pinColor
+            : otherOwnerPinColor(pin.ownerId ?? pin.id, myPinColours),
       }))
   }, [currentLocation, liveMapPosts, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
 
