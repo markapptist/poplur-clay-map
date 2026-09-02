@@ -601,12 +601,35 @@
      wrapper's far edge, so half of the oversized thumb extended beyond the
      screen and the visible target did not match the draggable target. */
   padding: 0;
+  /* A column now: the travel button sits in a fixed slot at the top and the
+     rail fills what is left. The rail measures its own height for the knob's
+     travel, so giving it less does not skew the zoom the thumb reports. */
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   cursor: ns-resize;
   -webkit-tap-highlight-color: transparent;
 }
+
+/* Zoom all the way in / all the way out. Same boxless clay chevron the channel
+   controls wear, so it reads as one of the map's own controls and not a
+   scrollbar end-cap. */
+.zoomTravel {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
+  transition: transform 120ms ease;
+}
+
+.zoomTravel:active { transform: scale(0.9); }
 
 .mapControlsObscured {
   opacity: 0;
@@ -623,7 +646,11 @@
 .zoomRail {
   position: relative;
   width: var(--zoom-track-size);
-  height: 100%;
+  /* Fills the column under the travel button (see .zoomWrap). */
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  align-self: center;
   border-radius: 9px;
   /* 0deg fills from the BOTTOM up, matching the knob: bottom = globe, top =
      street. (The old rail was drawn horizontally and rotated into place.) */

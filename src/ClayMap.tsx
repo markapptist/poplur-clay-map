@@ -1349,6 +1349,11 @@ const ZOOM_MIN = MAP_MIN_ZOOM
 // Slider top end. Zoom 16.x still reads like a satellite overview; 18.x gets
 // close enough for Mapbox Standard's 3D building massing to be obvious.
 const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doorstep
+/** Where the travel button flips from "all the way in" to "all the way out".
+ *  Just short of 1 so a spring that settles a hair under the stop still
+ *  counts as arrived; a user should never see an up arrow while the knob is
+ *  visibly parked at the top. */
+const ZOOM_TRAVEL_FULL_IN = 0.995
 // Where the launch dive ends, and the closeness the map is meant to READ at.
 //
 // Was 16.2, which this file's own ZOOM_MAX note calls out as still reading like
@@ -6727,6 +6732,35 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         onPointerCancel={handleZoomUp}
         onKeyDown={handleZoomKey}
       >
+        {/* One button, one job, in a fixed slot above the rail: zoom ALL the
+            way in. Once you are all the way in it turns into its opposite and
+            zooms all the way out. It rides the same spring the slider does, so
+            the knob travels the track rather than teleporting, and it stops
+            any orbit or cinematic move first exactly as grabbing the knob does
+            — a camera someone is already driving must not fight the request. */}
+        <button
+          type="button"
+          className={styles.zoomTravel}
+          aria-label={zoomRatio >= ZOOM_TRAVEL_FULL_IN ? 'Zoom all the way out' : 'Zoom all the way in'}
+          onPointerDown={event => {
+            // The wrap beneath turns any pointer into a rail grab; this must
+            // not double as one.
+            event.stopPropagation()
+            event.preventDefault()
+            if (!event.isPrimary || event.button !== 0) return
+            initialCameraInteractionRef.current = true
+            stopOrbitRef.current()
+            const live = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
+            if (live) { live.__cinematic = false; live.stop() }
+            playPop()
+            applyZoom(zoomRatio >= ZOOM_TRAVEL_FULL_IN ? ZOOM_MIN : ZOOM_MAX)
+          }}
+        >
+          <SideControlIconImage
+            icon={zoomRatio >= ZOOM_TRAVEL_FULL_IN ? 'global.channel_down' : 'global.channel_up'}
+            displaySize={40}
+          />
+        </button>
         <div className={styles.zoomRail} ref={zoomRailRef}>
           <div
             key={activeZoomThumb.id}
