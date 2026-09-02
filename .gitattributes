@@ -7,3 +7,4 @@ public/landmarks/*.glb -filter -diff -merge text=auto
 public/poplur_cube_*.glb -filter -diff -merge text=auto
 public/poplur_female_head_navigator.glb -filter -diff -merge text=auto
 public/wardrobe-models/*.glb -filter -diff -merge -text
+public/ar-filters/models/*.glb -filter -diff -merge -text

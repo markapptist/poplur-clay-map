@@ -41,29 +41,35 @@ const FUNCTIONS_REQUIRE = createRequire('/Users/matrix/Developer/Poplur2025-iOS/
  * widths; `offset` is in face units, +y up, applied after centering.
  */
 const DESIGNS = {
-  brighten: {
-    prompt: 'A single thin circular ring of warm golden light, like a slim glowing halo band, smooth polished gold with a bright white highlight edge, seen face-on, clean low-poly, no background',
-    scale: 1.25, offset: [0, 0.01, 0],
-  },
-  glow: {
-    prompt: 'A small polished gold angel halo ring floating at a slight tilt, with three tiny four-pointed golden sparkle stars around it, stylised, clean low-poly, no background',
+  // Keyed by the LIVE catalog ids (public/ar-filters/catalog.json), each
+  // prompt written from that filter's own thumbnail.
+  angel: {
+    prompt: 'A polished gold angel halo ring floating at a slight tilt, glowing softly, with a pair of small white feathered angel wings behind it, stylised, clean low-poly, no background',
     scale: 0.85, offset: [0, 0.55, 0],
   },
-  sharpen: {
-    prompt: 'Futuristic wraparound visor sunglasses with one continuous translucent cyan lens, bright chrome frame, chrome nose bridge and slim chrome arms, front view, clean low-poly, no background',
+  'pop-3d': {
+    prompt: 'Classic white paper 3D anaglyph glasses with one red lens and one cyan lens, cardboard frame, front view, clean low-poly, no background',
     scale: 1.3, offset: [0, 0.08, 0],
   },
-  cool: {
-    prompt: 'An ice crystal tiara: a pale ice-blue band with five upright translucent blue crystal spikes rising from it, the centre spike tallest, frosty and stylised, clean low-poly, no background',
-    scale: 1.1, offset: [0, 0.45, 0],
+  'heart-crown': {
+    prompt: 'A crown made of glossy hot-pink hearts on a thin gold band, hearts standing upright around the band, stylised, clean low-poly, no background',
+    scale: 1.05, offset: [0, 0.5, 0],
   },
-  beauty: {
-    prompt: 'Two small glossy hot-pink puffy hearts, one for each cheek, with three tiny pale-pink faceted gem sparkles floating around them, cute and stylised, clean low-poly, no background',
-    scale: 1.1, offset: [0, -0.05, 0],
+  'flower-crown': {
+    prompt: 'A flower crown of pastel pink, white and yellow daisies and small green leaves on a thin vine band, stylised, clean low-poly, no background',
+    scale: 1.1, offset: [0, 0.48, 0],
   },
-  vintage: {
-    prompt: 'Round vintage wire-rim spectacles with two circular amber-tinted lenses, thin dark bronze metal rims, a curved bridge, small nose pads and slim arms, front view, clean low-poly, no background',
-    scale: 1.2, offset: [0, 0.08, 0],
+  'dino-hood': {
+    prompt: 'A cute green dinosaur hoodie hood with rounded eyes on top and a row of soft spikes down the back, worn open like a hat, stylised, clean low-poly, no background',
+    scale: 1.25, offset: [0, 0.35, 0],
+  },
+  'puppy-love': {
+    prompt: 'A pair of floppy golden-brown puppy ears on a thin headband with a small black puppy nose, cute and stylised, clean low-poly, no background',
+    scale: 1.15, offset: [0, 0.25, 0],
+  },
+  'butterfly-dream': {
+    prompt: 'Three small iridescent blue and purple butterflies with open wings, floating together as a cluster, stylised, clean low-poly, no background',
+    scale: 0.9, offset: [0.35, 0.3, 0],
   },
 };
 
@@ -82,7 +88,14 @@ const only = args.includes('--only')
 async function idToken() {
   if (process.env.POPLUR_ID_TOKEN) return process.env.POPLUR_ID_TOKEN;
   const admin = FUNCTIONS_REQUIRE('firebase-admin');
-  admin.initializeApp({ credential: admin.credential.applicationDefault(), projectId: 'poplur2025' });
+  // A user credential cannot sign a custom token itself; it signs THROUGH the
+  // project's default service account via IAM signBlob (the project owner
+  // holds that permission). Nothing is downloaded or stored.
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+    projectId: 'poplur2025',
+    serviceAccountId: 'poplur2025@appspot.gserviceaccount.com',
+  });
   const custom = await admin.auth().createCustomToken(ADMIN_UID);
   const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${WEB_API_KEY}`, {
     method: 'POST', headers: { 'content-type': 'application/json' },

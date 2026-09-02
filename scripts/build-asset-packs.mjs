@@ -32,7 +32,7 @@ const PACKS = [
   // The filter library: thumbnails AND catalog.json, so a new filter is a
   // publish rather than an app release. Small today (~450KB), and the whole
   // reason it is a pack is that it grows every time a filter is added.
-  { id: 'ar-filters',     from: 'ar-filters',        version: 1 },
+  { id: 'ar-filters',     from: 'ar-filters',        version: 2 },
   // The clay-models pack is a FILE LIST, not a directory: the models it moves
   // out of the bundle are scattered top-level GLBs, not one folder. Keep this
   // list identical to CLAY_MODELS_PACK in src/modelUrl.ts — the app's resolver
