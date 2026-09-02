@@ -10,6 +10,9 @@ function pin(radiusKm: number, mine = false) {
   return { coords: TORONTO_POST, radiusKm, mine }
 }
 
+// `liveMapPinGhost` is now the map's INCLUSION test: a pin it answers true for
+// is dropped from the board entirely rather than dimmed, so that one predicate
+// still decides sight on both surfaces.
 describe('map/feed radius interception shares one math', () => {
   it('a radius that reaches the viewer is in sight', () => {
     // ~0.51 km from the preview viewer to the test cell; 5 km reaches.
@@ -20,7 +23,7 @@ describe('map/feed radius interception shares one math', () => {
   it('a radius that stops short of the viewer is ghosted', () => {
     // The shared tester post ships with radius 0 — it reaches nobody.
     expect(liveMapPinReachesViewer(pin(0), VIEWER)).toBe(false)
-    expect(liveMapPinGhost(pin(0), VIEWER)).toBe(true)
+    expect(liveMapPinGhost(pin(0), VIEWER)).toBe(true) // dropped from the board
     // 400 m also stops short of the ~510 m separation.
     expect(liveMapPinGhost(pin(0.4), VIEWER)).toBe(true)
   })

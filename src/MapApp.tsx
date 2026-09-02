@@ -3106,6 +3106,12 @@ export default function MapApp() {
     return liveMapPosts
       .filter(pin => popLevel === 'all'
         || (popLevel === 'mine' ? pin.mine : !pin.mine))
+      // Reach decides what is ON the board, not just how it looks. A pop whose
+      // radius does not carry to where you are standing is not dimmed any
+      // more — it is simply not there, the same answer Feed delivery gives.
+      // Your own pops always stand, and with no location fix yet nothing of
+      // anybody else's is drawn, because reach cannot be proven without one.
+      .filter(pin => !liveMapPinGhost(pin, reachViewer))
       .map(pin => ({
         ...pin,
         // Someone else's pin never wears YOUR colour. The identity colour the
@@ -3120,7 +3126,6 @@ export default function MapApp() {
           ? { src: ownSelfieVideo, poster: ownAvatar ?? pin.avatar ?? undefined }
           : undefined,
         radiusDeltaKm: pinRadiusPulse?.id === pin.id ? pinRadiusPulse.deltaKm : undefined,
-        ghost: liveMapPinGhost(pin, reachViewer),
         // Somebody else's pop never wears a colour of yours. Their own choice
         // stands unless it happens to be one you are already using, in which
         // case the board would stop answering "which of these are mine".
