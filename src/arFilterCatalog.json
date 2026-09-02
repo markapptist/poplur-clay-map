@@ -50,6 +50,15 @@
         "contrast": 1.02,
         "saturation": 1.14,
         "sepia": 0.1
+      },
+      "model": {
+        "file": "models/puppy-love.glb",
+        "scale": 1.15,
+        "offset": [
+          0,
+          0.25,
+          0
+        ]
       }
     },
     {
@@ -187,6 +196,15 @@
         "contrast": 1.05,
         "saturation": 1.2,
         "hueDegrees": -14
+      },
+      "model": {
+        "file": "models/dino-hood.glb",
+        "scale": 1.25,
+        "offset": [
+          0,
+          0.35,
+          0
+        ]
       }
     },
     {
