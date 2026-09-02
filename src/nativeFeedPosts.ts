@@ -123,7 +123,17 @@ function normalizeFeedPost(
   const syntheticJourney = allowSyntheticOnboarding && row.syntheticJourney === 'first-user-v1'
     ? 'first-user-v1' as const
     : undefined
-  const mediaURL = safeRemoteURL(row.playbackURL ?? row.mediaURL, Boolean(syntheticJourney))
+  // playbackURL FIRST, mediaURL as the fallback — but `??` is the wrong tool
+  // for that. Seeded documents (the first-user-shared journey) carry
+  // playbackURL as the EMPTY STRING, and '' is not nullish, so `??` returned
+  // '' instead of falling through, safeRemoteURL('') failed, and the post was
+  // dropped from every native path while the browser (whose map normaliser
+  // treats media as optional) kept showing it. That was the whole
+  // "posts show in the browser but never on my phone" divergence.
+  const mediaURL = safeRemoteURL(
+    boundedText(row.playbackURL, 2_048) ?? row.mediaURL,
+    Boolean(syntheticJourney),
+  )
   if (!mediaURL) return null
   const posterURL = safeRemoteURL(row.posterURL, Boolean(syntheticJourney)) ?? undefined
   const ownerId = boundedText(row.ownerId ?? row.userID ?? row.userId, 128)

@@ -171,7 +171,9 @@ export function normalizeLiveMapPost(
     && row.syntheticJourney === 'first-user-v1'
     ? 'first-user-v1' as const
     : undefined
-  const mediaURL = safeRemoteURL(row.playbackURL ?? row.mediaURL, Boolean(syntheticJourney))
+  // `||`, not `??`: seeded rows carry playbackURL as '' (see nativeFeedPosts),
+  // and '' must fall through to mediaURL or the pin stands with no media.
+  const mediaURL = safeRemoteURL(text(row.playbackURL, 2_048) || row.mediaURL, Boolean(syntheticJourney))
   const posterURL = safeRemoteURL(row.posterURL, Boolean(syntheticJourney))
   const avatar = safeRemoteURL(
     row.profilePictureURL ?? row.avatarURL ?? row.avatarUrl ?? row.photoURL,
