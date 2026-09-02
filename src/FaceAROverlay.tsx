@@ -25,8 +25,22 @@ const CANVAS_COSTUMES = new Set([
   'heart-crown', 'dino-hood', 'angel', 'flower-crown',
 ])
 
-/** True when the captured-photo painter has artwork for this filter. */
-export const hasCaptureCostume = (filter: string) => CANVAS_COSTUMES.has(filter)
+/**
+ * The traced SVG costume is the pre-Meshy artwork.
+ *
+ * Six of the seven now name a Meshy model in the catalog, and `FaceAR3D`
+ * mounts that model over the very same face box — so both accessories were
+ * being worn at once: the modelled crown, and the flat traced one drawn
+ * underneath it. The model wins. The SVG survives only for an id with no 3D
+ * part of its own, so a filter whose pack has not arrived is still costumed.
+ */
+const wearsSvgCostume = (filter: string) => CANVAS_COSTUMES.has(filter) && !hasFaceAR3D(filter)
+
+/** True when the captured-photo painter has artwork for this filter. Puppy
+ *  love stays in once modelled: its blush is painted outside the costume, and
+ *  the live overlay still wears it, so the capture has to match. */
+export const hasCaptureCostume = (filter: string) =>
+  wearsSvgCostume(filter) || filter === 'puppy-love'
 
 /** Web-authored pixel values are quoted at the ~390pt reference width, the same
  *  convention `applyAnaglyphToCanvas` rescales by, so a 4K still gets a shadow
@@ -64,7 +78,7 @@ export function drawFaceAREffect(
   filter: string,
   mirrored: boolean,
 ) {
-  if (filter === 'none' || !CANVAS_COSTUMES.has(filter)) return
+  if (filter === 'none' || !hasCaptureCostume(filter)) return
   const faces = detections.filter(isFace)
   if (faces.length === 0) return
 
@@ -87,7 +101,9 @@ export function drawFaceAREffect(
     const w = face.w * width
     const h = face.h * height
     if (filter === 'puppy-love') drawBlush(context, face, x, y, w, h, width)
-    buffer = drawCostumeOnCanvas(context, filter, x, y, w, h, width, height, buffer)
+    if (wearsSvgCostume(filter)) {
+      buffer = drawCostumeOnCanvas(context, filter, x, y, w, h, width, height, buffer)
+    }
   }
   context.restore()
 }
@@ -335,7 +351,7 @@ function FaceEffect({ filter }: { filter: string }) {
           <span className={`${styles.blush} ${styles.blushRight}`} />
         </>
       )}
-      <Costume filter={filter} />
+      {wearsSvgCostume(filter) && <Costume filter={filter} />}
     </>
   )
 }
