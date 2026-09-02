@@ -24,26 +24,42 @@ export default function FeedChannelRail({
   onPick,
   side,
   hidden = false,
+  newChannelIds,
 }: {
   activeIndex: number
   onPick: (index: number) => void
   side: ControlSide
   hidden?: boolean
+  /** Channels holding a pop the radius delivered that this viewer has not
+   *  opened. Those tiles wear the NEW burst; it comes off the moment the
+   *  channel is visited (FeedTwin marks the channel's pops seen on arrival). */
+  newChannelIds?: ReadonlySet<string>
 }) {
   const items = useMemo(() => CHANNELS.map(channel => ({
     id: channel.id,
     label: channel.name,
     render: () => (
-      <img
-        className={styles.art}
-        src={channelUrl(`${channel.icon}.png`)}
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        decoding="async"
-      />
+      <span className={styles.tile}>
+        <img
+          className={styles.art}
+          src={channelUrl(`${channel.icon}.png`)}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          decoding="async"
+        />
+        {newChannelIds?.has(channel.id) && (
+          <img
+            className={styles.newBadge}
+            src="new-badge.png"
+            alt="New pops"
+            draggable={false}
+            decoding="async"
+          />
+        )}
+      </span>
     ),
-  })), [])
+  })), [newChannelIds])
   const selectedId = CHANNELS[activeIndex]?.id ?? CHANNELS[0]?.id ?? ''
 
   return (

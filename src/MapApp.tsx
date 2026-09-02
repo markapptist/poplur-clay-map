@@ -165,6 +165,7 @@ import MapRadioButton from './MapRadioButton'
 import MapRadioStatusLabel from './MapRadioStatusLabel'
 import MapRandomTourButton from './MapRandomTourButton'
 import { mapTourControlState } from './mapTourControl'
+import { feedPostIdFromPinId, markPostsSeen } from './seenPosts'
 import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
@@ -3317,6 +3318,9 @@ export default function MapApp() {
     clearPopups('suggestion')
     clearPopups('mapContent')
     openedPinRef.current = pin.id
+    // Opening it is seeing it: the NEW burst comes off this pin, and off the
+    // same pop's channel tile in the Feed.
+    markPostsSeen([feedPostIdFromPinId(pin.id)])
     setCurrentPlace(displayPlaceName(pin.name))
 
     const ownPosts = accountPostedClaims(liveMapPosts)

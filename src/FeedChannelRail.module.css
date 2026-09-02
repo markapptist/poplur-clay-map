@@ -30,3 +30,23 @@
   display: block;
   -webkit-user-drag: none;
 }
+
+/* A tile is the artwork plus, sometimes, the NEW burst riding its top-right
+   corner. The wrapper exists only so the badge has something to sit on. */
+.tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.newBadge {
+  position: absolute;
+  top: -9px;
+  right: -11px;
+  width: 30px;
+  height: auto;
+  pointer-events: none;
+  /* Reads over both the lit tile and the dark ground without a plate. */
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+}

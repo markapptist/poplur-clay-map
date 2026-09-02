@@ -86,6 +86,7 @@ import {
 import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
 import { spreadOverlappingPins } from './pinSpread'
+import { feedPostIdFromPinId, isPostSeen, onSeenPostsChange } from './seenPosts'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer } from './mapClaims'
 import { ownershipTerrainPolygon } from './ownershipTerrain'
 import {
@@ -5965,6 +5966,20 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // Your own pops get a quiet marker of ownership so a crowded board
       // still answers "which of these are mine" without reading faces.
       if (pin.mine) el.classList.add(styles.popPinMine)
+      // NEW: a pop the radius delivered that this viewer has not opened, on
+      // either surface. Not on your own (you made it), not on a ghost (you
+      // cannot open it, so it can never stop being new). Comes off the moment
+      // the pop is opened here or seen in the Feed — see the seen listener in
+      // the pins effect below.
+      if (!pin.mine && !pin.ghost && !isPostSeen(feedPostIdFromPinId(pin.id))) {
+        const badge = document.createElement('img')
+        badge.className = styles.popPinNew
+        badge.src = 'new-badge.png'
+        badge.alt = ''
+        badge.draggable = false
+        badge.dataset.popPinNew = feedPostIdFromPinId(pin.id)
+        markerRoot.appendChild(badge)
+      }
       if (!pin.ghost) el.addEventListener('click', event => {
         // A search/tour selection owns the map during its camera flight. A
         // delayed pointer event must not open the pin now under the old touch
@@ -6049,6 +6064,16 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       applyPinSpread()
     }
 
+    // A pop opened here or watched in the Feed stops being new on the board
+    // without rebuilding its marker: drop just the badge element.
+    const offSeen = onSeenPostsChange(() => {
+      if (dropped) return
+      for (const marker of livePins.values()) {
+        const badge = marker.getElement().querySelector<HTMLElement>('[data-pop-pin-new]')
+        if (badge && isPostSeen(badge.dataset.popPinNew ?? '')) badge.remove()
+      }
+    })
+
     syncPins()
     // moveend/zoomend only — NOT `move`. Re-selecting the board mid-gesture
     // would run a bounds test and a DOM diff on every frame of every pan,
@@ -6058,6 +6083,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
 
     return () => {
       dropped = true
+      offSeen()
       map.off('moveend', syncPins)
       map.off('zoomend', syncPins)
       livePins.forEach(m => m.remove())

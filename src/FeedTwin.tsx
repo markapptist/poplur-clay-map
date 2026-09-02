@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
 import { feedSuggestionFor } from './tourSmarts'
 import { feedUrl, channelUrl } from './assetPacks'
+import { markPostsSeen, onSeenPostsChange, seenPostsSnapshot } from './seenPosts'
 import { blendedDemoPostsForChannel, demoFeedEnabled, useDemoFeedMedia } from './demoFeedMedia'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { setMusicPlayback } from './musicPlayback'
@@ -527,6 +528,17 @@ export default function FeedTwin({
     nativeFeedPostsSnapshot,
     nativeFeedPostsSnapshot,
   )
+  // Which pops this viewer has opened. NEW on a channel tile means the radius
+  // delivered something there you have not seen yet — a per-device set, not
+  // server state (see seenPosts.ts).
+  const seenPosts = useSyncExternalStore(onSeenPostsChange, seenPostsSnapshot, seenPostsSnapshot)
+  const newChannelIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const candidate of publishedPosts) {
+      if (!seenPosts.has(candidate.id)) ids.add(candidate.channelId)
+    }
+    return ids
+  }, [publishedPosts, seenPosts])
   // The removed selector used to persist Trending/Local in localStorage. Reset
   // it as part of retiring that unapproved UI so an invisible old choice cannot
   // keep changing Feed order.
@@ -849,6 +861,14 @@ export default function FeedTwin({
 
   const posts = rankedPostsFor(ch, publishedPosts, discovery, focusedContent?.target)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
+  // Going to a channel is seeing what it holds: the badge on its tile comes
+  // off on arrival, not one pop at a time. The pop actually on screen is
+  // marked too, which is what clears the same pop's badge on the Map.
+  useEffect(() => {
+    const arrived = publishedPosts.filter(candidate => candidate.channelId === ch.id).map(candidate => candidate.id)
+    if (post?.id) arrived.push(post.id)
+    if (arrived.length) markPostsSeen(arrived)
+  }, [ch.id, post?.id, publishedPosts])
   const postId = radiusPostId(ch.id, post)
   // Every Firestore snapshot re-reports the server-owned reach. The old local
   // ledger is retained only when the authenticated write fails; it no longer
@@ -2011,6 +2031,7 @@ export default function FeedTwin({
           onPick={goToChannel}
           side={controlSide === 'left' ? 'right' : 'left'}
           hidden={playerMode}
+          newChannelIds={newChannelIds}
         />
         <PostActionRail
           side={feedRailSide}

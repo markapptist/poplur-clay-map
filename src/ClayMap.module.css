@@ -2118,6 +2118,19 @@ header.weatherTitleBar {
 .popPin:active { transform: translateY(6px) scale(0.92); }
 
 /* Yours, on a board full of other people's. */
+/* The NEW burst on a pop you have not opened. Rides the pin's top-right, above
+   the face, and takes no pointer — the pin underneath is what you press. */
+.popPinNew {
+  position: absolute;
+  top: -28px;
+  right: -22px;
+  width: 44px;
+  height: auto;
+  pointer-events: none;
+  z-index: 3;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+}
+
 .popPinMine { transform: translateY(6px) scale(1.16); }
 .popPinMine:active { transform: translateY(6px) scale(1.02); }
 

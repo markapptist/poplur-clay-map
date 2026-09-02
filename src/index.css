@@ -50,29 +50,36 @@
    * action size so a phone never shrinks it below a touch target, capped so a
    * tall window does not turn them into slabs.
    */
-  /* The gap is what YIELDS when the column is short.
+  /* Sizes for the feed's right column: ten controls and one readout, on ONE
+   * pitch. Three values, derived in this order so none refers back to another:
    *
-   * At 44px the ten controls plus the 22px readout already come to 462px, so on
-   * a 375x812 phone — 487px of column — six-pixel gaps overrun the space by 29
-   * and the stepper's top arrow ran into the dislike button above it. Something
-   * has to give at that height, and it must not be the 44px touch target: air
-   * between controls is worth less than the controls being pressable. This
-   * spends whatever the column has left on gaps and no more, so it relaxes back
-   * to the full 6px the moment there is room (a column of 522px or taller).
+   *   ctl    — the control size, from an ELEVEN-row budget (the readout counts
+   *            as a row) at the full 6px gap, floored at the 44px touch target
+   *            and capped so a tall window does not make slabs.
+   *   number — the readout row. A full control row whenever the column has
+   *            the room, so every seat in the column is the same pitch and the
+   *            arrows do not crowd it; a 22px label slot only when the column is
+   *            too short for eleven rows (a 375x812 phone).
+   *   gap    — whatever the column has left, spread evenly across the ten
+   *            seams, floored at 2px. It absorbs the slack on a tall screen and
+   *            is the value that YIELDS on a short one — air between controls
+   *            is worth less than the controls being pressable.
    */
+  --poplur-feed-ctl: clamp(
+    44px,
+    calc((var(--poplur-feed-column) - 10 * 6px) / 11),
+    64px
+  );
+  --poplur-feed-number: clamp(
+    22px,
+    calc(var(--poplur-feed-column) - 10 * var(--poplur-feed-ctl) - 10 * 6px),
+    var(--poplur-feed-ctl)
+  );
   --poplur-feed-gap: clamp(
     2px,
     calc(
-      (var(--poplur-feed-column) - var(--poplur-feed-number) - 10 * 44px) / 10
-    ),
-    6px
-  );
-  --poplur-feed-number: 22px;
-  --poplur-feed-ctl: clamp(
-    44px,
-    calc(
       (var(--poplur-feed-column) - var(--poplur-feed-number)
-        - 10 * var(--poplur-feed-gap)) / 10
+        - 10 * var(--poplur-feed-ctl)) / 10
     ),
     64px
   );
