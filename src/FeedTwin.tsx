@@ -5,6 +5,7 @@ import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGat
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
 import { feedSuggestionFor } from './tourSmarts'
 import { feedUrl, channelUrl } from './assetPacks'
+import { blendedDemoPostsForChannel, demoFeedEnabled, useDemoFeedMedia } from './demoFeedMedia'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { setMusicPlayback } from './musicPlayback'
 import {
@@ -211,6 +212,10 @@ export interface ChannelPost {
   originLatitude?: number
   originLongitude?: number
   distanceMeters?: number
+  /** A licensed stock row from demoFeedMedia — present only while the
+   *  workbench simulation is on. It renders like a post but is never written
+   *  back: no engagement, no discovery signal, no radius ledger entry. */
+  demo?: boolean
 }
 
 /** Production Feed rows come only from the shared Firestore snapshot. A wiped
@@ -286,14 +291,22 @@ function rankedPostsFor(
     channelId: channel.id,
     radiusMeters: (post.reachKm ?? 0) * 1_000,
   })), discovery, Date.now(), viewer)
-  if (!focusedContent || focusedContent.channelId !== channel.id) return ranked
+  // Licensed demo media pads a channel that real uploads have not reached
+  // yet. It is appended AFTER the ranked authentic posts and never mixed into
+  // the ranking, so a stock clip cannot outrank, displace or renumber
+  // somebody's upload. With the simulation switch off this is a no-op and the
+  // channel stays honestly empty, exactly as before.
+  const withDemo = demoFeedEnabled()
+    ? [...ranked, ...blendedDemoPostsForChannel(channel)]
+    : ranked
+  if (!focusedContent || focusedContent.channelId !== channel.id) return withDemo
   // A Map handoff may reorder a post already present in the authoritative
   // snapshot, but it cannot resurrect a deleted or out-of-reach post.
   const focusedId = canonicalFeedPostId(focusedContent.id)
-  const focusedPost = ranked.find(post => post.id === focusedId)
+  const focusedPost = withDemo.find(post => post.id === focusedId)
   return focusedPost
-    ? [focusedPost, ...ranked.filter(post => post.id !== focusedPost.id)]
-    : ranked
+    ? [focusedPost, ...withDemo.filter(post => post.id !== focusedPost.id)]
+    : withDemo
 }
 
 function radiusDiscoverySnapshot(
@@ -492,6 +505,10 @@ export default function FeedTwin({
   // bundled clip; treating URL equality as readiness briefly exposes the new
   // decoder before it has painted its own first frame.
   const [readyPlaybackKey, setReadyPlaybackKey] = useState<string | null>(null)
+  // Loads the licensed demo manifest and re-renders when the workbench
+  // simulation switch flips, so toggling it takes effect without a reload.
+  useDemoFeedMedia()
+
   const ch = CHANNELS[index]
   const storedDiscovery = useSyncExternalStore(
     onFeedDiscoveryChange,
@@ -716,7 +733,7 @@ export default function FeedTwin({
       focusedContent?.target,
     )
     const current = currentPosts[(contentIdxRef.current[ch.id] ?? 0) % Math.max(1, currentPosts.length)]
-    if (current) recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'skip')
+    if (current && !current.demo) recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'skip')
     const currentVideo = adVideoRef.current
     if (currentVideo) retireFeedVideo(currentVideo)
     releaseAudioFocus('feed')
@@ -754,7 +771,7 @@ export default function FeedTwin({
     if (count < 2) return
     const current = contentIdxRef.current[ch.id] ?? 0
     const leaving = ranked[current % count]
-    if (leaving) recordFeedDiscoverySignal({ id: leaving.id, channelId: ch.id }, 'skip')
+    if (leaving && !leaving.demo) recordFeedDiscoverySignal({ id: leaving.id, channelId: ch.id }, 'skip')
     const next = (current + dir + count) % count
     const currentVideo = adVideoRef.current
     if (currentVideo) retireFeedVideo(currentVideo)
@@ -780,7 +797,7 @@ export default function FeedTwin({
     if (count === 0) return
     const current = contentIdxRef.current[ch.id] ?? 0
     const watched = ranked[current % count]
-    if (watched) recordFeedDiscoverySignal({ id: watched.id, channelId: ch.id }, 'watch')
+    if (watched && !watched.demo) recordFeedDiscoverySignal({ id: watched.id, channelId: ch.id }, 'watch')
     if (count < 2) return
     const next = nextFeedPostIndex(current, count)
     contentIdxRef.current[ch.id] = next
@@ -1540,11 +1557,14 @@ export default function FeedTwin({
     const current = postRef.current
     if (!current) return
     const id = radiusPostId(ch.id, current)
-    void recordPostEngagement(id, direction === 'up' ? 'like' : 'dislike').catch(() => {
-      if (direction === 'up') recordPostLike(id, 1)
-      else recordPostDislike(id, 1)
-    })
-    if (current) {
+    // A licensed stock row is nobody's post. It still reacts on screen, but it
+    // must never reach a Firestore engagement write, the discovery ranker, or
+    // a real radius ledger.
+    if (!current.demo) {
+      void recordPostEngagement(id, direction === 'up' ? 'like' : 'dislike').catch(() => {
+        if (direction === 'up') recordPostLike(id, 1)
+        else recordPostDislike(id, 1)
+      })
       recordFeedDiscoverySignal(
         { id: current.id, channelId: ch.id },
         direction === 'up' ? 'like' : 'dislike',
@@ -1608,7 +1628,7 @@ export default function FeedTwin({
     playPop()
     const title = post.caption ?? `${channel.name} post`
     const by = post.user
-    recordFeedDiscoverySignal({ id: post.id, channelId: channel.id }, 'share')
+    if (!post.demo) recordFeedDiscoverySignal({ id: post.id, channelId: channel.id }, 'share')
     // Native owns the real share sheet (UIActivityViewController); in the
     // browser the Web Share API is the same gesture. Browsers without it copy
     // a useful link and acknowledge the tap instead of silently doing nothing.
@@ -1728,7 +1748,7 @@ export default function FeedTwin({
     void recordPostEngagement(engagementPostId, 'comment').catch(() => {
       recordPostComment(engagementPostId, 2)
     })
-    recordFeedDiscoverySignal({ id: post.id, channelId: ch.id }, 'comment')
+    if (!post.demo) recordFeedDiscoverySignal({ id: post.id, channelId: ch.id }, 'comment')
     setRadiusReaction({ direction: 'up', amount: usesMiles() ? 1.2 : 2 })
     if (radiusReactionTimerRef.current != null) window.clearTimeout(radiusReactionTimerRef.current)
     radiusReactionTimerRef.current = window.setTimeout(() => setRadiusReaction(null), 720)

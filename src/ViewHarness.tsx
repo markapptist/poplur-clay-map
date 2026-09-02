@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import HomeTwin from './HomeTwin'
 import type { CubeTab } from './CubeTab3D'
 import UploadFlowReview from './UploadFlowReview'
+import FeedMixPanel from './FeedMixPanel'
 import { offlineGameDirector } from './gameDirector'
 import {
   normalizeTestActivityScreen,
@@ -19,12 +20,12 @@ const GamesScreen = React.lazy(() => import('./GamesScreen'))
 
 const HARNESS_ARCADE_DIRECTOR = offlineGameDirector('arcade')
 
-export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle'
+export type HarnessView = 'home' | 'map' | 'feed' | 'camera' | 'cameraroll' | 'profile' | 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle' | 'feedmix'
 
 // The four bottom-nav tabs now live INSIDE the home view (its pills switch
 // map/feed/camera/profile inline). The hold menu is a cube-long-press OVERLAY,
 // still routable (?view=holdmenu) but not a tab.
-const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu', 'uploadflows', 'arcade', 'games', 'battle']
+const ROUTES: HarnessView[] = ['home', 'map', 'feed', 'camera', 'cameraroll', 'profile', 'holdmenu', 'uploadflows', 'arcade', 'games', 'battle', 'feedmix']
 const VIEW_LABELS: Record<HarnessView, string> = {
   home: 'Home',
   map: 'Map',
@@ -37,6 +38,7 @@ const VIEW_LABELS: Record<HarnessView, string> = {
   arcade: 'Arcade',
   battle: 'Battle',
   games: 'Games',
+  feedmix: 'Feed Mix',
 }
 // Each ?view= simply picks which tab the tabbed home opens on.
 // The home view opens on the FEED tab; the map is one tab over (reachable via
@@ -65,7 +67,7 @@ export function harnessViewFromLocation(): HarnessView | null {
   return ROUTES.includes(normalized as HarnessView) ? normalized as HarnessView : null
 }
 
-type HomeHarnessView = Exclude<HarnessView, 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle'>
+type HomeHarnessView = Exclude<HarnessView, 'holdmenu' | 'uploadflows' | 'arcade' | 'games' | 'battle' | 'feedmix'>
 
 export function holdMenuBaseViewFromLocation(): HomeHarnessView {
   const screen = new URLSearchParams(window.location.search).get('holdScreen')?.toLowerCase() ?? ''
@@ -137,7 +139,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
       // Arcade returns its own surface below and never reaches HomeTwin, but
       // baseView is computed before that early return (hooks cannot be
       // conditional), so it still needs a value the tab map accepts.
-      : view === 'arcade' || view === 'games' || view === 'battle'
+      : view === 'arcade' || view === 'games' || view === 'battle' || view === 'feedmix'
         ? 'home'
         : view
   const [, setInlineTab] = useState<CubeTab>(VIEW_TO_TAB[baseView])
@@ -168,6 +170,9 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     </div>
   )
 
+  // A standalone test surface, not a phone screen: it configures the demo
+  // inventory blend the Feed draws from.
+  if (view === 'feedmix') return <FeedMixPanel />
   if (view === 'uploadflows') return <UploadFlowReview />
   // Standalone like uploadflows: the Arcade shell is its own surface, not a tab
   // inside the tabbed home.
