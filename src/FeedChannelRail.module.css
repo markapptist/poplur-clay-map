@@ -6,9 +6,11 @@
   position: absolute;
   top: var(--poplur-rail-top);
   bottom: var(--poplur-home-clearance);
-  /* One tile wide. The bow is unclipped and shallow, so it shows past this
-     column without the column itself covering the edge-tap lane beside it. */
-  width: 62px;
+  /* A tile and a little room: the bow curls back INTO the edge now, so the
+     lit tile stands at the apex a few px in from the edge and its neighbours
+     recede behind it toward the bezel. Any wider and the column would start
+     covering the edge-tap lane beside it. */
+  width: 72px;
   z-index: 46;
   pointer-events: auto;
   transition: opacity 160ms ease;

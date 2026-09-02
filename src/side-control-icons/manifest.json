@@ -8,7 +8,7 @@
     256
   ],
   "style": "Glossy rounded 3D clay/plastic icons using Poplur hot pink, black, white, and selective weather accents.",
-  "buttonCount": 35,
+  "buttonCount": 38,
   "weatherConditionCount": 14,
   "buttons": [
     {
@@ -363,6 +363,30 @@
       }
     },
     {
+      "id": "camera.kodak",
+      "asset": "camera/kodak",
+      "screen": "Camera",
+      "purpose": "Set the camera tab to PHOTO — the Kodak is the photo camera the cube wears for that mode. Same artwork as the Profile selfie camera.",
+      "accessibilityLabel": "Switch to the photo camera",
+      "files": {
+        "1024": "assets/1024/camera/kodak.png",
+        "512": "assets/512/camera/kodak.png",
+        "256": "assets/256/camera/kodak.png"
+      }
+    },
+    {
+      "id": "camera.camcorder",
+      "asset": "camera/camcorder",
+      "screen": "Camera",
+      "purpose": "Set the camera tab to VIDEO — the camcorder is the video camera the cube wears for that mode.",
+      "accessibilityLabel": "Switch to the video camera",
+      "files": {
+        "1024": "assets/1024/camera/camcorder.png",
+        "512": "assets/512/camera/camcorder.png",
+        "256": "assets/256/camera/camcorder.png"
+      }
+    },
+    {
       "id": "profile.alerts",
       "asset": "profile/alerts",
       "screen": "Profile",
@@ -396,6 +420,18 @@
         "1024": "assets/1024/profile/camera.png",
         "512": "assets/512/profile/camera.png",
         "256": "assets/256/profile/camera.png"
+      }
+    },
+    {
+      "id": "profile.map",
+      "asset": "profile/map",
+      "screen": "Profile",
+      "purpose": "Open the map at the public origin of the profile’s latest pop (or of the opened post), so a viewer can see where it was posted.",
+      "accessibilityLabel": "See where this was posted on the map",
+      "files": {
+        "1024": "assets/1024/profile/map.png",
+        "512": "assets/512/profile/map.png",
+        "256": "assets/256/profile/map.png"
       }
     },
     {

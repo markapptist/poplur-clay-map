@@ -279,6 +279,26 @@
   transition: transform 0.12s ease;
 }
 .gearBtn:active { transform: scale(0.9); }
+
+/* The map shortcut — "where was this posted?" — the same 44px clay object
+   as the gear, standing after it on the rail. */
+.mapBtn {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease;
+}
+.mapBtn:active { transform: scale(0.9); }
+.mapBtn img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 8px rgba(60, 20, 44, 0.35));
+}
 .gearBtn img {
   width: 100%;
   height: 100%;

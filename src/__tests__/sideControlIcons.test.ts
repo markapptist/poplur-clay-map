@@ -182,11 +182,11 @@ function pngAlphaAt(file: URL, x: number, y: number) {
 
 describe('Poplur side-control asset registry', () => {
   it('contains the exact 35 control IDs and 14 weather IDs from the package', () => {
-    expect(SIDE_CONTROL_ICON_IDS).toHaveLength(35)
+    expect(SIDE_CONTROL_ICON_IDS).toHaveLength(38)
     expect(WEATHER_ICON_IDS).toHaveLength(14)
-    expect(new Set(ALL_IDS).size).toBe(49)
+    expect(new Set(ALL_IDS).size).toBe(52)
     expect(Object.keys(POPLUR_SIDE_ICONS).sort()).toEqual([...ALL_IDS].sort())
-    expect(SIDE_ICON_MANIFEST.buttonCount).toBe(35)
+    expect(SIDE_ICON_MANIFEST.buttonCount).toBe(38)
     expect(SIDE_ICON_MANIFEST.weatherConditionCount).toBe(14)
   })
 

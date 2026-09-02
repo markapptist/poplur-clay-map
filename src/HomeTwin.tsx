@@ -2245,6 +2245,29 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     return () => window.removeEventListener('poplur-news-focus-map', onFocusNews)
   }, [sendMapAction])
 
+  // A profile's map button — "where was this pop posted?" — is the same
+  // handoff with the pop's public origin. Home closes whatever is up, lands
+  // on Map, and sendMapAction holds the focus until the map is ready.
+  useEffect(() => {
+    const onFocusPost = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: unknown; title?: unknown; user?: unknown; coords?: unknown }>).detail
+      const id = typeof detail?.id === 'string' ? detail.id.slice(0, 180) : ''
+      const title = typeof detail?.title === 'string' ? detail.title.slice(0, 220) : ''
+      const user = typeof detail?.user === 'string' ? detail.user.slice(0, 80) : ''
+      const raw = detail?.coords
+      if (!id || !Array.isArray(raw) || raw.length !== 2) return
+      const longitude = Number(raw[0])
+      const latitude = Number(raw[1])
+      if (!Number.isFinite(longitude) || Math.abs(longitude) > 180
+        || !Number.isFinite(latitude) || Math.abs(latitude) > 90) return
+      setHoldOpen(false)
+      setActiveTab('map')
+      sendMapAction('focusPost', { id, title, user, coords: [longitude, latitude] })
+    }
+    window.addEventListener('poplur-post-focus-map', onFocusPost)
+    return () => window.removeEventListener('poplur-post-focus-map', onFocusPost)
+  }, [sendMapAction])
+
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)
@@ -3470,6 +3493,32 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       ownUid,
     }, window.location.origin)
   }, [interceptingFeedPosts, mapReady, ownUid])
+  // …and the phone's location fix, for the same reason. Swift posts the fix
+  // into the map iframe only at the moment CoreLocation answers, which is
+  // normally before the Map has mounted at all — so the Map's reach test had
+  // no viewer to measure from, and every other user's pop was ghosted (now:
+  // kept off the board) even when its radius plainly covered where you
+  // stood. Replay the latest fix whenever the map comes up, and every fix
+  // after that while it is up.
+  useEffect(() => {
+    if (!mapReady || !(isRNWebShellRoute() || isNativeShell())) return
+    const relay = () => {
+      const location = radioLocationRef.current
+      if (!location) return
+      mapFrameRef.current?.contentWindow?.postMessage({
+        type: 'poplur-location',
+        latitude: location.lat,
+        longitude: location.lng,
+      }, window.location.origin)
+    }
+    relay()
+    window.addEventListener('poplur-location', relay)
+    window.addEventListener('poplur-native-location', relay)
+    return () => {
+      window.removeEventListener('poplur-location', relay)
+      window.removeEventListener('poplur-native-location', relay)
+    }
+  }, [mapReady])
   // A subscreen asking for the whole screen (the radio's long press). Kept as
   // shell state for the same reason feedFullscreen is: the chrome layer sits
   // ABOVE the subscreen stage, so a subscreen can neither cover it nor hide it
@@ -5444,6 +5493,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         {mainSurfaceVisible && committedTab === 'post' && (
           <Camera
             captureMode={cameraCaptureMode}
+            // The rail's Kodak / camcorder shortcuts select a mode exactly
+            // the way the hold menu's PHOTO / VIDEO tiles do.
+            onCaptureModeChange={setCameraCaptureMode}
             // Hold scrolling is UI over the lens, but it must not keep camera,
             // ML and AR work live while the wheel and its previews animate.
             // Camera preserves its last painted frame as the backdrop and

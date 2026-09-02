@@ -108,6 +108,8 @@ interface Post {
   poster?: string
   mediaType?: 'photo' | 'video'
   syntheticPostId?: string
+  /** Public origin, [lng, lat] — see profileRealtimePosts. */
+  origin?: [number, number]
 }
 
 // Production profile media is Firestore-authoritative. A wiped database must
@@ -2280,6 +2282,21 @@ export default function ProfileTwin({
     playPop()
     requestDirectMessage(visitingRecipientId, text, shownName, 'profile')
   }
+  // "Where was this posted?" — hand the pop's public origin to the map. The
+  // map is the shell's surface, so this is the same window handoff the
+  // newspaper uses (poplur-news-focus-map): Home closes whatever is up, lands
+  // on Map, and the map flies to the ground the pop was dropped on.
+  const showPostOnMap = (post: Post) => {
+    if (!post.origin) return
+    playPop()
+    window.dispatchEvent(new CustomEvent('poplur-post-focus-map', {
+      detail: { id: post.id ?? post.video, coords: post.origin, title: post.title, user: shownName },
+    }))
+  }
+  // The newest pop with a public origin. The profile rail's map button flies
+  // there, so an opened profile answers "where do they post from" in one tap;
+  // the post viewer's own button asks the same of the post that is open.
+  const locatedPost = profilePosts.find(post => post.origin) ?? null
   const verificationTier: 'none' | 'confirmed' | 'verified' = viewUser
     ? (viewUser === '@poplur' ? 'none' : 'confirmed')
     : 'verified'
@@ -2367,6 +2384,15 @@ export default function ProfileTwin({
             aria-label="Settings"
           >
             <SideControlIconImage icon="profile.settings" displaySize={44} />
+          </button>
+        )}
+        {locatedPost && (
+          <button
+            className={styles.mapBtn}
+            onClick={() => showPostOnMap(locatedPost)}
+            aria-label={visiting ? `See where ${shownName} posted on the map` : 'See where you posted on the map'}
+          >
+            <SideControlIconImage icon="profile.map" displaySize={44} />
           </button>
         )}
         {visiting ? (
@@ -2751,6 +2777,7 @@ export default function ProfileTwin({
             onDislike={() => reactToViewerPost('down')}
             onDelete={canDeleteViewerPost ? () => { playPop(); setDeletePromptPost(viewerPost) } : undefined}
             deletePending={deletePending != null}
+            onShowOnMap={viewerPost.origin ? () => showPostOnMap(viewerPost) : undefined}
           />
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>

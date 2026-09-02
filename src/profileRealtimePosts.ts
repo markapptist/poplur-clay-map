@@ -8,6 +8,10 @@ export interface RealtimeProfilePost {
   poster?: string
   mediaType?: 'photo' | 'video'
   syntheticPostId?: string
+  /** The pop's public origin as [lng, lat], only when its owner published an
+   *  approximate location. The profile's map button flies here; without it
+   *  there is no button, because a hidden origin must stay hidden. */
+  origin?: [number, number]
 }
 
 /** A shareable pop is addressed by its immutable post id, never its channel.
@@ -74,6 +78,11 @@ function profilePost(value: NativeFeedPost): RealtimeProfilePost | null {
     poster: poster && (/^https:\/\//i.test(poster) || isSyntheticURL(poster)) ? poster : undefined,
     mediaType: value.mediaType,
     syntheticPostId: synthetic ? value.id : undefined,
+    origin: value.locationVisibility === 'approximate'
+      && typeof value.originLongitude === 'number' && Number.isFinite(value.originLongitude)
+      && typeof value.originLatitude === 'number' && Number.isFinite(value.originLatitude)
+      ? [value.originLongitude, value.originLatitude]
+      : undefined,
   }
 }
 

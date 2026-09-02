@@ -23,6 +23,7 @@ export default function PostActionRail({
   onLike,
   onDislike,
   postActionsAvailable = true,
+  onShowOnMap,
   onDelete,
   deletePending = false,
 }: {
@@ -40,6 +41,10 @@ export default function PostActionRail({
   onDislike: () => void
   /** Share, comment, and radius reactions require a concrete post. */
   postActionsAvailable?: boolean
+  /** "Where was this posted?" — present only when the post carries a public
+   *  origin the map can fly to (a profile's opened post does; a demo clip
+   *  does not). */
+  onShowOnMap?: () => void
   onDelete?: () => void
   deletePending?: boolean
 }) {
@@ -108,6 +113,15 @@ export default function PostActionRail({
         disabled={!postActionsAvailable}
         onActivate={onDislike}
       />
+      {onShowOnMap && (
+        <SideControlIconButton
+          fluid
+          icon="profile.map"
+          aria-label="See where this pop was posted on the map"
+          activation="pointerdown"
+          onActivate={onShowOnMap}
+        />
+      )}
       {onDelete && (
         <span className={deletePending ? styles.deletePending : undefined} aria-busy={deletePending || undefined}>
           <SideControlIconButton

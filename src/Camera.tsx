@@ -220,6 +220,7 @@ export default function Camera({
   onComposingChange,
   onPhotoCapture,
   onFlashChange,
+  onCaptureModeChange,
 }: {
   step?: number
   /** Which capture the tab is set to. */
@@ -257,6 +258,9 @@ export default function Camera({
   onPhotoCapture?: () => void
   /** Mirrors the real flash/torch state onto the Kodak navigator lamp. */
   onFlashChange?: (on: boolean) => void
+  /** The rail's two camera shortcuts: the Kodak sets the tab to PHOTO, the
+   *  camcorder to VIDEO — the same selection the hold menu's tiles make. */
+  onCaptureModeChange?: (mode: 'photo' | 'video') => void
 }) {
   const controlSide = useControlSide()
   const [flash, setFlash] = useState(false)
@@ -1744,7 +1748,34 @@ export default function Camera({
       {/* …and the bloom at the instant of capture — the front camera's flash */}
       {bloom && <div className={styles.camBloom} aria-hidden="true" />}
 
-      <TabControlRail side={controlSide} label="Camera controls">
+      <TabControlRail side={controlSide} label="Camera controls" anchor="center">
+        {/* Which camera you are holding. The Kodak is the photo camera and the
+            camcorder the video camera — the two objects the cube wears for
+            those modes — so switching is one tap on the rail instead of a
+            trip through the channel arrows or the hold menu. The lit one is
+            the camera the shutter will fire. */}
+        <SideControlIconButton
+          icon="camera.kodak"
+          aria-pressed={captureMode === 'photo'}
+          aria-label={captureMode === 'photo' ? 'Photo camera, selected' : 'Switch to the photo camera'}
+          activation="pointerdown"
+          onActivate={() => {
+            if (captureMode === 'photo') return
+            playPop()
+            onCaptureModeChange?.('photo')
+          }}
+        />
+        <SideControlIconButton
+          icon="camera.camcorder"
+          aria-pressed={captureMode === 'video'}
+          aria-label={captureMode === 'video' ? 'Video camera, selected' : 'Switch to the video camera'}
+          activation="pointerdown"
+          onActivate={() => {
+            if (captureMode === 'video') return
+            playPop()
+            onCaptureModeChange?.('video')
+          }}
+        />
         <SideControlIconButton
           icon="camera.flash"
           aria-pressed={flash}

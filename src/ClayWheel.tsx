@@ -57,7 +57,7 @@ export default function ClayWheel({
   selectedId: string
   onSelect: (id: string) => void
   ariaLabel: string
-  /** Which edge the rail stands on; the arc bows away from it. */
+  /** Which edge the rail stands on; the arc curls back toward it. */
   side?: 'left' | 'right'
   tileSize?: number
   showLabels?: boolean
@@ -275,9 +275,12 @@ export default function ClayWheel({
     return c
   }
 
-  // The arc bows AWAY from the edge the rail stands on, so neighbours curl
-  // toward the screen's centre rather than off it.
-  const bow = side === 'right' ? -1 : 1
+  // The arc bows TOWARD the edge the rail stands on: the lit tile stands proud
+  // at the apex and its neighbours curl back into the edge, the way a drum's
+  // face reads from the side. It bowed the other way at first — lit tile
+  // pinned to the edge, neighbours drifting into the screen — which read as a
+  // wheel turning away from the hand instead of toward it.
+  const bow = side === 'right' ? 1 : -1
   const axis = flipY ? -1 : 1
   const onSize = Math.round(tileSize * 1.18)
 

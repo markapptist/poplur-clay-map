@@ -3736,6 +3736,24 @@ export default function MapApp() {
           flyToCenter([longitude, latitude], TOUR_FLIGHT_MS)
           break
         }
+        case 'focusPost': {
+          // A profile asking "where was this pop posted?" Fly to the pop's
+          // public origin and name the ground. If the pop is on the board it
+          // is the pin you land beside; if reach keeps it off the board, the
+          // place itself is still the honest answer.
+          const raw = event.data.coords
+          if (!Array.isArray(raw) || raw.length !== 2) break
+          const longitude = Number(raw[0])
+          const latitude = Number(raw[1])
+          if (!Number.isFinite(longitude) || Math.abs(longitude) > 180
+            || !Number.isFinite(latitude) || Math.abs(latitude) > 90) break
+          const user = typeof event.data.user === 'string' ? event.data.user.trim().slice(0, 80) : ''
+          stopTour()
+          closeSearchImmediately()
+          setCurrentPlace(user ? `${user.startsWith('@') ? user : `@${user}`} posted here` : 'Posted here')
+          flyToCenter([longitude, latitude], TOUR_FLIGHT_MS)
+          break
+        }
         case 'weather': toggleWeather(); break
         // The visible map rail belongs to Home when this document is embedded.
         // Persist the user choice here too, so Map audio follows the same gate
