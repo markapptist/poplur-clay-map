@@ -6732,7 +6732,15 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         onPointerCancel={handleZoomUp}
         onKeyDown={handleZoomKey}
       >
-        {/* One button, one job, in a fixed slot above the rail: zoom ALL the
+        <div className={styles.zoomRail} ref={zoomRailRef}>
+          <div
+            key={activeZoomThumb.id}
+            className={`${styles.zoomThumb}${landmarkThumbSprite ? ` ${styles.zoomThumbLandmark}` : ''}`}
+            data-zoom-thumb={activeZoomThumb.id}
+            style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
+          />
+        </div>
+        {/* One button, one job, in a fixed slot below the rail: zoom ALL the
             way in. Once you are all the way in it turns into its opposite and
             zooms all the way out. It rides the same spring the slider does, so
             the knob travels the track rather than teleporting, and it stops
@@ -6761,14 +6769,6 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             displaySize={40}
           />
         </button>
-        <div className={styles.zoomRail} ref={zoomRailRef}>
-          <div
-            key={activeZoomThumb.id}
-            className={`${styles.zoomThumb}${landmarkThumbSprite ? ` ${styles.zoomThumbLandmark}` : ''}`}
-            data-zoom-thumb={activeZoomThumb.id}
-            style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
-          />
-        </div>
       </div>
 
       {/* The takeover colour, worn as a clay circle under the zoom slider.

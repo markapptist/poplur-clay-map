@@ -588,6 +588,10 @@
   left: auto;
   /* Match the opposite 44px/12px side-control stack exactly. Preview mode has
      one extra dice control, so ClayMap receives the corresponding larger span. */
+  /* Stays on the opposite side-control stack's exact line. The travel button
+     moving below the rail already takes its room out of the column — the rail
+     simply gets shorter — so lifting the whole thing would have broken the
+     left/right symmetry for space it did not need. */
   top: var(--poplur-map-control-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)));
   bottom: auto;
   transform: none;
@@ -601,8 +605,9 @@
      wrapper's far edge, so half of the oversized thumb extended beyond the
      screen and the visible target did not match the draggable target. */
   padding: 0;
-  /* A column now: the travel button sits in a fixed slot at the top and the
-     rail fills what is left. The rail measures its own height for the knob's
+  /* A column: the rail fills what is left and the travel button sits in a
+     fixed slot BELOW it, under the thumb's own resting end rather than above
+     the track it drives. The rail measures its own height for the knob's
      travel, so giving it less does not skew the zoom the thumb reports. */
   display: flex;
   flex-direction: column;
