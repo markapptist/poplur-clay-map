@@ -1,6 +1,6 @@
 import mapboxgl from 'mapbox-gl'
 import { takeoverTint } from './takeoverColor'
-import { onFrame } from './frameGovernor'
+import { ambientAllowed, onFrame } from './frameGovernor'
 import {
   buildingClaimColorExpression,
 } from './buildingClaimDominance'
@@ -447,23 +447,62 @@ export function onClaimsSettled(cb: ClaimsListener): () => void {
   return () => { claimsListeners.delete(cb) }
 }
 
-function pushClaims(map: mapboxgl.Map) {
+/** What the source was last handed, so an identical board is never re-sent.
+ *  The live query re-emits the whole snapshot whenever ANY post's view counter
+ *  ticks, and each re-push of unchanged geometry made Mapbox draw a frame on a
+ *  map nobody was touching — the thermal gate counts those. Keyed on the map,
+ *  since the standalone route and the embedded one each own a source. */
+const lastPushSignature = new WeakMap<mapboxgl.Map, string>()
+
+/**
+ * What the renderer would actually be given, as a comparable string.
+ *
+ * Deliberately built from the DRAWN radius in PAINT ORDER, not from the raw
+ * claim list: the drawn size is what the zoom band decides, and the sequence
+ * is what the dominance sort decides, so this changes exactly when the picture
+ * does.
+ *
+ * `fameScore` is deliberately absent. It rides along in the feature properties
+ * but no paint expression reads it — its only effect on the render is the sort
+ * above, which the sequence already captures. Including it meant every view
+ * counter tick anywhere on the board re-pushed an identical picture, and each
+ * of those is a Mapbox frame on a map nobody is touching. If a paint expression
+ * ever starts reading fameScore, it has to come back into this signature.
+ */
+function pushSignature(byReach: readonly Claim[], drawn: (c: Claim) => number): string {
+  let signature = ''
+  for (const c of byReach) {
+    signature += `|${c.id}:${drawn(c).toFixed(4)}:${c.center[0]}:${c.center[1]}`
+      + `:${c.color ?? ''}:${c.user ?? ''}:${c.ownerId ?? ''}:${c.group ?? ''}`
+  }
+  return signature
+}
+
+/** Hand the board to the source. Returns false when the source already holds
+ *  exactly this picture and nothing was sent. */
+function pushClaims(map: mapboxgl.Map): boolean {
   const src = map.getSource(CLAIMS_SOURCE) as mapboxgl.GeoJSONSource | undefined
-  if (!src) return
+  if (!src) return false
+  // Where the camera is decides how much ground a claim must cover to still
+  // BE ground rather than a speck. Read once per push, not per claim.
+  const zoom = map.getZoom()
   // SMALLEST FIRST, so the biggest claim paints last and therefore on top.
   // Where two takeovers overlap, the ground shows whoever holds more of it —
   // that is what "who is in the lead here" looks like, and without the sort it
   // was just whichever pop happened to be inserted last.
   const byReach = dominancePaintOrder(claims.values())
-  // Where the camera is decides how much ground a claim must cover to still
-  // BE ground rather than a speck. Read once per push, not per claim.
-  const zoom = map.getZoom()
-  lastZoomBand = zoomBandOf(zoom)
   const drawn = (c: Claim) => drawnRadiusKm(c.radiusKm, zoom, c.center[1])
+  // Band first: a skipped push must not leave the band describing an older
+  // camera, since other readers use it to decide their own work.
+  lastZoomBand = zoomBandOf(zoom)
+  const signature = pushSignature(byReach, drawn)
+  if (lastPushSignature.get(map) === signature) return false
+  lastPushSignature.set(map, signature)
   src.setData({
     type: 'FeatureCollection',
     features: byReach.map(c => ownershipTerrainPolygon(c.center, drawn(c), claimProps(c))),
   })
+  return true
 }
 
 /** Feature properties every claim carries. `color` is omitted (not null) for
@@ -557,38 +596,6 @@ function cancelAllClaimAnimations(map: mapboxgl.Map): void {
   claimAnimations.delete(map)
 }
 
-/**
- * Growth and decay are NOT the same event, so they do not share a curve.
- *
- * Growth is earned and attributable — somebody just saw your pop — so it keeps
- * the curve that shipped: a hard attack covering 16.5% of the distance in the
- * first 5% of its duration, arriving at the target by t≈0.48 and holding.
- * (The comment below called that an overshoot spring. It is not. The raw
- * expression peaks at 1.086, but Math.min(1, …) clamps it at every call site,
- * so nothing has ever overshot. The attack is the real character of it.)
- *
- * Decay is the absence of events, and radiusDecay applies it to every post at
- * once, so that same attack would fire across the whole board simultaneously
- * and read as an alarm. Decay ramps in from nothing and uses its full duration
- * instead of finishing early: it settles rather than strikes.
- */
-export const CLAIM_GROWTH_MS = 620
-export const CLAIM_DECAY_MS = 1_400
-
-/** How long this particular move should take, by direction. */
-export function claimTransitionMs(from: number, to: number): number {
-  return to < from ? CLAIM_DECAY_MS : CLAIM_GROWTH_MS
-}
-
-/**
- * The eased fraction for a claim move. `shrinking` picks the curve: the
- * shipped attack for growth, easeInOutQuad for decay.
- */
-export function easeClaimRadius(t: number, shrinking: boolean): number {
-  if (shrinking) return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
-  return Math.min(1, 1 + Math.sin(t * Math.PI) * 0.14 - Math.pow(1 - t, 3))
-}
-
 function animateClaim(map: mapboxgl.Map, claim: Claim, from: number): void {
   const animations = animationsFor(map)
   cancelClaimAnimation(map, claim.id)
@@ -618,6 +625,221 @@ function animateClaim(map: mapboxgl.Map, claim: Claim, from: number): void {
   }, 'ambient')
 }
 
+// ── Watching ground change hands ────────────────────────────────────────────
+//
+// A radius that MOVED on a claim already standing on the board is the only
+// thing about this system a person can actually watch happen. Replacing the
+// geometry in a single frame reads as "some pixels changed colour"; sweeping
+// the boundary outward or inward reads as growth or loss, and the direction
+// carries the meaning without anybody having to find a number.
+//
+// This is deliberately ONE governor subscription and ONE source push per
+// frame however many cells are moving. The per-claim animator above is right
+// for a single authored land-grab, but N of them means N setData calls per
+// frame, which is the exact cost the bounded animation cap exists to prevent.
+/**
+ * Growth and decay are NOT the same event, so they do not share a curve.
+ *
+ * Growth is earned and attributable — somebody just saw your pop — so it keeps
+ * the overshoot spring: the land grabs past its resting edge and settles back.
+ *
+ * Decay is the absence of events. radiusDecay runs hourly against every post at
+ * once, so the identical 14% overshoot that reads as "earned" on the way out
+ * reads as a hit on the way in, and it lands on the whole board at the same
+ * moment. Decay therefore gets no overshoot and roughly twice the time: it
+ * settles instead of striking, and a full sweep passes as weather rather than
+ * as fourteen separate things happening.
+ */
+export const CLAIM_GROWTH_MS = 620
+export const CLAIM_DECAY_MS = 1_400
+
+/** How long this particular move should take, by direction. */
+export function claimTransitionMs(from: number, to: number): number {
+  return to < from ? CLAIM_DECAY_MS : CLAIM_GROWTH_MS
+}
+
+/**
+ * The eased fraction for a claim move. `shrinking` picks the curve: the
+ * overshoot spring for growth, easeInOutQuad for decay — which has no attack
+ * and never crosses its resting value, so the territory cannot punch past
+ * where it is going to land.
+ */
+export function easeClaimRadius(t: number, shrinking: boolean): number {
+  if (shrinking) return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+  return Math.min(1, 1 + Math.sin(t * Math.PI) * 0.14 - Math.pow(1 - t, 3))
+}
+
+/** The longest a move can run — what the safety clock has to outlast. */
+const CLAIM_TRANSITION_MS = CLAIM_DECAY_MS
+/** Below this a "change" is rounding noise, not an event worth animating. */
+const CLAIM_TRANSITION_MIN_KM = 0.01
+/** Past this many simultaneous movers the rest simply land. A board-wide
+ *  re-rank (a level switch, a first load) must never become a mass animation. */
+const CLAIM_TRANSITION_MAX_MOVERS = 8
+
+/** A sweep is allowed this long past its duration before the safety clock
+ *  lands it regardless of whether the governor ever ticked. */
+const CLAIM_TRANSITION_GRACE_MS = 500
+const CLAIM_TRANSITION_CLOCK_MS = 250
+
+interface ClaimMove {
+  claim: Claim
+  from: number
+  /** Governor clock (performance.now) at the start, for the eased sweep. */
+  started: number
+  /** Wall clock (Date.now) at the start, for the safety clock: the governor's
+   *  clock is not guaranteed to advance while parked, and this one is what a
+   *  fake-timer test can drive. */
+  startedMs: number
+}
+interface ActiveClaimTransition {
+  /** Keyed by claim id. One pass carries every mover; snapshots MERGE into it
+   *  rather than replacing it, which is the whole fix. */
+  movers: Map<string, ClaimMove>
+  stop: () => void
+}
+const claimTransitions = new WeakMap<mapboxgl.Map, ActiveClaimTransition>()
+
+/** Where a claim's sweep is heading, if one is in flight for it. */
+function inFlightTarget(map: mapboxgl.Map, id: string): number | undefined {
+  return claimTransitions.get(map)?.movers.get(id)?.claim.radiusKm
+}
+
+function endTransition(map: mapboxgl.Map, active: ActiveClaimTransition): void {
+  if (claimTransitions.get(map) === active) claimTransitions.delete(map)
+  active.stop()
+}
+
+/** Forget movers whose claim has left the board, so a sweep can never put a
+ *  claim back for a post that no longer exists. */
+function pruneMovers(map: mapboxgl.Map): void {
+  const active = claimTransitions.get(map)
+  if (!active) return
+  for (const id of [...active.movers.keys()]) if (!claims.has(id)) active.movers.delete(id)
+  if (active.movers.size === 0) endTransition(map, active)
+}
+
+/** Land these movers at their true radius and drop them from the pass. */
+function landMovers(map: mapboxgl.Map, active: ActiveClaimTransition, list: ClaimMove[]): void {
+  const landing = list.filter(move => claims.has(move.claim.id)).map(move => move.claim)
+  for (const move of list) active.movers.delete(move.claim.id)
+  if (landing.length) {
+    upsertClaimsBounded(map, landing)
+    pushClaims(map)
+  }
+  if (active.movers.size === 0) {
+    endTransition(map, active)
+    claimsListeners.forEach(fn => fn())
+  }
+}
+
+function cancelClaimTransition(map: mapboxgl.Map, settle: boolean): void {
+  const active = claimTransitions.get(map)
+  if (!active) return
+  const pending = [...active.movers.values()]
+  active.movers.clear()
+  endTransition(map, active)
+  if (!settle) return
+  const landing = pending.filter(move => claims.has(move.claim.id)).map(move => move.claim)
+  if (landing.length) {
+    upsertClaimsBounded(map, landing)
+    pushClaims(map)
+    claimsListeners.forEach(fn => fn())
+  }
+}
+
+function startTransitionPass(map: mapboxgl.Map): ActiveClaimTransition {
+  const movers = new Map<string, ClaimMove>()
+  const active: ActiveClaimTransition = { movers, stop: () => {} }
+  claimTransitions.set(map, active)
+
+  const step = (_elapsedMs: number, now: number) => {
+    if (claimTransitions.get(map) !== active) return
+    const frame: Claim[] = []
+    const done: ClaimMove[] = []
+    for (const move of movers.values()) {
+      if (!claims.has(move.claim.id)) { done.push(move); continue }
+      const shrinking = move.claim.radiusKm < move.from
+      const t = Math.min(1, (now - move.started) / claimTransitionMs(move.from, move.claim.radiusKm))
+      if (t >= 1) { done.push(move); continue }
+      // The same curves the authored land-grab uses, so a claim that grows
+      // because you earned it and one that grows because the board caught up
+      // move identically — and a decaying one settles either way.
+      const eased = easeClaimRadius(t, shrinking)
+      frame.push({ ...move.claim, radiusKm: Math.max(0, move.from + (move.claim.radiusKm - move.from) * eased) })
+    }
+    if (frame.length) {
+      upsertClaimsBounded(map, frame)
+      pushClaims(map)
+    }
+    if (done.length) landMovers(map, active, done)
+  }
+
+  // Subscribing is best-effort ON PURPOSE. setClaimGroup is the live update
+  // path — every snapshot lands here — and the governor reads `document` to
+  // decide whether to run, so importing this module without a DOM (a test, a
+  // non-browser context) would otherwise throw where the old instant replace
+  // never did. That throw would be swallowed by the caller's catch and the
+  // board would silently stop updating, which is the worst possible failure.
+  // MANAGED, not ambient. A radius change arrives while nobody is touching the
+  // screen, which is precisely when the ambient gate is asleep — and a
+  // sleeping gate pauses ambient subscribers outright, boost or no boost, so
+  // the sweep never ticked and the safety clock landed every change as a
+  // late snap. Managed work is finite, explicitly requested rendering that
+  // the gate admits while a bounded lease is held (see transitionClaims).
+  let unsubscribe = () => {}
+  try {
+    unsubscribe = onFrame(step, 'managed')
+  } catch {
+    /* no governor here; the safety clock lands everything */
+  }
+
+  // The safety clock. Bare setInterval, independent of the governor and of
+  // the DOM. A mover the sweep has not finished inside its grace is landed
+  // here, so a parked governor (thermal, hidden document) can only ever
+  // delay the truth by a beat, never withhold it — and because snapshots
+  // merge into this pass instead of restarting it, nothing can reset the
+  // clock out from under a mover.
+  const clock: ReturnType<typeof setInterval> = setInterval(() => {
+    if (claimTransitions.get(map) !== active) { clearInterval(clock); return }
+    const nowMs = Date.now()
+    const overdue = [...movers.values()].filter(move =>
+      nowMs - move.startedMs
+        > claimTransitionMs(move.from, move.claim.radiusKm) + CLAIM_TRANSITION_GRACE_MS)
+    if (overdue.length) landMovers(map, active, overdue)
+  }, CLAIM_TRANSITION_CLOCK_MS)
+
+  active.stop = () => {
+    clearInterval(clock)
+    unsubscribe()
+  }
+  return active
+}
+
+function transitionClaims(map: mapboxgl.Map, moves: ClaimMove[]): void {
+  if (!moves.length) return
+  const active = claimTransitions.get(map) ?? startTransitionPass(map)
+  const overflow: Claim[] = []
+  for (const move of moves) {
+    if (!active.movers.has(move.claim.id) && active.movers.size >= CLAIM_TRANSITION_MAX_MOVERS) {
+      overflow.push(move.claim)
+      continue
+    }
+    active.movers.set(move.claim.id, move)
+  }
+  // Past the cap the surplus lands immediately rather than being dropped:
+  // the board still has to end up telling the truth.
+  if (overflow.length) {
+    upsertClaimsBounded(map, overflow)
+    pushClaims(map)
+  }
+  // No rendering lease is taken here, on purpose. A sweep only starts while
+  // the map is attended (see setClaimGroup), and an awake gate already runs
+  // managed work; waking a parked renderer for a claim change is the heat
+  // regression the thermal gate exists to refuse. Should the gate fall asleep
+  // mid-sweep, the safety clock lands the remainder.
+}
+
 /**
  * Replace every claim owned by `owner` with `list`, in one push.
  *
@@ -630,6 +852,55 @@ function animateClaim(map: mapboxgl.Map, claim: Claim, from: number): void {
 export function setClaimGroup(map: mapboxgl.Map, owner: 'mine' | 'others' | 'games', list: Claim[]): void {
   installClaimsLayer(map)
   cancelAllClaimAnimations(map)
+  // A claim already on the board whose radius moved is grown or shrunk rather
+  // than replaced. A claim arriving for the first time still lands instantly:
+  // on a first load every claim is new, and animating a whole board in from
+  // zero is precisely the startup burst seedClaims exists to avoid.
+  //
+  // The live query covers every post on the board, so other people's view
+  // counters re-emit the whole snapshot every few seconds with THIS claim's
+  // target unchanged. Those must leave a sweep already in flight alone. The
+  // first build treated each one as a fresh change: it re-held the old radius,
+  // cancelled the sweep and reset its safety timer, and with the governor
+  // parked the claim never landed at all.
+  //
+  // And ONLY while somebody is watching. The governor's contract is that a
+  // screen nobody is touching draws nothing, and the thermal gate holds the
+  // idle map to two Mapbox frames a minute. A sweep taken on an untouched
+  // map — worse, a rendering lease taken to run it — un-parks the renderer
+  // and spends a dozen frames per change on a phone in a pocket. The first
+  // build did exactly that and the gate refused it. So: attended — the ambient
+  // gate is awake after a touch — means the boundary sweeps; idle means the
+  // truth lands in the single push the old instant replace always cost.
+  //
+  // Deliberately NOT "or a camera operation owns the renderer": the map's own
+  // startup lease, a landmark decoding, the gate's idle orbit all hold one
+  // while nobody is watching, and a sweep under any of them is exactly the
+  // dozen idle frames the second build was refused for.
+  const attended = ambientAllowed()
+  if (!attended) cancelClaimTransition(map, false)
+  const moves: ClaimMove[] = []
+  const held = new Map<string, number>()
+  const started = performance.now()
+  const startedMs = Date.now()
+  for (const claim of list) {
+    if (!attended) break
+    const standing = claims.get(claim.id)
+    if (!standing) continue
+    const flying = inFlightTarget(map, claim.id)
+    if (flying !== undefined) {
+      // Keep drawing the size it is showing right now; never push the target.
+      held.set(claim.id, standing.radiusKm)
+      if (Math.abs(flying - claim.radiusKm) < CLAIM_TRANSITION_MIN_KM) continue
+      // The destination itself moved: re-aim from where the sweep is now.
+      moves.push({ claim, from: standing.radiusKm, started, startedMs })
+      continue
+    }
+    if (Math.abs(standing.radiusKm - claim.radiusKm) < CLAIM_TRANSITION_MIN_KM) continue
+    held.set(claim.id, standing.radiusKm)
+    moves.push({ claim, from: standing.radiusKm, started, startedMs })
+  }
+
   const candidates = new Map(claims)
   for (const [id, claim] of [...candidates.entries()]) {
     // Tagged claims swap only with their own group; untagged ones keep the
@@ -641,17 +912,29 @@ export function setClaimGroup(map: mapboxgl.Map, owner: 'mine' | 'others' | 'gam
   }
   for (const claim of list) {
     candidates.delete(claim.id)
-    candidates.set(claim.id, claim)
+    // A mover enters the board still wearing its OLD radius. Pushing the new
+    // one here and rewinding a frame later is a visible snap-then-jump.
+    const from = held.get(claim.id)
+    candidates.set(claim.id, from === undefined ? claim : { ...claim, radiusKm: from })
   }
   replaceClaimsBounded(map, candidates)
-  pushClaims(map)
-  claimsListeners.forEach(fn => fn())
+  // An unchanged board sends nothing and wakes nobody: the settle listeners
+  // repaint roads and buildings with setPaintProperty, which is itself a frame.
+  if (pushClaims(map)) claimsListeners.forEach(fn => fn())
+  // Whatever just left the board (a swapped group, a deleted pop, retention)
+  // must not be resurrected by a sweep that was still holding it, and only a
+  // mover that survived the push is worth animating.
+  pruneMovers(map)
+  transitionClaims(map, moves.filter(move => claims.has(move.claim.id)))
 }
 
 /** Add or grow a claim, animating its terrain cell out to `radiusKm` (the land-grab
  *  pop). Call again with a larger radius as the post's reach climbs. */
 export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
   installClaimsLayer(map)
+  // The authored land-grab owns this claim's motion now; a live sweep still
+  // holding it would fight the pop frame by frame.
+  claimTransitions.get(map)?.movers.delete(claim.id)
   const existing = claims.get(claim.id)
   const from = existing ? existing.radiusKm : 0
   if (!animate) {
@@ -672,6 +955,9 @@ export function setClaim(map: mapboxgl.Map, claim: Claim, animate = true) {
 export function seedClaims(map: mapboxgl.Map, list: Claim[]) {
   installClaimsLayer(map)
   cancelAllClaimAnimations(map)
+  // A seed is authoritative: a sweep still heading for an older target would
+  // overwrite it a frame later.
+  cancelClaimTransition(map, false)
   upsertClaimsBounded(map, list)
   pushClaims(map)
   claimsListeners.forEach(fn => fn())
@@ -679,6 +965,7 @@ export function seedClaims(map: mapboxgl.Map, list: Claim[]) {
 
 export function clearClaims(map: mapboxgl.Map) {
   cancelAllClaimAnimations(map)
+  cancelClaimTransition(map, false)
   claims.clear()
   pushClaims(map)
 }

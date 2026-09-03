@@ -2994,6 +2994,10 @@ export default function MapApp() {
   } | null>(null)
   const pinRadiusPulseTimerRef = useRef(0)
   const pinRadiusPulseTokenRef = useRef(0)
+  // When the home shell relays a reaction it badges the pin immediately, and
+  // Firestore then delivers that same write a moment later. Without a record
+  // of what has already been announced the echo badges the pin a second time.
+  const announcedByRelayRef = useRef(new Map<string, number>())
   useEffect(() => () => window.clearTimeout(pinRadiusPulseTimerRef.current), [])
   const showPinRadiusPulse = useCallback((id: string, deltaKm: number) => {
     if (!Number.isFinite(deltaKm) || Math.abs(deltaKm) < 0.001) return
@@ -3037,10 +3041,56 @@ export default function MapApp() {
     if (!pin) return
     // The database remains authoritative for geometry. This is only the short
     // signed +/− badge while the Firestore listener delivers the new radius.
+    announcedByRelayRef.current.set(pin.id, Date.now())
     showPinRadiusPulse(pin.id, deltaKm)
     if (openedPinRef.current === pin.id) {
       window.parent?.postMessage({ type: 'poplur-map-radius', popId: pin.id, radiusKm: pin.radiusKm }, '*')
     }
+  }, [liveMapPosts, showPinRadiusPulse])
+
+  /**
+   * Badge ANY radius change, not only the reactions the home shell relays.
+   *
+   * Engagement scored server-side, the hourly decay job and admin writes all
+   * move a post's radius, and every one of them used to repaint the territory
+   * in silence — the ground changed hands with nothing on screen saying so.
+   * The signed badge already existed; it simply had one caller.
+   *
+   * The pulse shows one pin at a time by construction, so when several move in
+   * the same snapshot this picks the one the viewer most needs to know about:
+   * their own pop first, then the largest change.
+   */
+  const knownRadiusRef = useRef(new Map<string, number>())
+  useEffect(() => {
+    const known = knownRadiusRef.current
+    const relayed = announcedByRelayRef.current
+    const now = Date.now()
+    let best: { id: string; deltaKm: number; mine: boolean } | null = null
+    for (const pin of liveMapPosts) {
+      const previous = known.get(pin.id)
+      known.set(pin.id, pin.radiusKm)
+      // First sight of a pop is not a change. Its arrival is its own event.
+      if (previous === undefined) continue
+      const deltaKm = pin.radiusKm - previous
+      if (!Number.isFinite(deltaKm) || Math.abs(deltaKm) < 0.01) continue
+      const relayedAt = relayed.get(pin.id)
+      if (relayedAt !== undefined && now - relayedAt < 2_500) {
+        relayed.delete(pin.id)
+        continue
+      }
+      const mine = pin.mine === true
+      const better = best === null
+        || (mine && !best.mine)
+        || (mine === best.mine && Math.abs(deltaKm) > Math.abs(best.deltaKm))
+      if (better) best = { id: pin.id, deltaKm, mine }
+    }
+    // Neither map may grow without bound as pops rotate off the board.
+    if (known.size > liveMapPosts.length * 2 + 64) {
+      const live = new Set(liveMapPosts.map(pin => pin.id))
+      for (const id of [...known.keys()]) if (!live.has(id)) known.delete(id)
+    }
+    for (const [id, at] of [...relayed.entries()]) if (now - at > 10_000) relayed.delete(id)
+    if (best) showPinRadiusPulse(best.id, best.deltaKm)
   }, [liveMapPosts, showPinRadiusPulse])
 
   // Firestore is the one production source for user territory. onSnapshot

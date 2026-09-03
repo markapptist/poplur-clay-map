@@ -2167,34 +2167,39 @@ header.weatherTitleBar {
 
 /* A signed radius gain/loss belongs on the claimed pin, not in another global
    toast. One short compositor-only beat, then React removes the badge. */
+/* A counter, not a toast: it sits on the pin's shoulder like an app badge,
+   small enough that the pin is still the thing you are looking at. It now
+   fires on every radius change the board sees — engagement, decay, a relayed
+   reaction — so at its old size (14px type, parked a full pin-length above
+   the head and lifting further) a busy board read as a shower of pills. */
 .popPinRadiusDelta {
   position: absolute;
-  left: 50%;
-  bottom: 68px;
+  left: 66%;
+  bottom: 42px;
   z-index: 2;
-  min-width: 31px;
-  padding: 3px 6px 4px;
+  min-width: 20px;
+  padding: 1px 4px 2px;
   transform: translateX(-50%);
-  border: 2px solid rgba(255, 255, 255, 0.92);
+  border: 1.5px solid rgba(255, 255, 255, 0.92);
   border-radius: 999px;
   color: #fff;
-  font: 900 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: -0.04em;
+  font: 900 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -0.03em;
   text-align: center;
-  text-shadow: 0 1px 2px rgba(27, 4, 20, 0.72);
+  text-shadow: 0 1px 1px rgba(27, 4, 20, 0.7);
   pointer-events: none;
   will-change: transform, opacity;
 }
 .popPinRadiusGain {
   background: #18bc69;
-  box-shadow: 0 3px 9px rgba(6, 95, 49, 0.52);
+  box-shadow: 0 2px 5px rgba(6, 95, 49, 0.5);
   animation: popPinRadiusGain 1.05s cubic-bezier(.16, .82, .24, 1) both;
 }
 .popPinRadiusLoss {
   background: #d84b74;
-  box-shadow: 0 3px 9px rgba(107, 12, 39, 0.5);
+  box-shadow: 0 2px 5px rgba(107, 12, 39, 0.48);
   /* Longer than the gain pill, and eased without a snap: the terrain it
-     annotates takes CLAIM_DECAY_MS (1400ms) to settle, so a 1.05s badge
+     annotates now takes CLAIM_DECAY_MS (1400ms) to settle, so a 1.05s badge
      finished while the land was still moving. Decay is not the gain animation
      played backwards — see easeClaimRadius in mapClaims.ts. */
   animation: popPinRadiusLoss 1.5s cubic-bezier(.33, 0, .35, 1) both;
@@ -2835,15 +2840,17 @@ header.weatherTitleBar {
   }
 }
 
+/* A short nudge in the direction of the change — up for gained ground, down
+   for lost — that stays within the pin's own height instead of sailing off. */
 @keyframes popPinRadiusGain {
-  0% { opacity: 0; transform: translate(-50%, 7px) scale(.78); }
-  24% { opacity: 1; transform: translate(-50%, -8px) scale(1.1); }
-  72% { opacity: 1; transform: translate(-50%, -24px) scale(1); }
-  100% { opacity: 0; transform: translate(-50%, -34px) scale(.92); }
+  0% { opacity: 0; transform: translate(-50%, 4px) scale(.7); }
+  24% { opacity: 1; transform: translate(-50%, -3px) scale(1.08); }
+  72% { opacity: 1; transform: translate(-50%, -8px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -12px) scale(.9); }
 }
 @keyframes popPinRadiusLoss {
-  0% { opacity: 0; transform: translate(-50%, -4px) scale(.78); }
-  24% { opacity: 1; transform: translate(-50%, 5px) scale(1.08); }
-  72% { opacity: 1; transform: translate(-50%, 17px) scale(1); }
-  100% { opacity: 0; transform: translate(-50%, 27px) scale(.92); }
+  0% { opacity: 0; transform: translate(-50%, -3px) scale(.7); }
+  24% { opacity: 1; transform: translate(-50%, 2px) scale(1.06); }
+  72% { opacity: 1; transform: translate(-50%, 6px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, 10px) scale(.9); }
 }
