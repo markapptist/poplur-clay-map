@@ -89,6 +89,7 @@ import { spreadOverlappingPins } from './pinSpread'
 import { feedPostIdFromPinId, isPostSeen, onSeenPostsChange } from './seenPosts'
 import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer } from './mapClaims'
 import { ownershipTerrainPolygon } from './ownershipTerrain'
+import { fitZoomForRadius } from './mapFitZoom'
 import {
   dominanceFameScore,
   dominanceLeaders,
@@ -1357,6 +1358,14 @@ const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doo
  *  counts as arrived; a user should never see an up arrow while the knob is
  *  visibly parked at the top. */
 const ZOOM_TRAVEL_FULL_IN = 0.995
+
+/** The chrome that overlaps the map. Mirrors the composer's radius framing so
+ *  "1:1" means the same thing whether you are sizing a claim or looking at one. */
+function framePaddingFor(container: HTMLElement): { top: number; right: number; bottom: number; left: number } {
+  return container.clientWidth <= 480
+    ? { top: 176, right: 30, bottom: 96, left: 30 }
+    : { top: 138, right: 72, bottom: 88, left: 72 }
+}
 // Where the launch dive ends, and the closeness the map is meant to READ at.
 //
 // Was 16.2, which this file's own ZOOM_MAX note calls out as still reading like
@@ -6800,35 +6809,76 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
           />
         </div>
-        {/* One button, one job, in a fixed slot below the rail: zoom ALL the
-            way in. Once you are all the way in it turns into its opposite and
-            zooms all the way out. It rides the same spring the slider does, so
-            the knob travels the track rather than teleporting, and it stops
-            any orbit or cinematic move first exactly as grabbing the knob does
-            — a camera someone is already driving must not fight the request. */}
-        <button
-          type="button"
-          className={styles.zoomTravel}
-          aria-label={zoomRatio >= ZOOM_TRAVEL_FULL_IN ? 'Zoom all the way out' : 'Zoom all the way in'}
-          onPointerDown={event => {
-            // The wrap beneath turns any pointer into a rail grab; this must
-            // not double as one.
-            event.stopPropagation()
-            event.preventDefault()
-            if (!event.isPrimary || event.button !== 0) return
-            initialCameraInteractionRef.current = true
-            stopOrbitRef.current()
-            const live = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
-            if (live) { live.__cinematic = false; live.stop() }
-            playPop()
-            applyZoom(zoomRatio >= ZOOM_TRAVEL_FULL_IN ? ZOOM_MIN : ZOOM_MAX)
-          }}
-        >
-          <SideControlIconImage
-            icon={zoomRatio >= ZOOM_TRAVEL_FULL_IN ? 'global.channel_down' : 'global.channel_up'}
-            displaySize={40}
-          />
-        </button>
+        {/* One button, one job, in a fixed slot below the rail. When a pop is
+            the subject (the point the < > arrows have landed on) it FRAMES
+            that pop: centre on it and zoom until its territory fills the
+            viewport 1:1, so the ground it holds is the thing on screen rather
+            than a speck from space or one wall of colour at the doorstep.
+            Press again from that framing and it zooms all the way out. With
+            no subject it keeps its old job: all the way in, then its opposite.
+            Either way it stops any orbit or cinematic move first, exactly as
+            grabbing the knob does — a camera someone is already driving must
+            not fight the request. */}
+        {(() => {
+          const subject = focusedMapPoint?.kind === 'pin'
+            ? (pins ?? []).find(candidate => candidate.id === focusedMapPoint.id) ?? null
+            : focusedMapPoint?.kind === 'current' && (accountRadiusKm ?? 0) > 0
+              ? { coords: focusedMapPoint.coords, radiusKm: accountRadiusKm as number }
+              : null
+          const live = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
+          const frame = subject && live && subject.radiusKm > 0
+            ? (() => {
+              const box = live.getContainer()
+              const pad = framePaddingFor(box)
+              const usable = Math.max(120, Math.min(
+                box.clientWidth - pad.left - pad.right,
+                box.clientHeight - pad.top - pad.bottom,
+              ))
+              return { zoom: fitZoomForRadius(subject.radiusKm, subject.coords[1], usable, ZOOM_MIN, ZOOM_MAX), pad }
+            })()
+            : null
+          const framed = frame !== null && live !== null
+            && Math.abs(live.getZoom() - frame.zoom) < 0.2
+            && live.getCenter().distanceTo(new mapboxgl.LngLat(subject!.coords[0], subject!.coords[1]))
+              < subject!.radiusKm * 1000 * 0.35
+          const goingOut = frame ? framed : zoomRatio >= ZOOM_TRAVEL_FULL_IN
+          return (
+            <button
+              type="button"
+              className={styles.zoomTravel}
+              aria-label={goingOut ? 'Zoom all the way out' : frame ? 'Frame this pop' : 'Zoom all the way in'}
+              onPointerDown={event => {
+                // The wrap beneath turns any pointer into a rail grab; this must
+                // not double as one.
+                event.stopPropagation()
+                event.preventDefault()
+                if (!event.isPrimary || event.button !== 0) return
+                initialCameraInteractionRef.current = true
+                stopOrbitRef.current()
+                if (live) { live.__cinematic = false; live.stop() }
+                playPop()
+                if (goingOut) { applyZoom(ZOOM_MIN); return }
+                if (!frame || !live || !subject) { applyZoom(ZOOM_MAX); return }
+                // The padding keeps the territory inside the chrome-free part
+                // of the screen; the slider knob follows through the map's own
+                // zoom events, so the spring is not needed here.
+                wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
+                live.easeTo({
+                  center: [subject.coords[0], subject.coords[1]],
+                  zoom: frame.zoom,
+                  padding: frame.pad,
+                  duration: 900,
+                  essential: true,
+                })
+              }}
+            >
+              <SideControlIconImage
+                icon={goingOut ? 'global.channel_down' : 'global.channel_up'}
+                displaySize={40}
+              />
+            </button>
+          )
+        })()}
       </div>
 
       {/* The takeover colour, worn as a clay circle under the zoom slider.

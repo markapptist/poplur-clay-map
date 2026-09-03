@@ -65,21 +65,38 @@
    *            is the value that YIELDS on a short one — air between controls
    *            is worth less than the controls being pressable.
    */
+  /* The seam between the two GROUPS in the column — the post actions above,
+   * the channel stepper below. It is deliberately not one of the ten gaps:
+   * those yield to 2px on a short phone, and at 2px the channel-up arrow sat
+   * directly under the downvote button, so a thumb reaching for one hit the
+   * other. Budgeted out of the column like the readout is, so both columns
+   * still end on the same line. */
+  /* What the column has left once every floor is paid: ten 44px touch
+   * targets, the 22px readout, ten 2px gaps. The seam may only spend THAT.
+   * On a tall phone the slack is generous and the seam takes its full size;
+   * on the smallest phones the floors already consume the column, and a seam
+   * that insisted on 10px would push the rail's last buttons INTO the stepper
+   * — the one outcome worse than touching. */
+  --poplur-feed-slack: calc(var(--poplur-feed-column) - 10 * 44px - 22px - 10 * 2px);
+  --poplur-feed-seam: clamp(2px, min(var(--poplur-feed-slack), 1.8vh), 18px);
   --poplur-feed-ctl: clamp(
     44px,
-    calc((var(--poplur-feed-column) - 10 * 6px) / 11),
+    calc((var(--poplur-feed-column) - 10 * 6px - var(--poplur-feed-seam)) / 11),
     64px
   );
   --poplur-feed-number: clamp(
     22px,
-    calc(var(--poplur-feed-column) - 10 * var(--poplur-feed-ctl) - 10 * 6px),
+    calc(
+      var(--poplur-feed-column) - 10 * var(--poplur-feed-ctl) - 10 * 6px
+        - var(--poplur-feed-seam)
+    ),
     var(--poplur-feed-ctl)
   );
   --poplur-feed-gap: clamp(
     2px,
     calc(
       (var(--poplur-feed-column) - var(--poplur-feed-number)
-        - 10 * var(--poplur-feed-ctl)) / 10
+        - 10 * var(--poplur-feed-ctl) - var(--poplur-feed-seam)) / 10
     ),
     64px
   );
